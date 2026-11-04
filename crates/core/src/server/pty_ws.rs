@@ -20,6 +20,9 @@ const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long we wait for the client's Close frame after sending ours.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_MESSAGE: usize = 1 << 20;
+/// How long a socket waits for a session whose start is in progress, and how often it looks.
+const START_WAIT: Duration = Duration::from_secs(120);
+const START_POLL: Duration = Duration::from_millis(25);
 
 /// Detaches the session when dropped, so a panic or abort also detaches.
 struct AttachGuard {
@@ -33,8 +36,28 @@ impl Drop for AttachGuard {
     }
 }
 
+/// The tab's session. While a start holds a claim on the tab and no session exists yet (an elevated start
+/// waiting for UAC, a Reopen, Restart or Resume), waits for it: the UI would otherwise get 404s and retry,
+/// and each failed handshake is a console error. None when the claim ends without a session, or at the deadline.
+async fn session_or_wait(st: &AppState, tab: &str) -> Option<Arc<Session>> {
+    let deadline = Instant::now() + START_WAIT;
+    loop {
+        if let Some(session) = st.session(tab) {
+            return Some(session);
+        }
+        if !st.is_starting(tab) {
+            // The claim may have ended just after the session entered the map.
+            return st.session(tab);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        tokio::time::sleep(START_POLL).await;
+    }
+}
+
 pub async fn handler(State(st): State<AppState>, Path(tab): Path<String>, ws: WebSocketUpgrade) -> Response {
-    let Some(session) = st.session(&tab) else {
+    let Some(session) = session_or_wait(&st, &tab).await else {
         return StatusCode::NOT_FOUND.into_response();
     };
     // Echo our subprotocol, or browsers drop the connection.

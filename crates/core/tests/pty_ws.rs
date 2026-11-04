@@ -684,6 +684,79 @@ async fn websocket_from_foreign_origin_is_forbidden() {
     );
 }
 
+/// Opens `/v1/pty/{tab}` with the right token and returns the handshake outcome and how long it took.
+async fn try_connect(core: &RunningCore, tab: &str) -> (Result<Ws, u16>, Duration) {
+    let mut req = format!("ws://127.0.0.1:{}/v1/pty/{tab}", core.endpoint.port)
+        .into_client_request()
+        .unwrap();
+    req.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        format!("marshell.v1, token.{}", core.endpoint.token).parse().unwrap(),
+    );
+    let started = Instant::now();
+    let outcome = match tokio_tungstenite::connect_async(req).await {
+        Ok((ws, _)) => Ok(ws),
+        Err(tokio_tungstenite::tungstenite::Error::Http(res)) => Err(res.status().as_u16()),
+        Err(e) => panic!("unexpected error: {e}"),
+    };
+    (outcome, started.elapsed())
+}
+
+#[tokio::test]
+async fn a_socket_for_a_session_that_is_starting_waits_for_it() {
+    let (core, _home) = core().await;
+    let tab = create(&core, fake(&["echo"]), None).await.unwrap();
+    // Put the tab back into the state of a start in progress: claimed, and no session yet.
+    let session = core.state.remove_session(&tab).expect("the session exists");
+    let claim = core.state.claim_start(&tab).expect("nothing else is starting the tab");
+    let state = core.state.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        state.insert_session(session);
+        drop(claim);
+    });
+    let (outcome, _) = try_connect(&core, &tab).await;
+    assert!(outcome.is_ok(), "the socket was refused with {:?}", outcome.err());
+}
+
+#[tokio::test]
+async fn a_socket_for_a_start_that_ends_without_a_session_gets_404_at_once() {
+    let (core, _home) = core().await;
+    let tab = create(&core, fake(&["echo"]), None).await.unwrap();
+    let _gone = core.state.remove_session(&tab).expect("the session exists");
+    let claim = core.state.claim_start(&tab).expect("nothing else is starting the tab");
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        drop(claim);
+    });
+    let started = Instant::now();
+    let (outcome, _) = try_connect(&core, &tab).await;
+    let elapsed = started.elapsed();
+    assert_eq!(outcome.err(), Some(404));
+    assert!(
+        elapsed >= Duration::from_millis(250),
+        "answered before the claim ended: {elapsed:?}"
+    );
+    assert!(
+        elapsed < Duration::from_millis(400),
+        "answered long after the claim ended: {elapsed:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_socket_for_an_unknown_or_ended_tab_gets_404_at_once() {
+    let (core, _home) = core().await;
+    let (outcome, took) = try_connect(&core, "t-unknown").await;
+    assert_eq!(outcome.err(), Some(404));
+    assert!(took < Duration::from_millis(100), "took {took:?}");
+    // A tab whose session is gone and that nobody is starting.
+    let tab = create(&core, fake(&["echo"]), None).await.unwrap();
+    let _gone = core.state.remove_session(&tab).expect("the session exists");
+    let (outcome, took) = try_connect(&core, &tab).await;
+    assert_eq!(outcome.err(), Some(404));
+    assert!(took < Duration::from_millis(100), "took {took:?}");
+}
+
 /// S6 throughput. Run with: cargo test -p marshell-core --release --test pty_ws -- --ignored --nocapture
 #[tokio::test]
 #[ignore]

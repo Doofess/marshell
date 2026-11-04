@@ -871,8 +871,12 @@ impl AppState {
             .unwrap()
             .insert(session.id().to_string(), session);
     }
-    /// Claims the tab for one Resume or Restart. None while another one is starting it.
-    /// The claim ends when the returned value is dropped.
+    /// Whether a start (create, Reopen, Resume or Restart) holds a claim on the tab.
+    pub fn is_starting(&self, tab: &str) -> bool {
+        self.0.starting.lock().unwrap().contains(tab)
+    }
+    /// Claims the tab for one start: a create or Reopen (which reserve a new tab), a Resume or a Restart.
+    /// None while another one is starting it. The claim ends when the returned value is dropped.
     pub fn claim_start(&self, tab: &str) -> Option<StartClaim> {
         if !self.0.starting.lock().unwrap().insert(tab.to_string()) {
             return None;
