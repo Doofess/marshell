@@ -44,3 +44,8 @@ export function focusFellOut({ wasOpen, isOpen, activeIsBody }: { wasOpen: boole
 export function adminKey(e: { code: string; altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }): boolean {
   return e.code === "KeyA" && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
 }
+
+/** Alt+A is the chip's key only while the chip works; when it is off (macOS, Linux, a CLI that can't run elevated) the key is left alone, as Option+A is a letter on a Mac. */
+export function adminKeyClaimed(e: { code: string; altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }, enabled: boolean): boolean {
+  return enabled && adminKey(e);
+}

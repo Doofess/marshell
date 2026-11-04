@@ -17,3 +17,8 @@ export function launcherSetup(programs: LaunchProgram[], wsl: boolean, detection
     };
   });
 }
+
+/** The core reserves a session's number before the spawn, so the live list's next number moves on while a start is pending: show the one the start took. */
+export function shownNumber(live: number, starting: boolean, frozen: number | undefined): number {
+  return starting && frozen !== undefined ? frozen : live;
+}

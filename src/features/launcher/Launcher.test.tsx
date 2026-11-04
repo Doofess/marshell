@@ -209,6 +209,9 @@ describe("Launcher: the number the new session takes", () => {
     expect(h).toContain("Session 4");
     expect(h).toContain("launcher__next");
   });
+  it("shows the number while the start is pending", () => {
+    expect(renderToStaticMarkup(<Launcher view={view({ nextNumber: 2 })} pending />)).toContain("Session 2");
+  });
   it("says nothing when the parent does not know it", () => {
     expect(html()).not.toContain("launcher__next");
   });
@@ -521,6 +524,14 @@ describe("Launcher: the Administrator chip", () => {
     expect(on).toContain('data-kind="elevated"');
     expect(on).toMatch(/aria-checked="true"[^>]*aria-keyshortcuts="Alt\+A"/);
     expect(on).toContain("as administrator");
+  });
+  it("a disabled chip does not advertise Alt+A, and an enabled one does", () => {
+    const reason = "Not here.";
+    const programs = LAUNCH_PROGRAMS.map((p) => p.id === "codex" ? { ...p, adminUnavailable: reason } : p);
+    const off = renderToStaticMarkup(<Launcher programs={programs} view={view({ choice: { ...DEFAULT_CHOICE, program: "codex" } })} />);
+    expect(off).toContain('aria-disabled="true"');
+    expect(off).not.toContain("aria-keyshortcuts");
+    expect(admin()).toContain('aria-keyshortcuts="Alt+A"');
   });
   it("shows for a shell too", () => {
     expect(admin({ choice: { ...DEFAULT_CHOICE, program: "powershell" } })).toContain("Administrator");

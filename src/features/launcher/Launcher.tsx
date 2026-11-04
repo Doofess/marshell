@@ -29,7 +29,7 @@ import {
   type Remembered,
 } from "./launchChoice";
 import { effectiveMode, nextOffered, offeredMode } from "../modes/sessionModes";
-import { adminKey, focusFellOut, listNavKeys, stepActive } from "./launcherKeys";
+import { adminKeyClaimed, focusFellOut, listNavKeys, stepActive } from "./launcherKeys";
 import "./Launcher.css";
 import "../sessions/CloseBar.css";
 
@@ -232,7 +232,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
       }
       return;
     }
-    if (adminKey(e)) {
+    if (adminKeyClaimed(e, admin.enabled)) {
       e.preventDefault();
       toggleAdmin();
       return;
@@ -431,7 +431,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
                 aria-checked={admin.on}
                 aria-disabled={admin.enabled ? undefined : true}
                 aria-describedby={admin.enabled ? undefined : id("admin-off")}
-                aria-keyshortcuts="Alt+A"
+                aria-keyshortcuts={admin.enabled ? "Alt+A" : undefined}
                 onClick={toggleAdmin}
               >
                 <span className="launcher__box" aria-hidden="true" data-checked={admin.on || undefined} />

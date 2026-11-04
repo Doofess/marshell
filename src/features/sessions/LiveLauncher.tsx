@@ -1,5 +1,5 @@
 import type { Detection } from "../onboarding/types";
-import { launcherSetup } from "./launcherSetup";
+import { launcherSetup, shownNumber } from "./launcherSetup";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AgentCatalog } from "../../generated/AgentCatalog";
 import type { CreateSessionRequest } from "../../generated/CreateSessionRequest";
@@ -93,6 +93,8 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
   // Why the lists did not load. Unlike `error` no edit clears it: Start stays disabled until they do.
   const [loadError, setLoadError] = useState<string>();
   const [starting, setStarting] = useState(false);
+  // The number the pending start reserved; the live list moves on once the core has the row.
+  const frozen = useRef<number | undefined>(undefined);
   // The task name once the user has typed in the field; until then it follows the prompt.
   const [nameEdit, setNameEdit] = useState<string | null>(null);
   // The confirm view of a task, or null while the launcher shows its sentence.
@@ -326,6 +328,7 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
   /** Frees the confirm view after a failure, or when it waits for an answer. */
   const release = () => {
     inFlight.current = false;
+    frozen.current = undefined;
     setStarting(false);
   };
 
@@ -386,6 +389,7 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
     const projectPath = projects.find((p) => p.id === shown.projectId)?.path;
     const setupWanted = how !== "skip" && scripts !== undefined && scripts.kind !== "problem" && (scripts.kind === "setup" || how === "allow") && scripts.scripts.setup !== null;
     inFlight.current = true;
+    frozen.current = nextNumber;
     setStarting(true);
     setPhase("creating");
     setError(undefined);
@@ -418,6 +422,7 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
     const h = held.current;
     if (!endpoint || h === null || inFlight.current) return;
     inFlight.current = true;
+    frozen.current = nextNumber;
     setStarting(true);
     setPhase("starting");
     setError(undefined);
@@ -453,6 +458,7 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
       return;
     }
     inFlight.current = true;
+    frozen.current = nextNumber;
     setStarting(true);
     setError(undefined);
     try {
@@ -464,6 +470,7 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
     } catch (e) {
       setError(startFailure(e));
       inFlight.current = false;
+      frozen.current = undefined;
       setStarting(false);
     }
   };
@@ -471,7 +478,7 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
   return (
     <div ref={root} className="live-app__launcher">
       <Launcher
-        view={{ choice: shown, elevated, bypassAcknowledged, projects, query, pathCheck: shownCheck, activeIndex, programsOpen, prompt, nextNumber, taskName, ...(confirm === null ? {} : { confirm }) }}
+        view={{ choice: shown, elevated, bypassAcknowledged, projects, query, pathCheck: shownCheck, activeIndex, programsOpen, prompt, nextNumber: shownNumber(nextNumber, starting, frozen.current), taskName, ...(confirm === null ? {} : { confirm }) }}
         programs={programs}
         paceChip={false}
         os={os}
