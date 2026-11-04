@@ -4,7 +4,7 @@
 
 **Goal:** Fix issues #85 and #82, and the deferred minors from slices 6j2, 6k, 6l1 and 6l2 that were checked against the code and confirmed.
 
-**Architecture:** These are independent fixes in four areas: the bash integration script, the WSL uninstall path (core surface plus the CLI), the hook and preview code of the config service, and small session, socket and UI fixes. The tasks run in three lanes so that no two workers edit the same file at once. Lane A is config, agents and the CLI, in the `phase-6m` worktree. Lane B is the pty, sessions and shell code, in a second worktree, `phase-6m-b`. Lane F is frontend-only, also in `phase-6m-b`. Lane B and lane F are merged into `phase-6m` before the live check. No new dependencies.
+**Architecture:** These are independent fixes in four areas: the bash integration script, the WSL uninstall path (core surface plus the CLI), the hook and preview code of the config service, and small session, socket and UI fixes. All tasks run in the `phase-6m` worktree. The session is isolated to it, so no second worktree is used. The Rust tasks (lanes A and B) run one at a time, because one worker's half-done code would break another's build. The frontend tasks (lane F) touch no Rust and no file a Rust task touches, so they run beside them. No new dependencies.
 
 **Tech Stack:** Rust (axum core, jsonc-parser 0.34 CST, the `marshell` CLI crate), bash, React + TypeScript (Vitest in node, no DOM), ts-rs generated types.
 
@@ -13,8 +13,9 @@
 ## Global Constraints
 
 - Commit messages read `type(scope): what changed, as a sentence`. Run `cargo fmt --all` before every Rust commit.
-- Two lanes build Rust at the same time, so every cargo command uses `-j 3`, for example `cargo test -j 3 -p marshell-core <filter>`. The default job count runs rustc out of memory on this machine.
-- Lanes share a worktree with another worker. Stage only your own files, by path (`git add <paths>`), never `git add -A` or `git commit -a`. If git reports `index.lock`, wait a few seconds and retry. Run only the tests for your own files: `pnpm test <file>` and the crate's filtered `cargo test`. Don't run the whole frontend suite or `pnpm build` in lane F; the lead runs those after the merge.
+- Every cargo command uses `-j 3` (the plan's commands say so), for example `cargo test -j 3 -p marshell-core <filter>`. The default job count runs rustc out of memory on this machine, and a frontend worker may be running beside you.
+- Two workers share the worktree. Stage only your own files, by path (`git add <paths>`), never `git add -A` or `git commit -a`. If git reports `index.lock`, wait a few seconds and retry. Run only the tests for your own files: `pnpm test <file>` and the crate's filtered `cargo test`. Don't run the whole frontend suite or `pnpm build`; the lead runs those.
+- The session is isolated to the `phase-6m` worktree. Run commands from it with the Bash tool as plain commands. A compound command that changes directory, or a PowerShell call from Bash, can be refused.
 - A new protocol field goes in `crates/protocol`. Then run `cargo test -j 3 -p marshell-protocol` and `pnpm check:generated`, and commit `src/generated/`. New fields are `Option` with `#[ts(optional)]` and `skip_serializing_if`, so existing fixtures stay valid.
 - Never hold a `MutexGuard` across `.await` or I/O. A `wsl.exe` call or a file read on a `\\wsl.localhost` path runs in `spawn_blocking` or on a plain thread, never on an async worker.
 - UI copy is sentence case, puts the subject first, and has no "!" and no "successfully". Don't guess a status value.
@@ -32,7 +33,7 @@
 
 ---
 
-## Lane A: config, agents and the CLI (worktree `phase-6m`, one task at a time)
+## Lane A: config, agents and the CLI (one Rust task at a time)
 
 ### Task 2: Hooks off leaves nothing behind
 
@@ -63,7 +64,7 @@ Evidence. Only Qwen handles an empty `PermissionRequest` array (6l2 decision 8):
   - The removal reason gains the chain file. Qwen's reason text for an empty array, "Removes the empty PermissionRequest hook list left by an earlier Marshell.", is used for Claude and Codex too.
   - `removalCopy` in `consent.ts` names the chain file for the three CLIs that chain.
   - Update every caller to pass the chain path (`paths::statusline_chain(home, agent)`), and `None` for a distro.
-- [ ] **Step 4: Run.** `cargo test -j 3 -p marshell-core`, `cargo test -j 3 -p marshell-cli` and `pnpm test src/features/onboarding/consent.test.ts` pass.
+- [ ] **Step 4: Run.** `cargo test -j 3 -p marshell-core`, `cargo test -j 3 -p marshell-cli` and `pnpm test src/features/onboarding src/features/agents` pass. `agentsState.ts:154` feeds `removalCopy` into the Agents section.
 - [ ] **Step 5: Commit.** `fix(agents): hooks off removes an emptied approval list and the status line chain file, for every CLI`
 
 ### Task 3: A WSL surface the CLI can use (#82, core)
@@ -74,6 +75,7 @@ Evidence. Only Qwen handles an empty `PermissionRequest` array (6l2 decision 8):
 - Modify: `crates/core/src/server/agents.rs` (`distro_target` ~:320-346, `split_home_and_bridge` and `distro_target_of` ~:70-86, `distro_remove` ~:393-435, the test `a_distro_target_is_the_distros_own_share` ~:1827)
 
 **Interfaces:**
+- Consumes: Task 2's `remove_plan(.., chain_text, chain, distro)` for Claude Code, Antigravity and Qwen Code. A distro passes `chain: None`, because a distro's status line runs with `--no-chain`.
 - Produces:
   - `pub fn wsl::list_distros(timeout: Duration) -> Vec<String>` runs `wsl.exe -l -q`, decodes it and leaves out `docker-desktop` and `docker-desktop-data`. It returns empty off Windows and when `wsl.exe` is missing, fails or times out.
   - `pub fn wsl::distro_home(distro: &str, timeout: Duration) -> Option<PathBuf>` runs `wsl.exe -d <distro> --exec sh -c 'printf "%s\n" "$HOME"'` and keeps the result through `home_in_share`.
@@ -218,7 +220,7 @@ Evidence:
 - [ ] **Step 4: Run.** `cargo test -j 3 -p marshell-core` passes.
 - [ ] **Step 5: Commit.** `fix(qwen): a preview build isn't taken for a recorded version, and the system settings file is found per OS`
 
-## Lane B: pty, sessions and shell (worktree `phase-6m-b`, one task at a time)
+## Lane B: pty, sessions and shell (one Rust task at a time, after or between lane A's)
 
 ### Task 1: Bash marks a command's start from PS0, so later prompt hooks can't fake one (#85)
 
@@ -370,7 +372,7 @@ Evidence:
 - [ ] **Step 4: Run.** `cargo test -j 3 -p marshell-core` passes.
 - [ ] **Step 5: Commit.** `fix(sessions): the sidebar shell's recording is deleted when the shell ends without becoming a tab`
 
-## Lane F: frontend (worktree `phase-6m-b`, beside lane B)
+## Lane F: frontend (beside the Rust tasks)
 
 ### Task 14: The launcher's Alt+A and its pending session number
 
@@ -439,15 +441,15 @@ Evidence:
 - [ ] **Step 4: Run.** `pnpm test src/features/agents` passes.
 - [ ] **Step 5: Commit.** `fix(agents): a section for a CLI that isn't found shows only its hooks and Hooks off`
 
-## After the lanes (the lead, in `phase-6m`)
+## After the lanes (the lead)
 
-### Task 17: Merge, checks, live check and research note
+### Task 17: Checks, live check and research note
 
 **Files:**
 - Modify: `.claude/skills/marshell-live-check/live-check.ps1` (the `$env:` block of `start`, ~:208-216) and `SKILL.md`
 - Create: `docs/research/2026-11-04-maintenance-6m-live-check.md`
 
-- [ ] **Step 1: Merge** `phase-6m-b` into `phase-6m`, then run what CI runs: `cargo fmt --all --check`, `cargo clippy -j 4 --workspace --all-targets -- -D warnings`, `cargo test -j 4 --workspace`, `pnpm test`, `pnpm check:generated` and `pnpm build`.
+- [ ] **Step 1: Run what CI runs:** `cargo fmt --all --check`, `cargo clippy -j 4 --workspace --all-targets -- -D warnings`, `cargo test -j 4 --workspace`, `pnpm test`, `pnpm check:generated` and `pnpm build`.
 - [ ] **Step 2: Fix `NO_COLOR` in the live-check script.** In `start`, add `Remove-Item Env:NO_COLOR -ErrorAction SilentlyContinue` with a comment, and print `NO_COLOR cleared` when it was set. Add one line to `SKILL.md`. The variable belongs to the tool's own environment and blocks Qwen's `/theme`. The app never sets it, and a real user's `NO_COLOR` must still reach their tabs.
 - [ ] **Step 3: Live check** with `marshell-live-check`, scratch `MARSHELL_HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `QWEN_HOME`:
   1. **#85 in the user's Ubuntu.** It is read-only: open a WSL tab and use no agent and no Hooks setup there.
