@@ -134,6 +134,13 @@ pub struct DistroTarget {
     pub bridge: String,
 }
 
+/// How long `wsl.exe --list --running` may take.
+const RUNNING_LIST_TIMEOUT: Duration = Duration::from_secs(8);
+
+fn running_distros_of_wsl() -> Vec<String> {
+    crate::wsl::list_running(RUNNING_LIST_TIMEOUT)
+}
+
 /// The distros of the detected WSL profiles, each once (compared case-insensitively), spelt as the first profile
 /// that names it spells it.
 fn wsl_distros(doc: &ProfilesDoc) -> Vec<String> {
@@ -270,6 +277,9 @@ struct Inner {
     /// The target of a distro that a test pins, in place of asking `wsl.exe`. `Some(None)` is a distro that can't be
     /// reached.
     distro_target: Option<Option<DistroTarget>>,
+    /// The distros that are running now, which the Doctor asks only when a distro holds Marshell's hooks. Tests swap it,
+    /// so none runs `wsl.exe`.
+    running_distros: fn() -> Vec<String>,
     /// The previous process readings, so each `/v1/perf` call can tell the CPU used since the last one.
     sampler: Mutex<crate::diagnostics::perf::Sampler>,
     /// The diagnostics export waiting to be read and saved.
@@ -383,6 +393,7 @@ impl AppState {
             wsl_version: None,
             wsl_versions: Mutex::new(HashMap::new()),
             distro_target: None,
+            running_distros: running_distros_of_wsl,
             sampler: Mutex::new(crate::diagnostics::perf::Sampler::new()),
             previews: crate::diagnostics::export::Previews::default(),
             view: tokio::sync::watch::channel(marshell_protocol::api::UiView {
@@ -552,6 +563,13 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_distro_target runs before the state is shared")
             .distro_target = Some(target);
+        self
+    }
+    /// Pins the list of running distros, so a test never runs `wsl.exe`. Call it before the state is cloned.
+    pub fn with_running_distros(mut self, list: fn() -> Vec<String>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_running_distros runs before the state is shared")
+            .running_distros = list;
         self
     }
     /// Sets how long a permission request is held. Call it before the state is cloned.

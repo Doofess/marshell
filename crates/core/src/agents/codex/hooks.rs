@@ -6,7 +6,6 @@
 use crate::agents::common::{Bridge, PlanError, TAG, is_ours};
 use crate::config::hash::hash_bytes;
 use crate::config::jsonc::{parse_problem, read_value};
-use crate::paths;
 use crate::profiles::detect::{posix_quote, powershell_quote};
 use marshell_protocol::agents::{HookInstall, HookPlanRequest};
 use marshell_protocol::config::{Applies, ChangeSet, ConfigScope, EditOp, FileEdit};
@@ -40,17 +39,18 @@ pub fn hooks_path(env: &dyn Fn(&str) -> Option<String>, user_home: &Path) -> Pat
     }
 }
 
+#[cfg(test)]
 fn bridge_path(home: &Path) -> String {
-    paths::bridge_exe(home).to_string_lossy().replace('\\', "/")
+    crate::paths::bridge_exe(home).to_string_lossy().replace('\\', "/")
 }
 
-/// The bridge path quoted for the shell Codex runs a hook through: PowerShell on Windows, `sh`
-/// elsewhere. Single quotes in both, so a `$` or a backtick in the path is never expanded.
-fn quoted_bridge(home: &Path) -> String {
-    if cfg!(windows) {
-        powershell_quote(&bridge_path(home))
+/// The bridge path quoted for the shell Codex runs a hook through: PowerShell on Windows, `sh` elsewhere and in a
+/// distro. Single quotes in all, so a `$` or a backtick in the path is never expanded.
+fn quoted_bridge(bridge: &Bridge) -> String {
+    if cfg!(windows) && bridge.distro().is_none() {
+        powershell_quote(&bridge.path())
     } else {
-        posix_quote(&bridge_path(home))
+        posix_quote(&bridge.path())
     }
 }
 
@@ -88,6 +88,7 @@ fn entry_of(bridge: &Bridge, event: &str) -> Value {
     json!({ "type": "command", "command": command_of(bridge, role), "timeout": timeout })
 }
 
+#[cfg(test)]
 fn hook_entry(home: &Path, event: &str) -> Value {
     entry_of(&Bridge::local(home), event)
 }
@@ -272,15 +273,20 @@ pub struct Found {
 
 /// What the file (as a value) says about the install.
 pub fn inspect(hooks: &Value, home: &Path) -> Found {
+    inspect_for(hooks, &Bridge::local(home))
+}
+
+/// `inspect` for the entries of `bridge`: the local one, or a distro's, whose entries name the Linux path.
+pub fn inspect_for(hooks: &Value, bridge: &Bridge) -> Found {
     let ours = ours_of(hooks);
-    let bridge_exists = paths::bridge_exe(home).exists();
+    let bridge_exists = bridge.exists();
     // The first 6a wrote the path in double quotes; those entries still point at the bridge, so
     // they are not orphaned, only not exact (a reinstall sets the single-quoted form in place).
-    let quoted = quoted_bridge(home);
-    let old_quoted = format!("\"{}\"", bridge_path(home));
+    let quoted = quoted_bridge(bridge);
+    let old_quoted = format!("\"{}\"", bridge.path());
     let exact_one = |event: &str| {
         let mut it = ours.iter().filter(|(e, _)| *e == event);
-        matches!((it.next(), it.next()), (Some((_, entry)), None) if **entry == hook_entry(home, event))
+        matches!((it.next(), it.next()), (Some((_, entry)), None) if **entry == entry_of(bridge, event))
     };
     let exact_events = STATUS_EVENTS.iter().filter(|e| exact_one(e)).count();
     let permission_exact = exact_one(PERMISSION_EVENT);

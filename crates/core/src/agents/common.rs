@@ -214,6 +214,15 @@ impl Bridge {
             Bridge::Distro { name, .. } => Some(name),
         }
     }
+
+    /// The bridge file is there. A distro's bridge is judged by its path as a Windows path (a `/mnt/c/...` path is a
+    /// drive, anything else the distro's own share), so a path that has no Windows form counts as missing.
+    pub fn exists(&self) -> bool {
+        match self {
+            Bridge::Local(exe) => exe.exists(),
+            Bridge::Distro { name, path } => crate::wsl::to_windows(name, path).is_some_and(|p| p.exists()),
+        }
+    }
 }
 
 const REASON_PERCENT_OR_QUOTE: &str = "the path holds a % or a quote";

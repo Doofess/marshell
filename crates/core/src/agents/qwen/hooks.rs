@@ -10,6 +10,7 @@
 use crate::agents::common::{self, Bridge, PlanError, TAG, chain_delete, is_ours, statusline_left_note};
 use crate::config::hash::hash_bytes;
 use crate::config::jsonc::{parse_problem, read_value};
+#[cfg(test)]
 use crate::paths;
 use marshell_protocol::agents::{HookInstall, HookPlanRequest};
 use marshell_protocol::config::{Applies, ChangeSet, ConfigScope, EditOp, FileEdit};
@@ -309,20 +310,26 @@ fn chain_usable(chain: Option<&Value>) -> bool {
 
 /// What the settings (and the chain file's value, `{"statusLine": ...}`) say about the install.
 pub fn inspect(settings: &Value, chain: Option<&Value>, home: &Path) -> Found {
+    inspect_for(settings, chain, &Bridge::local(home))
+}
+
+/// `inspect` for the entries of `bridge`: the local one, or a distro's, which keeps no chain, so a status line there
+/// needs none.
+pub fn inspect_for(settings: &Value, chain: Option<&Value>, bridge: &Bridge) -> Found {
     let line = line_of(settings);
     let line_ours = matches!(line, Line::Ours(_));
     let chain_holds_users = chain_holds_users_line(chain);
-    let chain_usable = chain_usable(chain);
+    let chain_usable = chain_usable(chain) || bridge.distro().is_some();
     let line_current = match &line {
-        Line::Ours(l) => statusline_command(home).ok().as_deref() == command_text(l),
+        Line::Ours(l) => statusline_of(bridge).ok().as_deref() == command_text(l),
         _ => false,
     };
+    let bridge_exists = bridge.exists();
 
     // A bridge path no command can be built from (a `%` in it) makes nothing exact.
-    let bridge = Bridge::local(home);
     let exact_of = |event: &str| {
         let mut ours = entries_of(settings).filter(|(e, _, entry)| *e == event && is_ours(entry));
-        match (ours.next(), ours.next(), hook_entry_of(&bridge, event)) {
+        match (ours.next(), ours.next(), hook_entry_of(bridge, event)) {
             (Some((_, group, entry)), None, Ok(expected)) => {
                 *entry == expected && group.get("matcher").and_then(Value::as_str) == matcher_of(event)
             }
@@ -335,7 +342,7 @@ pub fn inspect(settings: &Value, chain: Option<&Value>, home: &Path) -> Found {
 
     let install = if total == 0 && !line_ours {
         HookInstall::None
-    } else if !paths::bridge_exe(home).exists() {
+    } else if !bridge_exists {
         HookInstall::Orphaned
     } else if exact_events == STATUS_EVENTS.len()
         && total == exact_events + usize::from(permission_exact)
@@ -347,7 +354,7 @@ pub fn inspect(settings: &Value, chain: Option<&Value>, home: &Path) -> Found {
     };
     Found {
         install,
-        approve_installed: permission_exact && paths::bridge_exe(home).exists(),
+        approve_installed: permission_exact && bridge_exists,
         has_own_statusline: matches!(line, Line::Theirs(_)) || (line_ours && chain_holds_users),
         chained: line_ours && chain_holds_users,
         preset_statusline: matches!(line, Line::Missing | Line::Preset),

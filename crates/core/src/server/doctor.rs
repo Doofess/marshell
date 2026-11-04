@@ -7,7 +7,7 @@ use super::AppState;
 use super::agents::{Adapter, agy_setup_of, codex_setup_of, qwen_setup_of, settings_file, setup_of};
 use crate::agents::common::Gate;
 use crate::config::guard::unverbatim;
-use crate::config::jsonc::read_value;
+use crate::config::jsonc::{parse_problem, read_value};
 use crate::config::managed::{self, ManagedEntry};
 use crate::doctor::{AgentFacts, FileState, checks};
 use axum::Json;
@@ -46,7 +46,7 @@ pub(crate) fn request_run(st: &AppState) {
 }
 
 /// Reads what the checks need, off the async threads. A test swaps it to hold a run.
-type ReadFacts = Arc<dyn Fn(&AppState) -> Vec<AgentFacts> + Send + Sync>;
+type ReadFacts = Arc<dyn Fn(&AppState) -> Gathered + Send + Sync>;
 
 fn request_run_with(st: &AppState, read: ReadFacts) {
     let doctor = st.doctor();
@@ -95,7 +95,7 @@ async fn run_once(st: &AppState, read: ReadFacts) -> Option<(u32, u64)> {
     let doctor = st.doctor();
     match facts {
         Ok(facts) => {
-            let items = checks::items(&facts, &[]);
+            let items = checks::items(&facts.facts, &facts.stopped);
             let issues = checks::issues(&items);
             let now = now_ms();
             *doctor.report.lock().unwrap_or_else(|e| e.into_inner()) = Some(DoctorReport {
@@ -119,46 +119,236 @@ fn now_ms() -> u64 {
 }
 
 /// What the checks need to know about each CLI. Reads files, so callers go through `spawn_blocking`.
-pub(crate) fn facts_of(st: &AppState) -> Vec<AgentFacts> {
-    facts_with(st, |st, agent| match agent {
+pub(crate) fn facts_of(st: &AppState) -> Gathered {
+    // managed.json is read once, for the Windows CLIs and for the distros. One that can't be read names no file, so no
+    // CLI reads as set up and no distro as managed.
+    let entries = managed_entries(st);
+    let facts = windows_facts(st, &entries, |st, agent| match agent {
         "claude" => setup_of(st),
         "codex" => codex_setup_of(st),
         "antigravity" => agy_setup_of(st),
         _ => qwen_setup_of(st),
+    });
+    let (distro, stopped) = distro_facts(st, &entries);
+    Gathered {
+        facts: facts.into_iter().chain(distro).collect(),
+        stopped,
+    }
+}
+
+fn managed_entries(st: &AppState) -> Vec<ManagedEntry> {
+    managed::list(&st.0.home).unwrap_or_else(|e| {
+        tracing::warn!("the doctor could not read managed.json: {e:#}");
+        Vec::new()
     })
 }
 
-/// `facts_of` over any reader of a CLI's setup, so a test can make one of them fail.
+/// The Windows CLIs' facts over any reader of a CLI's setup, so a test can make one of them fail.
+#[cfg(test)]
 fn facts_with(st: &AppState, read: impl Fn(&AppState, &'static str) -> Result<AgentSetup, Fail>) -> Vec<AgentFacts> {
-    // managed.json is read once. One that can't be read names no file, so no CLI reads as set up.
-    let entries = managed::list(&st.0.home).unwrap_or_else(|e| {
-        tracing::warn!("the doctor could not read managed.json: {e:#}");
-        Vec::new()
-    });
+    windows_facts(st, &managed_entries(st), read)
+}
+
+fn windows_facts(
+    st: &AppState,
+    entries: &[ManagedEntry],
+    read: impl Fn(&AppState, &'static str) -> Result<AgentSetup, Fail>,
+) -> Vec<AgentFacts> {
     AGENTS
         .into_iter()
         .map(|agent| match read(st, agent) {
-            Ok(setup) => facts_from(st, agent, setup, &entries),
-            Err((_, message)) => AgentFacts {
-                agent,
-                distro: None,
-                found: false,
-                path: PathBuf::new(),
-                file: FileState::Ok,
-                hooks: marshell_protocol::agents::HookInstall::None,
-                approve_installed: false,
-                has_own_statusline: false,
-                chained: false,
-                trust: None,
-                set_up: false,
-                bridge: PathBuf::new(),
-                version_note: None,
-                retention_unset: None,
-                managed_settings: None,
-                error: Some(message),
-            },
+            Ok(setup) => facts_from(st, agent, setup, entries),
+            Err((_, message)) => failed_facts(agent, None, message),
         })
         .collect()
+}
+
+/// What one run reads: the facts of every CLI on Windows and in each running distro Marshell set up, and the distros it
+/// set up that aren't running.
+pub(crate) struct Gathered {
+    pub facts: Vec<AgentFacts>,
+    pub stopped: Vec<String>,
+}
+
+/// The distros Marshell set up: the detected ones that hold a path of `managed.json`. This reads no distro's file.
+fn managed_distros(st: &AppState, entries: &[ManagedEntry]) -> Vec<String> {
+    if entries.is_empty() {
+        return Vec::new();
+    }
+    st.distros_of_paths(entries.iter().map(|e| Path::new(&e.path)))
+}
+
+/// The facts of every running managed distro, and the managed distros that aren't running. `wsl.exe` is asked what
+/// runs only when there is a managed distro, and a distro that isn't running is never asked for its target nor read,
+/// since either would start it. Runs `wsl.exe` and reads shares, so callers go through `spawn_blocking`.
+fn distro_facts(st: &AppState, entries: &[ManagedEntry]) -> (Vec<AgentFacts>, Vec<String>) {
+    let managed = managed_distros(st, entries);
+    if managed.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+    let running = (st.0.running_distros)();
+    let is_running = |d: &String| running.iter().any(|r| r.to_lowercase() == d.to_lowercase());
+    let (up, stopped): (Vec<String>, Vec<String>) = managed.into_iter().partition(is_running);
+    let mut facts = Vec::new();
+    for distro in &up {
+        match st.distro_target(distro) {
+            Ok(target) => {
+                for agent in AGENTS {
+                    facts.push(distro_agent_facts(agent, distro, &target, entries));
+                }
+            }
+            // It was running a moment ago and gave no home: each CLI says it couldn't be checked.
+            Err((_, message)) => {
+                for agent in AGENTS {
+                    facts.push(failed_facts(agent, Some(distro.clone()), message.clone()));
+                }
+            }
+        }
+    }
+    (facts, stopped)
+}
+
+/// A CLI's facts when its reader failed: every field a default, and the reason.
+fn failed_facts(agent: &'static str, distro: Option<String>, message: String) -> AgentFacts {
+    AgentFacts {
+        agent,
+        distro,
+        found: false,
+        path: PathBuf::new(),
+        file: FileState::Ok,
+        hooks: marshell_protocol::agents::HookInstall::None,
+        approve_installed: false,
+        has_own_statusline: false,
+        chained: false,
+        trust: None,
+        set_up: false,
+        bridge: PathBuf::new(),
+        version_note: None,
+        retention_unset: None,
+        managed_settings: None,
+        error: Some(message),
+    }
+}
+
+/// One file of a distro as a value and whether it is read-only: `Ok(None)` when it isn't there, and the line and
+/// message when it can't be read or doesn't parse.
+fn read_json(path: &Path) -> Result<Option<(serde_json::Value, bool)>, (u32, String)> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err((1, e.to_string())),
+    };
+    match (parse_problem(&text), read_value(&text)) {
+        (None, Ok(value)) => {
+            let read_only = std::fs::metadata(path).is_ok_and(|m| m.permissions().readonly());
+            Ok(Some((value, read_only)))
+        }
+        (problem, _) => Err(problem.unwrap_or((1, "the file doesn't parse".to_string()))),
+    }
+}
+
+/// What a CLI's hooks files say in a distro, judged against the distro's bridge. A distro keeps no chain file, and its
+/// version, retention and organisation settings are not checked.
+fn distro_agent_facts(
+    agent: &'static str,
+    distro: &str,
+    target: &super::DistroTarget,
+    entries: &[ManagedEntry],
+) -> AgentFacts {
+    use crate::agents::antigravity::hooks as agy;
+    use crate::agents::common::Bridge;
+    use crate::agents::{claude, codex, qwen};
+    use marshell_protocol::agents::HookInstall;
+
+    let home = &target.home;
+    let bridge = Bridge::Distro {
+        name: distro.to_string(),
+        path: target.bridge.clone(),
+    };
+    // Antigravity's hooks are in `hooks.json`, with the status line in `settings.json`.
+    let files: Vec<PathBuf> = match agent {
+        "claude" => vec![home.join(".claude").join("settings.json")],
+        "codex" => vec![home.join(".codex").join("hooks.json")],
+        "antigravity" => vec![agy::hooks_path(home), agy::settings_path(home)],
+        _ => vec![home.join(".qwen").join("settings.json")],
+    };
+    let path = files[0].clone();
+    let mut facts = AgentFacts {
+        agent,
+        distro: Some(distro.to_string()),
+        found: true,
+        set_up: set_up_of(entries, &path),
+        path,
+        file: FileState::Ok,
+        hooks: HookInstall::None,
+        approve_installed: false,
+        // A distro keeps no chain: its own status line is left alone, so nothing here says it isn't chained.
+        has_own_statusline: false,
+        chained: false,
+        trust: None,
+        bridge: PathBuf::from(&target.bridge),
+        version_note: None,
+        retention_unset: None,
+        managed_settings: None,
+        error: None,
+    };
+
+    let mut values = Vec::new();
+    let mut read_only = false;
+    for file in &files {
+        match read_json(file) {
+            Ok(Some((value, ro))) => {
+                read_only |= ro;
+                values.push(Some(value));
+            }
+            Ok(None) => values.push(None),
+            Err((line, message)) => {
+                // With two files, the message names the one that failed, as on Windows.
+                let message = if files.len() > 1 {
+                    format!("{}: {message}", file.display())
+                } else {
+                    message
+                };
+                facts.file = FileState::Unparsable { line, message };
+                return facts;
+            }
+        }
+    }
+    if values.iter().all(Option::is_none) {
+        facts.file = FileState::Missing;
+        return facts;
+    }
+    if read_only {
+        facts.file = FileState::ReadOnly;
+    }
+    let none = serde_json::json!({});
+    let first = values[0].as_ref();
+    let (install, approve_installed) = match agent {
+        "claude" => {
+            let f = claude::hooks::inspect_for(first.unwrap_or(&none), None, &bridge);
+            (f.install, f.approve_installed)
+        }
+        "codex" => {
+            let hooks = first.unwrap_or(&none);
+            let f = codex::hooks::inspect_for(hooks, &bridge);
+            // Codex keys its trust by the hooks file's path as the distro sees it.
+            let linux = crate::wsl::to_linux(distro, &facts.path).map_or_else(|| facts.path.clone(), PathBuf::from);
+            let config_toml = std::fs::read_to_string(facts.path.with_file_name("config.toml")).ok();
+            facts.trust = codex::trust::state(&linux, hooks, config_toml.as_deref());
+            (f.install, f.approve_installed)
+        }
+        "antigravity" => {
+            let f = agy::inspect_for(first, values[1].as_ref(), None, &bridge);
+            (f.install, f.approve_installed)
+        }
+        _ => {
+            let f = qwen::hooks::inspect_for(first.unwrap_or(&none), None, &bridge);
+            (f.install, f.approve_installed)
+        }
+    };
+    facts.hooks = install;
+    facts.approve_installed = approve_installed;
+    facts
 }
 
 fn facts_from(st: &AppState, agent: &'static str, setup: AgentSetup, entries: &[ManagedEntry]) -> AgentFacts {
@@ -419,9 +609,12 @@ mod tests {
                 }
                 release_rx.lock().unwrap().recv().unwrap();
             }
-            facts_with(st, move |_, _| {
-                Err((StatusCode::INTERNAL_SERVER_ERROR, format!("read {n}")))
-            })
+            Gathered {
+                facts: facts_with(st, move |_, _| {
+                    Err((StatusCode::INTERNAL_SERVER_ERROR, format!("read {n}")))
+                }),
+                stopped: Vec::new(),
+            }
         });
 
         let mut summary = st.doctor().summary.subscribe();

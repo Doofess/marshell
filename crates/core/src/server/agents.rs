@@ -292,10 +292,22 @@ impl AppState {
     /// distro's agent folders. This is for an undo after a restart. A distro that does not answer is left out and its
     /// paths stay refused. Runs `wsl.exe`, so callers go through `spawn_blocking`.
     pub(crate) fn record_distros_of<'a>(&self, paths: impl IntoIterator<Item = &'a Path>) {
+        for distro in self.distros_of_paths(paths) {
+            if self.0.config.has_distro_home(&distro) {
+                continue;
+            }
+            // The target is recorded by the lookup; a failure leaves the distro unrecorded.
+            let _ = self.distro_target(&distro);
+        }
+    }
+
+    /// The detected distros, each once and spelt as detected, that a path of `paths` is in: under the distro's own
+    /// share, or (in a test) under the pinned target's home, a plain folder that stands in for every share. Reads no
+    /// file and runs nothing.
+    pub(crate) fn distros_of_paths<'a>(&self, paths: impl IntoIterator<Item = &'a Path>) -> Vec<String> {
         let detected = super::wsl_distros(&self.profiles_snapshot());
-        // A test's pinned home is a plain folder that stands in for the share of every distro.
         let pinned_home = self.0.distro_target.iter().flatten().map(|t| t.home.clone()).next();
-        let mut tried: Vec<String> = Vec::new();
+        let mut found: Vec<String> = Vec::new();
         for path in paths {
             let path = crate::config::guard::unverbatim(path);
             let in_share = |d: &String| {
@@ -304,14 +316,11 @@ impl AppState {
             let Some(distro) = detected.iter().find(|d| in_share(d)) else {
                 continue;
             };
-            let key = distro.to_lowercase();
-            if tried.contains(&key) || self.0.config.has_distro_home(distro) {
-                continue;
+            if !found.iter().any(|f| f.to_lowercase() == distro.to_lowercase()) {
+                found.push(distro.clone());
             }
-            tried.push(key);
-            // The target is recorded by the lookup; a failure leaves the distro unrecorded.
-            let _ = self.distro_target(distro);
         }
+        found
     }
 
     /// Where Marshell's hooks go in `distro`: its home as a UNC path and the bridge as the distro sees it, or the one

@@ -5,7 +5,8 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use marshell_core::paths;
 use marshell_core::projects::{canonical, record};
-use marshell_core::server::{AppState, router};
+use marshell_core::server::{AppState, DistroTarget, router};
+use marshell_protocol::api::{Profile, ShellFamily};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -19,6 +20,8 @@ struct Env {
     _dir: tempfile::TempDir,
     app: axum::Router,
     home: PathBuf,
+    /// The distro's home, a plain folder that stands in for its share.
+    wsl_home: PathBuf,
     claude: PathBuf,
     codex: PathBuf,
     agy_hooks: PathBuf,
@@ -36,6 +39,38 @@ fn env() -> Env {
 }
 
 fn build(find: fn(&str) -> Option<PathBuf>, on_start: bool) -> Env {
+    build_with(find, on_start, None)
+}
+
+fn wsl_profile(name: &str) -> Profile {
+    Profile {
+        id: name.to_lowercase(),
+        name: name.into(),
+        command: vec!["wsl.exe".into(), "-d".into(), name.into()],
+        family: ShellFamily::Wsl,
+        cwd: None,
+        env: Vec::new(),
+        shell_integration: false,
+        terminal_theme: None,
+        detected: true,
+    }
+}
+
+/// A Windows path as the distro's Linux sees it: `C:/x` is `/mnt/c/x`.
+fn linux_path_of(path: &Path) -> String {
+    let text = path.to_string_lossy().replace('\\', "/");
+    let text = text.strip_prefix("//?/").unwrap_or(&text);
+    match text.as_bytes() {
+        [drive, b':', ..] if drive.is_ascii_alphabetic() => {
+            format!("/mnt/{}{}", (*drive as char).to_ascii_lowercase(), &text[2..])
+        }
+        _ => text.to_string(),
+    }
+}
+
+/// `running` set: a detected `Ubuntu` WSL profile, a pinned distro target (a plain folder, `Env::wsl_home`, stands in
+/// for the share, and its bridge is the Windows one as the distro sees it) and that list of running distros.
+fn build_with(find: fn(&str) -> Option<PathBuf>, on_start: bool, running: Option<fn() -> Vec<String>>) -> Env {
     let dir = tempfile::tempdir().unwrap();
     let root = canonical(dir.path());
     let home = root.join("home");
@@ -43,18 +78,24 @@ fn build(find: fn(&str) -> Option<PathBuf>, on_start: bool) -> Env {
     let codex_home = project.join("codex-home");
     let agy_home = project.join("agy-home");
     let qwen_home = project.join("qwen-home");
-    for d in [&home, &project, &codex_home, &agy_home, &qwen_home] {
+    let wsl_home = root.join("ubuntu-home");
+    for d in [&home, &project, &codex_home, &agy_home, &qwen_home, &wsl_home] {
         std::fs::create_dir_all(d).unwrap();
     }
     record(&home, &project, 1).unwrap();
     let claude = project.join("settings.json");
     let codex = codex_home.join("hooks.json");
+    let profiles = if running.is_some() {
+        vec![wsl_profile("Ubuntu")]
+    } else {
+        Vec::new()
+    };
     let st = AppState::new(
         TOKEN.into(),
         PORT,
         vec!["http://tauri.localhost".into()],
         home.clone(),
-        Vec::new(),
+        profiles,
     )
     .with_claude_settings(claude.clone())
     .with_codex_hooks(codex.clone())
@@ -72,10 +113,20 @@ fn build(find: fn(&str) -> Option<PathBuf>, on_start: bool) -> Env {
     let bridge = paths::bridge_exe(&home);
     std::fs::create_dir_all(bridge.parent().unwrap()).unwrap();
     std::fs::write(&bridge, "").unwrap();
+    let st = match running {
+        Some(running) => st
+            .with_distro_target(Some(DistroTarget {
+                home: wsl_home.clone(),
+                bridge: linux_path_of(&bridge),
+            }))
+            .with_running_distros(running),
+        None => st,
+    };
     Env {
         _dir: dir,
         app: router(st),
         home,
+        wsl_home,
         claude,
         codex,
         agy_hooks: marshell_core::agents::antigravity::hooks::hooks_path(&agy_home),
@@ -341,4 +392,147 @@ async fn a_second_request_joins_the_run_that_is_going() {
     assert_eq!((a.0, b.0), (StatusCode::ACCEPTED, StatusCode::ACCEPTED));
     let r = wait_report(&e).await;
     assert!(r["items"].is_array());
+}
+
+// ---- the hooks inside WSL distros ----
+
+fn none_running() -> Vec<String> {
+    Vec::new()
+}
+
+fn ubuntu_running() -> Vec<String> {
+    vec!["Ubuntu".into()]
+}
+
+/// Sets up `agent`'s hooks in the Ubuntu distro, through the plan and apply routes.
+async fn install_in_ubuntu(e: &Env, agent: &str) {
+    let want = json!({"status": true, "statusline": true, "distro": "Ubuntu"});
+    let (status, preview) = post(&e.app, &format!("/v1/agents/{agent}/hooks/plan"), want).await;
+    assert_eq!(status, StatusCode::OK, "{agent}: {preview}");
+    assert_eq!(preview["can_apply"], true, "{agent}: {preview}");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{agent}: {applied}");
+}
+
+/// The ids of the report's items that are about the Ubuntu distro.
+fn ubuntu_ids(report: &Value) -> Vec<&str> {
+    report["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["distro"] == "Ubuntu")
+        .map(|i| i["id"].as_str().unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_stopped_managed_distro_is_not_checked() {
+    let e = build_with(found, false, Some(none_running));
+    install_in_ubuntu(&e, "claude").await;
+    // Had the file been read, this would be a parse item.
+    let file = e.wsl_home.join(".claude").join("settings.json");
+    std::fs::write(&file, "{not json").unwrap();
+    let r = report(&e).await;
+    assert_eq!(ubuntu_ids(&r), ["wsl.Ubuntu"], "{r}");
+    let line = item(&r, "wsl.Ubuntu").unwrap();
+    assert_eq!(line["group"], "info");
+    assert_eq!(line["title"], "Not checked: Ubuntu isn't running.");
+    assert_eq!(line["detail"], "Start it, then run the check again.");
+    assert_eq!(line["fixable"], false);
+    assert!(item(&r, "hooks.claude@Ubuntu").is_none());
+}
+
+#[tokio::test]
+async fn a_running_distro_with_missing_hooks_is_broken() {
+    let e = build_with(found, false, Some(ubuntu_running));
+    install_in_ubuntu(&e, "claude").await;
+    write(&e.wsl_home.join(".claude").join("settings.json"), &json!({}));
+    let r = report(&e).await;
+    let hooks = item(&r, "hooks.claude@Ubuntu").unwrap_or_else(|| panic!("{:?}", ids(&r)));
+    assert_eq!(hooks["group"], "broken");
+    assert_eq!(hooks["fixable"], true);
+    assert_eq!(hooks["distro"], "Ubuntu");
+    assert_eq!(hooks["title"], "Claude Code's hooks in Ubuntu are gone");
+    assert!(item(&r, "wsl.Ubuntu").is_none());
+}
+
+/// Every CLI's entries, just after the install, are the distro bridge's exact ones: not Partial (the local bridge is
+/// the wrong command) and not Orphaned (the local bridge file is not where the distro's path points).
+#[cfg(windows)]
+#[tokio::test]
+async fn an_intact_distro_setup_reads_as_installed() {
+    for agent in AGENTS {
+        let e = build_with(found, false, Some(ubuntu_running));
+        install_in_ubuntu(&e, agent).await;
+        let r = report(&e).await;
+        // Codex runs a hook only once it is trusted, which a new install is not.
+        let expected: Vec<String> = if agent == "codex" {
+            vec!["trust.codex@Ubuntu".into()]
+        } else {
+            Vec::new()
+        };
+        let got: Vec<String> = ubuntu_ids(&r).into_iter().map(str::to_string).collect();
+        assert_eq!(got, expected, "{agent}: {r}");
+    }
+}
+
+/// A distro's hooks are orphaned when the file its bridge path points at is gone: the path is judged as the Windows
+/// path the distro's `/mnt/c/...` stands for, not as the local bridge.
+#[cfg(windows)]
+#[tokio::test]
+async fn a_distro_whose_bridge_is_gone_is_orphaned() {
+    let e = build_with(found, false, Some(ubuntu_running));
+    install_in_ubuntu(&e, "claude").await;
+    std::fs::remove_file(paths::bridge_exe(&e.home)).unwrap();
+    let r = report(&e).await;
+    let hooks = item(&r, "hooks.claude@Ubuntu").unwrap_or_else(|| panic!("{:?}", ids(&r)));
+    assert_eq!(
+        hooks["title"],
+        "Claude Code's hooks in Ubuntu run a program that's missing"
+    );
+    assert_eq!(hooks["group"], "broken");
+}
+
+#[tokio::test]
+async fn a_running_distro_whose_file_doesnt_parse_reports_that_cli_only() {
+    let e = build_with(found, false, Some(ubuntu_running));
+    for agent in ["claude", "codex"] {
+        install_in_ubuntu(&e, agent).await;
+    }
+    std::fs::write(e.wsl_home.join(".codex").join("hooks.json"), "{not json").unwrap();
+    let r = report(&e).await;
+    let parse = item(&r, "parse.codex@Ubuntu").unwrap_or_else(|| panic!("{:?}", ids(&r)));
+    assert_eq!(parse["group"], "broken");
+    assert_eq!(parse["fixable"], false);
+    assert!(
+        parse["title"].as_str().unwrap().ends_with("hooks.json doesn't parse"),
+        "{parse}"
+    );
+    // Claude's hooks in the same distro are read on their own.
+    assert!(item(&r, "parse.claude@Ubuntu").is_none(), "{:?}", ids(&r));
+    #[cfg(windows)]
+    assert!(item(&r, "hooks.claude@Ubuntu").is_none(), "{:?}", ids(&r));
+}
+
+#[tokio::test]
+async fn no_wsl_call_without_a_managed_distro() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    fn counting() -> Vec<String> {
+        CALLS.fetch_add(1, Ordering::SeqCst);
+        vec!["Ubuntu".into()]
+    }
+
+    // Marshell set up Claude on Windows only: no distro holds a managed path.
+    let e = build_with(found, false, Some(counting));
+    install(&e, "claude").await;
+    let r = report(&e).await;
+    assert!(r["items"].is_array());
+    assert_eq!(CALLS.load(Ordering::SeqCst), 0, "no distro is managed");
+
+    // With a managed distro the list is asked, once per run.
+    let e = build_with(found, false, Some(counting));
+    install_in_ubuntu(&e, "claude").await;
+    report(&e).await;
+    assert_eq!(CALLS.load(Ordering::SeqCst), 1);
 }
