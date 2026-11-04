@@ -58,7 +58,7 @@ const Kbd = ({ k }: { k: string }) => (
  */
 export function ApproveCard({ request, expanded = false, armed = true, holdProgress = 0, exiting = false, onAction, onHoldEnd, onHoldStart, onFocus }: ApproveCardProps) {
   const riskId = useId();
-  /** Set by a pointer press on the card: whether the card was armed when it came. Cleared once the press ends. */
+  /** Set by a pointer press on the card: whether the card was armed when it came. Cleared once the press ends or focus leaves the card. */
   const pressedArmed = useRef<boolean | null>(null);
   const { detail, risk, state, session } = request;
   const agent = AGENT_NAMES[session.agent];
@@ -162,6 +162,10 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
         const pressed = pressedArmed.current;
         pressedArmed.current = null;
         if (rearmOnFocus({ viaPointer: pressed !== null, wasArmed: pressed === true })) onFocus?.();
+      }}
+      onBlur={(e) => {
+        // A press released off the card sends it no pointerup: leaving the card ends it, so a later keyboard focus rearms.
+        if (!e.currentTarget.contains(e.relatedTarget)) pressedArmed.current = null;
       }}
     >
       <header className="approve-card__who">

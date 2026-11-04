@@ -86,6 +86,19 @@ describe("focus arming", () => {
     expect(c.h.current.view.props["data-armed"]).toBe(true);
     c.h.unmount();
   });
+  it("rearms on a later outside focus after a press that was released off the card", () => {
+    const c = card(); c.focus(); c.advance(500);
+    // The press lands on the focused card; its release is off the card, so no pointerup reaches it.
+    c.h.current.view.props.onPointerDownCapture();
+    // Focus leaves the card: the blur bubbles through the card, then the LiveCard wrapper.
+    const out = { currentTarget: c.node, relatedTarget: {} };
+    c.h.current.view.props.onBlur?.(out);
+    c.h.current.wrapper.props.onBlur(out);
+    c.focus();
+    expect(c.h.current.view.props["data-armed"]).toBe(false);
+    c.advance(500); expect(c.h.current.view.props["data-armed"]).toBe(true);
+    c.h.unmount();
+  });
   it("keeps the 500 ms guard on outside focus and on content changes", () => {
     const c = card(); c.advance(500); c.focus();
     c.advance(499); expect(c.h.current.view.props["data-armed"]).toBe(false);
