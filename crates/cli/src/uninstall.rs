@@ -1433,13 +1433,19 @@ mod tests {
     /// The four agents' files in a distro home: the person's own entries, with Marshell's hooks installed beside them
     /// through the real plans and a pinned service, as the Agents dialog does. Returns the four files.
     fn install_in_distro(f: &Fixture, home: &Path) -> [PathBuf; 4] {
+        install_in_named_distro(f, "Ubuntu", home)
+    }
+
+    /// `install_in_distro` for the distro `name`.
+    fn install_in_named_distro(f: &Fixture, name: &str, home: &Path) -> [PathBuf; 4] {
         use marshell_core::agents::antigravity::hooks as ah;
         use marshell_core::agents::codex::hooks as ch;
         use marshell_core::agents::qwen::hooks as qh;
-        let service = ConfigService::with_distros(f.home.clone(), Arc::new(|| vec!["Ubuntu".to_string()]));
-        service.record_distro_home("Ubuntu", home, true);
+        let listed = name.to_string();
+        let service = ConfigService::with_distros(f.home.clone(), Arc::new(move || vec![listed.clone()]));
+        service.record_distro_home(name, home, true);
         let bridge = Bridge::Distro {
-            name: "Ubuntu".to_string(),
+            name: name.to_string(),
             path: "/mnt/c/Users/x/.marshell/bin/marshell-hook.exe".to_string(),
         };
         let want = HookPlanRequest {
@@ -1447,7 +1453,7 @@ mod tests {
             statusline: false,
             approve: false,
             skill: false,
-            distro: Some("Ubuntu".to_string()),
+            distro: Some(name.to_string()),
         };
         let claude = home.join(".claude").join("settings.json");
         let codex = home.join(".codex").join("hooks.json");
@@ -1612,6 +1618,46 @@ mod tests {
             assert_eq!(&std::fs::read_to_string(file).unwrap(), text);
         }
         assert_eq!(std::fs::read_to_string(&f.settings).unwrap(), ORIGINAL);
+    }
+
+    #[test]
+    fn a_read_only_distro_file_is_left_and_the_rest_goes_on() {
+        let f = installed(ORIGINAL);
+        let (ubuntu, debian) = (fake_distro_home(), fake_distro_home());
+        let ubuntu_files = install_in_named_distro(&f, "Ubuntu", ubuntu.path());
+        let debian_files = install_in_named_distro(&f, "Debian", debian.path());
+        let locked = &ubuntu_files[0];
+        let locked_text = std::fs::read_to_string(locked).unwrap();
+        let mut permissions = std::fs::metadata(locked).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(locked, permissions).unwrap();
+
+        let (code, out, _) = run_in_wsl(
+            &f,
+            &["Ubuntu", "Debian"],
+            &[("Ubuntu", ubuntu.path()), ("Debian", debian.path())],
+        );
+
+        let mut permissions = std::fs::metadata(locked).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        std::fs::set_permissions(locked, permissions).unwrap();
+        assert_eq!(code, 1, "{out}");
+        assert!(
+            out.contains(&*locked.to_string_lossy()) && out.contains("The file is read-only."),
+            "{out}"
+        );
+        assert_eq!(std::fs::read_to_string(locked).unwrap(), locked_text);
+        // Ubuntu's other files, all of Debian's and the Windows hooks come out.
+        for file in ubuntu_files[1..].iter().chain(&debian_files) {
+            let after = std::fs::read_to_string(file).unwrap();
+            assert!(!after.contains("mshl1"), "{}: {after}", file.display());
+        }
+        assert_eq!(std::fs::read_to_string(&f.settings).unwrap(), ORIGINAL);
+        // The hooks left in Ubuntu may still point at the bridge, so bin stays, and the note names Ubuntu only.
+        assert!(bin_exists(&f), "{out}");
+        assert!(out.contains("because hooks in Ubuntu may still point at it."), "{out}");
+        assert!(out.contains("Debian: Marshell's hooks found."), "{out}");
     }
 
     #[cfg(windows)]
