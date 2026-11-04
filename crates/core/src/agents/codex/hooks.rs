@@ -449,6 +449,7 @@ pub fn remove_plan(path: &Path, text: Option<&str>, _home: &Path) -> Result<Chan
         });
     }
     let reason = match ours_of(&root).len() {
+        0 => "Removes the empty PermissionRequest hook list left by an earlier Marshell.".to_string(),
         1 => "Removes the hook entry Marshell added.".to_string(),
         n => format!("Removes the {n} hook entries Marshell added."),
     };
@@ -703,6 +704,10 @@ mod tests {
         let only = r#"{"hooks":{"PermissionRequest":[]}}"#;
         let cs = remove_plan(&file(), Some(only), &home).unwrap();
         assert!(value(&apply(&cs, Some(only)).unwrap()).get("hooks").is_none());
+        assert_eq!(
+            cs.reason,
+            "Removes the empty PermissionRequest hook list left by an earlier Marshell."
+        );
 
         let text = r#"{"hooks":{"PermissionRequest":[],"Notification":[],"Stop":[{"hooks":[{"type":"command","command":"mine"}]}]}}"#;
         let cs = remove_plan(&file(), Some(text), &home).unwrap();
