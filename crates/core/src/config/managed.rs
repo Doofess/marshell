@@ -56,6 +56,15 @@ fn upsert(entries: &mut Vec<ManagedEntry>, path: &str, pointer: Option<&str>, ch
     }
 }
 
+/// The `<array>/-` pointers of every array `pointer` goes into: each parent of an all-digit segment.
+fn appended_records(pointer: &str) -> Vec<String> {
+    let segments: Vec<&str> = pointer.split('/').collect();
+    (1..segments.len())
+        .filter(|&i| !segments[i].is_empty() && segments[i].bytes().all(|b| b.is_ascii_digit()))
+        .map(|i| format!("{}/-", segments[..i].join("/")))
+        .collect()
+}
+
 /// Computes the new list without writing it, so apply can write files first and roll back if this fails.
 pub fn updated(home: &Path, changeset_id: &str, changes: &[Change], now_ms: u64) -> anyhow::Result<Vec<ManagedEntry>> {
     let mut entries = list(home)?;
@@ -71,11 +80,15 @@ pub fn updated(home: &Path, changeset_id: &str, changes: &[Change], now_ms: u64)
             Change::Remove { path, pointer } => {
                 let path = path.to_string_lossy();
                 let child = format!("{pointer}/");
+                // Removing an element of an array leaves nothing appended to that array that this record still
+                // describes, so the array's `<array>/-` record goes too.
+                let appended = appended_records(pointer);
+                let under = |p: &str, root: &str| p == root || p.starts_with(&format!("{root}/"));
                 entries.retain(|e| {
                     !(same_path(&e.path, &path)
-                        && e.pointer
-                            .as_deref()
-                            .is_some_and(|p| p == *pointer || p.starts_with(&child)))
+                        && e.pointer.as_deref().is_some_and(|p| {
+                            p == *pointer || p.starts_with(&child) || appended.iter().any(|a| under(p, a))
+                        }))
                 });
             }
             Change::Created { path } => upsert(&mut entries, &path.to_string_lossy(), None, changeset_id, now_ms),
@@ -142,6 +155,62 @@ mod tests {
             2,
         );
         assert!(list(home.path()).unwrap().is_empty());
+    }
+
+    fn pointers(home: &Path) -> Vec<String> {
+        list(home).unwrap().into_iter().filter_map(|e| e.pointer).collect()
+    }
+
+    fn set(pointer: &'static str) -> Change<'static> {
+        Change::Set { path: file(), pointer }
+    }
+
+    fn remove(pointer: &'static str) -> Change<'static> {
+        Change::Remove { path: file(), pointer }
+    }
+
+    #[test]
+    fn removing_an_element_of_an_array_drops_that_arrays_appended_record() {
+        let home = tempfile::tempdir().unwrap();
+        apply(
+            home.path(),
+            "c1",
+            &[
+                set("/hooks/Stop/-"),
+                set("/hooks/Stop/-/hooks/0"),
+                set("/hooks/Start/-"),
+                set("/statusLine"),
+            ],
+            1,
+        );
+        apply(home.path(), "c2", &[remove("/hooks/Stop/1")], 2);
+        // Another array's record and an unrelated key stay.
+        assert_eq!(pointers(home.path()), ["/hooks/Start/-", "/statusLine"]);
+    }
+
+    #[test]
+    fn removing_deeper_in_an_array_element_drops_each_arrays_record() {
+        let home = tempfile::tempdir().unwrap();
+        apply(
+            home.path(),
+            "c1",
+            &[
+                set("/hooks/Stop/-"),
+                set("/hooks/Stop/1/hooks/-"),
+                set("/hooks/Start/-"),
+            ],
+            1,
+        );
+        apply(home.path(), "c2", &[remove("/hooks/Stop/1/hooks/2")], 2);
+        assert_eq!(pointers(home.path()), ["/hooks/Start/-"]);
+    }
+
+    #[test]
+    fn removing_a_key_keeps_the_appended_records_of_other_keys() {
+        let home = tempfile::tempdir().unwrap();
+        apply(home.path(), "c1", &[set("/hooks/Stop/-"), set("/hooks/Start/-")], 1);
+        apply(home.path(), "c2", &[remove("/hooks/Start")], 2);
+        assert_eq!(pointers(home.path()), ["/hooks/Stop/-"]);
     }
 
     #[test]
