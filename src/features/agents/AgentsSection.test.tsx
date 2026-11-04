@@ -269,7 +269,7 @@ describe("AgentsSectionView: Antigravity", () => {
   });
   it("antigravity_removal_copy_is_exact", () => {
     expect(withAgy(AGY_SETUP, card())).toContain(
-      "Marshell removes the hook entries it added, deletes hooks.json if nothing else is in it, puts your own status line back from statusline-chain.json, and removes the marshell skill it added; the rest of each file stays as it is",
+      "Marshell removes the hook entries it added, deletes hooks.json if nothing else is in it, puts your own status line back from statusline-chain.json and deletes that file, and removes the marshell skill it added; the rest of each file stays as it is",
     );
     const off = withAgy({ ...AGY_SETUP, hooks: "installed" }, { kind: "off", agent: "antigravity", removal: null, busy: false });
     expect(off).toContain("Turn Antigravity hooks off");

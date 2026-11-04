@@ -396,8 +396,8 @@ impl AppState {
             Adapter::Claude => {
                 let path = home.join(".claude").join("settings.json");
                 let text = read_text(&path).map_err(|e| refused(&e))?;
-                let plan =
-                    hooks::remove_plan(&path, &home, text.as_deref(), None, Some(distro)).map_err(|e| refused(&e))?;
+                let plan = hooks::remove_plan(&path, &home, text.as_deref(), None, None, Some(distro))
+                    .map_err(|e| refused(&e))?;
                 (plan.changes, plan.statusline_left)
             }
             Adapter::Codex => {
@@ -415,6 +415,7 @@ impl AppState {
                     hooks_text.as_deref(),
                     settings_text.as_deref(),
                     None,
+                    None,
                     Some(distro),
                 )
                 .map_err(|e| refused(&e))?;
@@ -423,7 +424,7 @@ impl AppState {
             Adapter::Qwen => {
                 let path = home.join(".qwen").join("settings.json");
                 let text = read_text(&path).map_err(|e| refused(&e))?;
-                let plan = qwen_hooks::remove_plan(&path, &home, text.as_deref(), None, Some(distro))
+                let plan = qwen_hooks::remove_plan(&path, &home, text.as_deref(), None, None, Some(distro))
                     .map_err(|e| refused(&e))?;
                 (plan.changes, plan.statusline_left)
             }
@@ -1732,6 +1733,7 @@ pub async fn remove_plan(
                 &inputs.user_home,
                 inputs.text.as_deref(),
                 inputs.chain_text.as_deref(),
+                Some(&paths::statusline_chain(&st.0.home, AGENT)),
                 None,
             )
             .map_err(|e| refused(&e))?;
@@ -1756,6 +1758,7 @@ pub async fn remove_plan(
                 inputs.hooks_text.as_deref(),
                 inputs.settings_text.as_deref(),
                 inputs.chain_text.as_deref(),
+                Some(&paths::statusline_chain(&st.0.home, ANTIGRAVITY)),
                 None,
             )
             .map_err(|e| refused(&e))?;
@@ -1771,6 +1774,7 @@ pub async fn remove_plan(
                 &inputs.user_home,
                 inputs.text.as_deref(),
                 inputs.chain_text.as_deref(),
+                Some(&paths::statusline_chain(&st.0.home, QWEN)),
                 None,
             )
             .map_err(|e| refused(&e))?;

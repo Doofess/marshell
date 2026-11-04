@@ -3,7 +3,7 @@
 //! config service previews, snapshots and writes it. Every doubt fails closed: a file that does not
 //! parse, or a `hooks` value of the wrong shape, gives an error and no edits.
 
-use crate::agents::common::{Bridge, is_ours, statusline_left_note};
+use crate::agents::common::{Bridge, chain_delete, is_ours, statusline_left_note};
 use crate::config::hash::hash_bytes;
 use crate::config::jsonc::{parse_problem, read_value};
 use crate::paths;
@@ -217,7 +217,8 @@ fn removal_pointers(settings: &Value, prune: bool) -> Vec<String> {
                 ops.extend(ours.iter().rev().map(|ei| format!("{event_pointer}/{gi}/hooks/{ei}")));
             }
         }
-        if !found {
+        // An empty approval list is what an earlier approvals-off install left behind: it counts as Marshell's.
+        if !found && !(event == PERMISSION_EVENT && groups.is_empty()) {
             continue;
         }
         if prune && groups_gone == groups.len() {
@@ -362,6 +363,20 @@ pub fn install_plan(
         .map(remove_op)
         .collect();
 
+    // Status arrays stay in place for the appends below. Only an approval array we no longer need is pruned,
+    // whole, so an emptied `PermissionRequest` list is not left behind.
+    let permission_pointer = format!("/hooks/{PERMISSION_EVENT}");
+    if !want.approve
+        && removal_pointers(&settings, true)
+            .iter()
+            .any(|p| p == &permission_pointer || p == "/hooks")
+    {
+        ops.retain(|op| !matches!(op, EditOp::JsonRemove { pointer } if pointer.starts_with(&format!("{permission_pointer}/"))));
+        if settings.pointer(&permission_pointer).is_some() {
+            ops.push(remove_op(permission_pointer));
+        }
+    }
+
     let existing = settings.get("hooks").and_then(Value::as_object);
     let bridge_text = bridge.path();
     let events = STATUS_EVENTS
@@ -477,8 +492,9 @@ fn saved_line(chain_text: Option<&str>, in_distro: bool) -> Saved {
 
 /// The plan that takes Marshell's entries out and puts the user's status line back.
 ///
-/// The chain file is read and never changed. A status line that is no longer Marshell's was
-/// changed by the person since the install and is left alone.
+/// The chain file is read for the status line to put back, and goes in the same change set, so one undo
+/// brings back both files. A status line that is no longer Marshell's was changed by the person since the
+/// install and is left alone.
 ///
 /// In a distro (`distro` is its name) there is no chain: a status line of Marshell's was added by it, and goes,
 /// and any other is the person's, left alone.
@@ -487,6 +503,7 @@ pub fn remove_plan(
     user_home: &Path,
     text: Option<&str>,
     chain_text: Option<&str>,
+    chain: Option<&Path>,
     distro: Option<&str>,
 ) -> Result<RemovePlan, PlanError> {
     let title = "Turn Claude Code hooks off".to_string();
@@ -523,7 +540,8 @@ pub fn remove_plan(
         _ => {}
     }
 
-    if ops.is_empty() {
+    let chain_edit = chain_delete(chain, chain_text, distro);
+    if ops.is_empty() && chain_edit.is_none() {
         return Ok(RemovePlan {
             changes: ChangeSet {
                 title,
@@ -538,17 +556,27 @@ pub fn remove_plan(
         1 => "Removes the hook entry Marshell added".to_string(),
         n => format!("Removes the {n} hook entries Marshell added"),
     };
-    let reason = match (entries.is_empty(), line_note.is_empty()) {
+    let mut reason = match (entries.is_empty(), line_note.is_empty()) {
         (false, false) => format!("{entries} and {line_note}."),
         (false, true) => format!("{entries}."),
-        (true, _) => format!("It {line_note}."),
+        (true, false) => format!("It {line_note}."),
+        (true, true) if !ops.is_empty() => {
+            "Removes the empty PermissionRequest hook list left by an earlier Marshell.".to_string()
+        }
+        (true, true) => String::new(),
     };
+    let mut edits: Vec<FileEdit> = ops.into_iter().map(|op| edit(settings_path, scope, op, text)).collect();
+    if let Some(chain_edit) = chain_edit {
+        edits.push(chain_edit);
+        let note = "Deletes the saved copy of the status line in Marshell's own folder.";
+        reason = if reason.is_empty() {
+            note.to_string()
+        } else {
+            format!("{reason} {note}")
+        };
+    }
     Ok(RemovePlan {
-        changes: ChangeSet {
-            title,
-            reason,
-            edits: ops.into_iter().map(|op| edit(settings_path, scope, op, text)).collect(),
-        },
+        changes: ChangeSet { title, reason, edits },
         statusline_left,
     })
 }
@@ -652,6 +680,12 @@ mod tests {
                     None => continue,
                     Some(text) => apply_ops(text, &[JsonOp::Remove { pointer }]).unwrap(),
                 },
+                EditOp::DeleteFile => {
+                    assert!(slot.is_some(), "DeleteFile of a missing {}", e.path);
+                    assert!(e.expected_hash.is_some(), "DeleteFile needs the hash");
+                    *slot = None;
+                    continue;
+                }
                 other => panic!("unexpected op {other:?}"),
             };
             *slot = Some(next);
@@ -681,6 +715,7 @@ mod tests {
             &user_home(),
             files.settings.as_deref(),
             files.chain.as_deref(),
+            Some(&chain_path()),
             None,
         )
         .unwrap();
@@ -905,6 +940,95 @@ mod tests {
             after.settings_value(),
             json!({"hooks": {"PermissionRequest": [{"hooks": [user]}]}})
         );
+    }
+
+    #[test]
+    fn approvals_off_removes_the_whole_permission_event() {
+        let (_, both) = install(
+            &Files::settings(&fixture("user-hooks.json")),
+            HookPlanRequest { approve: true, ..BOTH },
+        );
+        assert!(both.settings_value()["hooks"].get("PermissionRequest").is_some());
+        let (_, status) = install(&both, HookPlanRequest { approve: false, ..BOTH });
+        assert!(status.settings_value()["hooks"].get("PermissionRequest").is_none());
+        // Status off as well: only the approval hook is asked about.
+        let (_, only) = install(
+            &both,
+            HookPlanRequest {
+                status: false,
+                approve: false,
+                ..BOTH
+            },
+        );
+        assert!(only.settings_value()["hooks"].get("PermissionRequest").is_none());
+    }
+
+    #[test]
+    fn removal_takes_an_emptied_permission_list_and_nothing_else_empty() {
+        let (_, after) = remove(&Files::settings(r#"{"hooks":{"PermissionRequest":[]}}"#));
+        assert!(after.settings_value().get("hooks").is_none());
+
+        let user = json!({"type": "command", "command": "echo mine"});
+        let text = json!({"hooks": {"PermissionRequest": [], "Stop": [{"hooks": [user]}], "Notification": []}});
+        let (plan, after) = remove(&Files::settings(&text.to_string()));
+        assert_eq!(
+            after.settings_value(),
+            json!({"hooks": {"Stop": [{"hooks": [user]}], "Notification": []}})
+        );
+        assert!(
+            plan.changes.reason.contains("empty PermissionRequest"),
+            "{}",
+            plan.changes.reason
+        );
+    }
+
+    #[test]
+    fn a_users_own_empty_permission_list_goes_with_a_status_install() {
+        // The known limit: an empty list is taken for Marshell's, because it cannot be told apart.
+        let (_, after) = install(
+            &Files::settings(r#"{"hooks":{"PermissionRequest":[]}}"#),
+            HookPlanRequest { approve: false, ..BOTH },
+        );
+        assert!(after.settings_value()["hooks"].get("PermissionRequest").is_none());
+    }
+
+    #[test]
+    fn remove_deletes_the_chain_in_the_same_change_set() {
+        let (_, installed) = install(&Files::settings(&fixture("user-hooks.json")), BOTH);
+        let (plan, after) = remove(&installed);
+        let chains: Vec<_> = plan
+            .changes
+            .edits
+            .iter()
+            .filter(|e| e.path == chain_path().to_string_lossy())
+            .collect();
+        assert_eq!(chains.len(), 1);
+        assert_eq!(chains[0].op, EditOp::DeleteFile);
+        assert_eq!(chains[0].scope, ConfigScope::Marshell);
+        assert_eq!(
+            chains[0].expected_hash,
+            installed.chain.as_ref().map(|t| hash_bytes(t.as_bytes()))
+        );
+        assert_eq!(after.chain, None);
+        for (chain_text, chain, distro) in [
+            (None, Some(chain_path()), None),
+            (installed.chain.clone(), None, None),
+            (installed.chain.clone(), Some(chain_path()), Some("Ubuntu")),
+        ] {
+            let plan = remove_plan(
+                &sfile(),
+                &user_home(),
+                installed.settings.as_deref(),
+                chain_text.as_deref(),
+                chain.as_deref(),
+                distro,
+            )
+            .unwrap();
+            assert!(
+                plan.changes.edits.iter().all(|e| e.op != EditOp::DeleteFile),
+                "{distro:?} {chain:?}"
+            );
+        }
     }
 
     #[test]
@@ -1204,7 +1328,7 @@ mod tests {
                 }
                 other => panic!("{text}: {other:?}"),
             }
-            let removed = remove_plan(&sfile(), &user_home(), Some(text), None, None);
+            let removed = remove_plan(&sfile(), &user_home(), Some(text), None, None, None);
             assert!(matches!(removed, Err(PlanError::NotAnObject { .. })), "{text}");
         }
     }
@@ -1220,7 +1344,7 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        let removed = remove_plan(&sfile(), &user_home(), Some(text), None, None);
+        let removed = remove_plan(&sfile(), &user_home(), Some(text), None, None, None);
         assert!(matches!(removed, Err(PlanError::DoesNotParse { .. })));
     }
 
@@ -1246,7 +1370,7 @@ mod tests {
                 .iter()
                 .all(|p| !p.starts_with("/statusLine"))
         );
-        assert!(pointers(&plan.changes, &chain_path()).is_empty());
+        assert_eq!(after.chain, None);
         let v = after.settings_value();
         assert_eq!(v["statusLine"]["command"], "node ./mine.js");
         assert_eq!(ours_count(&v), 0);
@@ -1254,14 +1378,13 @@ mod tests {
     }
 
     #[test]
-    fn remove_restores_the_users_status_line_and_never_touches_the_chain() {
+    fn remove_restores_the_users_status_line_and_deletes_the_chain() {
         let before = Files::settings(&fixture("user-hooks.json"));
         let (_, installed) = install(&before, BOTH);
         let (plan, after) = remove(&installed);
         assert!(!plan.statusline_left);
         assert_eq!(plan.changes.title, "Turn Claude Code hooks off");
-        assert!(pointers(&plan.changes, &chain_path()).is_empty());
-        assert_eq!(after.chain, installed.chain);
+        assert_eq!(after.chain, None);
         assert_eq!(after.settings, before.settings);
     }
 
@@ -1734,6 +1857,7 @@ mod tests {
             &distro_user_home(),
             Some(&ours),
             None,
+            None,
             Some("Ubuntu"),
         )
         .unwrap();
@@ -1744,6 +1868,7 @@ mod tests {
             &distro_settings(),
             &distro_user_home(),
             Some(THEIRS),
+            None,
             None,
             Some("Ubuntu"),
         )

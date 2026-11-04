@@ -174,7 +174,14 @@ pub fn run(
             return 1;
         }
     };
-    let mut plan = match remove_plan(&settings, user_home, text.as_deref(), chain_text.as_deref(), None) {
+    let mut plan = match remove_plan(
+        &settings,
+        user_home,
+        text.as_deref(),
+        chain_text.as_deref(),
+        Some(&chain),
+        None,
+    ) {
         Ok(plan) => plan,
         Err(e) => {
             let _ = writeln!(out, "{e}");
@@ -212,12 +219,14 @@ pub fn run(
     let agy_file = agy_hooks::hooks_path(user_home);
     let agy = read_text(&agy_file).and_then(|hooks_text| {
         let settings_text = read_text(&agy_hooks::settings_path(user_home))?;
-        let chain_text = read_text(&paths::statusline_chain(home, "antigravity"))?;
+        let chain = paths::statusline_chain(home, "antigravity");
+        let chain_text = read_text(&chain)?;
         agy_hooks::remove_plan(
             user_home,
             hooks_text.as_deref(),
             settings_text.as_deref(),
             chain_text.as_deref(),
+            Some(&chain),
             None,
         )
         .map(|changes| (hooks_text, changes))
@@ -239,10 +248,18 @@ pub fn run(
     // Qwen Code's user settings.json and its chain, the same way: a problem is reported and the rest goes on.
     let qwen_file = qwen_hooks::settings_path(env, user_home);
     let qwen = read_text(&qwen_file).and_then(|text| {
-        let chain_text = read_text(&paths::statusline_chain(home, "qwen"))?;
-        qwen_hooks::remove_plan(&qwen_file, user_home, text.as_deref(), chain_text.as_deref(), None)
-            .map(|plan| (text, plan))
-            .map_err(|e| e.to_string())
+        let chain = paths::statusline_chain(home, "qwen");
+        let chain_text = read_text(&chain)?;
+        qwen_hooks::remove_plan(
+            &qwen_file,
+            user_home,
+            text.as_deref(),
+            chain_text.as_deref(),
+            Some(&chain),
+            None,
+        )
+        .map(|plan| (text, plan))
+        .map_err(|e| e.to_string())
     });
     match qwen {
         Ok((text, qwen_plan)) => {

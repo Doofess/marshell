@@ -7,6 +7,26 @@ use serde_json::Value;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+/// The edit that deletes a status line chain file with a hook removal. It is there only when the file exists
+/// and the removal is not for a distro, which has none. The same change set holds it, so one undo brings it back.
+pub fn chain_delete(
+    chain: Option<&Path>,
+    chain_text: Option<&str>,
+    distro: Option<&str>,
+) -> Option<marshell_protocol::config::FileEdit> {
+    use marshell_protocol::config::{Applies, ConfigScope, EditOp, FileEdit};
+    if distro.is_some() {
+        return None;
+    }
+    Some(FileEdit {
+        path: chain?.to_string_lossy().into_owned(),
+        scope: ConfigScope::Marshell,
+        op: EditOp::DeleteFile,
+        expected_hash: Some(crate::config::hash::hash_bytes(chain_text?.as_bytes())),
+        applies: Applies::NewSessions,
+    })
+}
+
 /// Cap on a tool card's detail, in characters.
 pub const DETAIL_CAP: usize = 4_000;
 

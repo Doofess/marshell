@@ -49,7 +49,7 @@ export function removalCopy(cli: CliId, on: Record<Capability, boolean>, hooks?:
     entries && (addedStatusLine ? "removes the hook entries and the status line it added" : "removes the hook entries it added"),
     !entries && addedStatusLine && "removes the status line it added",
     entries && hooks?.created && `deletes ${hooks.hooksFile} if nothing else is in it`,
-    chain && "puts your own status line back from statusline-chain.json",
+    chain && "puts your own status line back from statusline-chain.json and deletes that file",
     handedOver && `turns ${handedOver} back on`,
   ].filter((p): p is string => typeof p === "string");
   const skillPart = skill === "add" ? "removes the marshell skill it added" : skill === "update" ? "puts the earlier marshell skill back" : undefined;

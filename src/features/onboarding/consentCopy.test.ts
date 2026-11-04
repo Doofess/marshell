@@ -160,7 +160,7 @@ describe("the Antigravity diff writes ~/.gemini/config/hooks.json in the shape i
       "Turn off dangerouslySkipPermissions in C:\\Users\\Home Office\\.gemini\\antigravity-cli\\settings.json.",
     );
     expect(s.plan.removal).toBe(
-      "Marshell removes the hook entries it added, deletes hooks.json if nothing else is in it, puts your own status line back from statusline-chain.json, and turns dangerouslySkipPermissions back on; the rest of each file stays as it is.",
+      "Marshell removes the hook entries it added, deletes hooks.json if nothing else is in it, puts your own status line back from statusline-chain.json and deletes that file, and turns dangerouslySkipPermissions back on; the rest of each file stays as it is.",
     );
   });
   it("puts no hooks in settings.json: Antigravity reads them only from hooks.json", () => {
@@ -194,7 +194,7 @@ describe("chaining the status line keeps the user's own command visible", () => 
 
 describe("undo copy says what removal does for each CLI, and promises nothing more", () => {
   it("Claude: removes the hook entries and puts the user's own status line back from the chain file", () => {
-    expect(CONSENT.claude.plan.removal).toBe("Marshell removes the hook entries it added and puts your own status line back from statusline-chain.json; the rest of the file stays as it is.");
+    expect(CONSENT.claude.plan.removal).toBe("Marshell removes the hook entries it added and puts your own status line back from statusline-chain.json and deletes that file; the rest of the file stays as it is.");
   });
   it("Codex: removes its hook entries, and says nothing about a status line it never chained", () => {
     expect(CONSENT.codex.plan.removal).toBe("Marshell removes the hook entries it added; the rest of the file stays as it is.");
@@ -202,10 +202,10 @@ describe("undo copy says what removal does for each CLI, and promises nothing mo
   });
   it("Antigravity: removes its hook from the hooks.json it created (deleting the file only if nothing else is in it) and puts the status line back", () => {
     expect(CONSENT.antigravity.plan.removal).toBe(
-      "Marshell removes the hook entries it added, deletes hooks.json if nothing else is in it, and puts your own status line back from statusline-chain.json; the rest of each file stays as it is.",
+      "Marshell removes the hook entries it added, deletes hooks.json if nothing else is in it, and puts your own status line back from statusline-chain.json and deletes that file; the rest of each file stays as it is.",
     );
     expect(removalCopy("antigravity", { status: false, approve: false, statusline: true, skill: false }, { hooksFile: "hooks.json", created: true })).toBe(
-      "Marshell puts your own status line back from statusline-chain.json; the rest of the file stays as it is.",
+      "Marshell puts your own status line back from statusline-chain.json and deletes that file; the rest of the file stays as it is.",
     );
     expect(removalCopy("antigravity", { status: true, approve: true, statusline: false, skill: false }, { hooksFile: "hooks.json", created: false })).toBe(
       "Marshell removes the hook entries it added; the rest of the file stays as it is.",
@@ -275,7 +275,7 @@ describe("Qwen Code's consent card", () => {
     const h = card(QWEN_SETUP);
     expect(h).toContain('data-agent="qwen"');
     expect(h).toContain(">Qwen Code</h3>");
-    expect(h).toContain("puts your own status line back from statusline-chain.json");
+    expect(h).toContain("puts your own status line back from statusline-chain.json and deletes that file");
     expect(h).toContain("Add 9 hook entries");
     expect(h).toContain("Keep my status line working");
     expect(h).not.toContain("Your Qwen Code status line is a preset");

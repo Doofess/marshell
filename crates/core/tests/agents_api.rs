@@ -227,6 +227,37 @@ async fn remove_plan_after_install_restores_the_file() {
 }
 
 #[tokio::test]
+async fn hooks_off_deletes_the_chain_and_undo_puts_back_both_files() {
+    let e = env();
+    let original = "{\r\n  // mine\r\n  \"statusLine\": {\"type\": \"command\", \"command\": \"my-line\"},\r\n}\r\n";
+    std::fs::write(&e.settings, original).unwrap();
+    let bridge = paths::bridge_exe(&e.home);
+    std::fs::create_dir_all(bridge.parent().unwrap()).unwrap();
+    std::fs::write(&bridge, "").unwrap();
+    let chain = paths::statusline_chain(&e.home, "claude");
+
+    let (_, preview) = post(&e.app, "/v1/agents/claude/hooks/plan", WANT()).await;
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    let installed_settings = std::fs::read(&e.settings).unwrap();
+    let installed_chain = std::fs::read(&chain).unwrap();
+
+    let (_, removal) = post(&e.app, "/v1/agents/claude/hooks/remove-plan", json!({})).await;
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&removal["preview"])).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert_eq!(std::fs::read_to_string(&e.settings).unwrap(), original);
+    assert!(!chain.exists(), "the chain file is still there");
+
+    let snapshot = applied["snapshot_id"].as_str().unwrap();
+    let (status, restore) = post(&e.app, &format!("/v1/snapshots/{snapshot}/restore"), json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{restore}");
+    let (status, undone) = post(&e.app, "/v1/config/apply", shown(&restore)).await;
+    assert_eq!(status, StatusCode::OK, "{undone}");
+    assert_eq!(std::fs::read(&e.settings).unwrap(), installed_settings);
+    assert_eq!(std::fs::read(&chain).unwrap(), installed_chain);
+}
+
+#[tokio::test]
 async fn an_unknown_agent_is_still_404() {
     let e = env();
     let (status, body) = get(&e.app, "/v1/agents/nope/setup").await;

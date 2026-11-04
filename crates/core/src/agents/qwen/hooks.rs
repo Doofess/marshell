@@ -7,7 +7,7 @@
 //! status line lives at `ui.statusLine`. The command string is the Windows `cmd` form (`common::cmd_form`), because
 //! Qwen escapes `"` before it runs a hook through `cmd /d /s /c` (the 6l1 research note, Q2).
 
-use crate::agents::common::{self, Bridge, PlanError, TAG, is_ours, statusline_left_note};
+use crate::agents::common::{self, Bridge, PlanError, TAG, chain_delete, is_ours, statusline_left_note};
 use crate::config::hash::hash_bytes;
 use crate::config::jsonc::{parse_problem, read_value};
 use crate::paths;
@@ -543,7 +543,7 @@ fn saved_line(chain_text: Option<&str>, in_distro: bool) -> Saved {
 
 /// The plan that takes Marshell's entries out and puts the user's status line back.
 ///
-/// The chain file is read and never changed. While `ui.statusLine.command` is Marshell's, the chain's command goes
+/// The chain file is read, then deleted in the same change set, so one undo brings back both files. While `ui.statusLine.command` is Marshell's, the chain's command goes
 /// back in that key (or `null` back as `ui.statusLine`); a status line the person changed since the install is
 /// left alone.
 ///
@@ -554,6 +554,7 @@ pub fn remove_plan(
     _user_home: &Path,
     text: Option<&str>,
     chain_text: Option<&str>,
+    chain: Option<&Path>,
     distro: Option<&str>,
 ) -> Result<RemovePlan, PlanError> {
     let title = "Turn Qwen Code hooks off".to_string();
@@ -589,7 +590,8 @@ pub fn remove_plan(
         _ => {}
     }
 
-    if ops.is_empty() {
+    let chain_edit = chain_delete(chain, chain_text, distro);
+    if ops.is_empty() && chain_edit.is_none() {
         return Ok(RemovePlan {
             changes: ChangeSet {
                 title,
@@ -604,18 +606,27 @@ pub fn remove_plan(
         1 => "Removes the hook entry Marshell added".to_string(),
         n => format!("Removes the {n} hook entries Marshell added"),
     };
-    let reason = match (entries.is_empty(), line_note.is_empty()) {
+    let mut reason = match (entries.is_empty(), line_note.is_empty()) {
         (false, false) => format!("{entries} and {line_note}."),
         (false, true) => format!("{entries}."),
-        (true, true) => "Removes the empty PermissionRequest hook list left by an earlier Marshell.".to_string(),
-        (true, _) => format!("It {line_note}."),
+        (true, true) if !ops.is_empty() => {
+            "Removes the empty PermissionRequest hook list left by an earlier Marshell.".to_string()
+        }
+        (true, true) => String::new(),
+        (true, false) => format!("It {line_note}."),
     };
+    let mut edits: Vec<FileEdit> = ops.into_iter().map(|op| edit(settings_path, op, text)).collect();
+    if let Some(chain_edit) = chain_edit {
+        edits.push(chain_edit);
+        let note = "Deletes the saved copy of the status line in Marshell's own folder.";
+        reason = if reason.is_empty() {
+            note.to_string()
+        } else {
+            format!("{reason} {note}")
+        };
+    }
     Ok(RemovePlan {
-        changes: ChangeSet {
-            title,
-            reason,
-            edits: ops.into_iter().map(|op| edit(settings_path, op, text)).collect(),
-        },
+        changes: ChangeSet { title, reason, edits },
         statusline_left,
     })
 }
@@ -712,6 +723,12 @@ mod tests {
                     None => continue,
                     Some(text) => apply_ops(text, &[JsonOp::Remove { pointer }]).unwrap(),
                 },
+                EditOp::DeleteFile => {
+                    assert!(slot.is_some(), "DeleteFile of a missing {}", e.path);
+                    assert!(e.expected_hash.is_some(), "DeleteFile needs the hash");
+                    *slot = None;
+                    continue;
+                }
                 other => panic!("unexpected op {other:?}"),
             };
             *slot = Some(next);
@@ -741,6 +758,7 @@ mod tests {
             &user_home(),
             files.settings.as_deref(),
             files.chain.as_deref(),
+            Some(&chain_path()),
             None,
         )
         .unwrap();
@@ -1212,8 +1230,8 @@ mod tests {
                 );
                 assert!(!plan.statusline_left, "{name}");
                 assert_eq!(plan.changes.title, "Turn Qwen Code hooks off");
-                // The chain is read and never changed.
-                assert_eq!(removed.chain, installed.chain, "{name}");
+                // The chain goes in the same change set.
+                assert_eq!(removed.chain, None, "{name}");
             }
         }
     }
@@ -1236,12 +1254,48 @@ mod tests {
         assert_eq!(v["ui"]["statusLine"]["command"], "python ./newer.py");
         assert_eq!(ours_count(&v), 0);
         assert!(v.get("hooks").is_none());
-        assert_eq!(after.chain, installed.chain);
+        assert_eq!(after.chain, None);
         assert!(
             plan.changes.reason.contains("leaves your status line alone"),
             "{}",
             plan.changes.reason
         );
+    }
+
+    #[test]
+    fn remove_deletes_the_chain_in_the_same_change_set() {
+        let (_, installed) = install(&Files::settings(&with_ui(THEIR_LINE)), BOTH);
+        let (plan, after) = remove(&installed);
+        let chains: Vec<_> = plan
+            .changes
+            .edits
+            .iter()
+            .filter(|e| e.path == chain_path().to_string_lossy())
+            .collect();
+        assert_eq!(chains.len(), 1);
+        assert_eq!(chains[0].op, EditOp::DeleteFile);
+        assert_eq!(chains[0].scope, ConfigScope::Marshell);
+        assert_eq!(
+            chains[0].expected_hash,
+            installed.chain.as_ref().map(|t| hash_bytes(t.as_bytes()))
+        );
+        assert_eq!(after.chain, None);
+        for (chain_text, chain, distro) in [
+            (None, Some(chain_path()), None),
+            (installed.chain.clone(), None, None),
+            (installed.chain.clone(), Some(chain_path()), Some("Ubuntu")),
+        ] {
+            let plan = remove_plan(
+                &sfile(),
+                &user_home(),
+                installed.settings.as_deref(),
+                chain_text.as_deref(),
+                chain.as_deref(),
+                distro,
+            )
+            .unwrap();
+            assert!(plan.changes.edits.iter().all(|e| e.op != EditOp::DeleteFile));
+        }
     }
 
     #[test]
@@ -1381,7 +1435,7 @@ mod tests {
         let broken = Files::settings("{ \"hooks\": ");
         let err = try_install(&broken, BOTH, &home()).unwrap_err();
         assert!(matches!(err, PlanError::DoesNotParse { .. }), "{err}");
-        assert!(remove_plan(&sfile(), &user_home(), broken.settings.as_deref(), None, None).is_err());
+        assert!(remove_plan(&sfile(), &user_home(), broken.settings.as_deref(), None, None, None).is_err());
         for text in [
             "[]",
             "\"x\"",
@@ -1402,7 +1456,7 @@ mod tests {
             let err = try_install(&Files::settings(text), BOTH, &home()).unwrap_err();
             assert!(matches!(err, PlanError::NotAnObject { .. }), "{text}: {err}");
             assert!(
-                remove_plan(&sfile(), &user_home(), Some(text), None, None).is_err(),
+                remove_plan(&sfile(), &user_home(), Some(text), None, None, None).is_err(),
                 "{text}"
             );
         }
