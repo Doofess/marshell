@@ -21,6 +21,11 @@ export function isArmed(armedAtMs: number, nowMs: number): boolean {
   return nowMs - armedAtMs >= ARM_DELAY_MS;
 }
 
+/** A pointer press that focuses a card already armed doesn't re-arm it, so the click that focused it answers it. */
+export function rearmOnFocus(f: { viaPointer: boolean; wasArmed: boolean }): boolean {
+  return !(f.viaPointer && f.wasArmed);
+}
+
 export function holdProgress(heldMs: number): number {
   if (!Number.isFinite(heldMs) || heldMs <= 0) return 0;
   return Math.min(1, heldMs / HOLD_MS);
