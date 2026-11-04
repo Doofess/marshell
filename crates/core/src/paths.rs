@@ -120,6 +120,11 @@ pub fn snapshots_dir(home: &Path) -> PathBuf {
     home.join("snapshots")
 }
 
+/// `<home>/doctor/last-fix.json`: the last fix the Doctor applied, which "Undo last fix" puts back.
+pub fn doctor_last_fix(home: &Path) -> PathBuf {
+    home.join("doctor").join("last-fix.json")
+}
+
 /// `<home>/managed.json`: the config entries Marshell wrote.
 pub fn managed_file(home: &Path) -> PathBuf {
     home.join("managed.json")

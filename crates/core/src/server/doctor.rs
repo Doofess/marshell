@@ -4,18 +4,33 @@
 //! threads, builds the report with `doctor::checks` and publishes the summary on the events socket.
 
 use super::AppState;
-use super::agents::{Adapter, agy_setup_of, codex_setup_of, qwen_setup_of, settings_file, setup_of};
+use super::agents::{
+    Adapter, Refusal, adapter, agy_setup_of, changed_since, changes_of, codex_setup_of, hook_install_changes,
+    qwen_setup_of, settings_file, setup_of,
+};
 use crate::agents::common::Gate;
 use crate::config::guard::unverbatim;
+use crate::config::hash::{hash_bytes, hash_file};
 use crate::config::jsonc::{parse_problem, read_value};
 use crate::config::managed::{self, ManagedEntry};
-use crate::doctor::{AgentFacts, FileState, checks};
+use crate::config::service::ApplyError;
+use crate::doctor::{AgentFacts, FileState, PendingFix, checks};
+use crate::paths;
+use crate::store::{self, Versioned};
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use marshell_protocol::agents::{AgentSetup, SettingsState};
-use marshell_protocol::doctor::{DoctorReport, DoctorSummary};
+use marshell_protocol::agents::{AgentSetup, HookPlanRequest, SettingsState};
+use marshell_protocol::api::SessionState;
+use marshell_protocol::config::{
+    Applies, ApplyConflict, ApplyRequest, ApplyResult, ChangeSet, ConfigScope, EditOp, ExpectedHash, FileEdit,
+    SnapshotFileInfo,
+};
+use marshell_protocol::doctor::{
+    DoctorFixPlan, DoctorFixRequest, DoctorItem, DoctorLastFix, DoctorReport, DoctorSummary,
+};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -453,6 +468,434 @@ fn comparable(path: &Path) -> String {
         text.replace('/', "\\").trim_end_matches('\\').to_lowercase()
     } else {
         text.trim_end_matches('/').to_string()
+    }
+}
+
+// ---- fixing the checked items and undoing the last fix ----
+
+/// Why an id can't be fixed: it isn't in the last report, or the report or a fresh read says it can't be fixed.
+const CANT_FIX: &str = "This item can't be fixed any more. Run the check again.";
+
+fn cant_fix() -> Fail {
+    (StatusCode::UNPROCESSABLE_ENTITY, CANT_FIX.to_string())
+}
+
+fn server_error(err: impl std::fmt::Display) -> Response {
+    (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
+}
+
+/// Plans one fix for the items: every hooks item as "Set up" plans it, and the retention item as one edit of Claude
+/// Code's settings. The facts are read again here, so an item that was fixed or changed since the report is a 422.
+pub async fn fix(State(st): State<AppState>, Json(req): Json<DoctorFixRequest>) -> Response {
+    match tokio::task::spawn_blocking(move || fix_of(&st, req.item_ids)).await {
+        Ok(Ok(plan)) => Json(plan).into_response(),
+        Ok(Err((status, message))) => (status, message).into_response(),
+        Err(e) => server_error(e),
+    }
+}
+
+fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> {
+    let mut ids: Vec<String> = Vec::new();
+    for id in requested {
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    if ids.is_empty() {
+        return Err(cant_fix());
+    }
+    let reported = st
+        .doctor()
+        .report
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+        .ok_or_else(cant_fix)?;
+    // The files as they are now: the report may be minutes old.
+    let gathered = facts_of(st);
+    let now = checks::items(&gathered.facts, &gathered.stopped);
+    let entries = managed_entries(st);
+
+    let mut picked: Vec<(DoctorItem, &AgentFacts)> = Vec::new();
+    for id in &ids {
+        let fixable = |items: &[DoctorItem]| items.iter().find(|i| i.id == *id && i.fixable).cloned();
+        let (Some(_), Some(item)) = (fixable(&reported.items), fixable(&now)) else {
+            return Err(cant_fix());
+        };
+        let facts = gathered
+            .facts
+            .iter()
+            .find(|f| Some(f.agent) == item.agent.as_deref() && f.distro == item.distro)
+            .ok_or_else(cant_fix)?;
+        picked.push((item, facts));
+    }
+
+    let mut edits: Vec<FileEdit> = Vec::new();
+    for (item, facts) in &picked {
+        match item.id.split('.').next() {
+            Some("hooks") => {
+                let adapter = adapter(facts.agent)?;
+                let want = hooks_want_of(facts, &entries);
+                let changes = match &facts.distro {
+                    Some(distro) => st.distro_install(adapter, distro, &want)?,
+                    None => hook_install_changes(st, adapter, &want)?,
+                };
+                edits.extend(changes.edits);
+            }
+            Some("retention") => edits.push(retention_edit(facts)?),
+            _ => return Err(cant_fix()),
+        }
+    }
+    if edits.is_empty() {
+        return Err(cant_fix());
+    }
+
+    let count = picked.len();
+    let cs = ChangeSet {
+        title: if count == 1 {
+            "Fix 1 issue".to_string()
+        } else {
+            format!("Fix {count} issues")
+        },
+        reason: picked
+            .iter()
+            .map(|(item, _)| item.title.as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        edits,
+    };
+    // The retention setting is the person's, so applying it records no key in managed.json.
+    let preview = st.0.config.preview_mixed(cs, &is_retention_edit);
+    let restart = restart_list(st, &picked);
+    *st.doctor().pending.lock().unwrap_or_else(|e| e.into_inner()) = Some(PendingFix {
+        changeset_id: preview.changeset_id.clone(),
+        item_ids: ids.clone(),
+        restart: restart.clone(),
+    });
+    Ok(DoctorFixPlan {
+        preview,
+        item_ids: ids,
+        restart,
+    })
+}
+
+const RETENTION_POINTER: &str = "/cleanupPeriodDays";
+
+fn is_retention_edit(edit: &FileEdit) -> bool {
+    matches!(&edit.op, EditOp::JsonSet { pointer, .. } if pointer == RETENTION_POINTER)
+}
+
+/// Claude Code's `cleanupPeriodDays` set to a year, against the text of the file as it is now.
+fn retention_edit(facts: &AgentFacts) -> Result<FileEdit, Fail> {
+    let text = std::fs::read_to_string(&facts.path).map_err(|_| cant_fix())?;
+    Ok(FileEdit {
+        path: facts.path.to_string_lossy().into_owned(),
+        scope: ConfigScope::User,
+        op: EditOp::JsonSet {
+            pointer: RETENTION_POINTER.to_string(),
+            value: "365".to_string(),
+        },
+        expected_hash: Some(hash_bytes(text.as_bytes())),
+        applies: Applies::NewSessions,
+    })
+}
+
+/// What "Set up" would ask for, from what is there now: approval stays when it is installed or managed.json says
+/// Marshell added a `PermissionRequest` hook, and the chain stays when the status line is chained or managed.json says
+/// Marshell set the status line. Antigravity's approval is its `PreToolUse` entry, which managed.json can't tell from
+/// the status hooks, so only what the file shows keeps it. The skill is not part of a fix.
+fn hooks_want_of(facts: &AgentFacts, entries: &[ManagedEntry]) -> HookPlanRequest {
+    let approve =
+        facts.approve_installed || managed_pointer(entries, &facts.path, |p| p.contains("/PermissionRequest"));
+    // A distro keeps no chain, and Codex has no status line.
+    let chains = facts.distro.is_none() && facts.agent != "codex";
+    let statusline = chains
+        && (facts.chained || {
+            // Antigravity keeps its status line in `settings.json`, beside the `config` folder of its hooks.
+            let settings = (facts.agent == "antigravity")
+                .then(|| {
+                    facts
+                        .path
+                        .parent()
+                        .and_then(Path::parent)
+                        .map(|gemini| gemini.join("antigravity-cli").join("settings.json"))
+                })
+                .flatten();
+            [Some(facts.path.clone()), settings]
+                .into_iter()
+                .flatten()
+                .any(|path| managed_pointer(entries, &path, |p| under(p, "/statusLine")))
+        });
+    HookPlanRequest {
+        status: true,
+        statusline,
+        approve,
+        skill: false,
+        distro: facts.distro.clone(),
+    }
+}
+
+/// managed.json has an entry for `path` whose pointer `matches`.
+fn managed_pointer(entries: &[ManagedEntry], path: &Path, matches: impl Fn(&str) -> bool) -> bool {
+    let want = comparable(path);
+    entries
+        .iter()
+        .any(|e| comparable(Path::new(&e.path)) == want && e.pointer.as_deref().is_some_and(&matches))
+}
+
+/// The running sessions of the fixed items' agents, on Windows or in the item's distro, in session-number order.
+fn restart_list(st: &AppState, picked: &[(DoctorItem, &AgentFacts)]) -> Vec<String> {
+    let mut sessions: Vec<_> = st
+        .registry()
+        .snapshot()
+        .sessions
+        .into_iter()
+        .filter(|s| s.state == SessionState::Running)
+        .filter_map(|s| {
+            let agent = s.agent.clone()?;
+            let mut wanted = picked.iter().filter(|(_, f)| f.agent == agent).peekable();
+            wanted.peek()?;
+            // Asked of the tab only when an item of its agent could match.
+            let distro = st.wsl_distro_of_tab(&s.tab_id);
+            let matches = wanted.any(|(_, f)| match (&f.distro, &distro) {
+                (None, None) => true,
+                (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+                _ => false,
+            });
+            matches.then_some((s.number, s.tab_id))
+        })
+        .collect();
+    sessions.sort();
+    sessions.into_iter().map(|(_, tab)| tab).collect()
+}
+
+/// What `<home>/doctor/last-fix.json` keeps of a fix: the restart list and whether the files match are not kept.
+#[derive(Serialize, Deserialize)]
+struct LastFixFile {
+    snapshot_id: String,
+    fixed_at_ms: u64,
+    item_ids: Vec<String>,
+    count: u32,
+}
+
+impl Versioned for LastFixFile {
+    const VERSION: u32 = 1;
+}
+
+/// Applies the fix whose preview was shown, with the hashes that were shown. A file changed since is a 409 that
+/// writes nothing. On success the fix is recorded for "Undo last fix", and the checks run again.
+pub async fn fix_apply(State(st): State<AppState>, Json(req): Json<ApplyRequest>) -> Response {
+    let pending = st.doctor().pending.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let Some(pending) = pending.filter(|p| p.changeset_id == req.changeset_id) else {
+        return (StatusCode::NOT_FOUND, "no such preview").into_response();
+    };
+    let work = {
+        let st = st.clone();
+        let pending = pending.clone();
+        move || -> Result<DoctorLastFix, ApplyError> {
+            let at = now_ms();
+            let result = st.0.config.apply(&req, at)?;
+            let record = DoctorLastFix {
+                snapshot_id: result.snapshot_id,
+                fixed_at_ms: at,
+                count: pending.item_ids.len() as u32,
+                item_ids: pending.item_ids,
+                restart: pending.restart,
+                files_match: true,
+            };
+            // The files are written; a record that can't be kept only costs the undo after a restart.
+            let kept = LastFixFile {
+                snapshot_id: record.snapshot_id.clone(),
+                fixed_at_ms: record.fixed_at_ms,
+                item_ids: record.item_ids.clone(),
+                count: record.count,
+            };
+            if let Err(e) = store::write(&paths::doctor_last_fix(&st.0.home), &kept) {
+                tracing::warn!("the doctor could not keep the last fix: {e:#}");
+            }
+            Ok(record)
+        }
+    };
+    let outcome = tokio::task::spawn_blocking(work).await;
+    let doctor = st.doctor();
+    let forget_pending = || {
+        let mut slot = doctor.pending.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.as_ref().is_some_and(|p| p.changeset_id == pending.changeset_id) {
+            *slot = None;
+        }
+    };
+    match outcome {
+        Ok(Ok(record)) => {
+            *doctor.last_fix.lock().unwrap_or_else(|e| e.into_inner()) = Some(record.clone());
+            forget_pending();
+            request_run(&st);
+            Json(record).into_response()
+        }
+        Ok(Err(ApplyError::UnknownChangeSet)) => {
+            forget_pending();
+            (StatusCode::NOT_FOUND, "no such preview").into_response()
+        }
+        Ok(Err(ApplyError::Conflict { reason, paths })) => {
+            (StatusCode::CONFLICT, Json(ApplyConflict { reason, paths })).into_response()
+        }
+        Ok(Err(ApplyError::Failed(e))) => server_error(format!("{e:#}")),
+        Err(e) => server_error(e),
+    }
+}
+
+/// The last fix in this run of the app, else the one on disk (which has no restart list).
+fn current_record(st: &AppState) -> Option<DoctorLastFix> {
+    if let Some(record) = st.doctor().last_fix.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+        return Some(record);
+    }
+    match store::read::<LastFixFile>(&paths::doctor_last_fix(&st.0.home)) {
+        Ok(Some(kept)) => Some(DoctorLastFix {
+            snapshot_id: kept.snapshot_id,
+            fixed_at_ms: kept.fixed_at_ms,
+            item_ids: kept.item_ids,
+            count: kept.count,
+            restart: Vec::new(),
+            files_match: false,
+        }),
+        Ok(None) => None,
+        Err(e) => {
+            tracing::warn!("the doctor could not read the last fix: {e:#}");
+            None
+        }
+    }
+}
+
+/// Drops the record, in memory and on disk.
+fn forget_record(st: &AppState) {
+    *st.doctor().last_fix.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    let file = paths::doctor_last_fix(&st.0.home);
+    for path in [store::bak_path(&file), file] {
+        if let Err(e) = std::fs::remove_file(&path)
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!("the doctor could not delete {}: {e}", path.display());
+        }
+    }
+}
+
+/// The file isn't what the fix left: another hash, or present where the fix removed it.
+fn differs_from_fix(file: &SnapshotFileInfo) -> bool {
+    match hash_file(Path::new(&file.path)) {
+        Ok(now) => now != file.after_hash,
+        Err(_) => true,
+    }
+}
+
+/// `GET /v1/doctor/undo`: the last fix, or 204. `files_match` is read without starting a distro: a file in a managed
+/// distro that isn't running is left out of it.
+pub async fn last_fix(State(st): State<AppState>) -> Response {
+    let found = tokio::task::spawn_blocking(move || {
+        let mut record = current_record(&st)?;
+        record.files_match = match st.0.config.snapshots().get(&record.snapshot_id) {
+            Ok(Some(info)) => {
+                let mut running: Option<Vec<String>> = None;
+                info.files.iter().all(|file| {
+                    let in_distro = st.distros_of_paths([Path::new(&file.path)]).into_iter().next();
+                    if let Some(distro) = in_distro {
+                        let up = running.get_or_insert_with(|| (st.0.running_distros)());
+                        if !up.iter().any(|d| d.eq_ignore_ascii_case(&distro)) {
+                            return true;
+                        }
+                    }
+                    !differs_from_fix(file)
+                })
+            }
+            _ => false,
+        };
+        Some(record)
+    })
+    .await;
+    match found {
+        Ok(Some(record)) => Json(record).into_response(),
+        Ok(None) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => server_error(e),
+    }
+}
+
+/// `POST /v1/doctor/undo`: puts the files back as the last fix found them, if each is still as the fix left it.
+/// Starting a distro is allowed here: the person clicked.
+pub async fn undo(State(st): State<AppState>) -> Response {
+    let work = {
+        let st = st.clone();
+        move || undo_of(&st)
+    };
+    match tokio::task::spawn_blocking(work).await {
+        Ok(Ok(Some(result))) => {
+            request_run(&st);
+            Json(result).into_response()
+        }
+        Ok(Ok(None)) => StatusCode::NO_CONTENT.into_response(),
+        Ok(Err(refusal)) => refusal.into_response(),
+        Err(e) => server_error(e),
+    }
+}
+
+fn undo_of(st: &AppState) -> Result<Option<ApplyResult>, Refusal> {
+    let Some(record) = current_record(st) else {
+        return Ok(None);
+    };
+    let info = match st.0.config.snapshots().get(&record.snapshot_id) {
+        Ok(Some(info)) => info,
+        // The backup is gone, so the record can never be undone.
+        Ok(None) => {
+            forget_record(st);
+            return Ok(None);
+        }
+        Err(e) => return Err(Refusal::Plain(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}"))),
+    };
+    // After a restart the config guard knows no distro's folders until its home is looked up.
+    st.record_distros_of(info.files.iter().map(|f| Path::new(&f.path)));
+    let changed: Vec<String> = info
+        .files
+        .iter()
+        .filter(|f| differs_from_fix(f))
+        .map(|f| f.path.clone())
+        .collect();
+    if !changed.is_empty() {
+        return Err(changed_since(changed));
+    }
+    let cs = ChangeSet {
+        title: format!("Restore: {}", info.title),
+        reason: "Puts the files back as they were before this change.".to_string(),
+        edits: info
+            .files
+            .iter()
+            .map(|file| FileEdit {
+                path: file.path.clone(),
+                scope: file.scope,
+                op: EditOp::Restore {
+                    snapshot_id: info.id.clone(),
+                },
+                expected_hash: file.after_hash.clone(),
+                applies: file.applies,
+            })
+            .collect(),
+    };
+    let preview = changes_of(st.0.config.preview(cs))?;
+    let apply = ApplyRequest {
+        changeset_id: preview.changeset_id.clone(),
+        expected_hashes: preview
+            .files
+            .iter()
+            .map(|f| ExpectedHash {
+                path: f.path.clone(),
+                hash: f.before_hash.clone(),
+            })
+            .collect(),
+    };
+    match st.0.config.apply(&apply, now_ms()) {
+        Ok(result) => {
+            forget_record(st);
+            Ok(Some(result))
+        }
+        Err(ApplyError::Conflict { paths, .. }) => Err(changed_since(paths)),
+        Err(ApplyError::UnknownChangeSet) => Err(changed_since(vec![])),
+        Err(ApplyError::Failed(e)) => Err(Refusal::Plain(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}"))),
     }
 }
 

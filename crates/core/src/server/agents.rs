@@ -94,14 +94,14 @@ fn failed(err: impl std::fmt::Display) -> Fail {
 
 /// The agents that have a hook adapter.
 #[derive(Clone, Copy)]
-pub(super) enum Adapter {
+pub(crate) enum Adapter {
     Claude,
     Codex,
     Antigravity,
     Qwen,
 }
 
-fn adapter(agent: &str) -> Result<Adapter, Fail> {
+pub(super) fn adapter(agent: &str) -> Result<Adapter, Fail> {
     match agent {
         AGENT => Ok(Adapter::Claude),
         CODEX => Ok(Adapter::Codex),
@@ -356,7 +356,12 @@ impl AppState {
 
     /// The plan to set up hooks inside `distro`: the same plan as on Windows, for the files under the distro's own
     /// home and with the bridge named by its Linux path. The Windows overrides of the settings folders do not apply.
-    fn distro_install(&self, adapter: Adapter, distro: &str, want: &HookPlanRequest) -> Result<ChangeSet, Fail> {
+    pub(crate) fn distro_install(
+        &self,
+        adapter: Adapter,
+        distro: &str,
+        want: &HookPlanRequest,
+    ) -> Result<ChangeSet, Fail> {
         let target = self.distro_target(distro)?;
         self.ensure_bridge(want)?;
         let bridge = Bridge::Distro {
@@ -1199,7 +1204,7 @@ fn codex_newer_in(dir: &Path, version: &str) -> Option<String> {
 const NOT_THIS_FILE: &str = "That snapshot isn't of this agent's settings file.";
 
 /// Why a settings change isn't made: a plain sentence, or a 409 naming the files that changed since the person looked.
-enum Refusal {
+pub(super) enum Refusal {
     Plain(StatusCode, String),
     Changed(Vec<String>),
 }
@@ -1225,11 +1230,11 @@ impl IntoResponse for Refusal {
     }
 }
 
-fn unprocessable(message: impl Into<String>) -> Refusal {
+pub(super) fn unprocessable(message: impl Into<String>) -> Refusal {
     Refusal::Plain(StatusCode::UNPROCESSABLE_ENTITY, message.into())
 }
 
-fn changed_since(paths: Vec<String>) -> Refusal {
+pub(super) fn changed_since(paths: Vec<String>) -> Refusal {
     Refusal::Changed(paths)
 }
 
@@ -1482,7 +1487,7 @@ fn masked_diff<'a>(agent: &'a str, normalized: &'a Cell<bool>) -> impl Fn(&Plann
 
 /// The preview when it has a change to apply. A file changed since is a 409; any other refusal, or no change, is a 422.
 /// A refusal's detail can quote the file, so only the details that can't are passed on.
-fn changes_of(preview: ConfigPreview) -> Result<ConfigPreview, Refusal> {
+pub(super) fn changes_of(preview: ConfigPreview) -> Result<ConfigPreview, Refusal> {
     for file in &preview.files {
         if let FileStatus::Refused { reason, detail } = &file.status {
             return Err(match reason {
@@ -1570,6 +1575,63 @@ fn settings_undo_of(st: &AppState, agent: &str, kind: Adapter, snapshot_id: &str
     }
 }
 
+/// The plan that sets up `adapter`'s hooks for Windows: the same one the Agents dialog's "Set up" makes. It puts the
+/// bridge back first when `want` asks for status hooks and it is missing.
+pub(crate) fn hook_install_changes(st: &AppState, adapter: Adapter, want: &HookPlanRequest) -> Result<ChangeSet, Fail> {
+    match adapter {
+        Adapter::Claude => {
+            let inputs = st.inputs()?;
+            st.ensure_bridge(want)?;
+            hooks::install_plan(
+                &inputs.settings_path,
+                &inputs.user_home,
+                inputs.text.as_deref(),
+                inputs.chain_text.as_deref(),
+                Some(&paths::statusline_chain(&st.0.home, AGENT)),
+                &Bridge::local(&st.0.home),
+                want,
+            )
+        }
+        Adapter::Codex => {
+            let inputs = st.codex_inputs()?;
+            st.ensure_bridge(want)?;
+            codex::hooks::install_plan(
+                &inputs.hooks_path,
+                inputs.text.as_deref(),
+                &Bridge::local(&st.0.home),
+                want,
+            )
+        }
+        Adapter::Antigravity => {
+            let inputs = st.agy_inputs()?;
+            st.ensure_bridge(want)?;
+            agy::install_plan(
+                &inputs.user_home,
+                inputs.hooks_text.as_deref(),
+                inputs.settings_text.as_deref(),
+                inputs.chain_text.as_deref(),
+                Some(&paths::statusline_chain(&st.0.home, ANTIGRAVITY)),
+                &Bridge::local(&st.0.home),
+                want,
+            )
+        }
+        Adapter::Qwen => {
+            let inputs = st.qwen_inputs()?;
+            st.ensure_bridge(want)?;
+            qwen_hooks::install_plan(
+                &inputs.settings_path,
+                &inputs.user_home,
+                inputs.text.as_deref(),
+                inputs.chain_text.as_deref(),
+                Some(&paths::statusline_chain(&st.0.home, QWEN)),
+                &Bridge::local(&st.0.home),
+                want,
+            )
+        }
+    }
+    .map_err(|e| refused(&e))
+}
+
 pub async fn plan(
     State(st): State<AppState>,
     UrlPath(agent): UrlPath<String>,
@@ -1580,58 +1642,7 @@ pub async fn plan(
     let preview = tokio::task::spawn_blocking(move || {
         let mut changes = match &distro {
             Some(distro) => st.distro_install(adapter, distro, &want)?,
-            None => match adapter {
-                Adapter::Claude => {
-                    let inputs = st.inputs()?;
-                    st.ensure_bridge(&want)?;
-                    hooks::install_plan(
-                        &inputs.settings_path,
-                        &inputs.user_home,
-                        inputs.text.as_deref(),
-                        inputs.chain_text.as_deref(),
-                        Some(&paths::statusline_chain(&st.0.home, AGENT)),
-                        &Bridge::local(&st.0.home),
-                        &want,
-                    )
-                }
-                Adapter::Codex => {
-                    let inputs = st.codex_inputs()?;
-                    st.ensure_bridge(&want)?;
-                    codex::hooks::install_plan(
-                        &inputs.hooks_path,
-                        inputs.text.as_deref(),
-                        &Bridge::local(&st.0.home),
-                        &want,
-                    )
-                }
-                Adapter::Antigravity => {
-                    let inputs = st.agy_inputs()?;
-                    st.ensure_bridge(&want)?;
-                    agy::install_plan(
-                        &inputs.user_home,
-                        inputs.hooks_text.as_deref(),
-                        inputs.settings_text.as_deref(),
-                        inputs.chain_text.as_deref(),
-                        Some(&paths::statusline_chain(&st.0.home, ANTIGRAVITY)),
-                        &Bridge::local(&st.0.home),
-                        &want,
-                    )
-                }
-                Adapter::Qwen => {
-                    let inputs = st.qwen_inputs()?;
-                    st.ensure_bridge(&want)?;
-                    qwen_hooks::install_plan(
-                        &inputs.settings_path,
-                        &inputs.user_home,
-                        inputs.text.as_deref(),
-                        inputs.chain_text.as_deref(),
-                        Some(&paths::statusline_chain(&st.0.home, QWEN)),
-                        &Bridge::local(&st.0.home),
-                        &want,
-                    )
-                }
-            }
-            .map_err(|e| refused(&e))?,
+            None => hook_install_changes(&st, adapter, &want)?,
         };
         // The skill file is the Windows home's. A distro's skill is not planned here, so a request for one inside a
         // distro gets the hooks only.

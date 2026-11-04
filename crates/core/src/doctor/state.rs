@@ -1,7 +1,7 @@
 //! What the Doctor keeps between runs: the last report, whether a run is going, the summary the UI watches and the
 //! fix waiting to be applied. A run is the only writer of the report.
 
-use marshell_protocol::doctor::{DoctorReport, DoctorSummary};
+use marshell_protocol::doctor::{DoctorLastFix, DoctorReport, DoctorSummary};
 use std::sync::Mutex;
 use tokio::sync::watch;
 
@@ -34,6 +34,9 @@ pub struct DoctorState {
     /// What the sidebar and the events socket show.
     pub summary: watch::Sender<DoctorSummary>,
     pub pending: Mutex<Option<PendingFix>>,
+    /// The last fix applied in this run of the app, with its restart list. `<home>/doctor/last-fix.json` keeps the rest
+    /// across restarts.
+    pub last_fix: Mutex<Option<DoctorLastFix>>,
 }
 
 impl Default for DoctorState {
@@ -48,6 +51,7 @@ impl Default for DoctorState {
             })
             .0,
             pending: Mutex::new(None),
+            last_fix: Mutex::new(None),
         }
     }
 }
