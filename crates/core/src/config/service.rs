@@ -26,7 +26,7 @@ use crate::config::watch::Watcher;
 use crate::config::write;
 use anyhow::anyhow;
 use marshell_protocol::config::{
-    AppliedFile, ApplyRequest, ApplyResult, ChangeSet, ConfigPreview, EditOp, FileEdit, FileStatus,
+    AppliedFile, ApplyRequest, ApplyResult, ChangeSet, ConfigPreview, EditOp, FileEdit, FilePreview, FileStatus,
 };
 use std::collections::HashMap;
 use std::io;
@@ -82,8 +82,9 @@ struct Stored {
     /// The planned files' targets, in the preview's order.
     targets: Vec<PathBuf>,
     created: Instant,
-    /// The person's own edit (Settings' form or raw text): `managed.json` records none of its keys.
-    own: bool,
+    /// Per planned file, one flag per op in the order `plan` keeps them: true for the person's own edit (Settings'
+    /// form or raw text), whose JSON keys `managed.json` does not record.
+    own_ops: Vec<Vec<bool>>,
 }
 
 #[derive(Default)]
@@ -275,17 +276,39 @@ impl ConfigService {
     /// `preview`, except that when `shown` gives `Some` for a file, that text is the file's diff in the returned and
     /// in the stored preview. Apply still writes the planned bytes; only what is shown differs.
     pub fn preview_shown(&self, cs: ChangeSet, shown: &dyn Fn(&PlannedFile) -> Option<String>) -> ConfigPreview {
-        self.store_preview(cs, shown, false)
+        self.store_preview(cs, shown, &|_| false)
     }
 
     /// `preview_shown` for the person's own edit of a file: the keys it sets and removes are theirs, not Marshell's
     /// entries, so applying it records nothing in `managed.json`.
     pub fn preview_own(&self, cs: ChangeSet, shown: &dyn Fn(&PlannedFile) -> Option<String>) -> ConfigPreview {
-        self.store_preview(cs, shown, true)
+        self.store_preview(cs, shown, &|_| true)
     }
 
-    fn store_preview(&self, cs: ChangeSet, shown: &dyn Fn(&PlannedFile) -> Option<String>, own: bool) -> ConfigPreview {
+    /// `preview` for a ChangeSet that holds both: an edit for which `own` is true is the person's, and applying it
+    /// records none of its JSON keys in `managed.json`; the other edits are Marshell's, as with `preview`.
+    pub fn preview_mixed(&self, cs: ChangeSet, own: &dyn Fn(&FileEdit) -> bool) -> ConfigPreview {
+        self.store_preview(cs, &|_| None, own)
+    }
+
+    fn store_preview(
+        &self,
+        cs: ChangeSet,
+        shown: &dyn Fn(&PlannedFile) -> Option<String>,
+        own: &dyn Fn(&FileEdit) -> bool,
+    ) -> ConfigPreview {
         let files = plan(&cs, &self.shared.guard(), &self.shared.snapshots);
+        // `plan` groups the edits by path and keeps each file's ops in the edits' order.
+        let own_ops: Vec<Vec<bool>> = files
+            .iter()
+            .map(|f| {
+                cs.edits
+                    .iter()
+                    .filter(|e| Path::new(&e.path) == f.path)
+                    .map(own)
+                    .collect()
+            })
+            .collect();
         let id = new_id("c");
         let mut preview = to_preview(&id, &cs, &files);
         preview.snapshots_dir = Some(self.shared.snapshots.dir().to_string_lossy().into_owned());
@@ -306,7 +329,7 @@ impl ConfigService {
                 preview: preview.clone(),
                 targets,
                 created: Instant::now(),
-                own,
+                own_ops,
             },
         );
         previews.prune();
@@ -394,7 +417,7 @@ impl ConfigService {
     }
 
     /// The stored preview, or why it can't be applied now.
-    fn stored(&self, id: &str) -> Result<(ChangeSet, ConfigPreview, Vec<PathBuf>, bool), ApplyError> {
+    fn stored(&self, id: &str) -> Result<(ChangeSet, ConfigPreview, Vec<PathBuf>, Vec<Vec<bool>>), ApplyError> {
         let mut previews = lock(&self.shared.previews);
         previews.prune();
         let stored = previews.map.get(id).ok_or(ApplyError::UnknownChangeSet)?;
@@ -419,13 +442,18 @@ impl ConfigService {
                 paths_where(&|s| matches!(s, FileStatus::Refused { .. })),
             ));
         }
-        Ok((stored.cs.clone(), preview.clone(), stored.targets.clone(), stored.own))
+        Ok((
+            stored.cs.clone(),
+            preview.clone(),
+            stored.targets.clone(),
+            stored.own_ops.clone(),
+        ))
     }
 
     fn apply_with(&self, req: &ApplyRequest, now_ms: u64, write: Writer) -> Result<ApplyResult, ApplyError> {
         let shared = &*self.shared;
         // 1. The stored preview.
-        let (cs, preview, targets, own) = self.stored(&req.changeset_id)?;
+        let (cs, preview, targets, own_ops) = self.stored(&req.changeset_id)?;
 
         // 2. Exactly the hashes that were shown, one per file.
         let mut mismatched: Vec<String> = Vec::new();
@@ -455,21 +483,27 @@ impl ConfigService {
         // 4. Plan again from disk: nothing may have moved since the user looked.
         let files = plan(&cs, &shared.guard(), &shared.snapshots);
         let all_paths = || preview.files.iter().map(|f| f.path.clone()).collect::<Vec<_>>();
-        if files.len() != preview.files.len() || files.iter().map(|f| &f.target).ne(targets.iter()) {
-            return Err(conflict("changed", all_paths()));
-        }
-        let changed: Vec<String> = files
-            .iter()
-            .zip(&preview.files)
-            .filter(|(now, shown)| {
-                matches!(now.status, FileStatus::Refused { .. })
-                    || now.before.as_deref().map(hash_bytes) != shown.before_hash
-                    || now.after.as_deref().map(hash_bytes) != shown.after_hash
-            })
-            .map(|(_, shown)| shown.path.clone())
-            .collect();
-        if !changed.is_empty() {
-            return Err(conflict("changed", changed));
+        match changed_check(&files, &preview.files, &targets) {
+            None => {}
+            Some(Changed::Targets) => {
+                tracing::warn!(
+                    "apply of {} refused as changed: the files or targets differ; stored {:?}, now {:?}",
+                    preview.changeset_id,
+                    targets.iter().map(|t| t.display().to_string()).collect::<Vec<_>>(),
+                    files.iter().map(|f| f.target.display().to_string()).collect::<Vec<_>>(),
+                );
+                return Err(conflict("changed", all_paths()));
+            }
+            Some(Changed::Hashes(moved)) => {
+                for (path, what) in &moved {
+                    tracing::warn!(
+                        "apply of {} refused as changed: {path} moved ({})",
+                        preview.changeset_id,
+                        what.join(", ")
+                    );
+                }
+                return Err(conflict("changed", moved.into_iter().map(|(path, _)| path).collect()));
+            }
         }
         let changing: Vec<&PlannedFile> = files.iter().filter(|f| f.status == FileStatus::Changes).collect();
 
@@ -515,8 +549,11 @@ impl ConfigService {
             }
         }
         let mut changes: Vec<Change> = Vec::new();
-        for file in &changing {
-            for op in &file.ops {
+        for (file, own) in files.iter().zip(&own_ops) {
+            if file.status != FileStatus::Changes {
+                continue;
+            }
+            for (op, &own) in file.ops.iter().zip(own) {
                 changes.push(match op {
                     // The person's own TOML keys and whole-text edits aren't Marshell's entries, so
                     // `managed.json` records nothing for them.
@@ -618,6 +655,40 @@ impl ConfigService {
         }
         problems
     }
+}
+
+/// Which of apply's two "changed" checks refused.
+#[derive(Debug, PartialEq, Eq)]
+enum Changed {
+    /// The planned files or their targets differ from the stored ones.
+    Targets,
+    /// These files are now refused or their hashes moved, each with what moved (`status`, `before`, `after`).
+    Hashes(Vec<(String, Vec<&'static str>)>),
+}
+
+/// Compares the plan made now with the stored preview: `None` when nothing moved.
+fn changed_check(files: &[PlannedFile], shown: &[FilePreview], targets: &[PathBuf]) -> Option<Changed> {
+    if files.len() != shown.len() || files.iter().map(|f| &f.target).ne(targets.iter()) {
+        return Some(Changed::Targets);
+    }
+    let moved: Vec<(String, Vec<&'static str>)> = files
+        .iter()
+        .zip(shown)
+        .filter_map(|(now, shown)| {
+            let mut what = Vec::new();
+            if matches!(now.status, FileStatus::Refused { .. }) {
+                what.push("status");
+            }
+            if now.before.as_deref().map(hash_bytes) != shown.before_hash {
+                what.push("before");
+            }
+            if now.after.as_deref().map(hash_bytes) != shown.after_hash {
+                what.push("after");
+            }
+            (!what.is_empty()).then(|| (shown.path.clone(), what))
+        })
+        .collect();
+    (!moved.is_empty()).then_some(Changed::Hashes(moved))
 }
 
 /// `leftover` says what the roll back could not put back, when it left something.
@@ -811,6 +882,62 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&read(&path)).unwrap();
         assert_eq!(value, serde_json::json!({"model": "b"}));
         assert!(crate::config::managed::list(&e.home).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_mixed_preview_records_only_marshells_keys() {
+        let e = env();
+        let path = e.root.join("settings.json");
+        write(&path, "{}\n");
+        let preview = e.svc.preview_mixed(
+            changeset(vec![
+                edit(&path, set("/hooks/Stop", "[]")),
+                edit(&path, set("/cleanupPeriodDays", "90")),
+            ]),
+            &|edit| matches!(&edit.op, EditOp::JsonSet { pointer, .. } if pointer == "/cleanupPeriodDays"),
+        );
+        assert!(preview.can_apply);
+        assert_eq!(preview.files.len(), 1);
+        apply_shown(&e.svc, &preview).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&read(&path)).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({"hooks": {"Stop": []}, "cleanupPeriodDays": 90})
+        );
+        let managed = crate::config::managed::list(&e.home).unwrap();
+        let pointers: Vec<_> = managed.iter().map(|m| m.pointer.as_deref()).collect();
+        assert_eq!(pointers, vec![Some("/hooks/Stop")]);
+        assert_eq!(e.svc.snapshots().list(Some(&path)).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn changed_check_names_the_branch() {
+        let e = env();
+        let path = e.root.join("settings.json");
+        write(&path, "{}\n");
+        let cs = changeset(vec![edit(&path, set("/a", "1"))]);
+        let preview = e.svc.preview(cs.clone());
+        let plan_now = || plan(&cs, &e.svc.guard(), e.svc.snapshots());
+        let files = plan_now();
+        let targets: Vec<PathBuf> = files.iter().map(|f| f.target.clone()).collect();
+
+        // Nothing moved.
+        assert_eq!(changed_check(&files, &preview.files, &targets), None);
+
+        // The stored targets differ from the planned ones.
+        let other = vec![e.root.join("other.json")];
+        assert_eq!(changed_check(&files, &preview.files, &other), Some(Changed::Targets));
+
+        // The file moved after the preview: the hash branch names it and what moved.
+        write(&path, "{\"mine\":1}");
+        let moved = plan_now();
+        assert_eq!(
+            changed_check(&moved, &preview.files, &targets),
+            Some(Changed::Hashes(vec![(
+                preview.files[0].path.clone(),
+                vec!["before", "after"]
+            )]))
+        );
     }
 
     #[test]
