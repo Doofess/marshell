@@ -6,7 +6,7 @@ use super::AppState;
 use super::history::{Found, gone, look_up};
 use super::sessions::{
     Resume, cannot_resume, cannot_start_again, check_agent_installed, launch_mode, resolve_with, resume_session,
-    start_folder,
+    resume_session_blocking, start_folder,
 };
 use crate::agents::presets;
 use crate::outside::{ConversationKey, console_env, copy_line, lookup_path};
@@ -220,7 +220,16 @@ pub async fn tab_resume_command(
         return (StatusCode::NOT_FOUND, "No such session.").into_response();
     };
     let Some(purpose) = query.purpose else {
-        return answer(tab_plan(&st, &info, Purpose::Copy).and_then(|plan| command_of(&st, &plan)));
+        // tab_plan reads the History index, the archive meta and the transcript: off the async workers.
+        let (st, info) = (st.clone(), info.clone());
+        return match tokio::task::spawn_blocking(move || {
+            tab_plan(&st, &info, Purpose::Copy).and_then(|plan| command_of(&st, &plan))
+        })
+        .await
+        {
+            Ok(result) => answer(result),
+            Err(err) => (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
+        };
     };
     let mode = match purpose {
         CommandPurpose::Restart => match query.mode {
@@ -230,13 +239,9 @@ pub async fn tab_resume_command(
         CommandPurpose::Resume => launch_mode(info.elevated, info.agent.as_deref(), info.mode),
     };
     // The History index, the archive meta and the transcript are read from disk: off the async workers.
-    let session = {
-        let (st, tab, agent) = (st.clone(), tab.clone(), info.agent.clone());
-        match tokio::task::spawn_blocking(move || resume_session(&st, &tab, agent.as_deref())).await {
-            Ok(Ok(session)) => session,
-            Ok(Err(reason)) => return cannot_resume(reason),
-            Err(err) => return (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response(),
-        }
+    let session = match resume_session_blocking(&st, &tab, info.agent.as_deref()).await {
+        Ok(session) => session,
+        Err(reason) => return cannot_resume(reason),
     };
     // The same resolver as restart_as/resume_as chooses the profile, program, resume arguments and mode flags.
     let run = match resolve_with(

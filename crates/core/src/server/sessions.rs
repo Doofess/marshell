@@ -1319,6 +1319,10 @@ pub(super) fn resume_session(st: &AppState, tab: &str, agent: Option<&str>) -> R
     let Some(meta) = st.history().latest_for_tab_of(tab, agent) else {
         return Ok(Resume::Last);
     };
+    // The id is checked before it is formatted into any path.
+    if !crate::history::valid_session_id(&meta.session_id) {
+        return Ok(Resume::Last);
+    }
     // The row lives in the Marshell home and is checked again before its id reaches a command line or its
     // path a filesystem call. A row that fails counts as unknown.
     // A WSL row's transcript is on its distro's share, which only the distro the sidecar names admits; the index row
@@ -1342,6 +1346,16 @@ pub(super) fn resume_session(st: &AppState, tab: &str, agent: Option<&str>) -> R
         Err(NO_CONVERSATION)
     } else {
         Ok(Resume::Fresh)
+    }
+}
+
+/// `resume_session` on a blocking thread: it reads the index, the sidecar and the transcript's file entry, which
+/// for a WSL row is on a `\wsl.localhost` share.
+pub(super) async fn resume_session_blocking(st: &AppState, tab: &str, agent: Option<&str>) -> Result<Resume, String> {
+    let (st, tab, agent) = (st.clone(), tab.to_string(), agent.map(str::to_string));
+    match tokio::task::spawn_blocking(move || resume_session(&st, &tab, agent.as_deref())).await {
+        Ok(result) => result.map_err(String::from),
+        Err(err) => Err(err.to_string()),
     }
 }
 
@@ -1424,7 +1438,9 @@ pub(super) async fn resume_as(
     if let Some(reason) = cannot_start_again(st, &info) {
         return Err(Refusal::reason(reason));
     }
-    let session = resume_session(st, &tab, info.agent.as_deref()).map_err(Refusal::reason)?;
+    let session = resume_session_blocking(st, &tab, info.agent.as_deref())
+        .await
+        .map_err(Refusal::reason)?;
     // An administrator agent comes back in Manual; Bypass is only chosen on the restart bar (decision 2).
     let mode = launch_mode(info.elevated, info.agent.as_deref(), info.mode);
     let run = resolve_with(
@@ -1557,7 +1573,9 @@ pub(super) async fn restart_as(
     if let Some(reason) = cannot_start_again(st, &info) {
         return Err(Refusal::reason(reason));
     }
-    let session = resume_session(st, &tab, info.agent.as_deref()).map_err(Refusal::reason)?;
+    let session = resume_session_blocking(st, &tab, info.agent.as_deref())
+        .await
+        .map_err(Refusal::reason)?;
     let run = resolve_with(
         st,
         Some(&info.profile_id),
@@ -2164,6 +2182,35 @@ mod tests {
         );
         // The transcript can't be read in a test and there is no archive: a fresh start, not `--continue`.
         assert_eq!(resume_session(&st, "t1", Some("claude")), Ok(Resume::Fresh));
+    }
+
+    #[test]
+    fn resume_session_checks_the_id_before_reading_a_meta() {
+        use crate::history::{SessionMeta, index::Index};
+        let home = tempfile::tempdir().unwrap();
+        let st = AppState::new("t".into(), 1, Vec::new(), home.path().to_path_buf(), Vec::new());
+        // A decoy sidecar where the traversal of `../x` would land.
+        let (_, sidecar) = crate::history::archive::archive_paths(home.path(), "claude", "../x");
+        std::fs::create_dir_all(sidecar.parent().unwrap()).unwrap();
+        std::fs::write(&sidecar, "{}").unwrap();
+        let (index, _) = Index::open(home.path()).unwrap();
+        index
+            .upsert(&SessionMeta {
+                agent: "claude".into(),
+                session_id: "../x".into(),
+                tab_id: "t1".into(),
+                cwd: String::new(),
+                transcript_path: String::new(),
+                started_ms: 1,
+                updated_ms: 2,
+                previous_in_tab: None,
+                recordings: vec![],
+                client: Default::default(),
+                preset: None,
+                distro: None,
+            })
+            .unwrap();
+        assert_eq!(resume_session(&st, "t1", Some("claude")), Ok(Resume::Last));
     }
 
     #[test]
