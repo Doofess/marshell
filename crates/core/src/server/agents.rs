@@ -216,13 +216,13 @@ impl AppState {
         }
     }
 
-    /// Qwen Code's read-only system settings: the file a test named, else `C:\ProgramData\qwen-code\settings.json`.
+    /// Qwen Code's read-only system settings: the file a test named, else the one for this OS.
     /// `QWEN_CODE_SYSTEM_SETTINGS_PATH` is not read (slice 6l1 decision 3, 6l2 decision 9).
     fn qwen_system_settings_path(&self) -> PathBuf {
         self.0
             .qwen_system_settings
             .clone()
-            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData\qwen-code\settings.json"))
+            .unwrap_or_else(|| PathBuf::from(crate::agents::qwen::system_settings_for(std::env::consts::OS)))
     }
 
     /// Where `agent`'s `marshell` skill file goes. A skill home named by a test replaces the user's home and the

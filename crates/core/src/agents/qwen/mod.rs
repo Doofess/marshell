@@ -52,15 +52,15 @@ pub const FIXTURE_VERSIONS: &[(u32, u32, u32)] = &[(0, 26, 5)];
 
 /// Known: the same minor line as a recorded fixture set, and not older than its oldest patch.
 pub fn version_gate(version: Option<&str>) -> Gate {
-    let numeric = version.map(|v| v.split_once('-').map_or(v, |(core, _)| core));
-    match super::common::version_gate("Qwen Code", FIXTURE_VERSIONS, numeric) {
-        Gate::Unknown(note) => match version.zip(numeric) {
-            Some((full, core)) => {
-                Gate::Unknown(note.replacen(&format!("Qwen Code {core} "), &format!("Qwen Code {full} "), 1))
-            }
-            None => Gate::Unknown(note),
-        },
-        known => known,
+    super::common::version_gate("Qwen Code", FIXTURE_VERSIONS, version)
+}
+
+/// Qwen Code's read-only system settings file on `os` (a `std::env::consts::OS` value), from the 6l2 research note.
+pub fn system_settings_for(os: &str) -> &'static str {
+    match os {
+        "macos" => "/Library/Application Support/QwenCode/settings.json",
+        "linux" => "/etc/qwen-code/settings.json",
+        _ => r"C:\ProgramData\qwen-code\settings.json",
     }
 }
 
@@ -126,8 +126,26 @@ mod tests {
                 Gate::Unknown(format!("Qwen Code {version} is not one Marshell has recorded yet"))
             );
         }
-        assert_eq!(version_gate(Some("0.26.5-preview.1")), Gate::Known);
+        for version in ["0.26.5-preview.1", "0.26.6-nightly.20261101"] {
+            match version_gate(Some(version)) {
+                Gate::Unknown(note) => assert!(note.contains(version), "{note}"),
+                Gate::Known => panic!("{version} must not be Known"),
+            }
+        }
         assert_eq!(parse_version("0.27.0-"), None);
+    }
+
+    #[test]
+    fn the_system_settings_file_depends_on_the_os() {
+        assert_eq!(
+            system_settings_for("windows"),
+            r"C:\ProgramData\qwen-code\settings.json"
+        );
+        assert_eq!(
+            system_settings_for("macos"),
+            "/Library/Application Support/QwenCode/settings.json"
+        );
+        assert_eq!(system_settings_for("linux"), "/etc/qwen-code/settings.json");
     }
 
     #[test]
