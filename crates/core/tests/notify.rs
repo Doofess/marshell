@@ -39,6 +39,8 @@ fn core() -> (axum::Router, AppState, Got, tokio::task::JoinHandle<()>) {
                 preset: None,
             },
         );
+        // Claude Code runs in the row's foreground: a request is held only in a tab that runs the requesting agent.
+        assert!(st.registry().mark_hook_agent(tab, "claude", None));
     }
     let got: Got = Arc::default();
     let sink: NotifySink = {

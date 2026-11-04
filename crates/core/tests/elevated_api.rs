@@ -722,7 +722,10 @@ fn bash_request() -> serde_json::Value {
     })
 }
 
-fn hook(app: &axum::Router, tab: &str) -> tokio::task::JoinHandle<(StatusCode, Vec<u8>)> {
+/// Posts Claude Code's permission request for `tab`, which runs Claude Code in its foreground: a request is held only in
+/// a tab that runs the requesting agent.
+fn hook(st: &AppState, app: &axum::Router, tab: &str) -> tokio::task::JoinHandle<(StatusCode, Vec<u8>)> {
+    st.registry().mark_hook_agent(tab, "claude", None);
     let req = Request::builder()
         .method("POST")
         .uri("/v1/hook")
@@ -770,7 +773,7 @@ async fn the_permission_route_refuses_an_elevated_row_and_trusted_decide_accepts
     let app = router(st.clone());
     elevated_row(&st, "te", "sleep");
     plain_row(&st, "tp", "sleep");
-    let held = hook(&app, "te");
+    let held = hook(&st, &app, "te");
     let rid = wait_pending(&st, 1).await[0].rid.clone();
 
     // The token-guarded route refuses, and the request stays pending.
@@ -798,7 +801,7 @@ async fn the_permission_route_refuses_an_elevated_row_and_trusted_decide_accepts
     assert!(st.holds().pending().is_empty());
 
     // A request of an ordinary tab is not the trusted door's to answer.
-    let ordinary = hook(&app, "tp");
+    let ordinary = hook(&st, &app, "tp");
     let rid = wait_pending(&st, 1).await[0].rid.clone();
     let refused = st
         .trusted_for_tests()
@@ -831,8 +834,8 @@ async fn always_scope_on_an_elevated_row_is_409_and_the_view_has_no_rule() {
     let app = router(st.clone());
     elevated_row(&st, "te", "sleep");
     plain_row(&st, "tp", "sleep");
-    let elevated = hook(&app, "te");
-    let ordinary = hook(&app, "tp");
+    let elevated = hook(&st, &app, "te");
+    let ordinary = hook(&st, &app, "tp");
     let pending = wait_pending(&st, 2).await;
     let rid_of = |tab: &str| {
         pending

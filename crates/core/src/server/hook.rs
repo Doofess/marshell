@@ -145,16 +145,22 @@ pub async fn post(
     {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
+    // A request waits for a card only in an open tab that runs the requesting agent: an agent started from a plain
+    // shell tab inherits the tab's id (Antigravity's IDE reads the same hooks.json), and a tab the foreground
+    // watcher hasn't seen it in yet isn't one to hold for. Anything else passes before it folds anything, so the
+    // agent asks in its own terminal.
+    if role == HookRole::Permission
+        && !tab.as_deref().is_some_and(|t| {
+            st.registry().is_open(t) && st.registry().effective_agent(t).as_deref() == Some(agent.as_str())
+        })
+    {
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    }
     // Whether an Antigravity request waits for a card. Every other call passes at once (204): agy's own mode
     // decides, and it asks in its terminal where it would.
     let mut held = false;
     if agent == "antigravity" && role == HookRole::Permission {
-        // An Antigravity IDE started from a plain shell tab inherits the tab's id and reads the same
-        // hooks.json: only a tab that runs agy has a say, and anything else passes before it folds anything.
-        let Some(tab) = tab
-            .as_deref()
-            .filter(|t| st.registry().is_open(t) && st.registry().effective_agent(t).as_deref() == Some("antigravity"))
-        else {
+        let Some(tab) = tab.as_deref() else {
             return Ok(StatusCode::NO_CONTENT.into_response());
         };
         // agy's `workspacePaths` is empty, so the risk rules judge paths against the tab's folder.
