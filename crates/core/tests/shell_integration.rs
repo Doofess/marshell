@@ -416,3 +416,118 @@ fn bash_prompt_command_overwriting_ps1_keeps_marks() {
     sh.type_line("\r");
     sh.expect(Mark::PromptStart);
 }
+
+/// The marks that say where a prompt and a command begin and end, without the folder and command-line ones.
+fn shape_marks(sh: &Shell) -> Vec<Mark> {
+    sh.marks
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|m| matches!(m, Mark::PromptStart | Mark::Executed | Mark::Finished(_)))
+        .cloned()
+        .collect()
+}
+
+/// An empty line, then `false`: one `Executed` for the real command and none at a bare prompt.
+fn real_commands_only(sh: &mut Shell) {
+    sh.expect(Mark::PromptStart);
+    sh.type_line("\r");
+    sh.expect(Mark::PromptStart);
+    sh.type_line("false\r");
+    sh.expect(Mark::Finished(Some(1)));
+    sh.expect(Mark::PromptStart);
+    assert_eq!(
+        shape_marks(sh),
+        vec![
+            Mark::Finished(None),
+            Mark::PromptStart,
+            Mark::Finished(None),
+            Mark::PromptStart,
+            Mark::Executed,
+            Mark::Finished(Some(1)),
+            Mark::PromptStart,
+        ],
+        "output: {}",
+        sh.text()
+    );
+}
+
+fn bash_with_rc(rc: &'static str) -> Option<Shell> {
+    let Some(bash) = bash() else {
+        skipped("bash");
+        return None;
+    };
+    Some(Shell::start(profile(&bash, ShellFamily::Posix), |home| {
+        std::fs::write(home.join(".bashrc"), rc).unwrap();
+    }))
+}
+
+const LATE_HOOK_RC: &str = "late_hook() { :; }\nPROMPT_COMMAND+=('')\nPROMPT_COMMAND+=(late_hook)\n";
+
+#[test]
+fn bash_array_prompt_command_entry_after_ours_marks_only_real_commands() {
+    let Some(mut sh) = bash_with_rc(LATE_HOOK_RC) else {
+        return;
+    };
+    real_commands_only(&mut sh);
+}
+
+#[test]
+fn bash_lazy_prompt_hook_appended_at_the_first_prompt() {
+    let Some(mut sh) = bash_with_rc(
+        "late_hook() { :; }\nlazy() { [[ \" ${PROMPT_COMMAND[*]} \" == *\" late_hook \"* ]] || PROMPT_COMMAND+=(late_hook); }\nPROMPT_COMMAND+=(lazy)\n",
+    ) else {
+        return;
+    };
+    real_commands_only(&mut sh);
+}
+
+#[test]
+fn bash_array_entry_overwriting_ps1_keeps_marks() {
+    let Some(mut sh) = bash_with_rc("PROMPT_COMMAND+=('')\nPROMPT_COMMAND+=('PS1=\"x$ \"')\n") else {
+        return;
+    };
+    real_commands_only(&mut sh);
+}
+
+#[test]
+fn bash_without_promptvars_falls_back_to_the_trap() {
+    let Some(mut sh) =
+        bash_with_rc("late_hook() { :; }\nPROMPT_COMMAND+=('')\nPROMPT_COMMAND+=(late_hook)\nshopt -u promptvars\n")
+    else {
+        return;
+    };
+    real_commands_only(&mut sh);
+    assert!(!sh.text().contains("${__marshell"), "output: {}", sh.text());
+}
+
+#[test]
+fn bash_with_its_own_debug_trap_reports_running_commands() {
+    let Some(mut sh) = bash_with_rc("trap ': user trap' DEBUG\n") else {
+        return;
+    };
+    real_commands_only(&mut sh);
+    sh.type_line("trap -p DEBUG\r");
+    sh.expect_text("': user trap' DEBUG");
+}
+
+#[test]
+fn bash_keeps_the_last_argument() {
+    for rc in ["", "shopt -u promptvars\n"] {
+        let Some(mut sh) = bash_with_rc(rc) else {
+            return;
+        };
+        sh.expect(Mark::PromptStart);
+        sh.type_line("echo one two >/dev/null; echo \"U=$_\"\r");
+        sh.expect_text("U=two");
+    }
+}
+
+#[test]
+fn bash_nounset_rc_keeps_marks() {
+    let Some(mut sh) = bash_with_rc("late_hook() { :; }\nPROMPT_COMMAND+=('')\nPROMPT_COMMAND+=(late_hook)\nset -u\n")
+    else {
+        return;
+    };
+    real_commands_only(&mut sh);
+}
