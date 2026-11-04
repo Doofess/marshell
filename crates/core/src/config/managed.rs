@@ -40,20 +40,21 @@ pub fn list(home: &Path) -> anyhow::Result<Vec<ManagedEntry>> {
         .entries)
 }
 
+/// Records that `changeset_id` set the pointer. An entry that is there already stays as it is, so the change that
+/// first set it is the one an undo of a later change that sets it again does not forget.
 fn upsert(entries: &mut Vec<ManagedEntry>, path: &str, pointer: Option<&str>, changeset_id: &str, now_ms: u64) {
-    let entry = ManagedEntry {
+    if entries
+        .iter()
+        .any(|e| same_path(&e.path, path) && e.pointer.as_deref() == pointer)
+    {
+        return;
+    }
+    entries.push(ManagedEntry {
         path: path.to_string(),
         pointer: pointer.map(str::to_string),
         changeset_id: changeset_id.to_string(),
         applied_ms: now_ms,
-    };
-    match entries
-        .iter_mut()
-        .find(|e| same_path(&e.path, path) && e.pointer.as_deref() == pointer)
-    {
-        Some(existing) => *existing = entry,
-        None => entries.push(entry),
-    }
+    });
 }
 
 /// The `<array>/-` pointers of every array `pointer` goes into: each parent of an all-digit segment.
@@ -234,10 +235,29 @@ mod tests {
             }],
             2,
         );
+        // The first writer stays.
         let entries = list(home.path()).unwrap();
         assert_eq!(entries.len(), 1);
-        assert_eq!((entries[0].changeset_id.as_str(), entries[0].applied_ms), ("c2", 2));
+        assert_eq!((entries[0].changeset_id.as_str(), entries[0].applied_ms), ("c1", 1));
         assert_eq!(entries[0].pointer.as_deref(), Some("/a"));
+    }
+
+    #[test]
+    fn undoing_a_change_that_set_a_pointer_again_keeps_the_first_entry() {
+        let home = tempfile::tempdir().unwrap();
+        apply(home.path(), "c1", &[set("/hooks/Stop"), set("/statusLine")], 1);
+        // c2 sets one of them again and adds one more.
+        apply(home.path(), "c2", &[set("/hooks/Stop"), set("/hooks/Start")], 2);
+        apply(
+            home.path(),
+            "c3",
+            &[Change::Restored {
+                path: file(),
+                changeset_id: "c2",
+            }],
+            3,
+        );
+        assert_eq!(pointers(home.path()), ["/hooks/Stop", "/statusLine"]);
     }
 
     #[test]
