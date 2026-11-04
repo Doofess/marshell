@@ -157,6 +157,10 @@ pub struct FilePreview {
     /// A unified diff. Empty for a refused file and for a file with no change.
     pub diff: String,
     pub status: FileStatus,
+    /// True when the file was on one line before and is laid out over several lines after.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub one_line_spread: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -169,6 +173,10 @@ pub struct ConfigPreview {
     /// True when a file changed on disk since the preview was made.
     pub stale: bool,
     pub can_apply: bool,
+    /// The folder the backup of this change goes in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub snapshots_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

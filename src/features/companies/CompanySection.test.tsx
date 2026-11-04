@@ -202,6 +202,18 @@ describe("CompanyView", () => {
       expect(h).not.toContain("The file keeps its comments");
       expect(h).not.toContain("Review changes");
     });
+    it("shows the one-line sentence and the real backup folder from the preview", () => {
+      const withPreview = (extra: object) => ({ preview: { ...plan(false).preview, ...extra } as unknown as ConfigPreview, normalized: false });
+      const sentence = "This file was on one line. Marshell lays it out over several lines.";
+      const files = [{ path: "p", diff: "--- a/p\n+++ b/p\n@@ -1 +1 @@\n-a\n+b\n", one_line_spread: true }];
+      const h = render({ view: form([days]), review: { kind: "review", plan: withPreview({ files, snapshots_dir: "C:/scratch/mh/snapshots" }) } });
+      expect(h).toContain(sentence);
+      expect(h).toContain("C:/scratch/mh/snapshots");
+      expect(h).not.toContain("~/.marshell/snapshots/");
+      const old = render({ view: form([days]), review: { kind: "review", plan: plan(false) } });
+      expect(old).not.toContain(sentence);
+      expect(old).toContain("~/.marshell/snapshots/");
+    });
     it("puts the normalized note first", () => {
       const h = render({ view: form([days]), review: { kind: "review", plan: plan(true) } });
       const note = "Shown as Marshell reads it: comments and layout are left out, and secret values show as hidden. The file keeps its comments and layout.";

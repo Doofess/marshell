@@ -36,6 +36,12 @@ describe("ConsentCard", () => {
     card.toggle("Approve from anywhere", true);
     expect(card.changes).toEqual([["approve", true]]);
   });
+  it("says under the diff when a one-line file is laid out over several lines", () => {
+    const sentence = "This file was on one line. Marshell lays it out over several lines.";
+    const spread = { ...CONSENT.claude, plan: { ...CONSENT.claude.plan, oneLineSpread: true } };
+    expect(renderToStaticMarkup(<ConsentCard scenario={spread} on={on} open />)).toContain(sentence);
+    expect(renderToStaticMarkup(<ConsentCard scenario={CONSENT.claude} on={on} open />)).not.toContain(sentence);
+  });
   it("says what will change in plain words, with the backup and the way out", () => {
     const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.claude} on={on} />);
     expect(h).toContain("Add 11 hook entries and chain your status line");

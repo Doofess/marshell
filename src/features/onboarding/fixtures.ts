@@ -151,6 +151,7 @@ const plan = (d: Detection, diff: string, on: Record<Capability, boolean> = ALL_
   backupPath: `${HOME}\\.marshell\\snapshots\\2026-10-10T20-15\\${CLI_NAME[d.cli].toLowerCase().replace(/ /g, "-")}-${fileName(d.configPath)}`,
   removal: removalCopy(d.cli, on, d.hooks && { hooksFile: fileName(d.hooks.path), created: !d.hooks.exists }, handOver ? d.skipsAll?.setting : undefined, false, skillUndo(on.skill, d.skill)),
   diff,
+  oneLineSpread: false,
   needsTrust: d.cli === "codex" && (on.status || on.approve),
   chainPath: on.statusline && CAPABILITIES[d.cli].statusline.available ? chainPath(d.cli) : undefined,
 });

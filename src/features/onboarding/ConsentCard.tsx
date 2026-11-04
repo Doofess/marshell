@@ -113,6 +113,7 @@ export function ConsentCard({
               </p>
             ))}
           {open && <DiffView diff={plan.diff} label={`Exact changes to ${listFiles(changedFiles(d, on.skill))}`} />}
+          {open && plan.oneLineSpread && <p className="consent__meta">This file was on one line. Marshell lays it out over several lines.</p>}
           {plan.chainPath && on.statusline && !statuslinePreset && d.hasOwnStatusLine !== false && CAPABILITIES[d.cli].statusline.available && (
             <p className="consent__chain">
               Your own status line command is saved in <code>{plan.chainPath}</code> and keeps running: Marshell&apos;s runs first and then yours.
