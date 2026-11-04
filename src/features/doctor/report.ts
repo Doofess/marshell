@@ -34,6 +34,11 @@ export function groups(r: DoctorReport): { group: DoctorGroup; heading: "Broken"
 
 /** The sessions that only pick a fix up after a restart, counted (the core names them by tab id). */
 export const restartNote = (n: number): string => `${n} ${plural(n, "session picks", "sessions pick")} this up after a restart`;
+/** Session numbers in order, joined with "and": 3, "3 and 5", "1, 2 and 3". */
+export function listNumbers(numbers: readonly number[]): string {
+  const n = [...numbers].sort((a, b) => a - b).map(String);
+  return n.length <= 1 ? n.join("") : `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}`;
+}
 export function afterFixMessage(fixed: number, restart: readonly unknown[]): string {
   const base = `Fixed ${fixed} ${plural(fixed, "issue", "issues")}.`;
   return restart.length === 0 ? base : `${base} ${restartNote(restart.length)}.`;

@@ -96,3 +96,11 @@
   gap: var(--space-1);
   color: var(--text-1);
 }
+button.sidebar__doctor {
+  font: inherit;
+  background: none;
+  border: 0;
+  padding: var(--space-1);
+  border-radius: var(--radius);
+  cursor: pointer;
+}

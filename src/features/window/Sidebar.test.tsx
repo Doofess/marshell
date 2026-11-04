@@ -42,6 +42,11 @@ describe("Sidebar", () => {
     expect(h).toContain("5h 12%");
     expect(h).not.toContain("sidebar__doctor");
   });
+  it("makes the doctor count a button when the window can open the doctor", () => {
+    const h = html({ footer: { doctorIssues: 2 }, onOpenDoctor: () => {} });
+    expect(h).toMatch(/<button[^>]*class="sidebar__doctor"[^>]*aria-label="Doctor: 2 issues"/);
+    expect(html({ footer: { doctorIssues: 2 } })).not.toMatch(/<button[^>]*sidebar__doctor/);
+  });
   it("has no footer when none is given, and gives its row back", () => {
     const h = html({ footer: undefined });
     expect(h).not.toContain("sidebar__footer");

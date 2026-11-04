@@ -1,0 +1,43 @@
+/* The Doctor over the live window: below the title bar, as Settings is. The sessions stay mounted behind it. */
+.live-doctor {
+  position: absolute;
+  inset: 40px 0 0 0;
+  z-index: 20;
+  background: var(--bg-base);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-block-size: 0;
+}
+.live-doctor__bar {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-2) var(--space-4) 0;
+}
+.live-doctor__close {
+  font: inherit;
+  color: var(--text-1);
+  background: var(--bg-raised);
+  border: 0;
+  border-radius: var(--radius);
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+}
+.live-doctor__sheet {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  background: color-mix(in srgb, var(--bg-base) 70%, transparent);
+}
+
+@media (forced-colors: active) {
+  .live-doctor,
+  .live-doctor__sheet {
+    background: Canvas;
+  }
+  .live-doctor__close {
+    background: ButtonFace;
+    color: ButtonText;
+  }
+}

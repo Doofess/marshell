@@ -41,7 +41,7 @@ export function trayModel(state: TrayState): TrayModel {
 }
 
 /** What a tray menu choice does in the window. Open and Quit are the shell's own and never get here. */
-export type TrayAction = { kind: "goto"; number: number } | { kind: "nextWaiting" } | { kind: "overlay"; overlay: "settings" | "departures" } | { kind: "togglePause" };
+export type TrayAction = { kind: "goto"; number: number } | { kind: "nextWaiting" } | { kind: "overlay"; overlay: "settings" | "departures" | "doctor" } | { kind: "togglePause" };
 
 /**
  * A jump to a session from outside the window (a tray choice, a banner) closes the board, the Settings page or the palette over it,
@@ -65,6 +65,8 @@ export function actionFor(id: string): TrayAction | null {
       return { kind: "nextWaiting" };
     case "settings":
       return { kind: "overlay", overlay: "settings" };
+    case "doctor":
+      return { kind: "overlay", overlay: "doctor" };
     case "departures":
       return { kind: "overlay", overlay: "departures" };
     case "pause":

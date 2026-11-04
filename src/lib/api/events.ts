@@ -1,4 +1,5 @@
 import { TOKEN_SUBPROTOCOL_PREFIX, WS_SUBPROTOCOL } from "../../generated/constants";
+import type { DoctorSummary } from "../../generated/DoctorSummary";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { PermissionView } from "../../generated/PermissionView";
 import type { SessionsSnapshot } from "../../generated/SessionsSnapshot";
@@ -20,6 +21,7 @@ export class EventSocket {
     private readonly endpoint: Endpoint,
     private readonly onSnapshot: (s: SessionsSnapshot) => void,
     private readonly onPermissions?: (p: PermissionView[]) => void,
+    private readonly onDoctor?: (d: DoctorSummary) => void,
   ) {
     this.connect();
   }
@@ -36,6 +38,7 @@ export class EventSocket {
       const event = parseEvent(ev.data);
       if (event?.type === "sessions") this.onSnapshot(event.data);
       else if (event?.type === "permissions") this.onPermissions?.(event.data);
+      else if (event?.type === "doctor") this.onDoctor?.(event.data);
     };
     ws.onclose = () => {
       this.ws = null;
@@ -57,7 +60,7 @@ export class EventSocket {
   }
 }
 
-export type CoreEvent = { type: "sessions"; data: SessionsSnapshot } | { type: "permissions"; data: PermissionView[] };
+export type CoreEvent = { type: "sessions"; data: SessionsSnapshot } | { type: "permissions"; data: PermissionView[] } | { type: "doctor"; data: DoctorSummary };
 
 /** The event inside a frame, or null for anything else. */
 export function parseEvent(data: unknown): CoreEvent | null {
@@ -66,6 +69,7 @@ export function parseEvent(data: unknown): CoreEvent | null {
     const msg = JSON.parse(data) as { type?: unknown; data?: unknown };
     if (msg.type === "sessions" && msg.data) return { type: "sessions", data: msg.data as SessionsSnapshot };
     if (msg.type === "permissions" && Array.isArray(msg.data)) return { type: "permissions", data: msg.data as PermissionView[] };
+    if (msg.type === "doctor" && msg.data) return { type: "doctor", data: msg.data as DoctorSummary };
     return null;
   } catch {
     return null;

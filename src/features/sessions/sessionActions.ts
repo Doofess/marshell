@@ -457,14 +457,31 @@ export class SessionActions {
     if (this.restartNeedsAck() && !acknowledged) return;
     this.set({ restarting: null, focusToken: this.refocus() });
     if (!endpoint) return;
+    await this.sendRestart(endpoint, ask.id, ask.mode, infos.find((i) => i.tab_id === ask.id)?.elevated === true, true);
+  }
+
+  /**
+   * Restarts a session in `mode` at once, by the call the restart bar's Restart makes, with no bar and no focus change. The Doctor's
+   * "Restart them" uses it, after deciding itself which sessions are safe to restart. True when the core restarted it.
+   */
+  restartNow(id: string, mode: Mode, elevated: boolean): Promise<boolean> {
+    const { endpoint } = this.deps.context();
+    return endpoint ? this.sendRestart(endpoint, id, mode, elevated, false) : Promise.resolve(false);
+  }
+
+  private async sendRestart(endpoint: Endpoint, id: string, mode: Mode, elevated: boolean, refocus: boolean): Promise<boolean> {
     try {
       const size = this.deps.size?.() ?? DEFAULT_SIZE;
-      const elevated = infos.find((i) => i.tab_id === ask.id)?.elevated === true;
-      const result = await restartSession(elevated, ask.id, ask.mode, size, () => this.deps.api.restart(endpoint, ask.id, ask.mode, size), this.deps.ask);
-      if (result.ok) this.set({ resumed: { ...this.state.resumed, [ask.id]: (this.state.resumed[ask.id] ?? 0) + 1 }, focusToken: this.refocus() });
-      else this.showToast(result.reason);
+      const result = await restartSession(elevated, id, mode, size, () => this.deps.api.restart(endpoint, id, mode, size), this.deps.ask);
+      if (!result.ok) {
+        this.showToast(result.reason);
+        return false;
+      }
+      this.set({ resumed: { ...this.state.resumed, [id]: (this.state.resumed[id] ?? 0) + 1 }, ...(refocus ? { focusToken: this.refocus() } : {}) });
+      return true;
     } catch (e) {
       this.showToast(`Couldn't restart the session: ${reason(e)}`);
+      return false;
     }
   }
 

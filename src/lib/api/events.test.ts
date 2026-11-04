@@ -137,6 +137,19 @@ describe("EventSocket", () => {
     socket.close();
   });
 
+  it("parses a doctor frame and delivers it to its subscriber", () => {
+    const summary = { running: false, issues: 3, checked_at_ms: 9 };
+    expect(parseEvent(JSON.stringify({ type: "doctor", data: summary }))).toEqual({ type: "doctor", data: summary });
+    expect(parseEvent(JSON.stringify({ type: "doctor" }))).toBeNull();
+    const onDoctor = vi.fn();
+    const socket = new EventSocket(endpoint, vi.fn(), undefined, onDoctor);
+    const ws = FakeWebSocket.instances[0]!;
+    ws.open();
+    ws.receive(JSON.stringify({ type: "doctor", data: summary }));
+    expect(onDoctor).toHaveBeenCalledWith(summary);
+    socket.close();
+  });
+
   it("does not reconnect after close()", () => {
     const socket = new EventSocket(endpoint, vi.fn());
     socket.close();

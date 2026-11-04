@@ -44,6 +44,7 @@ import { focusPendingCard } from "../approval/focusPendingCard";
 import { osOfPlatform } from "../../lib/keymap";
 import { paletteSessions } from "../palette/sessions";
 import { LiveHistory } from "../history/LiveHistory";
+import { LiveDoctor } from "../doctor/LiveDoctor";
 import { LiveSettings } from "../settings/LiveSettings";
 import { closesSettings, isTextEntry, freshSettingsStart, paletteSection } from "../settings/settingsRouting";
 import { COMPANY_NAMES, type CompanyAgent, type SettingsSection } from "../settings/settingsSections";
@@ -156,7 +157,7 @@ export function LiveApp() {
   // Each hook agent's (Claude Code, Codex, Antigravity) hook state, read when the window opens and again after each change in the Agents dialog or the onboarding. Never polled.
   const [{ detections, detectionFailed }, setSetupDetections] = useState<SetupDetections>(() => ({ detections: [], detectionFailed: new Set() }));
   const [hooks, setHooks] = useState<Partial<Record<HookAgent, HookInstall>>>({});
-  const { endpoint, profiles, rows, infos, closed, permissions, now, selectedId, loaded, select, reloadProfiles, error } = useSessions(hooks, detections);
+  const { endpoint, profiles, rows, infos, closed, permissions, now, selectedId, loaded, select, reloadProfiles, error, doctor } = useSessions(hooks, detections);
   // The company CLIs found on this machine: Settings lists Accounts and a section for each. Read with the hooks.
   const [found, setFound] = useState<ReadonlySet<CompanyAgent>>(() => new Set());
   const readFound = useCallback(async (): Promise<ReadonlySet<CompanyAgent>> => {
@@ -258,7 +259,7 @@ export function LiveApp() {
     if (!launcherOpen) setLauncherElevated(false);
   }, [launcherOpen]);
   // The command palette, the Departures board or the Settings page, over the window.
-  const [overlay, setOverlay] = useState<"palette" | "settings" | "shortcuts" | "departures" | null>(null);
+  const [overlay, setOverlay] = useState<"palette" | "settings" | "shortcuts" | "departures" | "doctor" | null>(null);
   // The Settings page's section, and the one shown last in this run: the tray's Settings… reopens that one.
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
   const lastSettingsSection = useRef<SettingsSection | null>(null);
@@ -525,7 +526,7 @@ export function LiveApp() {
   useEffect(() => {
     if (endpoint) void refreshTasks();
   }, [endpoint, refreshTasks]);
-  // The footer shows the plan only when a status line has reported it; there is no doctor count to show yet.
+  // The footer shows the plan only when a status line has reported it, and the doctor count only once the first doctor frame has arrived.
   // A shown use goes when its 5-hour window resets, even if no session says anything new by then.
   const [planNow, setPlanNow] = useState(() => Date.now());
   const plan = useMemo(() => planRing(infos, Math.max(planNow, Date.now())), [infos, planNow]);
@@ -534,7 +535,7 @@ export function LiveApp() {
     const id = setTimeout(() => setPlanNow(Date.now()), Math.max(0, plan.until - Date.now()) + 1000);
     return () => clearTimeout(id);
   }, [plan?.until]);
-  const footer = useMemo(() => (plan ? { planPct: plan.pct, fiveHourPct: plan.pct } : null), [plan]);
+  const footer = useMemo(() => (plan || doctor ? { ...(plan ? { planPct: plan.pct, fiveHourPct: plan.pct } : {}), ...(doctor ? { doctorIssues: doctor.issues } : {}) } : null), [plan, doctor]);
   const taskRows = useMemo(() => markTasks(nameAgents(rows, infos, catalog?.agents), infos, tasks), [rows, infos, tasks, catalog]);
   const sidebarRows = useRowFlash(taskRows);
   // While the list is unknown the palette keeps Review for the session in focus, so choosing it can load the list again.
@@ -1377,7 +1378,7 @@ export function LiveApp() {
     setSettingsCwd(id === "edit-references" ? focusedInfo?.cwd : undefined);
     const section = paletteSection(id);
     if (section) return openSettings(section);
-    setOverlay(id === "departures" ? id : id === "cheatsheet" ? "shortcuts" : null);
+    setOverlay(id === "departures" || id === "doctor" ? id : id === "cheatsheet" ? "shortcuts" : null);
     if (id.startsWith("session:")) return pick(id.slice("session:".length));
     // Palette-only commands. The menu opens after the palette has given the focus back, so it keeps the focus it takes.
     if (id === "pause-notifications") return void togglePause();
@@ -1441,7 +1442,7 @@ export function LiveApp() {
       announce("Couldn't change the pause. Try again.");
     }
   }, [announce]);
-  const trayState = useMemo(() => (os ? { os, sessions: traySessions(entries, rows), paused, doctorIssues: null, departures: true } : null), [os, entries, rows, paused]);
+  const trayState = useMemo(() => (os ? { os, sessions: traySessions(entries, rows), paused, doctorIssues: doctor?.issues ?? null, departures: true } : null), [os, entries, rows, paused, doctor]);
   useTray(trayState);
   // A tray menu choice. The shell has already brought the window forward for the ones that need it.
   useTrayActions((action: TrayAction) => {
@@ -1721,6 +1722,7 @@ export function LiveApp() {
           drawerCard={drawerRequest && liveCard(drawerRequest, true)}
           onDrawerClose={() => setDrawerId(undefined)}
           footer={footer}
+          onOpenDoctor={() => setOverlay("doctor")}
           shell={{ terminal: shellTerminal, cwd: panelTab?.folder, hidden: view.shell_hidden, failed: shellFailed, onRetry: retryShell, openDisabled: !panelTab, forceOpen: shellForced, onToggle: toggleShell, onOpenInPane: () => void openInPane() }}
           composer={false}
           statusBar={false}
@@ -1836,6 +1838,21 @@ export function LiveApp() {
             void refreshTasks();
           }}
           onAskAgent={askAgent}
+        />
+      )}
+      {overlay === "doctor" && (
+        <LiveDoctor
+          endpoint={endpoint}
+          summary={doctor}
+          infos={infos}
+          isWorking={(tabId) => rows.find((r) => r.id === tabId)?.status === "working"}
+          actions={actions}
+          announce={announce}
+          onOpenAgents={() => openSettings("agents")}
+          onClose={() => {
+            setOverlay(null);
+            setTimeout(() => actions.focusTerminal(), 0);
+          }}
         />
       )}
       {overlay === "settings" && (

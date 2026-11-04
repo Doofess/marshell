@@ -40,6 +40,7 @@ export function Sidebar({
   visibleIds,
   os,
   footer,
+  onOpenDoctor,
   shell,
   renamingId,
   onRename,
@@ -76,6 +77,8 @@ export function Sidebar({
   /** Decides which click toggles a pane. Defaults to Windows (Ctrl+click). */
   os?: Os;
   footer?: SidebarFooter;
+  /** A click on the footer's Doctor count opens the Doctor. Left out, the count is only read. */
+  onOpenDoctor?: () => void;
   shell?: SidebarShell;
   /** F2: the row whose name is a text box, and what its Enter and its Escape or blur do. */
   renamingId?: string | null;
@@ -307,12 +310,25 @@ export function Sidebar({
             </span>
           )}
           <span className="sidebar__spacer" />
-          {footer.doctorIssues !== undefined && (
-            <span className="sidebar__doctor" role="img" aria-label={issues > 0 ? `Doctor: ${issues} issues` : "Doctor: no issues"}>
-              <span aria-hidden="true">{issues > 0 ? <AuxGlyph kind="caution" /> : <StatusGlyph kind="done-seen" size={12} />}</span>
-              <span aria-hidden="true">{issues}</span>
-            </span>
-          )}
+          {footer.doctorIssues !== undefined &&
+            (() => {
+              const label = issues > 0 ? `Doctor: ${issues} issues` : "Doctor: no issues";
+              const inner = (
+                <>
+                  <span aria-hidden="true">{issues > 0 ? <AuxGlyph kind="caution" /> : <StatusGlyph kind="done-seen" size={12} />}</span>
+                  <span aria-hidden="true">{issues}</span>
+                </>
+              );
+              return onOpenDoctor ? (
+                <button type="button" className="sidebar__doctor" aria-label={label} onClick={onOpenDoctor}>
+                  {inner}
+                </button>
+              ) : (
+                <span className="sidebar__doctor" role="img" aria-label={label}>
+                  {inner}
+                </span>
+              );
+            })()}
         </footer>
       )}
     </aside>

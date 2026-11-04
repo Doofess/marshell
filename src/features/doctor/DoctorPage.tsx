@@ -42,7 +42,9 @@ export function DoctorPage({ report, phase, selected, undo, nowMs, elapsedMs = 0
   const chosen = report ? selectedFixable(report, selected).length : 0;
   const fixedIds = new Set(phase === "fixed" ? undo?.item_ids : []);
   const fixedCount = report ? report.items.filter((i) => i.group !== "info" && fixedIds.has(i.id)).length : 0;
-  const offer = phase === "fixed" && undo ? undoOffer(undoState(undo), nowMs) : undefined;
+  // A record read back when the page opens (after a restart) shows in the header too; its toast is long gone or never shown.
+  const rawOffer = (phase === "fixed" || phase === "ready") && undo ? undoOffer(undoState(undo), nowMs) : undefined;
+  const offer = rawOffer && phase !== "fixed" && rawOffer.kind === "toast" ? { kind: "header" as const, text: "Undo last fix" } : rawOffer;
   const clear = !!report && report.items.length === 0 && phase === "ready";
   const clearCopy = EMPTY_STATES.find((e) => e.id === "doctor-clear")!;
   const checked = report ? `${Math.max(0, Math.round((nowMs - report.checked_at_ms) / 1000))} s ago` : "–";

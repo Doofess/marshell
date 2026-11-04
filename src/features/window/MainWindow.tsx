@@ -121,6 +121,8 @@ export type MainWindowProps = {
   ports?: string[];
   /** What the sidebar footer shows; defaults to the scenario's plan and doctor numbers. `null` leaves the footer out (the live app has none to show yet). */
   footer?: SidebarFooter | null;
+  /** A click on the sidebar footer's Doctor count. */
+  onOpenDoctor?: () => void;
   /** The needs-you count the window title leads with. The live app passes the one count it also gives the taskbar badge. */
   needsYou?: number;
   /** The 24 px status bar at the foot of the window (the focused session's strip); on by default, never in focus mode. */
@@ -254,6 +256,7 @@ export function MainWindow({
   renderTerminal,
   ports,
   footer = SCENARIO_FOOTER,
+  onOpenDoctor,
   needsYou = 0,
   headerBar,
   paneBar,
@@ -532,7 +535,7 @@ export function MainWindow({
       </header>
 
       <div ref={bodyRef} className="window__body">
-        {mode === "expanded" && <Sidebar rows={rows} requests={requests} renderCard={renderCard} onJumpRequest={onJumpRequest} readScreen={readScreen} onPeekClose={onPeekClose} height={height - BAR} width={sideW} selectedId={selected?.id} visibleIds={visibleIds} os={os} footer={footer ?? undefined} shell={shell ? { cwd: shellOptions.cwd ?? active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed || shellOptions.hidden === true, os, terminal: shellOptions.terminal, failed: shellOptions.failed, onRetry: shellOptions.onRetry, openDisabled: shellOptions.openDisabled, forceOpen: shellOptions.forceOpen, onToggle: shellOptions.onToggle, onOpenInPane: shellOptions.onOpenInPane } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} onSelect={onSelect} onToggle={onToggle} onReview={onReview} onSetup={onSetup} menuItems={menuItems} onMenuRun={onMenuRun} grouped={grouped} />}
+        {mode === "expanded" && <Sidebar rows={rows} requests={requests} renderCard={renderCard} onJumpRequest={onJumpRequest} readScreen={readScreen} onPeekClose={onPeekClose} height={height - BAR} width={sideW} selectedId={selected?.id} visibleIds={visibleIds} os={os} footer={footer ?? undefined} onOpenDoctor={onOpenDoctor} shell={shell ? { cwd: shellOptions.cwd ?? active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed || shellOptions.hidden === true, os, terminal: shellOptions.terminal, failed: shellOptions.failed, onRetry: shellOptions.onRetry, openDisabled: shellOptions.openDisabled, forceOpen: shellOptions.forceOpen, onToggle: shellOptions.onToggle, onOpenInPane: shellOptions.onOpenInPane } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} onSelect={onSelect} onToggle={onToggle} onReview={onReview} onSetup={onSetup} menuItems={menuItems} onMenuRun={onMenuRun} grouped={grouped} />}
         {mode === "expanded" && (
           <div
             className="window__side-handle"

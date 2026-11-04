@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DOCTOR_CLEAR, DOCTOR_PROBLEMS, DOCTOR_REPORT } from "./fixtures";
-import { afterFixMessage, counts, fixHeadline, groups, initialSelection, selectedFixable } from "./report";
+import { afterFixMessage, counts, fixHeadline, groups, initialSelection, listNumbers, selectedFixable } from "./report";
 
 describe("counts", () => {
   it("counts issues, not Info, and splits fixable from not", () => {
@@ -41,6 +41,13 @@ describe("groups", () => {
     expect(groups(DOCTOR_REPORT).map((g) => [g.heading, g.items.length])).toEqual([["Broken", 3], ["Waste", 1], ["Info", 1]]);
     expect(groups(DOCTOR_PROBLEMS).map((g) => g.heading)).toEqual(["Broken"]);
     expect(groups(DOCTOR_CLEAR)).toEqual([]);
+  });
+});
+describe("listNumbers", () => {
+  it("joins session numbers in order with and", () => {
+    expect(listNumbers([3])).toBe("3");
+    expect(listNumbers([5, 3])).toBe("3 and 5");
+    expect(listNumbers([1, 2, 3])).toBe("1, 2 and 3");
   });
 });
 describe("afterFixMessage", () => {
