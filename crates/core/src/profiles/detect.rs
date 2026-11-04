@@ -238,11 +238,8 @@ pub fn detect_profiles(probe: &Probe) -> Vec<Profile> {
                 ShellFamily::Posix,
             ));
         }
-        for distro in parse_wsl_list(&(probe.wsl_list)()) {
-            // Docker Desktop's internal distros are not shells to launch in.
-            if distro == "docker-desktop" || distro == "docker-desktop-data" {
-                continue;
-            }
+        // Docker Desktop's internal distros are not shells to launch in.
+        for distro in crate::wsl::user_distros(parse_wsl_list(&(probe.wsl_list)())) {
             found.push(detected(
                 &format!("wsl-{}", distro.to_lowercase()),
                 &distro,

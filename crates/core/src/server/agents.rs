@@ -67,9 +67,6 @@ fn wsl_version_argv(distro: &str, exe: &str) -> Vec<String> {
         .to_vec()
 }
 
-/// The target from what `distro` printed for its `$HOME` and for the bridge's Linux path. None for a home that is
-/// not under the distro's own share (one under `/mnt/c` is a folder of Windows, and a distro's hooks must never
-/// land in the Windows user's files), and for a bridge path that is not absolute.
 /// The distro's home and the bridge's Linux path from `distro_target`'s one call: two lines, each non-empty.
 fn split_home_and_bridge(out: &str) -> Option<(String, String)> {
     let mut lines = out.lines().map(|line| line.trim_end_matches('\r'));
@@ -77,8 +74,11 @@ fn split_home_and_bridge(out: &str) -> Option<(String, String)> {
     (!home.is_empty() && !bridge.is_empty()).then(|| (home.to_string(), bridge.to_string()))
 }
 
+/// The target from what `distro` printed for its `$HOME` and for the bridge's Linux path. None for a home that is
+/// not under the distro's own share (one under `/mnt/c` is a folder of Windows, and a distro's hooks must never
+/// land in the Windows user's files), and for a bridge path that is not absolute.
 fn distro_target_of(distro: &str, linux_home: &str, linux_bridge: &str) -> Option<DistroTarget> {
-    let home = crate::wsl::to_windows(distro, linux_home).filter(|home| crate::wsl::under_distro(distro, home))?;
+    let home = crate::wsl::home_in_share(distro, linux_home)?;
     linux_bridge.starts_with('/').then(|| DistroTarget {
         home,
         bridge: linux_bridge.to_string(),
@@ -392,43 +392,15 @@ impl AppState {
     /// The plan to take Marshell's hooks out of `distro`.
     fn distro_remove(&self, adapter: Adapter, distro: &str) -> Result<RemovePreview, Fail> {
         let home = self.distro_target(distro)?.home;
-        let (changes, statusline_left) = match adapter {
-            Adapter::Claude => {
-                let path = home.join(".claude").join("settings.json");
-                let text = read_text(&path).map_err(|e| refused(&e))?;
-                let plan = hooks::remove_plan(&path, &home, text.as_deref(), None, None, Some(distro))
-                    .map_err(|e| refused(&e))?;
-                (plan.changes, plan.statusline_left)
-            }
-            Adapter::Codex => {
-                let path = home.join(".codex").join("hooks.json");
-                let text = read_text(&path).map_err(|e| refused(&e))?;
-                let changes =
-                    codex::hooks::remove_plan(&path, text.as_deref(), &self.0.home).map_err(|e| refused(&e))?;
-                (changes, false)
-            }
-            Adapter::Antigravity => {
-                let hooks_text = read_text(&agy::hooks_path(&home)).map_err(|e| refused(&e))?;
-                let settings_text = read_text(&agy::settings_path(&home)).map_err(|e| refused(&e))?;
-                let changes = agy::remove_plan(
-                    &home,
-                    hooks_text.as_deref(),
-                    settings_text.as_deref(),
-                    None,
-                    None,
-                    Some(distro),
-                )
-                .map_err(|e| refused(&e))?;
-                (changes, false)
-            }
-            Adapter::Qwen => {
-                let path = home.join(".qwen").join("settings.json");
-                let text = read_text(&path).map_err(|e| refused(&e))?;
-                let plan = qwen_hooks::remove_plan(&path, &home, text.as_deref(), None, None, Some(distro))
-                    .map_err(|e| refused(&e))?;
-                (plan.changes, plan.statusline_left)
-            }
+        let agent = match adapter {
+            Adapter::Claude => AGENT,
+            Adapter::Codex => CODEX,
+            Adapter::Antigravity => ANTIGRAVITY,
+            Adapter::Qwen => QWEN,
         };
+        // The same plan `marshell uninstall` makes (`agents::distro`), so the dialog and the CLI never differ.
+        let (changes, statusline_left) =
+            crate::agents::distro::remove_plan_of(agent, &home, &self.0.home, distro).map_err(|e| refused(&e))?;
         Ok(RemovePreview {
             preview: self.0.config.preview(changes),
             statusline_left,
@@ -1828,15 +1800,13 @@ mod tests {
     }
 
     #[test]
-    fn a_distro_target_is_the_distros_own_share() {
+    fn a_distro_target_needs_a_linux_bridge_path() {
         let bridge = "/mnt/c/Users/x y/.marshell/bin/marshell-hook.exe";
         let target = distro_target_of("Ubuntu", "/home/me", bridge).unwrap();
         assert_eq!(target.home, PathBuf::from(r"\\wsl.localhost\Ubuntu\home\me"));
         assert_eq!(target.bridge, bridge);
-        // A home on a Windows drive, an empty or relative one, and one with `..`: no target.
-        for home in ["/mnt/c/Users/me", "/mnt/c", "", "me", "/home/../mnt/c/x"] {
-            assert_eq!(distro_target_of("Ubuntu", home, bridge), None, "{home:?}");
-        }
+        // A home outside the distro's share is `wsl::home_in_share`'s refusal, tested there.
+        assert_eq!(distro_target_of("Ubuntu", "/mnt/c/Users/me", bridge), None);
         // A bridge that is not a Linux path: no target.
         assert_eq!(distro_target_of("Ubuntu", "/home/me", ""), None);
         assert_eq!(distro_target_of("Ubuntu", "/home/me", r"C:\x"), None);

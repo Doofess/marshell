@@ -5,6 +5,7 @@ pub mod antigravity;
 pub mod claude;
 pub mod codex;
 pub mod common;
+pub mod distro;
 pub mod identify;
 pub mod install;
 pub mod manifest;
