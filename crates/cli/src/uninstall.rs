@@ -327,8 +327,9 @@ pub fn run(
     // The WSL distros: the installed ones, and any `managed.json` names that the list missed. Every home is asked for at
     // once, each with its own time limit, because a stopped distro is started by the question.
     let managed_names = managed_distros(home);
+    let listed = (wsl.distros)();
     let mut names: Vec<String> = Vec::new();
-    for name in (wsl.distros)().into_iter().chain(managed_names.iter().cloned()) {
+    for name in listed.iter().cloned().chain(managed_names.iter().cloned()) {
         if !names.iter().any(|n| n.eq_ignore_ascii_case(&name)) {
             names.push(name);
         }
@@ -356,6 +357,12 @@ pub fn run(
     let mut distro_unanswered = false;
     for (name, answer) in &answers {
         let Some(distro_home) = answer else {
+            // WSL answered with its distros and this one isn't among them: it was unregistered, and its files with it.
+            // An empty list may be WSL itself failing, so it proves nothing.
+            if !listed.is_empty() && !listed.iter().any(|l| l.eq_ignore_ascii_case(name)) {
+                let _ = writeln!(out, "{name} isn't installed in WSL any more: nothing to remove there.");
+                continue;
+            }
             let _ = writeln!(out, "{name} didn't answer. Start it and run marshell uninstall again.");
             distro_unanswered = true;
             if managed_names.iter().any(|m| m.eq_ignore_ascii_case(name)) {
@@ -1627,6 +1634,31 @@ mod tests {
         let (_, out, asked) = run_in_wsl(&f, &[], &[]);
         assert_eq!(asked, ["Ubuntu"]);
         assert!(out.contains("Looking in WSL distros: Ubuntu."), "{out}");
+    }
+
+    #[test]
+    fn a_managed_distro_that_is_no_longer_installed_does_not_keep_bin() {
+        // WSL listed its distros and Gone isn't one of them: it was unregistered, and its files went with it.
+        let f = installed(ORIGINAL);
+        manage_in_distro(&f, "Gone");
+        let ubuntu = fake_distro_home();
+        let (code, out, asked) = run_in_wsl(&f, &["Ubuntu"], &[("Ubuntu", ubuntu.path())]);
+        assert_eq!(code, 0, "{out}");
+        assert!(asked.contains(&"Gone".to_string()), "{asked:?}");
+        assert!(
+            out.contains("Gone isn't installed in WSL any more: nothing to remove there."),
+            "{out}"
+        );
+        assert!(!out.contains("Gone didn't answer"), "{out}");
+        assert!(!marshell_core::paths::bin_dir(&f.home).exists(), "{out}");
+
+        // An empty list may be WSL failing to answer, not a distro gone: the managed one still keeps bin.
+        let f = installed(ORIGINAL);
+        manage_in_distro(&f, "Gone");
+        let (code, out, _) = run_in_wsl(&f, &[], &[]);
+        assert_eq!(code, 1, "{out}");
+        assert!(out.contains("Gone didn't answer."), "{out}");
+        assert!(bin_exists(&f), "{out}");
     }
 
     #[test]
