@@ -87,6 +87,14 @@ struct Stored {
     own_ops: Vec<Vec<bool>>,
 }
 
+/// A stored preview that can be applied now, copied out from under the previews lock.
+struct Applicable {
+    cs: ChangeSet,
+    preview: ConfigPreview,
+    targets: Vec<PathBuf>,
+    own_ops: Vec<Vec<bool>>,
+}
+
 #[derive(Default)]
 struct Previews {
     next_seq: u64,
@@ -417,7 +425,7 @@ impl ConfigService {
     }
 
     /// The stored preview, or why it can't be applied now.
-    fn stored(&self, id: &str) -> Result<(ChangeSet, ConfigPreview, Vec<PathBuf>, Vec<Vec<bool>>), ApplyError> {
+    fn stored(&self, id: &str) -> Result<Applicable, ApplyError> {
         let mut previews = lock(&self.shared.previews);
         previews.prune();
         let stored = previews.map.get(id).ok_or(ApplyError::UnknownChangeSet)?;
@@ -442,18 +450,23 @@ impl ConfigService {
                 paths_where(&|s| matches!(s, FileStatus::Refused { .. })),
             ));
         }
-        Ok((
-            stored.cs.clone(),
-            preview.clone(),
-            stored.targets.clone(),
-            stored.own_ops.clone(),
-        ))
+        Ok(Applicable {
+            cs: stored.cs.clone(),
+            preview: preview.clone(),
+            targets: stored.targets.clone(),
+            own_ops: stored.own_ops.clone(),
+        })
     }
 
     fn apply_with(&self, req: &ApplyRequest, now_ms: u64, write: Writer) -> Result<ApplyResult, ApplyError> {
         let shared = &*self.shared;
         // 1. The stored preview.
-        let (cs, preview, targets, own_ops) = self.stored(&req.changeset_id)?;
+        let Applicable {
+            cs,
+            preview,
+            targets,
+            own_ops,
+        } = self.stored(&req.changeset_id)?;
 
         // 2. Exactly the hashes that were shown, one per file.
         let mut mismatched: Vec<String> = Vec::new();
@@ -478,7 +491,7 @@ impl ConfigService {
         let arcs = shared.path_locks(&targets);
         let _held: Vec<MutexGuard<'_, ()>> = arcs.iter().map(|l| lock(l)).collect();
         // A racing apply may have used or staled this preview while we waited.
-        let (_, _, _, _) = self.stored(&req.changeset_id)?;
+        self.stored(&req.changeset_id)?;
 
         // 4. Plan again from disk: nothing may have moved since the user looked.
         let files = plan(&cs, &shared.guard(), &shared.snapshots);

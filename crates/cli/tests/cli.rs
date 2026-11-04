@@ -45,6 +45,7 @@ async fn core_with_focus(home: &Path, focus: Option<marshell_core::server::Focus
         notify_paused: Default::default(),
         window_hidden: Default::default(),
         import: None,
+        doctor_on_start: false,
     })
     .await
     .unwrap()

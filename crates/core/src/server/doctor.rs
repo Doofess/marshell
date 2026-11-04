@@ -17,7 +17,7 @@ use axum::response::{IntoResponse, Response};
 use marshell_protocol::agents::{AgentSetup, SettingsState};
 use marshell_protocol::doctor::{DoctorReport, DoctorSummary};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 type Fail = (StatusCode, String);
@@ -42,26 +42,58 @@ pub async fn report(State(st): State<AppState>) -> Response {
 /// Starts a run of the checks unless one is going, in which case the request joins that run. The summary reads
 /// `running` as soon as this returns. Needs a Tokio runtime.
 pub(crate) fn request_run(st: &AppState) {
-    let doctor = st.doctor();
-    if doctor
-        .running
-        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
-    {
-        return;
-    }
-    doctor.summary.send_modify(|s| s.running = true);
-    let st = st.clone();
-    tokio::spawn(async move { run_once(st).await });
+    request_run_with(st, Arc::new(facts_of));
 }
 
-/// One run. It is the only writer of the report.
-async fn run_once(st: AppState) {
+/// Reads what the checks need, off the async threads. A test swaps it to hold a run.
+type ReadFacts = Arc<dyn Fn(&AppState) -> Vec<AgentFacts> + Send + Sync>;
+
+fn request_run_with(st: &AppState, read: ReadFacts) {
+    let doctor = st.doctor();
+    {
+        // `running` and `again` change together under one lock (see `RunFlags`), and the summary is updated under it
+        // too, so the end of a run and a new request cannot write `running` in the wrong order. Nothing here awaits.
+        let mut flags = doctor.run.lock().unwrap_or_else(|e| e.into_inner());
+        if flags.running {
+            // A fix may have been applied after this run read its files: one more run follows it, however many
+            // requests arrive meanwhile.
+            flags.again = true;
+            return;
+        }
+        flags.running = true;
+        doctor.summary.send_modify(|s| s.running = true);
+    }
+    let st = st.clone();
+    tokio::spawn(async move {
+        loop {
+            let finished = run_once(&st, read.clone()).await;
+            let doctor = st.doctor();
+            let mut flags = doctor.run.lock().unwrap_or_else(|e| e.into_inner());
+            let again = std::mem::take(&mut flags.again);
+            // `running` stays true in the summary while another run follows.
+            doctor.summary.send_modify(|s| {
+                s.running = again;
+                if let Some((issues, now)) = finished {
+                    s.issues = issues;
+                    s.checked_at_ms = Some(now);
+                }
+            });
+            if !again {
+                flags.running = false;
+                return;
+            }
+        }
+    });
+}
+
+/// One run, answering the issue count and the time of its report, or `None` when it failed. It is the only writer of
+/// the report.
+async fn run_once(st: &AppState, read: ReadFacts) -> Option<(u32, u64)> {
     let started = Instant::now();
     let reader = st.clone();
-    let facts = tokio::task::spawn_blocking(move || facts_of(&reader)).await;
+    let facts = tokio::task::spawn_blocking(move || read(&reader)).await;
     let doctor = st.doctor();
-    let finished = match facts {
+    match facts {
         Ok(facts) => {
             let items = checks::items(&facts, &[]);
             let issues = checks::issues(&items);
@@ -77,17 +109,7 @@ async fn run_once(st: AppState) {
             tracing::warn!("the doctor's run failed: {e}");
             None
         }
-    };
-    // The flag is cleared inside the summary's update, so a request that starts the next run cannot have its
-    // `running` overwritten by this run's end.
-    doctor.summary.send_modify(|s| {
-        s.running = false;
-        if let Some((issues, now)) = finished {
-            s.issues = issues;
-            s.checked_at_ms = Some(now);
-        }
-        doctor.running.store(false, Ordering::SeqCst);
-    });
+    }
 }
 
 fn now_ms() -> u64 {
@@ -372,6 +394,53 @@ mod tests {
             assert!(ids.contains(&format!("setup.{agent}").as_str()), "{ids:?}");
         }
         assert!(!ids.contains(&"setup.codex"), "{ids:?}");
+    }
+
+    #[tokio::test]
+    async fn a_request_during_a_run_runs_again_after_it() {
+        use std::sync::Mutex;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().unwrap();
+        let st = state(dir.path());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let started_tx = Mutex::new(Some(started_tx));
+        let release_rx = Mutex::new(release_rx);
+        let counter = calls.clone();
+        // The first read blocks until the test has made its further requests; each read names its own number.
+        let read: ReadFacts = Arc::new(move |st| {
+            let n = counter.fetch_add(1, Ordering::SeqCst) + 1;
+            if n == 1 {
+                if let Some(tx) = started_tx.lock().unwrap().take() {
+                    let _ = tx.send(());
+                }
+                release_rx.lock().unwrap().recv().unwrap();
+            }
+            facts_with(st, move |_, _| {
+                Err((StatusCode::INTERNAL_SERVER_ERROR, format!("read {n}")))
+            })
+        });
+
+        let mut summary = st.doctor().summary.subscribe();
+        request_run_with(&st, read.clone());
+        started_rx.await.unwrap();
+        // Two requests during one run still cause one more run.
+        request_run_with(&st, read.clone());
+        request_run_with(&st, read.clone());
+        release_tx.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(10), summary.wait_for(|s| !s.running))
+            .await
+            .expect("the runs end")
+            .unwrap();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let report = st.doctor().report.lock().unwrap().clone().unwrap();
+        let failed = report.items.iter().find(|i| i.id == "error.claude").unwrap();
+        assert_eq!(failed.detail, "read 2");
+        assert!(!st.doctor().summary.borrow().running);
     }
 
     #[test]

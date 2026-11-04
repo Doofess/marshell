@@ -21,6 +21,7 @@ async fn core() -> (RunningCore, tempfile::TempDir) {
         notify_paused: Default::default(),
         window_hidden: Default::default(),
         import: None,
+        doctor_on_start: false,
     })
     .await
     .unwrap();
@@ -136,15 +137,15 @@ async fn events_close_when_the_client_closes() {
 
 #[tokio::test]
 async fn the_events_socket_sends_the_doctor_summary() {
-    // The core runs the checks once at startup, so a summary that has finished arrives after the first one.
+    // The test config leaves `doctor_on_start` off, so no run reads the real CLI folders: the summary that follows the
+    // permissions is the idle one, before any run.
     let (core, _home) = core().await;
     let mut ws = connect(&core).await;
     assert_eq!(next_event(&mut ws).await["type"], "sessions");
     assert_eq!(next_event(&mut ws).await["type"], "permissions");
-    let mut event = next_event(&mut ws).await;
+    let event = next_event(&mut ws).await;
     assert_eq!(event["type"], "doctor", "{event}");
-    while event["type"] != "doctor" || event["data"]["running"] != false || event["data"]["checked_at_ms"].is_null() {
-        event = next_event(&mut ws).await;
-    }
-    assert!(event["data"]["checked_at_ms"].as_u64().unwrap() > 0, "{event}");
+    assert_eq!(event["data"]["running"], false, "{event}");
+    assert_eq!(event["data"]["issues"], 0, "{event}");
+    assert!(event["data"]["checked_at_ms"].is_null(), "{event}");
 }

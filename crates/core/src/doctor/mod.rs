@@ -4,4 +4,4 @@ pub mod checks;
 pub mod state;
 
 pub use checks::{AgentFacts, FileState, RETENTION_OTHERS, display_name, issues, items};
-pub use state::{DoctorState, PendingFix};
+pub use state::{DoctorState, PendingFix, RunFlags};

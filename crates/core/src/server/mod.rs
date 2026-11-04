@@ -101,6 +101,9 @@ pub struct CoreConfig {
     /// The folders of Claude Code's, Codex's and Qwen Code's conversations, for the importer. None in tests: then no
     /// importer runs, so nothing reads the real `~/.claude`, `~/.codex` or `~/.qwen`.
     pub import: Option<crate::history::import::ImportRoots>,
+    /// Whether the Doctor runs its checks once at startup. false in tests: then nothing reads the real CLI folders at
+    /// startup, and no CLI is asked for its `--version`.
+    pub doctor_on_start: bool,
 }
 
 /// The view with a hidden window counted as unfocused: the shell's visibility wins over the webview's last report.
@@ -1372,7 +1375,7 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
     let endpoint_file = paths::endpoint_file(&cfg.home);
     let mut state = AppState::new(endpoint.token.clone(), port, cfg.allowed_origins, cfg.home, detected)
         .with_notification_flags(cfg.notify_paused, cfg.window_hidden)
-        .with_doctor_on_start(true)
+        .with_doctor_on_start(cfg.doctor_on_start)
         .with_permission_hold(permission_hold_from_env(
             std::env::var("MARSHELL_PERMISSION_HOLD_SECS").ok().as_deref(),
         ))

@@ -3,7 +3,6 @@
 
 use marshell_protocol::doctor::{DoctorReport, DoctorSummary};
 use std::sync::Mutex;
-use std::sync::atomic::AtomicBool;
 use tokio::sync::watch;
 
 /// The fix whose preview was shown and not yet applied.
@@ -15,11 +14,23 @@ pub struct PendingFix {
     pub restart: Vec<String>,
 }
 
+/// The two facts about runs that must change together, so they share one mutex: a request and the end of a run each
+/// read and write both under the lock, and neither can slip between the other's read and write. Two atomics would
+/// let a request arrive after a run's last look at `again` and before it cleared `running`, and be lost. The lock is
+/// never held across an `.await`.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RunFlags {
+    /// A run is going.
+    pub running: bool,
+    /// A request came in during the run: one more run follows it, however many requests there were.
+    pub again: bool,
+}
+
 pub struct DoctorState {
     /// The last run's report; `None` until the first run ends.
     pub report: Mutex<Option<DoctorReport>>,
-    /// A run is going. Claimed with a compare-and-swap, so two requests start one run.
-    pub running: AtomicBool,
+    /// Whether a run is going and whether another was asked for meanwhile. See `RunFlags`.
+    pub run: Mutex<RunFlags>,
     /// What the sidebar and the events socket show.
     pub summary: watch::Sender<DoctorSummary>,
     pub pending: Mutex<Option<PendingFix>>,
@@ -29,7 +40,7 @@ impl Default for DoctorState {
     fn default() -> Self {
         Self {
             report: Mutex::new(None),
-            running: AtomicBool::new(false),
+            run: Mutex::new(RunFlags::default()),
             summary: watch::channel(DoctorSummary {
                 running: false,
                 issues: 0,

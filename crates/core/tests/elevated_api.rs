@@ -657,6 +657,7 @@ async fn ws_input_to_an_elevated_row_is_dropped() {
         notify_paused: Default::default(),
         window_hidden: Default::default(),
         import: None,
+        doctor_on_start: false,
     })
     .await
     .unwrap();
