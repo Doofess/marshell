@@ -1,42 +1,40 @@
-import { parseUnifiedDiff } from "../../components/DiffView/diff";
-import { mergeDiffs } from "./mergeDiff";
-import type { DoctorItem, DoctorReport, FixGroup } from "./types";
+import type { DoctorGroup, DoctorItem, DoctorReport } from "./types";
 export * from "./types";
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
-/** Issues are errors and warnings; information (such as managed settings) is listed but never counted. */
+/** Issues are Broken and Waste items; Info (such as managed settings) is listed but never counted. */
 export function counts(r: DoctorReport) {
-  const issues = r.items.filter((i) => i.severity !== "info");
+  const issues = r.items.filter((i) => i.group !== "info");
   const fixable = issues.filter((i) => i.fixable).length;
   return { issues: issues.length, fixable, unfixable: issues.length - fixable };
 }
-export function fixHeadline(r: DoctorReport): string {
-  const n = counts(r).fixable;
-  return n === 0 ? "Nothing to fix" : `Fix ${n} ${plural(n, "issue", "issues")}`;
-}
-export function groupByFile(items: DoctorItem[]): FixGroup[] {
-  const by = new Map<string, { item: DoctorItem; diff: string }[]>();
-  const add = (file: string, item: DoctorItem, diff: string) => by.set(file, [...(by.get(file) ?? []), { item, diff }]);
-  for (const i of items) {
-    if (!i.fixable || !i.file || !i.diff) continue;
-    add(i.file, i, i.diff);
-    for (const w of i.alsoWrites ?? []) add(w.file, i, w.diff);
+
+/** Fixable Broken items start checked; an item that was in the previous report keeps the state the person gave it. */
+export function initialSelection(r: DoctorReport, prev?: ReadonlySet<string>, prevReport?: DoctorReport): Set<string> {
+  const before = new Set(prevReport?.items.map((i) => i.id));
+  const on = new Set<string>();
+  for (const i of r.items) {
+    if (!i.fixable) continue;
+    if (prev && before.has(i.id) ? prev.has(i.id) : i.group === "broken") on.add(i.id);
   }
-  return [...by].map(([file, entries]) => {
-    const its = [...new Set(entries.map((e) => e.item))];
-    const diff = mergeDiffs(entries.map((e) => e.diff));
-    const p = parseUnifiedDiff(diff);
-    return { file, items: its, diff, added: p.added, removed: p.removed };
-  });
+  return on;
 }
-export const restartSessionsOf = (items: DoctorItem[]) => [...new Set(items.flatMap((i) => i.restartSessions ?? []))].sort((a, b) => a - b);
-export function listNumbers(n: number[]): string {
-  if (n.length <= 1) return n.join("");
-  return `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}`;
+export const selectedFixable = (r: DoctorReport, sel: ReadonlySet<string>): DoctorItem[] => r.items.filter((i) => i.fixable && sel.has(i.id));
+export const fixHeadline = (n: number): string => `Fix ${n} ${plural(n, "issue", "issues")}`;
+
+const HEADINGS: { group: DoctorGroup; heading: "Broken" | "Waste" | "Info" }[] = [
+  { group: "broken", heading: "Broken" },
+  { group: "waste", heading: "Waste" },
+  { group: "info", heading: "Info" },
+];
+export function groups(r: DoctorReport): { group: DoctorGroup; heading: "Broken" | "Waste" | "Info"; items: DoctorItem[] }[] {
+  return HEADINGS.map((h) => ({ ...h, items: r.items.filter((i) => i.group === h.group) })).filter((g) => g.items.length > 0);
 }
-export function afterFixMessage(fixed: number, restart: number[]): string {
+
+/** The sessions that only pick a fix up after a restart, counted (the core names them by tab id). */
+export const restartNote = (n: number): string => `${n} ${plural(n, "session picks", "sessions pick")} this up after a restart`;
+export function afterFixMessage(fixed: number, restart: readonly unknown[]): string {
   const base = `Fixed ${fixed} ${plural(fixed, "issue", "issues")}.`;
-  if (restart.length === 0) return base;
-  return `${base} ${restart.length} ${plural(restart.length, "session picks", "sessions pick")} this up after a restart.`;
+  return restart.length === 0 ? base : `${base} ${restartNote(restart.length)}.`;
 }
