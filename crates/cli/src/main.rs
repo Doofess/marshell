@@ -97,7 +97,16 @@ fn main() -> ExitCode {
                 return ExitCode::from(1);
             };
             let env = |name: &str| std::env::var(name).ok();
-            let code = uninstall::run(&home, &user_home, &env, &mut stdin().lock(), &mut stdout(), yes);
+            // Each WSL call may start a stopped distro, so it gets a longer limit than the app's own lookups.
+            let limit = std::time::Duration::from_secs(20);
+            let distros = || marshell_core::wsl::list_distros(limit);
+            let distro_home = |distro: &str| marshell_core::wsl::distro_home(distro, limit);
+            let wsl = uninstall::Wsl {
+                distros: &distros,
+                home: &distro_home,
+                pinned: false,
+            };
+            let code = uninstall::run(&home, &user_home, &env, &wsl, &mut stdin().lock(), &mut stdout(), yes);
             exit(code)
         }
         Err(message) => {

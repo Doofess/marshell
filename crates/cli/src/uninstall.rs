@@ -1,21 +1,69 @@
-//! `marshell uninstall`: shows what taking Marshell out of Claude Code and Codex would change, asks, and does it
-//! through the config service (so it is hashed, snapshotted and undoable), then removes `<home>/bin`.
+//! `marshell uninstall`: shows what taking Marshell out of each agent CLI (on Windows and in the WSL distros) would
+//! change, asks, and does it through the config service (so it is hashed, snapshotted and undoable), then removes
+//! `<home>/bin`.
 //!
-//! Exit codes: 0 done or nothing to do, 1 refused, failed or declined.
+//! Exit codes: 0 done or nothing to do, 1 refused, failed or declined, or a WSL distro that didn't answer.
 
 use marshell_core::agents::antigravity::hooks as agy_hooks;
 use marshell_core::agents::claude::hooks::{remove_plan, settings_path};
 use marshell_core::agents::codex::hooks as codex_hooks;
+use marshell_core::agents::distro as distro_hooks;
 use marshell_core::agents::qwen::hooks as qwen_hooks;
 use marshell_core::agents::skill;
+use marshell_core::config::guard::unverbatim;
+use marshell_core::config::managed;
 use marshell_core::config::preview::{MAX_CONFIG_BYTES, TOO_LARGE_DETAIL};
 use marshell_core::config::service::{ApplyError, ConfigService};
-use marshell_core::paths;
+use marshell_core::{paths, wsl};
 use marshell_protocol::agents::SkillInstall;
 use marshell_protocol::config::{ApplyRequest, ChangeSet, ConfigPreview, ExpectedHash, FileStatus};
 use std::io::{BufRead, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// How `run` looks into WSL: the installed distros, a distro's home as a path under its share (None when it doesn't
+/// answer), and whether that home is a plain folder a test pinned.
+pub struct Wsl<'a> {
+    pub distros: &'a dyn Fn() -> Vec<String>,
+    pub home: &'a (dyn Fn(&str) -> Option<PathBuf> + Sync),
+    pub pinned: bool,
+}
+
+/// The distro whose share `path` is under (`\\wsl.localhost\<distro>\...` or `\\wsl$\<distro>\...`).
+fn distro_of_share(path: &Path) -> Option<String> {
+    let path = unverbatim(path);
+    let text = path.to_str()?;
+    let rest = text.strip_prefix(r"\\").or_else(|| text.strip_prefix("//"))?;
+    let mut parts = rest.split(['\\', '/']);
+    let (host, share) = (parts.next()?, parts.next()?);
+    let on_wsl = host.eq_ignore_ascii_case("wsl.localhost") || host.eq_ignore_ascii_case("wsl$");
+    (on_wsl && wsl::under_distro(share, &path)).then(|| share.to_string())
+}
+
+/// The distros `managed.json` has entries in: Marshell wrote hooks there.
+fn managed_distros(home: &Path) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for entry in managed::list(home).unwrap_or_default() {
+        if let Some(name) = distro_of_share(Path::new(&entry.path))
+            && !names.iter().any(|n| n.eq_ignore_ascii_case(&name))
+        {
+            names.push(name);
+        }
+    }
+    names
+}
+
+/// The config service for this run. A distro's home that was looked up is opened to it only while the distro is in
+/// `distros`; without this wiring every distro file comes back refused.
+fn uninstall_service(home: &Path, distros: &[String], homes: &[(String, PathBuf)], pinned: bool) -> ConfigService {
+    let detected = distros.to_vec();
+    let service = ConfigService::with_distros(home.to_path_buf(), Arc::new(move || detected.clone()));
+    for (distro, distro_home) in homes {
+        service.record_distro_home(distro, distro_home, pinned);
+    }
+    service
+}
 
 /// The text of `path`, or `None` when the file is not there. Any other failure is an error.
 fn read_text(path: &Path) -> Result<Option<String>, String> {
@@ -161,6 +209,7 @@ pub fn run(
     home: &Path,
     user_home: &Path,
     env: &dyn Fn(&str) -> Option<String>,
+    wsl: &Wsl,
     input: &mut dyn BufRead,
     out: &mut dyn Write,
     yes: bool,
@@ -275,9 +324,84 @@ pub fn run(
             hooks_failed = true;
         }
     }
+    // The WSL distros: the installed ones, and any `managed.json` names that the list missed. Every home is asked for at
+    // once, each with its own time limit, because a stopped distro is started by the question.
+    let managed_names = managed_distros(home);
+    let mut names: Vec<String> = Vec::new();
+    for name in (wsl.distros)().into_iter().chain(managed_names.iter().cloned()) {
+        if !names.iter().any(|n| n.eq_ignore_ascii_case(&name)) {
+            names.push(name);
+        }
+    }
+    if !names.is_empty() {
+        let _ = writeln!(out, "Looking in WSL distros: {}.", names.join(", "));
+    }
+    let lookup = wsl.home;
+    let answers: Vec<(String, Option<PathBuf>)> = std::thread::scope(|scope| {
+        let asked: Vec<_> = names.iter().map(|name| scope.spawn(move || lookup(name))).collect();
+        names
+            .iter()
+            .zip(asked)
+            .map(|(name, asked)| (name.clone(), asked.join().unwrap_or(None)))
+            .collect()
+    });
+    let homes: Vec<(String, PathBuf)> = answers
+        .iter()
+        .filter_map(|(name, answer)| answer.clone().map(|answer| (name.clone(), answer)))
+        .collect();
+    // Built once, with the looked-up homes, so the guard admits the distro files and the skills below share it.
+    let service = uninstall_service(home, &names, &homes, wsl.pinned);
+    // A distro that didn't answer, or whose files can't all be removed, may still have hooks pointing at bin.
+    let mut distro_kept: Vec<String> = Vec::new();
+    let mut distro_unanswered = false;
+    for (name, answer) in &answers {
+        let Some(distro_home) = answer else {
+            let _ = writeln!(out, "{name} didn't answer. Start it and run marshell uninstall again.");
+            distro_unanswered = true;
+            if managed_names.iter().any(|m| m.eq_ignore_ascii_case(name)) {
+                distro_kept.push(name.clone());
+            }
+            continue;
+        };
+        // Each agent's removal is previewed on its own first, so a file that is refused or doesn't plan is reported by
+        // path and left, and the rest of the distro, the other distros and Windows go on.
+        let (mut found, mut failed) = (false, false);
+        for (agent, plan) in distro_hooks::remove_plans(name, distro_home, home) {
+            match plan {
+                Err(e) => {
+                    let _ = writeln!(out, "{e}");
+                    failed = true;
+                }
+                Ok(None) => {}
+                Ok(Some(changes)) => {
+                    let preview = service.preview(changes.clone());
+                    let refused = refusals(&preview);
+                    if refused.is_empty() && preview.can_apply {
+                        extras.push(changes);
+                        found = true;
+                    } else {
+                        for (path, detail) in &refused {
+                            let _ = writeln!(out, "Marshell can't change {path}: {detail}");
+                        }
+                        if refused.is_empty() {
+                            let _ = writeln!(out, "{name}: Marshell can't change the {agent} files.");
+                        }
+                        failed = true;
+                    }
+                }
+            }
+        }
+        if found {
+            let _ = writeln!(out, "{name}: Marshell's hooks found.");
+        } else if !failed {
+            let _ = writeln!(out, "{name}: nothing of Marshell's.");
+        }
+        if failed {
+            distro_kept.push(name.clone());
+        }
+    }
     // The marshell skill each CLI has: one Marshell wrote joins the removal, an edited one is left. Each removal
     // is previewed on its own first, so a skill the config service refuses is left out and the rest goes on.
-    let service = ConfigService::new(home.to_path_buf());
     for (agent, name) in skill::AGENTS {
         let Some(path) = skill::skill_path(agent, env, user_home) else {
             continue;
@@ -334,16 +458,24 @@ pub fn run(
         }
     }
     let bin = paths::bin_dir(home);
-    let others_failed = hooks_failed || skill_unread;
+    let others_failed = hooks_failed || skill_unread || !distro_kept.is_empty();
     let has_bin = bin.exists() && !others_failed;
     // Non-zero when something was left, so a script notices.
-    let ok = i32::from(others_failed);
+    let ok = i32::from(others_failed || distro_unanswered);
     let keep_note = |out: &mut dyn Write| {
         if hooks_failed && bin.exists() {
             let _ = writeln!(
                 out,
                 "The folder {} was left in place, because Codex's, Antigravity's or Qwen Code's hooks may still point at it.",
                 bin.display()
+            );
+        }
+        if !distro_kept.is_empty() && bin.exists() {
+            let _ = writeln!(
+                out,
+                "The folder {} was left in place, because hooks in {} may still point at it.",
+                bin.display(),
+                distro_kept.join(", ")
             );
         }
     };
@@ -466,6 +598,7 @@ mod tests {
     use marshell_protocol::agents::HookPlanRequest;
     use marshell_protocol::config::{ApplyRequest, ExpectedHash};
     use std::path::PathBuf;
+    use std::sync::{Arc, Mutex};
 
     const ORIGINAL: &str =
         "{\n  \"theme\": \"dark\",\n  \"statusLine\": {\"type\": \"command\", \"command\": \"my-line\"}\n}\n";
@@ -605,7 +738,15 @@ mod tests {
 
     fn run_with(f: &Fixture, input: &str, yes: bool) -> (i32, String) {
         let mut out = Vec::new();
-        let code = run(&f.home, &f.user_home, &no_env, &mut input.as_bytes(), &mut out, yes);
+        let code = run(
+            &f.home,
+            &f.user_home,
+            &no_env,
+            &no_wsl(),
+            &mut input.as_bytes(),
+            &mut out,
+            yes,
+        );
         (code, String::from_utf8(out).unwrap())
     }
 
@@ -944,7 +1085,15 @@ mod tests {
         std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
         std::fs::write(&settings, ORIGINAL).unwrap();
         let mut out = Vec::new();
-        let code = run(&home, &user_home, &no_env, &mut "".as_bytes(), &mut out, false);
+        let code = run(
+            &home,
+            &user_home,
+            &no_env,
+            &no_wsl(),
+            &mut "".as_bytes(),
+            &mut out,
+            false,
+        );
         let out = String::from_utf8(out).unwrap();
         assert_eq!(code, 0, "{out}");
         assert!(
@@ -962,6 +1111,7 @@ mod tests {
             &dir.path().join("h"),
             &dir.path().join("user"),
             &no_env,
+            &no_wsl(),
             &mut "".as_bytes(),
             &mut out,
             false,
@@ -978,12 +1128,28 @@ mod tests {
         std::fs::write(bin.join("marshell-hook.exe"), b"x").unwrap();
         let user_home = dir.path().join("user");
         let mut out = Vec::new();
-        let code = run(&home, &user_home, &no_env, &mut "n\n".as_bytes(), &mut out, false);
+        let code = run(
+            &home,
+            &user_home,
+            &no_env,
+            &no_wsl(),
+            &mut "n\n".as_bytes(),
+            &mut out,
+            false,
+        );
         let text = String::from_utf8(out).unwrap();
         assert_eq!(code, 1, "{text}");
         assert!(bin.exists(), "{text}");
         let mut out = Vec::new();
-        let code = run(&home, &user_home, &no_env, &mut "".as_bytes(), &mut out, true);
+        let code = run(
+            &home,
+            &user_home,
+            &no_env,
+            &no_wsl(),
+            &mut "".as_bytes(),
+            &mut out,
+            true,
+        );
         assert_eq!(code, 0, "{}", String::from_utf8_lossy(&out));
         assert!(!bin.exists());
     }
@@ -1010,7 +1176,15 @@ mod tests {
         let path = managed.to_string_lossy().into_owned();
         let env = move |name: &str| (name == "MARSHELL_CLAUDE_SETTINGS").then(|| path.clone());
         let mut out = Vec::new();
-        let code = run(&f.home, &f.user_home, &env, &mut "y\n".as_bytes(), &mut out, true);
+        let code = run(
+            &f.home,
+            &f.user_home,
+            &env,
+            &no_wsl(),
+            &mut "y\n".as_bytes(),
+            &mut out,
+            true,
+        );
         let out = String::from_utf8(out).unwrap();
         assert_eq!(code, 1, "{out}");
         assert!(out.contains("managed-settings.json"), "{out}");
@@ -1129,7 +1303,15 @@ mod tests {
         std::fs::write(&refused, marshell_core::agents::skill::SKILL_TEXT).unwrap();
         let codex = put_skill(&f, "codex", marshell_core::agents::skill::SKILL_TEXT.as_bytes());
         let mut out = Vec::new();
-        let code = run(&f.home, &f.user_home, &env, &mut "".as_bytes(), &mut out, true);
+        let code = run(
+            &f.home,
+            &f.user_home,
+            &env,
+            &no_wsl(),
+            &mut "".as_bytes(),
+            &mut out,
+            true,
+        );
         let out = String::from_utf8(out).unwrap();
         assert_eq!(code, 0, "{out}");
         assert!(
@@ -1199,5 +1381,260 @@ mod tests {
         let (code, out) = run_with(&f, "", true);
         assert_eq!(code, 0, "{out}");
         assert!(!out.to_lowercase().contains("skill"), "{out}");
+    }
+
+    // ---- WSL distros (#82) ----
+
+    fn no_wsl() -> Wsl<'static> {
+        Wsl {
+            distros: &|| Vec::new(),
+            home: &|_| None,
+            pinned: false,
+        }
+    }
+
+    /// A fake distro home that is not under the user's home, so a missing guard wiring shows as a refusal.
+    fn fake_distro_home() -> tempfile::TempDir {
+        let target = marshell_core::projects::canonical(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target"));
+        tempfile::tempdir_in(target).unwrap()
+    }
+
+    const MINE_CLAUDE: &str = "{\n  \"theme\": \"dark\",\n  \"statusLine\": {\"type\": \"command\", \"command\": \"my-line\"},\n  \"hooks\": {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"my-stop\"}]}]}\n}\n";
+    const MINE_CODEX: &str =
+        "{\"hooks\": {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"my-stop\"}]}]}}\n";
+    const MINE_AGY: &str =
+        "{\"mine\": {\"enabled\": true, \"Stop\": [{\"type\": \"command\", \"command\": \"my-stop\"}]}}\n";
+    const MINE_QWEN: &str = "{\n  \"theme\": \"dark\",\n  \"ui\": {\"statusLine\": {\"type\": \"command\", \"command\": \"my-qwen-line\"}}\n}\n";
+
+    fn apply_pinned(service: &ConfigService, changes: ChangeSet, at: u64) {
+        let preview = service.preview(changes);
+        assert!(preview.can_apply, "{preview:?}");
+        let request = ApplyRequest {
+            changeset_id: preview.changeset_id.clone(),
+            expected_hashes: preview
+                .files
+                .iter()
+                .map(|f| ExpectedHash {
+                    path: f.path.clone(),
+                    hash: f.before_hash.clone(),
+                })
+                .collect(),
+        };
+        service.apply(&request, at).unwrap();
+    }
+
+    /// The four agents' files in a distro home: the person's own entries, with Marshell's hooks installed beside them
+    /// through the real plans and a pinned service, as the Agents dialog does. Returns the four files.
+    fn install_in_distro(f: &Fixture, home: &Path) -> [PathBuf; 4] {
+        use marshell_core::agents::antigravity::hooks as ah;
+        use marshell_core::agents::codex::hooks as ch;
+        use marshell_core::agents::qwen::hooks as qh;
+        let service = ConfigService::with_distros(f.home.clone(), Arc::new(|| vec!["Ubuntu".to_string()]));
+        service.record_distro_home("Ubuntu", home, true);
+        let bridge = Bridge::Distro {
+            name: "Ubuntu".to_string(),
+            path: "/mnt/c/Users/x/.marshell/bin/marshell-hook.exe".to_string(),
+        };
+        let want = HookPlanRequest {
+            status: true,
+            statusline: false,
+            approve: false,
+            skill: false,
+            distro: Some("Ubuntu".to_string()),
+        };
+        let claude = home.join(".claude").join("settings.json");
+        let codex = home.join(".codex").join("hooks.json");
+        let agy = ah::hooks_path(home);
+        let qwen = home.join(".qwen").join("settings.json");
+        for (path, text) in [
+            (&claude, MINE_CLAUDE),
+            (&codex, MINE_CODEX),
+            (&agy, MINE_AGY),
+            (&qwen, MINE_QWEN),
+        ] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let changes = marshell_core::agents::claude::hooks::install_plan(
+            &claude,
+            home,
+            Some(MINE_CLAUDE),
+            None,
+            None,
+            &bridge,
+            &want,
+        )
+        .unwrap();
+        apply_pinned(&service, changes, 10);
+        let changes = ch::install_plan(&codex, Some(MINE_CODEX), &bridge, &want).unwrap();
+        apply_pinned(&service, changes, 11);
+        let changes = ah::install_plan(home, Some(MINE_AGY), None, None, None, &bridge, &want).unwrap();
+        apply_pinned(&service, changes, 12);
+        let changes = qh::install_plan(&qwen, home, Some(MINE_QWEN), None, None, &bridge, &want).unwrap();
+        apply_pinned(&service, changes, 13);
+        for path in [&claude, &codex, &agy, &qwen] {
+            assert!(
+                std::fs::read_to_string(path).unwrap().contains("mshl1"),
+                "{}",
+                path.display()
+            );
+        }
+        [claude, codex, agy, qwen]
+    }
+
+    /// Runs with `--yes`, the given listed distros and homes, and a pinned service. The third value is the distros the
+    /// home lookup was asked for.
+    fn run_in_wsl(f: &Fixture, names: &[&str], homes: &[(&str, &Path)]) -> (i32, String, Vec<String>) {
+        let names: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+        let homes: Vec<(String, PathBuf)> = homes.iter().map(|(n, h)| (n.to_string(), h.to_path_buf())).collect();
+        let asked = Mutex::new(Vec::new());
+        let list = || names.clone();
+        let lookup = |distro: &str| {
+            asked.lock().unwrap().push(distro.to_string());
+            homes.iter().find(|(n, _)| n == distro).map(|(_, h)| h.clone())
+        };
+        let wsl = Wsl {
+            distros: &list,
+            home: &lookup,
+            pinned: true,
+        };
+        let mut out = Vec::new();
+        let code = run(&f.home, &f.user_home, &no_env, &wsl, &mut "".as_bytes(), &mut out, true);
+        (code, String::from_utf8(out).unwrap(), asked.into_inner().unwrap())
+    }
+
+    /// Adds a `managed.json` entry for a file under a distro's share, as a real distro install leaves.
+    fn manage_in_distro(f: &Fixture, distro: &str) {
+        let file = marshell_core::paths::managed_file(&f.home);
+        let mut json: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        json["entries"].as_array_mut().unwrap().push(serde_json::json!({
+            "path": format!(r"\\wsl.localhost\{distro}\home\u\.claude\settings.json"),
+            "pointer": "/hooks/Stop",
+            "changeset_id": "c-test",
+            "applied_ms": 1,
+        }));
+        std::fs::write(&file, json.to_string()).unwrap();
+    }
+
+    fn bin_exists(f: &Fixture) -> bool {
+        marshell_core::paths::bridge_exe(&f.home).exists()
+    }
+
+    #[test]
+    fn removes_marshells_hooks_inside_a_distro() {
+        let f = installed(ORIGINAL);
+        let distro = fake_distro_home();
+        let files = install_in_distro(&f, distro.path());
+        let (code, out, asked) = run_in_wsl(&f, &["Ubuntu"], &[("Ubuntu", distro.path())]);
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(asked, ["Ubuntu"]);
+        assert!(out.contains("Looking in WSL distros: Ubuntu."), "{out}");
+        assert!(out.contains("Ubuntu: Marshell's hooks found."), "{out}");
+        for file in &files {
+            let after = std::fs::read_to_string(file).unwrap();
+            assert!(!after.contains("mshl1"), "{}: {after}", file.display());
+        }
+        let claude = std::fs::read_to_string(&files[0]).unwrap();
+        assert!(claude.contains("my-stop") && claude.contains("my-line"), "{claude}");
+        assert!(std::fs::read_to_string(&files[1]).unwrap().contains("my-stop"));
+        assert!(std::fs::read_to_string(&files[2]).unwrap().contains("my-stop"));
+        assert!(std::fs::read_to_string(&files[3]).unwrap().contains("my-qwen-line"));
+        // The Windows hooks came out too, and the program folder with them.
+        assert_eq!(std::fs::read_to_string(&f.settings).unwrap(), ORIGINAL);
+        assert!(!marshell_core::paths::bin_dir(&f.home).exists(), "{out}");
+    }
+
+    #[test]
+    fn a_distro_that_does_not_answer_is_named() {
+        // Not in managed.json: the program folder goes with the Windows hooks.
+        let f = installed(ORIGINAL);
+        let (code, out, _) = run_in_wsl(&f, &["Ubuntu"], &[]);
+        assert_eq!(code, 1, "{out}");
+        assert!(
+            out.contains("Ubuntu didn't answer. Start it and run marshell uninstall again."),
+            "{out}"
+        );
+        assert_eq!(std::fs::read_to_string(&f.settings).unwrap(), ORIGINAL);
+        assert!(!marshell_core::paths::bin_dir(&f.home).exists(), "{out}");
+
+        // Named in managed.json: hooks in it may still point at the bridge, so bin stays.
+        let f = installed(ORIGINAL);
+        manage_in_distro(&f, "Ubuntu");
+        let (code, out, _) = run_in_wsl(&f, &["Ubuntu"], &[]);
+        assert_eq!(code, 1, "{out}");
+        assert!(out.contains("Ubuntu didn't answer."), "{out}");
+        assert!(out.contains("because hooks in Ubuntu may still point at it."), "{out}");
+        assert_eq!(std::fs::read_to_string(&f.settings).unwrap(), ORIGINAL);
+        assert!(bin_exists(&f), "{out}");
+    }
+
+    #[test]
+    fn a_distro_file_that_does_not_parse_does_not_block_the_rest() {
+        let f = installed(ORIGINAL);
+        let distro = fake_distro_home();
+        let files = install_in_distro(&f, distro.path());
+        let broken = "{ \"hooks\": [oops\n";
+        std::fs::write(&files[1], broken).unwrap();
+        let (code, out, _) = run_in_wsl(&f, &["Ubuntu"], &[("Ubuntu", distro.path())]);
+        assert_eq!(code, 1, "{out}");
+        assert!(
+            out.contains(&*files[1].to_string_lossy()) && out.contains("does not parse"),
+            "{out}"
+        );
+        assert_eq!(std::fs::read_to_string(&files[1]).unwrap(), broken);
+        for file in [&files[0], &files[2], &files[3]] {
+            let after = std::fs::read_to_string(file).unwrap();
+            assert!(!after.contains("mshl1"), "{}: {after}", file.display());
+        }
+        assert_eq!(std::fs::read_to_string(&f.settings).unwrap(), ORIGINAL);
+        assert!(bin_exists(&f), "{out}");
+        assert!(out.contains("because hooks in Ubuntu may still point at it."), "{out}");
+    }
+
+    #[test]
+    fn a_refused_distro_file_is_left_out() {
+        let f = installed(ORIGINAL);
+        let distro = fake_distro_home();
+        let files = install_in_distro(&f, distro.path());
+        let before: Vec<String> = files.iter().map(|p| std::fs::read_to_string(p).unwrap()).collect();
+        // Ubuntu is neither listed nor managed, so its home is never looked up and the guard keeps its files closed.
+        let (code, out, asked) = run_in_wsl(&f, &[], &[("Ubuntu", distro.path())]);
+        assert_eq!(code, 0, "{out}");
+        assert!(asked.is_empty(), "{asked:?}");
+        for (file, text) in files.iter().zip(&before) {
+            assert_eq!(&std::fs::read_to_string(file).unwrap(), text);
+        }
+        assert_eq!(std::fs::read_to_string(&f.settings).unwrap(), ORIGINAL);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn uninstalls_service_admits_a_recorded_distro_home() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = PathBuf::from(r"\\wsl.localhost\MarshellTestDistro\home\u");
+        let file = home.join(".claude").join("settings.json");
+        let homes = [("MarshellTestDistro".to_string(), home.clone())];
+        let service = uninstall_service(dir.path(), &["MarshellTestDistro".to_string()], &homes, false);
+        assert_eq!(service.path_refusal(&file), None);
+        let service = uninstall_service(dir.path(), &[], &homes, false);
+        assert!(service.path_refusal(&file).is_some());
+    }
+
+    #[test]
+    fn managed_json_names_a_distro_the_list_missed() {
+        let f = installed(ORIGINAL);
+        manage_in_distro(&f, "Ubuntu");
+        let (_, out, asked) = run_in_wsl(&f, &[], &[]);
+        assert_eq!(asked, ["Ubuntu"]);
+        assert!(out.contains("Looking in WSL distros: Ubuntu."), "{out}");
+    }
+
+    #[test]
+    fn no_wsl_says_nothing() {
+        let f = installed(ORIGINAL);
+        let (code, out, asked) = run_in_wsl(&f, &[], &[]);
+        assert_eq!(code, 0, "{out}");
+        assert!(asked.is_empty());
+        assert!(!out.contains("WSL") && !out.contains("Ubuntu"), "{out}");
     }
 }
