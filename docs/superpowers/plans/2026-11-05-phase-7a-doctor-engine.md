@@ -92,13 +92,13 @@ The phase-0 mock is `src/features/doctor/`; its copy stands unless this plan cha
   - `struct DoctorReport { items: Vec<DoctorItem>, checked_at_ms: u64, duration_ms: u64 }`.
   - `struct DoctorSummary { running: bool, issues: u32, checked_at_ms: Option<u64> }`. `issues` counts the Broken and Waste items.
   - `struct DoctorFixRequest { item_ids: Vec<String> }`.
-  - `struct DoctorFixPlan { preview: crate::config::ConfigPreview, item_ids: Vec<String>, restart: Vec<u32> }`. `restart` is the session numbers that pick the fix up only after a restart.
+  - `struct DoctorFixPlan { preview: crate::config::ConfigPreview, item_ids: Vec<String>, restart: Vec<String> }`. `restart` is the tab ids of the running sessions that pick the fix up only after a restart. The frontend names them by their session numbers.
   - `struct DoctorLastFix`, with these fields:
     - `snapshot_id: String`;
     - `fixed_at_ms: u64`;
     - `item_ids: Vec<String>`;
     - `count: u32`;
-    - `restart: Vec<u32>`;
+    - `restart: Vec<String>`: tab ids, as in `DoctorFixPlan`. It is empty for a record read back after the app restarted, because tab ids don't survive a restart and sessions started since already have the fix;
     - `files_match: bool`.
 
 - [ ] **Step 1: Write the failing test** in `doctor.rs`. A `DoctorItem` with `agent: None, cannot_fix: None` serialises without those keys. `DoctorGroup::Broken` serialises as `"broken"`. A `DoctorSummary` round-trips.
@@ -236,6 +236,8 @@ Evidence:
 - Own edits (Settings) record no keys (`service.rs:524`), so an entry in a hooks file is Marshell's.
 
 - [ ] **Step 1: Write the failing tests.**
+  - `set_up_follows_each_clis_real_plans` (`doctor_api.rs`), for each of the four CLIs: install its hooks through `/v1/agents/<agent>/hooks/plan` and `/v1/config/apply`, then remove every Marshell entry from the file by hand. The result is `hooks.<agent>` Broken. This drives `set_up` from each CLI's real pointers, not hand-written ones.
+  - `hooks_off_reads_as_never_set_up` (`doctor_api.rs`), for each of the four CLIs, with one hook group of the person's own already in each event before the install. Install, then `/v1/agents/<agent>/hooks/remove-plan` and apply. The result has `setup.<agent>` and no `hooks.<agent>`. Evidence: Claude's install records `/hooks/<Event>/-` when the event already has groups (`claude/hooks.rs:389`), and Hooks off removes `/hooks/<Event>/<n>` (`claude/hooks.rs:214-217`). `managed::updated` drops only the removed pointer and its children (`managed.rs:71-80`), so the `/-` entry survives Hooks off. If this test fails that way, fix it at the source, in `managed::updated`: when Marshell removes an element of an array (`<A>/<index>` or deeper), it also drops that file's `<A>/-` entry and its children. Add a unit test in `managed.rs`, and run `cargo test -j 3 -p marshell-cli`, whose uninstall reads `managed.json`.
   - Inline in `server/doctor.rs`, `set_up_of(entries, path)` is true for an entry whose path is `path`, compared after `config::guard::unverbatim` and case-insensitively on Windows. The pointer must start with `/hooks`, or be None (a file Marshell created). It is false for a `/statusLine` entry alone and for another file.
   - `doctor_api.rs`, `the_report_finds_claudes_hooks_gone`:
     - set Claude's hooks up through `/v1/agents/claude/hooks/plan` and `/v1/config/apply`;
@@ -244,7 +246,7 @@ Evidence:
     - It has `hooks.claude` Broken and fixable.
   - `a_cli_never_set_up_gets_the_setup_info_line`: with a found Codex pinned the way `agents_api.rs` pins it.
   - `one_cli_failing_to_read_leaves_the_rest`: a reader error becomes `error.<agent>`.
-  - `the_events_socket_sends_the_doctor_summary`.
+  - `the_events_socket_sends_the_doctor_summary`. The new frame on connect comes after `sessions` and `permissions`. If an existing test in `crates/core/tests/events.rs` or `src/lib/api/events.test.ts` assumes the connect frames end there, update it to expect the `doctor` frame. That is part of this task, not a regression.
   - `doctor_routes_refuse_without_the_bearer`.
   - `no_run_at_start_unless_pinned_on`: with `doctor_on_start` false, a fresh router answers 204 to the report.
 - [ ] **Step 2: Run.** `cargo test -j 3 -p marshell-core --test doctor_api` and `cargo test -j 3 -p marshell-core server::doctor`. Expected: they fail to compile.
@@ -323,9 +325,9 @@ The fix:
   - `distro` set for a distro item.
 
   The bridge is put back at plan time by `ensure_bridge`, as "Set up" does.
-- **A retention item** is one `FileEdit`, which the person owns. It is `JsonSet { pointer: "/cleanupPeriodDays", value: 365 }` (a JSON number) on Claude Code's settings path, with `expected_hash` the hash of the text read and `applies: Applies::NewSessions`, as the settings plan uses (`server/agents.rs:1293`).
+- **A retention item** is one `FileEdit`, which the person owns. It is `JsonSet { pointer: "/cleanupPeriodDays", value: "365" }` (JSON text, `config.rs:61-64`) on Claude Code's settings path, with `expected_hash` the hash of the text read and `applies: Applies::NewSessions`, as the settings plan uses (`server/agents.rs:1293`).
 - **One preview.** All edits go into one `ChangeSet`, titled `Fix N issues`, with a reason listing the item titles one per line. It is previewed with `preview_mixed(cs, &|e| e is a retention edit)`.
-- **Restart list.** `restart` is the running sessions whose agent is an item's agent, in the item's distro or on Windows (`wsl_distro_of_tab`), sorted, from the registry's snapshot.
+- **Restart list.** `restart` is the tab ids of the running sessions whose agent is an item's agent, in the item's distro or on Windows (`wsl_distro_of_tab`), in session-number order, from the registry's snapshot. The record on disk leaves `restart` out; only the in-memory record of this run of the app carries it.
 - **Pending fix.** Store `PendingFix`.
 
 On apply success:
@@ -348,13 +350,15 @@ The undo:
   - `the_seeded_broken_config_is_repaired_and_undone`, the exit criterion:
     - Claude's hooks are gone, Codex's are partial, and Claude's `cleanupPeriodDays` is unset.
     - Fix the three items, then run the report: no fixable item is left, and Codex's trust item is the only Broken one.
-    - Then undo: every file is byte for byte as seeded, and `managed.json` is as before the fix.
+    - Then undo: every file is byte for byte as seeded. `managed.json` has the same set of `(path, pointer)` pairs as before the fix, and a new run has `hooks.claude` Broken again, not `setup.claude`.
+    - Evidence: `upsert` re-tags an existing entry with the new changeset id (`managed.rs:42-56`), and an undo's `Restored` drops every entry tagged with the undone id (`managed.rs:88-94`). So an undo of the fix would drop the setup's own entries, and the CLI would read as never set up.
+    - If the test fails that way, fix it at the source: `upsert` keeps an existing entry as it is (the first writer stays), so an undo drops only the entries the fix added. Add a unit test in `managed.rs`, and run `cargo test -j 3 -p marshell-core config` and `cargo test -j 3 -p marshell-cli`.
   - `hooks_and_retention_in_one_file_are_one_preview_and_retention_isnt_managed`.
   - `an_edit_between_the_sheet_and_allow_is_a_409_and_writes_no_record`.
   - `undo_after_an_edit_is_a_409_naming_the_file`.
-  - `undo_works_after_a_restart`: build a new `AppState` on the same home, and `GET /v1/doctor/undo` answers the record.
+  - `undo_works_after_a_restart`: build a new `AppState` on the same home. `GET /v1/doctor/undo` answers the record with `restart: []`, and `POST /v1/doctor/undo` restores the files.
   - `fixing_an_item_that_isnt_fixable_is_a_422`.
-  - `the_restart_list_names_the_running_sessions_of_that_agent`.
+  - `the_restart_list_names_the_running_sessions_of_that_agent`: tab ids, of that agent only.
   - `a_distro_hooks_fix_uses_the_distro_plan`.
 - [ ] **Step 2: Run.** `cargo test -j 3 -p marshell-core --test doctor_api`. Expected: the new tests fail.
 - [ ] **Step 3: Implement** as described above. `plan` must behave exactly as before; `cargo test -j 3 -p marshell-core --test agents_api` proves it.
@@ -450,7 +454,7 @@ Rules:
   - `changed` turns the header to the stale offer.
   - "Show differences" opens `DifferencesSheet` with `undoDifferences`.
   - When the page opens, it reads `lastFix` for the header after a restart.
-- **"Restart them"** restarts each listed session through the same call the session's own restart bar makes, in its current mode. A session that is working, or whose restart needs an acknowledgement (`restartNeedsAck`, `src/features/sessions/sessionActions.ts:415`), is skipped. The receipt names the skipped sessions:
+- **"Restart them"** restarts each listed tab id that is still open, through the same call the session's own restart bar makes, in its current mode. The toast's count and the receipt name sessions by the number the live session list gives each tab id. A tab id that is no longer open is dropped silently, because its session is gone. A session that is working, or whose restart needs an acknowledgement (`restartNeedsAck`, `src/features/sessions/sessionActions.ts:415`), is skipped. The receipt names the skipped sessions:
   - one session: `Session 3 wasn't restarted. Restart it from its tab.`
   - several: `Sessions 3 and 5 weren't restarted. Restart them from their tabs.`
   - It uses `listNumbers` from `report.ts`.
