@@ -384,6 +384,20 @@ describe("AgentsSectionView with a CLI missing on Windows", () => {
       const from = h.indexOf(`data-agent-card="${agent}"`);
       expect(h.slice(from, h.indexOf("</section>", from))).toContain("Live status");
     });
+    it(`${agent}_not_found_with_hooks_left_and_no_distros_shows_only_hooks_off`, () => {
+      const setups = {
+        codex: { codex: { ...CODEX_SETUP, found: false, hooks: "installed" as const, trust: "untrusted" as const }, codexLiveStatus: true },
+        qwen: { qwen: { ...QWEN_SETUP, found: false, hooks: "installed" as const }, qwenLiveStatus: true },
+        antigravity: { antigravity: { ...AGY_SETUP, found: false, hooks: "installed" as const }, antigravityLiveStatus: true },
+      };
+      const h = renderToStaticMarkup(<AgentsSectionView setup={SETUP} {...setups[agent]} panel={{ kind: "list" }} liveStatus={true} wslDistros={[]} {...handlers} />);
+      const from = h.indexOf(`data-agent-card="${agent}"`);
+      const card = h.slice(from, h.indexOf("</section>", from));
+      expect(card).toContain("still in");
+      expect(card).toContain(">Hooks off</button>");
+      expect(card).not.toContain("Live status");
+      expect(card).not.toMatch(/Trusted:|Not trusted|Changed since/);
+    });
     it(`${agent}_not_found_and_no_distros_renders_nothing`, () => {
       expect(missing(agent, [])).not.toContain(`data-agent-card="${agent}"`);
       expect(missing(agent, undefined)).not.toContain(`data-agent-card="${agent}"`);

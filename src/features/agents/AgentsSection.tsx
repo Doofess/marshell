@@ -174,7 +174,7 @@ function AgentList({ setup, agent, liveStatus, error, on, skill, distros }: { se
       <p className={orphaned ? "agents-dialog__warning" : "agents-dialog__line"} dir="auto">
         {setupLine(setup)}
       </p>
-      {agent === "codex" && setup.trust && <TrustLine trust={setup.trust} />}
+      {agent === "codex" && setup.found && setup.trust &&<TrustLine trust={setup.trust} />}
       {skill && setup.found && <SkillRow agent={agent} setup={setup} flow={skill.flow} on={skill.on} />}
       {/* Antigravity's hooks and its status line live in two files; both are named. */}
       {setup.found && setup.hooks_path !== undefined && (
@@ -184,7 +184,7 @@ function AgentList({ setup, agent, liveStatus, error, on, skill, distros }: { se
       )}
       {setup.found && setup.hooks === "installed" && !setup.approve_installed && <p className="agents-dialog__line">Approve from anywhere: off</p>}
       {/* Left out until the settings have been read: an unread value is never shown as off. Marshell's own setting, so it stays for a CLI found only in a distro. */}
-      {liveStatus !== null && (
+      {liveStatus !== null && (setup.found || (distros?.length ?? 0) > 0) && (
         <Switch label="Live status" checked={liveStatus} onChange={(checked) => on.onLiveStatus(checked, agent)} reason={liveStatus ? undefined : "Rows use output activity only: Working or Idle."} />
       )}
       {agent === "claude" && (
