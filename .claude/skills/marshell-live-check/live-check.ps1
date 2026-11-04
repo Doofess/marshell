@@ -214,6 +214,13 @@ switch ($Mode) {
         if (-not $env:RUSTUP_HOME) { $env:RUSTUP_HOME = Join-Path $HOME '.rustup' }
         $env:USERPROFILE = $agyHome
         $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$Port"
+        # NO_COLOR here is the calling tool's own environment, not the person's: tabs would inherit it and CLIs would
+        # drop colour (Qwen's /theme refuses to change). The app never sets it, so a real user's NO_COLOR still
+        # reaches their tabs; only the live check's copy is cleared.
+        if (Test-Path Env:NO_COLOR) {
+            Remove-Item Env:NO_COLOR -ErrorAction SilentlyContinue
+            Write-Output 'NO_COLOR cleared'
+        }
         $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/d', '/c', 'pnpm tauri dev' -WorkingDirectory $repo `
             -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $Scratch 'dev.out.log') `
             -RedirectStandardError (Join-Path $Scratch 'dev.err.log')

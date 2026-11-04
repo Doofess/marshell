@@ -93,14 +93,14 @@ fn parse_value(body: &str) -> Result<Value, EditError> {
         .map_err(|e| EditError::DoesNotParse(e.to_string()))
 }
 
-fn has_lone_lf(s: &str) -> bool {
+pub(crate) fn has_lone_lf(s: &str) -> bool {
     let b = s.as_bytes();
     b.iter()
         .enumerate()
         .any(|(i, &c)| c == b'\n' && (i == 0 || b[i - 1] != b'\r'))
 }
 
-fn lf_to_crlf(s: &str) -> String {
+pub(crate) fn lf_to_crlf(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + s.len() / 16);
     let mut prev = '\0';
     for c in s.chars() {
@@ -712,6 +712,43 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out, "{\n  \"a\": [\n    1,\n    2\n  ]\n}\n");
+    }
+
+    /// An object appended to a multi-line array keeps its inner lines one level deeper than the element's line.
+    #[test]
+    fn append_of_an_object_to_a_multiline_array_is_laid_out_at_the_separators_indent() {
+        let out = apply_ops(
+            "{\n  \"a\": [\n    {\"x\":1}\n  ]\n}\n",
+            &[JsonOp::Set {
+                pointer: "/a/-",
+                value: &serde_json::json!({"y": 2, "z": [1]}),
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            "{\n  \"a\": [\n    {\"x\":1},\n    {\n      \"y\": 2,\n      \"z\": [1]\n    }\n  ]\n}\n"
+        );
+    }
+
+    /// A Codex hook group appended to a two-space file keeps its inner lines at the separator's indent plus two.
+    #[test]
+    fn append_of_a_codex_hook_group_is_laid_out_at_the_separators_indent() {
+        let group: Value = serde_json::from_str(r#"{"hooks":[{"type":"command","command":"echo mine"}]}"#).unwrap();
+        let out = apply_ops(
+            "{\n  \"hooks\": {\n    \"Stop\": [\n      {\"x\":1}\n    ]\n  }\n}\n",
+            &[JsonOp::Set {
+                pointer: "/hooks/Stop/-",
+                value: &group,
+            }],
+        )
+        .unwrap();
+        assert!(
+            out.contains(
+                "      {\"x\":1},\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"echo mine\"\n          }\n        ]\n      }\n    ]"
+            ),
+            "{out}"
+        );
     }
 
     /// Removing a last element takes only the comma after the element before it, the whitespace in front of it

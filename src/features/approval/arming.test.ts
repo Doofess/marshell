@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { ARM_DELAY_MS, HOLD_MS, holdComplete, holdProgress, isArmed, keyAction, type KeyContext } from "./arming";
+import { ARM_DELAY_MS, HOLD_MS, holdComplete, holdProgress, isArmed, keyAction, rearmOnFocus, type KeyContext } from "./arming";
+
+describe("rearmOnFocus", () => {
+  it("skips the rearm only for a pointer press on an armed card", () => {
+    expect(rearmOnFocus({ viaPointer: true, wasArmed: true })).toBe(false);
+    expect(rearmOnFocus({ viaPointer: true, wasArmed: false })).toBe(true);
+    expect(rearmOnFocus({ viaPointer: false, wasArmed: true })).toBe(true);
+  });
+});
 
 const safe: KeyContext = { risky: false, armed: true, hasAlways: true, truncated: false, expanded: false };
 const risky: KeyContext = { ...safe, risky: true, hasAlways: false };

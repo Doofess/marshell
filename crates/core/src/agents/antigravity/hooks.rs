@@ -7,7 +7,7 @@
 //! person's own named hooks are never touched. The status line is `statusLine` in
 //! `~/.gemini/antigravity-cli/settings.json`, chained the way Claude Code's is.
 
-use crate::agents::common::{self, Bridge, PlanError, TAG, is_ours, statusline_left_note};
+use crate::agents::common::{self, Bridge, PlanError, TAG, chain_delete, is_ours, statusline_left_note};
 use crate::config::hash::hash_bytes;
 use crate::config::jsonc::{parse_problem, read_value};
 use crate::paths;
@@ -474,8 +474,8 @@ fn saved_line(chain_text: Option<&str>, in_distro: bool) -> Saved {
 
 /// The plan that takes Marshell's entries out and puts the user's status line back.
 ///
-/// `hooks.json` is deleted when nothing but the `marshell` hook is in it. The chain file is read and
-/// never changed. A status line that is no longer Marshell's was changed by the person since the
+/// `hooks.json` is deleted when nothing but the `marshell` hook is in it. The chain file is read, then
+/// deleted in the same change set, so one undo brings back every file. A status line that is no longer Marshell's was changed by the person since the
 /// install and is left alone.
 ///
 /// In a distro (`distro` is its name) there is no chain: a status line of Marshell's was added by it, and goes,
@@ -485,6 +485,7 @@ pub fn remove_plan(
     hooks_text: Option<&str>,
     settings_text: Option<&str>,
     chain_text: Option<&str>,
+    chain: Option<&Path>,
     distro: Option<&str>,
 ) -> Result<ChangeSet, PlanError> {
     let title = "Turn Antigravity hooks off".to_string();
@@ -525,6 +526,9 @@ pub fn remove_plan(
         _ => {}
     }
     edits.extend(line_op.map(|op| edit(&settings_file, ConfigScope::User, op, settings_text)));
+    let chain_edit = chain_delete(chain, chain_text, distro);
+    let chain_gone = chain_edit.is_some();
+    edits.extend(chain_edit);
 
     if edits.is_empty() {
         return Ok(ChangeSet {
@@ -542,11 +546,20 @@ pub fn remove_plan(
         (1, false) => "Removes the hook entry Marshell added".to_string(),
         (n, false) => format!("Removes the {n} hook entries Marshell added"),
     };
-    let reason = match (entries.is_empty(), line_note.is_empty()) {
+    let mut reason = match (entries.is_empty(), line_note.is_empty()) {
         (false, false) => format!("{entries} and {line_note}."),
         (false, true) => format!("{entries}."),
-        (true, _) => format!("It {line_note}."),
+        (true, false) => format!("It {line_note}."),
+        (true, true) => String::new(),
     };
+    if chain_gone {
+        let note = "Deletes the saved copy of the status line in Marshell's own folder.";
+        reason = if reason.is_empty() {
+            note.to_string()
+        } else {
+            format!("{reason} {note}")
+        };
+    }
     Ok(ChangeSet { title, reason, edits })
 }
 
@@ -712,11 +725,23 @@ mod tests {
             files.hooks.as_deref(),
             files.settings.as_deref(),
             files.chain.as_deref(),
+            Some(&chain_file(home)),
             None,
         )
         .unwrap();
         let after = apply(&cs, files, home);
         (cs, after)
+    }
+    /// How many edits delete the chain file, in the Marshell scope.
+    fn after_chain_edits(cs: &ChangeSet, home: &Path) -> usize {
+        cs.edits
+            .iter()
+            .filter(|e| {
+                e.path == chain_file(home).to_string_lossy()
+                    && e.op == EditOp::DeleteFile
+                    && e.scope == ConfigScope::Marshell
+            })
+            .count()
     }
     fn only_settings(text: &str) -> Files {
         Files {
@@ -986,7 +1011,8 @@ mod tests {
             let home = fake_home();
             let (_, installed) = install(&only_hooks(&text), &STATUS, &home);
             let (cs, after) = remove(&installed, &home);
-            assert!(cs.edits.iter().all(|e| e.op != EditOp::DeleteFile));
+            let hooks = hooks_file().to_string_lossy().into_owned();
+            assert!(cs.edits.iter().all(|e| e.path != hooks || e.op != EditOp::DeleteFile));
             assert_eq!(after.hooks.as_deref(), Some(text.as_str()), "{text:?}");
         }
     }
@@ -1027,8 +1053,47 @@ mod tests {
         let (cs, removed) = remove(&installed, &home);
         assert_eq!(removed.settings.as_deref(), Some(settings.as_str()));
         assert!(cs.reason.contains("puts your status line back"), "{}", cs.reason);
-        // The chain file is read and never changed.
-        assert!(cs.edits.iter().all(|e| e.path != chain_file(&home).to_string_lossy()));
+        // The chain file goes in the same change set, so one undo brings back every file.
+        assert_eq!(after_chain_edits(&cs, &home), 1);
+        assert_eq!(removed.chain, None);
+    }
+
+    #[test]
+    fn remove_deletes_the_chain_in_the_same_change_set() {
+        let home = fake_home();
+        let (_, installed) = install(
+            &only_settings(r#"{"statusLine":{"type":"command","command":"mine"}}"#),
+            &BOTH,
+            &home,
+        );
+        let (cs, after) = remove(&installed, &home);
+        assert_eq!(after_chain_edits(&cs, &home), 1);
+        let chain = cs
+            .edits
+            .iter()
+            .find(|e| e.path == chain_file(&home).to_string_lossy())
+            .unwrap();
+        assert_eq!(
+            chain.expected_hash,
+            installed.chain.as_ref().map(|t| hash_bytes(t.as_bytes()))
+        );
+        assert_eq!(after.chain, None);
+        for (chain_text, chain, distro) in [
+            (None, Some(chain_file(&home)), None),
+            (installed.chain.clone(), None, None),
+            (installed.chain.clone(), Some(chain_file(&home)), Some("Ubuntu")),
+        ] {
+            let cs = remove_plan(
+                &user_home(),
+                installed.hooks.as_deref(),
+                installed.settings.as_deref(),
+                chain_text.as_deref(),
+                chain.as_deref(),
+                distro,
+            )
+            .unwrap();
+            assert_eq!(after_chain_edits(&cs, &home), 0);
+        }
     }
 
     #[test]
@@ -1285,6 +1350,7 @@ mod tests {
                     files.settings.as_deref(),
                     None,
                     None,
+                    None,
                 )
                 .unwrap_err(),
             );
@@ -1462,14 +1528,14 @@ mod tests {
             .unwrap()
             .2;
         let ours = json!({ "statusLine": line }).to_string();
-        let cs = remove_plan(&distro_user_home(), None, Some(&ours), None, Some("Ubuntu")).unwrap();
+        let cs = remove_plan(&distro_user_home(), None, Some(&ours), None, None, Some("Ubuntu")).unwrap();
         assert!(
             cs.edits
                 .iter()
                 .any(|e| matches!(&e.op, EditOp::JsonRemove { pointer } if pointer == "/statusLine"))
         );
 
-        let cs = remove_plan(&distro_user_home(), None, Some(THEIRS), None, Some("Ubuntu")).unwrap();
+        let cs = remove_plan(&distro_user_home(), None, Some(THEIRS), None, None, Some("Ubuntu")).unwrap();
         assert!(cs.edits.is_empty(), "{cs:?}");
     }
 }

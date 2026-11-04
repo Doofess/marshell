@@ -222,7 +222,7 @@ fn fresh(taken_at: u64, now: u64, reading: Reading) -> Reading {
 /// epoch, on two readings at least `CONFIRM` apart, so the command was still running a tick later
 /// (another session's C mark can wake the watcher twice within that).
 /// `pending` is the first sighting. The agent need not be in the process chain: an npm-installed
-/// claude runs as node, so only the command line names it.
+/// claude runs as node, so the command line or node's script names it.
 fn seen_twice(pending: &mut Option<(String, u64, Instant)>, tab: &str, epoch: u64, now: Instant) -> bool {
     match pending {
         Some((t, e, first)) if t == tab && *e == epoch => {
@@ -244,7 +244,8 @@ fn seen_twice(pending: &mut Option<(String, u64, Instant)>, tab: &str, epoch: u6
 fn read(agents: &Agents, tools: &Tools, session: &Session) -> (Reading, Option<Watch>) {
     let (chain, argv) = session.foreground_reading();
     let mut reading = foreground_of(agents, chain.as_deref(), session.command_line());
-    // A standalone or npm Qwen Code runs as `node`, which names no agent: its script, in the deepest process's words, does.
+    // A standalone or npm Qwen Code, or an npm Claude Code, runs as `node`, which names no agent: its script, in the
+    // deepest process's words, does.
     if let Some(Some(fg)) = &mut reading
         && fg.agent.is_none()
     {

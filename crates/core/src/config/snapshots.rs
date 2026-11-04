@@ -89,6 +89,11 @@ impl Snapshots {
         }
     }
 
+    /// The folder the snapshots live in.
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
     fn index_path(&self) -> PathBuf {
         self.dir.join("index.json")
     }

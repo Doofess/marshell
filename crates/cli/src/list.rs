@@ -12,18 +12,28 @@ pub fn table(sessions: &[SessionInfo]) -> String {
     if sessions.is_empty() {
         return "No sessions.".to_string();
     }
-    let mut rows = vec![["#", "NAME", "AGENT", "STATE", "MODE", "CWD"].map(String::from)];
+    let admin = sessions.iter().any(|s| s.elevated);
+    let mut header: Vec<String> = ["#", "NAME", "AGENT", "STATE", "MODE"].map(String::from).into();
+    if admin {
+        header.push("ADMIN".into());
+    }
+    header.push("CWD".into());
+    let mut rows = vec![header];
     for s in sessions {
-        rows.push([
+        let mut row = vec![
             s.number.to_string(),
             s.name.clone(),
             s.agent.clone().unwrap_or_else(|| "-".into()),
             state_word(s).to_string(),
             mode_word(s).unwrap_or_else(|| "-".into()),
-            s.cwd.clone(),
-        ]);
+        ];
+        if admin {
+            row.push(if s.elevated { "yes" } else { "-" }.into());
+        }
+        row.push(s.cwd.clone());
+        rows.push(row);
     }
-    let widths: Vec<usize> = (0..6)
+    let widths: Vec<usize> = (0..rows[0].len())
         .map(|c| rows.iter().map(|r| r[c].chars().count()).max().unwrap_or(0))
         .collect();
     rows.iter()
@@ -51,6 +61,7 @@ pub fn json(sessions: &[SessionInfo]) -> String {
         cwd: &'a str,
         project: &'a str,
         mode: Option<String>,
+        elevated: bool,
     }
     let rows: Vec<Row> = sessions
         .iter()
@@ -63,6 +74,7 @@ pub fn json(sessions: &[SessionInfo]) -> String {
             cwd: &s.cwd,
             project: &s.project,
             mode: mode_word(s),
+            elevated: s.elevated,
         })
         .collect();
     serde_json::to_string_pretty(&rows).unwrap_or_else(|_| "[]".into())
@@ -150,11 +162,38 @@ mod tests {
             serde_json::json!({
                 "number": 1, "tab_id": "tab-a", "name": "Session 1", "agent": "claude", "state": "running",
                 "cwd": "C:\\work\\app", "project": "C:\\work", "mode": "plan",
+                "elevated": false,
             })
         );
         assert_eq!(parsed[1]["state"], "exited");
         assert!(parsed[1]["agent"].is_null() && parsed[1]["mode"].is_null());
         assert_eq!(json(&[]).trim(), "[]");
+    }
+
+    #[test]
+    fn an_elevated_row_is_marked_in_json_and_the_table() {
+        let mut admin = sample(2, "tab-b", SessionState::Running);
+        admin.elevated = true;
+        let sessions = vec![sample(1, "tab-a", SessionState::Running), admin];
+        let text = table(&sessions);
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(lines[0].contains("ADMIN"), "{text}");
+        assert!(lines[0].find("MODE") < lines[0].find("ADMIN"), "{text}");
+        assert!(lines[0].find("ADMIN") < lines[0].find("CWD"), "{text}");
+        let col = lines[0].find("ADMIN").unwrap();
+        assert_eq!(lines[2].get(col..col + 3), Some("yes"), "{text}");
+        assert_eq!(lines[1].get(col..col + 1), Some("-"), "{text}");
+        assert_eq!(lines[1].find("C:\\work\\app"), lines[0].find("CWD"), "{text}");
+        assert!(lines.iter().all(|l| l == &l.trim_end()), "no trailing spaces");
+        let parsed: serde_json::Value = serde_json::from_str(&json(&sessions)).unwrap();
+        assert_eq!(parsed[0]["elevated"], false);
+        assert_eq!(parsed[1]["elevated"], true);
+    }
+
+    #[test]
+    fn no_elevated_row_means_no_admin_column() {
+        let text = table(&[sample(1, "tab-a", SessionState::Running)]);
+        assert!(!text.contains("ADMIN"), "{text}");
     }
 
     #[test]

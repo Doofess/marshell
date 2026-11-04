@@ -5,4 +5,8 @@ export type ConfigPreview = { changeset_id: string, title: string, reason: strin
 /**
  * True when a file changed on disk since the preview was made.
  */
-stale: boolean, can_apply: boolean, };
+stale: boolean, can_apply: boolean, 
+/**
+ * The folder the backup of this change goes in.
+ */
+snapshots_dir?: string, };

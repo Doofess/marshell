@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { LAUNCH_PROGRAMS } from "../launcher/launchChoice";
 import type { Detection } from "../onboarding/types";
-import { launcherSetup } from "./launcherSetup";
+import { launcherSetup, shownNumber } from "./launcherSetup";
 
 const detected = (skipsAll = false): Detection => ({ cli: "antigravity", installed: true, configPath: "settings.json", configState: "ok", ...(skipsAll ? { skipsAll: { setting: "dangerouslySkipPermissions" } } : {}) });
 const programs = [...LAUNCH_PROGRAMS, { ...LAUNCH_PROGRAMS[2]!, id: "preset:agy", agent: "antigravity" }];
@@ -40,5 +40,13 @@ describe("launcher setup read state", () => {
   it("does not apply Windows settings or failures to WSL", () => {
     const result = launcherSetup(programs, true, [detected(true)], new Set(["antigravity"]));
     expect(result.some((p) => p.adminSetupPending || p.adminSetupFailed || p.skipsAll)).toBe(false);
+  });
+});
+
+describe("shownNumber", () => {
+  it("keeps the number a pending start reserved, and follows the live one otherwise", () => {
+    expect(shownNumber(3, false, 2)).toBe(3);
+    expect(shownNumber(3, true, 2)).toBe(2);
+    expect(shownNumber(3, true, undefined)).toBe(3);
   });
 });

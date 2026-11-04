@@ -233,3 +233,81 @@ async fn panel_shell_is_not_saved_to_layout() {
     state.session(&tab).unwrap().force_kill();
     state.session(&panel).unwrap().force_kill();
 }
+
+/// The `.cast` files in the home's recordings folder that belong to `tab`.
+fn casts_of(home: &Path, tab: &str) -> Vec<String> {
+    std::fs::read_dir(home.join("history").join("recordings"))
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.starts_with(&format!("{tab}-")) && n.ends_with(".cast"))
+        .collect()
+}
+
+async fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
+    let start = Instant::now();
+    while !done() {
+        assert!(start.elapsed() < Duration::from_secs(10), "{what}");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_panel_shell_that_ends_unadopted_leaves_no_recording() {
+    let home = tempfile::tempdir().unwrap();
+    let state = state_in(home.path());
+    let app = router(state.clone());
+    let first = open_panel(&app, home.path()).await;
+    assert_eq!(
+        casts_of(home.path(), &first).len(),
+        1,
+        "the panel records from the start"
+    );
+    state.session(&first).unwrap().force_kill();
+    wait_until("the panel shell never exited", || {
+        state.session(&first).unwrap().has_exited()
+    })
+    .await;
+    // The next open finds the dead shell and drops it, and its recording with it.
+    let second = open_panel(&app, home.path()).await;
+    wait_until("the recording stayed", || casts_of(home.path(), &first).is_empty()).await;
+    assert_eq!(casts_of(home.path(), &second).len(), 1);
+    state.session(&second).unwrap().force_kill();
+}
+
+#[tokio::test]
+async fn an_adopted_panel_shell_keeps_its_recording() {
+    let home = tempfile::tempdir().unwrap();
+    let state = state_in(home.path());
+    let app = router(state.clone());
+    let panel = open_panel(&app, home.path()).await;
+    assert_eq!(adopt(&app).await.status(), StatusCode::OK);
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(casts_of(home.path(), &panel).len(), 1);
+    state.session(&panel).unwrap().force_kill();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_duplicate_loser_panel_recording_goes() {
+    let home = tempfile::tempdir().unwrap();
+    let state = state_in(home.path());
+    let app = router(state.clone());
+    let mut tasks = Vec::new();
+    for _ in 0..2 {
+        let app = app.clone();
+        let cwd = home.path().to_path_buf();
+        tasks.push(tokio::spawn(async move { open_panel(&app, &cwd).await }));
+    }
+    let first = tasks.remove(0).await.unwrap();
+    let _ = tasks.remove(0).await.unwrap();
+    wait_until("the loser's recording stayed", || {
+        std::fs::read_dir(home.path().join("history").join("recordings"))
+            .map(|d| d.filter_map(|e| e.ok()).count())
+            .unwrap_or(0)
+            == 1
+    })
+    .await;
+    assert_eq!(casts_of(home.path(), &first).len(), 1);
+    state.session(&first).unwrap().force_kill();
+}

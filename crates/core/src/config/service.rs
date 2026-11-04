@@ -288,6 +288,7 @@ impl ConfigService {
         let files = plan(&cs, &self.shared.guard(), &self.shared.snapshots);
         let id = new_id("c");
         let mut preview = to_preview(&id, &cs, &files);
+        preview.snapshots_dir = Some(self.shared.snapshots.dir().to_string_lossy().into_owned());
         for (file, shown_file) in files.iter().zip(preview.files.iter_mut()) {
             if let Some(diff) = shown(file) {
                 shown_file.diff = diff;
@@ -691,6 +692,29 @@ mod tests {
             false,
         );
         assert!(plain.guard().check(file).is_err());
+    }
+
+    #[test]
+    fn a_preview_names_the_real_snapshot_folder() {
+        let e = env();
+        let path = e.root.join("settings.json");
+        let preview = e.svc.preview(ChangeSet {
+            title: "t".into(),
+            reason: "r".into(),
+            edits: vec![edit(
+                &path,
+                EditOp::JsonSet {
+                    pointer: "/a".into(),
+                    value: "1".into(),
+                },
+            )],
+        });
+        let expected = Some(e.home.join("snapshots").to_string_lossy().into_owned());
+        assert_eq!(preview.snapshots_dir, expected);
+        assert_eq!(
+            e.svc.get_preview(&preview.changeset_id).unwrap().snapshots_dir,
+            expected
+        );
     }
 
     fn edit(path: &Path, op: EditOp) -> FileEdit {

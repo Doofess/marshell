@@ -7,4 +7,8 @@ export type FilePreview = { path: string, scope: ConfigScope, applies: Applies, 
 /**
  * A unified diff. Empty for a refused file and for a file with no change.
  */
-diff: string, status: FileStatus, };
+diff: string, status: FileStatus, 
+/**
+ * True when the file was on one line before and is laid out over several lines after.
+ */
+one_line_spread?: boolean, };

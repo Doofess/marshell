@@ -210,9 +210,10 @@ export function CompanyView({ agent, name, install, view, running, mode, onMode,
             <section className="change-review" aria-label="Review of the changes" tabIndex={-1} data-focus="review">
               {review.kind === "review" && review.plan.normalized && <p className="change-bar__note">Shown as Marshell reads it: comments and layout are left out, and secret values show as hidden. The file keeps its comments and layout.</p>}
               {review.kind === "review" && <DiffView diff={previewDiff(review.plan.preview)} label={`Changes to ${view.path}`} />}
+              {review.kind === "review" && review.plan.preview.files.some((f) => f.one_line_spread === true) && <p className="change-bar__note">This file was on one line. Marshell lays it out over several lines.</p>}
               <p className="change-bar__note">
                 {"A backup is saved first, in "}
-                <code>~/.marshell/snapshots/</code>
+                <code>{(review.kind === "review" && review.plan.preview.snapshots_dir) || "~/.marshell/snapshots/"}</code>
                 {". To undo, Marshell puts that backup back, for as long as the file is unchanged since this change."}
               </p>
               {rewrite && <p className="change-bar__note">{rewrite}</p>}

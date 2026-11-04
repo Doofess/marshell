@@ -238,11 +238,8 @@ pub fn detect_profiles(probe: &Probe) -> Vec<Profile> {
                 ShellFamily::Posix,
             ));
         }
-        for distro in parse_wsl_list(&(probe.wsl_list)()) {
-            // Docker Desktop's internal distros are not shells to launch in.
-            if distro == "docker-desktop" || distro == "docker-desktop-data" {
-                continue;
-            }
+        // Docker Desktop's internal distros are not shells to launch in.
+        for distro in crate::wsl::user_distros(parse_wsl_list(&(probe.wsl_list)())) {
             found.push(detected(
                 &format!("wsl-{}", distro.to_lowercase()),
                 &distro,
@@ -377,9 +374,12 @@ pub(crate) fn adapter_of_package(name: &str) -> Option<&'static str> {
 }
 
 /// The adapter agent a node-run command line (its words, quotes removed) starts: the program is `node` and one of its
-/// words is a script of Qwen Code. That is the npm package (`...\@qwen-code\qwen-code\...`) or the standalone install
-/// (`...\qwen-code\lib\cli-entry.js` or `...\qwen-code\lib\cli.js`, where the launcher's path may hold `bin\..\`).
-/// A typed `qwen` is named by the program itself; this is for the node processes below it.
+/// words is a script of Qwen Code or of Claude Code's npm package.
+/// - Qwen Code: the npm package (`...\@qwen-code\qwen-code\...`) or the standalone install (`...\qwen-code\lib\cli-entry.js`
+///   or `...\qwen-code\lib\cli.js`, where the launcher's path may hold `bin\..\`).
+/// - Claude Code: the npm package's `...\@anthropic-ai\claude-code\cli.js`, which the `claude` shim runs in Git Bash or cmd.
+///
+/// A typed `qwen` or `claude` is named by the program itself; this is for the node processes below it.
 pub(crate) fn agent_of_node_argv(argv: &[String]) -> Option<&'static str> {
     if program_name(argv.first()?) != "node" {
         return None;
@@ -387,21 +387,38 @@ pub(crate) fn agent_of_node_argv(argv: &[String]) -> Option<&'static str> {
     argv.iter()
         .skip(1)
         .filter(|word| !word.starts_with('-'))
-        .any(|script| is_qwen_script(script))
-        .then_some("qwen")
+        .find_map(|script| {
+            let parts = script_parts(script);
+            if is_qwen_script(&parts) {
+                Some("qwen")
+            } else if is_claude_script(&parts) {
+                Some("claude")
+            } else {
+                None
+            }
+        })
 }
 
-fn is_qwen_script(script: &str) -> bool {
-    let lower = script.to_lowercase();
-    // `bin\..\lib` is `lib`: the launcher spells its script that way.
-    let mut parts: Vec<&str> = Vec::new();
-    for part in lower.split(['/', '\\']).filter(|p| !p.is_empty() && *p != ".") {
+/// A script path's parts, lowercased, with `.` dropped and `..` taken back: `bin\..\lib` is `lib`, as Qwen's launcher
+/// spells its script.
+fn script_parts(script: &str) -> Vec<String> {
+    let mut parts: Vec<String> = Vec::new();
+    for part in script.split(['/', '\\']).filter(|p| !p.is_empty() && *p != ".") {
         if part == ".." {
             parts.pop();
         } else {
-            parts.push(part);
+            parts.push(part.to_lowercase());
         }
     }
+    parts
+}
+
+fn is_claude_script(parts: &[String]) -> bool {
+    matches!(parts, [.., scope, package, file] if scope == "@anthropic-ai" && package == "claude-code" && file == "cli.js")
+}
+
+fn is_qwen_script(parts: &[String]) -> bool {
+    let parts: Vec<&str> = parts.iter().map(String::as_str).collect();
     let Some((file, folders)) = parts.split_last() else {
         return false;
     };
@@ -1734,6 +1751,25 @@ mod tests {
             r#"python C:\work\qwen-code\lib\cli.js"#,
         ] {
             assert_eq!(agent_in(&[], Some(line)), None, "{line}");
+            assert_eq!(agent_of_node_argv(&words(line)), None, "{line}");
+        }
+    }
+
+    #[test]
+    fn an_npm_claude_node_is_recognised() {
+        // A `claude` typed in Git Bash or cmd runs the npm shim, whose deepest process is node on the package's script.
+        for line in [
+            r#"node C:\Users\u\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code\cli.js"#,
+            r#""C:\Program Files\nodejs\node.exe" "C:\Users\u\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code\cli.js" --resume"#,
+            "node /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js",
+        ] {
+            assert_eq!(agent_of_node_argv(&words(line)), Some("claude"), "{line}");
+        }
+        // Another file of the package, or another package's cli.js, is nobody's.
+        for line in [
+            r#"node C:\Users\u\AppData\Roaming\npm\node_modules\@anthropic-ai\claude-code\scripts\preinstall.js"#,
+            r#"node C:\work\claude-code\cli.js"#,
+        ] {
             assert_eq!(agent_of_node_argv(&words(line)), None, "{line}");
         }
     }

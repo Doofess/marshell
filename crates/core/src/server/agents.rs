@@ -16,7 +16,7 @@ use crate::agents::settings_view::{
 use crate::agents::skill;
 use crate::agents::{parse_any_version, run_version_text};
 use crate::bridge;
-use crate::config::jsonc::{parse_problem, read_value};
+use crate::config::jsonc::{has_lone_lf, lf_to_crlf, parse_problem, read_value};
 use crate::config::preview::{MAX_CONFIG_BYTES, PlannedFile, TOO_LARGE_DETAIL, unified_diff};
 use crate::config::service::ApplyError;
 use crate::paths;
@@ -67,9 +67,6 @@ fn wsl_version_argv(distro: &str, exe: &str) -> Vec<String> {
         .to_vec()
 }
 
-/// The target from what `distro` printed for its `$HOME` and for the bridge's Linux path. None for a home that is
-/// not under the distro's own share (one under `/mnt/c` is a folder of Windows, and a distro's hooks must never
-/// land in the Windows user's files), and for a bridge path that is not absolute.
 /// The distro's home and the bridge's Linux path from `distro_target`'s one call: two lines, each non-empty.
 fn split_home_and_bridge(out: &str) -> Option<(String, String)> {
     let mut lines = out.lines().map(|line| line.trim_end_matches('\r'));
@@ -77,8 +74,11 @@ fn split_home_and_bridge(out: &str) -> Option<(String, String)> {
     (!home.is_empty() && !bridge.is_empty()).then(|| (home.to_string(), bridge.to_string()))
 }
 
+/// The target from what `distro` printed for its `$HOME` and for the bridge's Linux path. None for a home that is
+/// not under the distro's own share (one under `/mnt/c` is a folder of Windows, and a distro's hooks must never
+/// land in the Windows user's files), and for a bridge path that is not absolute.
 fn distro_target_of(distro: &str, linux_home: &str, linux_bridge: &str) -> Option<DistroTarget> {
-    let home = crate::wsl::to_windows(distro, linux_home).filter(|home| crate::wsl::under_distro(distro, home))?;
+    let home = crate::wsl::home_in_share(distro, linux_home)?;
     linux_bridge.starts_with('/').then(|| DistroTarget {
         home,
         bridge: linux_bridge.to_string(),
@@ -216,13 +216,13 @@ impl AppState {
         }
     }
 
-    /// Qwen Code's read-only system settings: the file a test named, else `C:\ProgramData\qwen-code\settings.json`.
+    /// Qwen Code's read-only system settings: the file a test named, else the one for this OS.
     /// `QWEN_CODE_SYSTEM_SETTINGS_PATH` is not read (slice 6l1 decision 3, 6l2 decision 9).
     fn qwen_system_settings_path(&self) -> PathBuf {
         self.0
             .qwen_system_settings
             .clone()
-            .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData\qwen-code\settings.json"))
+            .unwrap_or_else(|| PathBuf::from(crate::agents::qwen::system_settings_for(std::env::consts::OS)))
     }
 
     /// Where `agent`'s `marshell` skill file goes. A skill home named by a test replaces the user's home and the
@@ -392,42 +392,15 @@ impl AppState {
     /// The plan to take Marshell's hooks out of `distro`.
     fn distro_remove(&self, adapter: Adapter, distro: &str) -> Result<RemovePreview, Fail> {
         let home = self.distro_target(distro)?.home;
-        let (changes, statusline_left) = match adapter {
-            Adapter::Claude => {
-                let path = home.join(".claude").join("settings.json");
-                let text = read_text(&path).map_err(|e| refused(&e))?;
-                let plan =
-                    hooks::remove_plan(&path, &home, text.as_deref(), None, Some(distro)).map_err(|e| refused(&e))?;
-                (plan.changes, plan.statusline_left)
-            }
-            Adapter::Codex => {
-                let path = home.join(".codex").join("hooks.json");
-                let text = read_text(&path).map_err(|e| refused(&e))?;
-                let changes =
-                    codex::hooks::remove_plan(&path, text.as_deref(), &self.0.home).map_err(|e| refused(&e))?;
-                (changes, false)
-            }
-            Adapter::Antigravity => {
-                let hooks_text = read_text(&agy::hooks_path(&home)).map_err(|e| refused(&e))?;
-                let settings_text = read_text(&agy::settings_path(&home)).map_err(|e| refused(&e))?;
-                let changes = agy::remove_plan(
-                    &home,
-                    hooks_text.as_deref(),
-                    settings_text.as_deref(),
-                    None,
-                    Some(distro),
-                )
-                .map_err(|e| refused(&e))?;
-                (changes, false)
-            }
-            Adapter::Qwen => {
-                let path = home.join(".qwen").join("settings.json");
-                let text = read_text(&path).map_err(|e| refused(&e))?;
-                let plan = qwen_hooks::remove_plan(&path, &home, text.as_deref(), None, Some(distro))
-                    .map_err(|e| refused(&e))?;
-                (plan.changes, plan.statusline_left)
-            }
+        let agent = match adapter {
+            Adapter::Claude => AGENT,
+            Adapter::Codex => CODEX,
+            Adapter::Antigravity => ANTIGRAVITY,
+            Adapter::Qwen => QWEN,
         };
+        // The same plan `marshell uninstall` makes (`agents::distro`), so the dialog and the CLI never differ.
+        let (changes, statusline_left) =
+            crate::agents::distro::remove_plan_of(agent, &home, &self.0.home, distro).map_err(|e| refused(&e))?;
         Ok(RemovePreview {
             preview: self.0.config.preview(changes),
             statusline_left,
@@ -1193,15 +1166,17 @@ fn settings_file(st: &AppState, kind: Adapter) -> Result<(PathBuf, Option<(PathB
 }
 
 fn settings_view_of(st: &AppState, agent: &str, kind: Adapter) -> Result<AgentSettingsView, Fail> {
-    settings_read(st, agent, kind).map(|(view, _)| view)
+    settings_read(st, agent, kind).map(|(view, ..)| view)
 }
 
 /// The settings view and whether the file's text starts with a byte-order mark, from one read.
-fn settings_read(st: &AppState, agent: &str, kind: Adapter) -> Result<(AgentSettingsView, bool), Fail> {
+fn settings_read(st: &AppState, agent: &str, kind: Adapter) -> Result<(AgentSettingsView, bool, bool), Fail> {
     let (path, managed) = settings_file(st, kind)?;
     let text = std::fs::read_to_string(&path);
     let had_bom = text.as_deref().is_ok_and(has_bom);
-    Ok((view(agent, &path, text, managed), had_bom))
+    // Every line ends in CRLF, the same rule the form path uses.
+    let crlf = text.as_deref().is_ok_and(|t| t.contains("\r\n") && !has_lone_lf(t));
+    Ok((view(agent, &path, text, managed), had_bom, crlf))
 }
 
 /// Codex's `version.json` in `dir`, read against the installed `version`. A file that can't be read is no news.
@@ -1279,7 +1254,7 @@ fn settings_plan_of(
     kind: Adapter,
     req: SettingsPlanRequest,
 ) -> Result<SettingsPlan, Refusal> {
-    let (view, had_bom) = settings_read(st, agent, kind).map_err(Refusal::from)?;
+    let (view, had_bom, crlf) = settings_read(st, agent, kind).map_err(Refusal::from)?;
     match view.state {
         ViewState::Unparsable { line } => {
             return Err(unprocessable(format!(
@@ -1297,7 +1272,7 @@ fn settings_plan_of(
     }
     let ops = match &req.change {
         SettingsChange::Form { edits } => form_ops(agent, &view, edits)?,
-        SettingsChange::Raw { text } => vec![raw_op(agent, &view, had_bom, text)?],
+        SettingsChange::Raw { text } => vec![raw_op(agent, &view, had_bom, crlf, text)?],
     };
     let title = match kind {
         Adapter::Claude => "Change Claude Code settings",
@@ -1425,7 +1400,7 @@ fn top_value(text: &str, key: &str) -> Option<Value> {
 
 /// The op that replaces the file's whole text, when the view gives that text out and the new text parses.
 /// A BOM the file had stays, and only one: the text the person edits never carries it.
-fn raw_op(agent: &str, view: &AgentSettingsView, had_bom: bool, text: &str) -> Result<EditOp, Refusal> {
+fn raw_op(agent: &str, view: &AgentSettingsView, had_bom: bool, crlf: bool, text: &str) -> Result<EditOp, Refusal> {
     if view.state == ViewState::Missing {
         return Err(unprocessable("There is no file to edit as text."));
     }
@@ -1459,11 +1434,9 @@ fn raw_op(agent: &str, view: &AgentSettingsView, had_bom: bool, text: &str) -> R
             return Err(unprocessable(ACCOUNT_LINE));
         }
     }
-    let content = if had_bom {
-        format!("\u{feff}{body}")
-    } else {
-        body.to_string()
-    };
+    // A textarea gives LF only; a file whose lines all ended in CRLF stays that way.
+    let body = if crlf { lf_to_crlf(body) } else { body.to_string() };
+    let content = if had_bom { format!("\u{feff}{body}") } else { body };
     Ok(EditOp::ReplaceText { content })
 }
 
@@ -1732,6 +1705,7 @@ pub async fn remove_plan(
                 &inputs.user_home,
                 inputs.text.as_deref(),
                 inputs.chain_text.as_deref(),
+                Some(&paths::statusline_chain(&st.0.home, AGENT)),
                 None,
             )
             .map_err(|e| refused(&e))?;
@@ -1756,6 +1730,7 @@ pub async fn remove_plan(
                 inputs.hooks_text.as_deref(),
                 inputs.settings_text.as_deref(),
                 inputs.chain_text.as_deref(),
+                Some(&paths::statusline_chain(&st.0.home, ANTIGRAVITY)),
                 None,
             )
             .map_err(|e| refused(&e))?;
@@ -1771,6 +1746,7 @@ pub async fn remove_plan(
                 &inputs.user_home,
                 inputs.text.as_deref(),
                 inputs.chain_text.as_deref(),
+                Some(&paths::statusline_chain(&st.0.home, QWEN)),
                 None,
             )
             .map_err(|e| refused(&e))?;
@@ -1789,6 +1765,46 @@ pub async fn remove_plan(
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    /// The content a raw save of `typed` would write over `file`, with the flags `settings_read` derives.
+    fn raw_content(agent: &str, file: &str, typed: &str) -> String {
+        let v = view(agent, std::path::Path::new("settings"), Ok(file.to_string()), None);
+        let crlf = file.contains("\r\n") && !has_lone_lf(file);
+        match raw_op(agent, &v, has_bom(file), crlf, typed).map_err(|_| "refused") {
+            Ok(EditOp::ReplaceText { content }) => content,
+            _ => panic!("raw_op gave no ReplaceText"),
+        }
+    }
+
+    #[test]
+    fn a_raw_save_keeps_crlf() {
+        let out = raw_content("claude", "{\r\n  \"a\": 1\r\n}\r\n", "{\n  \"a\": 2\n}\n");
+        assert_eq!(out, "{\r\n  \"a\": 2\r\n}\r\n");
+        let out = raw_content("codex", "a = 1\r\nb = 2\r\n", "a = 1\nb = 3\n");
+        assert_eq!(out, "a = 1\r\nb = 3\r\n");
+        let out = raw_content("claude", "\u{feff}{\r\n  \"a\": 1\r\n}\r\n", "{\n  \"a\": 2\n}\n");
+        assert_eq!(out, "\u{feff}{\r\n  \"a\": 2\r\n}\r\n");
+    }
+
+    #[test]
+    fn a_raw_save_of_a_mixed_or_lf_file_is_as_typed() {
+        let out = raw_content("claude", "{\r\n  \"a\": 1\n}\n", "{\n  \"a\": 2\n}\n");
+        assert_eq!(out, "{\n  \"a\": 2\n}\n");
+        let out = raw_content("claude", "{\n  \"a\": 1\n}\n", "{\n  \"a\": 2\n}\n");
+        assert_eq!(out, "{\n  \"a\": 2\n}\n");
+    }
+
+    #[test]
+    fn a_raw_save_of_a_crlf_file_changes_only_the_edited_line() {
+        let file = "{\r\n  \"a\": 1,\r\n  \"b\": 2\r\n}\r\n";
+        let out = raw_content("claude", file, "{\n  \"a\": 1,\n  \"b\": 3\n}\n");
+        let changed = file
+            .split("\r\n")
+            .zip(out.split("\r\n"))
+            .filter(|(x, y)| x != y)
+            .count();
+        assert_eq!(changed, 1);
+    }
 
     #[test]
     fn the_distro_version_run_drops_windows_path_entries_and_takes_the_program_as_dollar_zero() {
@@ -1824,15 +1840,13 @@ mod tests {
     }
 
     #[test]
-    fn a_distro_target_is_the_distros_own_share() {
+    fn a_distro_target_needs_a_linux_bridge_path() {
         let bridge = "/mnt/c/Users/x y/.marshell/bin/marshell-hook.exe";
         let target = distro_target_of("Ubuntu", "/home/me", bridge).unwrap();
         assert_eq!(target.home, PathBuf::from(r"\\wsl.localhost\Ubuntu\home\me"));
         assert_eq!(target.bridge, bridge);
-        // A home on a Windows drive, an empty or relative one, and one with `..`: no target.
-        for home in ["/mnt/c/Users/me", "/mnt/c", "", "me", "/home/../mnt/c/x"] {
-            assert_eq!(distro_target_of("Ubuntu", home, bridge), None, "{home:?}");
-        }
+        // A home outside the distro's share is `wsl::home_in_share`'s refusal, tested there.
+        assert_eq!(distro_target_of("Ubuntu", "/mnt/c/Users/me", bridge), None);
         // A bridge that is not a Linux path: no target.
         assert_eq!(distro_target_of("Ubuntu", "/home/me", ""), None);
         assert_eq!(distro_target_of("Ubuntu", "/home/me", r"C:\x"), None);

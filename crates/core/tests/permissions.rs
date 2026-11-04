@@ -13,12 +13,19 @@ fn app(hold: Duration) -> (axum::Router, AppState) {
     app_on(PORT, hold)
 }
 
+/// An app whose tabs `t0` to `t2` are plain shell tabs that run Claude Code in the foreground.
 fn app_on(port: u16, hold: Duration) -> (axum::Router, AppState) {
-    app_with_codex(port, hold, "0.163.0")
+    app_running(port, hold, "0.163.0", "claude")
 }
 
-/// An app whose Codex version is pinned, so no test runs the `codex --version` on this machine.
+/// An app whose tabs run Codex, and whose Codex version is pinned, so no test runs the `codex --version` on this machine.
 fn app_with_codex(port: u16, hold: Duration, codex_version: &str) -> (axum::Router, AppState) {
+    app_running(port, hold, codex_version, "codex")
+}
+
+/// An app whose tabs `t0` to `t2` are plain shell tabs with `agent` in the foreground. A permission request is held
+/// only in a tab that runs the requesting agent.
+fn app_running(port: u16, hold: Duration, codex_version: &str, agent: &str) -> (axum::Router, AppState) {
     let home = tempfile::tempdir().unwrap().keep();
     let st = AppState::new(
         TOKEN.into(),
@@ -45,6 +52,7 @@ fn app_with_codex(port: u16, hold: Duration, codex_version: &str) -> (axum::Rout
                 preset: None,
             },
         );
+        assert!(st.registry().mark_hook_agent(tab, agent, None));
     }
     (router(st.clone()), st)
 }
@@ -217,7 +225,7 @@ fn answer_json(answer: &Answer) -> serde_json::Value {
 
 #[tokio::test]
 async fn a_codex_permission_is_held_and_answered() {
-    let (app, _) = app(Duration::from_secs(30));
+    let (app, _) = app_with_codex(PORT, Duration::from_secs(30), "0.163.0");
     let hook = spawn_agent_hook("codex", &app, Some("t1"), codex_request("Set-Content out.txt hi"));
     let entry = wait_one(&app).await;
     assert_eq!(
@@ -242,7 +250,7 @@ async fn a_codex_permission_is_held_and_answered() {
 
 #[tokio::test]
 async fn a_codex_permission_shows_a_card_with_no_always_rule() {
-    let (app, st) = app(Duration::from_secs(30));
+    let (app, st) = app_with_codex(PORT, Duration::from_secs(30), "0.163.0");
     let hook = spawn_agent_hook("codex", &app, Some("t1"), codex_request("Set-Content out.txt hi"));
     wait_one(&app).await;
     let views = st.permission_views();
@@ -261,7 +269,7 @@ async fn a_codex_permission_shows_a_card_with_no_always_rule() {
 
 #[tokio::test]
 async fn a_codex_project_decision_is_409() {
-    let (app, _) = app(Duration::from_secs(30));
+    let (app, _) = app_with_codex(PORT, Duration::from_secs(30), "0.163.0");
     let hook = spawn_agent_hook("codex", &app, Some("t0"), codex_request("npm test"));
     let rid = rid_of(&wait_one(&app).await);
     let (status, text) = post_to(
@@ -309,7 +317,7 @@ async fn a_codex_permission_is_answered_on_an_unrecorded_version() {
 
 #[tokio::test]
 async fn two_codex_tabs_get_their_own_answers() {
-    let (app, _) = app(Duration::from_secs(30));
+    let (app, _) = app_with_codex(PORT, Duration::from_secs(30), "0.163.0");
     let first = spawn_agent_hook("codex", &app, Some("t1"), codex_request("first command"));
     wait_pending(&app, |p| p.len() == 1).await;
     let second = spawn_agent_hook("codex", &app, Some("t2"), codex_request("second command"));
@@ -347,7 +355,7 @@ async fn two_codex_tabs_get_their_own_answers() {
 
 #[tokio::test]
 async fn no_decision_returns_204() {
-    let (app, _) = app(Duration::from_millis(100));
+    let (app, _) = app_with_codex(PORT, Duration::from_millis(100), "0.163.0");
     let hook = spawn_agent_hook("codex", &app, Some("t1"), codex_request("npm test"));
     let (status, ct, body) = hook.await.unwrap();
     assert_eq!(status, StatusCode::NO_CONTENT);
@@ -603,14 +611,17 @@ async fn app_with_session(hold: Duration) -> (axum::Router, String, tempfile::Te
     )
     .with_claude_version(Some("2.1.302".into()))
     .with_permission_hold(hold);
-    let app = router(st);
+    let app = router(st.clone());
     let body = serde_json::json!({
         "cols": 80, "rows": 24, "profile_id": "sleeper", "cwd": dir.path().to_string_lossy(), "agent": null,
     });
     let (status, text) = post_json(&app, "/v1/sessions", &body).await;
     assert_eq!(status, StatusCode::OK, "{text}");
     let json: serde_json::Value = serde_json::from_str(&text).unwrap();
-    (app, json["tab_id"].as_str().unwrap().to_string(), dir)
+    let tab = json["tab_id"].as_str().unwrap().to_string();
+    // A shell tab that runs Claude Code in the foreground: a request is held only there.
+    assert!(st.registry().mark_hook_agent(&tab, "claude", None));
+    (app, tab, dir)
 }
 
 async fn post_json(app: &axum::Router, path: &str, body: &serde_json::Value) -> (StatusCode, String) {
@@ -1182,8 +1193,10 @@ async fn an_antigravity_project_decision_is_409() {
 
 #[tokio::test]
 async fn a_claude_release_still_answers_204() {
-    let (app, _) = agy_app(Duration::from_secs(30), "1.4.7");
+    let (app, st) = agy_app(Duration::from_secs(30), "1.4.7");
     for agent in ["claude", "codex"] {
+        // `s1` runs the agent in the foreground while its request waits.
+        assert!(st.registry().mark_hook_agent("s1", agent, None), "{agent}");
         let hook = spawn_agent_hook(agent, &app, Some("s1"), bash_request());
         let rid = rid_of(&wait_one(&app).await);
         let (status, _) = post_to(&app, &format!("/v1/permissions/{rid}/release"), "").await;
@@ -1191,9 +1204,11 @@ async fn a_claude_release_still_answers_204() {
         let (status, _, body) = hook.await.unwrap();
         assert_eq!(status, StatusCode::NO_CONTENT, "{agent}");
         assert!(body.is_empty(), "{agent}");
+        assert!(st.registry().clear_hook_agent("s1", agent, None), "{agent}");
     }
     // And the timeout is still a 204 for them.
-    let (app, _) = agy_app(Duration::from_secs(1), "1.4.7");
+    let (app, st) = agy_app(Duration::from_secs(1), "1.4.7");
+    assert!(st.registry().mark_hook_agent("s1", "claude", None));
     let hook = spawn_agent_hook("claude", &app, Some("s1"), bash_request());
     let (status, _, body) = hook.await.unwrap();
     assert_eq!((status, body.is_empty()), (StatusCode::NO_CONTENT, true));
@@ -1259,6 +1274,10 @@ async fn a_held_request_view_carries_the_hold_deadline() {
         ("codex", "s1", codex_request("npm test")),
         ("antigravity", "a1", agy_request(RISKY)),
     ] {
+        if agent != "antigravity" {
+            // `s1` runs the agent in the foreground while its request waits.
+            assert!(st.registry().mark_hook_agent(tab, agent, None), "{agent}");
+        }
         let hook = spawn_agent_hook(agent, &app, Some(tab), body);
         let entry = wait_one(&app).await;
         let views = st.permission_views();
@@ -1275,6 +1294,9 @@ async fn a_held_request_view_carries_the_hold_deadline() {
         );
         post_to(&app, &format!("/v1/permissions/{}/release", rid_of(&entry)), "").await;
         hook.await.unwrap();
+        if agent != "antigravity" {
+            st.registry().clear_hook_agent(tab, agent, None);
+        }
     }
 }
 
@@ -1521,4 +1543,98 @@ async fn a_qwen_card_still_works_on_an_unrecorded_version() {
     assert!(row.live.is_none());
     decide(&app, &rid_of(&entry), r#"{"behavior":"allow"}"#).await;
     assert_eq!(answer_json(&hook.await.unwrap()), qwen_allow());
+}
+
+// An approve card is held only in a tab that runs the requesting agent, for every CLI.
+
+/// The agent each holding CLI is, with the request it posts.
+fn holding_requests() -> [(&'static str, serde_json::Value); 3] {
+    [
+        ("claude", bash_request()),
+        ("codex", codex_request("npm test")),
+        ("qwen", qwen_request()),
+    ]
+}
+
+#[tokio::test]
+async fn a_request_from_a_shell_tab_that_runs_no_agent_passes_for_every_cli() {
+    let (app, st) = qwen_app(Duration::from_secs(30), "0.26.5");
+    for (agent, request) in holding_requests() {
+        // `s1` is an open plain shell tab with no foreground agent.
+        let hook = spawn_agent_hook(agent, &app, Some("s1"), request);
+        let (status, _, body) = tokio::time::timeout(Duration::from_secs(2), hook)
+            .await
+            .unwrap_or_else(|_| panic!("{agent}: a pass waited"))
+            .unwrap();
+        assert_eq!((status, body.is_empty()), (StatusCode::NO_CONTENT, true), "{agent}");
+        assert!(pending(&app).await.is_empty(), "{agent}");
+    }
+    assert!(st.permission_views().is_empty());
+}
+
+#[tokio::test]
+async fn a_request_from_a_shell_tab_whose_foreground_is_that_agent_is_held() {
+    for (agent, request) in holding_requests() {
+        let (app, st) = qwen_app(Duration::from_secs(30), "0.26.5");
+        assert!(st.registry().mark_hook_agent("s1", agent, None), "{agent}");
+        let hook = spawn_agent_hook(agent, &app, Some("s1"), request);
+        let entry = wait_one(&app).await;
+        assert_eq!(
+            (entry["agent"].as_str(), entry["tab"].as_str()),
+            (Some(agent), Some("s1"))
+        );
+        hook.abort();
+    }
+}
+
+#[tokio::test]
+async fn a_request_from_a_wsl_tab_marked_by_the_agents_hook_is_held() {
+    for (agent, request) in holding_requests() {
+        let profile = marshell_protocol::api::Profile {
+            id: "wsl-ubuntu".into(),
+            name: "Ubuntu".into(),
+            command: vec!["wsl.exe".into(), "-d".into(), "Ubuntu".into()],
+            family: marshell_protocol::api::ShellFamily::Wsl,
+            cwd: None,
+            env: Vec::new(),
+            shell_integration: true,
+            terminal_theme: None,
+            detected: true,
+        };
+        let st = AppState::new(
+            TOKEN.into(),
+            PORT,
+            vec!["http://tauri.localhost".into()],
+            tempfile::tempdir().unwrap().keep(),
+            vec![profile],
+        )
+        .with_claude_version(Some("2.1.302".into()))
+        .with_codex_version(Some("0.163.0".into()))
+        .with_qwen_home(tempfile::tempdir().unwrap().keep())
+        .with_qwen_version(Some("0.26.5".into()))
+        .with_agent_path(|_| None)
+        .with_permission_hold(Duration::from_secs(30));
+        st.registry().reserve(
+            "w1",
+            marshell_core::registry::Relaunch {
+                elevated: false,
+                profile_id: "wsl-ubuntu".into(),
+                agent: None,
+                cwd: AGY_CWD.into(),
+                mode: None,
+                name: "w1".into(),
+                preset: None,
+            },
+        );
+        let app = router(st.clone());
+        // The request's own hook marks the tab as running the agent, and the card is held.
+        let hook = spawn_agent_hook(agent, &app, Some("w1"), request);
+        let entry = wait_one(&app).await;
+        assert_eq!(
+            (entry["agent"].as_str(), entry["tab"].as_str()),
+            (Some(agent), Some("w1"))
+        );
+        assert_eq!(st.registry().effective_agent("w1").as_deref(), Some(agent));
+        hook.abort();
+    }
 }

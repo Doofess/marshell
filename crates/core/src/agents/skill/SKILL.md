@@ -11,7 +11,7 @@ Use it only when `MARSHELL_TAB_ID` is set. Without it you are not inside Marshel
 
 ## Commands
 
-- `marshell list --json`: the open sessions as JSON, each with `number`, `tab_id`, `name`, `agent`, `state` (`running`, `ended` or `exited`), `cwd`, `project` and `mode`. Read this, not the plain table.
+- `marshell list --json`: the open sessions as JSON, each with `number`, `tab_id`, `name`, `agent`, `state` (`running`, `ended` or `exited`), `cwd`, `project`, `mode` and `elevated` (true when the session runs as administrator). Read this, not the plain table.
 - `marshell send <session> "<text>"`: puts the text on that session's prompt line. Marshell never presses Enter: the person reads it and sends it. `<session>` is a number or a tab id. The text is one line, at most 4000 characters.
 - `marshell new --agent <agent> [--cwd <folder>] [--prompt "<text>"] [--mode <mode>] [--name <name>]`: starts a session. `<agent>` is an agent id such as `claude`, `codex` or `antigravity`. `--prompt` fills the new session's prompt line once the agent is ready, without pressing Enter. `<mode>` is `manual`, `plan`, `auto-edit`, `full-auto`, `bypass` or `dont-ask`.
 - `marshell focus <session>`: brings Marshell's window to that session.

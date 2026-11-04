@@ -706,8 +706,9 @@ impl Registry {
     /// the foreground alone until the prompt mark, a restart, an exit or `clear_hook_agent` takes it. Broadcasts only
     /// on a change; returns whether the row changed.
     ///
-    /// The prompt refusal holds only once this process has sent an Executed mark: a shell that never does (it skips
-    /// the DEBUG trap) stays at Prompt while the agent runs. A hook of the session `session_id` names, when that
+    /// The prompt refusal holds only once this process has sent an Executed mark: a shell that never does stays at
+    /// Prompt while the agent runs. Bash marks a command's start from PS0 (or a DEBUG trap on older bash), also in a
+    /// shell with a DEBUG trap of its own. A hook of the session `session_id` names, when that
     /// session's SessionEnd was already seen (`clear_hook_agent`), is refused too: it is the agent's last word.
     pub fn mark_hook_agent(&self, tab_id: &str, agent: &str, session_id: Option<&str>) -> bool {
         // The program names of the adapter agents (`ADAPTER_EXES` in the manifest).

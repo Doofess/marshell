@@ -63,6 +63,7 @@ pub fn to_preview(changeset_id: &str, cs: &ChangeSet, files: &[PlannedFile]) -> 
         files: previews,
         stale: false,
         can_apply: !any_refused && any_changes,
+        snapshots_dir: None,
     }
 }
 
@@ -97,7 +98,24 @@ fn file_preview(file: &PlannedFile) -> FilePreview {
         after_hash: file.after.as_deref().map(hash_bytes),
         diff,
         status: file.status.clone(),
+        one_line_spread: one_line_spread(file).then_some(true),
     }
+}
+
+/// True when the file had text and no line break (a trailing `\r` or `\n` ignored) and now has one.
+fn one_line_spread(file: &PlannedFile) -> bool {
+    if file.status != FileStatus::Changes {
+        return false;
+    }
+    let (Some(before), Some(after)) = (&file.before, &file.after) else {
+        return false;
+    };
+    let trim = |b: &[u8]| {
+        let end = b.iter().rposition(|c| *c != b'\r' && *c != b'\n').map_or(0, |i| i + 1);
+        b[..end].to_vec()
+    };
+    let (before, after) = (trim(before), trim(after));
+    !before.is_empty() && !before.contains(&b'\n') && after.contains(&b'\n')
 }
 
 fn plan_file(path: &str, edits: &[&FileEdit], guard: &Guard, snapshots: &Snapshots) -> PlannedFile {
@@ -372,6 +390,30 @@ mod tests {
             FileStatus::Refused { reason, .. } => Some(*reason),
             _ => None,
         }
+    }
+
+    fn planned(before: Option<&str>, after: &str) -> PlannedFile {
+        PlannedFile {
+            path: PathBuf::from("f.json"),
+            target: PathBuf::from("f.json"),
+            scope: ConfigScope::User,
+            applies: Applies::Live,
+            before: before.map(|b| b.as_bytes().to_vec()),
+            after: Some(after.as_bytes().to_vec()),
+            status: FileStatus::Changes,
+            ops: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn one_line_spread_is_set_only_for_one_line_to_several() {
+        let spread = |b: Option<&str>, a: &str| file_preview(&planned(b, a)).one_line_spread;
+        assert_eq!(spread(Some("{\"a\":1}"), "{\n  \"a\": 1,\n  \"b\": 2\n}\n"), Some(true));
+        assert_eq!(spread(Some("{\"a\":1}\r\n"), "{\n  \"a\": 1\n}\n"), Some(true));
+        assert_eq!(spread(Some("{\n\"a\":1\n}\n"), "{\n\"a\":2\n}\n"), None);
+        assert_eq!(spread(Some("{\"a\":1}"), "{\"a\":2}"), None);
+        assert_eq!(spread(None, "{\n\"a\":1\n}\n"), None);
+        assert_eq!(spread(Some(""), "{\n\"a\":1\n}\n"), None);
     }
 
     #[test]

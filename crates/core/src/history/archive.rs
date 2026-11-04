@@ -65,6 +65,9 @@ pub fn write_meta(home: &Path, meta: &SessionMeta) -> anyhow::Result<()> {
 
 /// The session's sidecar, or None when it has none.
 pub fn read_meta(home: &Path, agent: &str, session_id: &str) -> anyhow::Result<Option<SessionMeta>> {
+    if !super::valid_session_id(session_id) {
+        return Ok(None);
+    }
     let (_, sidecar) = archive_paths(home, agent, session_id);
     store::read::<SessionMeta>(&sidecar)
 }
@@ -285,6 +288,15 @@ mod tests {
     use super::*;
     use crate::store;
     use marshell_protocol::history::Client;
+
+    #[test]
+    fn read_meta_refuses_an_id_that_is_not_one() {
+        let home = tempfile::tempdir().unwrap();
+        let (_, sidecar) = archive_paths(home.path(), "claude", "../x");
+        std::fs::create_dir_all(sidecar.parent().unwrap()).unwrap();
+        std::fs::write(&sidecar, "{}").unwrap();
+        assert!(read_meta(home.path(), "claude", "../x").unwrap().is_none());
+    }
 
     fn meta(id: &str, transcript: &std::path::Path) -> SessionMeta {
         SessionMeta {

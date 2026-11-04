@@ -242,7 +242,8 @@ fn removal_ops(
         };
         let event_pointer = format!("/hooks/{}", esc(event));
         let change = event_change(&event_pointer, groups, wanted(event).as_ref());
-        if !change.found {
+        // An empty approval list is what an earlier approvals-off install left behind: it counts as Marshell's.
+        if !change.found && !(event == PERMISSION_EVENT && groups.is_empty()) {
             continue;
         }
         if change.replaced {
@@ -376,6 +377,19 @@ pub fn install_plan(
     let (mut ops, replaced_in_place) = removal_ops(&root, false, &replaced, &|event| {
         events.contains(&event).then(|| group_of(event))
     });
+    // An approval list that loses every Marshell group goes whole, so no empty `PermissionRequest` is left.
+    if !want.approve {
+        let permission_pointer = format!("/hooks/{PERMISSION_EVENT}");
+        let groups = root.pointer(&permission_pointer).and_then(Value::as_array);
+        if let Some(groups) = groups {
+            let change = event_change(&permission_pointer, groups, None);
+            if (change.found || groups.is_empty()) && change.groups_gone == groups.len() {
+                let prefix = format!("{permission_pointer}/");
+                ops.retain(|op| !matches!(op, EditOp::JsonRemove { pointer } if pointer.starts_with(&prefix)));
+                ops.push(remove_op(permission_pointer));
+            }
+        }
+    }
     let existing = root.get("hooks").and_then(Value::as_object);
     for event in events.iter().filter(|e| !replaced_in_place.iter().any(|r| r == **e)) {
         let group = group_of(event);
@@ -435,6 +449,7 @@ pub fn remove_plan(path: &Path, text: Option<&str>, _home: &Path) -> Result<Chan
         });
     }
     let reason = match ours_of(&root).len() {
+        0 => "Removes the empty PermissionRequest hook list left by an earlier Marshell.".to_string(),
         1 => "Removes the hook entry Marshell added.".to_string(),
         n => format!("Removes the {n} hook entries Marshell added."),
     };
@@ -671,9 +686,38 @@ mod tests {
         let (_, first) = install(None, &home, &BOTH);
         let (_, second) = install(first.as_deref(), &home, &STATUS);
         let v = value(&second.unwrap());
-        // Like Claude's plan, this leaves an emptied event as `[]`.
-        assert!(v["hooks"]["PermissionRequest"].as_array().is_none_or(|a| a.is_empty()));
+        assert!(v["hooks"].get("PermissionRequest").is_none());
         assert_eq!(v["hooks"]["Stop"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn approvals_off_removes_the_whole_permission_event() {
+        let home = real_home();
+        let (_, both) = install(Some(&plain()), &home, &BOTH);
+        let (_, off) = install(both.as_deref(), &home, &STATUS);
+        assert!(value(&off.unwrap())["hooks"].get("PermissionRequest").is_none());
+    }
+
+    #[test]
+    fn removal_takes_an_emptied_permission_list_and_nothing_else_empty() {
+        let home = real_home();
+        let only = r#"{"hooks":{"PermissionRequest":[]}}"#;
+        let cs = remove_plan(&file(), Some(only), &home).unwrap();
+        assert!(value(&apply(&cs, Some(only)).unwrap()).get("hooks").is_none());
+        assert_eq!(
+            cs.reason,
+            "Removes the empty PermissionRequest hook list left by an earlier Marshell."
+        );
+
+        let text = r#"{"hooks":{"PermissionRequest":[],"Notification":[],"Stop":[{"hooks":[{"type":"command","command":"mine"}]}]}}"#;
+        let cs = remove_plan(&file(), Some(text), &home).unwrap();
+        let after = value(&apply(&cs, Some(text)).unwrap());
+        assert!(after["hooks"].get("PermissionRequest").is_none());
+        assert_eq!(after["hooks"]["Notification"], json!([]));
+        assert_eq!(after["hooks"]["Stop"].as_array().unwrap().len(), 1);
+        // The known limit: a user's own empty list next to a status install is removed with it.
+        let (_, after) = install(Some(text), &home, &STATUS);
+        assert!(value(&after.unwrap())["hooks"].get("PermissionRequest").is_none());
     }
 
     #[test]

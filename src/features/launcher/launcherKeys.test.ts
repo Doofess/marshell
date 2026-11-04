@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adminKey, focusFellOut, listNavKeys, openFolder, openPrograms, stepActive } from "./launcherKeys";
+import { adminKey, adminKeyClaimed, focusFellOut, listNavKeys, openFolder, openPrograms, stepActive } from "./launcherKeys";
 
 describe("launcherKeys: which keys move the highlighted option", () => {
   it("in the folder field only Up and Down do: Left and Right move the caret, so a typo can be fixed", () => {
@@ -63,5 +63,15 @@ describe("the Administrator chip's key", () => {
     expect(adminKey(key({ ctrlKey: true }))).toBe(false);
     expect(adminKey(key({ shiftKey: true }))).toBe(false);
     expect(adminKey(key({ code: "KeyB" }))).toBe(false);
+  });
+  it("adminKeyClaimed: Alt+A is claimed only while the chip is enabled, so Option+A still types a letter elsewhere", () => {
+    expect(adminKeyClaimed(key({}), false)).toBe(false);
+    expect(adminKeyClaimed(key({}), true)).toBe(true);
+    for (const enabled of [false, true]) {
+      expect(adminKeyClaimed(key({ ctrlKey: true }), enabled)).toBe(false);
+      expect(adminKeyClaimed(key({ shiftKey: true }), enabled)).toBe(false);
+      // AltGr+A arrives as Ctrl+Alt on Windows.
+      expect(adminKeyClaimed(key({ ctrlKey: true, altKey: true }), enabled)).toBe(false);
+    }
   });
 });

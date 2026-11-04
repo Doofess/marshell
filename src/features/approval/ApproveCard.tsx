@@ -1,9 +1,9 @@
-import { useId, type KeyboardEvent } from "react";
+import { useId, useRef, type KeyboardEvent } from "react";
 import { AGENT_NAMES } from "../../components/AgentMark/agents";
 import { SessionNumber } from "../../components/SessionNumber/SessionNumber";
 import { AuxGlyph, StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { formatAge, formatDuration } from "../sidebar/format";
-import { keyAction, type CardAction } from "./arming";
+import { keyAction, rearmOnFocus, type CardAction } from "./arming";
 import { headline, receiptText, subject } from "./headline";
 import { isTruncated, payloadLines, showAllLabel } from "./payload";
 import type { ApprovalRequest } from "./types";
@@ -58,6 +58,8 @@ const Kbd = ({ k }: { k: string }) => (
  */
 export function ApproveCard({ request, expanded = false, armed = true, holdProgress = 0, exiting = false, onAction, onHoldEnd, onHoldStart, onFocus }: ApproveCardProps) {
   const riskId = useId();
+  /** Set by a pointer press on the card: whether the card was armed when it came. Cleared once the press ends or focus leaves the card. */
+  const pressedArmed = useRef<boolean | null>(null);
   const { detail, risk, state, session } = request;
   const agent = AGENT_NAMES[session.agent];
   const leaving = exiting || request.leaving || undefined;
@@ -146,8 +148,24 @@ export function ApproveCard({ request, expanded = false, armed = true, holdProgr
       data-armed={armed}
       onKeyDown={onKeyDown}
       onKeyUp={onKeyUp}
+      onPointerDownCapture={() => {
+        pressedArmed.current = armed;
+      }}
+      onPointerUpCapture={() => {
+        pressedArmed.current = null;
+      }}
+      onPointerCancelCapture={() => {
+        pressedArmed.current = null;
+      }}
       onFocus={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget)) onFocus?.();
+        if (e.currentTarget.contains(e.relatedTarget)) return;
+        const pressed = pressedArmed.current;
+        pressedArmed.current = null;
+        if (rearmOnFocus({ viaPointer: pressed !== null, wasArmed: pressed === true })) onFocus?.();
+      }}
+      onBlur={(e) => {
+        // A press released off the card sends it no pointerup: leaving the card ends it, so a later keyboard focus rearms.
+        if (!e.currentTarget.contains(e.relatedTarget)) pressedArmed.current = null;
       }}
     >
       <header className="approve-card__who">

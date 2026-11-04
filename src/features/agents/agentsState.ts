@@ -154,6 +154,7 @@ export function consentProps(windows: AgentSetup, flow: InstallFlow) {
     removal: removalCopy(cli, on, s.hooks_path === undefined ? undefined : { hooksFile: fileName(s.hooks_path), created: true }, undefined, addsStatusLine(detection, on), skillUndo(on.skill, s.skill)),
     diff: flow.preview ? previewDiff(flow.preview) : "",
     deleted: flow.preview ? deletedFiles(flow.preview) : undefined,
+    oneLineSpread: files.some((f) => f.one_line_spread === true),
     needsTrust: s.needs_trust,
     chainPath: chain?.path,
     // A Partial install's repair changes only what is missing or wrong (the diff shows which), so it isn't the whole install's count.

@@ -269,7 +269,7 @@ describe("AgentsSectionView: Antigravity", () => {
   });
   it("antigravity_removal_copy_is_exact", () => {
     expect(withAgy(AGY_SETUP, card())).toContain(
-      "Marshell removes the hook entries it added, deletes hooks.json if nothing else is in it, puts your own status line back from statusline-chain.json, and removes the marshell skill it added; the rest of each file stays as it is",
+      "Marshell removes the hook entries it added, deletes hooks.json if nothing else is in it, puts your own status line back from statusline-chain.json and deletes that file, and removes the marshell skill it added; the rest of each file stays as it is",
     );
     const off = withAgy({ ...AGY_SETUP, hooks: "installed" }, { kind: "off", agent: "antigravity", removal: null, busy: false });
     expect(off).toContain("Turn Antigravity hooks off");
@@ -383,6 +383,20 @@ describe("AgentsSectionView with a CLI missing on Windows", () => {
       const h = renderToStaticMarkup(<AgentsSectionView setup={SETUP} {...props} panel={{ kind: "list" }} liveStatus={true} wslDistros={["Ubuntu"]} {...handlers} />);
       const from = h.indexOf(`data-agent-card="${agent}"`);
       expect(h.slice(from, h.indexOf("</section>", from))).toContain("Live status");
+    });
+    it(`${agent}_not_found_with_hooks_left_and_no_distros_shows_only_hooks_off`, () => {
+      const setups = {
+        codex: { codex: { ...CODEX_SETUP, found: false, hooks: "installed" as const, trust: "untrusted" as const }, codexLiveStatus: true },
+        qwen: { qwen: { ...QWEN_SETUP, found: false, hooks: "installed" as const }, qwenLiveStatus: true },
+        antigravity: { antigravity: { ...AGY_SETUP, found: false, hooks: "installed" as const }, antigravityLiveStatus: true },
+      };
+      const h = renderToStaticMarkup(<AgentsSectionView setup={SETUP} {...setups[agent]} panel={{ kind: "list" }} liveStatus={true} wslDistros={[]} {...handlers} />);
+      const from = h.indexOf(`data-agent-card="${agent}"`);
+      const card = h.slice(from, h.indexOf("</section>", from));
+      expect(card).toContain("still in");
+      expect(card).toContain(">Hooks off</button>");
+      expect(card).not.toContain("Live status");
+      expect(card).not.toMatch(/Trusted:|Not trusted|Changed since/);
     });
     it(`${agent}_not_found_and_no_distros_renders_nothing`, () => {
       expect(missing(agent, [])).not.toContain(`data-agent-card="${agent}"`);

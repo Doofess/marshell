@@ -10,6 +10,7 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 type ApiError = (StatusCode, String);
 
@@ -52,8 +53,27 @@ fn alive_panel(st: &AppState) -> Option<String> {
     }
     *panel = None;
     // The finished process is no use to anyone; drop it from the map too.
-    st.remove_session(&tab_id);
+    discard_recording(st, st.remove_session(&tab_id));
     None
+}
+
+/// Deletes the recording of a panel session that ends without becoming a tab. The recorder closes
+/// its file after the process output ends, and a file that is still open can't be deleted on
+/// Windows, so a plain thread waits for the close (never on an async worker). A tab with a row
+/// keeps its recording, and a removal error is ignored: retention deletes what is left.
+fn discard_recording(st: &AppState, session: Option<Arc<Session>>) {
+    let Some(session) = session else { return };
+    let Some(path) = session.recording_path() else { return };
+    let registry = st.0.registry.clone();
+    std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while session.open_recording().is_some() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        if session.open_recording().is_none() && registry.row(session.id()).is_none() {
+            let _ = std::fs::remove_file(path);
+        }
+    });
 }
 
 impl AppState {
@@ -77,7 +97,11 @@ impl AppState {
         if !panel.as_ref().is_some_and(|p| in_folder(&p.cwd)) {
             return None;
         }
-        panel.take().map(|p| p.tab_id)
+        let tab_id = panel.take().map(|p| p.tab_id)?;
+        drop(panel);
+        // The caller closes the session, which is never adopted from here.
+        discard_recording(self, self.session(&tab_id));
+        Some(tab_id)
     }
 }
 
@@ -117,12 +141,13 @@ pub async fn open(State(st): State<AppState>, Json(req): Json<PanelRequest>) -> 
         if is_alive(&st, &other) {
             drop(panel);
             if let Some(extra) = st.remove_session(&tab_id) {
+                discard_recording(&st, Some(extra.clone()));
                 extra.kill();
             }
             return Ok(Json(PanelResponse { tab_id: other }));
         }
         // The stored one has exited: ours replaces it, and the finished process leaves the map.
-        st.remove_session(&other);
+        discard_recording(&st, st.remove_session(&other));
     }
     *panel = Some(shell);
     Ok(Json(PanelResponse { tab_id }))
@@ -147,7 +172,7 @@ pub(super) fn take_and_adopt(st: &AppState, only: Option<&str>) -> Option<String
     }
     let shell = panel.take()?;
     let Some(session) = st.session(&shell.tab_id).filter(|s| !s.has_exited()) else {
-        st.remove_session(&shell.tab_id);
+        discard_recording(st, st.remove_session(&shell.tab_id));
         return None;
     };
     let tab_id = shell.tab_id;

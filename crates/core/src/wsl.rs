@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use crate::profiles::detect::run_wsl;
+use crate::profiles::detect::{parse_wsl_list, run_wsl};
 
 /// How long `wsl.exe --list` may take.
 const LIST_TIMEOUT: Duration = Duration::from_secs(8);
@@ -49,6 +49,46 @@ fn cached_default(cache: &Mutex<Option<String>>, fetch: impl FnOnce() -> Option<
     let found = fetch()?;
     *cache.lock().unwrap_or_else(|e| e.into_inner()) = Some(found.clone());
     Some(found)
+}
+
+/// Docker Desktop's internal distros, which are not shells to launch in nor homes to clean.
+fn is_internal_distro(name: &str) -> bool {
+    name == "docker-desktop" || name == "docker-desktop-data"
+}
+
+/// The distros worth listing: `names` without Docker Desktop's internal ones.
+pub fn user_distros(names: Vec<String>) -> Vec<String> {
+    names.into_iter().filter(|name| !is_internal_distro(name)).collect()
+}
+
+/// The user's distros from the raw bytes of `wsl.exe -l -q` (UTF-16LE, usually with a BOM).
+pub fn parse_distro_list(bytes: &[u8]) -> Vec<String> {
+    user_distros(parse_wsl_list(bytes))
+}
+
+/// The installed distros, from `wsl.exe -l -q`. Blocks up to `timeout`, so async callers go through `spawn_blocking`.
+/// Empty off Windows and when `wsl.exe` is missing, fails or is too slow.
+pub fn list_distros(timeout: Duration) -> Vec<String> {
+    parse_distro_list(&run_wsl(&["-l", "-q"], timeout))
+}
+
+/// `linux_home` as a path under the distro's own share. None for an empty or relative home, one with `..`, and one
+/// outside the share (a home under `/mnt/c` is a folder of Windows, and a distro's files must never land there).
+pub fn home_in_share(distro: &str, linux_home: &str) -> Option<PathBuf> {
+    to_windows(distro, linux_home).filter(|home| under_distro(distro, home))
+}
+
+/// A distro's home as a path under its share, asked of the distro itself (`$HOME`). Starts the distro if it is
+/// stopped and blocks up to `timeout`, so async callers go through `spawn_blocking`.
+pub fn distro_home(distro: &str, timeout: Duration) -> Option<PathBuf> {
+    // A Linux program's output through `--exec` is UTF-8.
+    let out = run_wsl(
+        &["-d", distro, "--exec", "sh", "-c", r#"printf "%s\n" "$HOME""#],
+        timeout,
+    );
+    let out = String::from_utf8_lossy(&out);
+    let home = out.lines().next()?.trim_end_matches('\r');
+    home_in_share(distro, home)
 }
 
 /// A distro name that can sit in a UNC path as one component.
@@ -240,6 +280,40 @@ mod tests {
         assert!(!under("Ubuntu", r"\\?\UNC\wsl.localhost\Ubuntu\home"));
         assert!(!under("Ubuntu", ""));
         assert!(!under("", r"\\wsl.localhost\\home"));
+    }
+
+    #[test]
+    fn a_distro_home_is_the_distros_own_share() {
+        assert_eq!(
+            home_in_share("Ubuntu", "/home/me"),
+            win(r"\\wsl.localhost\Ubuntu\home\me")
+        );
+        // A home on a Windows drive, an empty or relative one, and one with `..`: none.
+        for home in [
+            "/mnt/c/Users/me",
+            "/mnt/c",
+            "/mnt/c/Users/x y",
+            "",
+            "me",
+            "/home/../mnt/c/x",
+        ] {
+            assert_eq!(home_in_share("Ubuntu", home), None, "{home:?}");
+        }
+        assert_eq!(home_in_share("", "/home/me"), None);
+    }
+
+    #[test]
+    fn the_distro_list_drops_docker_desktops_own() {
+        let mut bytes = vec![0xFF, 0xFE];
+        for unit in "Ubuntu\r\ndocker-desktop\r\nDebian\r\ndocker-desktop-data\r\n".encode_utf16() {
+            bytes.extend(unit.to_le_bytes());
+        }
+        assert_eq!(parse_distro_list(&bytes), ["Ubuntu", "Debian"]);
+        assert!(parse_distro_list(&[]).is_empty());
+        assert_eq!(
+            user_distros(vec!["docker-desktop".into(), "Docker-Desktop-Mine".into()]),
+            ["Docker-Desktop-Mine"]
+        );
     }
 
     #[test]
