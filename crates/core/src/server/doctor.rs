@@ -1,0 +1,444 @@
+//! The Doctor's runs: `POST /v1/doctor/run` starts the checks (or joins the run that is going) and answers 202 with
+//! the summary; `GET /v1/doctor/report` answers the last report, or 204 before the first run ends. The core also
+//! runs once at startup (see `AppState::with_doctor_on_start`). A run reads the files of every CLI off the async
+//! threads, builds the report with `doctor::checks` and publishes the summary on the events socket.
+
+use super::AppState;
+use super::agents::{Adapter, agy_setup_of, codex_setup_of, qwen_setup_of, settings_file, setup_of};
+use crate::agents::common::Gate;
+use crate::config::guard::unverbatim;
+use crate::config::jsonc::read_value;
+use crate::config::managed::{self, ManagedEntry};
+use crate::doctor::{AgentFacts, FileState, checks};
+use axum::Json;
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use marshell_protocol::agents::{AgentSetup, SettingsState};
+use marshell_protocol::doctor::{DoctorReport, DoctorSummary};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+type Fail = (StatusCode, String);
+
+/// The CLIs the Doctor checks, in the report's order.
+const AGENTS: [&str; 4] = ["claude", "codex", "antigravity", "qwen"];
+
+pub async fn run(State(st): State<AppState>) -> (StatusCode, Json<DoctorSummary>) {
+    request_run(&st);
+    (StatusCode::ACCEPTED, Json(st.doctor().summary.borrow().clone()))
+}
+
+pub async fn report(State(st): State<AppState>) -> Response {
+    // Cloned under the lock, which is released before the reply is built.
+    let report = st.doctor().report.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    match report {
+        Some(report) => Json(report).into_response(),
+        None => StatusCode::NO_CONTENT.into_response(),
+    }
+}
+
+/// Starts a run of the checks unless one is going, in which case the request joins that run. The summary reads
+/// `running` as soon as this returns. Needs a Tokio runtime.
+pub(crate) fn request_run(st: &AppState) {
+    let doctor = st.doctor();
+    if doctor
+        .running
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return;
+    }
+    doctor.summary.send_modify(|s| s.running = true);
+    let st = st.clone();
+    tokio::spawn(async move { run_once(st).await });
+}
+
+/// One run. It is the only writer of the report.
+async fn run_once(st: AppState) {
+    let started = Instant::now();
+    let reader = st.clone();
+    let facts = tokio::task::spawn_blocking(move || facts_of(&reader)).await;
+    let doctor = st.doctor();
+    let finished = match facts {
+        Ok(facts) => {
+            let items = checks::items(&facts, &[]);
+            let issues = checks::issues(&items);
+            let now = now_ms();
+            *doctor.report.lock().unwrap_or_else(|e| e.into_inner()) = Some(DoctorReport {
+                items,
+                checked_at_ms: now,
+                duration_ms: started.elapsed().as_millis() as u64,
+            });
+            Some((issues, now))
+        }
+        Err(e) => {
+            tracing::warn!("the doctor's run failed: {e}");
+            None
+        }
+    };
+    // The flag is cleared inside the summary's update, so a request that starts the next run cannot have its
+    // `running` overwritten by this run's end.
+    doctor.summary.send_modify(|s| {
+        s.running = false;
+        if let Some((issues, now)) = finished {
+            s.issues = issues;
+            s.checked_at_ms = Some(now);
+        }
+        doctor.running.store(false, Ordering::SeqCst);
+    });
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+}
+
+/// What the checks need to know about each CLI. Reads files, so callers go through `spawn_blocking`.
+pub(crate) fn facts_of(st: &AppState) -> Vec<AgentFacts> {
+    facts_with(st, |st, agent| match agent {
+        "claude" => setup_of(st),
+        "codex" => codex_setup_of(st),
+        "antigravity" => agy_setup_of(st),
+        _ => qwen_setup_of(st),
+    })
+}
+
+/// `facts_of` over any reader of a CLI's setup, so a test can make one of them fail.
+fn facts_with(st: &AppState, read: impl Fn(&AppState, &'static str) -> Result<AgentSetup, Fail>) -> Vec<AgentFacts> {
+    // managed.json is read once. One that can't be read names no file, so no CLI reads as set up.
+    let entries = managed::list(&st.0.home).unwrap_or_else(|e| {
+        tracing::warn!("the doctor could not read managed.json: {e:#}");
+        Vec::new()
+    });
+    AGENTS
+        .into_iter()
+        .map(|agent| match read(st, agent) {
+            Ok(setup) => facts_from(st, agent, setup, &entries),
+            Err((_, message)) => AgentFacts {
+                agent,
+                distro: None,
+                found: false,
+                path: PathBuf::new(),
+                file: FileState::Ok,
+                hooks: marshell_protocol::agents::HookInstall::None,
+                approve_installed: false,
+                has_own_statusline: false,
+                chained: false,
+                trust: None,
+                set_up: false,
+                bridge: PathBuf::new(),
+                version_note: None,
+                retention_unset: None,
+                managed_settings: None,
+                error: Some(message),
+            },
+        })
+        .collect()
+}
+
+fn facts_from(st: &AppState, agent: &'static str, setup: AgentSetup, entries: &[ManagedEntry]) -> AgentFacts {
+    // Antigravity's hooks are in `hooks.json`; the others keep them in the file their setup names.
+    let path = PathBuf::from(setup.hooks_path.as_deref().unwrap_or(&setup.settings_path));
+    let file = match setup.settings_state {
+        SettingsState::Ok => FileState::Ok,
+        SettingsState::Missing => FileState::Missing,
+        SettingsState::ReadOnly => FileState::ReadOnly,
+        SettingsState::Unparsable => {
+            let (line, message) = setup
+                .parse_error
+                .as_ref()
+                .map_or((1, "the file can't be read".to_string()), |p| {
+                    (p.line, p.message.clone())
+                });
+            FileState::Unparsable { line, message }
+        }
+    };
+    let version_note = if setup.found {
+        match version_gate(agent, setup.version.as_deref()) {
+            Gate::Unknown(note) => Some(note),
+            Gate::Known => None,
+        }
+    } else {
+        None
+    };
+    // Only Claude Code deletes transcripts by age, and only a file that was read says whether the key is there.
+    let retention_unset = (agent == "claude" && setup.found && matches!(file, FileState::Ok | FileState::ReadOnly))
+        .then(|| cleanup_period_unset(&setup.settings_path))
+        .flatten();
+    let managed_settings = match agent {
+        "claude" => managed_file_of(st, Adapter::Claude),
+        "qwen" => managed_file_of(st, Adapter::Qwen),
+        _ => None,
+    };
+    AgentFacts {
+        agent,
+        distro: None,
+        found: setup.found,
+        set_up: set_up_of(entries, &path),
+        path,
+        file,
+        hooks: setup.hooks,
+        approve_installed: setup.approve_installed,
+        has_own_statusline: setup.has_own_statusline,
+        chained: setup.chained,
+        trust: setup.trust,
+        bridge: PathBuf::from(&setup.bridge_path),
+        version_note,
+        retention_unset,
+        managed_settings,
+        error: None,
+    }
+}
+
+fn version_gate(agent: &str, version: Option<&str>) -> Gate {
+    use crate::agents::{antigravity, claude, codex, qwen};
+    match agent {
+        "claude" => claude::version_gate(version),
+        "codex" => codex::version_gate(version),
+        "antigravity" => antigravity::version_gate(version),
+        _ => qwen::version_gate(version),
+    }
+}
+
+/// `Some(true)` when the settings file has no top-level `cleanupPeriodDays`, `Some(false)` when it has one, `None`
+/// when the file can't be read.
+fn cleanup_period_unset(settings_path: &str) -> Option<bool> {
+    let text = std::fs::read_to_string(settings_path).ok()?;
+    let value = read_value(&text).ok()?;
+    Some(value.get("cleanupPeriodDays").is_none())
+}
+
+/// The organisation's settings file that applies on top of the person's, with the paths the settings view reads.
+fn managed_file_of(st: &AppState, kind: Adapter) -> Option<PathBuf> {
+    let (_, managed) = settings_file(st, kind).ok()?;
+    managed.map(|(path, _)| path)
+}
+
+/// managed.json names hooks Marshell wrote in `path`: an entry for that file whose pointer is under `/hooks` (Claude,
+/// Codex and Qwen Code) or under `/marshell`, the one named hook Antigravity's `hooks.json` holds Marshell's entries
+/// in. An entry without a pointer is a file Marshell created. The paths are compared after `unverbatim`, ignoring case
+/// on Windows. Own edits record no keys, and a status line entry (`/statusLine`) is not a hook.
+pub(crate) fn set_up_of(entries: &[ManagedEntry], path: &Path) -> bool {
+    let want = comparable(path);
+    entries.iter().any(|e| {
+        comparable(Path::new(&e.path)) == want
+            && e.pointer
+                .as_deref()
+                .is_none_or(|p| under(p, "/hooks") || under(p, "/marshell"))
+    })
+}
+
+fn under(pointer: &str, root: &str) -> bool {
+    pointer == root || pointer.strip_prefix(root).is_some_and(|rest| rest.starts_with('/'))
+}
+
+fn comparable(path: &Path) -> String {
+    let text = unverbatim(path).to_string_lossy().into_owned();
+    if cfg!(windows) {
+        text.replace('/', "\\").trim_end_matches('\\').to_lowercase()
+    } else {
+        text.trim_end_matches('/').to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use marshell_protocol::doctor::DoctorGroup;
+
+    fn entry(path: &str, pointer: Option<&str>) -> ManagedEntry {
+        ManagedEntry {
+            path: path.into(),
+            pointer: pointer.map(str::to_string),
+            changeset_id: "c".into(),
+            applied_ms: 1,
+        }
+    }
+
+    #[test]
+    fn set_up_is_true_for_a_hooks_entry_of_that_file() {
+        let file = Path::new("C:/Users/me/.claude/settings.json");
+        assert!(set_up_of(
+            &[entry("C:/Users/me/.claude/settings.json", Some("/hooks/Stop/-"))],
+            file
+        ));
+        assert!(set_up_of(
+            &[entry("C:/Users/me/.claude/settings.json", Some("/hooks"))],
+            file
+        ));
+        // A file Marshell created.
+        assert!(set_up_of(&[entry("C:/Users/me/.claude/settings.json", None)], file));
+        // Antigravity's one named hook.
+        let agy = Path::new("C:/Users/me/.gemini/config/hooks.json");
+        assert!(set_up_of(
+            &[entry("C:/Users/me/.gemini/config/hooks.json", Some("/marshell"))],
+            agy
+        ));
+    }
+
+    #[test]
+    fn set_up_is_false_for_a_status_line_alone_and_for_another_file() {
+        let file = Path::new("C:/Users/me/.claude/settings.json");
+        assert!(!set_up_of(
+            &[entry("C:/Users/me/.claude/settings.json", Some("/statusLine"))],
+            file
+        ));
+        assert!(!set_up_of(
+            &[entry("C:/Users/me/.claude/settings.json", Some("/hooksX/a"))],
+            file
+        ));
+        assert!(!set_up_of(
+            &[entry("C:/Users/other/.claude/settings.json", Some("/hooks/Stop"))],
+            file
+        ));
+        assert!(!set_up_of(&[], file));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn set_up_ignores_case_slashes_and_the_verbatim_prefix_on_windows() {
+        let file = Path::new(r"C:\Users\Me\.claude\settings.json");
+        assert!(set_up_of(
+            &[entry("c:/users/me/.CLAUDE/settings.json", Some("/hooks/Stop"))],
+            file
+        ));
+        assert!(set_up_of(
+            &[entry(r"C:\Users\Me\.claude\settings.json", Some("/hooks/Stop"))],
+            file
+        ));
+        let share = Path::new(r"\\wsl.localhost\Ubuntu\home\me\.claude\settings.json");
+        assert!(set_up_of(
+            &[entry(
+                r"\\?\UNC\wsl.localhost\Ubuntu\home\me\.claude\settings.json",
+                Some("/hooks")
+            )],
+            share
+        ));
+    }
+
+    fn state(dir: &Path) -> AppState {
+        AppState::new("t".into(), 1, Vec::new(), dir.join("home"), Vec::new())
+    }
+
+    fn setup(agent: &str) -> AgentSetup {
+        AgentSetup {
+            agent: agent.into(),
+            admin_unavailable: None,
+            found: true,
+            version: None,
+            exe_path: None,
+            settings_path: "Z:/none/settings.json".into(),
+            skips_all: None,
+            hooks_path: None,
+            settings_state: SettingsState::Missing,
+            parse_error: None,
+            hooks: marshell_protocol::agents::HookInstall::None,
+            approve_installed: false,
+            has_own_statusline: false,
+            chained: false,
+            statusline_preset: false,
+            needs_trust: false,
+            trust: None,
+            bridge_path: "Z:/none/bridge.exe".into(),
+            snapshots_dir: String::new(),
+            skill: marshell_protocol::agents::SkillInstall::None,
+            skill_path: String::new(),
+            skill_problem: None,
+        }
+    }
+
+    #[test]
+    fn one_cli_failing_to_read_leaves_the_rest() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = state(dir.path());
+        let facts = facts_with(&st, |_, agent| {
+            if agent == "codex" {
+                Err((StatusCode::INTERNAL_SERVER_ERROR, "the home folder is not known".into()))
+            } else {
+                Ok(setup(agent))
+            }
+        });
+        assert_eq!(facts.len(), 4);
+        let items = checks::items(&facts, &[]);
+        let ids: Vec<&str> = items.iter().map(|i| i.id.as_str()).collect();
+        let failed = items.iter().find(|i| i.id == "error.codex").unwrap();
+        assert_eq!(failed.group, DoctorGroup::Info);
+        assert_eq!(failed.detail, "the home folder is not known");
+        // The others were read and found, with no file: each gets its setup line.
+        for agent in ["claude", "antigravity", "qwen"] {
+            assert!(ids.contains(&format!("setup.{agent}").as_str()), "{ids:?}");
+        }
+        assert!(!ids.contains(&"setup.codex"), "{ids:?}");
+    }
+
+    #[test]
+    fn antigravity_reads_its_hooks_file_and_an_unparsable_file_keeps_its_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = state(dir.path());
+        let mut s = setup("antigravity");
+        s.hooks_path = Some("Z:/none/hooks.json".into());
+        s.settings_state = SettingsState::Unparsable;
+        s.parse_error = Some(marshell_protocol::agents::ParseProblem {
+            line: 4,
+            message: "bad".into(),
+        });
+        let f = facts_from(&st, "antigravity", s, &[]);
+        assert_eq!(f.path, PathBuf::from("Z:/none/hooks.json"));
+        assert_eq!(
+            f.file,
+            FileState::Unparsable {
+                line: 4,
+                message: "bad".into()
+            }
+        );
+        assert_eq!(f.retention_unset, None);
+    }
+
+    #[test]
+    fn retention_is_read_for_claude_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        let st = state(dir.path());
+        let mut s = setup("claude");
+        s.settings_path = file.to_string_lossy().into_owned();
+        s.settings_state = SettingsState::Ok;
+
+        std::fs::write(&file, r#"{"theme": "dark"}"#).unwrap();
+        assert_eq!(facts_from(&st, "claude", s.clone(), &[]).retention_unset, Some(true));
+        std::fs::write(&file, r#"{"cleanupPeriodDays": 30}"#).unwrap();
+        assert_eq!(facts_from(&st, "claude", s.clone(), &[]).retention_unset, Some(false));
+        // A nested key is not the top-level setting.
+        std::fs::write(&file, r#"{"general": {"cleanupPeriodDays": 30}}"#).unwrap();
+        assert_eq!(facts_from(&st, "claude", s.clone(), &[]).retention_unset, Some(true));
+        // Not found, a missing file, and the other CLIs.
+        let mut gone = s.clone();
+        gone.found = false;
+        assert_eq!(facts_from(&st, "claude", gone, &[]).retention_unset, None);
+        let mut missing = s.clone();
+        missing.settings_state = SettingsState::Missing;
+        assert_eq!(facts_from(&st, "claude", missing, &[]).retention_unset, None);
+        for agent in ["codex", "antigravity", "qwen"] {
+            let mut other = s.clone();
+            other.agent = agent.into();
+            assert_eq!(facts_from(&st, agent_static(agent), other, &[]).retention_unset, None);
+        }
+    }
+
+    fn agent_static(agent: &str) -> &'static str {
+        AGENTS.into_iter().find(|a| *a == agent).unwrap()
+    }
+
+    #[test]
+    fn a_found_cli_with_an_unreadable_version_gets_the_version_note() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = state(dir.path());
+        let f = facts_from(&st, "codex", setup("codex"), &[]);
+        assert_eq!(f.version_note.as_deref(), Some("Codex's version could not be read"));
+        let mut gone = setup("codex");
+        gone.found = false;
+        assert_eq!(facts_from(&st, "codex", gone, &[]).version_note, None);
+    }
+}

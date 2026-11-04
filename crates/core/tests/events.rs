@@ -98,6 +98,12 @@ async fn events_send_snapshot_on_connect_and_change() {
     assert_eq!(second["type"], "permissions");
     assert_eq!(second["data"], serde_json::json!([]));
 
+    // The Doctor's summary follows the permissions.
+    let third = next_event(&mut ws).await;
+    assert_eq!(third["type"], "doctor");
+    assert!(third["data"]["running"].is_boolean(), "{third}");
+    assert!(third["data"]["issues"].is_u64(), "{third}");
+
     create(&core).await;
     // The session may publish more than one change (reserve, then ready); read until it shows up.
     let mut event = next_event(&mut ws).await;
@@ -126,4 +132,19 @@ async fn events_close_when_the_client_closes() {
     })
     .await;
     assert!(closed.is_ok(), "socket stayed open after the client's Close");
+}
+
+#[tokio::test]
+async fn the_events_socket_sends_the_doctor_summary() {
+    // The core runs the checks once at startup, so a summary that has finished arrives after the first one.
+    let (core, _home) = core().await;
+    let mut ws = connect(&core).await;
+    assert_eq!(next_event(&mut ws).await["type"], "sessions");
+    assert_eq!(next_event(&mut ws).await["type"], "permissions");
+    let mut event = next_event(&mut ws).await;
+    assert_eq!(event["type"], "doctor", "{event}");
+    while event["type"] != "doctor" || event["data"]["running"] != false || event["data"]["checked_at_ms"].is_null() {
+        event = next_event(&mut ws).await;
+    }
+    assert!(event["data"]["checked_at_ms"].as_u64().unwrap() > 0, "{event}");
 }

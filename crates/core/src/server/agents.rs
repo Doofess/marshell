@@ -94,7 +94,7 @@ fn failed(err: impl std::fmt::Display) -> Fail {
 
 /// The agents that have a hook adapter.
 #[derive(Clone, Copy)]
-enum Adapter {
+pub(super) enum Adapter {
     Claude,
     Codex,
     Antigravity,
@@ -1142,7 +1142,7 @@ pub async fn settings_view(
 }
 
 /// Where an agent's user settings file is, and Claude's managed settings or Qwen's system settings.
-fn settings_file(st: &AppState, kind: Adapter) -> Result<(PathBuf, Option<(PathBuf, Value)>), Fail> {
+pub(super) fn settings_file(st: &AppState, kind: Adapter) -> Result<(PathBuf, Option<(PathBuf, Value)>), Fail> {
     let no_home = || failed("the user's home folder is not known");
     Ok(match kind {
         Adapter::Claude => {

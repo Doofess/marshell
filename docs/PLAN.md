@@ -523,7 +523,7 @@ Session state is exactly as in brief §4, plus `unseen_done`, `waiting_since_ms`
 | Agents | `GET /agents` · `GET /agents/:id/hooks/plan` · `POST /agents/:id/hooks/apply {plan_hash}` |
 | Shells / settings | `GET/PUT /profiles` · `GET/PUT /app-settings` |
 | Config | `GET /config/sources?agent&cwd` · `GET /config/file?path` · `POST /config/preview` (ChangeSet → diffs) · `POST /config/apply {changeset_id, expected_hashes}` · `GET /snapshots` · `POST /snapshots/:id/restore` |
-| Doctor | `POST /doctor/run` · `GET /doctor/report` · `POST /doctor/fix {item_ids}` · `POST /doctor/undo` |
+| Doctor | `POST /doctor/run` · `GET /doctor/report` · `POST /doctor/fix {item_ids}` · `POST /doctor/fix/apply` · `GET /doctor/undo` · `POST /doctor/undo` |
 | History | `GET /history?filters` · `GET /history/search?q` · `GET /history/:id` · `GET /history/:id/recording` · `POST /history/:id/resume\|fork\|export` · `PATCH /history/:id` |
 | References | `GET/PUT /projects/:id/references` |
 

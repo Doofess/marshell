@@ -793,7 +793,7 @@ async fn next_permissions(ws: &mut Ws) -> Vec<serde_json::Value> {
         if frame["type"] == "permissions" {
             return frame["data"].as_array().unwrap().clone();
         }
-        assert_eq!(frame["type"], "sessions");
+        assert!(frame["type"] == "sessions" || frame["type"] == "doctor", "{frame}");
     }
 }
 
@@ -818,6 +818,7 @@ async fn events_socket_sends_permissions_on_open_and_change() {
     let second = next_frame(&mut ws).await;
     assert_eq!(second["type"], "permissions");
     assert_eq!(second["data"], serde_json::json!([]));
+    assert_eq!(next_frame(&mut ws).await["type"], "doctor");
 
     let hook = spawn_hook_on(port, &app, Some("t1"), bash_request());
     let views = loop {
@@ -862,6 +863,7 @@ async fn decision_sends_sessions_before_permissions() {
     let (mut ws, _) = tokio_tungstenite::connect_async(req).await.unwrap();
     assert_eq!(next_frame(&mut ws).await["type"], "sessions");
     assert_eq!(next_frame(&mut ws).await["type"], "permissions");
+    assert_eq!(next_frame(&mut ws).await["type"], "doctor");
 
     // Both channels can be ready together; exercise that choice across repeated decisions.
     for _ in 0..32 {
