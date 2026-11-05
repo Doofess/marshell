@@ -1385,6 +1385,26 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
         - Amended after the check (`docs/research/2026-11-05-transcript-retention.md`): Qwen Code's `general.cleanupPeriodDays` clears rewind backups, subagent transcripts and debug logs, not chat recordings. Codex has no setting that deletes sessions by age, and Antigravity documents none. So only Claude Code gets the fix, and its item says what the other three have.
      7. WSL: the checks cover the Windows-side configs. They also cover each distro that `managed.json` says Marshell set up, but only while that distro is running. A stopped distro gets "Not checked: <distro> isn't running." The Doctor never starts a distro in the background.
      8. #94: each "changed" refusal in `ConfigService::apply_with` logs which check refused, and names the targets when they differ. #94 stays open until a run shows the cause.
+   - **Slice 7b decisions (2026-11-05).** Each CLI's own doctor, and duplicate notifications. Facts checked on this PC on 2026-11-05 (claude 2.1.318, codex-cli 0.164.0, agy 1.4.12, qwen 0.26.5):
+     - `claude doctor` prints plain text in about 1.3 s, needs no TTY, and has no `--json`.
+     - `codex doctor --json` returns 25 checks keyed by id, each with a status, summary, details and remediation. Two of them (`network.provider_reachability`, `network.websocket_reachability`) contact OpenAI, and no flag skips them.
+     - Antigravity and Qwen Code have no doctor command. `qwen doctor` would be read as a prompt.
+     - Inside Marshell, a CLI's bell or OSC 9 never doubles a banner, because terminal alerts on a hooked row are already ignored.
+
+     The decisions:
+     1. A "Run CLI doctors" button on the Doctor page runs them, and only on that click (7a decision 3). The button says that Codex's doctor contacts OpenAI.
+     2. Each problem a CLI doctor reports becomes an item in the groups, tagged with its CLI. An error goes in Broken and a warning in Info. The item shows the CLI's own summary and remediation. Codex's `details` are never shown, because they hold personal paths. Claude Code's text gives one item for each warning it lists, from its `- <issue>` line and the `Fix:` line after it. This was amended at plan writing, when the binary showed that the result line is followed by each warning. Antigravity and Qwen Code each get the Info line "<CLI> has no doctor command."
+     3. These items are report-only: they are never counted in "Fix X issues", and Marshell acts on no other tool's diagnosis.
+     4. Duplicate notifications cover only those sent outside the terminal:
+        - Antigravity's `notifications: true` was to be Broken and pre-checked, with a fix that sets it to false. Amended 2026-11-05, with the user's OK, after reading the agy 1.4.12 binary:
+          - It has no toast code: no `Windows.UI.Notifications`, no toast library and no AppUserModelID.
+          - Its "Bell + desktop notification" is a bell and an OSC 9 escape in the terminal, which Marshell ignores on a hooked row.
+          - So it gets no item and no fix, like the terminal-sequence settings below.
+        - Every `notify.*` item appears only while Marshell's own banners are on.
+        - Codex's `notify` command, and Notification hooks the person added, are Info items that name the command. They are never edited.
+          - Amended 2026-11-05 after the final review: Codex has no Notification hook event (`docs/research/codex-cli.md`), so a group under it never runs and gets no item. Claude Code and Qwen Code have the event.
+        - Terminal-sequence settings get no item: Claude Code's `preferredNotifChannel`, Qwen Code's `general.terminalBell` and Codex's `tui.notifications`.
+     5. WSL follows 7a decision 7. The CLI doctors and the duplicate checks run in each distro that `managed.json` names, only while it is running, and only for the CLIs installed there. A stopped distro gets "Not checked: <distro> isn't running."
 8. **Editors + instruction library** (wired per CLI with a content hash and drift check; settings raw mode validated against the SchemaStore schema), smart and native recaps, diff drawer, step timeline, saved prompts, broadcast, and Extensions (moved from phase 6 by slice 6a decision 2).
    - Diff drawer comments (added 2026-10-15, after the Codex app's review pane): a **+** on a diff line adds a comment. "Send comments" puts them all in the prompt line as one message, with `file:line` before each. Like phase 2.5, it fills the prompt line and never sends on its own.
    - Instruction library items: frontmatter form, "what loads here" view, token estimate with a 4k warning, templates and one-click project profiles, per-project toggles, agent filter, globs, and "Improve this file" (headless, opt-in).

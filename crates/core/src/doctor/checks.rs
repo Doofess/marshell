@@ -22,6 +22,20 @@ pub enum FileState {
     Unparsable { line: u32, message: String },
 }
 
+/// What a CLI notifies by itself outside the terminal, besides Marshell. A bell or an OSC 9 inside the terminal isn't
+/// here: Marshell ignores those on a hooked row, so they never arrive twice. That covers Antigravity's `notifications`,
+/// which agy 1.4.12 sends as a bell and an OSC 9 (7b decision 4).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NotifyFacts {
+    /// Codex: its config.toml. Claude Code and Qwen Code: the hooks file (`path`).
+    pub file: PathBuf,
+    /// Codex's top-level `notify` array, its strings joined with spaces.
+    pub command: Option<String>,
+    /// The `command` of every hook under `hooks.Notification` that `agents::common::is_ours` doesn't claim
+    /// (Claude Code, Codex and Qwen Code), in file order.
+    pub hook_commands: Vec<String>,
+}
+
 /// Everything the checks need to know about one CLI, on Windows or in one WSL distro.
 #[derive(Debug, Clone)]
 pub struct AgentFacts {
@@ -52,6 +66,8 @@ pub struct AgentFacts {
     pub retention_unset: Option<bool>,
     /// An organisation file applies on top (Claude, Qwen).
     pub managed_settings: Option<PathBuf>,
+    /// What the CLI notifies by itself.
+    pub notify: NotifyFacts,
     /// The reader failed; every other field is a default.
     pub error: Option<String>,
 }
@@ -77,12 +93,12 @@ fn rank(agent: &str) -> usize {
 }
 
 /// The report's items: Windows CLIs in order, then each distro by name, then the stopped distros.
-pub fn items(facts: &[AgentFacts], stopped: &[String]) -> Vec<DoctorItem> {
+pub fn items(facts: &[AgentFacts], stopped: &[String], banners_on: bool) -> Vec<DoctorItem> {
     let mut sorted: Vec<&AgentFacts> = facts.iter().collect();
     sorted.sort_by(|a, b| (&a.distro, rank(a.agent)).cmp(&(&b.distro, rank(b.agent))));
     let mut out = Vec::new();
     for f in sorted {
-        cli_items(f, &mut out);
+        cli_items(f, banners_on, &mut out);
     }
     for d in stopped {
         out.push(DoctorItem {
@@ -101,7 +117,7 @@ pub fn items(facts: &[AgentFacts], stopped: &[String]) -> Vec<DoctorItem> {
     out
 }
 
-fn cli_items(f: &AgentFacts, out: &mut Vec<DoctorItem>) {
+fn cli_items(f: &AgentFacts, banners_on: bool, out: &mut Vec<DoctorItem>) {
     let cli = display_name(f.agent);
     let path = f.path.display().to_string();
     // A distro's ids add `@<distro>` and its titles say " in <distro>".
@@ -252,6 +268,39 @@ fn cli_items(f: &AgentFacts, out: &mut Vec<DoctorItem>) {
         }
     }
 
+    if banners_on && !unparsable {
+        let n = &f.notify;
+        let with_file = |mut i: DoctorItem| {
+            i.path = Some(n.file.display().to_string());
+            i
+        };
+        let twice = "If that shows a desktop notification, you get two.";
+        if f.agent == "codex"
+            && let Some(command) = &n.command
+        {
+            let mut i = with_file(mk(
+                "notify",
+                DoctorGroup::Info,
+                false,
+                format!("{cli}{place} runs its own notify command"),
+                format!("After each turn it runs {command}. {twice}"),
+            ));
+            i.cannot_fix = Some("Marshell doesn't change your notify command.".into());
+            found.push(i);
+        }
+        if !n.hook_commands.is_empty() {
+            let mut i = with_file(mk(
+                "notify",
+                DoctorGroup::Info,
+                false,
+                format!("{cli}{place} runs your own Notification hook"),
+                format!("It runs {}. {twice}", n.hook_commands.join("; ")),
+            ));
+            i.cannot_fix = Some("Marshell doesn't change your hooks.".into());
+            found.push(i);
+        }
+    }
+
     if f.file == FileState::ReadOnly {
         for i in found.iter_mut().filter(|i| i.fixable) {
             i.fixable = false;
@@ -283,12 +332,13 @@ mod tests {
             version_note: None,
             retention_unset: None,
             managed_settings: None,
+            notify: NotifyFacts::default(),
             error: None,
         }
     }
 
     fn one(f: AgentFacts) -> DoctorItem {
-        let mut v = items(&[f], &[]);
+        let mut v = items(&[f], &[], true);
         assert_eq!(v.len(), 1, "{v:?}");
         v.remove(0)
     }
@@ -312,7 +362,7 @@ mod tests {
 
     #[test]
     fn a_healthy_cli_has_no_items() {
-        assert!(items(&[facts("claude")], &[]).is_empty());
+        assert!(items(&[facts("claude")], &[], true).is_empty());
     }
 
     #[test]
@@ -414,7 +464,7 @@ mod tests {
         f.path = PathBuf::from("C:/h/hooks.json");
         f.hooks = HookInstall::Orphaned;
         f.trust = Some(HookTrust::Trusted);
-        let v = items(&[f], &[]);
+        let v = items(&[f], &[], true);
         let i = v.iter().find(|i| i.id == "hooks.codex").expect("a hooks row");
         check(
             i,
@@ -453,13 +503,13 @@ mod tests {
             Some("Marshell can't trust hooks for you. Open /hooks in Codex and trust them."),
         );
         f.trust = Some(HookTrust::Trusted);
-        assert!(items(&[f.clone()], &[]).is_empty());
+        assert!(items(&[f.clone()], &[], true).is_empty());
         // No hooks, no trust item.
         f.trust = Some(HookTrust::Untrusted);
         f.hooks = HookInstall::None;
         f.set_up = false;
         f.found = false;
-        assert!(items(&[f], &[]).is_empty());
+        assert!(items(&[f], &[], true).is_empty());
     }
 
     #[test]
@@ -509,7 +559,7 @@ mod tests {
             None,
         );
         f.retention_unset = Some(false);
-        assert!(items(&[f], &[]).is_empty());
+        assert!(items(&[f], &[], true).is_empty());
     }
 
     #[test]
@@ -517,7 +567,7 @@ mod tests {
         for agent in ["codex", "antigravity", "qwen"] {
             let mut f = facts(agent);
             f.retention_unset = Some(true);
-            assert!(items(&[f], &[]).is_empty(), "{agent}");
+            assert!(items(&[f], &[], true).is_empty(), "{agent}");
         }
     }
 
@@ -538,12 +588,12 @@ mod tests {
         );
         assert!(i.open_agents);
         f.found = false;
-        assert!(items(&[f], &[]).is_empty());
+        assert!(items(&[f], &[], true).is_empty());
     }
 
     #[test]
     fn stopped_row() {
-        let v = items(&[], &["Ubuntu".to_string()]);
+        let v = items(&[], &["Ubuntu".to_string()], true);
         assert_eq!(v.len(), 1);
         check(
             &v[0],
@@ -563,7 +613,7 @@ mod tests {
         f.file = FileState::ReadOnly;
         f.hooks = HookInstall::Partial;
         f.retention_unset = Some(true);
-        let v = items(&[f], &[]);
+        let v = items(&[f], &[], true);
         assert_eq!(v.len(), 2);
         for i in &v {
             assert!(!i.fixable, "{}", i.id);
@@ -582,7 +632,7 @@ mod tests {
         f.retention_unset = Some(true);
         f.version_note = Some("note".into());
         f.managed_settings = Some(PathBuf::from("C:/org/s.json"));
-        let ids: Vec<_> = items(&[f], &[]).into_iter().map(|i| i.id).collect();
+        let ids: Vec<_> = items(&[f], &[], true).into_iter().map(|i| i.id).collect();
         assert_eq!(ids, ["parse.claude", "version.claude", "managed.claude"]);
     }
 
@@ -593,7 +643,7 @@ mod tests {
         bad.hooks = HookInstall::Partial;
         let mut other = facts("claude");
         other.hooks = HookInstall::Partial;
-        let v = items(&[other, bad], &[]);
+        let v = items(&[other, bad], &[], true);
         let ids: Vec<_> = v.iter().map(|i| i.id.as_str()).collect();
         assert_eq!(ids, ["hooks.claude", "error.codex"]);
         assert_eq!(v[1].group, DoctorGroup::Info);
@@ -615,7 +665,10 @@ mod tests {
             mk("codex", None),
             mk("claude", None),
         ];
-        let ids: Vec<_> = items(&all, &["Zed".to_string()]).into_iter().map(|i| i.id).collect();
+        let ids: Vec<_> = items(&all, &["Zed".to_string()], true)
+            .into_iter()
+            .map(|i| i.id)
+            .collect();
         assert_eq!(
             ids,
             [
@@ -635,12 +688,12 @@ mod tests {
         let mut never = facts("claude");
         never.hooks = HookInstall::None;
         never.set_up = false;
-        let v = items(&[never.clone()], &["Ubuntu".to_string()]);
+        let v = items(&[never.clone()], &["Ubuntu".to_string()], true);
         assert_eq!(v.len(), 2);
         assert_eq!(issues(&v), 0);
         let mut gone = never;
         gone.set_up = true;
-        let mut v = items(&[gone], &[]);
+        let mut v = items(&[gone], &[], true);
         assert_eq!(issues(&v), 1);
         v.push(DoctorItem {
             group: DoctorGroup::Waste,
@@ -659,5 +712,71 @@ mod tests {
         assert_eq!(i.title, "Codex's hooks in Ubuntu are gone");
         assert_eq!(i.distro.as_deref(), Some("Ubuntu"));
         assert_eq!(i.agent.as_deref(), Some("codex"));
+    }
+
+    fn notify_file() -> PathBuf {
+        PathBuf::from("C:/h/settings.json")
+    }
+
+    #[test]
+    fn codex_notify_is_info() {
+        let mut f = facts("codex");
+        f.notify = NotifyFacts {
+            file: PathBuf::from("C:/h/config.toml"),
+            command: Some("a.exe x".into()),
+            hook_commands: Vec::new(),
+        };
+        let v = items(&[f], &[], true);
+        assert_eq!(v.len(), 1, "{v:?}");
+        check(
+            &v[0],
+            "notify.codex",
+            DoctorGroup::Info,
+            false,
+            "Codex runs its own notify command",
+            "After each turn it runs a.exe x. If that shows a desktop notification, you get two.",
+            Some("Marshell doesn't change your notify command."),
+        );
+        assert_eq!(v[0].path.as_deref(), Some("C:/h/config.toml"));
+    }
+
+    #[test]
+    fn claude_notification_hook_is_info() {
+        let mut f = facts("claude");
+        f.notify.file = notify_file();
+        f.notify.hook_commands = vec!["toast.exe a".into(), "b.sh".into()];
+        let i = one(f);
+        check(
+            &i,
+            "notify.claude",
+            DoctorGroup::Info,
+            false,
+            "Claude Code runs your own Notification hook",
+            "It runs toast.exe a; b.sh. If that shows a desktop notification, you get two.",
+            Some("Marshell doesn't change your hooks."),
+        );
+    }
+
+    #[test]
+    fn banners_off_gives_no_notify_item() {
+        let mut f = facts("codex");
+        f.notify.command = Some("x".into());
+        f.notify.hook_commands = vec!["y".into()];
+        assert!(items(&[f], &[], false).is_empty());
+    }
+
+    #[test]
+    fn a_distro_notify_item_has_its_suffix() {
+        let mut f = facts("claude");
+        f.distro = Some("Ubuntu".into());
+        f.notify.hook_commands = vec!["toast.exe".into()];
+        let i = one(f);
+        assert_eq!(i.id, "notify.claude@Ubuntu");
+        assert_eq!(i.title, "Claude Code in Ubuntu runs your own Notification hook");
+        let mut c = facts("codex");
+        c.distro = Some("Ubuntu".into());
+        c.notify.command = Some("a".into());
+        let ids: Vec<_> = items(&[c], &[], true).into_iter().map(|i| i.id).collect();
+        assert_eq!(ids, ["notify.codex@Ubuntu"]);
     }
 }

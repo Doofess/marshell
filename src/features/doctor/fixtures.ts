@@ -68,6 +68,18 @@ export const DOCTOR_PROBLEMS: DoctorReport = {
   ],
 };
 
+/** After "Run CLI doctors": a Codex fail, a Claude warning and a CLI with no doctor command, all report-only, in the core's copy. */
+export const DOCTOR_CLI: DoctorReport = {
+  checked_at_ms: NOW - 12_000,
+  cli_checked_at_ms: NOW - 20_000,
+  duration_ms: 1_840,
+  items: [
+    { id: "cli.codex.sandbox.helpers", agent: "codex", group: "broken", title: "Codex's doctor: Sandbox helpers are missing", detail: "Check sandbox.helpers, found by codex doctor. Marshell reports it and doesn't change it.", fixable: false, cannot_fix: "Reinstall Codex to restore the sandbox helpers.", open_agents: false },
+    { id: "cli.claude.5f1c2a9e", agent: "claude", group: "info", title: "Claude Code's doctor: Multiple installations found", detail: "Found by claude doctor. Marshell reports it and doesn't change it.", fixable: false, cannot_fix: "Fix: Remove the npm installation with npm uninstall -g @anthropic-ai/claude-code", open_agents: false },
+    { id: "cli.qwen", agent: "qwen", group: "info", title: "Qwen Code has no doctor command.", detail: "Marshell's own checks still cover its hooks and settings.", fixable: false, open_agents: false },
+  ],
+};
+
 export const DOCTOR_CLEAR: DoctorReport = { checked_at_ms: NOW - 4_000, duration_ms: 900, items: [] };
 
 export const UNDO_FIXED: DoctorLastFix = { snapshot_id: "snap-1", fixed_at_ms: NOW, item_ids: ["hooks.claude", "hooks.codex@Ubuntu", "retention.claude"], count: 3, restart: ["tab-1", "tab-2"], files_match: true };
