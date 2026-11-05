@@ -149,28 +149,16 @@ pub(crate) fn run_wsl(args: &[&str], timeout: std::time::Duration) -> Vec<u8> {
     rx.recv_timeout(timeout).unwrap_or_default()
 }
 
-/// Runs `wsl.exe` with the arguments on a thread, with no console window, and gives up after `timeout`. Unlike
-/// `run_wsl` it keeps stdout whatever the exit code. `None` when it can't start, or isn't done in time: the thread
-/// reads the pipes, so a grandchild that keeps them open holds the thread, never the caller.
+/// Runs `wsl.exe` with the arguments, with no console window, and gives up after `timeout`. Unlike `run_wsl` it keeps
+/// stdout whatever the exit code. `None` when it can't start, or isn't done in time; then `wsl.exe` and what it
+/// started are ended, so a hung doctor does not pile up behind the next click.
 pub(crate) fn run_wsl_capture(args: &[&str], timeout: std::time::Duration) -> Option<(i32, Vec<u8>)> {
     if !cfg!(windows) {
         return None;
     }
-    let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let mut cmd = std::process::Command::new("wsl.exe");
-        cmd.args(args);
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-        let ran = cmd.output().ok().map(|o| (o.status.code().unwrap_or(-1), o.stdout));
-        let _ = tx.send(ran);
-    });
-    rx.recv_timeout(timeout).ok().flatten()
+    let mut cmd = std::process::Command::new("wsl.exe");
+    cmd.args(args);
+    crate::agents::run_bounded(cmd, timeout).map(|(code, stdout, _)| (code, stdout))
 }
 
 /// The text of `wsl.exe` output. WSL prints UTF-16LE, usually with a BOM.

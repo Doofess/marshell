@@ -61,14 +61,23 @@ pub fn run_version_text(exe: &Path, timeout: Duration) -> Option<String> {
     Some(String::from_utf8_lossy(&out).into_owned())
 }
 
-/// Runs `<exe> <args>` with no stdin and returns its exit code and its stdout then stderr, joined. The process is
-/// killed after `timeout`, which gives `None`, as does a program that can't start.
+/// Runs `<exe> <args>` with no stdin and returns its exit code and its stdout then stderr, joined. The process and
+/// whatever it started are ended after `timeout`, which gives `None`, as does a program that can't start.
 pub fn run_capture(exe: &Path, args: &[&str], timeout: Duration) -> Option<(i32, String)> {
     let mut cmd = Command::new(exe);
-    cmd.args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.args(args);
+    let (code, stdout, stderr) = run_bounded(cmd, timeout)?;
+    let mut text = String::from_utf8_lossy(&stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&stderr));
+    Some((code, text))
+}
+
+/// Runs `cmd` with no stdin and no console window, and returns its exit code, stdout and stderr. `timeout` bounds the
+/// whole call: the wait for the child, and then the wait for its pipes, which a grandchild that outlives the child may
+/// keep open. When it passes, the child and the processes it started are ended and the result is `None`, not the
+/// bytes read so far: a half-read answer is not one the callers can use. `None` too when the program can't start.
+pub(crate) fn run_bounded(mut cmd: Command, timeout: Duration) -> Option<(i32, Vec<u8>, Vec<u8>)> {
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -77,34 +86,49 @@ pub fn run_capture(exe: &Path, args: &[&str], timeout: Duration) -> Option<(i32,
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
     let mut child = cmd.spawn().ok()?;
-    let stdout = child.stdout.take()?;
-    let stderr = child.stderr.take()?;
-    // Each pipe is read on its own thread, so a full pipe cannot hold the child past the deadline.
-    fn read(mut pipe: impl std::io::Read + Send + 'static) -> std::thread::JoinHandle<Vec<u8>> {
+    let tree = crate::job::ProcessTree::adopt(&child);
+    let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
+        tree.kill(&mut child);
+        let _ = child.wait();
+        return None;
+    };
+    // Each pipe is read on its own thread, so a full pipe cannot hold the child past the deadline. The thread sends
+    // its bytes when the pipe closes, which lets the caller wait for them with a deadline.
+    fn read(mut pipe: impl std::io::Read + Send + 'static) -> std::sync::mpsc::Receiver<Vec<u8>> {
+        let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let mut out = Vec::new();
             let _ = pipe.read_to_end(&mut out);
-            out
-        })
+            let _ = tx.send(out);
+        });
+        rx
     }
-    let out_reader = read(stdout);
-    let err_reader = read(stderr);
+    let out_rx = read(stdout);
+    let err_rx = read(stderr);
     let deadline = Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
             _ => {
-                let _ = child.kill();
+                tree.kill(&mut child);
                 let _ = child.wait();
-                // After a kill the readers are left alone: a grandchild may still hold a pipe open.
+                // The readers are left alone: they end once the killed processes have closed the pipes.
                 return None;
             }
         }
     };
-    let mut text = String::from_utf8_lossy(&out_reader.join().ok()?).into_owned();
-    text.push_str(&String::from_utf8_lossy(&err_reader.join().ok()?));
-    Some((status.code().unwrap_or(-1), text))
+    // The child is gone, but a grandchild may still hold a pipe open. Past the deadline, end it, so the readers end too.
+    let take = |rx: &std::sync::mpsc::Receiver<Vec<u8>>| {
+        rx.recv_timeout(deadline.saturating_duration_since(Instant::now())).ok()
+    };
+    let stdout = take(&out_rx);
+    let stderr = take(&err_rx);
+    let (Some(stdout), Some(stderr)) = (stdout, stderr) else {
+        tree.kill(&mut child);
+        return None;
+    };
+    Some((status.code().unwrap_or(-1), stdout, stderr))
 }
 
 /// The first version-shaped token, with an optional leading `v` removed and a suffix kept.
@@ -217,5 +241,87 @@ mod tests {
         );
         assert!(!INHERITED_MARKERS.contains(&"CLAUDE_CODE_GIT_BASH_PATH"));
         assert!(!INHERITED_MARKERS.contains(&"CLAUDE_CODE_USE_BEDROCK"));
+    }
+
+    #[cfg(windows)]
+    mod tree {
+        use std::path::Path;
+        use std::time::{Duration, Instant};
+
+        fn pid_alive(pid: u32) -> bool {
+            let out = std::process::Command::new("tasklist")
+                .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+                .output()
+                .expect("tasklist runs");
+            String::from_utf8_lossy(&out.stdout).contains(&format!("\"{pid}\""))
+        }
+
+        /// The args of a `cmd.exe /c powershell ...` tree: the grandchild writes its PID to `pid_file`, then sleeps 20 s
+        /// (so a failed test leaves nothing behind for long).
+        fn sleeper_args(pid_file: &Path) -> Vec<String> {
+            let script = format!(
+                "$PID | Set-Content -LiteralPath '{}'; Start-Sleep 20",
+                pid_file.display()
+            );
+            ["/c", "powershell", "-NoProfile", "-Command"]
+                .into_iter()
+                .map(String::from)
+                .chain([script])
+                .collect()
+        }
+
+        fn grandchild_pid(pid_file: &Path) -> u32 {
+            std::fs::read_to_string(pid_file)
+                .expect("the grandchild wrote its PID before the timeout")
+                .trim()
+                .parse()
+                .expect("a PID")
+        }
+
+        #[test]
+        fn run_capture_gives_up_when_a_grandchild_holds_the_pipe_after_the_child_exits() {
+            let started = Instant::now();
+            // `start /b` returns at once and leaves ping running with the inherited pipes.
+            let got = super::super::run_capture(
+                Path::new("cmd.exe"),
+                &["/c", "start", "/b", "ping", "-n", "20", "127.0.0.1"],
+                Duration::from_secs(2),
+            );
+            assert!(got.is_none(), "{got:?}");
+            assert!(started.elapsed() < Duration::from_secs(8), "{:?}", started.elapsed());
+        }
+
+        #[test]
+        fn run_capture_timeout_ends_the_whole_process_tree() {
+            let dir = tempfile::tempdir().unwrap();
+            let pid_file = dir.path().join("pid.txt");
+            let args = sleeper_args(&pid_file);
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            let got = super::super::run_capture(Path::new("cmd.exe"), &args, Duration::from_secs(5));
+            assert!(got.is_none(), "{got:?}");
+            let pid = grandchild_pid(&pid_file);
+            assert!(!pid_alive(pid), "the grandchild {pid} outlived the timeout");
+        }
+
+        #[test]
+        fn run_bounded_timeout_ends_the_whole_process_tree() {
+            let dir = tempfile::tempdir().unwrap();
+            let pid_file = dir.path().join("pid.txt");
+            let mut cmd = std::process::Command::new("cmd.exe");
+            cmd.args(sleeper_args(&pid_file));
+            assert!(super::super::run_bounded(cmd, Duration::from_secs(5)).is_none());
+            let pid = grandchild_pid(&pid_file);
+            assert!(!pid_alive(pid), "the grandchild {pid} outlived the timeout");
+        }
+
+        #[test]
+        fn run_bounded_returns_the_code_and_both_streams() {
+            let mut cmd = std::process::Command::new("cmd.exe");
+            cmd.args(["/c", "echo out& echo err 1>&2& exit 3"]);
+            let (code, out, err) = super::super::run_bounded(cmd, Duration::from_secs(10)).unwrap();
+            assert_eq!(code, 3);
+            assert!(String::from_utf8_lossy(&out).contains("out"));
+            assert!(String::from_utf8_lossy(&err).contains("err"));
+        }
     }
 }
