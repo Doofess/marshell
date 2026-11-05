@@ -22,13 +22,13 @@ pub enum FileState {
     Unparsable { line: u32, message: String },
 }
 
-/// What a CLI notifies by itself, besides Marshell.
+/// What a CLI notifies by itself outside the terminal, besides Marshell. A bell or an OSC 9 inside the terminal isn't
+/// here: Marshell ignores those on a hooked row, so they never arrive twice. That covers Antigravity's `notifications`,
+/// which agy 1.4.12 sends as a bell and an OSC 9 (7b decision 4).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct NotifyFacts {
-    /// Antigravity: its settings.json. Codex: its config.toml. Claude Code and Qwen Code: the hooks file (`path`).
+    /// Codex: its config.toml. Claude Code and Qwen Code: the hooks file (`path`).
     pub file: PathBuf,
-    /// Antigravity's `notifications` is `true`.
-    pub desktop: bool,
     /// Codex's top-level `notify` array, its strings joined with spaces.
     pub command: Option<String>,
     /// The `command` of every hook under `hooks.Notification` that `agents::common::is_ours` doesn't claim
@@ -274,15 +274,6 @@ fn cli_items(f: &AgentFacts, banners_on: bool, out: &mut Vec<DoctorItem>) {
             i.path = Some(n.file.display().to_string());
             i
         };
-        if f.agent == "antigravity" && n.desktop {
-            found.push(with_file(mk(
-                "notify",
-                DoctorGroup::Broken,
-                true,
-                format!("{cli}{place} sends its own desktop notifications"),
-                "With Marshell's banners on, you get each one twice. The fix sets notifications to false.".into(),
-            )));
-        }
         let twice = "If that shows a desktop notification, you get two.";
         if f.agent == "codex"
             && let Some(command) = &n.command
@@ -731,33 +722,10 @@ mod tests {
     }
 
     #[test]
-    fn antigravity_desktop_notifications_are_broken_and_fixable() {
-        let mut f = facts("antigravity");
-        f.notify = NotifyFacts {
-            file: notify_file(),
-            desktop: true,
-            ..Default::default()
-        };
-        let i = one(f);
-        check(
-            &i,
-            "notify.antigravity",
-            DoctorGroup::Broken,
-            true,
-            "Antigravity sends its own desktop notifications",
-            "With Marshell's banners on, you get each one twice. The fix sets notifications to false.",
-            None,
-        );
-        assert_eq!(i.path.as_deref(), Some("C:/h/settings.json"));
-        assert_eq!(i.agent.as_deref(), Some("antigravity"));
-    }
-
-    #[test]
     fn codex_notify_and_hooks_are_info() {
         let mut f = facts("codex");
         f.notify = NotifyFacts {
             file: PathBuf::from("C:/h/config.toml"),
-            desktop: false,
             command: Some("a.exe x".into()),
             hook_commands: vec!["toast.exe".into()],
         };
@@ -804,31 +772,20 @@ mod tests {
 
     #[test]
     fn banners_off_gives_no_notify_item() {
-        let mut f = facts("antigravity");
-        f.notify.desktop = true;
+        let mut f = facts("codex");
         f.notify.command = Some("x".into());
         f.notify.hook_commands = vec!["y".into()];
         assert!(items(&[f], &[], false).is_empty());
     }
 
     #[test]
-    fn read_only_antigravity_cannot_be_fixed() {
-        let mut f = facts("antigravity");
-        f.file = FileState::ReadOnly;
-        f.notify.desktop = true;
-        let i = one(f);
-        assert!(!i.fixable);
-        assert_eq!(i.cannot_fix.as_deref(), Some("The file is read-only."));
-    }
-
-    #[test]
     fn a_distro_notify_item_has_its_suffix() {
-        let mut f = facts("antigravity");
+        let mut f = facts("claude");
         f.distro = Some("Ubuntu".into());
-        f.notify.desktop = true;
+        f.notify.hook_commands = vec!["toast.exe".into()];
         let i = one(f);
-        assert_eq!(i.id, "notify.antigravity@Ubuntu");
-        assert_eq!(i.title, "Antigravity in Ubuntu sends its own desktop notifications");
+        assert_eq!(i.id, "notify.claude@Ubuntu");
+        assert_eq!(i.title, "Claude Code in Ubuntu runs your own Notification hook");
         let mut c = facts("codex");
         c.distro = Some("Ubuntu".into());
         c.notify.command = Some("a".into());

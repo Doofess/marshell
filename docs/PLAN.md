@@ -1396,7 +1396,11 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      2. Each problem a CLI doctor reports becomes an item in the groups, tagged with its CLI. An error goes in Broken and a warning in Info. The item shows the CLI's own summary and remediation. Codex's `details` are never shown, because they hold personal paths. Claude Code's text gives one item for each warning it lists, from its `- <issue>` line and the `Fix:` line after it. This was amended at plan writing, when the binary showed that the result line is followed by each warning. Antigravity and Qwen Code each get the Info line "<CLI> has no doctor command."
      3. These items are report-only: they are never counted in "Fix X issues", and Marshell acts on no other tool's diagnosis.
      4. Duplicate notifications cover only those sent outside the terminal:
-        - Antigravity's `notifications: true` is Broken and pre-checked, but only while Marshell's own banners are on. Its fix sets the value to false. The live check first confirms that it shows a native toast. If it doesn't, the item is Info.
+        - Antigravity's `notifications: true` was to be Broken and pre-checked, with a fix that sets it to false. Amended 2026-11-05, with the user's OK, after reading the agy 1.4.12 binary:
+          - It has no toast code: no `Windows.UI.Notifications`, no toast library and no AppUserModelID.
+          - Its "Bell + desktop notification" is a bell and an OSC 9 escape in the terminal, which Marshell ignores on a hooked row.
+          - So it gets no item and no fix, like the terminal-sequence settings below.
+        - Every `notify.*` item appears only while Marshell's own banners are on.
         - Codex's `notify` command, and Notification hooks the person added, are Info items that name the command. They are never edited.
         - Terminal-sequence settings get no item: Claude Code's `preferredNotifChannel`, Qwen Code's `general.terminalBell` and Codex's `tui.notifications`.
      5. WSL follows 7a decision 7. The CLI doctors and the duplicate checks run in each distro that `managed.json` names, only while it is running, and only for the CLIs installed there. A stopped distro gets "Not checked: <distro> isn't running."
