@@ -12,6 +12,9 @@ import { api, ApiError } from "./client";
 /** Starts a check. The answer is the summary at that moment; the finished one arrives as a `doctor` frame. */
 export const runDoctor = (ep: Endpoint) => api<DoctorSummary>(ep, "POST", "/v1/doctor/run");
 
+/** Starts the CLI doctors (`claude doctor`, `codex doctor`); a click while they run joins that run. The finished one arrives as a `doctor` frame. */
+export const runCliDoctors = (ep: Endpoint) => api<DoctorSummary>(ep, "POST", "/v1/doctor/cli");
+
 /** The last finished report, or null before the first run ends. */
 export const doctorReport = async (ep: Endpoint): Promise<DoctorReport | null> => (await api<DoctorReport | undefined>(ep, "GET", "/v1/doctor/report")) ?? null;
 

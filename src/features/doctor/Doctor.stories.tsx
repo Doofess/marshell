@@ -4,7 +4,7 @@ import { ThemePair } from "../../design/ThemePair";
 import { unifiedDiff } from "../../lib/diff";
 import { DoctorPage, type DoctorPageProps, type DoctorPhase } from "./DoctorPage";
 import { DifferencesSheet, FixSheet } from "./FixSheet";
-import { DOCTOR_CLEAR, DOCTOR_PLAN, DOCTOR_PREVIEW, DOCTOR_PROBLEMS, DOCTOR_REPORT, UNDO_FIXED, filePreview } from "./fixtures";
+import { DOCTOR_CLEAR, DOCTOR_CLI, DOCTOR_PLAN, DOCTOR_PREVIEW, DOCTOR_PROBLEMS, DOCTOR_REPORT, UNDO_FIXED, filePreview } from "./fixtures";
 import { initialSelection } from "./report";
 import type { DoctorReport } from "./types";
 
@@ -23,6 +23,8 @@ const page = (report: DoctorReport | null, phase: DoctorPhase, extra: Partial<Do
       onToggle={noop}
       onFix={noop}
       onRunAgain={noop}
+      cliRunning={false}
+      onRunCliDoctors={noop}
       onUndo={noop}
       onShowDifferences={noop}
       onOpenAgents={noop}
@@ -35,6 +37,8 @@ const sheet = (plan = DOCTOR_PLAN, over: Partial<Parameters<typeof FixSheet>[0]>
 export const Ready: StoryObj = { render: () => <ThemePair label="Doctor: Broken and Info groups; a checkbox on each fixable row, Broken ones checked; retention is Info and unchecked; managed settings are Info with no control" stack>{page(DOCTOR_REPORT, "ready")}</ThemePair> };
 export const NothingChosen: StoryObj = { render: () => <ThemePair label="Doctor: with no row checked, the fix button is disabled" stack>{page(DOCTOR_REPORT, "ready", { selected: new Set() })}</ThemePair> };
 export const ReadyProblems: StoryObj = { render: () => <ThemePair label="Doctor: problems Marshell will not fix say why, in words, and Antigravity's row offers Open Agents" stack>{page(DOCTOR_PROBLEMS, "ready")}</ThemePair> };
+export const CliDoctorsRan: StoryObj = { render: () => <ThemePair label="Doctor: after Run CLI doctors, each CLI's problems are report-only rows that say Marshell only reports them, and the status line says when they ran" stack>{page(DOCTOR_CLI, "ready")}</ThemePair> };
+export const CliDoctorsRunning: StoryObj = { render: () => <ThemePair label="Doctor: while the CLI doctors run, the button reads Running CLI doctors… and stays focusable but does nothing" stack>{page(DOCTOR_CLI, "ready", { cliRunning: true })}</ThemePair> };
 export const AllClear: StoryObj = { render: () => <ThemePair label="Doctor: all clear, with only Run again" stack>{page(DOCTOR_CLEAR, "ready")}</ThemePair> };
 export const Running: StoryObj = { render: () => <ThemePair label="Doctor: a check that takes over 150 ms says what it is checking; a quicker one shows nothing" stack>{page(null, "running", { elapsedMs: 400 })}</ThemePair> };
 export const Failed: StoryObj = { render: () => <ThemePair label="Doctor: when it cannot run it says why and offers Run again" stack>{page(null, "failed", { failure: "The core is not running." })}</ThemePair> };

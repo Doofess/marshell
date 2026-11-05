@@ -68,6 +68,20 @@ export const DOCTOR_PROBLEMS: DoctorReport = {
   ],
 };
 
+const CLI_ONLY = "Marshell only reports what the CLI's own doctor says.";
+
+/** After "Run CLI doctors": a Codex fail, a Claude warning and a CLI with no doctor command, all report-only. */
+export const DOCTOR_CLI: DoctorReport = {
+  checked_at_ms: NOW - 12_000,
+  cli_checked_at_ms: NOW - 20_000,
+  duration_ms: 1_840,
+  items: [
+    { id: "cli.codex", agent: "codex", group: "broken", title: "Codex's doctor reports: Sandbox is unavailable", detail: "Run codex doctor to see the full result.", fixable: false, cannot_fix: CLI_ONLY, open_agents: false },
+    { id: "cli.claude.1", agent: "claude", group: "waste", title: "Claude Code's doctor reports: Multiple installations found", detail: "Fix: remove the extra installation.", fixable: false, cannot_fix: CLI_ONLY, open_agents: false },
+    { id: "cli.qwen", agent: "qwen", group: "info", title: "Qwen Code has no doctor command", detail: "Marshell did not run anything for it.", fixable: false, cannot_fix: CLI_ONLY, open_agents: false },
+  ],
+};
+
 export const DOCTOR_CLEAR: DoctorReport = { checked_at_ms: NOW - 4_000, duration_ms: 900, items: [] };
 
 export const UNDO_FIXED: DoctorLastFix = { snapshot_id: "snap-1", fixed_at_ms: NOW, item_ids: ["hooks.claude", "hooks.codex@Ubuntu", "retention.claude"], count: 3, restart: ["tab-1", "tab-2"], files_match: true };

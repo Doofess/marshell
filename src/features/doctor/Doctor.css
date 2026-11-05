@@ -17,6 +17,13 @@
   font-size: var(--text-13);
   color: var(--text-2);
 }
+/* The CLI doctors' status line: the summary's quieter sibling, one step smaller, wrapping evenly. */
+.doctor__cli {
+  margin: 0;
+  font-size: var(--text-12);
+  color: var(--text-2);
+  text-wrap: pretty;
+}
 .doctor__failed {
   color: var(--text-1);
   padding: var(--space-3);
