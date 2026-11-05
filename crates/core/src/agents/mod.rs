@@ -248,6 +248,9 @@ mod tests {
         use std::path::Path;
         use std::time::{Duration, Instant};
 
+        /// Long enough for a cold PowerShell to start and write its PID on a loaded CI runner (5 s wasn't).
+        const TREE_TIMEOUT: Duration = Duration::from_secs(20);
+
         fn pid_alive(pid: u32) -> bool {
             let out = std::process::Command::new("tasklist")
                 .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
@@ -256,11 +259,11 @@ mod tests {
             String::from_utf8_lossy(&out.stdout).contains(&format!("\"{pid}\""))
         }
 
-        /// The args of a `cmd.exe /c powershell ...` tree: the grandchild writes its PID to `pid_file`, then sleeps 20 s
+        /// The args of a `cmd.exe /c powershell ...` tree: the grandchild writes its PID to `pid_file`, then sleeps 60 s
         /// (so a failed test leaves nothing behind for long).
         fn sleeper_args(pid_file: &Path) -> Vec<String> {
             let script = format!(
-                "$PID | Set-Content -LiteralPath '{}'; Start-Sleep 20",
+                "$PID | Set-Content -LiteralPath '{}'; Start-Sleep 60",
                 pid_file.display()
             );
             ["/c", "powershell", "-NoProfile", "-Command"]
@@ -297,7 +300,7 @@ mod tests {
             let pid_file = dir.path().join("pid.txt");
             let args = sleeper_args(&pid_file);
             let args: Vec<&str> = args.iter().map(String::as_str).collect();
-            let got = super::super::run_capture(Path::new("cmd.exe"), &args, Duration::from_secs(5));
+            let got = super::super::run_capture(Path::new("cmd.exe"), &args, TREE_TIMEOUT);
             assert!(got.is_none(), "{got:?}");
             let pid = grandchild_pid(&pid_file);
             assert!(!pid_alive(pid), "the grandchild {pid} outlived the timeout");
@@ -309,7 +312,7 @@ mod tests {
             let pid_file = dir.path().join("pid.txt");
             let mut cmd = std::process::Command::new("cmd.exe");
             cmd.args(sleeper_args(&pid_file));
-            assert!(super::super::run_bounded(cmd, Duration::from_secs(5)).is_none());
+            assert!(super::super::run_bounded(cmd, TREE_TIMEOUT).is_none());
             let pid = grandchild_pid(&pid_file);
             assert!(!pid_alive(pid), "the grandchild {pid} outlived the timeout");
         }
