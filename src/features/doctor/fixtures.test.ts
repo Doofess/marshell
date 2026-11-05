@@ -11,7 +11,8 @@ describe("doctor fixtures", () => {
     for (const i of [...DOCTOR_REPORT.items, ...DOCTOR_PROBLEMS.items].filter((x) => !x.fixable && x.group !== "info")) expect(i.cannot_fix, i.id).toBeTruthy();
   });
   it("includes managed settings as Info that is never fixable", () => {
-    const m = DOCTOR_REPORT.items.find((i) => i.group === "info")!;
+    const m = DOCTOR_REPORT.items.find((i) => i.id === "managed.claude")!;
+    expect(m.group).toBe("info");
     expect(m.fixable).toBe(false);
     expect(m.detail).toContain("never changes");
   });

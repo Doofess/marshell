@@ -3,11 +3,15 @@ export * from "./types";
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
-/** Issues are Broken and Waste items; Info (such as managed settings) is listed but never counted. */
+/**
+ * Issues are Broken and Waste items; Info (such as managed settings) is listed but never counted. `offered` counts every
+ * fixable item, Info ones too (transcript retention), since the fix button offers them all.
+ */
 export function counts(r: DoctorReport) {
   const issues = r.items.filter((i) => i.group !== "info");
   const fixable = issues.filter((i) => i.fixable).length;
-  return { issues: issues.length, fixable, unfixable: issues.length - fixable };
+  const offered = r.items.filter((i) => i.fixable).length;
+  return { issues: issues.length, fixable, unfixable: issues.length - fixable, offered };
 }
 
 /** Fixable Broken items start checked; an item that was in the previous report keeps the state the person gave it. */

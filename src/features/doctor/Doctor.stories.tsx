@@ -32,7 +32,7 @@ const page = (report: DoctorReport | null, phase: DoctorPhase, extra: Partial<Do
   );
 const sheet = (plan = DOCTOR_PLAN, over: Partial<Parameters<typeof FixSheet>[0]> = {}) => <FixSheet plan={plan} busy={false} conflict={false} onConfirm={noop} onCancel={noop} onReload={noop} {...over} />;
 
-export const Ready: StoryObj = { render: () => <ThemePair label="Doctor: Broken, Waste and Info groups; a checkbox on each fixable row, Broken ones checked; managed settings are Info with no control" stack>{page(DOCTOR_REPORT, "ready")}</ThemePair> };
+export const Ready: StoryObj = { render: () => <ThemePair label="Doctor: Broken and Info groups; a checkbox on each fixable row, Broken ones checked; retention is Info and unchecked; managed settings are Info with no control" stack>{page(DOCTOR_REPORT, "ready")}</ThemePair> };
 export const NothingChosen: StoryObj = { render: () => <ThemePair label="Doctor: with no row checked, the fix button is disabled" stack>{page(DOCTOR_REPORT, "ready", { selected: new Set() })}</ThemePair> };
 export const ReadyProblems: StoryObj = { render: () => <ThemePair label="Doctor: problems Marshell will not fix say why, in words, and Antigravity's row offers Open Agents" stack>{page(DOCTOR_PROBLEMS, "ready")}</ThemePair> };
 export const AllClear: StoryObj = { render: () => <ThemePair label="Doctor: all clear, with only Run again" stack>{page(DOCTOR_CLEAR, "ready")}</ThemePair> };

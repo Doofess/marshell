@@ -54,7 +54,7 @@ export const DOCTOR_REPORT: DoctorReport = {
     { id: "hooks.claude", agent: "claude", group: "broken", title: "Approve from anywhere is not installed", detail: "Claude Code's permission requests cannot reach Marshell's cards, so they only show in the terminal.", fixable: true, path: CLAUDE, open_agents: false },
     { id: "hooks.codex@Ubuntu", agent: "codex", distro: "Ubuntu", group: "broken", title: "Codex in Ubuntu has no Marshell hooks", detail: "Codex's requests in this distro only show in the terminal.", fixable: true, path: CODEX_HOOKS, open_agents: false },
     { id: "hooks.antigravity", agent: "antigravity", group: "broken", title: "Antigravity's settings file does not parse", detail: `${HOME}\\.gemini\\antigravity-cli\\settings.json`, fixable: false, cannot_fix: "The file does not parse (line 14). Marshell never edits a file it can't read.", open_agents: true },
-    { id: "retention.claude", agent: "claude", group: "waste", title: "Claude deletes transcripts after 30 days", detail: "Marshell keeps its own copy, but raising this to 365 days keeps Claude's own resume working.", fixable: true, path: CLAUDE, open_agents: false },
+    { id: "retention.claude", agent: "claude", group: "info", title: "Claude deletes transcripts after 30 days", detail: "Marshell keeps its own copy, but raising this to 365 days keeps Claude's own resume working.", fixable: true, path: CLAUDE, open_agents: false },
     { id: "managed.claude", agent: "claude", group: "info", title: "Managed settings apply on top of yours", detail: "Your organisation manages some Claude settings in C:\\Program Files\\ClaudeCode\\managed-settings.json. Marshell lists them and never changes them.", fixable: false, open_agents: false },
   ],
 };

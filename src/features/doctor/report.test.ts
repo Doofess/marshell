@@ -3,10 +3,10 @@ import { DOCTOR_CLEAR, DOCTOR_PROBLEMS, DOCTOR_REPORT } from "./fixtures";
 import { afterFixMessage, counts, fixHeadline, groups, initialSelection, listNumbers, selectedFixable } from "./report";
 
 describe("counts", () => {
-  it("counts issues, not Info, and splits fixable from not", () => {
-    expect(counts(DOCTOR_REPORT)).toEqual({ issues: 4, fixable: 3, unfixable: 1 });
+  it("counts issues, not Info, and splits fixable from not; offered counts every fixable item", () => {
+    expect(counts(DOCTOR_REPORT)).toEqual({ issues: 3, fixable: 2, unfixable: 1, offered: 3 });
     expect(counts(DOCTOR_PROBLEMS)).toMatchObject({ unfixable: 2, fixable: 0 });
-    expect(counts(DOCTOR_CLEAR)).toEqual({ issues: 0, fixable: 0, unfixable: 0 });
+    expect(counts(DOCTOR_CLEAR)).toEqual({ issues: 0, fixable: 0, unfixable: 0, offered: 0 });
   });
 });
 describe("initialSelection", () => {
@@ -38,7 +38,10 @@ describe("fixHeadline", () => {
 });
 describe("groups", () => {
   it("orders Broken, Waste, Info and drops the empty ones", () => {
-    expect(groups(DOCTOR_REPORT).map((g) => [g.heading, g.items.length])).toEqual([["Broken", 3], ["Waste", 1], ["Info", 1]]);
+    // Nothing in 7a is Waste yet, so one Broken item stands in for it, listed last.
+    const first = DOCTOR_REPORT.items[0]!;
+    const withWaste = { ...DOCTOR_REPORT, items: [...DOCTOR_REPORT.items, { ...first, id: "waste.one", group: "waste" as const }] };
+    expect(groups(withWaste).map((g) => [g.heading, g.items.length])).toEqual([["Broken", 3], ["Waste", 1], ["Info", 2]]);
     expect(groups(DOCTOR_PROBLEMS).map((g) => g.heading)).toEqual(["Broken"]);
     expect(groups(DOCTOR_CLEAR)).toEqual([]);
   });

@@ -38,7 +38,7 @@ export type DoctorPageProps = {
  */
 export function DoctorPage({ report, phase, selected, undo, nowMs, elapsedMs = 0, failure, onToggle, onFix, onRunAgain, onUndo, onShowDifferences, onOpenAgents, onRestart }: DoctorPageProps) {
   const uid = useId();
-  const c = report ? counts(report) : { issues: 0, fixable: 0, unfixable: 0 };
+  const c = report ? counts(report) : { issues: 0, fixable: 0, unfixable: 0, offered: 0 };
   const chosen = report ? selectedFixable(report, selected).length : 0;
   const fixedIds = new Set(phase === "fixed" ? undo?.item_ids : []);
   const fixedCount = report ? report.items.filter((i) => i.group !== "info" && fixedIds.has(i.id)).length : 0;
@@ -53,7 +53,7 @@ export function DoctorPage({ report, phase, selected, undo, nowMs, elapsedMs = 0
   const actions =
     phase === "running" ? null : (
       <>
-        {phase === "ready" && c.fixable > 0 && (
+        {phase === "ready" && c.offered > 0 && (
           <button type="button" className="doctor__btn" data-primary disabled={chosen === 0} onClick={onFix}>
             {fixHeadline(chosen)}
           </button>
@@ -87,7 +87,7 @@ export function DoctorPage({ report, phase, selected, undo, nowMs, elapsedMs = 0
             <p className="doctor__summary">
               {c.issues} {plural(c.issues, "issue", "issues")}
               {phase === "fixed" ? (fixedCount >= c.issues ? ` · all fixed` : ` · ${fixedCount} fixed · ${c.issues - fixedCount} ${c.issues - fixedCount === 1 ? "remains" : "remain"}`) : c.fixable > 0 ? ` · ${c.fixable} can be fixed` : ""}
-              {phase !== "fixed" && c.fixable === 0 && c.issues > 0 ? ` · Nothing to fix` : ""}
+              {phase !== "fixed" && c.offered === 0 && c.issues > 0 ? ` · Nothing to fix` : ""}
             </p>
           )}
           {offer?.kind === "stale" && (

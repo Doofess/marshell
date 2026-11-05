@@ -16,10 +16,10 @@ const page = (report: DoctorReport | null, phase: Props["phase"], extra: Partial
 const at = (ms: number) => UNDO_FIXED.fixed_at_ms + ms;
 
 describe("DoctorPage", () => {
-  it("groups under Broken, Waste and Info headings with counts, in that order", () => {
+  it("groups under Broken, Waste and Info headings with counts, in that order, leaving out an empty one", () => {
     const h = page(DOCTOR_REPORT, "ready");
     const heads = [...h.matchAll(/<h2[^>]*class="doctor__group-title"[^>]*>(.*?)<\/h2>/g)].map((m) => m[1]!.replace(/<[^>]+>/g, ""));
-    expect(heads).toEqual(["Broken 3", "Waste 1", "Info 1"]);
+    expect(heads).toEqual(["Broken 3", "Info 2"]);
   });
   it("drops empty groups", () => {
     const h = page(DOCTOR_PROBLEMS, "ready");
@@ -47,6 +47,15 @@ describe("DoctorPage", () => {
     const h = page(DOCTOR_REPORT, "ready", { selected: new Set() });
     expect(h).toMatch(/<button[^>]*disabled=""[^>]*>Fix 0 issues<\/button>/);
   });
+  // Found in the 7a final review: with only Codex trust and the retention item left, the page offered no fix at all.
+  it("offers the fix button when only an Info item can be fixed", () => {
+    const retention = DOCTOR_REPORT.items.find((i) => i.id === "retention.claude")!;
+    const r: DoctorReport = { ...DOCTOR_PROBLEMS, items: [...DOCTOR_PROBLEMS.items, retention] };
+    const h = page(r, "ready");
+    expect(h).toMatch(/<button[^>]*disabled=""[^>]*>Fix 0 issues<\/button>/);
+    expect(h).not.toContain("Nothing to fix");
+    expect(page(r, "ready", { selected: new Set(["retention.claude"]) })).toContain("Fix 1 issue<");
+  });
   it("offers no fix button when nothing can be fixed", () => {
     const h = page(DOCTOR_PROBLEMS, "ready");
     expect(h).not.toContain("Fix 0");
@@ -58,8 +67,8 @@ describe("DoctorPage", () => {
   });
   it("summarises the issues and what can be fixed", () => {
     const h = page(DOCTOR_REPORT, "ready");
-    expect(h).toContain("4 issues");
-    expect(h).toContain("3 can be fixed");
+    expect(h).toContain("3 issues");
+    expect(h).toContain("2 can be fixed");
     expect(h).toContain("Run again");
   });
   it("running: says what is being checked and is busy, with no live region", () => {
@@ -88,7 +97,7 @@ describe("DoctorPage", () => {
     expect(toast).toContain("Fixed 3 issues. 2 sessions pick this up after a restart.");
     expect(toast).toContain("Restart them");
     expect((toast.match(/data-state="fixed"/g) ?? []).length).toBe(3);
-    expect(toast).toContain("4 issues · 3 fixed · 1 remains");
+    expect(toast).toContain("3 issues · 2 fixed · 1 remains");
     const later = page(DOCTOR_REPORT, "fixed", { undo: UNDO_FIXED, nowMs: at(60_000) });
     expect(later).not.toContain("Restart them");
     expect(later).toContain("Undo last fix");
