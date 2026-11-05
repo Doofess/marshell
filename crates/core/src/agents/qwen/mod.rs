@@ -1,5 +1,6 @@
 //! Qwen Code (`qwen`): its hook entries and status line, planned as config changes in its user `settings.json`.
 
+pub mod extensions;
 pub mod hooks;
 pub mod request;
 pub mod status;
