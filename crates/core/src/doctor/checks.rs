@@ -43,6 +43,9 @@ pub struct AgentFacts {
     pub set_up: bool,
     /// The bridge program the hooks run.
     pub bridge: PathBuf,
+    /// The file at `bridge` is there. Orphaned hooks with it in place run another program (Codex and Antigravity
+    /// read an entry naming another home's bridge as Orphaned).
+    pub bridge_exists: bool,
     /// Gate::Unknown's note; None when known, not found, or a distro.
     pub version_note: Option<String>,
     /// Some(true): the key is unset; Some(false): the person set it; None: no such setting or not read.
@@ -157,6 +160,13 @@ fn cli_items(f: &AgentFacts, out: &mut Vec<DoctorItem>) {
                 d.push_str(" The fix sets them up again.");
                 Some((format!("{cli}'s hooks{place} are incomplete"), d))
             }
+            HookInstall::Orphaned if f.bridge_exists => Some((
+                format!("{cli}'s hooks{place} point at a moved program"),
+                format!(
+                    "Some of Marshell's entries in {path} run a program other than {}. The fix points them at it again.",
+                    f.bridge.display()
+                ),
+            )),
             HookInstall::Orphaned => Some((
                 format!("{cli}'s hooks{place} run a program that's missing"),
                 format!(
@@ -269,6 +279,7 @@ mod tests {
             trust: None,
             set_up: true,
             bridge: PathBuf::from("C:/m/bridge.exe"),
+            bridge_exists: true,
             version_note: None,
             retention_unset: None,
             managed_settings: None,
@@ -382,6 +393,7 @@ mod tests {
     fn hooks_orphaned_row() {
         let mut f = facts("qwen");
         f.hooks = HookInstall::Orphaned;
+        f.bridge_exists = false;
         let i = one(f);
         check(
             &i,
@@ -390,6 +402,27 @@ mod tests {
             true,
             "Qwen Code's hooks run a program that's missing",
             "The hooks in C:/h/settings.json run C:/m/bridge.exe, which isn't there. The fix puts it back and sets the hooks up again.",
+            None,
+        );
+    }
+
+    /// Found in the 7a live check: Codex reads an entry naming another bridge as Orphaned while this home's bridge is
+    /// there, and the row said that bridge "isn't there".
+    #[test]
+    fn hooks_pointing_at_a_moved_bridge_row() {
+        let mut f = facts("codex");
+        f.path = PathBuf::from("C:/h/hooks.json");
+        f.hooks = HookInstall::Orphaned;
+        f.trust = Some(HookTrust::Trusted);
+        let v = items(&[f], &[]);
+        let i = v.iter().find(|i| i.id == "hooks.codex").expect("a hooks row");
+        check(
+            i,
+            "hooks.codex",
+            DoctorGroup::Broken,
+            true,
+            "Codex's hooks point at a moved program",
+            "Some of Marshell's entries in C:/h/hooks.json run a program other than C:/m/bridge.exe. The fix points them at it again.",
             None,
         );
     }
