@@ -140,6 +140,22 @@ pub fn key(file: &Path, name: &str) -> String {
     hash_bytes(format!("{}\n{name}", file.display()).as_bytes())[..8].to_string()
 }
 
+/// An item's key: `key(file, name)`, with a project item's folder added to the name, because one file can hold the
+/// same name for several projects (Claude Code's local-scope servers in `~/.claude.json`).
+fn item_key(file: &Path, origin: &Origin, name: &str) -> String {
+    match origin {
+        Origin::Project(p) => key(
+            file,
+            &format!(
+                "{}
+{name}",
+                p.display()
+            ),
+        ),
+        _ => key(file, name),
+    }
+}
+
 /// The report's items for these inventories.
 pub fn items(inv: &[Inventory]) -> Vec<DoctorItem> {
     build(inv).into_iter().map(|(item, _)| item).collect()
@@ -261,7 +277,7 @@ fn inventory_items(inv: &Inventory, out: &mut Vec<(DoctorItem, Option<Switch>)>)
             _ => continue,
         };
         let mut item = mk(
-            format!("mcp.{}.{}{suffix}", inv.agent, key(&s.file, &s.name)),
+            format!("mcp.{}.{}{suffix}", inv.agent, item_key(&s.file, &s.origin, &s.name)),
             DoctorGroup::Broken,
             format!("{cli}'s MCP server {}{place} can't start", s.name),
             why,
@@ -286,7 +302,7 @@ fn inventory_items(inv: &Inventory, out: &mut Vec<(DoctorItem, Option<Switch>)>)
             SkillState::BadName => format!("Its name has characters {cli} refuses."),
         };
         let mut item = mk(
-            format!("skill.{}.{}{suffix}", inv.agent, key(&s.file, &s.name)),
+            format!("skill.{}.{}{suffix}", inv.agent, item_key(&s.file, &s.origin, &s.name)),
             DoctorGroup::Broken,
             format!("{cli}'s skill {}{place} doesn't load", s.name),
             why,
@@ -303,7 +319,11 @@ fn inventory_items(inv: &Inventory, out: &mut Vec<(DoctorItem, Option<Switch>)>)
             .filter(|s| !s.hidden && !s.name_only && s.listed_chars > cap)
         {
             let mut item = mk(
-                format!("skilldesc.{}.{}{suffix}", inv.agent, key(&s.file, &s.name)),
+                format!(
+                    "skilldesc.{}.{}{suffix}",
+                    inv.agent,
+                    item_key(&s.file, &s.origin, &s.name)
+                ),
                 DoctorGroup::Waste,
                 format!("{cli}'s skill {}{place} has a description {cli} cuts", s.name),
                 format!("It is {} characters, and {cli} keeps the first {cap}.", s.listed_chars),
@@ -457,6 +477,64 @@ mod tests {
 
     fn with_prefix<'a>(items: &'a [DoctorItem], prefix: &str) -> Vec<&'a DoctorItem> {
         items.iter().filter(|i| i.id.starts_with(prefix)).collect()
+    }
+
+    #[test]
+    fn same_name_in_one_file_for_two_projects_gets_two_ids() {
+        // Claude Code keeps user and local-scope servers in one `~/.claude.json`.
+        let mut i = inv("claude");
+        let add = |pointer: &str| {
+            Ok(Switch::JsonAdd {
+                file: PathBuf::from("C:/h/.claude.json"),
+                pointer: pointer.into(),
+                name: "pw".into(),
+            })
+        };
+        for (origin, pointer) in [
+            (
+                Origin::Project(PathBuf::from("C:/a")),
+                "/projects/C:~1a/disabledMcpServers",
+            ),
+            (
+                Origin::Project(PathBuf::from("C:/b")),
+                "/projects/C:~1b/disabledMcpServers",
+            ),
+        ] {
+            let mut s = server("pw", "C:/h/.claude.json", missing("ghost"), add(pointer));
+            s.origin = origin;
+            i.servers.push(s);
+        }
+        i.servers.push(server(
+            "pw",
+            "C:/h/.claude.json",
+            missing("ghost"),
+            Err(NoSwitch::ClaudeUser),
+        ));
+        let inv = [i];
+        let items = items(&inv);
+        let ids: Vec<&str> = with_prefix(&items, "mcp.").iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids.len(), 3);
+        let mut unique = ids.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), 3, "{ids:?}");
+        let pointers: Vec<String> = with_prefix(&items, "mcp.")
+            .iter()
+            .filter(|it| it.fixable)
+            .map(|it| match switch_of(&inv, &it.id) {
+                Some(Switch::JsonAdd { pointer, .. }) => pointer,
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        let mut sorted = pointers.clone();
+        sorted.sort();
+        assert_eq!(
+            sorted,
+            [
+                "/projects/C:~1a/disabledMcpServers",
+                "/projects/C:~1b/disabledMcpServers"
+            ]
+        );
     }
 
     #[test]
