@@ -41,12 +41,22 @@ pub fn list(home: &Path) -> anyhow::Result<Vec<ManagedEntry>> {
 }
 
 /// Records that `changeset_id` set the pointer. An entry that is there already stays as it is, so the change that
-/// first set it is the one an undo of a later change that sets it again does not forget.
-fn upsert(entries: &mut Vec<ManagedEntry>, path: &str, pointer: Option<&str>, changeset_id: &str, now_ms: u64) {
-    if entries
-        .iter()
-        .any(|e| same_path(&e.path, path) && e.pointer.as_deref() == pointer)
-    {
+/// first set it is the one an undo of a later change that sets it again does not forget. An entry this same change
+/// removed earlier comes back as it was, for the same reason: a repair removes Marshell's entry and appends it again.
+fn upsert(
+    entries: &mut Vec<ManagedEntry>,
+    dropped: &mut Vec<ManagedEntry>,
+    path: &str,
+    pointer: Option<&str>,
+    changeset_id: &str,
+    now_ms: u64,
+) {
+    let same = |e: &ManagedEntry| same_path(&e.path, path) && e.pointer.as_deref() == pointer;
+    if entries.iter().any(same) {
+        return;
+    }
+    if let Some(i) = dropped.iter().position(same) {
+        entries.push(dropped.remove(i));
         return;
     }
     entries.push(ManagedEntry {
@@ -69,10 +79,13 @@ fn appended_records(pointer: &str) -> Vec<String> {
 /// Computes the new list without writing it, so apply can write files first and roll back if this fails.
 pub fn updated(home: &Path, changeset_id: &str, changes: &[Change], now_ms: u64) -> anyhow::Result<Vec<ManagedEntry>> {
     let mut entries = list(home)?;
+    // What this change's removes took out, in case a later step of the same change sets it again.
+    let mut dropped = Vec::new();
     for change in changes {
         match change {
             Change::Set { path, pointer } => upsert(
                 &mut entries,
+                &mut dropped,
                 &path.to_string_lossy(),
                 Some(pointer),
                 changeset_id,
@@ -85,14 +98,23 @@ pub fn updated(home: &Path, changeset_id: &str, changes: &[Change], now_ms: u64)
                 // describes, so the array's `<array>/-` record goes too.
                 let appended = appended_records(pointer);
                 let under = |p: &str, root: &str| p == root || p.starts_with(&format!("{root}/"));
-                entries.retain(|e| {
-                    !(same_path(&e.path, &path)
+                let (gone, kept): (Vec<_>, Vec<_>) = entries.into_iter().partition(|e| {
+                    same_path(&e.path, &path)
                         && e.pointer.as_deref().is_some_and(|p| {
                             p == *pointer || p.starts_with(&child) || appended.iter().any(|a| under(p, a))
-                        }))
+                        })
                 });
+                entries = kept;
+                dropped.extend(gone);
             }
-            Change::Created { path } => upsert(&mut entries, &path.to_string_lossy(), None, changeset_id, now_ms),
+            Change::Created { path } => upsert(
+                &mut entries,
+                &mut dropped,
+                &path.to_string_lossy(),
+                None,
+                changeset_id,
+                now_ms,
+            ),
             // Nothing of Marshell's is left in a file that is gone, so its entries go.
             Change::Deleted { path } => {
                 let path = path.to_string_lossy();
@@ -258,6 +280,35 @@ mod tests {
             3,
         );
         assert_eq!(pointers(home.path()), ["/hooks/Stop", "/statusLine"]);
+    }
+
+    // Found in the 7a final review: a repair removes Marshell's entry and appends it again in one change. The remove
+    // dropped the setup's record and the append made a new one under the repair, so undoing the repair forgot the
+    // entry the file still held.
+    #[test]
+    fn a_change_that_removes_and_sets_a_pointer_again_keeps_the_first_entry() {
+        let home = tempfile::tempdir().unwrap();
+        apply(home.path(), "c1", &[set("/hooks/Stop/-"), set("/statusLine")], 1);
+        apply(home.path(), "c2", &[remove("/hooks/Stop/1"), set("/hooks/Stop/-")], 2);
+        let stop: Vec<_> = list(home.path())
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.pointer.as_deref() == Some("/hooks/Stop/-"))
+            .map(|e| (e.changeset_id, e.applied_ms))
+            .collect();
+        assert_eq!(stop, [("c1".to_string(), 1)]);
+        apply(
+            home.path(),
+            "c3",
+            &[Change::Restored {
+                path: file(),
+                changeset_id: "c2",
+            }],
+            3,
+        );
+        let mut left = pointers(home.path());
+        left.sort();
+        assert_eq!(left, ["/hooks/Stop/-", "/statusLine"]);
     }
 
     #[test]

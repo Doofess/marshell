@@ -740,6 +740,29 @@ async fn the_seeded_broken_config_is_repaired_and_undone() {
     assert!(item(&r, "setup.claude").is_none(), "{:?}", ids(&r));
 }
 
+// Found in the 7a final review: with the person's own hooks in an event, the repair removes Marshell's entries and
+// appends them again, and undoing it dropped the setup's records while the file still held the entries.
+#[tokio::test]
+async fn undoing_a_repair_beside_the_persons_own_hooks_keeps_the_setups_records() {
+    let e = env();
+    seed_own_hooks(&e, "claude");
+    install(&e, "claude").await;
+    let managed_before = managed_pairs(&e);
+    // One of Marshell's groups gone by hand; the person's own group in that event stays.
+    let mut settings: Value = serde_json::from_str(&std::fs::read_to_string(&e.claude).unwrap()).unwrap();
+    let stop = settings["hooks"]["Stop"].as_array_mut().unwrap();
+    assert_eq!(stop.len(), 2, "{stop:?}");
+    stop.truncate(1);
+    write(&e.claude, &settings);
+
+    let r = rerun(&e).await;
+    assert!(fixable(&r).contains(&"hooks.claude"), "{:?}", ids(&r));
+    fix(&e, &["hooks.claude"]).await;
+    let (status, result) = post(&e.app, "/v1/doctor/undo", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(managed_pairs(&e), managed_before, "managed.json is as before the fix");
+}
+
 #[tokio::test]
 async fn hooks_and_retention_in_one_file_are_one_preview_and_retention_isnt_managed() {
     let e = env();
