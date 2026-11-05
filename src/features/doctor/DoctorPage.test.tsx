@@ -88,7 +88,7 @@ describe("DoctorPage", () => {
     expect(toast).toContain("Fixed 3 issues. 2 sessions pick this up after a restart.");
     expect(toast).toContain("Restart them");
     expect((toast.match(/data-state="fixed"/g) ?? []).length).toBe(3);
-    expect(toast).toContain("4 issues · 3 fixed · 1 remain");
+    expect(toast).toContain("4 issues · 3 fixed · 1 remains");
     const later = page(DOCTOR_REPORT, "fixed", { undo: UNDO_FIXED, nowMs: at(60_000) });
     expect(later).not.toContain("Restart them");
     expect(later).toContain("Undo last fix");

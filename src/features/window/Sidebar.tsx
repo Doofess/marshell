@@ -312,7 +312,7 @@ export function Sidebar({
           <span className="sidebar__spacer" />
           {footer.doctorIssues !== undefined &&
             (() => {
-              const label = issues > 0 ? `Doctor: ${issues} issues` : "Doctor: no issues";
+              const label = issues > 0 ? `Doctor: ${issues} ${issues === 1 ? "issue" : "issues"}` : "Doctor: no issues";
               const inner = (
                 <>
                   <span aria-hidden="true">{issues > 0 ? <AuxGlyph kind="caution" /> : <StatusGlyph kind="done-seen" size={12} />}</span>

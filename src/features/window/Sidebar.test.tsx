@@ -47,6 +47,9 @@ describe("Sidebar", () => {
     expect(h).toMatch(/<button[^>]*class="sidebar__doctor"[^>]*aria-label="Doctor: 2 issues"/);
     expect(html({ footer: { doctorIssues: 2 } })).not.toMatch(/<button[^>]*sidebar__doctor/);
   });
+  it("names one doctor issue in the singular", () => {
+    expect(html({ footer: { doctorIssues: 1 }, onOpenDoctor: () => {} })).toContain('aria-label="Doctor: 1 issue"');
+  });
   it("has no footer when none is given, and gives its row back", () => {
     const h = html({ footer: undefined });
     expect(h).not.toContain("sidebar__footer");

@@ -86,7 +86,7 @@ export function DoctorPage({ report, phase, selected, undo, nowMs, elapsedMs = 0
           {listed && !clear && (
             <p className="doctor__summary">
               {c.issues} {plural(c.issues, "issue", "issues")}
-              {phase === "fixed" ? (fixedCount >= c.issues ? ` · all fixed` : ` · ${fixedCount} fixed · ${c.issues - fixedCount} remain`) : c.fixable > 0 ? ` · ${c.fixable} can be fixed` : ""}
+              {phase === "fixed" ? (fixedCount >= c.issues ? ` · all fixed` : ` · ${fixedCount} fixed · ${c.issues - fixedCount} ${c.issues - fixedCount === 1 ? "remains" : "remain"}`) : c.fixable > 0 ? ` · ${c.fixable} can be fixed` : ""}
               {phase !== "fixed" && c.fixable === 0 && c.issues > 0 ? ` · Nothing to fix` : ""}
             </p>
           )}
