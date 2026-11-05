@@ -9,7 +9,7 @@ import { useDialogFocus } from "../../lib/useDialogFocus";
 import { needsBypassAck, type SessionActions } from "../sessions/sessionActions";
 import { DoctorPage } from "./DoctorPage";
 import { doctorReducer, INITIAL_DOCTOR } from "./doctorModel";
-import { cliDoneAnnouncement } from "./cliDoctors";
+import { cliDoneAnnouncement, cliFinishedSince } from "./cliDoctors";
 import { planRestarts, skippedReceipt } from "./doctorRestart";
 import { fixAnnouncement, undoRefusedAnnouncement } from "./doctorUi";
 import { selectedFixable } from "./report";
@@ -92,43 +92,43 @@ export function LiveDoctor({ endpoint, summary, infos, isWorking, actions, annou
     void load();
   }, [summary, load]);
 
-  // The CLI doctors: the button stays busy from the click until a frame shows them done after they were running.
+  // The CLI doctors: the button stays busy from the click until the report carries a newer CLI run. The summary
+  // socket can skip a quick run's frames, so the report decides, not a seen `cli_running` change.
   const [cliPending, setCliPending] = useState(false);
   const reportRef = useRef(m.report);
   reportRef.current = m.report;
-  const wasCliRunning = useRef(summary?.cli_running ?? false);
   const cliBase = useRef<number | undefined>(undefined);
   const cliAwaiting = useRef(false);
   const cliNow = summary?.cli_running ?? false;
+  // A run started elsewhere while the page shows a report is announced too. One already going when the page opened
+  // isn't: the report it would be compared with isn't in yet.
+  // A seen end clears the button too, for a run that failed and left the report's time as it was.
+  const wasCliRunning = useRef(cliNow);
   useEffect(() => {
-    if (cliNow && !wasCliRunning.current && !cliAwaiting.current) cliBase.current = reportRef.current?.cli_checked_at_ms;
-    if (!cliNow && wasCliRunning.current) {
-      setCliPending(false);
-      cliAwaiting.current = true;
-    }
+    if (!cliNow && wasCliRunning.current) setCliPending(false);
     wasCliRunning.current = cliNow;
+    if (!cliNow || cliAwaiting.current || !reportRef.current) return;
+    cliBase.current = reportRef.current.cli_checked_at_ms;
+    cliAwaiting.current = true;
   }, [cliNow]);
-  // The finish is announced once the report that carries the new items is in.
   useEffect(() => {
-    const at = m.report?.cli_checked_at_ms;
-    if (!cliAwaiting.current || !m.report || at === undefined || (cliBase.current !== undefined && at <= cliBase.current)) return;
+    if (!cliAwaiting.current || !m.report || !cliFinishedSince(cliBase.current, m.report.cli_checked_at_ms)) return;
     cliAwaiting.current = false;
+    setCliPending(false);
     announce(cliDoneAnnouncement(m.report));
-  }, [m.report, cliNow, announce]);
+  }, [m.report, announce]);
 
   const runCli = async () => {
     if (!endpoint) return;
     cliBase.current = m.report?.cli_checked_at_ms;
+    cliAwaiting.current = true;
     setCliPending(true);
     try {
       const s = await runCliDoctors(endpoint);
-      if (!s.cli_running && !wasCliRunning.current) {
-        // Already over by the time the answer came; no frame will show the change.
-        setCliPending(false);
-        cliAwaiting.current = true;
-        await load();
-      }
+      // Already over by the time the answer came: load the report that has the new items.
+      if (!s.cli_running) await load();
     } catch (e) {
+      cliAwaiting.current = false;
       setCliPending(false);
       announce(`Couldn't run the CLI doctors: ${message(e)}`);
     }

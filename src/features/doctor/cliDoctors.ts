@@ -9,6 +9,10 @@ export function cliLine(checkedAtMs: number | undefined, nowMs: number): string 
   return `CLI doctors ran ${s >= 60 ? `${Math.floor(s / 60)} min` : `${s} s`} ago. ${CONTACTS}`;
 }
 
+/** Whether the report shows a CLI doctors' run newer than `base`, the one the report had when the run was asked for. */
+export const cliFinishedSince = (base: number | undefined, at: number | undefined): boolean =>
+  at !== undefined && (base === undefined || at > base);
+
 /** What the announcer says when the CLI doctors finish: the Broken and Waste items they added. */
 export function cliDoneAnnouncement(report: DoctorReport): string {
   const n = report.items.filter((i) => i.id.startsWith("cli.") && (i.group === "broken" || i.group === "waste")).length;
