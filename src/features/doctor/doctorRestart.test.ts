@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionInfo } from "../../generated/SessionInfo";
-import { planRestarts, skippedReceipt } from "./doctorRestart";
+import { midTurn, planRestarts, skippedReceipt } from "./doctorRestart";
 
 const info = (n: number, patch: Partial<SessionInfo> = {}): SessionInfo =>
   ({ tab_id: `t${n}`, number: n, name: `Claude ${n}`, agent: "claude", mode: "manual", elevated: false, state: { kind: "running" }, ...patch }) as SessionInfo;
@@ -19,6 +19,14 @@ describe("planRestarts", () => {
   });
   it("skips a session with no mode to restart in", () => {
     expect(planRestarts(["t1"], [info(1, { mode: null })], never, never).skipped).toEqual([1]);
+  });
+});
+
+// Found in the 7a final review: only "working" was skipped, so a restart cut off a session waiting on an approval or a question.
+describe("midTurn", () => {
+  it("holds a session that is working or waiting on the person, so a restart can't cut its turn short", () => {
+    for (const s of ["working", "needs-permission", "needs-question"]) expect(midTurn(s), s).toBe(true);
+    for (const s of ["idle", "done-seen", "error", "ended", "paused", undefined]) expect(midTurn(s), String(s)).toBe(false);
   });
 });
 

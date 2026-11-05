@@ -46,6 +46,7 @@ import { paletteSessions } from "../palette/sessions";
 import { LiveHistory } from "../history/LiveHistory";
 import { LiveDoctor } from "../doctor/LiveDoctor";
 import { shownIssues } from "../doctor/doctorUi";
+import { midTurn } from "../doctor/doctorRestart";
 import { LiveSettings } from "../settings/LiveSettings";
 import { closesSettings, isTextEntry, freshSettingsStart, paletteSection } from "../settings/settingsRouting";
 import { COMPANY_NAMES, type CompanyAgent, type SettingsSection } from "../settings/settingsSections";
@@ -1850,7 +1851,7 @@ export function LiveApp() {
           endpoint={endpoint}
           summary={doctor}
           infos={infos}
-          isWorking={(tabId) => rows.find((r) => r.id === tabId)?.status === "working"}
+          isWorking={(tabId) => midTurn(rows.find((r) => r.id === tabId)?.status)}
           actions={actions}
           announce={announce}
           onOpenAgents={() => openSettings("agents")}

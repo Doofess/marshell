@@ -6,7 +6,7 @@ export type RestartGo = { tabId: string; number: number; mode: SessionMode; elev
 
 /**
  * Which of the fix's tab ids "Restart them" restarts, each in its current mode. A tab that is no longer open is dropped, silently:
- * its session is gone. A session that is working, one whose restart needs the administrator acknowledgement, and one with no mode
+ * its session is gone. A session mid-turn (`midTurn`), one whose restart needs the administrator acknowledgement, and one with no mode
  * to come back in are skipped, and named by number for the receipt.
  */
 export function planRestarts(tabIds: readonly string[], infos: readonly SessionInfo[], working: (tabId: string) => boolean, needsAck: (info: SessionInfo) => boolean): { go: RestartGo[]; skipped: number[] } {
@@ -20,6 +20,9 @@ export function planRestarts(tabIds: readonly string[], infos: readonly SessionI
   }
   return { go, skipped };
 }
+
+/** Whether a session's row status says a turn is under way: working, or waiting on the person's approval or answer. */
+export const midTurn = (status: string | undefined): boolean => status === "working" || status === "needs-permission" || status === "needs-question";
 
 /** What the receipt says about sessions that were left for the person to restart. */
 export function skippedReceipt(numbers: readonly number[]): string | null {
