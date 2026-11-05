@@ -10,7 +10,7 @@ import { needsBypassAck, type SessionActions } from "../sessions/sessionActions"
 import { DoctorPage } from "./DoctorPage";
 import { doctorReducer, INITIAL_DOCTOR } from "./doctorModel";
 import { planRestarts, skippedReceipt } from "./doctorRestart";
-import { fixAnnouncement } from "./doctorUi";
+import { fixAnnouncement, undoRefusedAnnouncement } from "./doctorUi";
 import { selectedFixable } from "./report";
 import { DifferencesSheet, FixSheet } from "./FixSheet";
 import "./LiveDoctor.css";
@@ -140,8 +140,10 @@ export function LiveDoctor({ endpoint, summary, infos, isWorking, actions, annou
         dispatch({ type: "undone" });
         announce("The last fix is undone.");
         void run();
-      } else if ("changed" in r) dispatch({ type: "undoStale" });
-      else announce(r.message);
+      } else if ("changed" in r) {
+        dispatch({ type: "undoStale" });
+        announce(undoRefusedAnnouncement(r.changed).text);
+      } else announce(r.message);
     } catch (e) {
       announce(`Couldn't undo the last fix: ${message(e)}`);
     }

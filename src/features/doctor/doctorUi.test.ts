@@ -1,11 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { fixAnnouncement, shownIssues } from "./doctorUi";
+import { fixAnnouncement, shownIssues, undoRefusedAnnouncement } from "./doctorUi";
 import { UNDO_FIXED } from "./fixtures";
 
 describe("fixAnnouncement", () => {
   it("says the result the user caused, as an action result", () => {
     // The fix included Codex's hooks in a distro, so it ends with the trust step.
     expect(fixAnnouncement(UNDO_FIXED)).toEqual({ text: "Fixed 3 issues. 2 sessions pick this up after a restart. Codex runs the changed hooks once you trust them in /hooks.", kind: "action-result" });
+  });
+});
+
+// Found in the 7a final review: a refused undo only withdrew the button, so a screen reader said nothing.
+describe("undoRefusedAnnouncement", () => {
+  it("says nothing was undone and names the changed files, as an action result", () => {
+    expect(undoRefusedAnnouncement(["C:\\u\\.claude\\settings.json"])).toEqual({
+      text: "Nothing was undone: C:\\u\\.claude\\settings.json changed since the fix, so undo would overwrite it.",
+      kind: "action-result",
+    });
+    expect(undoRefusedAnnouncement(["a.json", "b.json", "c.json"]).text).toBe("Nothing was undone: a.json, b.json and c.json changed since the fix, so undo would overwrite them.");
+    expect(undoRefusedAnnouncement([]).text).toBe("Nothing was undone: a file changed since the fix, so undo would overwrite it.");
   });
 });
 
