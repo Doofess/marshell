@@ -3,7 +3,7 @@ import { DiffView } from "../../components/DiffView/DiffView";
 import { deletedFiles } from "../../lib/api/agents";
 import { useDialogFocus } from "../../lib/useDialogFocus";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
-import { fixHeadline, restartNote } from "./report";
+import { fixesCodexHooks, fixHeadline, restartNote } from "./report";
 import type { DoctorFixPlan } from "./types";
 import "./Doctor.css";
 
@@ -59,6 +59,11 @@ export function FixSheet({ plan, busy, conflict, onConfirm, onCancel, onReload }
           A backup is saved first, in <code>~/.marshell/snapshots/</code>. To undo: Undo last fix in the Doctor header puts that backup back, for as long as the files are unchanged since this fix.
         </p>
         {plan.restart.length > 0 && <p className="fix-sheet__note">{restartNote(plan.restart.length)}.</p>}
+        {fixesCodexHooks(plan.item_ids) && (
+          <p className="fix-sheet__note">
+            Codex runs changed hooks only after you trust them. The next time Codex starts, choose <strong>Trust all and continue</strong>, or review them first in <code>/hooks</code>.
+          </p>
+        )}
       </div>
       <footer className="fix-sheet__foot">
         <button type="button" className="fix-sheet__btn" onClick={onCancel}>

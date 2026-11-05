@@ -11,5 +11,5 @@ export const showProgress = (elapsedMs: number) => elapsedMs > 150;
 
 /** What the window's announcer says when a fix finishes: the receipt text, as the result of something the user did. */
 export function fixAnnouncement(last: DoctorLastFix): { text: string; kind: AnnounceKind } {
-  return { text: afterFixMessage(last.count, last.restart), kind: "action-result" };
+  return { text: afterFixMessage(last.count, last.restart, last.item_ids), kind: "action-result" };
 }

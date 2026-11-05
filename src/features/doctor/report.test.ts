@@ -60,4 +60,10 @@ describe("afterFixMessage", () => {
     expect(afterFixMessage(2, [])).toBe("Fixed 2 issues.");
     expect(afterFixMessage(4, ["a"])).not.toMatch(/!|successfully|oops/i);
   });
+  it("ends with the trust step when Codex's hooks were fixed, on Windows or in a distro", () => {
+    const trust = "Codex runs the changed hooks once you trust them in /hooks.";
+    expect(afterFixMessage(2, [], ["hooks.claude", "hooks.codex"])).toBe(`Fixed 2 issues. ${trust}`);
+    expect(afterFixMessage(1, ["a"], ["hooks.codex@Ubuntu"])).toBe(`Fixed 1 issue. 1 session picks this up after a restart. ${trust}`);
+    expect(afterFixMessage(2, [], ["hooks.claude", "retention.claude"])).toBe("Fixed 2 issues.");
+  });
 });

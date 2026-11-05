@@ -4,7 +4,8 @@ import { UNDO_FIXED } from "./fixtures";
 
 describe("fixAnnouncement", () => {
   it("says the result the user caused, as an action result", () => {
-    expect(fixAnnouncement(UNDO_FIXED)).toEqual({ text: "Fixed 3 issues. 2 sessions pick this up after a restart.", kind: "action-result" });
+    // The fix included Codex's hooks in a distro, so it ends with the trust step.
+    expect(fixAnnouncement(UNDO_FIXED)).toEqual({ text: "Fixed 3 issues. 2 sessions pick this up after a restart. Codex runs the changed hooks once you trust them in /hooks.", kind: "action-result" });
   });
 });
 

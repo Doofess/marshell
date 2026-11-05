@@ -23,6 +23,11 @@ describe("FixSheet", () => {
     expect(out).toContain("Deletes");
     expect(out).toContain("C:\\a.json");
   });
+  // Found in the 7a final review: PLAN §6 ends every Codex hook install with the trust step, and the Doctor's repair is one.
+  it("ends a fix of Codex's hooks with the trust step, and only then", () => {
+    expect(h).toContain("Codex runs changed hooks only after you trust them. The next time Codex starts, choose <strong>Trust all and continue</strong>, or review them first in <code>/hooks</code>.");
+    expect(sheet({ plan: { ...DOCTOR_PLAN, item_ids: ["hooks.claude", "retention.claude"] } })).not.toContain("Trust all");
+  });
   it("names the restart count, and makes the confirm button the headline", () => {
     expect(h).toContain("2 sessions pick this up after a restart");
     expect(h).toContain(">Fix 3 issues<");

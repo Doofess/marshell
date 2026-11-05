@@ -15,7 +15,7 @@ export function UndoToast({ undo, nowMs, onUndo, onRestart }: { undo: DoctorLast
   const hasActions = undo.files_match || undo.restart.length > 0;
   return (
     <div className="toast" data-kind="fixed">
-      <p className="toast__text">{afterFixMessage(undo.count, undo.restart)}</p>
+      <p className="toast__text">{afterFixMessage(undo.count, undo.restart, undo.item_ids)}</p>
       {hasActions && (
         <div className="toast__actions">
           {undo.files_match && (

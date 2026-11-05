@@ -43,7 +43,11 @@ export function listNumbers(numbers: readonly number[]): string {
   const n = [...numbers].sort((a, b) => a - b).map(String);
   return n.length <= 1 ? n.join("") : `${n.slice(0, -1).join(", ")} and ${n[n.length - 1]}`;
 }
-export function afterFixMessage(fixed: number, restart: readonly unknown[]): string {
+export function afterFixMessage(fixed: number, restart: readonly unknown[], itemIds: readonly string[] = []): string {
   const base = `Fixed ${fixed} ${plural(fixed, "issue", "issues")}.`;
-  return restart.length === 0 ? base : `${base} ${restartNote(restart.length)}.`;
+  const parts = [base, ...(restart.length > 0 ? [`${restartNote(restart.length)}.`] : []), ...(fixesCodexHooks(itemIds) ? ["Codex runs the changed hooks once you trust them in /hooks."] : [])];
+  return parts.join(" ");
 }
+
+/** Whether a fix rewrites Codex's hooks, on Windows or in a distro: Codex runs changed hooks only once the person trusts them (PLAN §6). */
+export const fixesCodexHooks = (itemIds: readonly string[]): boolean => itemIds.some((id) => id === "hooks.codex" || id.startsWith("hooks.codex@"));
