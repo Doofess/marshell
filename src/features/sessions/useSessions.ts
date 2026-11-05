@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import type { DoctorSummary } from "../../generated/DoctorSummary";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { PermissionView } from "../../generated/PermissionView";
 import type { Profile } from "../../generated/Profile";
@@ -23,6 +24,8 @@ export type SessionsState = {
   closed: SessionInfo[];
   /** The permission requests being held, oldest first. Replaced whole by every `permissions` frame. */
   permissions: PermissionView[];
+  /** The doctor frame: how many issues the last check found. Null until the first one arrives. */
+  doctor: DoctorSummary | null;
   selectedId: string | undefined;
   /** True once the core has sent the list on this connection, so an empty list really is empty. */
   loaded: boolean;
@@ -31,7 +34,7 @@ export type SessionsState = {
   error: string | null;
 };
 
-const EMPTY: SessionsState = { endpoint: null, profiles: [], infos: [], closed: [], permissions: [], selectedId: undefined, loaded: false, restarts: 0, error: null };
+const EMPTY: SessionsState = { endpoint: null, profiles: [], infos: [], closed: [], permissions: [], doctor: null, selectedId: undefined, loaded: false, restarts: 0, error: null };
 const FAILED_TEXT = "Marshell's core stopped and could not restart. Restart Marshell to continue.";
 
 /** Which session is selected after the list changed: the newest one, else the same one, else its neighbour. */
@@ -129,7 +132,7 @@ export class SessionsStore {
       // A profile list that won't load only costs the shell marks (rows fall back to the generic one), so it is not an error.
       const doc = await profilesApi.get(endpoint).catch(() => null);
       if (gen !== this.generation) return;
-      this.socket = new EventSocket(endpoint, (snapshot) => gen === this.generation && this.apply(snapshot), (permissions) => gen === this.generation && this.set({ permissions }));
+      this.socket = new EventSocket(endpoint, (snapshot) => gen === this.generation && this.apply(snapshot), (permissions) => gen === this.generation && this.set({ permissions }), (doctor) => gen === this.generation && this.set({ doctor }));
       this.set({ endpoint, profiles: doc?.profiles ?? [], error: null });
     } catch (e) {
       if (gen === this.generation) this.set({ error: `Couldn't reach the core: ${String(e)}` });
@@ -151,6 +154,8 @@ export function useSessions(setup?: Partial<Record<HookAgent, HookInstall>>, det
   infos: SessionInfo[];
   closed: SessionInfo[];
   permissions: PermissionView[];
+  /** The doctor frame: how many issues the last check found. Null until the first one arrives. */
+  doctor: DoctorSummary | null;
   /** The clock the rows' ages count from (it also dates the lane's waits). */
   now: number;
   selectedId: string | undefined;

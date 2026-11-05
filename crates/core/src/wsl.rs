@@ -72,6 +72,13 @@ pub fn list_distros(timeout: Duration) -> Vec<String> {
     parse_distro_list(&run_wsl(&["-l", "-q"], timeout))
 }
 
+/// The distros that are running now, from `wsl.exe -l --running -q`. Listing starts nothing. Blocks up to `timeout`, so
+/// async callers go through `spawn_blocking`. Empty off Windows and when `wsl.exe` is missing, fails or is too slow;
+/// when none runs the output is a sentence, not a name, which the caller never matches to a detected distro.
+pub fn list_running(timeout: Duration) -> Vec<String> {
+    parse_distro_list(&run_wsl(&["-l", "--running", "-q"], timeout))
+}
+
 /// `linux_home` as a path under the distro's own share. None for an empty or relative home, one with `..`, and one
 /// outside the share (a home under `/mnt/c` is a folder of Windows, and a distro's files must never land there).
 pub fn home_in_share(distro: &str, linux_home: &str) -> Option<PathBuf> {

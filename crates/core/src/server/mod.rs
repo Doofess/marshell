@@ -4,6 +4,7 @@ mod attachments;
 mod catalog;
 mod config;
 mod diagnostics;
+pub(crate) mod doctor;
 mod events;
 mod files;
 mod fill;
@@ -100,6 +101,9 @@ pub struct CoreConfig {
     /// The folders of Claude Code's, Codex's and Qwen Code's conversations, for the importer. None in tests: then no
     /// importer runs, so nothing reads the real `~/.claude`, `~/.codex` or `~/.qwen`.
     pub import: Option<crate::history::import::ImportRoots>,
+    /// Whether the Doctor runs its checks once at startup. false in tests: then nothing reads the real CLI folders at
+    /// startup, and no CLI is asked for its `--version`.
+    pub doctor_on_start: bool,
 }
 
 /// The view with a hidden window counted as unfocused: the shell's visibility wins over the webview's last report.
@@ -128,6 +132,13 @@ type WslVersion = (std::time::Instant, Option<String>);
 pub struct DistroTarget {
     pub home: PathBuf,
     pub bridge: String,
+}
+
+/// How long `wsl.exe --list --running` may take.
+const RUNNING_LIST_TIMEOUT: Duration = Duration::from_secs(8);
+
+fn running_distros_of_wsl() -> Vec<String> {
+    crate::wsl::list_running(RUNNING_LIST_TIMEOUT)
 }
 
 /// The distros of the detected WSL profiles, each once (compared case-insensitively), spelt as the first profile
@@ -266,6 +277,9 @@ struct Inner {
     /// The target of a distro that a test pins, in place of asking `wsl.exe`. `Some(None)` is a distro that can't be
     /// reached.
     distro_target: Option<Option<DistroTarget>>,
+    /// The distros that are running now, which the Doctor asks only when a distro holds Marshell's hooks. Tests swap it,
+    /// so none runs `wsl.exe`.
+    running_distros: fn() -> Vec<String>,
     /// The previous process readings, so each `/v1/perf` call can tell the CPU used since the last one.
     sampler: Mutex<crate::diagnostics::perf::Sampler>,
     /// The diagnostics export waiting to be read and saved.
@@ -277,6 +291,10 @@ struct Inner {
     focus: Option<FocusSink>,
     /// Starts a session in the elevated helper. Tests swap it.
     elevated_spawner: ElevatedSpawner,
+    /// The Doctor's last report, summary and pending fix.
+    doctor: crate::doctor::DoctorState,
+    /// The Doctor runs once when the router starts. Only the app's startup sets it; tests start runs themselves.
+    doctor_on_start: bool,
 }
 
 /// How long a permission request is held when `MARSHELL_PERMISSION_HOLD_SECS` is not set.
@@ -375,6 +393,7 @@ impl AppState {
             wsl_version: None,
             wsl_versions: Mutex::new(HashMap::new()),
             distro_target: None,
+            running_distros: running_distros_of_wsl,
             sampler: Mutex::new(crate::diagnostics::perf::Sampler::new()),
             previews: crate::diagnostics::export::Previews::default(),
             view: tokio::sync::watch::channel(marshell_protocol::api::UiView {
@@ -386,6 +405,8 @@ impl AppState {
             window_hidden: Arc::default(),
             focus: None,
             elevated_spawner: production_elevated_spawner(),
+            doctor: crate::doctor::DoctorState::default(),
+            doctor_on_start: false,
         }))
     }
     /// Replaces how a session is started in the elevated helper, so a test needs no UAC prompt or helper. Call it
@@ -414,6 +435,16 @@ impl AppState {
     }
     pub(crate) fn focus_sink(&self) -> Option<FocusSink> {
         self.0.focus.clone()
+    }
+    /// Makes the router run the Doctor's checks once when it starts. Call it before the state is cloned.
+    pub fn with_doctor_on_start(mut self, on: bool) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_doctor_on_start runs before the state is shared")
+            .doctor_on_start = on;
+        self
+    }
+    pub(crate) fn doctor(&self) -> &crate::doctor::DoctorState {
+        &self.0.doctor
     }
     /// Shares the supervisor's flags with this core, before the state is cloned.
     pub(crate) fn with_notification_flags(mut self, paused: Arc<AtomicBool>, hidden: Arc<AtomicBool>) -> Self {
@@ -532,6 +563,13 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_distro_target runs before the state is shared")
             .distro_target = Some(target);
+        self
+    }
+    /// Pins the list of running distros, so a test never runs `wsl.exe`. Call it before the state is cloned.
+    pub fn with_running_distros(mut self, list: fn() -> Vec<String>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_running_distros runs before the state is shared")
+            .running_distros = list;
         self
     }
     /// Sets how long a permission request is held. Call it before the state is cloned.
@@ -1047,6 +1085,9 @@ pub fn router(state: AppState) -> Router {
     foreground::spawn_watcher(&state);
     ports::spawn_watcher(&state);
     activity::spawn_watcher(&state);
+    if state.0.doctor_on_start {
+        doctor::request_run(&state);
+    }
     let origins: Vec<HeaderValue> = state.0.allowed_origins.iter().filter_map(|o| o.parse().ok()).collect();
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))
@@ -1148,6 +1189,11 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/agents/{agent}/hooks/remove-plan", post(agents::remove_plan))
         .route("/v1/agents/{agent}/skill/plan", post(agents::skill_plan))
         .route("/v1/agents/{agent}/skill/remove-plan", post(agents::skill_remove_plan))
+        .route("/v1/doctor/run", post(doctor::run))
+        .route("/v1/doctor/report", get(doctor::report))
+        .route("/v1/doctor/fix", post(doctor::fix))
+        .route("/v1/doctor/fix/apply", post(doctor::fix_apply))
+        .route("/v1/doctor/undo", get(doctor::last_fix).post(doctor::undo))
         .route("/v1/history", get(history::list))
         .route("/v1/history/import", get(history::import_status))
         .route("/v1/history/storage", get(history::storage_report))
@@ -1350,6 +1396,7 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
     let endpoint_file = paths::endpoint_file(&cfg.home);
     let mut state = AppState::new(endpoint.token.clone(), port, cfg.allowed_origins, cfg.home, detected)
         .with_notification_flags(cfg.notify_paused, cfg.window_hidden)
+        .with_doctor_on_start(cfg.doctor_on_start)
         .with_permission_hold(permission_hold_from_env(
             std::env::var("MARSHELL_PERMISSION_HOLD_SECS").ok().as_deref(),
         ))

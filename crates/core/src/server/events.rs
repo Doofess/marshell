@@ -1,7 +1,7 @@
 //! `GET /v1/events`: pushes the session list and the held permission requests to the UI. Every
 //! message is a text frame: `{"type":"sessions","data":SessionsSnapshot}` and
-//! `{"type":"permissions","data":[PermissionView]}` (oldest request first). Each kind is sent
-//! once on connect (sessions first), then once per change.
+//! `{"type":"permissions","data":[PermissionView]}` (oldest request first) and
+//! `{"type":"doctor","data":DoctorSummary}`. Each kind is sent once on connect (in that order), then once per change.
 //! The UI sends nothing; whatever text it does send is ignored.
 
 use super::AppState;
@@ -12,6 +12,7 @@ use futures_util::SinkExt;
 use futures_util::StreamExt;
 use marshell_protocol::api::SessionsSnapshot;
 use marshell_protocol::brand;
+use marshell_protocol::doctor::DoctorSummary;
 use marshell_protocol::hook::PermissionView;
 use std::time::Duration;
 use tokio::sync::watch;
@@ -21,9 +22,10 @@ const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 pub async fn handler(State(st): State<AppState>, ws: WebSocketUpgrade) -> Response {
     let rx = st.0.registry.subscribe();
     let holds = st.holds().subscribe();
+    let doctor = st.doctor().summary.subscribe();
     // Echo our subprotocol, or browsers drop the connection.
     ws.protocols([brand::WS_SUBPROTOCOL])
-        .on_upgrade(move |socket| run(socket, st, rx, holds))
+        .on_upgrade(move |socket| run(socket, st, rx, holds, doctor))
 }
 
 fn event(snapshot: &SessionsSnapshot) -> Message {
@@ -36,11 +38,17 @@ fn permissions_event(views: &[PermissionView]) -> Message {
     Message::Text(json.to_string().into())
 }
 
+fn doctor_event(summary: &DoctorSummary) -> Message {
+    let json = serde_json::json!({ "type": "doctor", "data": summary });
+    Message::Text(json.to_string().into())
+}
+
 async fn run(
     socket: WebSocket,
     st: AppState,
     mut rx: watch::Receiver<SessionsSnapshot>,
     mut holds: watch::Receiver<u64>,
+    mut doctor: watch::Receiver<DoctorSummary>,
 ) {
     let (mut tx, mut incoming) = socket.split();
     // The first send covers the state at connect; `borrow_and_update` marks it as seen.
@@ -52,6 +60,10 @@ async fn run(
     // The views are cloned under the holds lock, which is released before anything is sent.
     holds.borrow_and_update();
     if !send_permissions(&mut tx, &st, &mut rx).await {
+        return;
+    }
+    let first = doctor_event(&doctor.borrow_and_update());
+    if !send(&mut tx, first).await {
         return;
     }
     loop {
@@ -72,6 +84,15 @@ async fn run(
                 }
                 holds.borrow_and_update();
                 if !send_permissions(&mut tx, &st, &mut rx).await {
+                    break;
+                }
+            }
+            changed = doctor.changed() => {
+                if changed.is_err() {
+                    break;
+                }
+                let msg = doctor_event(&doctor.borrow_and_update());
+                if !send(&mut tx, msg).await {
                     break;
                 }
             }

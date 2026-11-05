@@ -13,7 +13,7 @@ export type DialogDom = {
   /** The dialog's controls in document order (the FOCUSABLE query), read afresh when a key arrives. */
   controls(): Focusable[];
   /** Listens for keydown on the dialog; returns the way to stop listening. */
-  onKeydown(handler: (e: { key: string; shiftKey?: boolean; preventDefault(): void }) => void): () => void;
+  onKeydown(handler: (e: { key: string; shiftKey?: boolean; defaultPrevented?: boolean; preventDefault(): void }) => void): () => void;
 };
 
 /**
@@ -25,6 +25,8 @@ export function openDialogFocus(dom: DialogDom, close: () => void): () => void {
   const opener = dom.active();
   dom.title?.focus();
   const stop = dom.onKeydown((e) => {
+    // A dialog inside this one (the Doctor's fix sheet) already moved focus or closed itself; the key is spent.
+    if (e.defaultPrevented) return;
     const controls = dom.controls();
     const current = dom.active();
     const action = trapKey(e, controls.length, current ? controls.indexOf(current) : -1);

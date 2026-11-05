@@ -189,6 +189,7 @@ mod tests {
             notify_paused: Default::default(),
             window_hidden: Default::default(),
             import: None,
+            doctor_on_start: false,
         };
         let events: Events = Arc::default();
         let sink = events.clone();

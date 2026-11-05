@@ -523,7 +523,7 @@ Session state is exactly as in brief §4, plus `unseen_done`, `waiting_since_ms`
 | Agents | `GET /agents` · `GET /agents/:id/hooks/plan` · `POST /agents/:id/hooks/apply {plan_hash}` |
 | Shells / settings | `GET/PUT /profiles` · `GET/PUT /app-settings` |
 | Config | `GET /config/sources?agent&cwd` · `GET /config/file?path` · `POST /config/preview` (ChangeSet → diffs) · `POST /config/apply {changeset_id, expected_hashes}` · `GET /snapshots` · `POST /snapshots/:id/restore` |
-| Doctor | `POST /doctor/run` · `GET /doctor/report` · `POST /doctor/fix {item_ids}` · `POST /doctor/undo` |
+| Doctor | `POST /doctor/run` · `GET /doctor/report` · `POST /doctor/fix {item_ids}` · `POST /doctor/fix/apply` · `GET /doctor/undo` · `POST /doctor/undo` |
 | History | `GET /history?filters` · `GET /history/search?q` · `GET /history/:id` · `GET /history/:id/recording` · `POST /history/:id/resume\|fork\|export` · `PATCH /history/:id` |
 | References | `GET/PUT /projects/:id/references` |
 
@@ -1340,7 +1340,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      7. WSL: Qwen in a distro gets "Set up in <distro>" like the other CLIs (6j1 decisions 5 to 9), and the config guard admits `<distro home>\.qwen`. The live check installs `@qwen-code/qwen-code@0.26.5` with npm into a scratch prefix under `/tmp`, with `HOME` there, and runs it against the fake model. If the distro has no Node 22, a scratch Node tarball goes in the same folder.
      8. The 6l1 deferred minors fixed here: a leading `~` in `QWEN_HOME` is expanded, as Qwen does; turning approvals off and then Hooks off leaves no empty `PermissionRequest` array; the restart bar names the command a restart really runs (`--resume <id>` where Marshell knows the id; on a PowerShell profile it leaves off the `& ` call operator before a bare program name, amended 2026-11-04); a leading `~` in `QWEN_RUNTIME_DIR` is expanded too, as Qwen does (amended 2026-11-04, after the final review); and a preview or nightly version string is read.
      9. (Asked at plan review, 2026-11-03.) Qwen's tab masks leaves only, because 6e decision 15's name rule would hide all of `security.auth` (with the harmless `selectedType`), `general.gitCoAuthor` and token limits, and so turn raw editing off for almost every Qwen file. For Qwen alone, the tab hides the paths in decision 5, a hook's `env`, `telemetry` headers, and any string value whose own key looks secret. An object with a secret-looking name is walked into, not hidden whole, and numbers and booleans are never hidden. Claude Code, Codex and Antigravity keep today's rule. Following 6l1 decision 3, the system file is read only at `C:\ProgramData\qwen-code\settings.json`, never through `QWEN_CODE_SYSTEM_SETTINGS_PATH`.
-   - **Slice 6m decisions (2026-11-04).** A maintenance slice after 6l2: issues #85 and #82, and the deferred minors from slices 6j2, 6k, 6l1 and 6l2 that were checked against the code and confirmed. The slice's plan (`docs/superpowers/plans/2026-11-04-phase-6m-maintenance.md`) carries the evidence for each. Phase 7 (Doctor) is next.
+   - **Slice 6m decisions (2026-11-04).** A maintenance slice after 6l2: issues #85 and #82, and the deferred minors from slices 6j2, 6k, 6l1 and 6l2 that were checked against the code and confirmed. The slice's plan (`docs/superpowers/plans/2026-11-04-phase-6m-maintenance.md`) carries the evidence for each. Phase 7 (Doctor) is next, starting with slice 7a (below).
      1. One slice, with one plan, one live check and one pull request. The final review is split by area across several reviewers.
      2. #82: `marshell uninstall` looks in every registered WSL distro (Docker Desktop's left out), starting a stopped one, and in any distro that Marshell's `managed.json` names. In each, it removes what the Agents dialog's WSL "Hooks off" removes, for all four CLIs (6k decision 7). A distro that doesn't answer within 20 s is named with "start it and run marshell uninstall again", and the exit code is 1. `<home>/bin` then stays only when `managed.json` says Marshell wrote in that distro, and is removed otherwise. Amended 2026-11-04 (user OK after the final review): a distro that `managed.json` names but that WSL's list no longer has, when that list isn't empty, gets "isn't installed in WSL any more: nothing to remove there." and doesn't keep `bin`. An empty list still keeps `bin`, because WSL may have failed.
      3. #82's live check imports a throwaway distro from Canonical's Ubuntu rootfs, sets hooks up there from a scratch Marshell, and runs uninstall with a scratch `MARSHELL_HOME`, answering n first. It applies only when the preview names no file outside the throwaway distro. The distro is unregistered afterwards, after asking.
@@ -1356,6 +1356,35 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      - **One-click doctor per CLI.** It runs the CLI's own doctor (`claude doctor` text, `codex doctor --json`) and opens a summary window of suggested fixes. Every fix goes through preview, backup and undo; nothing is applied silently. Antigravity has no doctor command, so it gets none.
      - **Instruction-file check, beside the doctor.** For CLAUDE.md, AGENTS.md, GEMINI.md and the like, it checks per CLI for size, stale paths, contradictions and that CLI's conventions (for example Codex's 32 KiB limit), and shows suggested edits with a preview. Nothing is written until the user accepts; backup and undo apply. It is a check on files that exist; the phase-8 instruction library is where files are authored and wired.
    - Exit: a seeded broken config is fully repaired and fully undone.
+   - **Slice 7a decisions (2026-11-05).** The Doctor's engine and its first checks. The slice's plan is `docs/superpowers/plans/2026-11-05-phase-7a-doctor-engine.md`.
+     1. Phase 7 is four slices:
+        - **7a:** the check engine, the live Doctor page, "Fix X issues", the fix sheet and Undo. It covers the checks Marshell's code already detects, listed in decisions 5 to 8, and meets the phase exit on its own.
+        - **7b:** each CLI's own doctor, and duplicate notifications.
+        - **7c:** MCP servers and skills: broken, unused and token cost.
+        - **7d:** instruction files, and the tokens injected by project references.
+
+        Each later slice asks its own design questions when it starts.
+     2. The report has BRIEF §5.4's three groups: Broken, Waste and Info. The group headings replace the mock's Error, Warning and Information words.
+        - Each fixable item has a checkbox. Broken items are pre-checked; Waste and Info items are unchecked.
+        - "Fix X issues" counts only the checked fixable items.
+        - An item that needs the person, such as Codex hook trust, says what to do and isn't counted.
+
+        This settles batch 3's open question on per-item fixing.
+     3. Marshell's own checks are local, use zero tokens and touch no network.
+        - They run in the background at startup, when the Doctor page opens, after a Doctor fix or undo, and on "Run again".
+        - The sidebar count and the tray's Doctor item show the last result.
+        - The CLI doctors (7b) run only when the person clicks.
+     4. The last fix's snapshot id is kept under `MARSHELL_HOME`. "Undo last fix" therefore survives an app restart, for as long as every fixed file is unchanged since the fix.
+     5. Hooks, for all four CLIs:
+        - A CLI whose hooks Marshell set up (`managed.json` says so) and that are now missing, partial, or pointing at a moved bridge is Broken. The item is pre-checked, and the fix reinstalls the hooks through that CLI's own setup plan.
+        - A CLI whose hooks were never set up, or were turned off with Hooks off, gets the Info line "Hooks aren't set up for <CLI>.". It opens the Agents dialog and isn't counted.
+        - Codex hook trust is reported with what to do in Codex's `/hooks`. Marshell never trusts a hook for the person.
+     6. Transcript retention:
+        - Claude Code's `cleanupPeriodDays` and Qwen Code's `general.cleanupPeriodDays` are offered only while the key is unset (the 30-day default), never when the person chose a value. The item is in the Info group, unchecked, and its fix raises the value to 365.
+        - The plan first checks whether Codex and Antigravity have such a setting. Where one has none, the item says so.
+        - Amended after the check (`docs/research/2026-11-05-transcript-retention.md`): Qwen Code's `general.cleanupPeriodDays` clears rewind backups, subagent transcripts and debug logs, not chat recordings. Codex has no setting that deletes sessions by age, and Antigravity documents none. So only Claude Code gets the fix, and its item says what the other three have.
+     7. WSL: the checks cover the Windows-side configs. They also cover each distro that `managed.json` says Marshell set up, but only while that distro is running. A stopped distro gets "Not checked: <distro> isn't running." The Doctor never starts a distro in the background.
+     8. #94: each "changed" refusal in `ConfigService::apply_with` logs which check refused, and names the targets when they differ. #94 stays open until a run shows the cause.
 8. **Editors + instruction library** (wired per CLI with a content hash and drift check; settings raw mode validated against the SchemaStore schema), smart and native recaps, diff drawer, step timeline, saved prompts, broadcast, and Extensions (moved from phase 6 by slice 6a decision 2).
    - Diff drawer comments (added 2026-10-15, after the Codex app's review pane): a **+** on a diff line adds a comment. "Send comments" puts them all in the prompt line as one message, with `file:line` before each. Like phase 2.5, it fills the prompt line and never sends on its own.
    - Instruction library items: frontmatter form, "what loads here" view, token estimate with a 4k warning, templates and one-click project profiles, per-project toggles, agent filter, globs, and "Improve this file" (headless, opt-in).

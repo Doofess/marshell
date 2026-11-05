@@ -39,7 +39,7 @@ export const planRemove = (ep: Endpoint, agent: HookAgent, distro?: string) =>
   api<RemovePreview>(ep, "POST", `${base(agent)}/hooks/remove-plan${distro === undefined ? "" : `?distro=${encodeURIComponent(distro)}`}`);
 
 /** The 409 body's reason and the files it is about. A body that is not that JSON is read as a plain conflict. */
-function conflictBody(text: string): { reason?: string; paths: string[] } {
+export function conflictBody(text: string): { reason?: string; paths: string[] } {
   try {
     const b = JSON.parse(text) as { reason?: unknown; paths?: unknown };
     return { reason: typeof b.reason === "string" ? b.reason : undefined, paths: Array.isArray(b.paths) ? b.paths.filter((p): p is string => typeof p === "string") : [] };

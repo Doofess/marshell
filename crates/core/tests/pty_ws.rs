@@ -20,6 +20,7 @@ async fn core() -> (RunningCore, tempfile::TempDir) {
         notify_paused: Default::default(),
         window_hidden: Default::default(),
         import: None,
+        doctor_on_start: false,
     })
     .await
     .unwrap();
@@ -673,6 +674,7 @@ async fn websocket_from_foreign_origin_is_forbidden() {
         notify_paused: Default::default(),
         window_hidden: Default::default(),
         import: None,
+        doctor_on_start: false,
     })
     .await
     .unwrap();

@@ -1,38 +1,61 @@
+import { useId } from "react";
 import { EmptyState } from "../../components/EmptyState/EmptyState";
 import { Page } from "../../components/Page/Page";
 import { EMPTY_STATES } from "../onboarding/emptyStates";
 import { DoctorRow } from "./DoctorRow";
 import { UndoToast } from "./UndoToast";
 import { showProgress } from "./doctorUi";
-import { counts, fixHeadline, restartSessionsOf } from "./report";
-import type { DoctorReport } from "./types";
-import { undoOffer, type UndoState } from "./undo";
+import { counts, fixHeadline, groups, selectedFixable } from "./report";
+import type { DoctorLastFix, DoctorReport } from "./types";
+import { undoOffer, undoState } from "./undo";
 import "./Doctor.css";
 
 export type DoctorPhase = "running" | "ready" | "fixing" | "fixed" | "failed";
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
+export type DoctorPageProps = {
+  report: DoctorReport | null;
+  phase: DoctorPhase;
+  selected: ReadonlySet<string>;
+  undo?: DoctorLastFix;
+  nowMs: number;
+  elapsedMs?: number;
+  failure?: string;
+  onToggle: (id: string) => void;
+  onFix: () => void;
+  onRunAgain: () => void;
+  onUndo: () => void;
+  onShowDifferences: () => void;
+  onOpenAgents: () => void;
+  /** The toast's "Restart them"; the brief's prop list leaves it out, but the toast needs it. */
+  onRestart?: () => void;
+};
+
 /**
- * The Doctor page: one report, one combined fix. Nothing is drawn for the first 150 ms of a check; a failure says why and
- * offers Run again; after a fix each fixed row says Fixed in words, the receipt toast floats for 10 seconds and then Undo
- * last fix stays in the header. Information (managed settings) is listed and never has a control.
+ * The Doctor page: one report in three groups, one combined fix for the rows that are checked. Nothing is drawn for the first
+ * 150 ms of a check; a failure says why and offers Run again; after a fix each fixed row says Fixed in words, the receipt toast
+ * floats for 10 seconds and then Undo last fix stays in the header. Info (managed settings) is listed and never has a control.
  */
-export function DoctorPage({ report, phase, undo, nowMs, elapsedMs = 0, failure }: { report: DoctorReport; phase: DoctorPhase; undo?: UndoState; nowMs?: number; elapsedMs?: number; failure?: string }) {
-  const c = counts(report);
-  const now = nowMs ?? report.checkedAtMs;
-  const offer = phase === "fixed" && undo ? undoOffer(undo, now) : undefined;
-  const clear = report.items.length === 0 && phase === "ready";
+export function DoctorPage({ report, phase, selected, undo, nowMs, elapsedMs = 0, failure, onToggle, onFix, onRunAgain, onUndo, onShowDifferences, onOpenAgents, onRestart }: DoctorPageProps) {
+  const uid = useId();
+  const c = report ? counts(report) : { issues: 0, fixable: 0, unfixable: 0, offered: 0 };
+  const chosen = report ? selectedFixable(report, selected).length : 0;
+  const fixedIds = new Set(phase === "fixed" ? undo?.item_ids : []);
+  const fixedCount = report ? report.items.filter((i) => i.group !== "info" && fixedIds.has(i.id)).length : 0;
+  // A record read back when the page opens (after a restart) shows in the header too; its toast is long gone or never shown.
+  const rawOffer = (phase === "fixed" || phase === "ready") && undo ? undoOffer(undoState(undo), nowMs) : undefined;
+  const offer = rawOffer && phase !== "fixed" && rawOffer.kind === "toast" ? { kind: "header" as const, text: "Undo last fix" } : rawOffer;
+  const clear = !!report && report.items.length === 0 && phase === "ready";
   const clearCopy = EMPTY_STATES.find((e) => e.id === "doctor-clear")!;
-  const checked = nowMs === undefined ? "–" : `${Math.max(0, Math.round((nowMs - report.checkedAtMs) / 1000))} s ago`;
-  const restart = restartSessionsOf(report.items.filter((i) => i.fixable));
-  const listed = phase !== "running" && phase !== "failed";
+  const checked = report ? `${Math.max(0, Math.round((nowMs - report.checked_at_ms) / 1000))} s ago` : "–";
+  const listed = !!report && phase !== "running" && phase !== "failed";
 
   const actions =
     phase === "running" ? null : (
       <>
-        {phase === "ready" && c.fixable > 0 && (
-          <button type="button" className="doctor__btn" data-primary>
-            {fixHeadline(report)}
+        {phase === "ready" && c.offered > 0 && (
+          <button type="button" className="doctor__btn" data-primary disabled={chosen === 0} onClick={onFix}>
+            {fixHeadline(chosen)}
           </button>
         )}
         {phase === "fixing" && (
@@ -41,12 +64,12 @@ export function DoctorPage({ report, phase, undo, nowMs, elapsedMs = 0, failure 
           </button>
         )}
         {offer?.kind === "header" && (
-          <button type="button" className="doctor__btn">
+          <button type="button" className="doctor__btn" onClick={onUndo}>
             {offer.text}
           </button>
         )}
         {phase !== "fixing" && (
-          <button type="button" className="doctor__btn">
+          <button type="button" className="doctor__btn" onClick={onRunAgain}>
             Run again
           </button>
         )}
@@ -63,27 +86,33 @@ export function DoctorPage({ report, phase, undo, nowMs, elapsedMs = 0, failure 
           {listed && !clear && (
             <p className="doctor__summary">
               {c.issues} {plural(c.issues, "issue", "issues")}
-              {phase === "fixed" ? (c.unfixable === 0 ? ` · all fixed` : ` · ${c.fixable} fixed · ${c.unfixable} remain`) : c.fixable > 0 ? ` · ${c.fixable} can be fixed` : ""}
-              {phase !== "fixed" && c.fixable === 0 && c.issues > 0 ? ` · ${fixHeadline(report)}` : ""}
+              {phase === "fixed" ? (fixedCount >= c.issues ? ` · all fixed` : ` · ${fixedCount} fixed · ${c.issues - fixedCount} ${c.issues - fixedCount === 1 ? "remains" : "remain"}`) : c.fixable > 0 ? ` · ${c.fixable} can be fixed` : ""}
+              {phase !== "fixed" && c.offered === 0 && c.issues > 0 ? ` · Nothing to fix` : ""}
             </p>
           )}
           {offer?.kind === "stale" && (
             <p className="doctor__stale">
               {offer.text.replace(" Show differences.", "")}{" "}
-              <button type="button" className="doctor__link">
+              <button type="button" className="doctor__link" onClick={onShowDifferences}>
                 Show differences
               </button>
             </p>
           )}
-          {listed && report.items.length > 0 && (
-            <ul className="doctor__list">
-              {report.items.map((i) => (
-                <DoctorRow key={i.id} item={i} fixed={phase === "fixed"} />
-              ))}
-            </ul>
-          )}
+          {listed &&
+            groups(report).map((g) => (
+              <section key={g.group} className="doctor__group" aria-labelledby={`${uid}-${g.group}`}>
+                <h2 id={`${uid}-${g.group}`} className="doctor__group-title">
+                  {g.heading} <span className="doctor__group-count">{g.items.length}</span>
+                </h2>
+                <ul className="doctor__list">
+                  {g.items.map((i) => (
+                    <DoctorRow key={i.id} item={i} fixed={fixedIds.has(i.id)} checked={selected.has(i.id)} disabled={phase !== "ready"} onToggle={onToggle} onOpenAgents={onOpenAgents} />
+                  ))}
+                </ul>
+              </section>
+            ))}
         </div>
-        {phase === "fixed" && undo && <UndoToast undo={undo} nowMs={now} restart={restart} />}
+        {phase === "fixed" && undo && <UndoToast undo={undo} nowMs={nowMs} onUndo={onUndo} onRestart={onRestart ?? (() => {})} />}
       </Page>
     </div>
   );

@@ -19,7 +19,7 @@ function fakeDialog(names: string[]) {
   const title = node("title");
   const controls = names.map(node);
   active = opener;
-  let handler: ((e: { key: string; shiftKey?: boolean; preventDefault(): void }) => void) | null = null;
+  let handler: ((e: { key: string; shiftKey?: boolean; defaultPrevented?: boolean; preventDefault(): void }) => void) | null = null;
   let prevented = 0;
   const dom: DialogDom = {
     active: () => active,
@@ -33,7 +33,9 @@ function fakeDialog(names: string[]) {
     },
   };
   const press = (key: string, shiftKey = false) => handler?.({ key, shiftKey, preventDefault: () => prevented++ });
-  return { dom, log, press, prevented: () => prevented, listening: () => handler !== null };
+  /** A key that bubbled up from a dialog inside this one, which already handled it. */
+  const pressHandled = (key: string) => handler?.({ key, defaultPrevented: true, preventDefault: () => prevented++ });
+  return { dom, log, press, pressHandled, prevented: () => prevented, listening: () => handler !== null };
 }
 
 describe("openDialogFocus: one run per open", () => {
@@ -64,6 +66,18 @@ describe("openDialogFocus: one run per open", () => {
     expect(closed).toEqual(["first", "second"]);
     expect(d.prevented()).toBe(2);
     expect(d.log).toEqual(["title"]);
+  });
+  // Found in the 7a live check: the fix sheet is a dialog inside the Doctor. Its Escape bubbled on and closed the Doctor
+  // too, and each Tab moved twice, so Tab never reached the sheet's scrolling body.
+  it("leaves a key that a dialog inside it already handled", () => {
+    const d = fakeDialog(["body", "Cancel", "Fix"]);
+    const closed: string[] = [];
+    openDialogFocus(d.dom, () => closed.push("outer"));
+    d.pressHandled("Escape");
+    d.pressHandled("Tab");
+    expect(closed).toEqual([]);
+    expect(d.log).toEqual(["title"]);
+    expect(d.prevented()).toBe(0);
   });
   it("ending it stops listening and puts focus back on the opener", () => {
     const d = fakeDialog(["Cancel"]);

@@ -10,6 +10,7 @@
 use crate::agents::common::{self, Bridge, PlanError, TAG, chain_delete, is_ours, statusline_left_note};
 use crate::config::hash::hash_bytes;
 use crate::config::jsonc::{parse_problem, read_value};
+#[cfg(test)]
 use crate::paths;
 use marshell_protocol::agents::{HookInstall, HookPlanRequest};
 use marshell_protocol::config::{Applies, ChangeSet, ConfigScope, EditOp, FileEdit};
@@ -44,10 +45,6 @@ pub fn settings_path(user_home: &Path) -> PathBuf {
 
 fn bridge_prefix_of(bridge: &Bridge) -> Result<String, PlanError> {
     common::bridge_prefix_of(AGENT_NAME, bridge)
-}
-
-fn bridge_prefix(home: &Path) -> Result<String, PlanError> {
-    bridge_prefix_of(&Bridge::local(home))
 }
 
 /// The command string of a hook entry.
@@ -88,10 +85,6 @@ fn event_value_of(bridge: &Bridge, event: &str, permission: bool) -> Result<Valu
         PRE_TOOL | "PostToolUse" => json!([{ "matcher": ".*", "hooks": [entry] }]),
         _ => json!([entry]),
     })
-}
-
-fn event_value(home: &Path, event: &str, permission: bool) -> Result<Value, PlanError> {
-    event_value_of(&Bridge::local(home), event, permission)
 }
 
 // ---- reading the files ----
@@ -201,16 +194,22 @@ pub struct Found {
 /// What the files (as values, `None` for a missing file) say about the install. The chain is
 /// `{"statusLine": ...}`.
 pub fn inspect(hooks: Option<&Value>, settings: Option<&Value>, chain: Option<&Value>, home: &Path) -> Found {
+    inspect_for(hooks, settings, chain, &Bridge::local(home))
+}
+
+/// `inspect` for the entries of `bridge`: the local one, or a distro's, which keeps no chain, so a status line there
+/// needs none.
+pub fn inspect_for(hooks: Option<&Value>, settings: Option<&Value>, chain: Option<&Value>, bridge: &Bridge) -> Found {
     let none = json!({});
     let hooks = hooks.unwrap_or(&none);
     let hook = hooks.get(HOOK_NAME).filter(|h| h.is_object());
     let ours = ours_in(hooks);
     let line = settings.and_then(|s| s.get("statusLine")).filter(|l| l.is_object());
     let line_ours = line.is_some_and(line_is_ours);
-    let bridge_exists = paths::bridge_exe(home).exists();
+    let bridge_exists = bridge.exists();
 
     let event_is = |event: &str, permission: bool| {
-        event_value(home, event, permission)
+        event_value_of(bridge, event, permission)
             .ok()
             .is_some_and(|want| hook.and_then(|h| h.get(event)) == Some(&want))
     };
@@ -221,11 +220,11 @@ pub fn inspect(hooks: Option<&Value>, settings: Option<&Value>, chain: Option<&V
     }) && (permission_exact || event_is(PRE_TOOL, false))
         && STATUS_EVENTS.iter().all(|e| event_is(e, false));
 
-    let prefix = bridge_prefix(home).ok();
+    let prefix = bridge_prefix_of(bridge).ok();
     let from_this_home =
         |command: Option<&str>| matches!((command, &prefix), (Some(c), Some(p)) if c.starts_with(p.as_str()));
     let line_command = line.and_then(|l| l.get("command")).and_then(Value::as_str);
-    let line_current = statusline_command(home)
+    let line_current = statusline_of(bridge)
         .ok()
         .is_some_and(|c| line_command == Some(c.as_str()));
     let chain_holds_users = chain_holds_users_line(chain);
@@ -239,7 +238,7 @@ pub fn inspect(hooks: Option<&Value>, settings: Option<&Value>, chain: Option<&V
         || (line_ours && !from_this_home(line_command))
     {
         HookInstall::Orphaned
-    } else if hooks_exact && (!line_ours || (chain_usable(chain) && line_current)) {
+    } else if hooks_exact && (!line_ours || ((chain_usable(chain) || bridge.distro().is_some()) && line_current)) {
         HookInstall::Installed
     } else {
         HookInstall::Partial

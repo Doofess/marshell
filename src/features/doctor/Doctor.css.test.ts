@@ -7,9 +7,9 @@ describe("Doctor.css", () => {
   it("draws no box: the only borders are radius and a start-edge bar", () => {
     for (const m of css.matchAll(/border[a-z-]*\s*:[^;]+;/g)) expect(m[0], m[0]).toMatch(/border-radius|border-inline-start/);
   });
-  it("tells severity by a fill and a start-edge bar, and again with an outline in forced colours", () => {
+  it("tells the group by a fill and a start-edge bar, and again with an outline in forced colours", () => {
     expect(css).toMatch(/\.doctor__row\s*\{[^}]*background:\s*var\(--fill\)/);
-    expect(css).toMatch(/\.doctor__row\[data-severity="error"\]\s*\{[^}]*border-inline-start/);
+    expect(css).toMatch(/\.doctor__row\[data-group="broken"\]\s*\{[^}]*border-inline-start/);
     const forced = css.slice(css.indexOf("@media (forced-colors: active)"));
     expect(forced).toMatch(/\.doctor__row/);
   });

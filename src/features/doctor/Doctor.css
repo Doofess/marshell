@@ -24,6 +24,22 @@
   background: var(--fill);
   border-inline-start: 3px solid var(--error);
 }
+.doctor__group {
+  display: grid;
+  gap: var(--space-2);
+}
+.doctor__group-title {
+  margin: 0;
+  font-size: var(--text-13);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.doctor__group-count {
+  font-weight: 400;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  margin-inline-start: var(--space-1);
+}
 .doctor__list {
   margin: 0;
   padding: 0;
@@ -41,13 +57,13 @@
   background: var(--fill);
   color: var(--text-1);
 }
-.doctor__row[data-severity="error"] {
+.doctor__row[data-group="broken"] {
   border-inline-start: 3px solid var(--error);
 }
-.doctor__row[data-severity="warning"] {
+.doctor__row[data-group="waste"] {
   border-inline-start: 3px solid var(--caution);
 }
-.doctor__row[data-severity="info"] {
+.doctor__row[data-group="info"] {
   border-inline-start: 3px solid var(--text-3);
 }
 .doctor__row[data-state="fixed"] {
@@ -82,6 +98,27 @@
   font-size: var(--text-13);
   font-weight: 500;
   overflow-wrap: anywhere;
+}
+/* A fixable row's title is its checkbox label, so the whole title is a target. */
+.doctor__check {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: baseline;
+  cursor: pointer;
+}
+.doctor__check input {
+  inline-size: 1em;
+  block-size: 1em;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.doctor__check input:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+.doctor__check input:disabled {
+  cursor: default;
 }
 .doctor__word {
   font-size: var(--text-11);
@@ -127,7 +164,8 @@
   color: var(--accent-ink);
   font-weight: 600;
 }
-.doctor__btn[aria-disabled="true"] {
+.doctor__btn[aria-disabled="true"],
+.doctor__btn:disabled {
   color: var(--text-2);
   background: var(--fill);
 }
@@ -253,6 +291,16 @@
   overflow-wrap: anywhere;
   text-wrap: pretty;
 }
+.fix-sheet__conflict {
+  margin: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  background: var(--fill);
+  border-inline-start: 3px solid var(--caution);
+  font-size: var(--text-13);
+  color: var(--text-1);
+  text-wrap: pretty;
+}
 .fix-sheet__foot {
   display: flex;
   justify-content: flex-end;
@@ -261,10 +309,17 @@
 
 @media (forced-colors: active) {
   .doctor__row,
-  .doctor__failed {
+  .doctor__failed,
+  .fix-sheet__conflict {
     outline: 1px solid CanvasText;
   }
   .doctor__row[data-state="fixed"] {
+    outline: 2px solid Highlight;
+  }
+  .doctor__check input {
+    accent-color: Highlight;
+  }
+  .doctor__check input:focus-visible {
     outline: 2px solid Highlight;
   }
   .doctor__btn,

@@ -4,6 +4,7 @@ pub mod api;
 pub mod brand;
 pub mod config;
 pub mod diagnostics;
+pub mod doctor;
 pub mod frames;
 pub mod history;
 pub mod hook;

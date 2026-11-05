@@ -94,14 +94,14 @@ fn failed(err: impl std::fmt::Display) -> Fail {
 
 /// The agents that have a hook adapter.
 #[derive(Clone, Copy)]
-enum Adapter {
+pub(crate) enum Adapter {
     Claude,
     Codex,
     Antigravity,
     Qwen,
 }
 
-fn adapter(agent: &str) -> Result<Adapter, Fail> {
+pub(super) fn adapter(agent: &str) -> Result<Adapter, Fail> {
     match agent {
         AGENT => Ok(Adapter::Claude),
         CODEX => Ok(Adapter::Codex),
@@ -292,10 +292,22 @@ impl AppState {
     /// distro's agent folders. This is for an undo after a restart. A distro that does not answer is left out and its
     /// paths stay refused. Runs `wsl.exe`, so callers go through `spawn_blocking`.
     pub(crate) fn record_distros_of<'a>(&self, paths: impl IntoIterator<Item = &'a Path>) {
+        for distro in self.distros_of_paths(paths) {
+            if self.0.config.has_distro_home(&distro) {
+                continue;
+            }
+            // The target is recorded by the lookup; a failure leaves the distro unrecorded.
+            let _ = self.distro_target(&distro);
+        }
+    }
+
+    /// The detected distros, each once and spelt as detected, that a path of `paths` is in: under the distro's own
+    /// share, or (in a test) under the pinned target's home, a plain folder that stands in for every share. Reads no
+    /// file and runs nothing.
+    pub(crate) fn distros_of_paths<'a>(&self, paths: impl IntoIterator<Item = &'a Path>) -> Vec<String> {
         let detected = super::wsl_distros(&self.profiles_snapshot());
-        // A test's pinned home is a plain folder that stands in for the share of every distro.
         let pinned_home = self.0.distro_target.iter().flatten().map(|t| t.home.clone()).next();
-        let mut tried: Vec<String> = Vec::new();
+        let mut found: Vec<String> = Vec::new();
         for path in paths {
             let path = crate::config::guard::unverbatim(path);
             let in_share = |d: &String| {
@@ -304,14 +316,11 @@ impl AppState {
             let Some(distro) = detected.iter().find(|d| in_share(d)) else {
                 continue;
             };
-            let key = distro.to_lowercase();
-            if tried.contains(&key) || self.0.config.has_distro_home(distro) {
-                continue;
+            if !found.iter().any(|f| f.to_lowercase() == distro.to_lowercase()) {
+                found.push(distro.clone());
             }
-            tried.push(key);
-            // The target is recorded by the lookup; a failure leaves the distro unrecorded.
-            let _ = self.distro_target(distro);
         }
+        found
     }
 
     /// Where Marshell's hooks go in `distro`: its home as a UNC path and the bridge as the distro sees it, or the one
@@ -347,7 +356,12 @@ impl AppState {
 
     /// The plan to set up hooks inside `distro`: the same plan as on Windows, for the files under the distro's own
     /// home and with the bridge named by its Linux path. The Windows overrides of the settings folders do not apply.
-    fn distro_install(&self, adapter: Adapter, distro: &str, want: &HookPlanRequest) -> Result<ChangeSet, Fail> {
+    pub(crate) fn distro_install(
+        &self,
+        adapter: Adapter,
+        distro: &str,
+        want: &HookPlanRequest,
+    ) -> Result<ChangeSet, Fail> {
         let target = self.distro_target(distro)?;
         self.ensure_bridge(want)?;
         let bridge = Bridge::Distro {
@@ -1142,7 +1156,7 @@ pub async fn settings_view(
 }
 
 /// Where an agent's user settings file is, and Claude's managed settings or Qwen's system settings.
-fn settings_file(st: &AppState, kind: Adapter) -> Result<(PathBuf, Option<(PathBuf, Value)>), Fail> {
+pub(super) fn settings_file(st: &AppState, kind: Adapter) -> Result<(PathBuf, Option<(PathBuf, Value)>), Fail> {
     let no_home = || failed("the user's home folder is not known");
     Ok(match kind {
         Adapter::Claude => {
@@ -1190,7 +1204,7 @@ fn codex_newer_in(dir: &Path, version: &str) -> Option<String> {
 const NOT_THIS_FILE: &str = "That snapshot isn't of this agent's settings file.";
 
 /// Why a settings change isn't made: a plain sentence, or a 409 naming the files that changed since the person looked.
-enum Refusal {
+pub(super) enum Refusal {
     Plain(StatusCode, String),
     Changed(Vec<String>),
 }
@@ -1216,11 +1230,11 @@ impl IntoResponse for Refusal {
     }
 }
 
-fn unprocessable(message: impl Into<String>) -> Refusal {
+pub(super) fn unprocessable(message: impl Into<String>) -> Refusal {
     Refusal::Plain(StatusCode::UNPROCESSABLE_ENTITY, message.into())
 }
 
-fn changed_since(paths: Vec<String>) -> Refusal {
+pub(super) fn changed_since(paths: Vec<String>) -> Refusal {
     Refusal::Changed(paths)
 }
 
@@ -1473,7 +1487,7 @@ fn masked_diff<'a>(agent: &'a str, normalized: &'a Cell<bool>) -> impl Fn(&Plann
 
 /// The preview when it has a change to apply. A file changed since is a 409; any other refusal, or no change, is a 422.
 /// A refusal's detail can quote the file, so only the details that can't are passed on.
-fn changes_of(preview: ConfigPreview) -> Result<ConfigPreview, Refusal> {
+pub(super) fn changes_of(preview: ConfigPreview) -> Result<ConfigPreview, Refusal> {
     for file in &preview.files {
         if let FileStatus::Refused { reason, detail } = &file.status {
             return Err(match reason {
@@ -1561,6 +1575,63 @@ fn settings_undo_of(st: &AppState, agent: &str, kind: Adapter, snapshot_id: &str
     }
 }
 
+/// The plan that sets up `adapter`'s hooks for Windows: the same one the Agents dialog's "Set up" makes. It puts the
+/// bridge back first when `want` asks for status hooks and it is missing.
+pub(crate) fn hook_install_changes(st: &AppState, adapter: Adapter, want: &HookPlanRequest) -> Result<ChangeSet, Fail> {
+    match adapter {
+        Adapter::Claude => {
+            let inputs = st.inputs()?;
+            st.ensure_bridge(want)?;
+            hooks::install_plan(
+                &inputs.settings_path,
+                &inputs.user_home,
+                inputs.text.as_deref(),
+                inputs.chain_text.as_deref(),
+                Some(&paths::statusline_chain(&st.0.home, AGENT)),
+                &Bridge::local(&st.0.home),
+                want,
+            )
+        }
+        Adapter::Codex => {
+            let inputs = st.codex_inputs()?;
+            st.ensure_bridge(want)?;
+            codex::hooks::install_plan(
+                &inputs.hooks_path,
+                inputs.text.as_deref(),
+                &Bridge::local(&st.0.home),
+                want,
+            )
+        }
+        Adapter::Antigravity => {
+            let inputs = st.agy_inputs()?;
+            st.ensure_bridge(want)?;
+            agy::install_plan(
+                &inputs.user_home,
+                inputs.hooks_text.as_deref(),
+                inputs.settings_text.as_deref(),
+                inputs.chain_text.as_deref(),
+                Some(&paths::statusline_chain(&st.0.home, ANTIGRAVITY)),
+                &Bridge::local(&st.0.home),
+                want,
+            )
+        }
+        Adapter::Qwen => {
+            let inputs = st.qwen_inputs()?;
+            st.ensure_bridge(want)?;
+            qwen_hooks::install_plan(
+                &inputs.settings_path,
+                &inputs.user_home,
+                inputs.text.as_deref(),
+                inputs.chain_text.as_deref(),
+                Some(&paths::statusline_chain(&st.0.home, QWEN)),
+                &Bridge::local(&st.0.home),
+                want,
+            )
+        }
+    }
+    .map_err(|e| refused(&e))
+}
+
 pub async fn plan(
     State(st): State<AppState>,
     UrlPath(agent): UrlPath<String>,
@@ -1571,58 +1642,7 @@ pub async fn plan(
     let preview = tokio::task::spawn_blocking(move || {
         let mut changes = match &distro {
             Some(distro) => st.distro_install(adapter, distro, &want)?,
-            None => match adapter {
-                Adapter::Claude => {
-                    let inputs = st.inputs()?;
-                    st.ensure_bridge(&want)?;
-                    hooks::install_plan(
-                        &inputs.settings_path,
-                        &inputs.user_home,
-                        inputs.text.as_deref(),
-                        inputs.chain_text.as_deref(),
-                        Some(&paths::statusline_chain(&st.0.home, AGENT)),
-                        &Bridge::local(&st.0.home),
-                        &want,
-                    )
-                }
-                Adapter::Codex => {
-                    let inputs = st.codex_inputs()?;
-                    st.ensure_bridge(&want)?;
-                    codex::hooks::install_plan(
-                        &inputs.hooks_path,
-                        inputs.text.as_deref(),
-                        &Bridge::local(&st.0.home),
-                        &want,
-                    )
-                }
-                Adapter::Antigravity => {
-                    let inputs = st.agy_inputs()?;
-                    st.ensure_bridge(&want)?;
-                    agy::install_plan(
-                        &inputs.user_home,
-                        inputs.hooks_text.as_deref(),
-                        inputs.settings_text.as_deref(),
-                        inputs.chain_text.as_deref(),
-                        Some(&paths::statusline_chain(&st.0.home, ANTIGRAVITY)),
-                        &Bridge::local(&st.0.home),
-                        &want,
-                    )
-                }
-                Adapter::Qwen => {
-                    let inputs = st.qwen_inputs()?;
-                    st.ensure_bridge(&want)?;
-                    qwen_hooks::install_plan(
-                        &inputs.settings_path,
-                        &inputs.user_home,
-                        inputs.text.as_deref(),
-                        inputs.chain_text.as_deref(),
-                        Some(&paths::statusline_chain(&st.0.home, QWEN)),
-                        &Bridge::local(&st.0.home),
-                        &want,
-                    )
-                }
-            }
-            .map_err(|e| refused(&e))?,
+            None => hook_install_changes(&st, adapter, &want)?,
         };
         // The skill file is the Windows home's. A distro's skill is not planned here, so a request for one inside a
         // distro gets the hooks only.

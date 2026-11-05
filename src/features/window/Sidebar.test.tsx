@@ -28,7 +28,7 @@ describe("Sidebar", () => {
   it("shows the plan ring, the 5h percentage and the doctor count in the footer", () => {
     const h = html();
     expect(h).toContain("5h 38%");
-    expect(h).toContain("Doctor: 4 issues");
+    expect(h).toContain("Doctor: 3 issues");
   });
   it("leaves out unknown plan usage, and shows a clean doctor as such", () => {
     const h = html({ footer: { doctorIssues: 0 } });
@@ -41,6 +41,14 @@ describe("Sidebar", () => {
     const h = html({ footer: { planPct: 12, fiveHourPct: 12 } });
     expect(h).toContain("5h 12%");
     expect(h).not.toContain("sidebar__doctor");
+  });
+  it("makes the doctor count a button when the window can open the doctor", () => {
+    const h = html({ footer: { doctorIssues: 2 }, onOpenDoctor: () => {} });
+    expect(h).toMatch(/<button[^>]*class="sidebar__doctor"[^>]*aria-label="Doctor: 2 issues"/);
+    expect(html({ footer: { doctorIssues: 2 } })).not.toMatch(/<button[^>]*sidebar__doctor/);
+  });
+  it("names one doctor issue in the singular", () => {
+    expect(html({ footer: { doctorIssues: 1 }, onOpenDoctor: () => {} })).toContain('aria-label="Doctor: 1 issue"');
   });
   it("has no footer when none is given, and gives its row back", () => {
     const h = html({ footer: undefined });
