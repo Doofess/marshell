@@ -314,8 +314,12 @@ fn inventory_items(inv: &Inventory, out: &mut Vec<(DoctorItem, Option<Switch>)>)
         }
     }
 
-    // 5 and 6. The listing cut and the cost, over the skills that are listed.
-    let listed: Vec<&Skill> = inv.skills.iter().filter(|s| !s.off && !s.hidden).collect();
+    // 5 and 6. The listing cut and the cost, over the skills that are listed. A skill that doesn't load isn't listed.
+    let listed: Vec<&Skill> = inv
+        .skills
+        .iter()
+        .filter(|s| !s.off && !s.hidden && s.state == SkillState::Ok)
+        .collect();
     let full_chars = |s: &Skill| -> usize {
         let desc = if s.name_only {
             0
@@ -366,8 +370,12 @@ fn inventory_items(inv: &Inventory, out: &mut Vec<(DoctorItem, Option<Switch>)>)
                     tokens(total)
                 ),
                 format!(
-                    "{} skills are listed, by name and description. The largest: {}.",
-                    listed.len(),
+                    "{} listed, by name and description. The largest: {}.",
+                    if listed.len() == 1 {
+                        "1 skill is".to_string()
+                    } else {
+                        format!("{} skills are", listed.len())
+                    },
                     top.join(", ")
                 ),
                 None,
@@ -589,10 +597,15 @@ mod tests {
         sk.origin = Origin::Bundled;
         sk.state = SkillState::NoBlock;
         b.skills.push(sk);
+        let mut loads = skill("pdf", 4);
+        loads.origin = Origin::Bundled;
+        b.skills.push(loads);
         let items = items(&[b]);
         assert!(with_prefix(&items, "skill.").is_empty());
-        // It still counts toward the cost.
-        assert_eq!(with_prefix(&items, "skillcost.").len(), 1);
+        // A bundled skill that loads still counts toward the cost; one that doesn't load isn't listed.
+        let cost = with_prefix(&items, "skillcost.");
+        assert_eq!(cost.len(), 1);
+        assert!(cost[0].detail.starts_with("1 skill is listed"), "{}", cost[0].detail);
     }
 
     #[test]
@@ -688,6 +701,23 @@ mod tests {
         assert_eq!(
             it.detail,
             "3 skills are listed, by name and description. The largest: a (2), ccc (1), bb (1)."
+        );
+    }
+
+    #[test]
+    fn a_skill_that_does_not_load_costs_nothing() {
+        let mut i = inv("codex");
+        i.skills.push(skill("a", 7));
+        let mut broken = skill("broken", 1000);
+        broken.state = SkillState::Missing("description");
+        i.skills.push(broken);
+        let items = items(&[i]);
+        let cost = items.iter().find(|it| it.id == "skillcost.codex").unwrap();
+        // Only `a`: 8 characters, 2 tokens.
+        assert_eq!(cost.title, "Codex's skills add about 2 tokens to each session");
+        assert_eq!(
+            cost.detail,
+            "1 skill is listed, by name and description. The largest: a (2)."
         );
     }
 
