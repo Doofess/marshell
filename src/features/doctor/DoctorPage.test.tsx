@@ -137,7 +137,7 @@ describe("DoctorPage", () => {
       const h = page(DOCTOR_CLI, "ready");
       expect((h.match(/type="checkbox"/g) ?? []).length).toBe(0);
       expect(h).toContain("Qwen Code has no doctor command");
-      expect(h).toContain("Marshell only reports what the CLI&#x27;s own doctor says.");
+      expect(h).toContain("Reinstall Codex to restore the sandbox helpers.");
     });
   });
 });
