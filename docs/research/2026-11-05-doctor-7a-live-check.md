@@ -35,3 +35,14 @@
 6. **"3 issues · 2 fixed · 1 remains" beside "Fixed 3 issues.".** The summary counts issues (Broken and Waste), and the toast counts the fixed items, as decision 2 says "Fix X issues" does. The retention item is Info, so the two numbers differ when it is ticked. Not fixed (minor).
 7. **The sidebar said "Doctor: no issues" right after onboarding set up hooks.** The startup run happened before the setup, and decision 3 doesn't list a setup among the times the check runs. The count was right as soon as the page opened. Not fixed (minor).
 8. **Vite's hot reload of `dialogFocus.ts` left stale key handlers in the open Doctor,** so Tab still moved twice and Escape did nothing until a full reload. This happens only in dev, and the results above come from the full reload.
+
+## After the final review
+
+The whole-branch review came after this check. Its fixes are covered by tests only and weren't run in the app:
+
+- With only an Info item fixable (transcript retention beside Codex trust), the page now offers "Fix 0 issues", which becomes "Fix 1 issue" when the item is ticked. During the check it offered no fix button (1415639).
+- Before the first check ends, the sidebar and the tray show no doctor count, where they used to say "no issues". The sidebar row above saw a real result: the startup run came before onboarding's setup (finding 7) (1bd1096).
+- A fix that includes Codex's hooks ends with the trust step. The sheet says "Codex runs changed hooks only after you trust them. The next time Codex starts, choose Trust all and continue, or review them first in /hooks.", and the toast and announcement add "Codex runs the changed hooks once you trust them in /hooks." (39243f9).
+- A refused undo now says "Nothing was undone: <files> changed since the fix, so undo would overwrite it." (59155df).
+- "Restart them" skips sessions waiting on an approval or a question, as it skips working ones (99d3843).
+- Undoing a repair beside the person's own hooks keeps the setup's `managed.json` records, for Claude Code and Qwen Code (4b3f619, a6755e2).
