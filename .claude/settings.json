@@ -48,10 +48,6 @@
   "enabledMcpjsonServers": [
     "webview"
   ],
-  "skillOverrides": {
-    "underwater-photoshop": "off",
-    "dataviz": "off"
-  },
   "deniedMcpServers": [
     {
       "serverName": "claude.ai Supabase"
@@ -64,9 +60,7 @@
     }
   ],
   "enabledPlugins": {
-    "pyright-lsp@claude-plugins-official": false,
-    "engineering@synced": false,
-    "design@synced": false,
+    "frontend-design@claude-plugins-official": true,
     "good-css@good-css": true
   },
   "extraKnownMarketplaces": {
