@@ -110,7 +110,7 @@ async fn run_once(st: &AppState, read: ReadFacts) -> Option<(u32, u64)> {
     let doctor = st.doctor();
     match facts {
         Ok(facts) => {
-            let items = checks::items(&facts.facts, &facts.stopped);
+            let items = checks::items(&facts.facts, &facts.stopped, banners_on(st));
             let issues = checks::issues(&items);
             let now = now_ms();
             *doctor.report.lock().unwrap_or_else(|e| e.into_inner()) = Some(DoctorReport {
@@ -125,6 +125,12 @@ async fn run_once(st: &AppState, read: ReadFacts) -> Option<(u32, u64)> {
             None
         }
     }
+}
+
+/// Marshell's banners are on for at least one of needs-you, done and error.
+fn banners_on(st: &AppState) -> bool {
+    let n = st.notify_settings();
+    n.needs_you.banner || n.done.banner || n.error.banner
 }
 
 fn now_ms() -> u64 {
@@ -242,8 +248,67 @@ fn failed_facts(agent: &'static str, distro: Option<String>, message: String) ->
         version_note: None,
         retention_unset: None,
         managed_settings: None,
+        notify: Default::default(),
         error: Some(message),
     }
+}
+
+/// The `command` of every `hooks.Notification[*].hooks[*]` entry that isn't Marshell's, in file order. An entry without
+/// a string `command` is skipped.
+fn notification_hooks(value: &serde_json::Value) -> Vec<String> {
+    let groups = value
+        .pointer("/hooks/Notification")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten();
+    groups
+        .filter_map(|g| g.get("hooks").and_then(serde_json::Value::as_array))
+        .flatten()
+        .filter(|h| !crate::agents::common::is_ours(h))
+        .filter_map(|h| h.get("command").and_then(serde_json::Value::as_str))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Codex's top-level `notify` array of strings, joined with spaces. A missing file, one that doesn't parse, and a
+/// `notify` that isn't an array of strings give `None`.
+fn codex_notify_command(config: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(config).ok()?;
+    let doc = text.parse::<toml_edit::DocumentMut>().ok()?;
+    let items = doc.get("notify")?.as_array()?;
+    let parts: Option<Vec<&str>> = items.iter().map(toml_edit::Value::as_str).collect();
+    let parts = parts?;
+    (!parts.is_empty()).then(|| parts.join(" "))
+}
+
+/// What a CLI notifies by itself. `hooks` is the value its hooks file gave; `agy_settings` is Antigravity's
+/// `settings.json` as a value.
+fn notify_facts(
+    agent: &str,
+    hooks_path: &Path,
+    hooks: Option<&serde_json::Value>,
+    agy_settings: Option<(&Path, &serde_json::Value)>,
+) -> checks::NotifyFacts {
+    let mut n = checks::NotifyFacts {
+        file: hooks_path.to_path_buf(),
+        ..Default::default()
+    };
+    match agent {
+        "antigravity" => {
+            if let Some((path, value)) = agy_settings {
+                n.file = path.to_path_buf();
+                n.desktop = value.get("notifications") == Some(&serde_json::Value::Bool(true));
+            }
+        }
+        _ => {
+            if agent == "codex" {
+                n.file = hooks_path.with_file_name("config.toml");
+                n.command = codex_notify_command(&n.file);
+            }
+            n.hook_commands = hooks.map(notification_hooks).unwrap_or_default();
+        }
+    }
+    n
 }
 
 /// One file of a distro as a value and whether it is read-only: `Ok(None)` when it isn't there, and the line and
@@ -307,6 +372,7 @@ fn distro_agent_facts(
         version_note: None,
         retention_unset: None,
         managed_settings: None,
+        notify: Default::default(),
         error: None,
     };
 
@@ -365,6 +431,10 @@ fn distro_agent_facts(
     };
     facts.hooks = install;
     facts.approve_installed = approve_installed;
+    let agy_settings = (agent == "antigravity")
+        .then(|| values[1].as_ref().map(|v| (files[1].as_path(), v)))
+        .flatten();
+    facts.notify = notify_facts(agent, &facts.path, first, agy_settings);
     facts
 }
 
@@ -402,6 +472,26 @@ fn facts_from(st: &AppState, agent: &'static str, setup: AgentSetup, entries: &[
         "qwen" => managed_file_of(st, Adapter::Qwen),
         _ => None,
     };
+    // Only a CLI on this machine is asked what it notifies by itself.
+    let notify = if setup.found {
+        let hooks = matches!(file, FileState::Ok | FileState::ReadOnly)
+            .then(|| {
+                let text = std::fs::read_to_string(&path).ok()?;
+                read_value(&text).ok()
+            })
+            .flatten();
+        let agy_settings = (agent == "antigravity")
+            .then(|| {
+                let text = std::fs::read_to_string(&setup.settings_path).ok()?;
+                read_value(&text).ok()
+            })
+            .flatten();
+        let settings_path = PathBuf::from(&setup.settings_path);
+        let agy = agy_settings.as_ref().map(|v| (settings_path.as_path(), v));
+        notify_facts(agent, &path, hooks.as_ref(), agy)
+    } else {
+        checks::NotifyFacts::default()
+    };
     AgentFacts {
         agent,
         distro: None,
@@ -419,6 +509,7 @@ fn facts_from(st: &AppState, agent: &'static str, setup: AgentSetup, entries: &[
         version_note,
         retention_unset,
         managed_settings,
+        notify,
         error: None,
     }
 }
@@ -516,7 +607,7 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
         .ok_or_else(cant_fix)?;
     // The files as they are now: the report may be minutes old.
     let gathered = facts_of(st);
-    let now = checks::items(&gathered.facts, &gathered.stopped);
+    let now = checks::items(&gathered.facts, &gathered.stopped, banners_on(st));
     let entries = managed_entries(st);
 
     let mut picked: Vec<(DoctorItem, &AgentFacts)> = Vec::new();
@@ -546,6 +637,7 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
                 edits.extend(changes.edits);
             }
             Some("retention") => edits.push(retention_edit(facts)?),
+            Some("notify") if facts.agent == "antigravity" => edits.push(notifications_edit(facts)?),
             _ => return Err(cant_fix()),
         }
     }
@@ -567,8 +659,8 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
             .join("\n"),
         edits,
     };
-    // The retention setting is the person's, so applying it records no key in managed.json.
-    let preview = st.0.config.preview_mixed(cs, &is_retention_edit);
+    // The retention and notifications settings are the person's, so applying them records no key in managed.json.
+    let preview = st.0.config.preview_mixed(cs, &is_own_edit);
     let restart = restart_list(st, &picked);
     *st.doctor().pending.lock().unwrap_or_else(|e| e.into_inner()) = Some(PendingFix {
         changeset_id: preview.changeset_id.clone(),
@@ -583,9 +675,27 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
 }
 
 const RETENTION_POINTER: &str = "/cleanupPeriodDays";
+const NOTIFICATIONS_POINTER: &str = "/notifications";
 
-fn is_retention_edit(edit: &FileEdit) -> bool {
-    matches!(&edit.op, EditOp::JsonSet { pointer, .. } if pointer == RETENTION_POINTER)
+/// An edit of a setting that is the person's own: managed.json records no key for it.
+fn is_own_edit(edit: &FileEdit) -> bool {
+    matches!(&edit.op, EditOp::JsonSet { pointer, .. } if pointer == RETENTION_POINTER || pointer == NOTIFICATIONS_POINTER)
+}
+
+/// Antigravity's `notifications` set to false, against the text of its settings file as it is now.
+fn notifications_edit(facts: &AgentFacts) -> Result<FileEdit, Fail> {
+    let file = &facts.notify.file;
+    let text = std::fs::read_to_string(file).map_err(|_| cant_fix())?;
+    Ok(FileEdit {
+        path: file.to_string_lossy().into_owned(),
+        scope: ConfigScope::User,
+        op: EditOp::JsonSet {
+            pointer: NOTIFICATIONS_POINTER.to_string(),
+            value: "false".to_string(),
+        },
+        expected_hash: Some(hash_bytes(text.as_bytes())),
+        applies: Applies::NewSessions,
+    })
 }
 
 /// Claude Code's `cleanupPeriodDays` set to a year, against the text of the file as it is now.
@@ -1020,7 +1130,7 @@ mod tests {
             }
         });
         assert_eq!(facts.len(), 4);
-        let items = checks::items(&facts, &[]);
+        let items = checks::items(&facts, &[], true);
         let ids: Vec<&str> = items.iter().map(|i| i.id.as_str()).collect();
         let failed = items.iter().find(|i| i.id == "error.codex").unwrap();
         assert_eq!(failed.group, DoctorGroup::Info);
@@ -1148,5 +1258,204 @@ mod tests {
         let mut gone = setup("codex");
         gone.found = false;
         assert_eq!(facts_from(&st, "codex", gone, &[]).version_note, None);
+    }
+
+    fn write(path: &Path, text: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+
+    #[test]
+    fn notify_facts_are_read_for_each_cli() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = state(dir.path());
+        let root = dir.path();
+
+        let agy_settings = root.join("agy").join("settings.json");
+        write(&agy_settings, r#"{"notifications": true}"#);
+        let mut s = setup("antigravity");
+        s.settings_path = agy_settings.to_string_lossy().into_owned();
+        s.hooks_path = Some(root.join("agy").join("hooks.json").to_string_lossy().into_owned());
+        s.settings_state = SettingsState::Ok;
+        let f = facts_from(&st, "antigravity", s.clone(), &[]);
+        assert_eq!(
+            f.notify,
+            checks::NotifyFacts {
+                file: agy_settings.clone(),
+                desktop: true,
+                command: None,
+                hook_commands: Vec::new(),
+            }
+        );
+        // Only `true` counts.
+        write(&agy_settings, r#"{"notifications": "true"}"#);
+        assert!(!facts_from(&st, "antigravity", s, &[]).notify.desktop);
+
+        let hooks = root.join("codex").join("hooks.json");
+        let config = root.join("codex").join("config.toml");
+        write(
+            &hooks,
+            r#"{"hooks": {"Notification": [{"hooks": [{"type": "command", "command": "toast.exe"}]}]}}"#,
+        );
+        write(&config, "notify = [\"a.exe\", \"x\"]\n");
+        let mut s = setup("codex");
+        s.settings_path = hooks.to_string_lossy().into_owned();
+        s.hooks_path = Some(hooks.to_string_lossy().into_owned());
+        s.settings_state = SettingsState::Ok;
+        let f = facts_from(&st, "codex", s.clone(), &[]);
+        assert_eq!(
+            f.notify,
+            checks::NotifyFacts {
+                file: config.clone(),
+                desktop: false,
+                command: Some("a.exe x".into()),
+                hook_commands: vec!["toast.exe".into()],
+            }
+        );
+        // A config.toml that doesn't parse gives no command.
+        write(&config, "notify = [");
+        assert_eq!(facts_from(&st, "codex", s, &[]).notify.command, None);
+
+        let claude = root.join("claude").join("settings.json");
+        write(
+            &claude,
+            r#"{"hooks": {"Notification": [
+                {"hooks": [
+                    {"type": "command", "command": "toast.exe a"},
+                    {"type": "command", "command": "bridge.exe", "args": ["--tag", "mshl1"]},
+                    {"type": "command", "command": "bridge.exe --tag mshl1 notification"},
+                    {"type": "http"}
+                ]},
+                {"hooks": [{"type": "command", "command": "b.sh"}]}
+            ]}}"#,
+        );
+        let mut s = setup("claude");
+        s.settings_path = claude.to_string_lossy().into_owned();
+        s.settings_state = SettingsState::Ok;
+        let f = facts_from(&st, "claude", s, &[]);
+        assert_eq!(f.notify.file, claude);
+        assert_eq!(f.notify.hook_commands, ["toast.exe a", "b.sh"]);
+        assert!(!f.notify.desktop);
+        assert_eq!(f.notify.command, None);
+    }
+
+    /// A state over folders under `root` with every path pinned, as the route tests do.
+    fn pinned(root: &Path) -> AppState {
+        use crate::projects::{canonical, record};
+        let root = canonical(root);
+        let home = root.join("home");
+        let project = root.join("project");
+        for d in ["home", "project/codex-home", "project/agy-home", "project/qwen-home"] {
+            std::fs::create_dir_all(root.join(d)).unwrap();
+        }
+        record(&home, &project, 1).unwrap();
+        let st = AppState::new("t".into(), 1, Vec::new(), home.clone(), Vec::new())
+            .with_claude_settings(project.join("settings.json"))
+            .with_codex_hooks(project.join("codex-home").join("hooks.json"))
+            .with_agy_home(project.join("agy-home"))
+            .with_qwen_home(project.join("qwen-home"))
+            .with_qwen_system_settings(root.join("qwen-system.json"))
+            .with_skill_home(root.join("skill-home"))
+            .with_claude_compact_paths(root.join("claude-home"), vec![root.join("claude-managed.json")])
+            .with_claude_version(Some("2.1.302".into()))
+            .with_codex_version(Some("0.163.0".into()))
+            .with_agy_version(Some("1.0.0".into()))
+            .with_qwen_version(Some("0.26.5".into()))
+            .with_agent_path(|name| Some(PathBuf::from(format!(r"Z:\nowhere\{name}.exe"))));
+        let bridge = paths::bridge_exe(&home);
+        std::fs::create_dir_all(bridge.parent().unwrap()).unwrap();
+        std::fs::write(&bridge, "").unwrap();
+        st
+    }
+
+    #[tokio::test]
+    async fn the_antigravity_fix_sets_notifications_false_and_managed_json_skips_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let agy_home = crate::projects::canonical(dir.path()).join("project").join("agy-home");
+        let settings = crate::agents::antigravity::hooks::settings_path(&agy_home);
+        write(&settings, "{\n  \"notifications\": true,\n  \"theme\": \"dark\"\n}\n");
+
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        let report = st.doctor().report.lock().unwrap().clone().unwrap();
+        let item = report
+            .items
+            .iter()
+            .find(|i| i.id == "notify.antigravity")
+            .expect("the item");
+        assert!(item.fixable, "{item:?}");
+
+        let plan = fix_of(&st, vec!["notify.antigravity".into()]).expect("a plan");
+        let req = ApplyRequest {
+            changeset_id: plan.preview.changeset_id.clone(),
+            expected_hashes: plan
+                .preview
+                .files
+                .iter()
+                .map(|f| ExpectedHash {
+                    path: f.path.clone(),
+                    hash: f.before_hash.clone(),
+                })
+                .collect(),
+        };
+        st.0.config.apply(&req, now_ms()).expect("applied");
+
+        let text = std::fs::read_to_string(&settings).unwrap();
+        let value = read_value(&text).unwrap();
+        assert_eq!(value["notifications"], false, "{text}");
+        assert_eq!(value["theme"], "dark");
+        let pointers: Vec<String> = managed_entries(&st).into_iter().filter_map(|e| e.pointer).collect();
+        assert!(
+            !pointers.iter().any(|p| p.contains("notifications")),
+            "notifications is the person's: {pointers:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_notify_fix_for_codex_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let codex_home = crate::projects::canonical(dir.path())
+            .join("project")
+            .join("codex-home");
+        write(&codex_home.join("config.toml"), "notify = [\"a.exe\"]\n");
+
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        let report = st.doctor().report.lock().unwrap().clone().unwrap();
+        let item = report.items.iter().find(|i| i.id == "notify.codex").expect("the item");
+        assert!(!item.fixable);
+        let (status, _) = fix_of(&st, vec!["notify.codex".into()]).expect_err("refused");
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[tokio::test]
+    async fn banners_off_in_settings_gives_no_notify_item() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let agy_home = crate::projects::canonical(dir.path()).join("project").join("agy-home");
+        write(
+            &crate::agents::antigravity::hooks::settings_path(&agy_home),
+            "{\"notifications\": true}",
+        );
+        assert!(banners_on(&st));
+        st.0.settings.lock().unwrap().notifications = marshell_protocol::api::NotifySettings {
+            needs_you: marshell_protocol::api::NotifyChannel {
+                banner: false,
+                sound: true,
+            },
+            done: marshell_protocol::api::NotifyChannel {
+                banner: false,
+                sound: true,
+            },
+            error: marshell_protocol::api::NotifyChannel {
+                banner: false,
+                sound: true,
+            },
+            ..Default::default()
+        };
+        assert!(!banners_on(&st));
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        let report = st.doctor().report.lock().unwrap().clone().unwrap();
+        assert!(!report.items.iter().any(|i| i.id.starts_with("notify.")));
     }
 }
