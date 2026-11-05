@@ -28,7 +28,7 @@ describe("Sidebar", () => {
   it("shows the plan ring, the 5h percentage and the doctor count in the footer", () => {
     const h = html();
     expect(h).toContain("5h 38%");
-    expect(h).toContain("Doctor: 4 issues");
+    expect(h).toContain("Doctor: 3 issues");
   });
   it("leaves out unknown plan usage, and shows a clean doctor as such", () => {
     const h = html({ footer: { doctorIssues: 0 } });

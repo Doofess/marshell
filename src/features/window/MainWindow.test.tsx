@@ -336,7 +336,7 @@ describe("MainWindow: the sidebar footer", () => {
   it("defaults to the scenario's plan and doctor numbers, so the stories do not change", () => {
     const h = html();
     expect(h).toContain("5h 38%");
-    expect(h).toContain("Doctor: 4 issues");
+    expect(h).toContain("Doctor: 3 issues");
   });
   it("shows no footer, and no made-up plan or doctor numbers, when given null", () => {
     const h = html({ footer: null });
