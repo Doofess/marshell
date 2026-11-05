@@ -55,16 +55,24 @@ const VERSION_TIMEOUT: Duration = Duration::from_secs(5);
 const WSL_VERSION_TIMEOUT: Duration = Duration::from_secs(8);
 const WSL_VERSION_TTL: Duration = Duration::from_secs(10 * 60);
 
-/// Run by `sh -c` inside the distro; `$0` is the program. WSL appends the Windows PATH, whose npm folder holds a
-/// `claude` or `codex` shim that would report the Windows version, so every `/mnt/` entry goes first. The usual
-/// install folders of a Linux CLI come before what is left, because `--exec` starts no login shell.
-const WSL_VERSION_SCRIPT: &str = r#"set -f; p=; IFS=:; for d in $PATH; do case $d in /mnt/*|'') ;; *) p="${p:+$p:}$d";; esac; done; unset IFS; set +f; [ -n "$p" ] || p=/usr/local/bin:/usr/bin:/bin; n=; for d in "$HOME"/.nvm/versions/node/*/bin; do [ -d "$d" ] && n="$n$d:"; done; PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/.bun/bin:$n$p"; exec "$0" --version"#;
+/// Run by `sh -c` inside the distro; `$0` is the program and `$@` its arguments. WSL appends the Windows PATH, whose
+/// npm folder holds a `claude` or `codex` shim that would report the Windows version, so every `/mnt/` entry goes
+/// first. The usual install folders of a Linux CLI come before what is left, because `--exec` starts no login shell.
+const WSL_SCRIPT: &str = r#"set -f; p=; IFS=:; for d in $PATH; do case $d in /mnt/*|'') ;; *) p="${p:+$p:}$d";; esac; done; unset IFS; set +f; [ -n "$p" ] || p=/usr/local/bin:/usr/bin:/bin; n=; for d in "$HOME"/.nvm/versions/node/*/bin; do [ -d "$d" ] && n="$n$d:"; done; PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/.bun/bin:$n$p"; exec "$0" "$@""#;
 
-/// The arguments of the `wsl.exe` run that prints `<exe> --version` inside `distro`. `exe` is a constant program name.
-fn wsl_version_argv(distro: &str, exe: &str) -> Vec<String> {
-    ["-d", distro, "--exec", "sh", "-c", WSL_VERSION_SCRIPT, exe]
+/// The arguments of the `wsl.exe` run that prints `<exe> <args>` inside `distro`. `exe` is a constant program name and
+/// `args` constants too.
+pub(crate) fn wsl_exec_argv(distro: &str, exe: &str, args: &[&str]) -> Vec<String> {
+    ["-d", distro, "--exec", "sh", "-c", WSL_SCRIPT, exe]
+        .into_iter()
+        .chain(args.iter().copied())
         .map(String::from)
-        .to_vec()
+        .collect()
+}
+
+/// The arguments of the `wsl.exe` run that prints `<exe> --version` inside `distro`.
+fn wsl_version_argv(distro: &str, exe: &str) -> Vec<String> {
+    wsl_exec_argv(distro, exe, &["--version"])
 }
 
 /// The distro's home and the bridge's Linux path from `distro_target`'s one call: two lines, each non-empty.
@@ -1830,18 +1838,26 @@ mod tests {
     fn the_distro_version_run_drops_windows_path_entries_and_takes_the_program_as_dollar_zero() {
         let argv = wsl_version_argv("Ubuntu", "codex");
         assert_eq!(argv[..5], ["-d", "Ubuntu", "--exec", "sh", "-c"]);
-        // The program is the last argument, so `$0` in the script; it is not part of the script text.
-        assert_eq!(argv.last().map(String::as_str), Some("codex"));
-        assert_eq!(argv.len(), 7);
+        // The program follows the script, so it is `$0`; `--version` is `$@`. Neither is part of the script text.
+        assert_eq!(argv[6..], ["codex", "--version"]);
+        assert_eq!(argv.len(), 8);
         let script = &argv[5];
         assert!(script.contains("/mnt/*"));
-        assert!(script.ends_with(r#"exec "$0" --version"#));
+        assert!(script.ends_with(r#"exec "$0" "$@""#));
         // The Windows entries are dropped before the Linux install folders are put in front.
         assert!(script.find("/mnt/*") < script.find("$HOME/.local/bin"));
         for folder in ["/.npm-global/bin", "/.bun/bin", "/.nvm/versions/node/*/bin"] {
             assert!(script.contains(folder), "{folder}");
         }
         assert!(!script.contains("codex"));
+    }
+
+    #[test]
+    fn wsl_exec_argv_passes_the_args() {
+        let argv = wsl_exec_argv("Ubuntu", "codex", &["doctor", "--json"]);
+        assert_eq!(argv[..5], ["-d", "Ubuntu", "--exec", "sh", "-c"]);
+        assert_eq!(argv[5], WSL_SCRIPT);
+        assert_eq!(argv[6..], ["codex", "doctor", "--json"]);
     }
 
     #[test]

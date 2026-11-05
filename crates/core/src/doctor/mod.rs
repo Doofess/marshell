@@ -5,4 +5,4 @@ pub mod cli;
 pub mod state;
 
 pub use checks::{AgentFacts, FileState, RETENTION_OTHERS, display_name, issues, items};
-pub use state::{DoctorState, PendingFix, RunFlags};
+pub use state::{CliRun, DoctorState, PendingFix, RunFlags};

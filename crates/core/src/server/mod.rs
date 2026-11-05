@@ -205,6 +205,9 @@ struct Inner {
     /// Runs an agent's status command (`claude auth status`, `codex login status`) and returns its exit code and output.
     /// Tests swap it, so none runs a real CLI.
     status_runner: StatusRunner,
+    /// Runs one CLI doctor (`claude doctor`, `codex doctor --json`), on Windows or in a distro. Tests swap it, so none
+    /// runs a real CLI or `wsl.exe`.
+    doctor_runner: doctor::DoctorRunner,
     /// `~/.marshell/agents.json`, read again when the file's modified time changes. `AppState::agents` adds the shipped
     /// manifests to the valid entries.
     own_agents: crate::agents::own::OwnCache,
@@ -362,6 +365,7 @@ impl AppState {
             consoles: crate::outside::Consoles::default(),
             deepseek_key: || std::env::var(crate::agents::presets::DEEPSEEK_KEY_VAR).ok(),
             status_runner: |exe, args| crate::agents::run_capture(exe, args, std::time::Duration::from_secs(10)),
+            doctor_runner: doctor::run_doctor_command,
             own_agents: crate::agents::own::OwnCache::default(),
             own_agents_write: Mutex::new(()),
             own_tools: crate::tools::own::ToolsCache::default(),
@@ -689,6 +693,15 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_status_runner runs before the state is shared")
             .status_runner = run;
+        self
+    }
+    /// Replaces the run of a CLI doctor. Call it before the state is cloned. Unit tests only: `DoctorRunner` is not part
+    /// of the crate's public API.
+    #[cfg(test)]
+    pub(crate) fn with_doctor_runner(mut self, run: doctor::DoctorRunner) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_doctor_runner runs before the state is shared")
+            .doctor_runner = run;
         self
     }
     /// Replaces the `--version` reader the manifest agents' programs are checked with. Call it before the state is cloned.
@@ -1190,6 +1203,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/agents/{agent}/skill/plan", post(agents::skill_plan))
         .route("/v1/agents/{agent}/skill/remove-plan", post(agents::skill_remove_plan))
         .route("/v1/doctor/run", post(doctor::run))
+        .route("/v1/doctor/cli", post(doctor::cli_run))
         .route("/v1/doctor/report", get(doctor::report))
         .route("/v1/doctor/fix", post(doctor::fix))
         .route("/v1/doctor/fix/apply", post(doctor::fix_apply))

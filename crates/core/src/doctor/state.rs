@@ -1,7 +1,7 @@
 //! What the Doctor keeps between runs: the last report, whether a run is going, the summary the UI watches and the
 //! fix waiting to be applied. A run is the only writer of the report.
 
-use marshell_protocol::doctor::{DoctorLastFix, DoctorReport, DoctorSummary};
+use marshell_protocol::doctor::{DoctorItem, DoctorLastFix, DoctorReport, DoctorSummary};
 use std::sync::Mutex;
 use tokio::sync::watch;
 
@@ -26,11 +26,23 @@ pub struct RunFlags {
     pub again: bool,
 }
 
+/// The CLI doctors' run: whether one is going, and what the last one found. Every report carries `items`, so a
+/// background run keeps them. Never held across an `.await`.
+#[derive(Debug, Default, Clone)]
+pub struct CliRun {
+    pub running: bool,
+    pub items: Vec<DoctorItem>,
+    /// When the last CLI run ended; `None` before the first.
+    pub checked_at_ms: Option<u64>,
+}
+
 pub struct DoctorState {
     /// The last run's report; `None` until the first run ends.
     pub report: Mutex<Option<DoctorReport>>,
     /// Whether a run is going and whether another was asked for meanwhile. See `RunFlags`.
     pub run: Mutex<RunFlags>,
+    /// The CLI doctors' run and findings. See `CliRun`.
+    pub cli: Mutex<CliRun>,
     /// What the sidebar and the events socket show.
     pub summary: watch::Sender<DoctorSummary>,
     pub pending: Mutex<Option<PendingFix>>,
@@ -44,8 +56,10 @@ impl Default for DoctorState {
         Self {
             report: Mutex::new(None),
             run: Mutex::new(RunFlags::default()),
+            cli: Mutex::new(CliRun::default()),
             summary: watch::channel(DoctorSummary {
                 running: false,
+                cli_running: false,
                 issues: 0,
                 checked_at_ms: None,
             })

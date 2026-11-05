@@ -4,4 +4,8 @@ import type { DoctorItem } from "./DoctorItem";
 /**
  * The result of one run of the checks.
  */
-export type DoctorReport = { items: Array<DoctorItem>, checked_at_ms: number, duration_ms: number, };
+export type DoctorReport = { items: Array<DoctorItem>, checked_at_ms: number, duration_ms: number, 
+/**
+ * When the CLI doctors last ran in this run of the app; absent before the first CLI run ends.
+ */
+cli_checked_at_ms?: number, };

@@ -5,6 +5,10 @@
  */
 export type DoctorSummary = { running: boolean, 
 /**
+ * The CLI doctors are running.
+ */
+cli_running: boolean, 
+/**
  * Broken and Waste items in the last report.
  */
 issues: number, 

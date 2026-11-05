@@ -56,6 +56,11 @@ pub struct DoctorReport {
     pub checked_at_ms: u64,
     #[ts(type = "number")]
     pub duration_ms: u64,
+    /// When the CLI doctors last ran in this run of the app; absent before the first CLI run ends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    #[ts(type = "number")]
+    pub cli_checked_at_ms: Option<u64>,
 }
 
 /// What the sidebar and the tray show: whether a run is going and how many issues the last one found.
@@ -63,6 +68,9 @@ pub struct DoctorReport {
 #[ts(export)]
 pub struct DoctorSummary {
     pub running: bool,
+    /// The CLI doctors are running.
+    #[serde(default)]
+    pub cli_running: bool,
     /// Broken and Waste items in the last report.
     pub issues: u32,
     /// When the last run ended; absent before the first run ends.
@@ -144,6 +152,7 @@ mod tests {
     fn a_summary_round_trips() {
         let summary = DoctorSummary {
             running: true,
+            cli_running: true,
             issues: 3,
             checked_at_ms: Some(1_762_300_000_000),
         };
@@ -151,5 +160,6 @@ mod tests {
         assert_eq!(back, summary);
         let first: DoctorSummary = serde_json::from_str(r#"{"running":false,"issues":0}"#).unwrap();
         assert_eq!(first.checked_at_ms, None);
+        assert!(!first.cli_running);
     }
 }

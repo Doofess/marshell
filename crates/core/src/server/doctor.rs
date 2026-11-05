@@ -14,8 +14,10 @@ use crate::config::hash::{hash_bytes, hash_file};
 use crate::config::jsonc::{parse_problem, read_value};
 use crate::config::managed::{self, ManagedEntry};
 use crate::config::service::ApplyError;
+use crate::doctor::cli::{CLI_DOCTOR_TIMEOUT_SECS, Ran, claude_items, codex_items, no_doctor_item};
 use crate::doctor::{AgentFacts, FileState, PendingFix, checks};
 use crate::paths;
+use crate::profiles::detect::{agent_command, run_wsl_capture};
 use crate::store::{self, Versioned};
 use axum::Json;
 use axum::extract::State;
@@ -43,6 +45,109 @@ const AGENTS: [&str; 4] = ["claude", "codex", "antigravity", "qwen"];
 pub async fn run(State(st): State<AppState>) -> (StatusCode, Json<DoctorSummary>) {
     request_run(&st);
     (StatusCode::ACCEPTED, Json(st.doctor().summary.borrow().clone()))
+}
+
+/// `POST /v1/doctor/cli`: runs the CLI doctors, or joins the run that is going, and answers 202 with the summary.
+pub async fn cli_run(State(st): State<AppState>) -> (StatusCode, Json<DoctorSummary>) {
+    request_cli_run(&st);
+    (StatusCode::ACCEPTED, Json(st.doctor().summary.borrow().clone()))
+}
+
+/// One CLI doctor to run: on Windows `exe` is the resolved program, in a distro it is the Linux program name.
+pub(crate) struct DoctorCommand {
+    pub distro: Option<String>,
+    pub exe: PathBuf,
+    pub args: Vec<&'static str>,
+}
+
+/// Runs one CLI doctor and returns its exit code and output; `None` when it can't start or isn't done in time.
+pub(crate) type DoctorRunner = fn(&DoctorCommand) -> Ran;
+
+/// The default `DoctorRunner`: a process on Windows, `wsl.exe --exec` in a distro. Both give up after the timeout.
+pub(crate) fn run_doctor_command(cmd: &DoctorCommand) -> Ran {
+    let timeout = std::time::Duration::from_secs(CLI_DOCTOR_TIMEOUT_SECS);
+    match &cmd.distro {
+        None => crate::agents::run_capture(&cmd.exe, &cmd.args, timeout),
+        Some(distro) => {
+            let argv = super::agents::wsl_exec_argv(distro, &cmd.exe.to_string_lossy(), &cmd.args);
+            let args: Vec<&str> = argv.iter().map(String::as_str).collect();
+            run_wsl_capture(&args, timeout).map(|(code, out)| (code, String::from_utf8_lossy(&out).into_owned()))
+        }
+    }
+}
+
+/// Starts the CLI doctors unless they are going, in which case the request joins that run: nothing runs twice. The
+/// summary reads `cli_running` as soon as this returns. When they end, the findings are stored, a run of the checks
+/// is asked for, and only then does `cli_running` clear, so the page that reloads on it finds the new items. Needs a
+/// Tokio runtime.
+pub(crate) fn request_cli_run(st: &AppState) {
+    let doctor = st.doctor();
+    {
+        let mut cli = doctor.cli.lock().unwrap_or_else(|e| e.into_inner());
+        if cli.running {
+            return;
+        }
+        cli.running = true;
+        doctor.summary.send_modify(|s| s.cli_running = true);
+    }
+    let st = st.clone();
+    tokio::spawn(async move {
+        let reader = st.clone();
+        let found = tokio::task::spawn_blocking(move || cli_doctor_items(&reader)).await;
+        let doctor = st.doctor();
+        match found {
+            Ok(items) => {
+                let mut cli = doctor.cli.lock().unwrap_or_else(|e| e.into_inner());
+                cli.items = items;
+                cli.checked_at_ms = Some(now_ms());
+            }
+            // The old findings stay, and the flag still clears below.
+            Err(e) => tracing::warn!("the CLI doctors' run failed: {e}"),
+        }
+        // `running` goes true here, before `cli_running` goes false.
+        request_run(&st);
+        let mut cli = doctor.cli.lock().unwrap_or_else(|e| e.into_inner());
+        cli.running = false;
+        doctor.summary.send_modify(|s| s.cli_running = false);
+    });
+}
+
+/// The items of every CLI doctor: on Windows, then in each running managed distro. Runs processes, so callers go
+/// through `spawn_blocking`.
+fn cli_doctor_items(st: &AppState) -> Vec<DoctorItem> {
+    let mut out = Vec::new();
+    for agent in AGENTS {
+        if let Some(exe) = st.agent_exe_of(agent) {
+            out.extend(doctor_items_of(st, agent, None, exe));
+        }
+    }
+    let entries = managed_entries(st);
+    for distro in running_managed_distros(st, &entries) {
+        for agent in AGENTS {
+            if st.agent_version_in(&distro, agent).is_some() {
+                // The program's name in the distro, as the version check runs it.
+                let exe = PathBuf::from(agent_command(agent).unwrap_or(agent));
+                out.extend(doctor_items_of(st, agent, Some(&distro), exe));
+            }
+        }
+    }
+    out
+}
+
+fn doctor_items_of(st: &AppState, agent: &str, distro: Option<&str>, exe: PathBuf) -> Vec<DoctorItem> {
+    let run = |args: Vec<&'static str>| {
+        let cmd = DoctorCommand {
+            distro: distro.map(str::to_string),
+            exe,
+            args,
+        };
+        (st.0.doctor_runner)(&cmd)
+    };
+    match agent {
+        "claude" => claude_items(&run(vec!["doctor"]), distro),
+        "codex" => codex_items(&run(vec!["doctor", "--json"]), distro),
+        _ => vec![no_doctor_item(agent, distro)],
+    }
 }
 
 pub async fn report(State(st): State<AppState>) -> Response {
@@ -110,13 +215,20 @@ async fn run_once(st: &AppState, read: ReadFacts) -> Option<(u32, u64)> {
     let doctor = st.doctor();
     match facts {
         Ok(facts) => {
-            let items = checks::items(&facts.facts, &facts.stopped, banners_on(st));
+            let mut items = checks::items(&facts.facts, &facts.stopped, banners_on(st));
+            // The CLI doctors' last findings ride along in every report. The lock is released at once.
+            let (cli_items, cli_checked_at_ms) = {
+                let cli = doctor.cli.lock().unwrap_or_else(|e| e.into_inner());
+                (cli.items.clone(), cli.checked_at_ms)
+            };
+            items.extend(cli_items);
             let issues = checks::issues(&items);
             let now = now_ms();
             *doctor.report.lock().unwrap_or_else(|e| e.into_inner()) = Some(DoctorReport {
                 items,
                 checked_at_ms: now,
                 duration_ms: started.elapsed().as_millis() as u64,
+                cli_checked_at_ms,
             });
             Some((issues, now))
         }
@@ -199,17 +311,28 @@ fn managed_distros(st: &AppState, entries: &[ManagedEntry]) -> Vec<String> {
     st.distros_of_paths(entries.iter().map(|e| Path::new(&e.path)))
 }
 
-/// The facts of every running managed distro, and the managed distros that aren't running. `wsl.exe` is asked what
-/// runs only when there is a managed distro, and a distro that isn't running is never asked for its target nor read,
-/// since either would start it. Runs `wsl.exe` and reads shares, so callers go through `spawn_blocking`.
-fn distro_facts(st: &AppState, entries: &[ManagedEntry]) -> (Vec<AgentFacts>, Vec<String>) {
+/// The managed distros that are running, and those that aren't. `wsl.exe` is asked what runs only when there is a
+/// managed distro.
+fn partition_managed_distros(st: &AppState, entries: &[ManagedEntry]) -> (Vec<String>, Vec<String>) {
     let managed = managed_distros(st, entries);
     if managed.is_empty() {
         return (Vec::new(), Vec::new());
     }
     let running = (st.0.running_distros)();
     let is_running = |d: &String| running.iter().any(|r| r.to_lowercase() == d.to_lowercase());
-    let (up, stopped): (Vec<String>, Vec<String>) = managed.into_iter().partition(is_running);
+    managed.into_iter().partition(is_running)
+}
+
+/// The managed distros that are running: the only ones a CLI doctor may run in.
+fn running_managed_distros(st: &AppState, entries: &[ManagedEntry]) -> Vec<String> {
+    partition_managed_distros(st, entries).0
+}
+
+/// The facts of every running managed distro, and the managed distros that aren't running. `wsl.exe` is asked what
+/// runs only when there is a managed distro, and a distro that isn't running is never asked for its target nor read,
+/// since either would start it. Runs `wsl.exe` and reads shares, so callers go through `spawn_blocking`.
+fn distro_facts(st: &AppState, entries: &[ManagedEntry]) -> (Vec<AgentFacts>, Vec<String>) {
+    let (up, stopped) = partition_managed_distros(st, entries);
     let mut facts = Vec::new();
     for distro in &up {
         match st.distro_target(distro) {
@@ -1341,6 +1464,10 @@ mod tests {
 
     /// A state over folders under `root` with every path pinned, as the route tests do.
     fn pinned(root: &Path) -> AppState {
+        pinned_with(root, Vec::new())
+    }
+
+    fn pinned_with(root: &Path, profiles: Vec<marshell_protocol::api::Profile>) -> AppState {
         use crate::projects::{canonical, record};
         let root = canonical(root);
         let home = root.join("home");
@@ -1349,7 +1476,7 @@ mod tests {
             std::fs::create_dir_all(root.join(d)).unwrap();
         }
         record(&home, &project, 1).unwrap();
-        let st = AppState::new("t".into(), 1, Vec::new(), home.clone(), Vec::new())
+        let st = AppState::new("t".into(), 1, Vec::new(), home.clone(), profiles)
             .with_claude_settings(project.join("settings.json"))
             .with_codex_hooks(project.join("codex-home").join("hooks.json"))
             .with_agy_home(project.join("agy-home"))
@@ -1457,5 +1584,233 @@ mod tests {
         run_once(&st, Arc::new(facts_of)).await.expect("a run");
         let report = st.doctor().report.lock().unwrap().clone().unwrap();
         assert!(!report.items.iter().any(|i| i.id.starts_with("notify.")));
+    }
+
+    // The CLI doctors. Every runner is a pinned `fn`, so none runs a real CLI or `wsl.exe`; `pinned` finds every CLI at
+    // a path that doesn't exist.
+
+    const CODEX_FAIL: &str = r#"{"schemaVersion":1,"checks":{"auth":{"id":"auth","status":"fail","summary":"No login","remediation":"Run codex login"}}}"#;
+    const CODEX_OK: &str = r#"{"schemaVersion":1,"checks":{"auth":{"id":"auth","status":"ok","summary":"Logged in"}}}"#;
+    const CLAUDE_OK: &str = "No installation issues found.\n";
+
+    fn is_codex(cmd: &DoctorCommand) -> bool {
+        cmd.args.contains(&"--json")
+    }
+
+    fn claude_ok_codex_fails(cmd: &DoctorCommand) -> Ran {
+        Some(if is_codex(cmd) {
+            (1, CODEX_FAIL.to_string())
+        } else {
+            (0, CLAUDE_OK.to_string())
+        })
+    }
+
+    /// Ends when no run of either kind is going.
+    async fn wait_idle(st: &AppState) {
+        let mut rx = st.doctor().summary.subscribe();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            rx.wait_for(|s| !s.running && !s.cli_running),
+        )
+        .await
+        .expect("the runs end")
+        .unwrap();
+    }
+
+    fn last_report(st: &AppState) -> DoctorReport {
+        st.doctor().report.lock().unwrap().clone().expect("a report")
+    }
+
+    #[tokio::test]
+    async fn cli_doctors_fold_into_the_report() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path()).with_doctor_runner(claude_ok_codex_fails);
+        request_cli_run(&st);
+        wait_idle(&st).await;
+        let report = last_report(&st);
+        let broken = report
+            .items
+            .iter()
+            .find(|i| i.id == "cli.codex.auth")
+            .expect("the item");
+        assert_eq!(broken.group, DoctorGroup::Broken);
+        assert!(
+            !broken.fixable && !broken.open_agents && broken.path.is_none(),
+            "{broken:?}"
+        );
+        assert!(report.cli_checked_at_ms.is_some());
+        // Claude was fine; Antigravity and Qwen Code have no doctor.
+        assert!(!report.items.iter().any(|i| i.id == "cli.claude"));
+        assert!(report.items.iter().any(|i| i.id == "cli.antigravity"));
+        assert!(report.items.iter().any(|i| i.id == "cli.qwen"));
+        let summary = st.doctor().summary.borrow().clone();
+        assert_eq!(summary.issues, checks::issues(&report.items));
+        let without: Vec<DoctorItem> = report
+            .items
+            .iter()
+            .filter(|i| !i.id.starts_with("cli."))
+            .cloned()
+            .collect();
+        assert_eq!(summary.issues, checks::issues(&without) + 1);
+    }
+
+    fn claude_times_out(cmd: &DoctorCommand) -> Ran {
+        if is_codex(cmd) {
+            Some((0, CODEX_OK.to_string()))
+        } else {
+            None
+        }
+    }
+
+    #[tokio::test]
+    async fn a_cli_doctor_that_times_out_leaves_the_others() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path()).with_doctor_runner(claude_times_out);
+        request_cli_run(&st);
+        wait_idle(&st).await;
+        let report = last_report(&st);
+        let ids: Vec<&str> = report
+            .items
+            .iter()
+            .filter(|i| i.id.starts_with("cli."))
+            .map(|i| i.id.as_str())
+            .collect();
+        assert!(ids.contains(&"cli.claude"), "{ids:?}");
+        assert!(!ids.iter().any(|i| i.starts_with("cli.codex")), "{ids:?}");
+        let item = report.items.iter().find(|i| i.id == "cli.claude").unwrap();
+        assert!(item.title.contains("didn't give a result"), "{}", item.title);
+        assert!(report.cli_checked_at_ms.is_some());
+    }
+
+    static JOIN_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    static JOIN_HOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+    fn held_runner(cmd: &DoctorCommand) -> Ran {
+        use std::sync::atomic::Ordering;
+        JOIN_CALLS.fetch_add(1, Ordering::SeqCst);
+        while JOIN_HOLD.load(Ordering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        claude_ok_codex_fails(cmd)
+    }
+
+    #[tokio::test]
+    async fn a_second_request_joins_the_cli_run() {
+        use std::sync::atomic::Ordering;
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path()).with_doctor_runner(held_runner);
+        request_cli_run(&st);
+        assert!(st.doctor().summary.borrow().cli_running);
+        // Wait for the first CLI to be running, then ask again, twice.
+        while JOIN_CALLS.load(Ordering::SeqCst) == 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        request_cli_run(&st);
+        request_cli_run(&st);
+        assert!(st.doctor().summary.borrow().cli_running);
+        JOIN_HOLD.store(false, Ordering::SeqCst);
+        wait_idle(&st).await;
+        // One call per CLI that has a doctor, whatever the number of requests.
+        assert_eq!(JOIN_CALLS.load(Ordering::SeqCst), 2);
+        assert!(!st.doctor().summary.borrow().cli_running);
+        assert!(last_report(&st).items.iter().any(|i| i.id == "cli.codex.auth"));
+    }
+
+    #[tokio::test]
+    async fn cli_items_survive_a_background_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path()).with_doctor_runner(claude_ok_codex_fails);
+        request_cli_run(&st);
+        wait_idle(&st).await;
+        let before = last_report(&st);
+        request_run(&st);
+        wait_idle(&st).await;
+        let after = last_report(&st);
+        assert!(after.checked_at_ms >= before.checked_at_ms);
+        assert!(after.items.iter().any(|i| i.id == "cli.codex.auth"));
+        assert_eq!(after.cli_checked_at_ms, before.cli_checked_at_ms);
+    }
+
+    /// A thread watches the summary as fast as it can while the runs go on other threads. The first time it sees
+    /// neither flag set, the report must already hold the new items: reading the summary first and the report after
+    /// can only make the report newer, so a failure here is real.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn running_is_set_before_cli_running_clears() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path()).with_doctor_runner(claude_ok_codex_fails);
+        request_cli_run(&st);
+        let watched = st.clone();
+        let seen = std::thread::spawn(move || {
+            let started = Instant::now();
+            loop {
+                let s = watched.doctor().summary.borrow().clone();
+                if !s.running && !s.cli_running {
+                    let report = watched.doctor().report.lock().unwrap().clone();
+                    return report.is_some_and(|r| r.items.iter().any(|i| i.id == "cli.codex.auth"));
+                }
+                assert!(started.elapsed().as_secs() < 10, "the runs did not end");
+                std::thread::yield_now();
+            }
+        });
+        assert!(
+            seen.join().unwrap(),
+            "a frame with neither flag set came before the new items"
+        );
+    }
+
+    static SEEN: std::sync::Mutex<Vec<(Option<String>, String)>> = std::sync::Mutex::new(Vec::new());
+
+    fn recording_runner(cmd: &DoctorCommand) -> Ran {
+        SEEN.lock().unwrap().push((
+            cmd.distro.clone(),
+            cmd.exe.file_stem().unwrap().to_string_lossy().into_owned(),
+        ));
+        claude_ok_codex_fails(cmd)
+    }
+
+    #[tokio::test]
+    async fn cli_doctors_run_only_in_running_managed_distros() {
+        use marshell_protocol::api::{Profile, ShellFamily};
+        let profile = |name: &str| Profile {
+            id: name.to_lowercase(),
+            name: name.into(),
+            command: vec!["wsl.exe".into(), "-d".into(), name.into()],
+            family: ShellFamily::Wsl,
+            cwd: None,
+            env: Vec::new(),
+            shell_integration: false,
+            terminal_theme: None,
+            detected: true,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned_with(dir.path(), vec![profile("Ubuntu"), profile("Debian")])
+            .with_wsl_version(Some("1.0.0".into()))
+            .with_running_distros(|| vec!["Ubuntu".to_string()])
+            .with_doctor_runner(recording_runner);
+        // Marshell set up both distros; only Ubuntu runs.
+        let entry = |distro: &str| ManagedEntry {
+            path: format!(r"\\wsl.localhost\{distro}\home\u\.claude\settings.json"),
+            pointer: Some("/hooks/Stop/-".into()),
+            changeset_id: "c".into(),
+            applied_ms: 1,
+        };
+        crate::config::managed::save(&st.0.home, &[entry("Ubuntu"), entry("Debian")]).unwrap();
+
+        request_cli_run(&st);
+        wait_idle(&st).await;
+        let seen = SEEN.lock().unwrap().clone();
+        assert!(seen.contains(&(Some("Ubuntu".into()), "claude".into())), "{seen:?}");
+        assert!(seen.contains(&(Some("Ubuntu".into()), "codex".into())), "{seen:?}");
+        assert!(seen.contains(&(None, "claude".into())), "{seen:?}");
+        assert!(!seen.iter().any(|(d, _)| d.as_deref() == Some("Debian")), "{seen:?}");
+        let report = last_report(&st);
+        assert!(report.items.iter().any(|i| i.id == "cli.codex.auth@Ubuntu"));
+        assert!(report.items.iter().any(|i| i.id == "cli.antigravity@Ubuntu"));
+        assert!(
+            !report
+                .items
+                .iter()
+                .any(|i| i.id.ends_with("@Debian") && i.id.starts_with("cli."))
+        );
     }
 }
