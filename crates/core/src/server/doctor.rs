@@ -415,8 +415,10 @@ fn notify_facts(agent: &str, hooks_path: &Path, hooks: Option<&serde_json::Value
         return n;
     }
     if agent == "codex" {
+        // Codex has no Notification hook event, so a group under it never runs: only its notify command counts.
         n.file = hooks_path.with_file_name("config.toml");
         n.command = codex_notify_command(&n.file);
+        return n;
     }
     n.hook_commands = hooks.map(notification_hooks).unwrap_or_default();
     n
@@ -1376,12 +1378,13 @@ mod tests {
         s.hooks_path = Some(hooks.to_string_lossy().into_owned());
         s.settings_state = SettingsState::Ok;
         let f = facts_from(&st, "codex", s.clone(), &[]);
+        // Codex has no Notification hook event (docs/research/codex-cli.md), so a group under it never runs.
         assert_eq!(
             f.notify,
             checks::NotifyFacts {
                 file: config.clone(),
                 command: Some("a.exe x".into()),
-                hook_commands: vec!["toast.exe".into()],
+                hook_commands: Vec::new(),
             }
         );
         // A config.toml that doesn't parse gives no command.
@@ -1719,6 +1722,10 @@ mod tests {
         let st = pinned_with(dir.path(), vec![profile("Ubuntu"), profile("Debian")])
             .with_wsl_version(Some("1.0.0".into()))
             .with_running_distros(|| vec!["Ubuntu".to_string()])
+            .with_distro_target(Some(super::super::DistroTarget {
+                home: dir.path().join("ubuntu-home"),
+                bridge: "/mnt/c/marshell-hook.exe".into(),
+            }))
             .with_doctor_runner(recording_runner);
         // Marshell set up both distros; only Ubuntu runs.
         let entry = |distro: &str| ManagedEntry {

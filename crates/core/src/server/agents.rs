@@ -346,6 +346,10 @@ impl AppState {
             self.0.config.record_distro_home(distro, &target.home, true);
             return Ok(target);
         }
+        // A unit test that gets here would start the developer's real distro and read its files.
+        if cfg!(test) {
+            panic!("a test reached wsl.exe for {distro}; pin it with with_distro_target");
+        }
         // The bridge's path goes as an argument ($1), never into the script.
         let bridge_exe = paths::bridge_exe(&self.0.home);
         let bridge_exe = bridge_exe.to_str().ok_or_else(unreachable)?;

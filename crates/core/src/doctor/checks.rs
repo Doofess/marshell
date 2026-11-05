@@ -296,9 +296,6 @@ fn cli_items(f: &AgentFacts, banners_on: bool, out: &mut Vec<DoctorItem>) {
                 format!("{cli}{place} runs your own Notification hook"),
                 format!("It runs {}. {twice}", n.hook_commands.join("; ")),
             ));
-            if f.agent == "codex" {
-                i.id = format!("notify.codex.hooks{suffix}");
-            }
             i.cannot_fix = Some("Marshell doesn't change your hooks.".into());
             found.push(i);
         }
@@ -722,15 +719,15 @@ mod tests {
     }
 
     #[test]
-    fn codex_notify_and_hooks_are_info() {
+    fn codex_notify_is_info() {
         let mut f = facts("codex");
         f.notify = NotifyFacts {
             file: PathBuf::from("C:/h/config.toml"),
             command: Some("a.exe x".into()),
-            hook_commands: vec!["toast.exe".into()],
+            hook_commands: Vec::new(),
         };
         let v = items(&[f], &[], true);
-        assert_eq!(v.len(), 2, "{v:?}");
+        assert_eq!(v.len(), 1, "{v:?}");
         check(
             &v[0],
             "notify.codex",
@@ -740,17 +737,7 @@ mod tests {
             "After each turn it runs a.exe x. If that shows a desktop notification, you get two.",
             Some("Marshell doesn't change your notify command."),
         );
-        check(
-            &v[1],
-            "notify.codex.hooks",
-            DoctorGroup::Info,
-            false,
-            "Codex runs your own Notification hook",
-            "It runs toast.exe. If that shows a desktop notification, you get two.",
-            Some("Marshell doesn't change your hooks."),
-        );
         assert_eq!(v[0].path.as_deref(), Some("C:/h/config.toml"));
-        assert_eq!(v[1].path.as_deref(), Some("C:/h/config.toml"));
     }
 
     #[test]
@@ -789,8 +776,7 @@ mod tests {
         let mut c = facts("codex");
         c.distro = Some("Ubuntu".into());
         c.notify.command = Some("a".into());
-        c.notify.hook_commands = vec!["b".into()];
         let ids: Vec<_> = items(&[c], &[], true).into_iter().map(|i| i.id).collect();
-        assert_eq!(ids, ["notify.codex@Ubuntu", "notify.codex.hooks@Ubuntu"]);
+        assert_eq!(ids, ["notify.codex@Ubuntu"]);
     }
 }

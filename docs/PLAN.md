@@ -1402,6 +1402,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
           - So it gets no item and no fix, like the terminal-sequence settings below.
         - Every `notify.*` item appears only while Marshell's own banners are on.
         - Codex's `notify` command, and Notification hooks the person added, are Info items that name the command. They are never edited.
+          - Amended 2026-11-05 after the final review: Codex has no Notification hook event (`docs/research/codex-cli.md`), so a group under it never runs and gets no item. Claude Code and Qwen Code have the event.
         - Terminal-sequence settings get no item: Claude Code's `preferredNotifChannel`, Qwen Code's `general.terminalBell` and Codex's `tui.notifications`.
      5. WSL follows 7a decision 7. The CLI doctors and the duplicate checks run in each distro that `managed.json` names, only while it is running, and only for the CLIs installed there. A stopped distro gets "Not checked: <distro> isn't running."
 8. **Editors + instruction library** (wired per CLI with a content hash and drift check; settings raw mode validated against the SchemaStore schema), smart and native recaps, diff drawer, step timeline, saved prompts, broadcast, and Extensions (moved from phase 6 by slice 6a decision 2).

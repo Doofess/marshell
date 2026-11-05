@@ -2,6 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Amended after the build (2026-11-05).** What shipped differs from this plan in two places. Read these first:
+> - **Antigravity has no fix.** Its binary has no desktop notification code, so its `notifications` setting stays in the terminal. It gets no item and no fix (decision 4 amendment in `docs/PLAN.md` §9). Ignore every `notify.antigravity` line below: the table row, the `fix_of` arm, its tests, and Task 5's toast check.
+> - **Codex gets no `notify.codex.hooks`.** Codex has no Notification hook event (`docs/research/codex-cli.md`), so a group under it never runs. Codex reports only its `notify` command.
+
 **Goal:** The Doctor page gets a "Run CLI doctors" button. It runs `claude doctor` and `codex doctor --json` on Windows and in running managed WSL distros, and folds each problem they report into the three groups as a report-only item. Marshell's own background checks gain duplicate-notification items, and Antigravity's `notifications: true` can be fixed with preview and undo.
 
 **Architecture:**
