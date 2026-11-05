@@ -22,11 +22,13 @@
   padding: var(--space-1) var(--space-3);
   cursor: pointer;
 }
+/* The one row is the overlay's height, so the sheet's `max-block-size: 100%` caps it and only its body scrolls. */
 .live-doctor__sheet {
   position: absolute;
   inset: 0;
   display: grid;
-  place-items: center;
+  grid-template-rows: minmax(0, 1fr);
+  place-items: safe center;
   padding: var(--space-4);
   background: color-mix(in srgb, var(--bg-base) 70%, transparent);
 }
