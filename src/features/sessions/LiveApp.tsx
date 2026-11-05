@@ -45,6 +45,7 @@ import { osOfPlatform } from "../../lib/keymap";
 import { paletteSessions } from "../palette/sessions";
 import { LiveHistory } from "../history/LiveHistory";
 import { LiveDoctor } from "../doctor/LiveDoctor";
+import { shownIssues } from "../doctor/doctorUi";
 import { LiveSettings } from "../settings/LiveSettings";
 import { closesSettings, isTextEntry, freshSettingsStart, paletteSection } from "../settings/settingsRouting";
 import { COMPANY_NAMES, type CompanyAgent, type SettingsSection } from "../settings/settingsSections";
@@ -535,7 +536,11 @@ export function LiveApp() {
     const id = setTimeout(() => setPlanNow(Date.now()), Math.max(0, plan.until - Date.now()) + 1000);
     return () => clearTimeout(id);
   }, [plan?.until]);
-  const footer = useMemo(() => (plan || doctor ? { ...(plan ? { planPct: plan.pct, fiveHourPct: plan.pct } : {}), ...(doctor ? { doctorIssues: doctor.issues } : {}) } : null), [plan, doctor]);
+  const doctorIssues = shownIssues(doctor);
+  const footer = useMemo(
+    () => (plan || doctorIssues !== undefined ? { ...(plan ? { planPct: plan.pct, fiveHourPct: plan.pct } : {}), ...(doctorIssues !== undefined ? { doctorIssues } : {}) } : null),
+    [plan, doctorIssues],
+  );
   const taskRows = useMemo(() => markTasks(nameAgents(rows, infos, catalog?.agents), infos, tasks), [rows, infos, tasks, catalog]);
   const sidebarRows = useRowFlash(taskRows);
   // While the list is unknown the palette keeps Review for the session in focus, so choosing it can load the list again.
@@ -1442,7 +1447,7 @@ export function LiveApp() {
       announce("Couldn't change the pause. Try again.");
     }
   }, [announce]);
-  const trayState = useMemo(() => (os ? { os, sessions: traySessions(entries, rows), paused, doctorIssues: doctor?.issues ?? null, departures: true } : null), [os, entries, rows, paused, doctor]);
+  const trayState = useMemo(() => (os ? { os, sessions: traySessions(entries, rows), paused, doctorIssues: shownIssues(doctor) ?? null, departures: true } : null), [os, entries, rows, paused, doctor]);
   useTray(trayState);
   // A tray menu choice. The shell has already brought the window forward for the ones that need it.
   useTrayActions((action: TrayAction) => {
