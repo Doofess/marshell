@@ -274,7 +274,7 @@ fn skill_rules(doc: &DocumentMut) -> Vec<SkillRule> {
 }
 
 /// A path compared the way the rules compare it: `\` as `/`, without case.
-fn same_path(path: &str) -> String {
+pub(crate) fn same_path(path: &str) -> String {
     path.replace('\\', "/").to_lowercase()
 }
 

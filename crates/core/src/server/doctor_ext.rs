@@ -3,6 +3,7 @@
 //! CLI's file rules live in its `agents/<cli>/extensions.rs`.
 
 use super::AppState;
+use crate::agents::codex::extensions::same_path;
 use crate::config::hash::hash_bytes;
 use crate::config::jsonc::read_value;
 use crate::doctor::AgentFacts;
@@ -378,11 +379,15 @@ fn codex_edit(file: &Path, group: &[&Switch], homes: &[PathBuf]) -> Result<FileE
                 }
                 match skills.get_mut("config") {
                     Some(Item::ArrayOfTables(rules)) => {
-                        // A rule for this skill that is there already is switched off, not repeated.
-                        if let Some(rule) = rules
-                            .iter_mut()
-                            .find(|r| r.get("path").and_then(Item::as_str) == Some(path.as_str()))
-                        {
+                        // Codex uses the last rule that matches the skill, by path or by name. The last rule, when it
+                        // is this skill's by path, is switched off; otherwise one is added after the rest, so a later
+                        // rule that turns the skill on can't win.
+                        let last = rules.len().checked_sub(1);
+                        if let Some(rule) = last.and_then(|i| rules.get_mut(i)).filter(|r| {
+                            r.get("path")
+                                .and_then(Item::as_str)
+                                .is_some_and(|p| same_path(p) == same_path(&path))
+                        }) {
                             rule.insert("enabled", value(false));
                             continue;
                         }
@@ -393,6 +398,18 @@ fn codex_edit(file: &Path, group: &[&Switch], homes: &[PathBuf]) -> Result<FileE
                     }
                     // `config = [{ path = ".." }]` written inline.
                     Some(Item::Value(toml_edit::Value::Array(rules))) => {
+                        let last = rules.len().checked_sub(1);
+                        if let Some(rule) = last
+                            .and_then(|i| rules.get_mut(i))
+                            .and_then(|v| v.as_inline_table_mut())
+                            && rule
+                                .get("path")
+                                .and_then(toml_edit::Value::as_str)
+                                .is_some_and(|p| same_path(p) == same_path(&path))
+                        {
+                            rule.insert("enabled", false.into());
+                            continue;
+                        }
                         let mut rule = InlineTable::new();
                         rule.insert("path", path.as_str().into());
                         rule.insert("enabled", false.into());
@@ -526,6 +543,68 @@ mod tests {
         assert_eq!(rules[1]["enabled"].as_bool(), Some(false));
         // One key, quoted: not `my` holding `server`.
         assert!(doc["mcp_servers"].get("my").is_none(), "{content}");
+    }
+
+    /// The rules of `skills.config` after turning off the skill at `skill` in a config.toml holding `text`.
+    fn rules_after(text: &str, skill: &Path) -> Vec<toml::Table> {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("config.toml");
+        write(&file, text);
+        let out = edits(
+            &[Switch::CodexSkill {
+                file,
+                skill: skill.to_path_buf(),
+            }],
+            &[],
+        )
+        .unwrap();
+        let EditOp::ReplaceText { content } = &out[0].op else {
+            panic!("not a ReplaceText: {:?}", out[0].op);
+        };
+        let doc: toml::Table = content.parse().unwrap();
+        doc["skills"]["config"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r.as_table().unwrap().clone())
+            .collect()
+    }
+
+    #[test]
+    fn a_later_rule_for_the_skill_still_wins_so_the_fix_appends_one() {
+        let skill = PathBuf::from("C:/h/.codex/skills/nodesc/SKILL.md");
+        let path = crate::agents::codex::extensions::rule_path(&skill);
+        let tables = format!(
+            "[[skills.config]]\npath = '{path}'\nenabled = true\n\n[[skills.config]]\nname = \"nodesc\"\nenabled = true\n"
+        );
+        let inline = format!(
+            "[skills]\nconfig = [{{ path = '{path}', enabled = true }}, {{ name = \"nodesc\", enabled = true }}]\n"
+        );
+        for text in [tables, inline] {
+            let rules = rules_after(&text, &skill);
+            assert_eq!(rules.len(), 3, "{text}");
+            let last = rules.last().unwrap();
+            assert_eq!(last["path"].as_str(), Some(path.as_str()), "{text}");
+            assert_eq!(last["enabled"].as_bool(), Some(false), "{text}");
+            // The person's own rules are left as they were.
+            assert_eq!(rules[0]["enabled"].as_bool(), Some(true), "{text}");
+            assert_eq!(rules[1]["enabled"].as_bool(), Some(true), "{text}");
+        }
+    }
+
+    #[test]
+    fn the_last_rule_for_the_path_is_switched_not_repeated() {
+        let skill = PathBuf::from("C:/h/.codex/skills/nodesc/SKILL.md");
+        let path = crate::agents::codex::extensions::rule_path(&skill);
+        // Written with the other slash and case, which Codex's rules ignore.
+        let spelled = path.replace('/', "\\").to_uppercase();
+        let tables = format!("[[skills.config]]\npath = '{spelled}'\nenabled = true\n");
+        let inline = format!("[skills]\nconfig = [{{ path = '{path}', enabled = true }}]\n");
+        for text in [tables, inline] {
+            let rules = rules_after(&text, &skill);
+            assert_eq!(rules.len(), 1, "{text}");
+            assert_eq!(rules[0]["enabled"].as_bool(), Some(false), "{text}");
+        }
     }
 
     #[test]
