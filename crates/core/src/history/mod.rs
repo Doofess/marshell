@@ -104,6 +104,9 @@ pub fn sidecar_allowed_in(agent: &str, path: &str, session_id: &str, distro: Opt
     if agent == "qwen" {
         return qwen_transcript_allowed(path, session_id, distro);
     }
+    if agent == "copilot" {
+        return copilot_transcript_allowed(path, session_id, distro);
+    }
     if agent != "codex" {
         return transcript_allowed(path, session_id, distro);
     }
@@ -155,6 +158,17 @@ fn qwen_transcript_allowed(path: &str, session_id: &str, distro: Option<&str>) -
             parts.as_slice(),
             [.., "projects", folder, "chats", name] if !folder.is_empty() && *name == file
         )
+}
+
+/// True when `path` is absolute, local, free of `..`, and ends in Copilot CLI's event log for this session:
+/// `session-state/<id>/events.jsonl`, with `/` or `\` between the parts. The id is a UUID. Any `distro` is refused:
+/// Copilot in WSL is 6n2. Makes no filesystem call.
+fn copilot_transcript_allowed(path: &str, session_id: &str, distro: Option<&str>) -> bool {
+    if distro.is_some() || !is_uuid(session_id) || !readable_place(path, None) {
+        return false;
+    }
+    let parts: Vec<&str> = path.split(['/', '\\']).collect();
+    parts.iter().all(|part| *part != "..") && parts.ends_with(&["session-state", session_id, "events.jsonl"])
 }
 
 /// Reads the conversation in `text`, the decoded transcript of `agent`'s session. None for an agent whose
@@ -393,6 +407,64 @@ mod tests {
         // The id is a UUID.
         for id in ["", "abc-1", "../x", "x; calc"] {
             assert!(!sidecar_allowed("qwen", &qwen_path('/', id), id), "{id:?}");
+        }
+    }
+
+    fn copilot_path(sep: char, id: &str) -> String {
+        ["C:", "Users", "u", ".copilot", "session-state", id, "events.jsonl"].join(&sep.to_string())
+    }
+
+    #[test]
+    fn a_copilot_transcript_path_is_allowed() {
+        for sep in ['/', '\\'] {
+            assert!(sidecar_allowed("copilot", &copilot_path(sep, ID), ID), "{sep}");
+        }
+        let upper = ID.replace('0', "A");
+        assert!(sidecar_allowed("copilot", &copilot_path('/', &upper), &upper));
+        // A COPILOT_HOME can be anywhere local.
+        assert!(sidecar_allowed(
+            "copilot",
+            &format!(r"D:\cp\session-state\{ID}\events.jsonl"),
+            ID
+        ));
+        // WSL is 6n2: no distro is admitted.
+        let share = format!(r"\\wsl.localhost\Ubuntu\home\u\.copilot\session-state\{ID}\events.jsonl");
+        assert!(!sidecar_allowed_in("copilot", &share, ID, Some("Ubuntu")));
+        assert!(!sidecar_allowed_in("copilot", &share, ID, None));
+        assert!(!sidecar_allowed_in(
+            "copilot",
+            &copilot_path('/', ID),
+            ID,
+            Some("Ubuntu")
+        ));
+    }
+
+    #[test]
+    fn a_copilot_path_outside_session_state_or_with_dotdot_is_refused() {
+        let good = copilot_path('/', ID);
+        let bad = [
+            good.replace("/session-state/", "/session/"),
+            good.replace("events.jsonl", "events.json"),
+            good.replace("events.jsonl", "other.jsonl"),
+            // The id in the path is another session's.
+            copilot_path('/', "00000000-0000-4000-8000-000000000002"),
+            good.replace("/session-state/", "/session-state/../session-state/"),
+            good.replace("/.copilot/", "/../.copilot/"),
+            // The session's folder, which is what a status line reports, is not the file.
+            good.replace("/events.jsonl", ""),
+            // A remote path, a relative path and a trailing part.
+            format!("//host/share{}", &good[good.find("/.copilot").unwrap()..]),
+            format!(r"\\?\{}", good.replace('/', r"\")),
+            good[good.find("session-state").unwrap()..].to_string(),
+            format!("{good}/more"),
+            String::new(),
+        ];
+        for path in &bad {
+            assert!(!sidecar_allowed("copilot", path, ID), "{path}");
+        }
+        // The id is a UUID.
+        for id in ["", "abc-1", "../x", "x; calc"] {
+            assert!(!sidecar_allowed("copilot", &copilot_path('/', id), id), "{id:?}");
         }
     }
 }

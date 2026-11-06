@@ -170,7 +170,7 @@ export function LiveApp() {
   const refreshSetup = useCallback(() => {
     if (!endpoint) return;
     readFound().then(setFound, () => {});
-    for (const agent of ["claude", "codex", "antigravity", "qwen"] as const) {
+    for (const agent of ["claude", "codex", "antigravity", "qwen", "copilot"] as const) {
       getSetup(endpoint, agent).then(
         (s) => {
           setHooks((h) => ({ ...h, [agent]: s.found ? s.hooks : undefined }));

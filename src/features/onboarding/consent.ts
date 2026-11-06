@@ -1,7 +1,7 @@
 import type { Capability, CliId, Detection } from "./types";
 export * from "./types";
 
-export const CLI_NAME: Record<CliId, string> = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity CLI", qwen: "Qwen Code" };
+export const CLI_NAME: Record<CliId, string> = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity CLI", qwen: "Qwen Code", copilot: "Copilot CLI" };
 
 const no = (reason: string) => ({ available: false, reason, entries: 0 });
 
@@ -16,6 +16,7 @@ export const CAPABILITIES: Record<CliId, Record<Capability, { available: boolean
   codex: { status: { available: true, entries: 7 }, approve: { available: true, entries: 1 }, statusline: no("Codex has no status line to chain."), skill: { available: true, entries: 0 } },
   antigravity: { status: { available: true, entries: 4 }, approve: { available: true, entries: 1 }, statusline: { available: true, entries: 0 }, skill: { available: true, entries: 0 } },
   qwen: { status: { available: true, entries: 8 }, approve: { available: true, entries: 1 }, statusline: { available: true, entries: 0 }, skill: { available: true, entries: 0 } },
+  copilot: { status: { available: true, entries: 9 }, approve: no("Copilot CLI asks in its own terminal. Its hook can't tell which requests Copilot would allow by itself."), statusline: { available: true, entries: 0 }, skill: { available: true, entries: 0 } },
 };
 
 export function entryCount(cli: CliId, on: Record<Capability, boolean>): number {

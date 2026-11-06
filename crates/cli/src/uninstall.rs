@@ -7,6 +7,8 @@
 use marshell_core::agents::antigravity::hooks as agy_hooks;
 use marshell_core::agents::claude::hooks::{remove_plan, settings_path};
 use marshell_core::agents::codex::hooks as codex_hooks;
+use marshell_core::agents::copilot;
+use marshell_core::agents::copilot::hooks as copilot_hooks;
 use marshell_core::agents::distro as distro_hooks;
 use marshell_core::agents::qwen::hooks as qwen_hooks;
 use marshell_core::agents::skill;
@@ -246,7 +248,7 @@ pub fn run(
             .map(|changes| (text, changes))
             .map_err(|e| e.to_string())
     });
-    // Codex's, Antigravity's or Qwen Code's hooks could not be planned, so their entries may still point at the bridge.
+    // Codex's, Antigravity's, Qwen Code's or Copilot CLI's hooks could not be planned, so their entries may still point at the bridge.
     let mut hooks_failed = false;
     // A skill file could not be read: the removal goes on without it, but the exit code says it was left.
     let mut skill_unread = false;
@@ -317,6 +319,41 @@ pub fn run(
                 extras.push(qwen_plan.changes);
             } else if text.is_some() {
                 let _ = writeln!(out, "Marshell has no hooks in {}.", qwen_file.display());
+            }
+        }
+        Err(e) => {
+            let _ = writeln!(out, "{e}");
+            hooks_failed = true;
+        }
+    }
+    // Copilot CLI's hooks file, settings.json and chain, the same way: a problem is reported and the rest goes on.
+    // A `marshell.json` the person wrote counts as a problem too, because it may hold Marshell's entries as well. A
+    // bridge that is gone makes Copilot refuse every tool call, so bin stays (slice 6n1 decision 13).
+    let copilot_dir = copilot::home(env, user_home);
+    let copilot_hooks_file = copilot_hooks::hooks_path(&copilot_dir);
+    let copilot_settings_file = copilot_hooks::settings_path(&copilot_dir);
+    let copilot = read_text(&copilot_hooks_file).and_then(|hooks_text| {
+        let settings_text = read_text(&copilot_settings_file)?;
+        let chain = paths::statusline_chain(home, "copilot");
+        let chain_text = read_text(&chain)?;
+        copilot_hooks::remove_plan(&copilot_hooks::Files {
+            hooks_path: &copilot_hooks_file,
+            hooks_text: hooks_text.as_deref(),
+            settings_path: &copilot_settings_file,
+            settings_text: settings_text.as_deref(),
+            chain_path: &chain,
+            chain_text: chain_text.as_deref(),
+        })
+        .map(|plan| (hooks_text, plan))
+        .map_err(|e| e.to_string())
+    });
+    match copilot {
+        Ok((text, copilot_plan)) => {
+            plan.statusline_left |= copilot_plan.statusline_left;
+            if !copilot_plan.changes.edits.is_empty() {
+                extras.push(copilot_plan.changes);
+            } else if text.is_some() {
+                let _ = writeln!(out, "Marshell has no hooks in {}.", copilot_hooks_file.display());
             }
         }
         Err(e) => {
@@ -473,7 +510,7 @@ pub fn run(
         if hooks_failed && bin.exists() {
             let _ = writeln!(
                 out,
-                "The folder {} was left in place, because Codex's, Antigravity's or Qwen Code's hooks may still point at it.",
+                "The folder {} was left in place, because Codex's, Antigravity's, Qwen Code's or Copilot CLI's hooks may still point at it.",
                 bin.display()
             );
         }
@@ -744,11 +781,15 @@ mod tests {
     }
 
     fn run_with(f: &Fixture, input: &str, yes: bool) -> (i32, String) {
+        run_with_env(f, input, yes, &no_env)
+    }
+
+    fn run_with_env(f: &Fixture, input: &str, yes: bool, env: &dyn Fn(&str) -> Option<String>) -> (i32, String) {
         let mut out = Vec::new();
         let code = run(
             &f.home,
             &f.user_home,
-            &no_env,
+            env,
             &no_wsl(),
             &mut input.as_bytes(),
             &mut out,
@@ -988,6 +1029,113 @@ mod tests {
         assert!(marshell_core::paths::bridge_exe(&f.home).exists());
         assert!(out.contains("left in place"), "{out}");
         assert_ne!(code, 0, "{out}");
+    }
+
+    /// Installs Copilot CLI's hooks and status line under `<user home>/.copilot` through the real plan and config
+    /// service, over `original` as its `settings.json`. Returns the hooks file and the settings file.
+    fn install_copilot(f: &Fixture, original: &str) -> (PathBuf, PathBuf) {
+        use marshell_core::agents::copilot::hooks as ch;
+        let dir = f.user_home.join(".copilot");
+        let (hooks, settings) = (ch::hooks_path(&dir), ch::settings_path(&dir));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&settings, original).unwrap();
+        let want = HookPlanRequest {
+            status: true,
+            statusline: true,
+            approve: false,
+            skill: false,
+            distro: None,
+        };
+        let chain = paths::statusline_chain(&f.home, "copilot");
+        let changes = ch::install_plan(
+            &ch::Files {
+                hooks_path: &hooks,
+                hooks_text: None,
+                settings_path: &settings,
+                settings_text: Some(original),
+                chain_path: &chain,
+                chain_text: None,
+            },
+            &Bridge::local(&f.home),
+            &want,
+        )
+        .unwrap();
+        let service = ConfigService::new(f.home.clone());
+        let preview = service.preview(changes);
+        assert!(preview.can_apply, "{preview:?}");
+        let request = ApplyRequest {
+            changeset_id: preview.changeset_id.clone(),
+            expected_hashes: preview
+                .files
+                .iter()
+                .map(|f| ExpectedHash {
+                    path: f.path.clone(),
+                    hash: f.before_hash.clone(),
+                })
+                .collect(),
+        };
+        service.apply(&request, 5).unwrap();
+        assert!(std::fs::read_to_string(&hooks).unwrap().contains("mshl1"));
+        (hooks, settings)
+    }
+
+    #[test]
+    fn uninstall_removes_copilots_hooks_and_restores_its_status_line() {
+        let f = installed(ORIGINAL);
+        let mine = "{\r\n  \"theme\": \"dark\",\r\n  \"statusLine\": {\"type\": \"command\", \"command\": \"my-copilot-line\", \"padding\": 2}\r\n}\r\n";
+        let (hooks, settings) = install_copilot(&f, mine);
+        let during = std::fs::read_to_string(&settings).unwrap();
+        assert!(!during.contains("my-copilot-line"), "{during}");
+        let (code, out) = run_with(&f, "y\n", false);
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(out.matches("Apply these changes?").count(), 1, "{out}");
+        assert!(out.contains("marshell.json"), "{out}");
+        assert!(!hooks.exists(), "{out}");
+        assert_eq!(std::fs::read_to_string(&settings).unwrap(), mine);
+        assert!(!paths::statusline_chain(&f.home, "copilot").exists());
+        assert_eq!(std::fs::read_to_string(&f.settings).unwrap(), ORIGINAL);
+        assert!(!marshell_core::paths::bin_dir(&f.home).exists(), "{out}");
+    }
+
+    #[test]
+    fn uninstall_follows_copilot_home_from_the_env_it_is_given() {
+        let f = installed(ORIGINAL);
+        let (hooks, _) = install_copilot(&f, "{}\n");
+        // COPILOT_HOME names another folder, so the file under `<home>/.copilot` is not looked at.
+        let elsewhere = f.user_home.join("elsewhere");
+        let env = |k: &str| (k == "COPILOT_HOME").then(|| elsewhere.to_string_lossy().into_owned());
+        let (code, out) = run_with_env(&f, "y\n", false, &env);
+        assert_eq!(code, 0, "{out}");
+        assert!(hooks.exists(), "{out}");
+    }
+
+    #[test]
+    fn uninstall_keeps_the_bridge_while_copilots_hooks_may_remain() {
+        // A file that does not parse, then one the person wrote: each time bin stays and the note names Copilot CLI.
+        for (text, says) in [
+            ("{ \"hooks\": [oops\n", "does not parse"),
+            (
+                "{\"version\":1,\"hooks\":{\"preToolUse\":[{\"type\":\"command\",\"exec\":\"mine.exe\",\"args\":[]}]}}\n",
+                "holds hooks Marshell didn't write",
+            ),
+        ] {
+            let f = installed(ORIGINAL);
+            let hooks = marshell_core::agents::copilot::hooks::hooks_path(&f.user_home.join(".copilot"));
+            std::fs::create_dir_all(hooks.parent().unwrap()).unwrap();
+            std::fs::write(&hooks, text).unwrap();
+            let (code, out) = run_with(&f, "y\n", false);
+            assert!(out.contains(&*hooks.to_string_lossy()) && out.contains(says), "{out}");
+            // Claude's removal went on, and the person's file is as they left it.
+            assert_eq!(out.matches("Apply these changes?").count(), 1, "{out}");
+            assert_eq!(std::fs::read_to_string(&f.settings).unwrap(), ORIGINAL);
+            assert_eq!(std::fs::read_to_string(&hooks).unwrap(), text);
+            assert!(marshell_core::paths::bridge_exe(&f.home).exists(), "{out}");
+            assert!(
+                out.contains("Codex's, Antigravity's, Qwen Code's or Copilot CLI's hooks may still point at it."),
+                "{out}"
+            );
+            assert_ne!(code, 0, "{out}");
+        }
     }
 
     #[test]
@@ -1347,7 +1495,10 @@ mod tests {
         let (code, out) = run_with(&f, "", true);
         assert_eq!(code, 1, "{out}");
         assert!(out.contains(&format!("Couldn't read {}", path.display())), "{out}");
-        assert!(!out.contains("Codex's, Antigravity's or Qwen Code's"), "{out}");
+        assert!(
+            !out.contains("Codex's, Antigravity's, Qwen Code's or Copilot CLI's"),
+            "{out}"
+        );
         assert!(marshell_core::paths::bin_dir(&f.home).exists(), "{out}");
     }
 
@@ -1378,7 +1529,10 @@ mod tests {
         let (path, _) = broken_codex(&f);
         let (code, out) = run_with(&f, "", true);
         assert_eq!(code, 1, "{out}");
-        assert!(out.contains("Codex's, Antigravity's or Qwen Code's"), "{out}");
+        assert!(
+            out.contains("Codex's, Antigravity's, Qwen Code's or Copilot CLI's"),
+            "{out}"
+        );
         assert!(path.exists());
     }
 

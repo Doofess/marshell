@@ -77,6 +77,23 @@ describe("Lane (live entries)", () => {
     expect(h).toContain("Has a question");
     expect(h).toContain("Needs you · 1");
   });
+  it("shows a terminal-only entry whose session needs permission as a permission, with the row's phrase", () => {
+    const asking: ApprovalRequest = { ...waitingRow, id: "terminal-t3", tab: "t3", session: { name: "infra", agent: "copilot", number: 3 }, asks: "permission", detail: { kind: "question", question: "Wants to run `New-Item a.txt`", options: [] } };
+    const h = html([asking]);
+    expect(h).toContain('aria-label="infra Wants to run `New-Item a.txt` 1m. Needs permission."');
+    expect(h).toContain('data-kind="needs-permission"');
+    expect(h).not.toContain("Has a question");
+    // With no phrase it still says what it waits for.
+    expect(html([{ ...asking, detail: { kind: "question", question: "", options: [] } }])).toContain('aria-label="infra Needs permission 1m. Needs permission."');
+  });
+  it("shows two sessions asking in their own terminals as two rows, with no room kept for a card none of them has", () => {
+    const other: ApprovalRequest = { ...waitingRow, id: "terminal-t4", tab: "t4", waitingMs: 30_000, session: { name: "api", agent: "copilot", number: 4 } };
+    // 740 px is the live check's sidebar: 40% is 296 px, too short for a card and a row, room enough for two rows.
+    const h = html([waitingRow, other], 740);
+    expect((h.match(/class="lane-row"/g) ?? []).length).toBe(2);
+    expect(h).not.toContain("lane__more");
+    expect(h).toContain(`block-size:${28 + 2 * 36}px`);
+  });
   it("counts entries, so two requests from one tab are two", () => {
     expect(html([APPROVALS.safeBash, { ...APPROVALS.safeBash, id: "second" }])).toContain("Needs you · 2");
   });

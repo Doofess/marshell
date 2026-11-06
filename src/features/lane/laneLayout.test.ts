@@ -87,6 +87,11 @@ describe("layout (review focus 3): the lane never scrolls", () => {
     expect(l.hiddenCount).toBe(12 - l.visible);
     expect(l.clipped).toBe(true);
   });
+  it("keeps no room for a card when no card can be targeted: sessions asking in their own terminals are one-liners", () => {
+    expect(laneLayout(2, 740, false)).toEqual({ height: LANE.header + 2 * LANE.collapsed, clipped: false, hiddenCount: 0, expanded: false, visible: 2 });
+    const l = laneLayout(12, 400, false);
+    expect(l).toEqual({ height: LANE.header + 3 * LANE.collapsed, clipped: true, hiddenCount: 9, expanded: false, visible: 3 });
+  });
   it("keeps the header for nonsense heights, hiding every request behind the +N button", () => {
     for (const h of [0, Number.NaN, -5]) {
       const l = laneLayout(3, h);

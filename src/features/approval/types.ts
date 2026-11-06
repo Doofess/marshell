@@ -38,6 +38,8 @@ export type ApprovalRequest = {
   tab: string;
   /** A session needing you with no held request (the CLI asks in its own terminal): a one-liner that jumps to the session, never the full card. */
   terminalOnly?: boolean;
+  /** What a terminal-only entry's session waits for, from its row's status; its `detail` carries only the row's phrase. */
+  asks?: "permission" | "question";
   /** An answer is on its way: the card is inert. */
   busy?: boolean;
   /** One-shot: the receipt is leaving (140 ms). */

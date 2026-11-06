@@ -9,6 +9,9 @@ describe("resumeCommand", () => {
   it("qwen --continue", () => {
     expect(resumeCommand("qwen", "pwsh")).toBe("qwen --continue");
   });
+  it("copilot --continue", () => {
+    expect(resumeCommand("copilot", "pwsh")).toBe("copilot --continue");
+  });
   it("is agy --continue for Antigravity", () => {
     expect(resumeCommand("antigravity", "pwsh")).toBe("agy --continue");
   });

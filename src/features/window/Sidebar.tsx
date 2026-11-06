@@ -3,7 +3,7 @@ import { ContextRing } from "../../components/ContextRing/ContextRing";
 import { AuxGlyph, StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import type { ApprovalRequest } from "../approval/types";
 import { Lane } from "../lane/Lane";
-import { laneLayout, pending } from "../lane/laneLayout";
+import { laneLayout, nextWaiting, pending } from "../lane/laneLayout";
 import { SessionRow, type RowDrag } from "../sidebar/SessionRow";
 import { dragOver, dragStarted, dropOrder, edgeAt, rowIdAt, type DragState } from "../sidebar/reorder";
 import { inRenameBox, menuStillValid, sameMenuItems } from "../sidebar/rowMenu";
@@ -248,7 +248,7 @@ export function Sidebar({
       rename={r.id === renamingId && onRename && onRenameCancel ? { onCommit: (name) => onRename(r.id, name), onCancel: onRenameCancel } : undefined}
     />
   );
-  const lane = laneLayout(pending(requests).length, height);
+  const lane = laneLayout(pending(requests).length, height, nextWaiting(requests)?.kind === "card");
   const panel = shell ? shellLayout(height, lane.height, shell.collapsed, ROW_HEIGHT, shell.forceOpen) : null;
   const style = { inlineSize: width, ...(panel ? { "--shell-h": `${panel.height}px` } : {}), ...(footer ? {} : { "--footer-h": "0px" }) } as CSSProperties;
   return (

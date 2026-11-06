@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AGY_SETUP, CODEX_SETUP, PREVIEW, QWEN_SETUP, SETUP } from "../agents/fixtures";
+import { AGY_SETUP, CODEX_SETUP, COPILOT_SETUP, PREVIEW, QWEN_SETUP, SETUP } from "../agents/fixtures";
 import { onboardingQueue, OnboardingView, type OnboardingState } from "./LiveOnboarding";
 
 const none = () => {};
@@ -101,6 +101,10 @@ describe("OnboardingView: Codex", () => {
   it("Qwen's consent comes after Antigravity's", () => {
     const order = onboardingQueue(SETUP, CODEX_SETUP, AGY_SETUP, QWEN_SETUP).map((s) => s.agent);
     expect(order).toEqual(["claude", "codex", "antigravity", "qwen"]);
+  });
+  it("Copilot's consent comes after Qwen's", () => {
+    const order = onboardingQueue(SETUP, CODEX_SETUP, AGY_SETUP, QWEN_SETUP, COPILOT_SETUP).map((s) => s.agent);
+    expect(order).toEqual(["claude", "codex", "antigravity", "qwen", "copilot"]);
   });
   it("lists Qwen Code from its own setup, then its card names its settings file and has no bulk allow", () => {
     const list = view({ kind: "detected", setup: SETUP, found: [{ agent: "qwen", found: true, exe_path: "C:/bin/qwen.cmd" }], qwen: QWEN_SETUP });

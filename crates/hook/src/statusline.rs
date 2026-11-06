@@ -123,7 +123,8 @@ fn shell_for(agent: &str, env: Env) -> (shell::ShellCmd, bool) {
         };
         return (sh, false);
     }
-    if cfg!(windows) && agent == "qwen" {
+    // Copilot CLI runs a status line the same way (slice 6n1, research Q8).
+    if cfg!(windows) && (agent == "qwen" || agent == "copilot") {
         let sh = shell::ShellCmd {
             program: PathBuf::from("cmd.exe"),
             args_before_command: vec!["/d".into(), "/s".into(), "/c".into()],
@@ -292,6 +293,26 @@ mod tests {
         let env = move |k: &str| (k == "PATH").then(|| path.clone());
         let out = String::from_utf8(run(Some(home.path()), "antigravity", b"{}", &env, false)).unwrap();
         assert!(out.trim_end().to_ascii_lowercase().ends_with("cmd.exe"), "{out:?}");
+    }
+
+    /// Copilot CLI runs a status line the way Qwen does (research Q8): `cmd.exe /d /s /c "<command>"`, verbatim.
+    #[cfg(windows)]
+    #[test]
+    fn copilot_runs_its_chained_line_through_cmd_on_windows() {
+        let home = tempfile::tempdir().unwrap();
+        let chain = home.path().join("agents").join("copilot");
+        std::fs::create_dir_all(&chain).unwrap();
+        std::fs::write(
+            chain.join("statusline-chain.json"),
+            r#"{"statusLine":{"type":"command","command":"echo \"a b\" %COMSPEC%"}}"#,
+        )
+        .unwrap();
+        let path = std::env::var("PATH").unwrap_or_default();
+        let env = move |k: &str| (k == "PATH").then(|| path.clone());
+        let out = String::from_utf8(run(Some(home.path()), "copilot", b"{}", &env, false)).unwrap();
+        let out = out.trim_end().to_ascii_lowercase();
+        assert!(out.starts_with("\"a b\" "), "{out:?}");
+        assert!(out.ends_with("cmd.exe"), "{out:?}");
     }
 
     /// Qwen runs a status line with Node's `exec`: `cmd.exe /d /s /c "<command>"`, with the command verbatim, so

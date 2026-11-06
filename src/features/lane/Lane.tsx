@@ -29,7 +29,7 @@ export function Lane({
   const target = next?.kind === "card" ? next.request : undefined;
   const ordered = target ? [target, ...waiting.filter((r) => r !== target)] : waiting;
   const settled = requests.filter((r) => r.state.phase !== "pending");
-  const layout = laneLayout(ordered.length, sidebarHeight);
+  const layout = laneLayout(ordered.length, sidebarHeight, target !== undefined);
   const heading = laneHeading(ordered.length);
   const shown = ordered.slice(0, layout.visible);
   return (

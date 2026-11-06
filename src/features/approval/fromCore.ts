@@ -68,6 +68,7 @@ export function laneEntries(views: PermissionView[], rows: RowModel[], now: numb
       risk: { level: "normal" },
       state: { phase: "pending" },
       terminalOnly: true,
+      asks: row.status === "needs-permission" ? "permission" : "question",
     });
   }
   // Array.sort is stable, so equal waits keep the core's order.

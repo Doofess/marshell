@@ -7,7 +7,7 @@ import { sessions, type SessionCommandPurpose } from "../../lib/api/sessions";
 // The shipped manifests the core reads, so a shipped agent's command can never drift from what the core runs.
 import shipped from "../../../crates/core/src/agents/manifests.json";
 
-const isCliId = (agent: string): agent is CliId => agent === "claude" || agent === "codex" || agent === "antigravity" || agent === "qwen";
+const isCliId = (agent: string): agent is CliId => agent === "claude" || agent === "codex" || agent === "antigravity" || agent === "qwen" || agent === "copilot";
 
 type ShippedManifest = { id: string; commands: string[]; continue?: string[]; modes: Partial<Record<Mode, string[]>> };
 const MANIFESTS = shipped as ShippedManifest[];
@@ -31,7 +31,7 @@ function manifestResume(agent: string, mode?: Mode): string | undefined {
 export function resumeCommand(agent: string | null, profileName: string, mode?: Mode): string {
   if (agent === null) return profileName;
   if (!isCliId(agent)) return manifestResume(agent, mode) ?? agent; // An agent with no manifest here: the core answers for it in its own words, so show the name.
-  const base = { claude: "claude --continue", codex: "codex resume --last", antigravity: "agy --continue", qwen: "qwen --continue" }[agent];
+  const base = { claude: "claude --continue", codex: "codex resume --last", antigravity: "agy --continue", qwen: "qwen --continue", copilot: "copilot --continue" }[agent];
   // The mode's own flags, as `mode_args` gives them; a mode the CLI can't have adds nothing.
   const flags = mode === undefined ? [] : (launchArgs(agent, mode, false)?.args ?? []);
   return [base, ...flags].join(" ");

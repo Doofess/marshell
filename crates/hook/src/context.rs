@@ -11,8 +11,18 @@ pub fn accepted(agent: &str, answer: &[u8]) -> bool {
     match agent {
         "claude" | "codex" | "qwen" => hook_specific_output(&answer),
         "antigravity" => inject_steps(&answer),
+        "copilot" => additional_context(&answer),
         _ => false,
     }
+}
+
+/// `{"additionalContext":<string>}` and no other key (Copilot CLI's `userPromptSubmitted` shape, research Q7).
+fn additional_context(answer: &Value) -> bool {
+    answer
+        .as_object()
+        .filter(|top| top.len() == 1)
+        .and_then(|top| top.get("additionalContext"))
+        .is_some_and(Value::is_string)
 }
 
 /// `{"injectSteps":[{"ephemeralMessage":<string>}]}`: one step with one key, and no other key at the top.
@@ -89,6 +99,26 @@ mod tests {
     fn qwen_takes_the_additional_context_shape() {
         assert!(accepted("qwen", NOTE));
         assert!(!accepted("qwen", AGY));
+    }
+
+    #[test]
+    fn copilot_takes_only_top_level_additional_context() {
+        assert!(accepted("copilot", br#"{"additionalContext":"x"}"#));
+        for answer in [
+            NOTE,
+            &br#"{"additionalContext":1}"#[..],
+            br#"{"additionalContext":null}"#,
+            br#"{"additionalContext":"x","decision":"block"}"#,
+            br#"{"injectSteps":[]}"#,
+            br#"{}"#,
+            br#"[]"#,
+            b"not json",
+            b"",
+        ] {
+            assert!(!accepted("copilot", answer), "{}", String::from_utf8_lossy(answer));
+        }
+        // Each agent takes only its own shape.
+        assert!(!accepted("claude", br#"{"additionalContext":"x"}"#));
     }
 
     #[test]

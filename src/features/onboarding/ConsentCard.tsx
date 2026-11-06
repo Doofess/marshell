@@ -97,6 +97,10 @@ export function ConsentCard({
           {offer.includes("skill") && (d.skill === "unavailable" ? d.skillProblem !== undefined && <p className="consent__meta" dir="auto">{d.skillProblem}</p> : <p className="consent__meta">Teaches {name} the marshell command: list, send, new and focus.</p>)}
           {d.cli === "antigravity" && offer.includes("approve") && <p className="consent__meta">Cards for risky commands in Bypass. In other modes Antigravity asks in its terminal.</p>}
           {statuslinePreset && <p className="consent__meta">{`Your ${name} status line is a preset, so Marshell leaves it as it is. Rows show context % once per turn.`}</p>}
+          {/* Copilot names the session that goes on after /clear only in its status line (slice 6n1 decision 15). */}
+          {d.cli === "copilot" && offer.includes("statusline") && on.status && !on.statusline && d.hasOwnStatusLine !== false && !statuslinePreset && (
+            <p className="consent__meta">With your own status line left as it is, a Copilot CLI row reads Ended after /clear until your next prompt.</p>
+          )}
           {d.skipsAll && (
             <p className="consent__handover">
               {name} is set to skip every permission prompt (<code>{d.skipsAll.setting}</code>), so Marshell can&apos;t ask you about anything. Turning it off lets each

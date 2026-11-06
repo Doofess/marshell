@@ -1,0 +1,1 @@
+{"sessionId":"00000000-0000-4000-8000-000000000001","timestamp":1793980896347,"cwd":"C:\\dev\\scratch-6n1-lc-1\\proj","message":"Run command: New-Item -ItemType File a.txt","title":"Permission needed","hook_event_name":"Notification","notification_type":"permission_prompt"}

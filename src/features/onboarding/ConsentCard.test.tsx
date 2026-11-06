@@ -50,6 +50,15 @@ describe("ConsentCard", () => {
     expect(h).toContain("removes the hook entries it added and puts your own status line back from statusline-chain.json and deletes that file");
     expect(h).toContain("Skip: use limited status");
   });
+  it("says what Copilot CLI's row loses when the person keeps their own status line as it is", () => {
+    const copilot = { ...CONSENT.claude, detection: { ...CONSENT.claude.detection, cli: "copilot" as const } };
+    const note = "With your own status line left as it is, a Copilot CLI row reads Ended after /clear until your next prompt.";
+    const card = (scenario: typeof CONSENT.claude, value: typeof on) => renderToStaticMarkup(<ConsentCard scenario={scenario} on={value} />);
+    expect(card(copilot, { ...on, approve: false, statusline: false })).toContain(note);
+    expect(card(copilot, { ...on, approve: false })).not.toContain(note);
+    expect(card(copilot, { ...on, approve: false, status: false, statusline: false })).not.toContain(note);
+    expect(card(CONSENT.claude, { ...on, statusline: false })).not.toContain(note);
+  });
   it("has a switch for each capability and explains an unavailable one", () => {
     const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.codex} on={on} />);
     expect(h.match(/role="switch"/g)).toHaveLength(4);

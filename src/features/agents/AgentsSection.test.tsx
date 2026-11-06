@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { AgentSetup } from "../../generated/AgentSetup";
 import { AgentsSectionView, escapeLeavesPanel, SETUP_UNREADABLE, type Panel } from "./AgentsSection";
-import { AGY_SETUP, CODEX_SETUP, PREVIEW, QWEN_SETUP, SETUP } from "./fixtures";
+import { AGY_SETUP, CODEX_SETUP, PREVIEW, COPILOT_SETUP, QWEN_SETUP, SETUP } from "./fixtures";
 import { nameContainsLabel } from "../../lib/labelInName";
 
 const none = () => {};
@@ -25,7 +25,7 @@ describe("AgentsSectionView switches", () => {
 
 describe("AgentsSectionView skill row", () => {
   const skillHandlers = { install: none, remove: none, apply: none, toggleDiff: none, reload: none, cancel: none };
-  const skills = { claude: { flow: null, on: skillHandlers }, codex: { flow: null, on: skillHandlers }, antigravity: { flow: null, on: skillHandlers }, qwen: { flow: null, on: skillHandlers } };
+  const skills = { claude: { flow: null, on: skillHandlers }, codex: { flow: null, on: skillHandlers }, antigravity: { flow: null, on: skillHandlers }, qwen: { flow: null, on: skillHandlers }, copilot: { flow: null, on: skillHandlers } };
   const withSkills = (setup: AgentSetup) => renderToStaticMarkup(<AgentsSectionView setup={setup} panel={{ kind: "list" }} liveStatus={true} skills={skills} {...handlers} />);
   it("shows the skill row for a CLI that is found", () => {
     expect(withSkills(SETUP)).toContain('data-agent-skill="claude"');
@@ -408,7 +408,7 @@ describe("AgentsSectionView with a CLI missing on Windows", () => {
 describe("AgentsSectionView: Qwen Code", () => {
   const qs = { flow: null, on: { install: none, remove: none, apply: none, toggleDiff: none, reload: none, cancel: none } };
   const withQwen = (qwen: AgentSetup | null, panel: Panel = { kind: "list" }, skillsOn = false) =>
-    renderToStaticMarkup(<AgentsSectionView setup={SETUP} qwen={qwen} panel={panel} liveStatus={true} qwenLiveStatus={true} {...(skillsOn ? { skills: { claude: qs, codex: qs, antigravity: qs, qwen: qs } } : {})} {...handlers} />);
+    renderToStaticMarkup(<AgentsSectionView setup={SETUP} qwen={qwen} panel={panel} liveStatus={true} qwenLiveStatus={true} {...(skillsOn ? { skills: { claude: qs, codex: qs, antigravity: qs, qwen: qs, copilot: qs } } : {})} {...handlers} />);
   const section = (h: string) => h.slice(h.indexOf('aria-label="Qwen Code"'));
 
   it("lists Qwen Code with its hook state and a Set up button", () => {
@@ -429,5 +429,34 @@ describe("AgentsSectionView: Qwen Code", () => {
   });
   it("the Hooks off panel is titled for Qwen Code", () => {
     expect(withQwen({ ...QWEN_SETUP, hooks: "installed" }, { kind: "off", agent: "qwen", removal: null, busy: false })).toContain("Turn Qwen Code hooks off");
+  });
+});
+
+describe("AgentsSectionView: Copilot CLI", () => {
+  const cs = { flow: null, on: { install: none, remove: none, apply: none, toggleDiff: none, reload: none, cancel: none } };
+  const withCopilot = (copilot: AgentSetup | null, panel: Panel = { kind: "list" }, skillsOn = false) =>
+    renderToStaticMarkup(<AgentsSectionView setup={SETUP} copilot={copilot} panel={panel} liveStatus={true} copilotLiveStatus={true} {...(skillsOn ? { skills: { claude: cs, codex: cs, antigravity: cs, qwen: cs, copilot: cs } } : {})} {...handlers} />);
+  const section = (h: string) => h.slice(h.indexOf('aria-label="Copilot CLI"'));
+
+  it("lists Copilot CLI with its hook state and a Set up button", () => {
+    const h = section(withCopilot(COPILOT_SETUP));
+    expect(h).toContain("version 1.0.106");
+    expect(h).toContain("Not set up. Sessions show limited status.");
+    expect(h).toContain(">Set up</button>");
+    expect(h).toContain("Live status");
+    expect(withCopilot(null)).not.toContain('aria-label="Copilot CLI"');
+    expect(withCopilot({ ...COPILOT_SETUP, found: false })).not.toContain('aria-label="Copilot CLI"');
+    const on = section(withCopilot({ ...COPILOT_SETUP, hooks: "installed" }));
+    expect(on).toContain("Hooks on in C:/h/.copilot/hooks/marshell.json.");
+    expect(on).not.toContain(">Set up</button>");
+  });
+  it("Copilot's skill row says the skill isn't available for Copilot CLI yet", () => {
+    const h = section(withCopilot(COPILOT_SETUP, { kind: "list" }, true));
+    expect(h).toContain('data-agent-skill="copilot"');
+    expect(h).toContain("Marshell has no skill for Copilot CLI yet.");
+    expect(h).not.toContain("Install the marshell skill</button>");
+  });
+  it("the Hooks off panel is titled for Copilot CLI", () => {
+    expect(withCopilot({ ...COPILOT_SETUP, hooks: "installed" }, { kind: "off", agent: "copilot", removal: null, busy: false })).toContain("Turn Copilot CLI hooks off");
   });
 });

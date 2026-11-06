@@ -39,10 +39,10 @@ const TOOL_IDS: &[&str] = &[
 ];
 
 /// Ids of agents that have a Rust adapter.
-const ADAPTER_IDS: &[&str] = &["claude", "codex", "antigravity", "qwen"];
+const ADAPTER_IDS: &[&str] = &["claude", "codex", "antigravity", "qwen", "copilot"];
 
 /// Program names of the adapter agents.
-const ADAPTER_EXES: &[&str] = &["claude", "codex", "agy", "qwen"];
+const ADAPTER_EXES: &[&str] = &["claude", "codex", "agy", "qwen", "copilot"];
 
 /// Ids and program names an own agent may not take.
 pub struct Reserved {
@@ -90,7 +90,7 @@ impl Agents {
         Self(Arc::new(all))
     }
 
-    /// The manifest of a manifest agent. None for the adapters (claude, codex, antigravity, qwen) and unknown ids.
+    /// The manifest of a manifest agent. None for the adapters (claude, codex, antigravity, qwen, copilot) and unknown ids.
     pub fn manifest(&self, id: &str) -> Option<&AgentManifest> {
         self.0.iter().find(|m| m.id == id)
     }
@@ -223,10 +223,7 @@ mod tests {
     #[test]
     fn shipped_manifests_parse_and_have_unique_ids() {
         let ids: Vec<&str> = shipped().iter().map(|m| m.id.as_str()).collect();
-        assert_eq!(
-            ids,
-            ["copilot", "cursor", "opencode", "amp", "grok", "kimi", "aider", "crush"]
-        );
+        assert_eq!(ids, ["cursor", "opencode", "amp", "grok", "kimi", "aider", "crush"]);
     }
 
     #[test]
@@ -285,6 +282,24 @@ mod tests {
         assert_eq!(
             Agents::shipped().agent_of_package("@qwen-code/qwen-code").as_deref(),
             Some("qwen")
+        );
+    }
+
+    #[test]
+    fn an_own_agent_may_not_take_copilot() {
+        // Copilot CLI has a Rust adapter now: its id and its program are taken as Claude's are.
+        assert_eq!(
+            reason_of(own("copilot")),
+            "The id \"copilot\" is taken by a built-in agent."
+        );
+        let mut by_exe = own("my-copilot");
+        by_exe.exe_names = vec!["copilot".into()];
+        assert!(!reason_of(by_exe).is_empty());
+        assert!(Agents::shipped().manifest("copilot").is_none());
+        assert_eq!(Agents::shipped().agent_of_exe("copilot").as_deref(), Some("copilot"));
+        assert_eq!(
+            Agents::shipped().agent_of_package("@github/copilot").as_deref(),
+            Some("copilot")
         );
     }
 

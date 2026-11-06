@@ -4,10 +4,10 @@ import { describe, expect, it } from "vitest";
 import { parseUnifiedDiff } from "../../components/DiffView/diff";
 import type { AgentSetup } from "../../generated/AgentSetup";
 import { consentProps } from "../agents/agentsState";
-import { PREVIEW, QWEN_SETUP } from "../agents/fixtures";
+import { COPILOT_SETUP, PREVIEW, QWEN_SETUP } from "../agents/fixtures";
 import { ConsentCard } from "./ConsentCard";
 import { Detected } from "./Detected";
-import { canEdit, CAPABILITIES, consentHeadline, entryCount, removalCopy, type Capability, type Detection } from "./consent";
+import { canEdit, CAPABILITIES, CLI_NAME, consentHeadline, entryCount, removalCopy, type Capability, type Detection } from "./consent";
 import { emptyStatesFor } from "./emptyStates";
 import { CONSENT, DETECTIONS } from "./fixtures";
 
@@ -308,5 +308,32 @@ describe("empty states take their shortcut from the keymap", () => {
     expect(win.body).toBe("Start one with Ctrl+Shift+T.");
     expect(mac.body).not.toContain("Ctrl");
     expect(emptyStatesFor("windows").find((e) => e.id === "departures-empty")!.body).toBe("Start one with Ctrl+Shift+T.");
+  });
+});
+
+describe("Copilot CLI's consent card", () => {
+  const card = (setup: AgentSetup) => {
+    const { allow: _allow, done: _done, ...props } = consentProps(setup, { preview: PREVIEW, open: false, busy: false });
+    return renderToStaticMarkup(createElement(ConsentCard, props));
+  };
+  it('Copilot\'s card is titled "Set up Copilot CLI hooks" and its removal uses the removal copy', () => {
+    const h = card(COPILOT_SETUP);
+    expect(h).toContain('data-agent="copilot"');
+    expect(h).toContain(">Copilot CLI</h3>");
+    expect(h).toContain("puts your own status line back from statusline-chain.json and deletes that file");
+    expect(h).toContain("Keep my status line working");
+    expect(h).not.toContain("Allow all");
+    expect(CLI_NAME.copilot).toBe("Copilot CLI");
+  });
+  it("Copilot's approve switch is off and disabled, with its reason", () => {
+    const h = card(COPILOT_SETUP);
+    expect(h).toContain("Copilot CLI asks in its own terminal. Its hook can&#x27;t tell which requests Copilot would allow by itself.");
+    expect(CAPABILITIES.copilot.approve).toMatchObject({ available: false, entries: 0 });
+    expect(CAPABILITIES.copilot.skill).toEqual({ available: true, entries: 0 });
+  });
+  it("Copilot's status adds 9 entries", () => {
+    expect(entryCount("copilot", ALL)).toBe(9);
+    expect(entryCount("copilot", { ...ALL, status: false })).toBe(0);
+    expect(card(COPILOT_SETUP)).toContain("Add 9 hook entries");
   });
 });

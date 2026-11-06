@@ -2,7 +2,7 @@ use super::AppState;
 use crate::agents::claude::compact;
 use crate::agents::claude::status::{fold_event, fold_statusline_with_window, mode_of};
 use crate::agents::common::Gate;
-use crate::agents::{antigravity, codex, qwen};
+use crate::agents::{antigravity, codex, copilot, qwen};
 use crate::history::recorder::schedule_copy;
 use crate::hooks::holds::Outcome;
 use crate::hooks::log::HookEventRecord;
@@ -84,6 +84,15 @@ pub async fn post(
         // neither.
         object.remove("submitted_prompt");
         object.remove("last_assistant_message");
+        prompt = match object.remove("prompt") {
+            Some(serde_json::Value::String(text)) => Some(text),
+            _ => None,
+        };
+    } else if agent == "copilot"
+        && let Some(object) = json.as_object_mut()
+    {
+        // `initialPrompt` repeats the first prompt of a session: the core keeps neither it nor `prompt`.
+        object.remove("initialPrompt");
         prompt = match object.remove("prompt") {
             Some(serde_json::Value::String(text)) => Some(text),
             _ => None,
@@ -183,6 +192,8 @@ pub async fn post(
     let starts_prompt = match agent.as_str() {
         "claude" | "codex" => event == Some("UserPromptSubmit"),
         "qwen" => event == Some("UserPromptSubmit") && prompt.as_deref().is_some_and(|text| !text.is_empty()),
+        // Autopilot's continuations are prompts of Copilot's own text, so each one counts.
+        "copilot" => event == Some("userPromptSubmitted") && prompt.as_deref().is_some_and(|text| !text.is_empty()),
         "antigravity" => {
             event == Some("PreInvocation") && json.get("invocationNum").and_then(serde_json::Value::as_u64) == Some(0)
         }
@@ -197,13 +208,22 @@ pub async fn post(
     // The lookup runs beside the fold and the history (the history's index lock can be held by a search) under what
     // is left of the budget, so a slow fold can't make the answer later than the bridge waits.
     let fold = async {
-        if matches!(agent.as_str(), "claude" | "codex" | "antigravity" | "qwen")
+        if matches!(agent.as_str(), "claude" | "codex" | "antigravity" | "qwen" | "copilot")
             && let Some(tab) = tab.as_deref()
         {
+            // Copilot's session id changes inside one process (`/clear`): see `copilot_session`.
+            let session = if agent == "copilot" {
+                copilot_session(&st, role, tab, &json).await
+            } else {
+                CopilotSession::Current
+            };
+            if session == CopilotSession::Stale {
+                return;
+            }
             if !left_wsl {
                 fold_live_with(&st, &agent, role, tab, &json, at_ms, held).await;
             }
-            if role == HookRole::Event && st.registry().is_open(tab) {
+            if (role == HookRole::Event || session == CopilotSession::Newer) && st.registry().is_open(tab) {
                 record_history(&st, &agent, tab, &json, at_ms).await;
             }
         }
@@ -224,6 +244,7 @@ pub async fn post(
                 "codex" => codex::context_output(&found.note),
                 "antigravity" => antigravity::context_output(&found.note),
                 "qwen" => qwen::context_output(&found.note),
+                "copilot" => copilot::context_output(&found.note),
                 _ => crate::agents::claude::context_output(&found.note),
             };
             return Ok(Json(output).into_response());
@@ -240,6 +261,45 @@ pub async fn post(
         return Ok(hold_permission(&st, Some(tab), agent, json).await);
     }
     Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// What a Copilot body says about the tab's session. `/clear` ends the old id and goes on under a new one in the same
+/// process, and its status line names the new id before any event does.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CopilotSession {
+    /// Nothing special: fold it as any other body.
+    Current,
+    /// A status line that names a session the tab is not linked to: link the tab to it.
+    Newer,
+    /// A `sessionEnd` of a session that is not the tab's latest linked one (a late one from `/clear`): change nothing.
+    Stale,
+}
+
+/// Compares the session `body` names with the tab's latest linked Copilot session. The index is a file, so it is read
+/// off the async workers. With history off, or no session linked yet, nothing is stale.
+async fn copilot_session(st: &AppState, role: HookRole, tab: &str, body: &serde_json::Value) -> CopilotSession {
+    let text = |key: &str| body.get(key).and_then(serde_json::Value::as_str);
+    let (named, ending) = match role {
+        HookRole::Statusline => (text("session_id"), false),
+        HookRole::Event => (text("sessionId"), text("hook_event_name") == Some("sessionEnd")),
+        _ => return CopilotSession::Current,
+    };
+    let Some(named) = named.map(str::to_string) else {
+        return CopilotSession::Current;
+    };
+    let (history, tab) = (st.history(), tab.to_string());
+    let latest = tokio::task::spawn_blocking(move || history.latest_for_tab_of(&tab, "copilot"))
+        .await
+        .ok()
+        .flatten()
+        .map(|meta| meta.session_id);
+    match latest {
+        Some(latest) if latest == named => CopilotSession::Current,
+        Some(_) if ending => CopilotSession::Stale,
+        _ if ending => CopilotSession::Current,
+        _ if role == HookRole::Statusline => CopilotSession::Newer,
+        _ => CopilotSession::Current,
+    }
 }
 
 /// Whether the tab's shell runs in a WSL distro. The first answer for a profile without `-d` asks `wsl.exe` for the default
@@ -297,6 +357,20 @@ async fn references_for(
 /// runs on its own and the response does not wait for it.
 async fn record_history(st: &AppState, agent: &str, tab: &str, body: &serde_json::Value, at_ms: u64) {
     let history = st.history();
+    // Copilot's bodies are camelCase and a status line's are snake_case: the recorder reads the one shape `link_body` makes.
+    let linked;
+    let body = if agent == "copilot" {
+        let Some(dir) = st.copilot_dir() else { return };
+        match copilot::link_body(body, &dir) {
+            Some(made) => {
+                linked = made;
+                &linked
+            }
+            None => return,
+        }
+    } else {
+        body
+    };
     let recording = st
         .session(tab)
         .and_then(|s| s.recording_path())
@@ -318,7 +392,7 @@ async fn record_history(st: &AppState, agent: &str, tab: &str, body: &serde_json
 
 /// Folds what an agent (Claude Code, Codex or Antigravity) reported into the tab's live status. A permission
 /// request counts as an event (it folds to Needs permission). Without a known version, or with the switch off,
-/// the row gets a note saying why and keeps no status. Claude Code, Antigravity and Qwen Code send a status line.
+/// the row gets a note saying why and keeps no status. Claude Code, Antigravity, Qwen Code and Copilot CLI send a status line.
 #[cfg(test)]
 async fn fold_live(st: &AppState, agent: &str, role: HookRole, tab: &str, body: &serde_json::Value, at_ms: u64) {
     fold_live_with(st, agent, role, tab, body, at_ms, false).await;
@@ -335,7 +409,7 @@ async fn fold_live_with(
     held: bool,
 ) {
     if !matches!(role, HookRole::Event | HookRole::Permission | HookRole::Statusline)
-        || (role == HookRole::Statusline && !matches!(agent, "claude" | "antigravity" | "qwen"))
+        || (role == HookRole::Statusline && !matches!(agent, "claude" | "antigravity" | "qwen" | "copilot"))
         || !st.registry().is_open(tab)
     {
         return;
@@ -345,6 +419,7 @@ async fn fold_live_with(
         "codex" => ("Codex", codex::version_gate),
         "antigravity" => ("Antigravity", antigravity::version_gate),
         "qwen" => ("Qwen Code", qwen::version_gate),
+        "copilot" => ("Copilot CLI", copilot::version_gate),
         _ => return,
     };
     let off = st.0.settings.lock().unwrap().status_off.iter().any(|a| a == agent);
@@ -389,6 +464,17 @@ async fn fold_live_with(
                 if let Some(mode) = qwen::status::mode_of(body) {
                     st.registry().set_live_mode(tab, agent, mode);
                 }
+            }
+            st.registry().set_status_note(tab, None);
+        }
+        Gate::Known if agent == "copilot" => {
+            // No Done hold, subagent count or stuck check, and no mode: Copilot's bodies carry none.
+            if role == HookRole::Statusline {
+                st.registry()
+                    .update_live(tab, |prev| Some(copilot::status::fold_statusline(prev, body, at_ms)));
+            } else {
+                st.registry()
+                    .update_live(tab, |prev| copilot::status::fold_event(prev, body, at_ms));
             }
             st.registry().set_status_note(tab, None);
         }

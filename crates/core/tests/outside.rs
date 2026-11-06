@@ -247,18 +247,60 @@ async fn resume_command_falls_back_to_continue_last_then_fresh() {
     assert!(command.ends_with("claude"), "{command}");
 }
 
+/// A new Copilot tab starts under an id Marshell picked and is linked to it at once, so the command to resume it names
+/// that id as soon as Copilot has written the session.
+#[tokio::test]
+async fn a_new_copilot_tab_is_linked_to_the_session_id_it_was_started_with() {
+    let home = tempfile::tempdir().unwrap();
+    let copilot_user = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let st = state(home.path()).with_copilot_home(copilot_user.path().to_path_buf());
+    let app = router(st.clone());
+
+    let tab = start(&app, Some("copilot"), work.path(), json!({})).await;
+    let linked = st
+        .history()
+        .latest_for_tab_of(&tab, "copilot")
+        .expect("linked at start");
+    assert_eq!(linked.session_id.len(), 36, "{}", linked.session_id);
+    let events = copilot_user
+        .path()
+        .join(".copilot")
+        .join("session-state")
+        .join(&linked.session_id)
+        .join("events.jsonl");
+    assert_eq!(Path::new(&linked.transcript_path), events);
+
+    // Copilot has written nothing yet: a new session, never `--continue`.
+    let (status, body) = get(&app, &format!("/v1/sessions/{tab}/resume-command")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["form"], "fresh");
+    // Once it has, the id is the way back, as one argument.
+    std::fs::create_dir_all(events.parent().unwrap()).unwrap();
+    std::fs::write(&events, "{}\n").unwrap();
+    let (status, body) = get(&app, &format!("/v1/sessions/{tab}/resume-command")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["form"], "by_id");
+    let command = body["command"].as_str().unwrap();
+    assert!(
+        command.contains(&format!("copilot --resume={}", linked.session_id)),
+        "{command}"
+    );
+    assert!(!command.contains("--session-id"), "{command}");
+}
+
 #[tokio::test]
 async fn resume_command_continue_last_for_a_manifest_agent() {
     let home = tempfile::tempdir().unwrap();
     let work = tempfile::tempdir().unwrap();
     let app = router(state(home.path()));
 
-    let copilot = start(&app, Some("copilot"), work.path(), json!({})).await;
-    let (status, body) = get(&app, &format!("/v1/sessions/{copilot}/resume-command")).await;
+    let cursor = start(&app, Some("cursor"), work.path(), json!({})).await;
+    let (status, body) = get(&app, &format!("/v1/sessions/{cursor}/resume-command")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["form"], "continue_last");
     assert!(
-        body["command"].as_str().unwrap().ends_with("copilot --continue"),
+        body["command"].as_str().unwrap().ends_with("cursor-agent --continue"),
         "{body}"
     );
 
@@ -620,9 +662,9 @@ async fn continue_last_is_held_per_agent_and_folder() {
     let st = state(home.path());
     let app = router(st.clone());
 
-    let first = start(&app, Some("copilot"), work.path(), json!({})).await;
-    let second = start(&app, Some("copilot"), work.path(), json!({})).await;
-    let other = start(&app, Some("copilot"), elsewhere.path(), json!({})).await;
+    let first = start(&app, Some("cursor"), work.path(), json!({})).await;
+    let second = start(&app, Some("cursor"), work.path(), json!({})).await;
+    let other = start(&app, Some("cursor"), elsewhere.path(), json!({})).await;
     for tab in [&first, &second, &other] {
         end_tab(&st, tab).await;
     }

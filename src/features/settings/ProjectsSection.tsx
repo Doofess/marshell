@@ -10,7 +10,7 @@ import "./ProjectsSection.css";
 
 export const NO_PROJECTS = "Start a session in a folder first; its project shows here.";
 export const TOGGLE_HELP = "When a prompt names an alias, Marshell tells the agent which file or folder it means. Off until you turn it on.";
-export const CLIS_HELP = "Claude Code, Codex, Antigravity and Qwen Code get references. Other agents don't.";
+export const CLIS_HELP = "Claude Code, Codex, Antigravity, Qwen Code and Copilot CLI get references. Other agents don't.";
 export const BROKEN_PATH = "Not found in the project, so it isn't sent.";
 // Antigravity: "Antigravity can't take references yet." belongs here, under the toggle, only if the agy spike fails.
 

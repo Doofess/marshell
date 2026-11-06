@@ -96,6 +96,16 @@ describe("laneEntries", () => {
     expect(e).toHaveLength(1);
     expect(e[0]).toMatchObject({ tab: "tab-a", terminalOnly: true, detail: { kind: "question", question: "Pick a region", options: [] }, waitingMs: 9000 });
   });
+  it("a Copilot session in Needs permission is a one-liner that names Copilot CLI", () => {
+    const e = laneEntries([], [row({ agent: "copilot", status: "needs-permission", phrase: "Wants to run `New-Item a.txt`", waitingMs: 4000 })], NOW);
+    expect(e).toHaveLength(1);
+    expect(e[0]).toMatchObject({ tab: "tab-a", terminalOnly: true, session: { agent: "copilot" }, detail: { kind: "question", question: "Wants to run `New-Item a.txt`" } });
+    expect(needsYouCount(e)).toBe(1);
+  });
+  it("a terminal-only entry says whether its session needs permission or has a question", () => {
+    expect(laneEntries([], [row({ status: "needs-permission", phrase: "Wants to run `New-Item a.txt`" })], NOW)[0]).toMatchObject({ asks: "permission" });
+    expect(laneEntries([], [row({ status: "needs-question", phrase: "Pick a region" })], NOW)[0]).toMatchObject({ asks: "question" });
+  });
   it("does not count a row that has a view twice", () => {
     const e = laneEntries([view()], [row({ status: "needs-permission" })], NOW);
     expect(e).toHaveLength(1);

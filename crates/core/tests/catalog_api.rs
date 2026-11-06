@@ -224,6 +224,69 @@ async fn catalog_lists_adapters_shipped_and_own_with_found_flags() {
     assert_eq!(mine["prompt"], json!({"style": "flag", "flag": "--prompt"}));
 }
 
+/// An app whose Copilot search is exactly `dirs` and no winget folder, with its version pinned. Nothing is run.
+fn copilot_app(dirs: Vec<PathBuf>) -> (tempfile::TempDir, axum::Router) {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let st = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home,
+        Vec::new(),
+    )
+    .with_copilot_search(dirs, None)
+    .with_copilot_version(Some("1.0.106".into()));
+    (dir, router(st))
+}
+
+/// A folder under `root` holding an empty `file`, which is never run.
+fn folder_with(root: &std::path::Path, segments: &[&str], file: &str) -> PathBuf {
+    let dir = segments.iter().fold(root.to_path_buf(), |dir, s| dir.join(s));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(file), "").unwrap();
+    dir
+}
+
+#[tokio::test]
+async fn copilot_is_found_past_the_shim() {
+    let root = tempfile::tempdir().unwrap();
+    let shim = folder_with(root.path(), &["VS Code", "bin", "copilot-shim"], "copilot.exe");
+    let real = folder_with(root.path(), &["npm"], "copilot.cmd");
+
+    let (_keep, app) = copilot_app(vec![shim.clone(), real]);
+    let (status, catalog) = get(&app, "/v1/agents/catalog").await;
+    assert_eq!(status, StatusCode::OK, "{catalog}");
+    let copilot = entry(&catalog, "copilot");
+    assert_eq!(
+        (
+            copilot["adapter"].clone(),
+            copilot["own"].clone(),
+            copilot["found"].clone()
+        ),
+        (json!(true), json!(false), json!(true))
+    );
+    assert_eq!(copilot["version"], "1.0.106");
+    assert_eq!(
+        (copilot["name"].clone(), copilot["cli"].clone()),
+        ("GitHub Copilot".into(), "Copilot CLI".into())
+    );
+    assert_eq!(copilot["mark"], "copilot");
+    assert_eq!(copilot["prompt"], json!({"style": "flag", "flag": "-i"}));
+    assert_eq!(copilot["modes"], json!(["manual", "plan", "bypass"]));
+    assert_eq!(copilot["can_continue"], true);
+
+    // With only the shim, Copilot is not found: it is never launched.
+    let (_keep, app) = copilot_app(vec![shim]);
+    let (_, catalog) = get(&app, "/v1/agents/catalog").await;
+    let copilot = entry(&catalog, "copilot");
+    assert_eq!(
+        (copilot["found"].clone(), copilot["version"].clone()),
+        (json!(false), Value::Null)
+    );
+}
+
 #[tokio::test]
 async fn the_deepseek_preset_has_no_problem_with_a_key_and_never_shows_it() {
     let e = build_with_key(|| Some("sk-marshell-test-0000".into()));

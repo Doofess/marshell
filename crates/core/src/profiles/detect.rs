@@ -281,6 +281,7 @@ pub fn agent_command(agent: &str) -> Option<&'static str> {
         "codex" => Some("codex"),
         "antigravity" => Some("agy"),
         "qwen" => Some("qwen"),
+        "copilot" => Some("copilot"),
         _ => None,
     }
 }
@@ -362,6 +363,7 @@ pub(crate) fn adapter_of_exe(name: &str) -> Option<&'static str> {
         "codex" => Some("codex"),
         "agy" => Some("antigravity"),
         "qwen" => Some("qwen"),
+        "copilot" => Some("copilot"),
         _ if name.starts_with("codex-") => Some("codex"),
         _ => None,
     }
@@ -381,6 +383,7 @@ pub(crate) fn adapter_of_package(name: &str) -> Option<&'static str> {
         "@anthropic-ai/claude-code" => Some("claude"),
         "@openai/codex" => Some("codex"),
         "@qwen-code/qwen-code" => Some("qwen"),
+        "@github/copilot" => Some("copilot"),
         _ => None,
     }
 }
@@ -461,7 +464,7 @@ pub fn agent_in(agents: &Agents, chain: &[String], command_line: Option<&str>) -
 pub enum ResumeTarget<'a> {
     /// The CLI's own "last conversation in this folder".
     Last,
-    /// One conversation by the CLI's session id. Claude Code, Codex, Antigravity and Qwen Code take one.
+    /// One conversation by the CLI's session id. Claude Code, Codex, Antigravity, Qwen Code and Copilot CLI take one.
     Session(&'a str),
     /// A new conversation that starts from one by the CLI's session id, leaving the original as it is.
     /// Only Claude Code can fork; every other agent continues its last conversation as `Last` does.
@@ -485,9 +488,21 @@ pub fn resume_args(agents: &Agents, agent: &str, target: ResumeTarget) -> Vec<St
         ("antigravity", _) => vec!["--continue"],
         ("qwen", ResumeTarget::Session(id)) => vec!["--resume", id],
         ("qwen", _) => vec!["--continue"],
+        // Copilot CLI takes the id as one argument; its other forms continue the last session of the folder.
+        ("copilot", ResumeTarget::Session(id)) => return vec![format!("--resume={id}")],
+        ("copilot", _) => vec!["--continue"],
         _ => Vec::new(),
     };
     args.into_iter().map(String::from).collect()
+}
+
+/// The arguments that start a new conversation under an id Marshell picks, for the CLIs that take one: Copilot CLI's
+/// `--session-id`. Empty for every other agent, which names its own.
+pub fn new_session_args(agent: &str, id: &str) -> Vec<String> {
+    match agent {
+        "copilot" => vec!["--session-id".to_string(), id.to_string()],
+        _ => Vec::new(),
+    }
 }
 
 /// What to type into `agent`'s prompt so it reads the image at `path`: the absolute path in quotes.
@@ -545,6 +560,10 @@ pub fn mode_args(agents: &Agents, agent: &str, mode: SessionMode) -> Option<Vec<
         ("qwen", AutoEdit) => Some(&["--approval-mode", "auto-edit"]),
         ("qwen", FullAuto) => Some(&["--approval-mode", "auto"]),
         ("qwen", Bypass) => Some(&["--approval-mode", "yolo"]),
+        // Copilot CLI: no flag for Manual, `--plan`, `--allow-all`. The other modes it has no flag for are refused.
+        ("copilot", Manual) => Some(&[]),
+        ("copilot", Plan) => Some(&["--plan"]),
+        ("copilot", Bypass) => Some(&["--allow-all"]),
         _ => None,
     };
     if let Some(flags) = adapter {
@@ -676,7 +695,7 @@ pub(crate) fn build_line(
     let prompt = prompt.filter(|p| !p.is_empty());
     // The flag before the first prompt: agy's, Qwen Code's and a manifest's own, else none (a positional argument).
     let prompt_flag: Option<&str> = match manifest.map(|m| &m.prompt) {
-        None if matches!(agent, "antigravity" | "qwen") => Some("-i"),
+        None if matches!(agent, "antigravity" | "qwen" | "copilot") => Some("-i"),
         None | Some(PromptStyle::Positional) => None,
         Some(PromptStyle::Flag { flag }) => Some(flag),
         Some(PromptStyle::None) => {
@@ -1740,6 +1759,69 @@ mod tests {
         assert_eq!(mode_args("qwen", SessionMode::DontAsk), None);
         assert_eq!(agent_in(&["pwsh".into(), "qwen".into()], None).as_deref(), Some("qwen"));
         assert_eq!(agent_in(&[], Some("npx @qwen-code/qwen-code")).as_deref(), Some("qwen"));
+    }
+
+    const COPILOT_ID: &str = "00000000-0000-4000-8000-000000000001";
+
+    #[test]
+    fn copilot_resumes_by_session_id_in_one_argument() {
+        assert_eq!(
+            resume_args("copilot", ResumeTarget::Session(COPILOT_ID)),
+            [format!("--resume={COPILOT_ID}")]
+        );
+        let argv = launch_argv_resume(
+            &pwsh(),
+            Some("copilot"),
+            Some(SessionMode::Plan),
+            ResumeTarget::Session(COPILOT_ID),
+        )
+        .unwrap();
+        assert_eq!(argv.last().unwrap(), &format!("& copilot --resume={COPILOT_ID} --plan"));
+    }
+
+    #[test]
+    fn copilot_continues_without_an_id() {
+        assert_eq!(resume_args("copilot", ResumeTarget::Last), ["--continue"]);
+        assert_eq!(resume_args("copilot", ResumeTarget::Fork("abc-1")), ["--continue"]);
+        let argv = launch_argv_resume(&pwsh(), Some("copilot"), None, ResumeTarget::Last).unwrap();
+        assert_eq!(argv.last().unwrap(), "& copilot --continue");
+    }
+
+    #[test]
+    fn a_new_copilot_session_gets_its_id() {
+        assert_eq!(
+            new_session_args("copilot", COPILOT_ID),
+            ["--session-id".to_string(), COPILOT_ID.to_string()]
+        );
+        for other in ["claude", "codex", "antigravity", "qwen", "grok", "nope"] {
+            assert!(new_session_args(other, COPILOT_ID).is_empty(), "{other}");
+        }
+    }
+
+    #[test]
+    fn copilot_modes_are_the_manifests() {
+        assert_eq!(mode_args("copilot", SessionMode::Manual).unwrap(), Vec::<String>::new());
+        assert_eq!(mode_args("copilot", SessionMode::Plan).unwrap(), ["--plan"]);
+        assert_eq!(mode_args("copilot", SessionMode::Bypass).unwrap(), ["--allow-all"]);
+        for refused in [SessionMode::AutoEdit, SessionMode::FullAuto, SessionMode::DontAsk] {
+            assert_eq!(mode_args("copilot", refused), None, "{refused:?}");
+        }
+        let argv = launch_argv(&pwsh(), Some("copilot"), Some("x"), Some(SessionMode::Bypass)).unwrap();
+        assert_eq!(argv.last().unwrap(), "& copilot --allow-all -i 'x'");
+    }
+
+    #[test]
+    fn a_copilot_exe_or_npm_package_is_copilot() {
+        assert_eq!(agent_command("copilot"), Some("copilot"));
+        assert!(Agents::shipped().manifest("copilot").is_none());
+        assert!(Agents::shipped().is_known("copilot"));
+        assert_eq!(adapter_of_exe("copilot"), Some("copilot"));
+        assert_eq!(adapter_of_package("@github/copilot"), Some("copilot"));
+        assert_eq!(
+            agent_in(&["pwsh".into(), "copilot".into()], None).as_deref(),
+            Some("copilot")
+        );
+        assert_eq!(agent_in(&[], Some("npx @github/copilot")).as_deref(), Some("copilot"));
     }
 
     #[test]

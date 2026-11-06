@@ -99,6 +99,46 @@ pub fn edit_detail(path: &str, old: &str, new: &str) -> PermissionDetail {
     }
 }
 
+/// The first non-empty line, trimmed, cut at `max` characters with an ellipsis.
+pub(crate) fn first_line(text: &str, max: usize) -> String {
+    let line = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    if line.chars().count() > max {
+        format!("{}…", line.chars().take(max).collect::<String>())
+    } else {
+        line.to_string()
+    }
+}
+
+pub(crate) fn str_at<'a>(body: &'a Value, pointer: &str) -> Option<&'a str> {
+    body.pointer(pointer)
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+}
+
+/// A tool phrase turned into what a permission dialog asks, "Running `x`" into "Wants to run `x`".
+pub(crate) fn wants_phrase(phrase: &str) -> String {
+    const VERBS: [(&str, &str); 4] = [
+        ("Running ", "Wants to run "),
+        ("Editing ", "Wants to edit "),
+        ("Reading ", "Wants to read "),
+        ("Using ", "Wants to use "),
+    ];
+    if phrase.starts_with("Wants to") {
+        return phrase.to_string();
+    }
+    for (seen, wants) in VERBS {
+        if let Some(target) = phrase.strip_prefix(seen) {
+            return format!("{wants}{target}");
+        }
+    }
+    "Wants to use a tool".to_string()
+}
+
+/// A whole percentage from a JSON number, clamped to 0..=100. Anything else is unknown.
+pub(crate) fn pct_of(n: f64) -> Option<u8> {
+    n.is_finite().then(|| n.clamp(0.0, 100.0).round() as u8)
+}
+
 /// `path` relative to `cwd` (with `/` separators) when it is inside it, else as given.
 pub fn relative(path: &str, cwd: &str) -> String {
     let p = path.replace('\\', "/");
@@ -293,6 +333,8 @@ pub enum PlanError {
         path: PathBuf,
         reason: &'static str,
     },
+    /// A file Marshell would own whole holds hooks it didn't write (or isn't shaped like its own), so it stays.
+    NotMarshells { path: PathBuf },
 }
 
 impl fmt::Display for PlanError {
@@ -316,6 +358,13 @@ impl fmt::Display for PlanError {
             }
             PlanError::BridgePath { agent, path, reason } => {
                 write!(f, "{agent} can't run Marshell's hook from {}: {reason}", path.display())
+            }
+            PlanError::NotMarshells { path } => {
+                write!(
+                    f,
+                    "{} holds hooks Marshell didn't write, so Marshell leaves it as it is.",
+                    path.display()
+                )
             }
         }
     }

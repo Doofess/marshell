@@ -106,10 +106,10 @@ export function planRing(infos: SessionInfo[], now = Date.now()): { pct: number;
   return best;
 }
 
-const isHookAgent = (agent: string): agent is HookAgent => agent === "claude" || agent === "codex" || agent === "antigravity" || agent === "qwen";
+const isHookAgent = (agent: string): agent is HookAgent => agent === "claude" || agent === "codex" || agent === "antigravity" || agent === "qwen" || agent === "copilot";
 
 /** The agents with a Rust adapter. Any other agent is a manifest: Marshell writes no hooks for it, so there are none to wait for. */
-const isManifestAgent = (agent: string): boolean => agent !== "claude" && agent !== "codex" && agent !== "antigravity" && agent !== "qwen";
+const isManifestAgent = (agent: string): boolean => agent !== "claude" && agent !== "codex" && agent !== "antigravity" && agent !== "qwen" && agent !== "copilot";
 
 /** The pty fallback of an agent without live status: Working or Idle from its output, noted as limited. Undefined without activity. */
 function fallbackRow(info: SessionInfo, base: Omit<RowModel, "status" | "phrase">): RowModel | undefined {
@@ -189,7 +189,7 @@ function rowOf(info: SessionInfo, profiles: Profile[], setup: Partial<Record<Hoo
   }
   if (info.agent !== null) {
     if (info.live !== null) return { ...base, ...liveRow(info.live, info.stuck, now) };
-    // A hook agent (Claude Code, Codex, Antigravity, Qwen Code) without Marshell's hooks: say so and offer the setup, ahead of the output fallback. An unknown state (not fetched yet) says and offers nothing.
+    // A hook agent (Claude Code, Codex, Antigravity, Qwen Code, Copilot CLI) without Marshell's hooks: say so and offer the setup, ahead of the output fallback. An unknown state (not fetched yet) says and offers nothing.
     // Installed hooks offer nothing, even for a Codex that has not trusted them yet: the row keeps the limited fallback and never claims they work.
     // The setup state is the Windows files'; it says nothing about a WSL tab's distro, so a WSL tab never offers the Windows setup.
     const hooks = isHookAgent(info.agent) && profile?.family !== "wsl" ? setup?.[info.agent] : undefined;

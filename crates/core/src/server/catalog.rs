@@ -14,7 +14,7 @@ use marshell_protocol::api::SessionMode;
 use marshell_protocol::manifest::{AgentCatalog, CatalogAgent, CatalogPreset, OwnAgents, OwnAgentsSave};
 
 /// The agents with a Rust adapter, in launcher order: id, name, CLI, first-prompt style.
-fn adapters() -> [(&'static str, &'static str, &'static str, PromptStyle); 4] {
+fn adapters() -> [(&'static str, &'static str, &'static str, PromptStyle); 5] {
     [
         ("claude", "Claude Code", "Claude Code", PromptStyle::Positional),
         ("codex", "Codex", "Codex CLI", PromptStyle::Positional),
@@ -25,6 +25,12 @@ fn adapters() -> [(&'static str, &'static str, &'static str, PromptStyle); 4] {
             PromptStyle::Flag { flag: "-i".into() },
         ),
         ("qwen", "Qwen", "Qwen Code", PromptStyle::Flag { flag: "-i".into() }),
+        (
+            "copilot",
+            "GitHub Copilot",
+            "Copilot CLI",
+            PromptStyle::Flag { flag: "-i".into() },
+        ),
     ]
 }
 

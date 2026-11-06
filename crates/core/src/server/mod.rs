@@ -254,6 +254,12 @@ struct Inner {
     /// The user home Qwen Code's `.qwen/settings.json` is planned under when a test names one; None means the user's
     /// home (and `QWEN_HOME` from the environment).
     qwen_home: Option<PathBuf>,
+    /// The user home Copilot CLI's `.copilot` files are planned under when a test names one; None means the user's
+    /// home (and `COPILOT_HOME` from the environment).
+    copilot_home: Option<PathBuf>,
+    /// The folders and the `LOCALAPPDATA` a test searches for the real Copilot CLI program, in place of the PATH a tab
+    /// gets and the environment. None means the real ones.
+    copilot_search: Option<(Vec<PathBuf>, Option<PathBuf>)>,
     /// The user home the Doctor reads MCP servers and skills under when a test names one; every CLI folder is then at
     /// its default under it and the environment is not read. None means the user's home and the environment.
     ext_home: Option<PathBuf>,
@@ -279,6 +285,8 @@ struct Inner {
     agy_version: Option<Option<String>>,
     /// A Qwen Code version a test pins, in place of asking the executable. `Some(None)` cannot be read.
     qwen_version: Option<Option<String>>,
+    /// A Copilot CLI version a test pins, in place of asking the executable. `Some(None)` cannot be read.
+    copilot_version: Option<Option<String>>,
     /// The version of an agent inside a WSL distro that a test pins, in place of asking `wsl.exe`. `Some(None)` cannot
     /// be read.
     wsl_version: Option<Option<String>>,
@@ -394,6 +402,8 @@ impl AppState {
             codex_hooks: None,
             agy_home: None,
             qwen_home: None,
+            copilot_home: None,
+            copilot_search: None,
             ext_home: None,
             qwen_system_settings: None,
             skill_home: None,
@@ -404,6 +414,7 @@ impl AppState {
             codex_version: None,
             agy_version: None,
             qwen_version: None,
+            copilot_version: None,
             wsl_version: None,
             wsl_versions: Mutex::new(HashMap::new()),
             distro_target: None,
@@ -499,6 +510,37 @@ impl AppState {
             .qwen_home = Some(user_home);
         self
     }
+    /// Names the user home under which Copilot CLI's `.copilot` files are planned, in place of the environment. Call
+    /// it before the state is cloned.
+    pub fn with_copilot_home(mut self, user_home: PathBuf) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_copilot_home runs before the state is shared")
+            .copilot_home = Some(user_home);
+        self
+    }
+    /// The user home a test named for Copilot CLI's files, if any.
+    pub fn copilot_home_named(&self) -> Option<&Path> {
+        self.0.copilot_home.as_deref()
+    }
+    /// Copilot CLI's own folder (`COPILOT_HOME`, else `<home>/.copilot`), where its `session-state` is. A home a test
+    /// named is used as it is and the environment is not read. None when the user's home is not known.
+    pub(crate) fn copilot_dir(&self) -> Option<PathBuf> {
+        match &self.0.copilot_home {
+            Some(user_home) => Some(crate::agents::copilot::home(&|_| None, user_home)),
+            None => {
+                let user_home = files::home_dir()?;
+                Some(crate::agents::copilot::home(&|k| std::env::var(k).ok(), &user_home))
+            }
+        }
+    }
+    /// Names the folders and the `LOCALAPPDATA` that are searched for the real Copilot CLI program, in place of a tab's
+    /// PATH and the environment, so a test never finds the program on this machine. Call it before the state is cloned.
+    pub fn with_copilot_search(mut self, path_dirs: Vec<PathBuf>, local_app_data: Option<PathBuf>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_copilot_search runs before the state is shared")
+            .copilot_search = Some((path_dirs, local_app_data));
+        self
+    }
     /// Names the user home the Doctor reads MCP servers and skills under, in place of the environment. Call it
     /// before the state is cloned.
     pub fn with_ext_home(mut self, home: PathBuf) -> Self {
@@ -569,6 +611,14 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_qwen_version runs before the state is shared")
             .qwen_version = Some(version);
+        self
+    }
+    /// Pins the Copilot CLI version live status sees, so a test never runs a real `copilot`. `None` is a version that
+    /// cannot be read. Call it before the state is cloned.
+    pub fn with_copilot_version(mut self, version: Option<String>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_copilot_version runs before the state is shared")
+            .copilot_version = Some(version);
         self
     }
     /// Pins the version of an agent inside a WSL distro that live status sees, so a test never runs `wsl.exe`. `None` is
@@ -690,6 +740,7 @@ impl AppState {
                 .map(|(_, value)| value.into()),
             read_tab_path: self.0.tab_path,
             tab_path: std::sync::OnceLock::new(),
+            copilot_search: self.0.copilot_search.clone(),
         }
     }
     /// Replaces the PATH sessions are looked up on. Call it before the state is cloned.
@@ -1091,6 +1142,7 @@ pub(crate) struct AgentFinder {
     profile_path: Option<std::ffi::OsString>,
     read_tab_path: fn() -> Option<std::ffi::OsString>,
     tab_path: std::sync::OnceLock<Option<std::ffi::OsString>>,
+    copilot_search: Option<(Vec<PathBuf>, Option<PathBuf>)>,
 }
 
 impl AgentFinder {
@@ -1100,8 +1152,35 @@ impl AgentFinder {
             .or_else(|| self.tab_path.get_or_init(self.read_tab_path).as_deref())
     }
 
+    /// The real Copilot CLI program, never VS Code's `copilot-shim`: the search a test named; else, when a test swapped
+    /// the PATH lookup, what that finds (a path in a shim folder is the shim); else the PATH in use and then
+    /// `%LOCALAPPDATA%\GitHubCopilotCLI`. Touches the disk, so async callers go through `spawn_blocking`.
+    pub(crate) fn copilot_exe(&self) -> Result<PathBuf, crate::agents::identify::Missing> {
+        use crate::agents::copilot::exe;
+        use crate::agents::identify::Missing;
+        match (&self.copilot_search, self.path_of) {
+            (Some((dirs, local_app_data)), _) => exe::resolve(dirs, local_app_data.as_deref()),
+            (None, Some(swap)) => match swap("copilot") {
+                Some(path) if exe::in_shim_folder(&path) => Err(Missing::Rejected { path }),
+                Some(path) => Ok(path),
+                None => Err(Missing::NotOnPath),
+            },
+            (None, None) => {
+                let dirs: Vec<PathBuf> = self
+                    .path_in_use()
+                    .map(|p| std::env::split_paths(p).collect())
+                    .unwrap_or_default();
+                let local_app_data = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
+                exe::resolve(&dirs, local_app_data.as_deref())
+            }
+        }
+    }
+
     /// The file `command` runs from.
     pub(crate) fn path_of(&self, command: &str) -> Option<PathBuf> {
+        if command == "copilot" {
+            return self.copilot_exe().ok();
+        }
         match self.path_of {
             Some(swap) => swap(command),
             None => crate::profiles::detect::command_path_in(self.path_in_use()?, command),
@@ -1110,6 +1189,10 @@ impl AgentFinder {
 
     /// Whether `command` runs at all.
     pub(crate) fn on_path(&self, command: &str) -> bool {
+        // A test's swap of "everything is installed" stands for Copilot too, unless the test named a Copilot search.
+        if command == "copilot" && (self.on_path.is_none() || self.copilot_search.is_some()) {
+            return self.copilot_exe().is_ok();
+        }
         match self.on_path {
             Some(swap) => swap(command),
             None => self

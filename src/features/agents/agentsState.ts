@@ -2,7 +2,7 @@ import type { AgentSetup } from "../../generated/AgentSetup";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { HookPlanRequest } from "../../generated/HookPlanRequest";
 import { deletedFiles, previewDiff, toDetection, type HookAgent } from "../../lib/api/agents";
-import { addsStatusLine, CLI_NAME, consentHeadline, fileName, opensDiff, removalCopy, skillUndo, type Capability, type CliId, type ConsentPlan, type Detection } from "../onboarding/consent";
+import { addsStatusLine, CAPABILITIES, CLI_NAME, consentHeadline, fileName, opensDiff, removalCopy, skillUndo, type Capability, type CliId, type ConsentPlan, type Detection } from "../onboarding/consent";
 
 /** The capabilities offered for a new Claude Code setup. */
 export const OFFER: Capability[] = ["status", "approve", "statusline", "skill"];
@@ -14,7 +14,8 @@ export const DEFAULT_WANT: Want = { status: true, statusline: true, approve: tru
 export const installRequest = (w: Want, agent: HookAgent = "claude", distro?: string): HookPlanRequest => ({
   status: w.status,
   statusline: agent !== "codex" && w.status && w.statusline,
-  approve: w.approve,
+  // A CLI that asks in its own terminal (Copilot) has no approve hook to ask for.
+  approve: w.approve && CAPABILITIES[agent].approve.available,
   // The core installs no skill file inside a distro.
   skill: distro === undefined && w.skill,
   ...(distro === undefined ? {} : { distro }),
@@ -27,7 +28,7 @@ export const setupWant = (s: AgentSetup): Want => ({ ...(s.hooks === "installed"
 
 /** Where the Agents dialog opens from a session row's "set up" link: on that row's agent's Set up card. */
 export type SetupStart = { setup: HookAgent };
-export const rowSetupStart = (agent: string): SetupStart => ({ setup: agent === "codex" || agent === "antigravity" || agent === "qwen" ? agent : "claude" });
+export const rowSetupStart = (agent: string): SetupStart => ({ setup: agent === "codex" || agent === "antigravity" || agent === "qwen" || agent === "copilot" ? agent : "claude" });
 
 /** Whether an agent's live status is on: it is unless the agent is in the settings' `status_off`. */
 export const liveStatusOn = (statusOff: string[], agent: string): boolean => !statusOff.includes(agent);
@@ -60,8 +61,8 @@ export function setupLine(s: AgentSetup): string {
     case "partial":
       return `Some hooks are missing in ${file}. Set up again to repair them.`;
     case "orphaned": {
-      // agy blocks a tool call whose PreToolUse command can't start (6d research, A3); the others only report it.
-      const effect = s.agent === "antigravity" ? "blocks every tool call, outside Marshell too" : "reports a failing hook each time one fires";
+      // agy and Copilot CLI (6n1 spike Q6) block a tool call whose PreToolUse command can't start (6d research, A3); the others only report it.
+      const effect = s.agent === "antigravity" || s.agent === "copilot" ? "blocks every tool call, outside Marshell too" : "reports a failing hook each time one fires";
       return `Marshell's hooks are in ${file}, but the bridge at ${s.bridge_path} is missing, so ${name} ${effect}. Turn the hooks off, or set up again.`;
     }
   }
@@ -75,7 +76,8 @@ export function actions(s: AgentSetup): Array<"setup" | "hooksOff"> {
     case "none":
       return ["setup"];
     case "installed":
-      return s.approve_installed ? ["hooksOff"] : ["setup", "hooksOff"];
+      // A CLI whose approve hook can't be installed (Copilot asks in its own terminal) has nothing more to set up.
+      return s.approve_installed || CAPABILITIES[s.agent as CliId]?.approve.available === false ? ["hooksOff"] : ["setup", "hooksOff"];
     case "partial":
     case "orphaned":
       return ["setup", "hooksOff"];

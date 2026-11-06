@@ -77,6 +77,9 @@ export function AgentsSectionView({
   qwen,
   qwenLiveStatus = null,
   qwenLiveStatusError,
+  copilot,
+  copilotLiveStatus = null,
+  copilotLiveStatusError,
   own,
   tools,
   rootRef,
@@ -99,6 +102,10 @@ export function AgentsSectionView({
   qwen?: AgentSetup | null;
   qwenLiveStatus?: boolean | null;
   qwenLiveStatusError?: string | null;
+  /** Copilot CLI's setup; its section shows only when it was read and Copilot is found (it keeps no WSL group). */
+  copilot?: AgentSetup | null;
+  copilotLiveStatus?: boolean | null;
+  copilotLiveStatusError?: string | null;
   /** The section for the person's own agents, after the hook sections. */
   own?: ReactNode;
   setup: AgentSetup | "loading" | "failed";
@@ -111,7 +118,7 @@ export function AgentsSectionView({
   codexLiveStatusError?: string | null;
 } & AgentsHandlers) {
   // The card and the turn-off panel belong to the agent the person chose.
-  const chosen = panel.kind === "list" ? undefined : panel.agent === "codex" ? codex : panel.agent === "antigravity" ? antigravity : panel.agent === "qwen" ? qwen : undefined;
+  const chosen = panel.kind === "list" ? undefined : panel.agent === "codex" ? codex : panel.agent === "antigravity" ? antigravity : panel.agent === "qwen" ? qwen : panel.agent === "copilot" ? copilot : undefined;
   const target = chosen ?? (typeof setup === "object" ? setup : null);
   return (
     <div ref={rootRef} className="agents" onKeyDown={(e) => escapeLeavesPanel(e, panel, on.onBack)}>
@@ -129,6 +136,7 @@ export function AgentsSectionView({
           {codex && (codex.found || (distros?.length ?? 0) > 0 || leftover(codex)) && <AgentList setup={codex} agent="codex" liveStatus={codexLiveStatus} error={codexLiveStatusError} on={on} skill={skills?.codex} distros={distros} />}
           {antigravity && (antigravity.found || (distros?.length ?? 0) > 0 || leftover(antigravity)) && <AgentList setup={antigravity} agent="antigravity" liveStatus={antigravityLiveStatus} error={antigravityLiveStatusError} on={on} skill={skills?.antigravity} distros={distros} />}
           {qwen && (qwen.found || (distros?.length ?? 0) > 0 || leftover(qwen)) && <AgentList setup={qwen} agent="qwen" liveStatus={qwenLiveStatus} error={qwenLiveStatusError} on={on} skill={skills?.qwen} distros={distros} />}
+          {copilot && (copilot.found || leftover(copilot)) && <AgentList setup={copilot} agent="copilot" liveStatus={copilotLiveStatus} error={copilotLiveStatusError} on={on} skill={skills?.copilot} />}
           {own}
           {tools}
         </>
@@ -334,20 +342,21 @@ export function AgentsSection({
   const [codex, setCodex] = useState<AgentSetup | null>(null);
   const [antigravity, setAntigravity] = useState<AgentSetup | null>(null);
   const [qwen, setQwen] = useState<AgentSetup | null>(null);
+  const [copilot, setCopilot] = useState<AgentSetup | null>(null);
   const [mode, setMode] = useState<"list" | "setup" | "off">("list");
   // The agent whose card or turn-off panel is open.
   const [active, setActive] = useState<HookAgent>("claude");
   const [off, setOff] = useState<Extract<Panel, { kind: "off" }>>({ kind: "off", removal: null, busy: false });
 
   // null until the settings have been read.
-  const [liveStatus, setLiveStatus] = useState<Record<HookAgent, boolean | null>>({ claude: null, codex: null, antigravity: null, qwen: null });
+  const [liveStatus, setLiveStatus] = useState<Record<HookAgent, boolean | null>>({ claude: null, codex: null, antigravity: null, qwen: null, copilot: null });
   const [saveError, setSaveError] = useState<{ agent: HookAgent; text: string } | null>(null);
   useEffect(() => {
     let live = true;
     sync?.load().then(
       () => {
         if (!live) return;
-        setLiveStatus({ claude: liveStatusOn(sync.statusOff, "claude"), codex: liveStatusOn(sync.statusOff, "codex"), antigravity: liveStatusOn(sync.statusOff, "antigravity"), qwen: liveStatusOn(sync.statusOff, "qwen") });
+        setLiveStatus({ claude: liveStatusOn(sync.statusOff, "claude"), codex: liveStatusOn(sync.statusOff, "codex"), antigravity: liveStatusOn(sync.statusOff, "antigravity"), qwen: liveStatusOn(sync.statusOff, "qwen"), copilot: liveStatusOn(sync.statusOff, "copilot") });
       },
       () => {},
     );
@@ -371,6 +380,7 @@ export function AgentsSection({
     void getSetup(endpoint, "codex").then(setCodex, () => {});
     void getSetup(endpoint, "antigravity").then(setAntigravity, () => {});
     void getSetup(endpoint, "qwen").then(setQwen, () => {});
+    void getSetup(endpoint, "copilot").then(setCopilot, () => {});
     try {
       const found = await getSetup(endpoint, "claude");
       setSetup(found);
@@ -390,8 +400,9 @@ export function AgentsSection({
   const codexInstall = useInstallFlow(endpoint, "codex", installed);
   const antigravityInstall = useInstallFlow(endpoint, "antigravity", installed);
   const qwenInstall = useInstallFlow(endpoint, "qwen", installed);
+  const copilotInstall = useInstallFlow(endpoint, "copilot", installed);
   // The skill rows: after an apply the section reads the setup again, and the announcer says what was done.
-  const setups = { claude: setup, codex, antigravity, qwen };
+  const setups = { claude: setup, codex, antigravity, qwen, copilot };
   const skillApplied = (agent: HookAgent) => (kind: SkillFlow["kind"]) => {
     const current = setups[agent];
     const updating = typeof current === "object" && current !== null && (current.skill === "outdated" || current.skill === "edited");
@@ -406,7 +417,8 @@ export function AgentsSection({
   const codexSkill = useSkillFlow(endpoint, "codex", skillApplied("codex"), skillOf(codex), reloadSetups);
   const antigravitySkill = useSkillFlow(endpoint, "antigravity", skillApplied("antigravity"), skillOf(antigravity), reloadSetups);
   const qwenSkill = useSkillFlow(endpoint, "qwen", skillApplied("qwen"), skillOf(qwen), reloadSetups);
-  const skillFlows = { claude: claudeSkill, codex: codexSkill, antigravity: antigravitySkill, qwen: qwenSkill };
+  const copilotSkill = useSkillFlow(endpoint, "copilot", skillApplied("copilot"), skillOf(copilot), reloadSetups);
+  const skillFlows = { claude: claudeSkill, codex: codexSkill, antigravity: antigravitySkill, qwen: qwenSkill, copilot: copilotSkill };
   const skills = Object.fromEntries(
     (Object.keys(skillFlows) as HookAgent[]).map((a) => {
       const f = skillFlows[a];
@@ -417,18 +429,18 @@ export function AgentsSection({
   useAnnounceOnce(claudeSkill.flow?.conflict ? SKILL_CONFLICT : null, announce);
   useAnnounceOnce(codexSkill.flow?.conflict ? SKILL_CONFLICT : null, announce);
   useAnnounceOnce(antigravitySkill.flow?.conflict ? SKILL_CONFLICT : null, announce);
-  const installs = { claude: claudeInstall, codex: codexInstall, antigravity: antigravityInstall, qwen: qwenInstall };
+  const installs = { claude: claudeInstall, codex: codexInstall, antigravity: antigravityInstall, qwen: qwenInstall, copilot: copilotInstall };
   const install = installs[active];
 
   const startSetup = useCallback(
     (agent: HookAgent = "claude", current?: AgentSetup) => {
-      const found = current ?? (agent === "codex" ? codex : agent === "antigravity" ? antigravity : agent === "qwen" ? qwen : setup);
+      const found = current ?? (agent === "codex" ? codex : agent === "antigravity" ? antigravity : agent === "qwen" ? qwen : agent === "copilot" ? copilot : setup);
       if (typeof found !== "object" || found === null) return;
       setActive(agent);
       setMode("setup");
-      void (agent === "codex" ? codexInstall : agent === "antigravity" ? antigravityInstall : agent === "qwen" ? qwenInstall : claudeInstall).plan(setupWant(found), found.skill);
+      void (agent === "codex" ? codexInstall : agent === "antigravity" ? antigravityInstall : agent === "qwen" ? qwenInstall : agent === "copilot" ? copilotInstall : claudeInstall).plan(setupWant(found), found.skill);
     },
-    [claudeInstall.plan, codexInstall.plan, antigravityInstall.plan, qwenInstall.plan, setup, codex, antigravity, qwen],
+    [claudeInstall.plan, codexInstall.plan, antigravityInstall.plan, qwenInstall.plan, copilotInstall.plan, setup, codex, antigravity, qwen, copilot],
   );
   const startOff = useCallback(
     async (agent: HookAgent = "claude", distro?: string) => {
@@ -462,9 +474,9 @@ export function AgentsSection({
       // The hooks the Windows panel would offer by default; the core installs no skill file in a distro.
       setActive(agent);
       setMode("setup");
-      void (agent === "codex" ? codexInstall : agent === "antigravity" ? antigravityInstall : agent === "qwen" ? qwenInstall : claudeInstall).plan(DEFAULT_WANT, undefined, distro);
+      void (agent === "codex" ? codexInstall : agent === "antigravity" ? antigravityInstall : agent === "qwen" ? qwenInstall : agent === "copilot" ? copilotInstall : claudeInstall).plan(DEFAULT_WANT, undefined, distro);
     },
-    [claudeInstall.plan, codexInstall.plan, antigravityInstall.plan, qwenInstall.plan],
+    [claudeInstall.plan, codexInstall.plan, antigravityInstall.plan, qwenInstall.plan, copilotInstall.plan],
   );
 
   const first = useRef(true);
@@ -478,7 +490,7 @@ export function AgentsSection({
         if (found) startSetup("claude", found);
         return;
       }
-      // Codex's, Antigravity's or Qwen Code's own setup is read here, so its card does not wait on the section's load.
+      // Codex's, Antigravity's, Qwen Code's or Copilot CLI's own setup is read here, so its card does not wait on the section's load.
       const agent = startWith.setup;
       const own = await getSetup(endpoint, agent).catch(() => null);
       if (own) startSetup(agent, own);
@@ -541,6 +553,9 @@ export function AgentsSection({
       qwen={qwen}
       qwenLiveStatus={liveStatus.qwen}
       qwenLiveStatusError={saveError?.agent === "qwen" ? saveError.text : null}
+      copilot={copilot}
+      copilotLiveStatus={liveStatus.copilot}
+      copilotLiveStatusError={saveError?.agent === "copilot" ? saveError.text : null}
       onLiveStatus={(on, agent) => void switchLiveStatus(on, agent)}
       onNotifications={onNotifications}
       wslDistros={distros}

@@ -36,8 +36,11 @@ describe("ProjectsView", () => {
   it("has no live region of its own", () => {
     expect(html(state({ error: "x" }))).not.toMatch(/aria-live|role="status"|role="alert"/);
   });
+  it("the references help names Copilot CLI", () => {
+    expect(html(state())).toContain("Copilot CLI get references");
+  });
   it("says which CLIs get references", () => {
-    expect(html(state())).toContain("Claude Code, Codex, Antigravity and Qwen Code get references. Other agents don&#x27;t.");
+    expect(html(state())).toContain("Claude Code, Codex, Antigravity, Qwen Code and Copilot CLI get references. Other agents don&#x27;t.");
   });
   it("shows Discard only while there are unsaved edits, and locks the picker", () => {
     const clean = html(state());

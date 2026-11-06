@@ -785,3 +785,101 @@ fn a_qwen_permission_answer_with_updated_permissions_is_refused() {
     write_endpoint(home.path(), fake.port, "t");
     assert!(go(home.path(), TAB, qwen("permission"), QWEN_REQUEST).is_empty());
 }
+
+fn copilot(role: &str, event: Option<&str>) -> Vec<String> {
+    let mut v: Vec<String> = [role, "--agent", "copilot"].iter().map(|s| s.to_string()).collect();
+    if let Some(event) = event {
+        v.extend(["--event".to_string(), event.to_string()]);
+    }
+    v.extend(["--tag".to_string(), "mshl1".to_string()]);
+    v
+}
+
+#[test]
+fn a_copilot_call_with_no_core_prints_nothing_and_exits_0() {
+    // Copilot denies a tool call when a preToolUse hook exits non-zero (research Q3), so the bridge never does.
+    let home = tempfile::tempdir().unwrap();
+    for args in [copilot("event", Some("preToolUse")), copilot("permission", None)] {
+        let (out, code) = run_binary(home.path(), &[("MARSHELL_TAB_ID", "tab1")], &args, b"{}");
+        assert!(out.is_empty(), "{args:?}");
+        assert_eq!(code, Some(0), "{args:?}");
+    }
+}
+
+#[test]
+fn a_copilot_permission_call_prints_nothing_whatever_the_core_answers() {
+    // Copilot has no approve cards (slice 6n1 decision 12), so no answer is one the bridge passes on: neither
+    // Copilot's own shape nor Claude's.
+    for answer in [
+        r#"{"behavior":"allow"}"#.to_string(),
+        decision(r#"{"behavior":"allow"}"#),
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let fake = serve(Reply::new(200, &answer));
+        write_endpoint(home.path(), fake.port, "t");
+        let (out, code) = run_binary(
+            home.path(),
+            &[("MARSHELL_TAB_ID", "tab1")],
+            &copilot("permission", None),
+            br#"{"toolName":"bash","toolArgs":"{}"}"#,
+        );
+        assert!(out.is_empty(), "{answer}");
+        assert_eq!(code, Some(0));
+    }
+}
+
+#[test]
+fn a_claude_call_made_by_copilot_prints_nothing() {
+    // Copilot runs a trusted project's .claude/settings.json hooks with COPILOT_CLI set but no COPILOT_HOOK_DIR
+    // (spike Q14), so the Claude bridge it starts stays quiet.
+    let extra = [("MARSHELL_TAB_ID", "tab1"), ("COPILOT_CLI", "1")];
+    for role in ["permission", "event"] {
+        let home = tempfile::tempdir().unwrap();
+        let fake = serve(Reply::new(200, &decision(r#"{"behavior":"allow"}"#)));
+        write_endpoint(home.path(), fake.port, "t");
+        assert!(go(home.path(), &extra, argv(role), permission_request().as_bytes()).is_empty());
+        assert!(
+            fake.captured(Duration::from_millis(300)).is_none(),
+            "{role}: the bridge posted for Copilot"
+        );
+        assert!(log_lines(home.path()).is_empty());
+    }
+    // An empty COPILOT_CLI is not Copilot, and Copilot's own call is not filtered.
+    let home = tempfile::tempdir().unwrap();
+    let fake = serve(Reply::new(204, ""));
+    write_endpoint(home.path(), fake.port, "t");
+    go(home.path(), &[("COPILOT_CLI", "")], argv("event"), b"{}");
+    assert!(fake.captured(WAIT).is_some());
+    let home = tempfile::tempdir().unwrap();
+    let fake = serve(Reply::new(204, ""));
+    write_endpoint(home.path(), fake.port, "t");
+    go(
+        home.path(),
+        &[("COPILOT_CLI", "1")],
+        copilot("event", Some("agentStop")),
+        b"{}",
+    );
+    assert!(fake.captured(WAIT).is_some());
+}
+
+#[test]
+fn a_copilot_body_gets_its_event_name_from_the_flag() {
+    let home = tempfile::tempdir().unwrap();
+    let fake = serve(Reply::new(204, ""));
+    write_endpoint(home.path(), fake.port, "t");
+    go(
+        home.path(),
+        TAB,
+        copilot("event", Some("agentStop")),
+        br#"{"sessionId":"s"}"#,
+    );
+    let body: serde_json::Value = serde_json::from_slice(&fake.captured(WAIT).unwrap().body).unwrap();
+    assert_eq!(body, serde_json::json!({"sessionId":"s","hook_event_name":"agentStop"}));
+
+    let home = tempfile::tempdir().unwrap();
+    let fake = serve(Reply::new(204, ""));
+    write_endpoint(home.path(), fake.port, "t");
+    let stdin = br#"{"hook_event_name":"Notification","sessionId":"s"}"#;
+    go(home.path(), TAB, copilot("event", Some("agentStop")), stdin);
+    assert_eq!(fake.captured(WAIT).unwrap().body, stdin);
+}
