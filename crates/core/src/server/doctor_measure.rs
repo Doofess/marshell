@@ -467,14 +467,15 @@ mod tests {
             }],
         )
         .unwrap();
-        // Claude Code at the user level: one on, one remote, one whose command isn't there.
+        // Claude Code at the user level: one on, one remote, one whose command isn't there. The project's trust dialog
+        // was accepted, without which no project server is approved.
         write(
             &ext.join(".claude.json"),
             &serde_json::json!({"mcpServers": {
                 "on": entry(&exe, "on"),
                 "rem": {"type": "http", "url": "https://example.invalid/mcp"},
                 "ghost": {"command": "ghost", "args": ["ghost"]},
-            }})
+            }, "projects": {project.to_string_lossy().replace('\\', "/"): {"hasTrustDialogAccepted": true}}})
             .to_string(),
         );
         // The project's shared file: one approved in settings.local.json, one not approved, one approved and then
@@ -656,6 +657,11 @@ mod tests {
         write(
             &project.join(".claude").join("settings.local.json"),
             r#"{"enabledMcpjsonServers":["p1","p2"]}"#,
+        );
+        write(
+            &ext.join(".claude.json"),
+            &serde_json::json!({"projects": {project.to_string_lossy().replace('\\', "/"): {"hasTrustDialogAccepted": true}}})
+                .to_string(),
         );
         request_measure(&st);
         wait_idle(&st).await;
