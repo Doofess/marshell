@@ -25,6 +25,10 @@ pub fn accepted(agent: &str, answer: &[u8], request: &[u8], elevated: bool) -> b
     if agent == "antigravity" {
         return antigravity(&answer);
     }
+    // Copilot CLI has no approve cards (slice 6n1 decision 12): it asks in its own terminal, so no answer passes.
+    if agent == "copilot" {
+        return false;
+    }
     let Some(top) = answer.as_object().filter(|top| top.len() == 1) else {
         return false;
     };

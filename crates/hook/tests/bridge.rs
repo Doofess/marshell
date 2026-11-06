@@ -808,18 +808,24 @@ fn a_copilot_call_with_no_core_prints_nothing_and_exits_0() {
 
 #[test]
 fn a_copilot_permission_call_prints_nothing_whatever_the_core_answers() {
-    // Copilot has no approve cards (slice 6n1 decision 12), so no answer is one the bridge passes on.
-    let home = tempfile::tempdir().unwrap();
-    let fake = serve(Reply::new(200, r#"{"behavior":"allow"}"#));
-    write_endpoint(home.path(), fake.port, "t");
-    let (out, code) = run_binary(
-        home.path(),
-        &[("MARSHELL_TAB_ID", "tab1")],
-        &copilot("permission", None),
-        br#"{"toolName":"bash","toolArgs":"{}"}"#,
-    );
-    assert!(out.is_empty());
-    assert_eq!(code, Some(0));
+    // Copilot has no approve cards (slice 6n1 decision 12), so no answer is one the bridge passes on: neither
+    // Copilot's own shape nor Claude's.
+    for answer in [
+        r#"{"behavior":"allow"}"#.to_string(),
+        decision(r#"{"behavior":"allow"}"#),
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let fake = serve(Reply::new(200, &answer));
+        write_endpoint(home.path(), fake.port, "t");
+        let (out, code) = run_binary(
+            home.path(),
+            &[("MARSHELL_TAB_ID", "tab1")],
+            &copilot("permission", None),
+            br#"{"toolName":"bash","toolArgs":"{}"}"#,
+        );
+        assert!(out.is_empty(), "{answer}");
+        assert_eq!(code, Some(0));
+    }
 }
 
 #[test]
