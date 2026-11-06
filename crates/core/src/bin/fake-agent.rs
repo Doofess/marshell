@@ -17,6 +17,11 @@
 //!   fake-agent env-present <names> print "NAME=present" or "NAME=absent" for each name (never a value), exit 0;
 //!                                  the names end at a "-c" word, where a launch line starts
 //!   fake-agent capture-input <f>   read stdin raw, turn bracketed paste on (2004h), append every byte read to <f>
+//!   fake-agent mcp <mode>          an MCP server over stdio, as the Doctor's probe meets it: ok (a banner line, a
+//!                                  request to the client, two pages of tools; with FAKE_MCP_ECHO set it reports its
+//!                                  environment's names as its instructions), notools, silent, exit3, garbage,
+//!                                  refuse, flood (20 MiB of non-JSON lines), grandchild (after `initialize`, starts
+//!                                  a sleeping grandchild, writes its pid to the file FAKE_MCP_PIDFILE, never answers)
 use std::io::{BufRead, Read, Write};
 
 /// Raw, unechoed input, so what the core types arrives byte for byte.
@@ -49,6 +54,115 @@ fn escape_633(text: &str) -> String {
         }
     }
     esc
+}
+
+fn mcp_send(out: &mut impl Write, value: serde_json::Value) {
+    let _ = writeln!(out, "{value}");
+    let _ = out.flush();
+}
+
+/// A tool of the fake MCP server.
+fn mcp_tool(name: &str, description: &str, meta: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "name": name,
+        "description": description,
+        "inputSchema": {"type": "object", "properties": {"q": {"type": "string"}}},
+        "_meta": meta,
+    })
+}
+
+fn mcp(mode: &str, out: &mut impl Write) {
+    use serde_json::{Value, json};
+    match mode {
+        "exit3" => std::process::exit(3),
+        "garbage" => {
+            mcp_send_raw(out, "hello");
+            return;
+        }
+        "flood" => {
+            let chunk = "this is not json, only a line of text to fill the pipe\n".repeat(1024);
+            for _ in 0..(20 * 1024 * 1024 / chunk.len()) {
+                if out.write_all(chunk.as_bytes()).and_then(|()| out.flush()).is_err() {
+                    break;
+                }
+            }
+            std::process::exit(0);
+        }
+        "ok" => mcp_send_raw(out, "fake mcp ready"),
+        _ => {}
+    }
+    let mut lines = std::io::stdin().lock().lines().map_while(Result::ok);
+    let mut grandchild_started = false;
+    while let Some(line) = lines.next() {
+        let Ok(msg) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        let id = msg["id"].clone();
+        match msg["method"].as_str() {
+            Some("initialize") => match mode {
+                "refuse" => mcp_send(
+                    out,
+                    json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32000, "message": "no"}}),
+                ),
+                "grandchild" if !grandchild_started => {
+                    grandchild_started = true;
+                    let me = std::env::current_exe().unwrap();
+                    #[allow(clippy::zombie_processes)] // the probe must end it with the rest of the tree
+                    let child = std::process::Command::new(me).arg("sleep").spawn().unwrap();
+                    std::fs::write(std::env::var("FAKE_MCP_PIDFILE").unwrap(), child.id().to_string()).unwrap();
+                }
+                "silent" | "grandchild" => {}
+                _ => {
+                    if mode == "ok" {
+                        mcp_send(out, json!({"jsonrpc": "2.0", "id": "s1", "method": "roots/list"}));
+                        // The probe must answer a request from the server with "Method not found".
+                        let reply =
+                            lines.find_map(|l| serde_json::from_str::<Value>(&l).ok().filter(|v| v["id"] == "s1"));
+                        if reply.is_none_or(|r| r["error"]["code"] != -32601) {
+                            std::process::exit(9);
+                        }
+                    }
+                    let instructions = if std::env::var_os("FAKE_MCP_ECHO").is_some() {
+                        std::env::vars_os()
+                            .map(|(k, _)| k.to_string_lossy().into_owned())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    } else {
+                        "Use it.".to_string()
+                    };
+                    let capabilities = if mode == "notools" {
+                        json!({})
+                    } else {
+                        json!({"tools": {}})
+                    };
+                    mcp_send(
+                        out,
+                        json!({"jsonrpc": "2.0", "id": id, "result": {
+                            "protocolVersion": "2025-06-18",
+                            "capabilities": capabilities,
+                            "serverInfo": {"name": "fake-mcp", "version": "0"},
+                            "instructions": instructions,
+                        }}),
+                    );
+                }
+            },
+            Some("tools/list") => {
+                let result = if msg["params"]["cursor"].is_null() {
+                    let alpha = mcp_tool("alpha", "First tool.\nMore.", json!({"anthropic/alwaysLoad": true}));
+                    json!({"tools": [alpha], "nextCursor": "page2"})
+                } else {
+                    json!({"tools": [mcp_tool("beta", "Second tool.", json!({"anthropic/alwaysLoad": false}))]})
+                };
+                mcp_send(out, json!({"jsonrpc": "2.0", "id": id, "result": result}));
+            }
+            _ => {}
+        }
+    }
+}
+
+fn mcp_send_raw(out: &mut impl Write, text: &str) {
+    let _ = writeln!(out, "{text}");
+    let _ = out.flush();
 }
 
 fn main() {
@@ -174,6 +288,7 @@ fn main() {
                 file.flush().unwrap();
             }
         }
+        Some("mcp") => mcp(args.get(1).map_or("ok", String::as_str), &mut out),
         _ => eprintln!("unknown mode"),
     }
     out.flush().unwrap();
