@@ -256,6 +256,37 @@ pub(in crate::server) mod tests {
         assert_eq!(second.agents["claude"].used, claude.used);
     }
 
+    // Found in the 7c2 final review: an unreadable scan leaves `scanned_ms` as it was, so `absorb` saw a tie and
+    // dropped `unreadable`; the "can't be read" item never showed and old coverage kept judging.
+    #[test]
+    fn history_that_becomes_unreadable_is_kept_as_unreadable() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, ext) = ext_state(dir.path());
+        write(
+            &ext.join(".claude").join("skills").join("mine").join("SKILL.md"),
+            "---\nname: mine\ndescription: d\n---\nbody\n",
+        );
+        put_lines(&transcript(&ext, "s1.jsonl"), &[quiet_line(now_ms() - 2 * DAY)]);
+        assert_eq!(facts_of(&st).usage.agents["claude"].unreadable, None);
+
+        // The history folder can no longer be listed: a file stands where it was.
+        let projects = ext.join(".claude").join("projects");
+        std::fs::remove_dir_all(&projects).unwrap();
+        write(&projects, "");
+        let usage = facts_of(&st).usage;
+        assert!(
+            usage.agents["claude"].unreadable.is_some(),
+            "{:?}",
+            usage.agents["claude"]
+        );
+        assert!(on_disk(&st).agents["claude"].unreadable.is_some());
+
+        // Readable again: the next scan clears it.
+        std::fs::remove_file(&projects).unwrap();
+        put_lines(&transcript(&ext, "s1.jsonl"), &[quiet_line(now_ms() - 2 * DAY)]);
+        assert_eq!(facts_of(&st).usage.agents["claude"].unreadable, None);
+    }
+
     #[test]
     fn corrupt_usage_json_starts_fresh() {
         let dir = tempfile::tempdir().unwrap();
@@ -302,6 +333,12 @@ pub(in crate::server) mod tests {
         write(
             &project.join(".claude").join("settings.local.json"),
             r#"{"enabledMcpjsonServers":["srv"]}"#,
+        );
+        // Approval counts only in a folder whose trust dialog was accepted.
+        write(
+            &ext.join(".claude.json"),
+            &serde_json::json!({"projects": {project.to_string_lossy().replace('\\', "/"): {"hasTrustDialogAccepted": true}}})
+                .to_string(),
         );
         put_lines(&transcript(&ext, "s1.jsonl"), &[quiet_line(now_ms() - 40 * DAY)]);
         seed_first_sight(&st, 40);

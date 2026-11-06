@@ -244,6 +244,10 @@ pub fn absorb(into: &mut UsageStore, other: &UsageStore) {
         if (o.scanned_ms, o.oldest_ms) > (e.scanned_ms, e.oldest_ms) {
             e.oldest_ms = o.oldest_ms;
             e.cursors = o.cursors.clone();
+        }
+        // An unreadable scan leaves `scanned_ms` as it was, so a run that started from at least the kept scan says
+        // whether the history can be read now.
+        if o.scanned_ms >= e.scanned_ms {
             e.unreadable = o.unreadable.clone();
         }
         e.scanned_ms = e.scanned_ms.max(o.scanned_ms);
