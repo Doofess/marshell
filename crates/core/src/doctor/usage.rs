@@ -408,7 +408,13 @@ pub(crate) fn items(
         .collect();
     let judged_skills: Vec<_> = skills
         .iter()
-        .filter(|s| !s.hidden && s.state == SkillState::Ok && !broken(&item_key(&s.file, &s.origin, &s.name)))
+        .filter(|s| {
+            // A skill whose use the history can't show (no `used_as`) is never judged, like a server's `Unknown`.
+            !s.used_as.is_empty()
+                && !s.hidden
+                && s.state == SkillState::Ok
+                && !broken(&item_key(&s.file, &s.origin, &s.name))
+        })
         .collect();
 
     let cutoff = now_ms.saturating_sub(WINDOW_MS);
@@ -486,6 +492,8 @@ pub(crate) fn items(
                 tail,
                 Some(file.display().to_string()),
             );
+            // Decision 1: Waste, and unchecked, so a fix turns it off only when the user picks it.
+            item.unchecked = true;
             let sw = fixability(&mut item, switch, cli, noun, name);
             out.push((item, sw));
             return;
@@ -1030,12 +1038,16 @@ mod tests {
         let mut hidden = skill("hidden", vec![SkillUse::Name("hidden".into())], Some(NOW - 40 * D));
         hidden.hidden = true;
         i.skills.push(hidden);
+        // A skill whose use the CLI's history can't show is never called unused.
+        i.skills.push(skill("silent", Vec::new(), Some(NOW - 40 * D)));
         first_seen(&mut store, &i);
         let out = run(&i, &store, &[]);
         assert_eq!(
             titles(&out.iter().collect::<Vec<_>>()),
             ["Claude Code's MCP server judged wasn't used in 30 days"]
         );
+        // Decision 1: an unused item is Waste and starts unchecked.
+        assert!(out[0].unchecked);
 
         // A distro's inventory, and one that isn't found, get nothing.
         let mut d = i.clone();
