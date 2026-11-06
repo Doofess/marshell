@@ -14,13 +14,13 @@ export function counts(r: DoctorReport) {
   return { issues: issues.length, fixable, unfixable: issues.length - fixable, offered };
 }
 
-/** Fixable Broken items start checked; an item that was in the previous report keeps the state the person gave it. */
+/** Fixable Broken items start checked, except one marked `unchecked`; an item that was in the previous report keeps the state the person gave it. */
 export function initialSelection(r: DoctorReport, prev?: ReadonlySet<string>, prevReport?: DoctorReport): Set<string> {
   const before = new Set(prevReport?.items.map((i) => i.id));
   const on = new Set<string>();
   for (const i of r.items) {
     if (!i.fixable) continue;
-    if (prev && before.has(i.id) ? prev.has(i.id) : i.group === "broken") on.add(i.id);
+    if (prev && before.has(i.id) ? prev.has(i.id) : i.group === "broken" && !i.unchecked) on.add(i.id);
   }
   return on;
 }

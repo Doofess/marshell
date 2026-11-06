@@ -51,6 +51,7 @@ fn item(
         cannot_fix,
         path: None,
         open_agents: false,
+        unchecked: false,
     }
 }
 

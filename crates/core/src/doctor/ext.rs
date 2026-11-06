@@ -68,7 +68,10 @@ pub enum NoSwitch {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandState {
     Found,
+    /// An absolute path that isn't there.
     Missing,
+    /// A bare name the PATH check doesn't find.
+    NotOnPath,
     NotChecked,
 }
 
@@ -236,6 +239,7 @@ fn inventory_items(inv: &Inventory, out: &mut Vec<(DoctorItem, Option<Switch>)>)
         cannot_fix: None,
         path: path.map(|p| p.display().to_string()),
         open_agents: false,
+        unchecked: false,
     };
 
     // 1. Files that don't parse.
@@ -266,14 +270,19 @@ fn inventory_items(inv: &Inventory, out: &mut Vec<(DoctorItem, Option<Switch>)>)
         .collect();
     servers.sort_by(|a, b| (&a.name, &a.file).cmp(&(&b.name, &b.file)));
     for s in servers {
-        let why = match &s.transport {
+        let (why, unchecked) = match &s.transport {
             Transport::Stdio {
                 command,
                 state: CommandState::Missing,
-            } => {
-                format!("Its command, {command}, isn't on this PC.")
-            }
-            Transport::Nothing => "Its entry has no command and no URL.".to_string(),
+            } => (format!("Its command, {command}, isn't on this PC."), false),
+            Transport::Stdio {
+                command,
+                state: CommandState::NotOnPath,
+            } => (
+                format!("Its command, {command}, isn't on the PATH Marshell's tabs get."),
+                true,
+            ),
+            Transport::Nothing => ("Its entry has no command and no URL.".to_string(), false),
             _ => continue,
         };
         let mut item = mk(
@@ -283,6 +292,7 @@ fn inventory_items(inv: &Inventory, out: &mut Vec<(DoctorItem, Option<Switch>)>)
             why,
             Some(&s.file),
         );
+        item.unchecked = unchecked;
         let switch = fixability(&mut item, &s.switch, cli, Some(&s.name));
         out.push((item, switch));
     }
@@ -534,6 +544,49 @@ mod tests {
                 "/projects/C:~1a/disabledMcpServers",
                 "/projects/C:~1b/disabledMcpServers"
             ]
+        );
+    }
+
+    #[test]
+    fn a_bare_command_not_on_the_path_is_broken_but_unchecked() {
+        let file = PathBuf::from("C:/h/.codex/config.toml");
+        let mut i = inv("codex");
+        let switch = || {
+            Ok(Switch::CodexServer {
+                file: file.clone(),
+                name: "files".into(),
+            })
+        };
+        i.servers.push(server(
+            "files",
+            "C:/h/.codex/config.toml",
+            Transport::Stdio {
+                command: "npx-x".into(),
+                state: CommandState::NotOnPath,
+            },
+            switch(),
+        ));
+        i.servers.push(server(
+            "gone",
+            "C:/h/.codex/config.toml",
+            missing("C:/x/gone.exe"),
+            switch(),
+        ));
+        let items = items(&[i]);
+        assert_eq!(items.len(), 2);
+        let on_path = items.iter().find(|it| it.title.contains("files")).unwrap();
+        assert_eq!(on_path.group, DoctorGroup::Broken);
+        assert!(on_path.fixable);
+        assert!(on_path.unchecked);
+        assert_eq!(
+            on_path.detail,
+            "Its command, npx-x, isn't on the PATH Marshell's tabs get. The fix turns it off and doesn't delete it."
+        );
+        let absolute = items.iter().find(|it| it.title.contains("gone")).unwrap();
+        assert!(absolute.fixable && !absolute.unchecked);
+        assert_eq!(
+            absolute.detail,
+            "Its command, C:/x/gone.exe, isn't on this PC. The fix turns it off and doesn't delete it."
         );
     }
 

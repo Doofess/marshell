@@ -65,11 +65,16 @@ pub(crate) fn windows_roots(st: &AppState) -> Option<ExtRoots> {
     })
 }
 
-/// Whether a stdio server's command is there: an absolute path by the file (with the extensions Windows runs when the
-/// path has none), a relative path not at all, and a bare name by the PATH.
+/// Whether a stdio server's command is there: one with `$` or `%` isn't checked (the CLI expands it), an absolute path
+/// by the file (with the extensions Windows runs when the path has none), a relative path not at all, and a bare name
+/// by the PATH.
 pub(crate) fn judge(command: &str, on_path: &dyn Fn(&str) -> bool) -> CommandState {
     let command = command.trim();
     if command.is_empty() {
+        return CommandState::NotChecked;
+    }
+    // Claude Code and Qwen Code expand `${VAR}` in a command.
+    if command.contains(['$', '%']) {
         return CommandState::NotChecked;
     }
     if command.contains(['\\', '/']) {
@@ -91,7 +96,7 @@ pub(crate) fn judge(command: &str, on_path: &dyn Fn(&str) -> bool) -> CommandSta
     if on_path(command) {
         CommandState::Found
     } else {
-        CommandState::Missing
+        CommandState::NotOnPath
     }
 }
 
@@ -558,7 +563,10 @@ mod tests {
         write(&real, "");
         let on_path = |c: &str| c == "node";
         assert_eq!(judge("node", &on_path), CommandState::Found);
-        assert_eq!(judge("ghost", &on_path), CommandState::Missing);
+        assert_eq!(judge("ghost", &on_path), CommandState::NotOnPath);
+        for var in ["${NODE}", "$NODE", "%NODE%"] {
+            assert_eq!(judge(var, &on_path), CommandState::NotChecked, "{var}");
+        }
         assert_eq!(judge(&real.to_string_lossy(), &on_path), CommandState::Found);
         assert_eq!(
             judge(&dir.path().join("gone.exe").to_string_lossy(), &on_path),

@@ -21,6 +21,14 @@ describe("initialSelection", () => {
     expect(sel.has("retention.claude")).toBe(true);
     expect(sel.has("hooks.codex@Ubuntu")).toBe(true);
   });
+  it("leaves an unchecked Broken item unchecked, and keeps the person's choice once it was in the previous report", () => {
+    const first = DOCTOR_REPORT.items[0]!;
+    const ghost = { ...first, id: "mcp.codex.ab12cd34", unchecked: true };
+    const report = { ...DOCTOR_REPORT, items: [...DOCTOR_REPORT.items, ghost] };
+    expect(initialSelection(report).has(ghost.id)).toBe(false);
+    expect(initialSelection(report).has("hooks.claude")).toBe(true);
+    expect(initialSelection(report, new Set([ghost.id]), report).has(ghost.id)).toBe(true);
+  });
   it("never selects an item that cannot be fixed", () => {
     expect(initialSelection(DOCTOR_PROBLEMS).size).toBe(0);
   });
