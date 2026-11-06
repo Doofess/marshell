@@ -48,6 +48,9 @@ impl UseKey {
 pub enum EventKind {
     /// The key was used.
     Used,
+    /// The CLI's own record of the key's last use, with no place (Claude Code's `skillUsage`). It raises the last use
+    /// and isn't a place, so it neither makes nor stops a "one project only" item.
+    LastUse,
     /// The CLI's history listed the key as there (a session's deferred tools or skill listing).
     Available,
 }
@@ -209,6 +212,10 @@ pub fn merge(store: &mut AgentStore, scan: Scan, now_ms: u64) {
                 let place = ev.cwd.as_deref().map(norm_path).unwrap_or_default();
                 let p = u.places.entry(place).or_insert(0);
                 *p = (*p).max(ev.at_ms);
+            }
+            EventKind::LastUse => {
+                let u = store.used.entry(key).or_default();
+                u.last_ms = u.last_ms.max(ev.at_ms);
             }
             EventKind::Available => {
                 let a = store.available.entry(key).or_insert(ev.at_ms);
@@ -514,6 +521,12 @@ pub(crate) fn items(
                 return;
             }
             let project = first.1.clone().unwrap_or_else(|| PathBuf::from(&first.0));
+            // A folder that already holds the item's file (the home folder, for a user-level one) is no place to move
+            // it to.
+            let folder = norm_path(&project.to_string_lossy());
+            if norm_path(&file.to_string_lossy()).starts_with(&format!("{folder}/")) {
+                return;
+            }
             let hint = if kind == "mcp" {
                 (inv.hints.move_server)(name, &project)
             } else {
@@ -1128,6 +1141,63 @@ mod tests {
                 .detail
                 .starts_with("In the last 30 days it was used only in c:/dev/airportx.")
         );
+    }
+
+    // Found in the 7c2 final review: Claude Code's `skillUsage` keeps each skill's last use with no place, and as a
+    // use at an unknown place it stopped every broad-scope item for a skill used recently.
+    #[test]
+    fn a_last_use_with_no_place_raises_the_last_use_only() {
+        let mut store = covered();
+        let mut i = inv("claude");
+        i.skills
+            .push(skill("ship", vec![SkillUse::Name("ship".into())], Some(NOW - 40 * D)));
+        let ev = |kind, at, cwd: Option<&str>| Event {
+            kind,
+            key: UseKey::SkillName("ship".into()),
+            at_ms: at,
+            cwd: cwd.map(String::from),
+        };
+        let scan = Scan {
+            events: vec![
+                ev(EventKind::Used, NOW - 3 * D, Some(r"C:\dev\Airport")),
+                ev(EventKind::LastUse, NOW - D, None),
+            ],
+            ..scan_with(NOW - 40 * D)
+        };
+        merge(store.agents.get_mut("claude").unwrap(), scan, NOW);
+        let u = &store.agents["claude"].used["skill:ship"];
+        assert_eq!(u.last_ms, NOW - D);
+        assert_eq!(u.places.keys().collect::<Vec<_>>(), ["c:/dev/airport"]);
+        let out = run(&i, &store, &[PathBuf::from(r"C:\dev\Airport")]);
+        assert_eq!(with_prefix(&out, "skillbroad.claude.").len(), 1, "{out:?}");
+
+        // A last use alone in the window says nothing about where.
+        let mut alone = covered();
+        let scan = Scan {
+            events: vec![ev(EventKind::LastUse, NOW - D, None)],
+            ..scan_with(NOW - 40 * D)
+        };
+        merge(alone.agents.get_mut("claude").unwrap(), scan, NOW);
+        let out = run(&i, &alone, &[PathBuf::from(r"C:\dev\Airport")]);
+        assert!(out.is_empty(), "used in the window, place unknown: {out:?}");
+    }
+
+    // Found in the 7c2 final review: a skill used only from the home folder was told to move into the home folder's
+    // `.claude\skills`, where it already is.
+    #[test]
+    fn no_broad_item_for_a_folder_that_holds_the_item() {
+        let mut i = inv("claude");
+        i.skills
+            .push(skill("ship", vec![SkillUse::Name("ship".into())], Some(NOW - 40 * D)));
+        i.servers.push(server("gh", UsedAs::ToolPrefix("mcp__gh__".into())));
+        let mut store = covered();
+        mark_used(&mut store, "skill:ship", NOW - D, "c:/h");
+        mark_used(&mut store, "tool:mcp__gh__list", NOW - D, "c:/h");
+        for projects in [vec![], vec![PathBuf::from(r"C:\h")]] {
+            let out = run(&i, &store, &projects);
+            assert!(with_prefix(&out, "skillbroad.").is_empty(), "{out:?}");
+            assert!(with_prefix(&out, "mcpbroad.").is_empty(), "{out:?}");
+        }
     }
 
     #[test]

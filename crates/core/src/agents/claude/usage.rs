@@ -168,7 +168,7 @@ fn skill_usage(claude_json: &Path) -> Vec<Event> {
                 .as_u64()
                 .or_else(|| at.as_f64().filter(|f| *f >= 0.0).map(|f| f as u64))
                 .or_else(|| at.as_str().and_then(rfc3339_ms))?;
-            Some(event(EventKind::Used, UseKey::SkillName(name.clone()), ms, &None))
+            Some(event(EventKind::LastUse, UseKey::SkillName(name.clone()), ms, &None))
         })
         .collect()
 }
@@ -396,7 +396,8 @@ mod tests {
         assert_eq!(
             s.events,
             vec![Event {
-                kind: EventKind::Used,
+                // A last use with no place: it raises the last use and isn't a place (7c2 final review).
+                kind: EventKind::LastUse,
                 key: UseKey::SkillName("marshell-ship".into()),
                 at_ms: 1_762_000_000_000,
                 cwd: None,
