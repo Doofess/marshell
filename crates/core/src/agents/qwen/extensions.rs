@@ -208,6 +208,43 @@ fn skills_in(
     }
 }
 
+/// Qwen Code's switch adds a name to the person's global `mcp.excluded` or `skills.disabled`, which turns off every
+/// server or skill with that name: skills match without regard to case, and an extension's `ext:name` matches by its
+/// bare name. An entry that shares its name with another that is in use (not off, and not broken itself) gets no
+/// switch, so turning it off can't turn off one that works.
+fn report_only_when_name_is_shared(servers: &mut [Server], skills: &mut [Skill]) {
+    let broken = |s: &Server| match &s.transport {
+        Transport::Stdio { state, .. } => matches!(state, CommandState::Missing | CommandState::NotOnPath),
+        Transport::Nothing => true,
+        Transport::Remote => false,
+    };
+    let in_use: Vec<(String, bool)> = servers.iter().map(|s| (s.name.clone(), !s.off && !broken(s))).collect();
+    for (i, s) in servers.iter_mut().enumerate() {
+        let shared = in_use
+            .iter()
+            .enumerate()
+            .any(|(j, (name, used))| j != i && *used && *name == s.name);
+        if !s.off && shared && s.switch.is_ok() {
+            s.switch = Err(NoSwitch::SameName);
+        }
+    }
+    let bare = |name: &str| name.rsplit(':').next().unwrap_or(name).to_lowercase();
+    let in_use: Vec<(String, bool)> = skills
+        .iter()
+        .map(|s| (bare(&s.name), !s.off && s.state == SkillState::Ok))
+        .collect();
+    for (i, s) in skills.iter_mut().enumerate() {
+        let mine = bare(&s.name);
+        let shared = in_use
+            .iter()
+            .enumerate()
+            .any(|(j, (name, used))| j != i && *used && *name == mine);
+        if !s.off && shared && s.switch.is_ok() {
+            s.switch = Err(NoSwitch::SameName);
+        }
+    }
+}
+
 /// `command` judges a stdio server's command. `projects` are the folders to read project files in.
 pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) -> CommandState) -> Inventory {
     let mut files = Files::default();
@@ -334,6 +371,8 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
             );
         }
     }
+
+    report_only_when_name_is_shared(&mut servers, &mut skills);
 
     Inventory {
         agent: "qwen",
@@ -562,6 +601,61 @@ mod tests {
                 name: "ps".into()
             })
         );
+    }
+
+    #[test]
+    fn a_server_name_another_server_uses_is_report_only() {
+        let h = fake_home("same-server");
+        let r = roots(&h);
+        let user = r.qwen_dir.join("settings.json");
+        let proj = h.join("proj");
+        put(
+            &user,
+            &json!({"mcpServers": {"github": {"command": "here"}}}).to_string(),
+        );
+        put(
+            &proj.join(".mcp.json"),
+            &json!({"mcpServers": {"github": {"command": "gone"}, "solo": {"command": "gone"}}}).to_string(),
+        );
+        let judge = |c: &str| {
+            if c == "gone" {
+                CommandState::NotOnPath
+            } else {
+                CommandState::Found
+            }
+        };
+
+        let inv = inventory(&r, std::slice::from_ref(&proj), &judge);
+
+        let project_github = inv
+            .servers
+            .iter()
+            .find(|s| s.name == "github" && s.origin == Origin::Project(proj.clone()))
+            .unwrap();
+        assert_eq!(project_github.switch, Err(NoSwitch::SameName));
+        let user_github = inv.servers.iter().find(|s| s.origin == Origin::User).unwrap();
+        assert!(user_github.switch.is_ok(), "{user_github:?}");
+        assert!(server(&inv, "solo").switch.is_ok());
+    }
+
+    #[test]
+    fn a_skill_name_another_skill_uses_is_report_only() {
+        let h = fake_home("same-skill");
+        let r = roots(&h);
+        let skills = r.qwen_dir.join("skills");
+        put(&skills.join("one").join("SKILL.md"), "---\nname: dup\n---\n");
+        put(
+            &skills.join("two").join("SKILL.md"),
+            "---\nname: Dup\ndescription: d\n---\n",
+        );
+        put(&skills.join("three").join("SKILL.md"), "---\nname: alone\n---\n");
+
+        let inv = inventory(&r, &[], &found);
+
+        assert_eq!(skill(&inv, "dup").state, SkillState::Missing("description"));
+        assert_eq!(skill(&inv, "dup").switch, Err(NoSwitch::SameName));
+        assert!(skill(&inv, "Dup").switch.is_ok());
+        assert!(skill(&inv, "alone").switch.is_ok());
     }
 
     #[test]

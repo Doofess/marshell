@@ -66,6 +66,8 @@ pub enum NoSwitch {
     /// The file the switch writes can't be edited safely: it doesn't parse, the config guard refuses it, or it is too
     /// large, read-only or unreadable.
     CantEdit(PathBuf),
+    /// The CLI turns items off by name, and another item in use has this name.
+    SameName,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -217,6 +219,14 @@ fn cannot_fix_of(no: &NoSwitch, cli: &str, kind: &str, name: &str) -> String {
         NoSwitch::ClaudeUser => format!(
             "Claude Code can turn a user-level server off only per project. To remove it, run claude mcp remove {name} -s user."
         ),
+        NoSwitch::SameName => {
+            let name = if kind == "skill" {
+                name.rsplit(':').next().unwrap_or(name)
+            } else {
+                name
+            };
+            format!("{cli} turns {kind}s off by name, and another {kind} named {name} is in use.")
+        }
         NoSwitch::CantEdit(f) => format!(
             "Marshell can't edit {} safely, so it leaves the file alone. Turn the {kind} off in {cli}.",
             f.display()
@@ -552,6 +562,31 @@ mod tests {
                 "/projects/C:~1a/disabledMcpServers",
                 "/projects/C:~1b/disabledMcpServers"
             ]
+        );
+    }
+
+    #[test]
+    fn a_same_name_item_says_who_else_uses_the_name() {
+        let mut i = inv("qwen");
+        i.servers.push(server(
+            "github",
+            "C:/h/.qwen/settings.json",
+            missing("C:/x/gone.exe"),
+            Err(NoSwitch::SameName),
+        ));
+        let mut dup = skill("dup", 5);
+        dup.state = SkillState::Missing("description");
+        dup.switch = Err(NoSwitch::SameName);
+        i.skills.push(dup);
+        let items = items(&[i]);
+        let said = |prefix: &str| with_prefix(&items, prefix)[0].cannot_fix.clone();
+        assert_eq!(
+            said("mcp.").as_deref(),
+            Some("Qwen Code turns servers off by name, and another server named github is in use.")
+        );
+        assert_eq!(
+            said("skill.").as_deref(),
+            Some("Qwen Code turns skills off by name, and another skill named dup is in use.")
         );
     }
 
