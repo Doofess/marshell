@@ -1640,3 +1640,59 @@ async fn a_request_from_a_wsl_tab_marked_by_the_agents_hook_is_held() {
         hook.abort();
     }
 }
+
+#[tokio::test]
+async fn a_copilot_permission_request_is_never_held() {
+    // Decision 12: Copilot asks in its own terminal, and no card is made for it, even for a body that reaches the
+    // permission role from a hooks file of the person's own.
+    let home = tempfile::tempdir().unwrap().keep();
+    let st = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home,
+        Vec::new(),
+    )
+    .with_claude_version(Some("2.1.302".into()))
+    .with_copilot_home(tempfile::tempdir().unwrap().keep())
+    .with_copilot_version(Some("1.0.106".into()))
+    .with_agent_path(|_| None)
+    .with_permission_hold(Duration::from_secs(120));
+    // A row that runs Copilot, with no process: an open tab of the requesting agent, so only the agent decides.
+    st.registry().reserve(
+        "t0",
+        marshell_core::registry::Relaunch {
+            elevated: false,
+            profile_id: "none".into(),
+            agent: Some("copilot".into()),
+            cwd: String::new(),
+            mode: None,
+            name: "t0".into(),
+            preset: None,
+        },
+    );
+    let app = router(st.clone());
+    assert!(st.registry().is_open("t0"));
+    assert_eq!(st.registry().effective_agent("t0").as_deref(), Some("copilot"));
+    let body = serde_json::json!({
+        "hook_event_name": "permissionRequest",
+        "sessionId": "00000000-0000-4000-8000-000000000001",
+        "toolName": "powershell",
+        "toolInput": {"command": "echo marshell"}
+    });
+    let response = tokio::time::timeout(
+        Duration::from_secs(1),
+        app.clone().oneshot(hook_request("copilot", Some("t0"), &body)),
+    )
+    .await
+    .expect("a Copilot request was held")
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(
+        axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert!(pending(&app).await.is_empty());
+}

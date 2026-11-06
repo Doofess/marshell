@@ -2173,3 +2173,295 @@ async fn qwen_status_off_says_so() {
     assert_eq!(info.live, None);
     assert_eq!(info.status_note.as_deref(), Some("Live status is off for Qwen Code"));
 }
+
+// Copilot CLI. Its bodies are camelCase and carry no `hook_event_name` except `notification`: the bridge adds it
+// from its `--event` flag. The fixtures are the ones recorded from a real 1.0.106.
+
+/// A Copilot CLI version Marshell has recorded; pinned so no test runs a real `copilot`.
+const COPILOT: &str = "1.0.106";
+
+/// A state whose Copilot files would be planned under a scratch home and whose `copilot` version is pinned.
+fn copilot_state(version: Option<&str>) -> AppState {
+    state(Some(KNOWN))
+        .with_copilot_home(tempfile::tempdir().unwrap().keep())
+        .with_copilot_version(version.map(str::to_string))
+}
+
+/// A row that runs Copilot in `cwd`, with no process: enough for a hook to name an open tab.
+fn reserve_copilot(st: &AppState, cwd: &std::path::Path) -> String {
+    st.registry().reserve(
+        "copilot-tab",
+        marshell_core::registry::Relaunch {
+            elevated: false,
+            profile_id: "none".into(),
+            agent: Some("copilot".into()),
+            cwd: cwd.to_string_lossy().into_owned(),
+            mode: None,
+            name: "Copilot".into(),
+            preset: None,
+        },
+    );
+    "copilot-tab".into()
+}
+
+/// The recorded body `name`, with the `hook_event_name` the bridge adds from `--event` (the fixture's own for
+/// `notification`).
+fn copilot_hook_body(name: &str, event: &str) -> serde_json::Value {
+    let text = std::fs::read_to_string(format!(
+        "{}/tests/fixtures/copilot/hooks/{COPILOT}/{name}.json",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    let mut body: serde_json::Value = serde_json::from_str(&text).unwrap();
+    if body.get("hook_event_name").is_none() {
+        body["hook_event_name"] = event.into();
+    }
+    body
+}
+
+fn copilot_statusline_body(name: &str) -> serde_json::Value {
+    let text = std::fs::read_to_string(format!(
+        "{}/tests/fixtures/copilot/statusline/{COPILOT}/{name}.json",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    serde_json::from_str(&text).unwrap()
+}
+
+async fn post_copilot_as(
+    app: &axum::Router,
+    role: &str,
+    tab: Option<&str>,
+    body: &serde_json::Value,
+) -> (StatusCode, String) {
+    let res = app
+        .clone()
+        .oneshot(hook(
+            Some(role),
+            Some("copilot"),
+            tab,
+            serde_json::to_vec(body).unwrap(),
+        ))
+        .await
+        .unwrap();
+    let code = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    (code, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Posts the recorded hook body `name` to `tab` as the event `event`.
+async fn post_copilot(app: &axum::Router, tab: &str, name: &str, event: &str) -> (StatusCode, String) {
+    post_copilot_as(app, "event", Some(tab), &copilot_hook_body(name, event)).await
+}
+
+/// A Copilot prompt: the recorded `userPromptSubmitted` body with `prompt` replaced.
+async fn submit_copilot(app: &axum::Router, tab: &str, prompt: &str) -> (StatusCode, String) {
+    let mut body = copilot_hook_body("userPromptSubmitted", "userPromptSubmitted");
+    body["prompt"] = prompt.into();
+    post_copilot_as(app, "event", Some(tab), &body).await
+}
+
+#[tokio::test]
+async fn copilot_events_fold_into_the_tabs_live_status() {
+    let st = copilot_state(Some(COPILOT));
+    let app = router(st.clone());
+    let p = project();
+    let tab = reserve_copilot(&st, &p.repo);
+
+    assert_eq!(
+        post_copilot(&app, &tab, "sessionStart", "sessionStart").await.0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(row(&st, &tab).live.unwrap().state, LiveState::Idle);
+
+    post_copilot(&app, &tab, "userPromptSubmitted", "userPromptSubmitted").await;
+    assert_eq!(row(&st, &tab).live.unwrap().state, LiveState::Working);
+
+    post_copilot(&app, &tab, "preToolUse-powershell", "preToolUse").await;
+    let tool = row(&st, &tab).live.unwrap();
+    assert_eq!(
+        (tool.state, tool.phrase.as_str()),
+        (LiveState::Working, "Running `echo marshell`")
+    );
+
+    // Copilot's own dialog: Needs permission, until the tool's result.
+    post_copilot(&app, &tab, "notification-permission_prompt", "notification").await;
+    let asking = row(&st, &tab).live.unwrap();
+    assert_eq!(
+        (asking.state, asking.phrase.as_str()),
+        (LiveState::NeedsPermission, "Wants to run `echo marshell`")
+    );
+    post_copilot(&app, &tab, "postToolUse", "postToolUse").await;
+    assert_eq!(row(&st, &tab).live.unwrap().state, LiveState::Working);
+
+    // The status line sets the model and the context.
+    let (code, _) = post_copilot_as(&app, "statusline", Some(&tab), &copilot_statusline_body("working")).await;
+    assert_eq!(code, StatusCode::NO_CONTENT);
+    let line = row(&st, &tab).live.unwrap();
+    assert_eq!(
+        (line.state, line.model.as_deref(), line.context_pct),
+        (LiveState::Working, Some("marshell-fake"), Some(1))
+    );
+
+    // `agentStop` is Done at once (no hold).
+    post_copilot(&app, &tab, "agentStop", "agentStop").await;
+    let done = row(&st, &tab);
+    post_copilot(&app, &tab, "sessionEnd-clear", "sessionEnd").await;
+    let ended = row(&st, &tab).live.unwrap();
+    // `/clear`'s status line with the new id: the row runs again.
+    post_copilot_as(&app, "statusline", Some(&tab), &copilot_statusline_body("idle")).await;
+    let again = row(&st, &tab).live.unwrap();
+    stop(&st, &tab);
+    assert_eq!(done.status_note, None);
+    assert_eq!(done.live.unwrap().state, LiveState::Done);
+    assert_eq!(ended.state, LiveState::Ended);
+    assert_eq!(again.state, LiveState::Idle);
+}
+
+#[tokio::test]
+async fn a_copilot_prompt_is_never_logged_or_kept() {
+    let st = copilot_state(Some(COPILOT));
+    let app = router(st.clone());
+    let p = project();
+    let tab = reserve_copilot(&st, &p.repo);
+
+    let secret = "COPILOTSECRET-6603";
+    let mut start = copilot_hook_body("sessionStart", "sessionStart");
+    start["initialPrompt"] = format!("{secret} first").into();
+    post_copilot_as(&app, "event", Some(&tab), &start).await;
+    submit_copilot(&app, &tab, &format!("{secret} hello")).await;
+
+    // The row has no process, so the log keeps these under no tab.
+    let logged = events(&app, None).await;
+    let sessions = serde_json::to_string(&st.registry().snapshot().sessions).unwrap();
+    let mut files = Vec::new();
+    texts_under(st.home(), &mut files);
+    stop(&st, &tab);
+
+    assert_eq!(logged.len(), 2);
+    let text = serde_json::to_string(&logged).unwrap();
+    for key in ["\"prompt\"", "\"initialPrompt\""] {
+        assert!(!text.contains(key), "the hook log has {key}: {text}");
+    }
+    assert!(
+        text.contains("userPromptSubmitted"),
+        "the rest of the body stays: {text}"
+    );
+    assert!(
+        !text.contains(secret) && !sessions.contains(secret),
+        "the prompt is kept"
+    );
+    for (path, content) in &files {
+        assert!(!content.contains(secret), "{} has the prompt", path.display());
+    }
+}
+
+#[tokio::test]
+async fn a_copilot_prompt_naming_an_alias_gets_the_note_as_additional_context() {
+    let st = copilot_state(Some(COPILOT));
+    let app = router(st.clone());
+    let p = project();
+    save_refs(&st, &p.repo, true, login_button());
+    let tab = reserve_copilot(&st, &p.repo);
+
+    let (code, text) = submit_copilot(&app, &tab, "fix the Login Button please").await;
+    let shown = row(&st, &tab).references;
+    // A prompt that names nothing clears the chip.
+    let (fresh, _) = submit_copilot(&app, &tab, "fix the logout link").await;
+    let cleared = row(&st, &tab).references;
+    stop(&st, &tab);
+
+    assert_eq!(code, StatusCode::OK, "{text}");
+    let note = format!(
+        "References: 'login button' = {}.",
+        p.repo.join("src").join("login.rs").display()
+    );
+    let answer: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(answer, serde_json::json!({"additionalContext": note}));
+    let shown = shown.expect("the chip's note");
+    assert_eq!((shown.names, shown.note), (vec!["login button".to_string()], note));
+    assert_eq!((fresh, cleared), (StatusCode::NO_CONTENT, None));
+}
+
+#[tokio::test]
+async fn no_other_copilot_event_gets_the_note() {
+    let st = copilot_state(Some(COPILOT));
+    let app = router(st.clone());
+    let p = project();
+    save_refs(&st, &p.repo, true, login_button());
+    let tab = reserve_copilot(&st, &p.repo);
+
+    let mut answers = Vec::new();
+    for (name, event) in [
+        ("notification-permission_prompt", "notification"),
+        ("preToolUse-powershell", "preToolUse"),
+        ("postToolUse", "postToolUse"),
+        ("agentStop", "agentStop"),
+    ] {
+        let mut body = copilot_hook_body(name, event);
+        body["prompt"] = "fix the login button".into();
+        body["message"] = "fix the login button".into();
+        answers.push(post_copilot_as(&app, "event", Some(&tab), &body).await);
+    }
+    let chip = row(&st, &tab).references;
+    stop(&st, &tab);
+    for answer in answers {
+        assert_eq!(answer, (StatusCode::NO_CONTENT, String::new()));
+    }
+    assert_eq!(chip, None);
+}
+
+#[tokio::test]
+async fn an_unrecorded_copilot_version_gets_the_note_and_no_status() {
+    for (version, note) in [
+        (Some("1.1.0"), "Copilot CLI 1.1.0 is not one Marshell has recorded yet"),
+        (
+            Some("1.0.105"),
+            "Copilot CLI 1.0.105 is older than the versions Marshell knows",
+        ),
+        (None, "Copilot CLI's version could not be read"),
+    ] {
+        let st = copilot_state(version);
+        let app = router(st.clone());
+        let p = project();
+        save_refs(&st, &p.repo, true, login_button());
+        let tab = reserve_copilot(&st, &p.repo);
+
+        // The reference note does not depend on the version.
+        let (code, text) = submit_copilot(&app, &tab, "fix the login button").await;
+        post_copilot_as(&app, "statusline", Some(&tab), &copilot_statusline_body("working")).await;
+        let info = row(&st, &tab);
+        stop(&st, &tab);
+        assert_eq!(code, StatusCode::OK, "{version:?}: {text}");
+        assert!(text.contains("additionalContext"), "{text}");
+        assert_eq!(info.live, None, "{version:?}");
+        assert_eq!(info.status_note.as_deref(), Some(note));
+    }
+}
+
+#[tokio::test]
+async fn copilot_status_off_says_so() {
+    let st = copilot_state(Some(COPILOT));
+    let app = router(st.clone());
+    let p = project();
+    let tab = reserve_copilot(&st, &p.repo);
+    let settings = serde_json::json!({ "appearance": {}, "status_off": ["copilot"] });
+    let res = app
+        .clone()
+        .oneshot(
+            base("PUT", "/v1/settings")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(settings.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+
+    post_copilot(&app, &tab, "userPromptSubmitted", "userPromptSubmitted").await;
+    post_copilot_as(&app, "statusline", Some(&tab), &copilot_statusline_body("working")).await;
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(info.live, None);
+    assert_eq!(info.status_note.as_deref(), Some("Live status is off for Copilot CLI"));
+}

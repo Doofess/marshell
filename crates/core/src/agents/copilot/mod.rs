@@ -1,6 +1,7 @@
 //! GitHub Copilot CLI (`copilot`): its own hooks file and its status line, planned as config changes.
 
 pub mod hooks;
+pub mod status;
 
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};

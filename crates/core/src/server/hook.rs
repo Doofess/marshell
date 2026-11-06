@@ -2,7 +2,7 @@ use super::AppState;
 use crate::agents::claude::compact;
 use crate::agents::claude::status::{fold_event, fold_statusline_with_window, mode_of};
 use crate::agents::common::Gate;
-use crate::agents::{antigravity, codex, qwen};
+use crate::agents::{antigravity, codex, copilot, qwen};
 use crate::history::recorder::schedule_copy;
 use crate::hooks::holds::Outcome;
 use crate::hooks::log::HookEventRecord;
@@ -84,6 +84,15 @@ pub async fn post(
         // neither.
         object.remove("submitted_prompt");
         object.remove("last_assistant_message");
+        prompt = match object.remove("prompt") {
+            Some(serde_json::Value::String(text)) => Some(text),
+            _ => None,
+        };
+    } else if agent == "copilot"
+        && let Some(object) = json.as_object_mut()
+    {
+        // `initialPrompt` repeats the first prompt of a session: the core keeps neither it nor `prompt`.
+        object.remove("initialPrompt");
         prompt = match object.remove("prompt") {
             Some(serde_json::Value::String(text)) => Some(text),
             _ => None,
@@ -183,6 +192,8 @@ pub async fn post(
     let starts_prompt = match agent.as_str() {
         "claude" | "codex" => event == Some("UserPromptSubmit"),
         "qwen" => event == Some("UserPromptSubmit") && prompt.as_deref().is_some_and(|text| !text.is_empty()),
+        // Autopilot's continuations are prompts of Copilot's own text, so each one counts.
+        "copilot" => event == Some("userPromptSubmitted") && prompt.as_deref().is_some_and(|text| !text.is_empty()),
         "antigravity" => {
             event == Some("PreInvocation") && json.get("invocationNum").and_then(serde_json::Value::as_u64) == Some(0)
         }
@@ -197,7 +208,7 @@ pub async fn post(
     // The lookup runs beside the fold and the history (the history's index lock can be held by a search) under what
     // is left of the budget, so a slow fold can't make the answer later than the bridge waits.
     let fold = async {
-        if matches!(agent.as_str(), "claude" | "codex" | "antigravity" | "qwen")
+        if matches!(agent.as_str(), "claude" | "codex" | "antigravity" | "qwen" | "copilot")
             && let Some(tab) = tab.as_deref()
         {
             if !left_wsl {
@@ -224,6 +235,7 @@ pub async fn post(
                 "codex" => codex::context_output(&found.note),
                 "antigravity" => antigravity::context_output(&found.note),
                 "qwen" => qwen::context_output(&found.note),
+                "copilot" => copilot::context_output(&found.note),
                 _ => crate::agents::claude::context_output(&found.note),
             };
             return Ok(Json(output).into_response());
@@ -318,7 +330,7 @@ async fn record_history(st: &AppState, agent: &str, tab: &str, body: &serde_json
 
 /// Folds what an agent (Claude Code, Codex or Antigravity) reported into the tab's live status. A permission
 /// request counts as an event (it folds to Needs permission). Without a known version, or with the switch off,
-/// the row gets a note saying why and keeps no status. Claude Code, Antigravity and Qwen Code send a status line.
+/// the row gets a note saying why and keeps no status. Claude Code, Antigravity, Qwen Code and Copilot CLI send a status line.
 #[cfg(test)]
 async fn fold_live(st: &AppState, agent: &str, role: HookRole, tab: &str, body: &serde_json::Value, at_ms: u64) {
     fold_live_with(st, agent, role, tab, body, at_ms, false).await;
@@ -335,7 +347,7 @@ async fn fold_live_with(
     held: bool,
 ) {
     if !matches!(role, HookRole::Event | HookRole::Permission | HookRole::Statusline)
-        || (role == HookRole::Statusline && !matches!(agent, "claude" | "antigravity" | "qwen"))
+        || (role == HookRole::Statusline && !matches!(agent, "claude" | "antigravity" | "qwen" | "copilot"))
         || !st.registry().is_open(tab)
     {
         return;
@@ -345,6 +357,7 @@ async fn fold_live_with(
         "codex" => ("Codex", codex::version_gate),
         "antigravity" => ("Antigravity", antigravity::version_gate),
         "qwen" => ("Qwen Code", qwen::version_gate),
+        "copilot" => ("Copilot CLI", copilot::version_gate),
         _ => return,
     };
     let off = st.0.settings.lock().unwrap().status_off.iter().any(|a| a == agent);
@@ -389,6 +402,17 @@ async fn fold_live_with(
                 if let Some(mode) = qwen::status::mode_of(body) {
                     st.registry().set_live_mode(tab, agent, mode);
                 }
+            }
+            st.registry().set_status_note(tab, None);
+        }
+        Gate::Known if agent == "copilot" => {
+            // No Done hold, subagent count or stuck check, and no mode: Copilot's bodies carry none.
+            if role == HookRole::Statusline {
+                st.registry()
+                    .update_live(tab, |prev| Some(copilot::status::fold_statusline(prev, body, at_ms)));
+            } else {
+                st.registry()
+                    .update_live(tab, |prev| copilot::status::fold_event(prev, body, at_ms));
             }
             st.registry().set_status_note(tab, None);
         }

@@ -4,7 +4,7 @@
 //! `submitted_prompt` or a `last_assistant_message`: the core takes them out of the body at the door. Qwen has no
 //! subagent count, Done hold or stuck check, and its status line carries no mode and no plan meter.
 
-use crate::agents::common::{blank, relative};
+use crate::agents::common::{blank, first_line, pct_of, relative, str_at, wants_phrase};
 use marshell_protocol::api::{LiveState, LiveStatus, SessionMode};
 use serde_json::Value;
 
@@ -20,22 +20,6 @@ pub fn mode_of(body: &Value) -> Option<SessionMode> {
         "yolo" => SessionMode::Bypass,
         _ => return None,
     })
-}
-
-/// The first non-empty line, trimmed, cut at `max` characters with an ellipsis.
-fn first_line(text: &str, max: usize) -> String {
-    let line = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
-    if line.chars().count() > max {
-        format!("{}…", line.chars().take(max).collect::<String>())
-    } else {
-        line.to_string()
-    }
-}
-
-fn str_at<'a>(body: &'a Value, pointer: &str) -> Option<&'a str> {
-    body.pointer(pointer)
-        .and_then(Value::as_str)
-        .filter(|s| !s.trim().is_empty())
 }
 
 /// The file a tool names, relative to the folder Qwen runs in when it is inside it.
@@ -69,34 +53,10 @@ fn permission_phrase(body: &Value) -> String {
     phrase.unwrap_or_else(|| format!("Wants to use `{}`", first_line(tool, 60)))
 }
 
-/// A tool phrase turned into what a permission dialog asks, "Running `x`" into "Wants to run `x`".
-fn wants_phrase(phrase: &str) -> String {
-    const VERBS: [(&str, &str); 4] = [
-        ("Running ", "Wants to run "),
-        ("Editing ", "Wants to edit "),
-        ("Reading ", "Wants to read "),
-        ("Using ", "Wants to use "),
-    ];
-    if phrase.starts_with("Wants to") {
-        return phrase.to_string();
-    }
-    for (seen, wants) in VERBS {
-        if let Some(target) = phrase.strip_prefix(seen) {
-            return format!("{wants}{target}");
-        }
-    }
-    "Wants to use a tool".to_string()
-}
-
 /// How long after a permission dialog starts, or after the last turn event while Working, an `idle_prompt` is taken
 /// for the one Qwen sent just around it. A "No" in Qwen's own dialog sends its `idle_prompt` about 8 s later (Task 1's
 /// recording).
 const IDLE_PROMPT_RACE_MS: u64 = 1_000;
-
-/// A whole percentage from a JSON number, clamped to 0..=100. Anything else is unknown.
-fn pct_of(n: f64) -> Option<u8> {
-    n.is_finite().then(|| n.clamp(0.0, 100.0).round() as u8)
-}
 
 /// The status after one hook event. None for an event that says nothing about status. Any event can be the first
 /// one a tab sees, so `prev` may be None for all of them.

@@ -254,6 +254,9 @@ struct Inner {
     /// The user home Qwen Code's `.qwen/settings.json` is planned under when a test names one; None means the user's
     /// home (and `QWEN_HOME` from the environment).
     qwen_home: Option<PathBuf>,
+    /// The user home Copilot CLI's `.copilot` files are planned under when a test names one; None means the user's
+    /// home (and `COPILOT_HOME` from the environment).
+    copilot_home: Option<PathBuf>,
     /// The user home the Doctor reads MCP servers and skills under when a test names one; every CLI folder is then at
     /// its default under it and the environment is not read. None means the user's home and the environment.
     ext_home: Option<PathBuf>,
@@ -279,6 +282,8 @@ struct Inner {
     agy_version: Option<Option<String>>,
     /// A Qwen Code version a test pins, in place of asking the executable. `Some(None)` cannot be read.
     qwen_version: Option<Option<String>>,
+    /// A Copilot CLI version a test pins, in place of asking the executable. `Some(None)` cannot be read.
+    copilot_version: Option<Option<String>>,
     /// The version of an agent inside a WSL distro that a test pins, in place of asking `wsl.exe`. `Some(None)` cannot
     /// be read.
     wsl_version: Option<Option<String>>,
@@ -394,6 +399,7 @@ impl AppState {
             codex_hooks: None,
             agy_home: None,
             qwen_home: None,
+            copilot_home: None,
             ext_home: None,
             qwen_system_settings: None,
             skill_home: None,
@@ -404,6 +410,7 @@ impl AppState {
             codex_version: None,
             agy_version: None,
             qwen_version: None,
+            copilot_version: None,
             wsl_version: None,
             wsl_versions: Mutex::new(HashMap::new()),
             distro_target: None,
@@ -499,6 +506,18 @@ impl AppState {
             .qwen_home = Some(user_home);
         self
     }
+    /// Names the user home under which Copilot CLI's `.copilot` files are planned, in place of the environment. Call
+    /// it before the state is cloned.
+    pub fn with_copilot_home(mut self, user_home: PathBuf) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_copilot_home runs before the state is shared")
+            .copilot_home = Some(user_home);
+        self
+    }
+    /// The user home a test named for Copilot CLI's files, if any.
+    pub fn copilot_home_named(&self) -> Option<&Path> {
+        self.0.copilot_home.as_deref()
+    }
     /// Names the user home the Doctor reads MCP servers and skills under, in place of the environment. Call it
     /// before the state is cloned.
     pub fn with_ext_home(mut self, home: PathBuf) -> Self {
@@ -569,6 +588,14 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_qwen_version runs before the state is shared")
             .qwen_version = Some(version);
+        self
+    }
+    /// Pins the Copilot CLI version live status sees, so a test never runs a real `copilot`. `None` is a version that
+    /// cannot be read. Call it before the state is cloned.
+    pub fn with_copilot_version(mut self, version: Option<String>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_copilot_version runs before the state is shared")
+            .copilot_version = Some(version);
         self
     }
     /// Pins the version of an agent inside a WSL distro that live status sees, so a test never runs `wsl.exe`. `None` is

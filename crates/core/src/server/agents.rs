@@ -572,6 +572,12 @@ impl AppState {
                     self.version_of(exe, crate::agents::qwen::parse_version, package.as_deref())
                 }),
             }
+        } else if agent == "copilot" {
+            // `copilot --version` prints "GitHub Copilot CLI 1.0.106."; a pinned one (tests) replaces asking it.
+            match &self.0.copilot_version {
+                Some(pinned) => pinned.clone(),
+                None => exe.and_then(|exe| self.version_of(exe, crate::agents::copilot::parse_version, None)),
+            }
         } else {
             exe.and_then(|exe| self.version_of(exe, parse_any_version, None))
         }
