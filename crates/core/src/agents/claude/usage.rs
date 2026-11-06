@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use crate::agents::common::rfc3339_ms;
-use crate::doctor::ext::ExtRoots;
+use crate::doctor::ext::{ExtRoots, sanitize_tool_part};
 use crate::doctor::usage::{AgentStore, Cursor, Event, EventKind, Scan, UseKey, new_lines};
 
 /// A line is worth parsing only when it holds one of these (or while the file's first time is still unknown).
@@ -84,6 +84,12 @@ fn record_events(rec: &Value, at: u64, cwd: &Option<String>, out: &mut Vec<Event
                 };
                 if name.starts_with("mcp__") {
                     out.push(event(EventKind::Used, UseKey::Tool(name.to_string()), at, cwd));
+                } else if matches!(name, "ReadMcpResourceTool" | "ListMcpResourcesTool")
+                    && let Some(server) = item.pointer("/input/server").and_then(Value::as_str)
+                {
+                    // A resource read names its server, which the server's `mcp__<name>__` prefix matches.
+                    let key = format!("mcp__{}__", sanitize_tool_part(server));
+                    out.push(event(EventKind::Used, UseKey::Tool(key), at, cwd));
                 } else if name == "Skill"
                     && let Some(skill) = item.pointer("/input/skill").and_then(Value::as_str)
                 {
@@ -96,7 +102,13 @@ fn record_events(rec: &Value, at: u64, cwd: &Option<String>, out: &mut Vec<Event
                 && text.starts_with("<command-")
                 && let Some(name) = command_name(text)
             {
-                out.push(event(EventKind::Used, UseKey::SkillName(name), at, cwd));
+                // `/mcp__<server>__<prompt>` is an MCP server's prompt; any other command may be a skill.
+                let key = if name.starts_with("mcp__") {
+                    UseKey::Tool(name)
+                } else {
+                    UseKey::SkillName(name)
+                };
+                out.push(event(EventKind::Used, key, at, cwd));
             }
         }
         Some("attachment") => {
@@ -382,6 +394,50 @@ mod tests {
             )]
         );
         assert_eq!(s3.cursors[&f.display().to_string()].first_ms, Some(ms(T1)));
+    }
+
+    // Found in the 7c2 final review: a server used only through its resources or a prompt command was called unused.
+    #[test]
+    fn claude_mcp_resources_and_prompts_count_for_their_server() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join(".claude").join("projects").join("p").join("s.jsonl");
+        put(
+            &file,
+            &[
+                format!(
+                    r#"{{"type":"assistant",{},"message":{{"content":[{{"type":"tool_use","name":"ReadMcpResourceTool","input":{{"server":"plugin:docs:srv","uri":"docs://a"}}}},{{"type":"tool_use","name":"ListMcpResourcesTool","input":{{"server":"files"}}}},{{"type":"tool_use","name":"ListMcpResourcesTool","input":{{}}}}]}}}}"#,
+                    at(T1)
+                ),
+                format!(
+                    r#"{{"type":"user",{},"message":{{"content":"<command-message>p</command-message>\n<command-name>/mcp__gh__review</command-name>"}}}}"#,
+                    at(T3)
+                ),
+            ],
+        );
+        let s = scan(&roots(tmp.path()), &AgentStore::default());
+        assert_eq!(
+            s.events,
+            vec![
+                ev(
+                    EventKind::Used,
+                    UseKey::Tool("mcp__plugin_docs_srv__".into()),
+                    T1,
+                    Some("c:/dev/x")
+                ),
+                ev(
+                    EventKind::Used,
+                    UseKey::Tool("mcp__files__".into()),
+                    T1,
+                    Some("c:/dev/x")
+                ),
+                ev(
+                    EventKind::Used,
+                    UseKey::Tool("mcp__gh__review".into()),
+                    T3,
+                    Some("c:/dev/x")
+                ),
+            ]
+        );
     }
 
     #[test]
