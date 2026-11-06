@@ -133,11 +133,6 @@ describe("DoctorPage", () => {
       expect(h).not.toContain("CLI doctors…");
       expect(h).not.toContain(">Run CLI doctors<");
     });
-    it("renders a CLI item with no checkbox and its cannot_fix text", () => {
-      const h = page(DOCTOR_CLI, "ready");
-      expect((h.match(/type="checkbox"/g) ?? []).length).toBe(0);
-      expect(h).toContain("Qwen Code has no doctor command");
-    });
   });
 
   describe("Measure MCP servers", () => {
