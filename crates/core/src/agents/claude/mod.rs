@@ -7,6 +7,7 @@ pub mod request;
 pub mod status;
 pub mod stuck;
 pub mod transcript;
+pub mod usage;
 
 use std::path::Path;
 use std::time::Duration;
