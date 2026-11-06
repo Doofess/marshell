@@ -407,9 +407,27 @@ fn build(inv: &[Inventory], sig: &Signals) -> Vec<(DoctorItem, Option<Switch>)> 
     sorted.sort_by(|a, b| (&a.distro, rank(a.agent)).cmp(&(&b.distro, rank(b.agent))));
     let mut out = Vec::new();
     for i in sorted.into_iter().filter(|i| i.found) {
+        let start = out.len();
         inventory_items(i, &mut out);
         super::measure::items(i, sig.measured, &mut out);
-        // Task 6 adds the usage items here, from `sig.usage`, `sig.projects` and `sig.now_ms`.
+        // An item key that already has a Broken item ("can't start", "doesn't load", "didn't start") gets no usage verdict.
+        let broken: std::collections::HashSet<String> = out[start..]
+            .iter()
+            .filter_map(|(item, _)| {
+                ["mcp", "skill", "mcpfail"].iter().find_map(|kind| {
+                    let rest = item.id.strip_prefix(&format!("{kind}.{}.", i.agent))?;
+                    Some(rest.split('@').next().unwrap_or(rest).to_string())
+                })
+            })
+            .collect();
+        super::usage::items(
+            i,
+            sig.usage,
+            &|k| broken.contains(k),
+            sig.projects,
+            sig.now_ms,
+            &mut out,
+        );
     }
     out
 }
