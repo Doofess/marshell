@@ -6,10 +6,10 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::config::jsonc::{EditError, read_value};
+use crate::config::jsonc::read_value;
 use crate::doctor::ext::{
     Caps, CommandState, ExtRoots, Inventory, NoSwitch, Origin, Server, Skill, SkillState, Switch, Transport,
-    skill_files,
+    skill_files, unreadable,
 };
 use crate::doctor::frontmatter::{self, Front, SkillMeta};
 
@@ -32,12 +32,12 @@ impl Files {
             Ok(bytes) => match String::from_utf8(bytes) {
                 Ok(text) => match read_value(&text) {
                     Ok(v) => Some(v),
-                    Err(e) => self.fail(path, edit_message(e)),
+                    Err(_) => self.fail(path, unreadable::json(&text)),
                 },
-                Err(_) => self.fail(path, "it isn't UTF-8 text".to_string()),
+                Err(_) => self.fail(path, unreadable::NOT_UTF8.to_string()),
             },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => self.fail(path, e.to_string()),
+            Err(e) => self.fail(path, unreadable::io(&e)),
         };
         self.cache.insert(path.to_path_buf(), value.clone());
         value
@@ -46,13 +46,6 @@ impl Files {
     fn fail(&mut self, path: &Path, message: String) -> Option<Value> {
         self.unreadable.push((path.to_path_buf(), message));
         None
-    }
-}
-
-fn edit_message(e: EditError) -> String {
-    match e {
-        EditError::DoesNotParse(m) => m,
-        other => format!("{other:?}"),
     }
 }
 
@@ -712,5 +705,25 @@ mod tests {
         assert_eq!(inv.unreadable.len(), 1);
         assert_eq!(inv.unreadable[0].0, proj.join(".mcp.json"));
         assert!(!inv.unreadable[0].1.is_empty());
+    }
+
+    #[test]
+    fn claude_unreadable_files_are_described_in_one_sentence() {
+        let h = fake_home("unreadable-message");
+        let r = roots(&h);
+        let (bad, binary) = (h.join("bad"), h.join("binary"));
+        put(
+            &bad.join(".mcp.json"),
+            "{\n  \"mcpServers\": {\n    \"x\": \"sk-SECRET\" oops\n  }\n}\n",
+        );
+        std::fs::create_dir_all(&binary).unwrap();
+        std::fs::write(binary.join(".mcp.json"), [0xff, 0xfe, 0x41]).unwrap();
+        let inv = inventory(&r, &[bad.clone(), binary.clone()], &found);
+        let message = |dir: &Path| {
+            let file = dir.join(".mcp.json");
+            inv.unreadable.iter().find(|(f, _)| *f == file).unwrap().1.clone()
+        };
+        assert_eq!(message(&bad), "It doesn't parse (line 4).");
+        assert_eq!(message(&binary), "It isn't UTF-8 text.");
     }
 }

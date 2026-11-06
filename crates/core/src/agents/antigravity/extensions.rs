@@ -8,7 +8,7 @@ use serde_json::Value;
 use crate::config::jsonc;
 use crate::doctor::ext::{
     Caps, CommandState, ExtRoots, Inventory, NoSwitch, Origin, Server, Skill, SkillState, Switch, Transport,
-    skill_files,
+    skill_files, unreadable as ext_unreadable,
 };
 use crate::doctor::frontmatter::{self, Front};
 
@@ -91,14 +91,14 @@ fn read_json(file: &Path, unreadable: &mut Vec<(PathBuf, String)>) -> Option<Val
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
         Err(e) => {
-            unreadable.push((file.to_path_buf(), e.to_string()));
+            unreadable.push((file.to_path_buf(), ext_unreadable::io(&e)));
             return None;
         }
     };
     match jsonc::read_value(&text) {
         Ok(value) => Some(value),
-        Err(e) => {
-            unreadable.push((file.to_path_buf(), format!("{e:?}")));
+        Err(_) => {
+            unreadable.push((file.to_path_buf(), ext_unreadable::json(&text)));
             None
         }
     }
@@ -320,6 +320,21 @@ mod tests {
         assert!(inv.servers.is_empty());
         assert_eq!(inv.unreadable.len(), 1);
         assert_eq!(inv.unreadable[0].0, file);
+    }
+
+    #[test]
+    fn agy_unreadable_files_are_described_in_one_sentence() {
+        let (root, roots) = fake("unreadable-message");
+        let config = root.join(".gemini").join("config");
+        let user = config.join("mcp_config.json");
+        write(&user, "{\n  \"mcpServers\": {\n    \"x\": \"sk-SECRET\" oops\n  }\n}\n");
+        let plugin = config.join("plugins").join("p").join("mcp_config.json");
+        std::fs::create_dir_all(plugin.parent().unwrap()).unwrap();
+        std::fs::write(&plugin, [0xff, 0xfe, 0x41]).unwrap();
+        let inv = inventory(&roots, &[], &judge);
+        let message = |file: &Path| inv.unreadable.iter().find(|(f, _)| f == file).unwrap().1.clone();
+        assert_eq!(message(&user), "It doesn't parse (line 4).");
+        assert_eq!(message(&plugin), "It isn't UTF-8 text.");
     }
 
     #[test]

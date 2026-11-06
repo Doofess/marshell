@@ -143,6 +143,44 @@ pub struct Inventory {
     pub unreadable: Vec<(PathBuf, String)>,
 }
 
+/// What an `unreadable` file's message says, in one sentence that never quotes the file: the Info item shows it, and a
+/// parser's own message can repeat the line it stopped at, which can hold a token.
+pub mod unreadable {
+    use std::io::ErrorKind;
+
+    pub const NOT_UTF8: &str = "It isn't UTF-8 text.";
+    pub const CANT_READ: &str = "It can't be read.";
+
+    /// `It doesn't parse (line N).`, or `It doesn't parse.` when the line isn't known.
+    pub fn doesnt_parse(line: Option<usize>) -> String {
+        match line {
+            Some(n) => format!("It doesn't parse (line {n})."),
+            None => "It doesn't parse.".to_string(),
+        }
+    }
+
+    /// For a file that couldn't be read as text.
+    pub fn io(e: &std::io::Error) -> String {
+        match e.kind() {
+            ErrorKind::InvalidData => NOT_UTF8.to_string(),
+            _ => CANT_READ.to_string(),
+        }
+    }
+
+    /// For JSON(C) text that doesn't parse: the line the parser reports.
+    pub fn json(text: &str) -> String {
+        doesnt_parse(crate::config::jsonc::parse_problem(text).and_then(|(line, _)| usize::try_from(line).ok()))
+    }
+
+    /// For TOML that doesn't parse: the line the error's span starts on.
+    pub fn toml(text: &str, e: &toml_edit::TomlError) -> String {
+        doesnt_parse(e.span().map(|span| {
+            let start = span.start.min(text.len());
+            text.as_bytes()[..start].iter().filter(|b| **b == b'\n').count() + 1
+        }))
+    }
+}
+
 /// The first 8 hex digits of `hash_bytes("<file>\n<name>")`, with the file as `display()` prints it.
 pub fn key(file: &Path, name: &str) -> String {
     hash_bytes(format!("{}\n{name}", file.display()).as_bytes())[..8].to_string()

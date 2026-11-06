@@ -8,7 +8,7 @@ use toml_edit::{DocumentMut, Item, TableLike};
 use crate::config::jsonc;
 use crate::doctor::ext::{
     Caps, CommandState, ExtRoots, Inventory, NoSwitch, Origin, Server, Skill, SkillState, Switch, Transport,
-    skill_files,
+    skill_files, unreadable as ext_unreadable,
 };
 use crate::doctor::frontmatter::{self, Front};
 
@@ -93,14 +93,14 @@ fn read_doc(file: &Path, unreadable: &mut Vec<(PathBuf, String)>) -> Option<Docu
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
         Err(e) => {
-            unreadable.push((file.to_path_buf(), e.to_string()));
+            unreadable.push((file.to_path_buf(), ext_unreadable::io(&e)));
             return None;
         }
     };
     match text.parse::<DocumentMut>() {
         Ok(doc) => Some(doc),
         Err(e) => {
-            unreadable.push((file.to_path_buf(), e.to_string()));
+            unreadable.push((file.to_path_buf(), ext_unreadable::toml(&text, &e)));
             None
         }
     }
@@ -209,14 +209,14 @@ fn plugin_servers(
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
         Err(e) => {
-            unreadable.push((file, e.to_string()));
+            unreadable.push((file, ext_unreadable::io(&e)));
             return;
         }
     };
     let value = match jsonc::read_value(&text) {
         Ok(value) => value,
-        Err(e) => {
-            unreadable.push((file, format!("{e:?}")));
+        Err(_) => {
+            unreadable.push((file, ext_unreadable::json(&text)));
             return;
         }
     };
@@ -645,5 +645,41 @@ mod tests {
         assert!(inv.servers.is_empty());
         assert_eq!(inv.unreadable.len(), 1);
         assert_eq!(inv.unreadable[0].0, config);
+    }
+
+    #[test]
+    fn codex_unreadable_files_are_described_in_one_sentence_that_never_quotes_them() {
+        let (root, roots) = fake("unreadable-message");
+        let config = root.join(".codex").join("config.toml");
+        write(
+            &config,
+            "model = \"x\"\n\n[mcp_servers.a]\nbearer_token = \"sk-SECRET\n\n[plugins.\"p@m\"]\nenabled = true\n",
+        );
+        let inv = inventory(&roots, &[], &judge);
+        let message = inv.unreadable.iter().find(|(f, _)| *f == config).unwrap().1.clone();
+        assert_eq!(message, "It doesn't parse (line 4).");
+        assert!(!message.contains("SECRET"), "{message}");
+
+        // A plugin's `.mcp.json`, with the plugin on.
+        write(&config, "[plugins.\"on@mkt\"]\nenabled = true\n");
+        let plugin = root
+            .join(".codex")
+            .join("plugins")
+            .join("cache")
+            .join("mkt")
+            .join("on")
+            .join("latest")
+            .join(".mcp.json");
+        write(
+            &plugin,
+            "{\n  \"mcpServers\": {\n    \"x\": \"sk-SECRET\" oops\n  }\n}\n",
+        );
+        let inv = inventory(&roots, &[], &judge);
+        let message = inv.unreadable.iter().find(|(f, _)| *f == plugin).unwrap().1.clone();
+        assert_eq!(message, "It doesn't parse (line 4).");
+        std::fs::write(&plugin, [0xff, 0xfe, 0x41]).unwrap();
+        let inv = inventory(&roots, &[], &judge);
+        let message = inv.unreadable.iter().find(|(f, _)| *f == plugin).unwrap().1.clone();
+        assert_eq!(message, "It isn't UTF-8 text.");
     }
 }
