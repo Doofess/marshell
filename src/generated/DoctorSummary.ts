@@ -9,6 +9,10 @@ export type DoctorSummary = { running: boolean,
  */
 cli_running: boolean, 
 /**
+ * "Measure MCP servers" is running.
+ */
+measuring: boolean, 
+/**
  * Broken and Waste items in the last report.
  */
 issues: number, 

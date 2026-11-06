@@ -11,6 +11,7 @@ use super::probe::{Failure, Listed, Tool};
 use crate::config::hash::hash_bytes;
 
 /// One server's measurement.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Measured {
     pub agent: &'static str,
     /// 7c1's `item_key` of the server.
@@ -19,6 +20,7 @@ pub struct Measured {
     pub outcome: Result<Listed, Failure>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Measurements {
     pub at_ms: u64,
     pub servers: Vec<Measured>,

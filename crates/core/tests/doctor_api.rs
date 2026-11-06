@@ -426,6 +426,19 @@ async fn cli_route_is_refused_without_the_bearer() {
 }
 
 #[tokio::test]
+async fn measure_route_refuses_without_bearer() {
+    let e = env();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/doctor/measure")
+        .header(header::HOST, format!("127.0.0.1:{PORT}"))
+        .body(Body::empty())
+        .unwrap();
+    let (status, _) = send(&e.app, req).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn no_run_at_start_unless_pinned_on() {
     let e = env();
     // Give a startup run the time it would need.

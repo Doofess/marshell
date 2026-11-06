@@ -6,6 +6,7 @@ mod config;
 mod diagnostics;
 pub(crate) mod doctor;
 mod doctor_ext;
+mod doctor_measure;
 mod events;
 mod files;
 mod fill;
@@ -209,6 +210,8 @@ struct Inner {
     /// Runs one CLI doctor (`claude doctor`, `codex doctor --json`), on Windows or in a distro. Tests swap it, so none
     /// runs a real CLI or `wsl.exe`.
     doctor_runner: doctor::DoctorRunner,
+    /// Starts one MCP server and lists its tools ("Measure MCP servers"). Tests swap it, so none starts a real server.
+    probe: doctor_measure::Prober,
     /// `~/.marshell/agents.json`, read again when the file's modified time changes. `AppState::agents` adds the shipped
     /// manifests to the valid entries.
     own_agents: crate::agents::own::OwnCache,
@@ -370,6 +373,7 @@ impl AppState {
             deepseek_key: || std::env::var(crate::agents::presets::DEEPSEEK_KEY_VAR).ok(),
             status_runner: |exe, args| crate::agents::run_capture(exe, args, std::time::Duration::from_secs(10)),
             doctor_runner: doctor::run_doctor_command,
+            probe: crate::doctor::probe::probe,
             own_agents: crate::agents::own::OwnCache::default(),
             own_agents_write: Mutex::new(()),
             own_tools: crate::tools::own::ToolsCache::default(),
@@ -715,6 +719,15 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_doctor_runner runs before the state is shared")
             .doctor_runner = run;
+        self
+    }
+    /// Replaces the probe that starts one MCP server. Call it before the state is cloned. Unit tests only: no test
+    /// starts a real server.
+    #[cfg(test)]
+    pub(crate) fn with_probe(mut self, probe: doctor_measure::Prober) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_probe runs before the state is shared")
+            .probe = probe;
         self
     }
     /// Replaces the `--version` reader the manifest agents' programs are checked with. Call it before the state is cloned.
@@ -1217,6 +1230,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/agents/{agent}/skill/remove-plan", post(agents::skill_remove_plan))
         .route("/v1/doctor/run", post(doctor::run))
         .route("/v1/doctor/cli", post(doctor::cli_run))
+        .route("/v1/doctor/measure", post(doctor::measure_run))
         .route("/v1/doctor/report", get(doctor::report))
         .route("/v1/doctor/fix", post(doctor::fix))
         .route("/v1/doctor/fix/apply", post(doctor::fix_apply))

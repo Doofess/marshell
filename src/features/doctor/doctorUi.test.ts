@@ -26,8 +26,8 @@ describe("undoRefusedAnnouncement", () => {
 describe("shownIssues", () => {
   it("gives no count until a check has ended, then the last one's, also while the next one runs", () => {
     expect(shownIssues(null)).toBeUndefined();
-    expect(shownIssues({ running: true, cli_running: false, issues: 0 })).toBeUndefined();
-    expect(shownIssues({ running: false, cli_running: false, issues: 0, checked_at_ms: 5 })).toBe(0);
-    expect(shownIssues({ running: true, cli_running: false, issues: 3, checked_at_ms: 5 })).toBe(3);
+    expect(shownIssues({ running: true, cli_running: false, measuring: false, issues: 0 })).toBeUndefined();
+    expect(shownIssues({ running: false, cli_running: false, measuring: false, issues: 0, checked_at_ms: 5 })).toBe(0);
+    expect(shownIssues({ running: true, cli_running: false, measuring: false, issues: 3, checked_at_ms: 5 })).toBe(3);
   });
 });
