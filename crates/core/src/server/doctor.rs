@@ -8,6 +8,7 @@ use super::agents::{
     Adapter, Refusal, adapter, agy_setup_of, changed_since, changes_of, codex_setup_of, hook_install_changes,
     qwen_setup_of, settings_file, setup_of,
 };
+use super::doctor_ext;
 use crate::agents::common::Gate;
 use crate::config::guard::unverbatim;
 use crate::config::hash::{hash_bytes, hash_file};
@@ -15,6 +16,7 @@ use crate::config::jsonc::{parse_problem, read_value};
 use crate::config::managed::{self, ManagedEntry};
 use crate::config::service::ApplyError;
 use crate::doctor::cli::{CLI_DOCTOR_TIMEOUT_SECS, Ran, claude_items, codex_items, no_doctor_item};
+use crate::doctor::ext::{self, Inventory, Switch};
 use crate::doctor::{AgentFacts, FileState, PendingFix, checks};
 use crate::paths;
 use crate::profiles::detect::{agent_command, run_wsl_capture};
@@ -216,6 +218,7 @@ async fn run_once(st: &AppState, read: ReadFacts) -> Option<(u32, u64)> {
     match facts {
         Ok(facts) => {
             let mut items = checks::items(&facts.facts, &facts.stopped, banners_on(st));
+            items.extend(ext::items(&facts.ext));
             // The CLI doctors' last findings ride along in every report. The lock is released at once.
             let (cli_items, cli_checked_at_ms) = {
                 let cli = doctor.cli.lock().unwrap_or_else(|e| e.into_inner());
@@ -262,10 +265,17 @@ pub(crate) fn facts_of(st: &AppState) -> Gathered {
         "antigravity" => agy_setup_of(st),
         _ => qwen_setup_of(st),
     });
-    let (distro, stopped) = distro_facts(st, &entries);
+    let (distro, stopped, distro_homes) = distro_facts(st, &entries);
+    let facts: Vec<AgentFacts> = facts.into_iter().chain(distro).collect();
+    // The MCP servers and skills are read after the facts, so an agent whose facts failed is left out.
+    let ext = doctor_ext::inventories(st, &facts, &distro_homes);
+    let mut ext_homes: Vec<PathBuf> = doctor_ext::windows_roots(st).map(|r| r.home).into_iter().collect();
+    ext_homes.extend(distro_homes.into_iter().map(|(_, home)| home));
     Gathered {
-        facts: facts.into_iter().chain(distro).collect(),
+        facts,
         stopped,
+        ext,
+        ext_homes,
     }
 }
 
@@ -297,10 +307,14 @@ fn windows_facts(
 }
 
 /// What one run reads: the facts of every CLI on Windows and in each running distro Marshell set up, and the distros it
-/// set up that aren't running.
+/// set up that aren't running, and their MCP servers and skills.
 pub(crate) struct Gathered {
     pub facts: Vec<AgentFacts>,
     pub stopped: Vec<String>,
+    /// Each CLI's MCP servers and skills, on Windows and in each running managed distro.
+    pub ext: Vec<Inventory>,
+    /// The user homes those were read under: Windows' and each distro's. A fix's edit is `User` scope under one.
+    pub ext_homes: Vec<PathBuf>,
 }
 
 /// The distros Marshell set up: the detected ones that hold a path of `managed.json`. This reads no distro's file.
@@ -331,12 +345,14 @@ fn running_managed_distros(st: &AppState, entries: &[ManagedEntry]) -> Vec<Strin
 /// The facts of every running managed distro, and the managed distros that aren't running. `wsl.exe` is asked what
 /// runs only when there is a managed distro, and a distro that isn't running is never asked for its target nor read,
 /// since either would start it. Runs `wsl.exe` and reads shares, so callers go through `spawn_blocking`.
-fn distro_facts(st: &AppState, entries: &[ManagedEntry]) -> (Vec<AgentFacts>, Vec<String>) {
+fn distro_facts(st: &AppState, entries: &[ManagedEntry]) -> (Vec<AgentFacts>, Vec<String>, Vec<(String, PathBuf)>) {
     let (up, stopped) = partition_managed_distros(st, entries);
     let mut facts = Vec::new();
+    let mut homes = Vec::new();
     for distro in &up {
         match st.distro_target(distro) {
             Ok(target) => {
+                homes.push((distro.clone(), target.home.clone()));
                 for agent in AGENTS {
                     facts.push(distro_agent_facts(agent, distro, &target, entries));
                 }
@@ -349,7 +365,7 @@ fn distro_facts(st: &AppState, entries: &[ManagedEntry]) -> (Vec<AgentFacts>, Ve
             }
         }
     }
-    (facts, stopped)
+    (facts, stopped, homes)
 }
 
 /// A CLI's facts when its reader failed: every field a default, and the reason.
@@ -709,7 +725,8 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
         .ok_or_else(cant_fix)?;
     // The files as they are now: the report may be minutes old.
     let gathered = facts_of(st);
-    let now = checks::items(&gathered.facts, &gathered.stopped, banners_on(st));
+    let mut now = checks::items(&gathered.facts, &gathered.stopped, banners_on(st));
+    now.extend(ext::items(&gathered.ext));
     let entries = managed_entries(st);
 
     let mut picked: Vec<(DoctorItem, &AgentFacts)> = Vec::new();
@@ -727,6 +744,7 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
     }
 
     let mut edits: Vec<FileEdit> = Vec::new();
+    let mut switches: Vec<Switch> = Vec::new();
     for (item, facts) in &picked {
         match item.id.split('.').next() {
             Some("hooks") => {
@@ -739,9 +757,14 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
                 edits.extend(changes.edits);
             }
             Some("retention") => edits.push(retention_edit(facts)?),
+            // A server or a skill turned off: the switch is read again from the inventory just gathered.
+            Some("mcp" | "skill") => switches.push(ext::switch_of(&gathered.ext, &item.id).ok_or_else(cant_fix)?),
             _ => return Err(cant_fix()),
         }
     }
+    // One edit per list and one per Codex file, whatever the number of items. They are the person's own settings.
+    let ext_edits = doctor_ext::edits(&switches, &gathered.ext_homes)?;
+    edits.extend(ext_edits.iter().cloned());
     if edits.is_empty() {
         return Err(cant_fix());
     }
@@ -760,8 +783,11 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
             .join("\n"),
         edits,
     };
-    // The retention setting is the person's, so applying it records no key in managed.json.
-    let preview = st.0.config.preview_mixed(cs, &is_own_edit);
+    // The retention setting and every server or skill turned off are the person's, so applying them records no key in
+    // managed.json.
+    let preview =
+        st.0.config
+            .preview_mixed(cs, &|edit| is_own_edit(edit) || ext_edits.contains(edit));
     let restart = restart_list(st, &picked);
     *st.doctor().pending.lock().unwrap_or_else(|e| e.into_inner()) = Some(PendingFix {
         changeset_id: preview.changeset_id.clone(),
@@ -1254,6 +1280,8 @@ mod tests {
                     Err((StatusCode::INTERNAL_SERVER_ERROR, format!("read {n}")))
                 }),
                 stopped: Vec::new(),
+                ext: Vec::new(),
+                ext_homes: Vec::new(),
             }
         });
 
@@ -1751,6 +1779,252 @@ mod tests {
                 .items
                 .iter()
                 .any(|i| i.id.ends_with("@Debian") && i.id.starts_with("cli."))
+        );
+    }
+
+    // MCP servers and skills (slice 7c1). `with_ext_home` points the readers at a fake home, and a pinned PATH check
+    // makes `ghost` the one command that isn't there.
+
+    fn ext_state(root: &Path) -> (AppState, PathBuf) {
+        let ext = crate::projects::canonical(root).join("ext-home");
+        std::fs::create_dir_all(&ext).unwrap();
+        let st = pinned(root)
+            .with_ext_home(ext.clone())
+            .with_agent_check(|command| command != "ghost");
+        (st, ext)
+    }
+
+    fn broken_ext_ids(report: &DoctorReport) -> Vec<String> {
+        report
+            .items
+            .iter()
+            .filter(|i| i.group == DoctorGroup::Broken && (i.id.starts_with("mcp.") || i.id.starts_with("skill.")))
+            .map(|i| i.id.clone())
+            .collect()
+    }
+
+    fn bytes(path: &Path) -> Option<Vec<u8>> {
+        std::fs::read(path).ok()
+    }
+
+    fn managed_pairs(st: &AppState) -> Vec<(String, Option<String>)> {
+        managed_entries(st).into_iter().map(|e| (e.path, e.pointer)).collect()
+    }
+
+    #[tokio::test]
+    async fn fix_apply_and_undo_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, ext) = ext_state(dir.path());
+        let project = crate::projects::canonical(dir.path()).join("project");
+        let codex_cfg = ext.join(".codex").join("config.toml");
+        let qwen_cfg = ext.join(".qwen").join("settings.json");
+        let skill = ext.join(".qwen").join("skills").join("nodesc").join("SKILL.md");
+        let shared = project.join(".mcp.json");
+        let local = project.join(".claude").join("settings.local.json");
+        write(&codex_cfg, "# mine\n[mcp_servers.ghostly]\ncommand = \"ghost\"\n");
+        write(&qwen_cfg, "{\n  \"theme\": \"dark\"\n}\n");
+        write(&skill, "---\nname: nodesc\n---\nbody\n");
+        write(&shared, r#"{"mcpServers":{"proj-ghost":{"command":"ghost"}}}"#);
+        let before: Vec<Option<Vec<u8>>> = [&codex_cfg, &qwen_cfg, &shared, &local]
+            .iter()
+            .map(|p| bytes(p))
+            .collect();
+        let managed_before = managed_pairs(&st);
+
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        let report = last_report(&st);
+        let ids = broken_ext_ids(&report);
+        // Claude Code and Qwen Code both read the project's `.mcp.json`, so its server is two items, beside Codex's
+        // server and Qwen Code's skill.
+        assert_eq!(ids.len(), 4, "{:?}", report.items);
+        assert!(
+            report.items.iter().filter(|i| ids.contains(&i.id)).all(|i| i.fixable),
+            "{:?}",
+            report.items
+        );
+
+        let plan = fix_of(&st, ids.clone()).expect("a plan");
+        assert!(plan.preview.can_apply, "{:?}", plan.preview);
+        let req = ApplyRequest {
+            changeset_id: plan.preview.changeset_id.clone(),
+            expected_hashes: plan
+                .preview
+                .files
+                .iter()
+                .map(|f| ExpectedHash {
+                    path: f.path.clone(),
+                    hash: f.before_hash.clone(),
+                })
+                .collect(),
+        };
+        let applied = fix_apply(State(st.clone()), Json(req)).await;
+        assert_eq!(applied.status(), StatusCode::OK);
+        wait_idle(&st).await;
+
+        let codex_after = std::fs::read_to_string(&codex_cfg).unwrap();
+        assert!(codex_after.contains("# mine"), "{codex_after}");
+        let doc: toml::Table = codex_after.parse().unwrap();
+        assert_eq!(doc["mcp_servers"]["ghostly"]["enabled"].as_bool(), Some(false));
+        let qwen_after: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&qwen_cfg).unwrap()).unwrap();
+        assert_eq!(qwen_after["skills"]["disabled"], serde_json::json!(["nodesc"]));
+        assert_eq!(qwen_after["mcp"]["excluded"], serde_json::json!(["proj-ghost"]));
+        assert_eq!(qwen_after["theme"], "dark");
+        let local_after: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&local).unwrap()).unwrap();
+        assert_eq!(local_after["disabledMcpjsonServers"], serde_json::json!(["proj-ghost"]));
+        // The project's shared file is never written, and the person's own edits are not Marshell's entries.
+        assert_eq!(bytes(&shared), before[2]);
+        assert_eq!(managed_pairs(&st), managed_before);
+        // The next report has none of the three.
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        assert_eq!(broken_ext_ids(&last_report(&st)), Vec::<String>::new());
+
+        let undone = undo(State(st.clone())).await;
+        assert_eq!(undone.status(), StatusCode::OK);
+        wait_idle(&st).await;
+        let after: Vec<Option<Vec<u8>>> = [&codex_cfg, &qwen_cfg, &shared, &local]
+            .iter()
+            .map(|p| bytes(p))
+            .collect();
+        assert_eq!(after, before);
+    }
+
+    #[tokio::test]
+    async fn report_only_items_are_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, ext) = ext_state(dir.path());
+        let project = crate::projects::canonical(dir.path()).join("project");
+        // A user-level Claude Code server, a server only the project's shared file can turn off, and a plugin's.
+        write(
+            &ext.join(".claude.json"),
+            r#"{"mcpServers":{"user-ghost":{"command":"ghost"}}}"#,
+        );
+        write(
+            &project.join(".codex").join("config.toml"),
+            "[mcp_servers.shared-ghost]\ncommand = \"ghost\"\n",
+        );
+        let plugin = ext.join("plugin-install");
+        write(
+            &plugin.join(".mcp.json"),
+            r#"{"mcpServers":{"plug-ghost":{"command":"ghost"}}}"#,
+        );
+        // Claude Code's user settings are the pinned file (`pinned` names `<project>/settings.json`).
+        write(&project.join("settings.json"), r#"{"enabledPlugins":{"p@m":true}}"#);
+        write(
+            &ext.join(".claude").join("plugins").join("installed_plugins.json"),
+            &serde_json::json!({"plugins": {"p@m": [{"installPath": plugin.to_string_lossy()}]}}).to_string(),
+        );
+
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        let report = last_report(&st);
+        let ghosts: Vec<&DoctorItem> = report.items.iter().filter(|i| i.id.starts_with("mcp.")).collect();
+        assert_eq!(ghosts.len(), 3, "{:?}", report.items);
+        for item in ghosts {
+            assert!(!item.fixable && item.cannot_fix.is_some(), "{item:?}");
+            let (status, _) = fix_of(&st, vec![item.id.clone()]).expect_err("refused");
+            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{item:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_agent_that_failed_to_read_has_no_inventory() {
+        let dir = tempfile::tempdir().unwrap();
+        let ext = dir.path().join("ext-home");
+        let st = state(dir.path()).with_ext_home(ext.clone());
+        write(
+            &ext.join(".codex").join("config.toml"),
+            "[mcp_servers.g]\ncommand = \"ghost\"\n",
+        );
+        let facts = facts_with(&st, |_, agent| {
+            if agent == "codex" {
+                Err((StatusCode::INTERNAL_SERVER_ERROR, "the home folder is not known".into()))
+            } else {
+                Ok(setup(agent))
+            }
+        });
+        let inv = doctor_ext::inventories(&st, &facts, &[]);
+        let mut agents: Vec<&str> = inv.iter().map(|i| i.agent).collect();
+        agents.sort();
+        assert_eq!(agents, ["antigravity", "claude", "qwen"]);
+    }
+
+    #[tokio::test]
+    async fn distro_inventory_has_no_projects_and_no_command_check() {
+        use crate::doctor::ext::{CommandState, Origin, Transport};
+        use marshell_protocol::api::{Profile, ShellFamily};
+        let ubuntu = Profile {
+            id: "ubuntu".into(),
+            name: "Ubuntu".into(),
+            command: vec!["wsl.exe".into(), "-d".into(), "Ubuntu".into()],
+            family: ShellFamily::Wsl,
+            cwd: None,
+            env: Vec::new(),
+            shell_integration: false,
+            terminal_theme: None,
+            detected: true,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let ubuntu_home = dir.path().join("ubuntu-home");
+        let project = crate::projects::canonical(dir.path()).join("project");
+        let st = pinned_with(dir.path(), vec![ubuntu])
+            .with_ext_home(dir.path().join("ext-home"))
+            .with_wsl_version(Some("1.0.0".into()))
+            .with_running_distros(|| vec!["Ubuntu".to_string()])
+            .with_distro_target(Some(super::super::DistroTarget {
+                home: ubuntu_home.clone(),
+                bridge: "/mnt/c/marshell-hook.exe".into(),
+            }));
+        crate::config::managed::save(
+            &st.0.home,
+            &[ManagedEntry {
+                path: r"\\wsl.localhost\Ubuntu\home\u\.claude\settings.json".into(),
+                pointer: Some("/hooks/Stop/-".into()),
+                changeset_id: "c".into(),
+                applied_ms: 1,
+            }],
+        )
+        .unwrap();
+        write(
+            &ubuntu_home.join(".qwen").join("settings.json"),
+            r#"{"mcpServers":{"in-distro":{"command":"ghost"}}}"#,
+        );
+        // A project of Windows holds a server too; the distro never reads it.
+        write(
+            &project.join(".mcp.json"),
+            r#"{"mcpServers":{"proj":{"command":"ghost"}}}"#,
+        );
+
+        let gathered = facts_of(&st);
+        let in_distro: Vec<_> = gathered
+            .ext
+            .iter()
+            .filter(|i| i.distro.as_deref() == Some("Ubuntu"))
+            .collect();
+        assert_eq!(in_distro.len(), 4, "{:?}", gathered.ext);
+        let qwen = in_distro.iter().find(|i| i.agent == "qwen").unwrap();
+        assert_eq!(qwen.servers.len(), 1);
+        assert_eq!(
+            qwen.servers[0].transport,
+            Transport::Stdio {
+                command: "ghost".into(),
+                state: CommandState::NotChecked
+            }
+        );
+        for inv in &in_distro {
+            assert!(
+                inv.servers
+                    .iter()
+                    .all(|s| !matches!(s.origin, Origin::Project(_)) && s.file.starts_with(&ubuntu_home)),
+                "{inv:?}"
+            );
+        }
+        // On Windows the project's server was read.
+        assert!(
+            gathered
+                .ext
+                .iter()
+                .any(|i| i.distro.is_none() && i.servers.iter().any(|s| s.name == "proj")),
+            "{:?}",
+            gathered.ext
         );
     }
 }

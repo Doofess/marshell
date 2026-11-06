@@ -477,7 +477,7 @@ impl AppState {
         }
     }
 
-    fn claude_settings_path(&self, user_home: &Path) -> PathBuf {
+    pub(super) fn claude_settings_path(&self, user_home: &Path) -> PathBuf {
         match &self.0.claude_settings {
             Some(path) => path.clone(),
             None => hooks::settings_path(&|k| std::env::var(k).ok(), user_home),

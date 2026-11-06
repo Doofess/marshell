@@ -5,6 +5,7 @@ mod catalog;
 mod config;
 mod diagnostics;
 pub(crate) mod doctor;
+mod doctor_ext;
 mod events;
 mod files;
 mod fill;
@@ -249,6 +250,9 @@ struct Inner {
     /// The user home Qwen Code's `.qwen/settings.json` is planned under when a test names one; None means the user's
     /// home (and `QWEN_HOME` from the environment).
     qwen_home: Option<PathBuf>,
+    /// The user home the Doctor reads MCP servers and skills under when a test names one; every CLI folder is then at
+    /// its default under it and the environment is not read. None means the user's home and the environment.
+    ext_home: Option<PathBuf>,
     /// Qwen Code's read-only system settings file when a test names one; otherwise the fixed ProgramData path.
     qwen_system_settings: Option<PathBuf>,
     /// The user home the `marshell` skill files are planned under when a test names one; None means the user's
@@ -385,6 +389,7 @@ impl AppState {
             codex_hooks: None,
             agy_home: None,
             qwen_home: None,
+            ext_home: None,
             qwen_system_settings: None,
             skill_home: None,
             claude_compact_paths: None,
@@ -487,6 +492,14 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_qwen_home runs before the state is shared")
             .qwen_home = Some(user_home);
+        self
+    }
+    /// Names the user home the Doctor reads MCP servers and skills under, in place of the environment. Call it
+    /// before the state is cloned.
+    pub fn with_ext_home(mut self, home: PathBuf) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_ext_home runs before the state is shared")
+            .ext_home = Some(home);
         self
     }
 
