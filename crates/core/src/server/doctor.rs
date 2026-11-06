@@ -9,6 +9,7 @@ use super::agents::{
     qwen_setup_of, settings_file, setup_of,
 };
 use super::doctor_ext;
+use super::doctor_usage;
 use crate::agents::common::Gate;
 use crate::config::guard::unverbatim;
 use crate::config::hash::{hash_bytes, hash_file};
@@ -229,9 +230,10 @@ async fn run_once(st: &AppState, read: ReadFacts) -> Option<(u32, u64)> {
             let measured = doctor.measure.lock().unwrap_or_else(|e| e.into_inner()).results.clone();
             let measured_at_ms = measured.as_ref().map(|m| m.at_ms);
             let signals = ext::Signals {
-                measured: measured.as_ref(),
+                usage: Some(&facts.usage),
+                projects: &facts.projects,
                 now_ms: now_ms(),
-                ..ext::Signals::default()
+                measured: measured.as_ref(),
             };
             items.extend(ext::items(&facts.ext, &signals));
             // The CLI doctors' last findings ride along in every report. The lock is released at once.
@@ -285,13 +287,26 @@ pub(crate) fn facts_of(st: &AppState) -> Gathered {
     let facts: Vec<AgentFacts> = facts.into_iter().chain(distro).collect();
     // The MCP servers and skills are read after the facts, so an agent whose facts failed is left out.
     let ext = doctor_ext::inventories(st, &facts, &distro_homes);
-    let mut ext_homes: Vec<PathBuf> = doctor_ext::windows_roots(st).map(|r| r.home).into_iter().collect();
+    let roots = doctor_ext::windows_roots(st);
+    // What each CLI's history shows was used: the new lines are read now and kept in usage.json.
+    let usage = doctor_usage::scan_all(st, &ext, roots.as_ref(), now_ms());
+    let projects = if roots.is_some() {
+        crate::projects::list(&st.0.home)
+            .into_iter()
+            .map(|p| PathBuf::from(p.path))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let mut ext_homes: Vec<PathBuf> = roots.map(|r| r.home).into_iter().collect();
     ext_homes.extend(distro_homes.into_iter().map(|(_, home)| home));
     Gathered {
         facts,
         stopped,
         ext,
         ext_homes,
+        usage,
+        projects,
     }
 }
 
@@ -331,6 +346,10 @@ pub(crate) struct Gathered {
     pub ext: Vec<Inventory>,
     /// The user homes those were read under: Windows' and each distro's. A fix's edit is `User` scope under one.
     pub ext_homes: Vec<PathBuf>,
+    /// What the histories showed was used, as of this read (Windows CLIs only).
+    pub usage: crate::doctor::usage::UsageStore,
+    /// Marshell's projects, which tell where a user-level item was used.
+    pub projects: Vec<PathBuf>,
 }
 
 /// The distros Marshell set up: the detected ones that hold a path of `managed.json`. This reads no distro's file.
@@ -751,9 +770,10 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
         .results
         .clone();
     let signals = ext::Signals {
-        measured: measured.as_ref(),
+        usage: Some(&gathered.usage),
+        projects: &gathered.projects,
         now_ms: now_ms(),
-        ..ext::Signals::default()
+        measured: measured.as_ref(),
     };
     now.extend(ext::items(&gathered.ext, &signals));
     let entries = managed_entries(st);
@@ -1317,6 +1337,8 @@ pub(in crate::server) mod tests {
                 stopped: Vec::new(),
                 ext: Vec::new(),
                 ext_homes: Vec::new(),
+                usage: Default::default(),
+                projects: Vec::new(),
             }
         });
 

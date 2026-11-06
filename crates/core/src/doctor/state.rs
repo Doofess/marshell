@@ -54,6 +54,8 @@ pub struct DoctorState {
     pub cli: Mutex<CliRun>,
     /// "Measure MCP servers": the run and its last results. See `MeasureRun`.
     pub measure: Mutex<MeasureRun>,
+    /// What the usage scans found, loaded from `<home>/doctor/usage.json` on the first scan. Never held across I/O.
+    pub usage: Mutex<Option<super::usage::UsageStore>>,
     /// What the sidebar and the events socket show.
     pub summary: watch::Sender<DoctorSummary>,
     pub pending: Mutex<Option<PendingFix>>,
@@ -69,6 +71,7 @@ impl Default for DoctorState {
             run: Mutex::new(RunFlags::default()),
             cli: Mutex::new(CliRun::default()),
             measure: Mutex::new(MeasureRun::default()),
+            usage: Mutex::new(None),
             summary: watch::channel(DoctorSummary {
                 running: false,
                 cli_running: false,

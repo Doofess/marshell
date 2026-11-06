@@ -125,6 +125,11 @@ pub fn doctor_last_fix(home: &Path) -> PathBuf {
     home.join("doctor").join("last-fix.json")
 }
 
+/// `<home>/doctor/usage.json`: what each CLI's history showed was used, for the Doctor's usage items.
+pub fn doctor_usage(home: &Path) -> PathBuf {
+    home.join("doctor").join("usage.json")
+}
+
 /// `<home>/managed.json`: the config entries Marshell wrote.
 pub fn managed_file(home: &Path) -> PathBuf {
     home.join("managed.json")

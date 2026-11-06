@@ -7,6 +7,7 @@ mod diagnostics;
 pub(crate) mod doctor;
 mod doctor_ext;
 mod doctor_measure;
+mod doctor_usage;
 mod events;
 mod files;
 mod fill;

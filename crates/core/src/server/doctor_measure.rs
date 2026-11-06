@@ -640,14 +640,13 @@ mod tests {
         serde_json::from_slice(&body).unwrap()
     }
 
-    /// The usage half (an unused item and a failed one for one server, picked together) comes with Task 9, when the
-    /// report carries usage; what exists now is a failed measurement's switch, which the fix reads again, and one edit
-    /// for the list it adds to.
+    /// Failed measurements and an unused server, picked together, give one edit to the one list. (A server never has
+    /// both items; the switch of one server picked twice is taken once in `fix_of`, and `ext` tests that.)
     #[tokio::test]
     async fn fix_picks_unused_and_failed_once() {
         let dir = tempfile::tempdir().unwrap();
         let exe = program(dir.path());
-        let (st, _ext) = ext_state(dir.path());
+        let (st, ext) = ext_state(dir.path());
         let st = st.with_probe(all_fail);
         let project = crate::projects::canonical(dir.path()).join("project");
         write(
@@ -678,5 +677,40 @@ mod tests {
         let doc = &both.preview.files[0];
         assert!(doc.path.ends_with("settings.local.json"), "{doc:?}");
         assert!(doc.diff.contains("p1") && doc.diff.contains("p2"), "{}", doc.diff);
+
+        // A third server, never measured and unused for 40 days. A server with a failed measurement gets no unused item
+        // (one server, one verdict), so the two kinds are of different servers, and picked together they still give
+        // one edit to the one list.
+        use super::super::doctor_usage::tests::{DAY, put_lines, quiet_line, seed_first_sight, transcript};
+        write(
+            &project.join(".mcp.json"),
+            &serde_json::json!({"mcpServers": {"p1": entry(&exe, "p1"), "p2": entry(&exe, "p2"), "p3": entry(&exe, "p3")}})
+                .to_string(),
+        );
+        write(
+            &project.join(".claude").join("settings.local.json"),
+            r#"{"enabledMcpjsonServers":["p1","p2","p3"]}"#,
+        );
+        put_lines(&transcript(&ext, "s1.jsonl"), &[quiet_line(now_ms() - 40 * DAY)]);
+        seed_first_sight(&st, 40);
+        request_run(&st);
+        wait_idle(&st).await;
+        let report = last_report(&st);
+        let unused: Vec<String> = report
+            .items
+            .iter()
+            .filter(|i| i.id.starts_with("mcpunused.claude.") && i.fixable)
+            .map(|i| i.id.clone())
+            .collect();
+        assert_eq!(unused.len(), 1, "{:?}", report.items);
+        let mixed: Vec<String> = ids.iter().cloned().chain(unused).collect();
+        assert_eq!(mixed.len(), 3);
+        let plan = plan_of(&st, &mixed).await;
+        assert_eq!(plan.preview.files.len(), 1, "{:?}", plan.preview);
+        let diff = &plan.preview.files[0].diff;
+        assert!(
+            diff.contains("p1") && diff.contains("p2") && diff.contains("p3"),
+            "{diff}"
+        );
     }
 }
