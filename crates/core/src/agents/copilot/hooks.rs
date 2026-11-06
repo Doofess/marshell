@@ -234,7 +234,8 @@ pub fn inspect(files: &Files, bridge: &Bridge) -> Found {
     } else if exact_events == EVENTS.len()
         && all == EVENTS.len()
         && ours == EVENTS.len()
-        && ((line_ours && line_current) || matches!(line, Line::Other))
+        // A line that isn't Marshell's is the person's to keep: a setup with the status line off leaves it (as Qwen's).
+        && (!line_ours || line_current)
     {
         HookInstall::Installed
     } else {
@@ -1102,13 +1103,18 @@ mod tests {
         };
         assert_eq!(found(&twice, &real).install, HookInstall::Partial);
 
-        let file_only = State {
-            hooks: installed.hooks.clone(),
-            ..State::settings(&their_settings())
+        // Installed: a setup with the status line off leaves the person's own line, or none, as it is (as Qwen's).
+        let no_line = HookPlanRequest {
+            statusline: false,
+            ..BOTH
         };
+        let (_, file_only) = install_with(&State::settings(&their_settings()), &real, &no_line);
+        assert_eq!(file_only.settings.as_deref(), Some(their_settings().as_str()));
         let f = found(&file_only, &real);
-        assert_eq!(f.install, HookInstall::Partial);
+        assert_eq!(f.install, HookInstall::Installed);
         assert!(f.has_own_statusline && !f.chained);
+        let (_, bare_file_only) = install_with(&State::default(), &real, &no_line);
+        assert_eq!(found(&bare_file_only, &real).install, HookInstall::Installed);
 
         let stale_line = State {
             settings: installed.settings.as_deref().map(|t| {
