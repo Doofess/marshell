@@ -1,7 +1,7 @@
 # Doctor MCP servers and skills live check (slice 7c1)
 
-- Date: 2026-11-06, 02:16 to 02:24 local time.
-- Build: `phase-7c` at `f442fa4` under `pnpm tauri dev` on Windows 11 Pro (26300).
+- Date: 2026-11-06, 02:16 to 02:24 local time, and a re-check from 12:44 to 12:48 after the review's fix pass.
+- Build: `phase-7c` at `f442fa4` under `pnpm tauri dev` on Windows 11 Pro (26300); the re-check at `5ab24e6`.
 - Home: `live-check.ps1 start -Scratch <scratchpad>\lc-7c1-1 -CodexHome %TEMP%\lc-7c1-cx`. That gave a scratch `MARSHELL_HOME`, `CLAUDE_CONFIG_DIR`, `MARSHELL_CLAUDE_SETTINGS`, `CODEX_HOME` and `USERPROFILE` (`home`, so Antigravity's `~/.gemini` and Qwen Code's `~/.qwen` were scratch too), with CDP on port 9333. Onboarding was left at its first step, with nothing set up.
 - Data: `seed_7c1.py` (scratchpad) wrote:
   - **Marshell:** `mh\projects.json` holding the scratch project.
@@ -21,7 +21,8 @@
 
 | Check | Result |
 | --- | --- |
-| The Broken items, pre-checked | Pass. "Broken 8": Claude Code's `local-ghost` and `proj-ghost`; Codex's `ghost`, `inline-ghost` and skill `nodesc`; Antigravity's `agy-ghost`; Qwen Code's `proj-ghost` (it reads the project's `.mcp.json` too) and skill `a b`. All 8 checkboxes were checked and the button read "Fix 8 issues". Copy: "Its command, ghost-mcp, isn't on this PC. The fix turns it off and doesn't delete it.", "Its SKILL.md has no description.", "Its name has characters Qwen Code refuses." |
+| Re-check at `5ab24e6`: a bare command missing from the PATH starts unchecked (decision 11) | Pass. A new scratch (`lc-7c1-2`, `%TEMP%\lc-7c1-cx2`) with the same seed, except that `agy-ghost`'s command was the absolute `C:\nope-7c1\ghost-mcp.exe`. "Broken 8" and "Fix 3 issues": the five `ghost-mcp` servers were unchecked, with "Its command, ghost-mcp, isn't on the PATH Marshell's tabs get. The fix turns it off and doesn't delete it." `agy-ghost` ("Its command, C:\nope-7c1\ghost-mcp.exe, isn't on this PC."), `nodesc` and `a b` were checked. Nothing was applied. All 19 processes were stopped, and the real `settings.json` kept its modified time. |
+| The Broken items, pre-checked (at `f442fa4`, before decision 11) | Pass. "Broken 8": Claude Code's `local-ghost` and `proj-ghost`; Codex's `ghost`, `inline-ghost` and skill `nodesc`; Antigravity's `agy-ghost`; Qwen Code's `proj-ghost` (it reads the project's `.mcp.json` too) and skill `a b`. All 8 checkboxes were checked and the button read "Fix 8 issues". Copy: "Its command, ghost-mcp, isn't on this PC. The fix turns it off and doesn't delete it.", "Its SKILL.md has no description.", "Its name has characters Qwen Code refuses." |
 | The Waste long-description item, unchecked and report-only | Pass. "Claude Code's skill long-reader has a description Claude Code cuts", "It is 1631 characters, and Claude Code keeps the first 1536.", "Shorten the description in its SKILL.md.", with no checkbox. |
 | The cost lines | Pass. "Claude Code's skills add about 393 tokens to each session", "2 skills are listed, by name and description. The largest: long-reader (387), fine (6)." Codex and Qwen Code had no line: their one skill doesn't load. |
 | One diff per file | Pass. Five regions: `cc\.claude.json`, `proj\.claude\settings.local.json`, `home\.qwen\settings.json` (new), `home\.gemini\config\mcp_config.json`, and `lc-7c1-cx\config.toml` (one edit for its three items). |
