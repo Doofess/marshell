@@ -4,7 +4,7 @@ import { ThemePair } from "../../design/ThemePair";
 import { unifiedDiff } from "../../lib/diff";
 import { DoctorPage, type DoctorPageProps, type DoctorPhase } from "./DoctorPage";
 import { DifferencesSheet, FixSheet } from "./FixSheet";
-import { DOCTOR_CLEAR, DOCTOR_CLI, DOCTOR_PLAN, DOCTOR_PREVIEW, DOCTOR_PROBLEMS, DOCTOR_REPORT, UNDO_FIXED, filePreview } from "./fixtures";
+import { DOCTOR_CLEAR, DOCTOR_CLI, DOCTOR_MEASURED, DOCTOR_PLAN, DOCTOR_PREVIEW, DOCTOR_PROBLEMS, DOCTOR_REPORT, UNDO_FIXED, filePreview } from "./fixtures";
 import { initialSelection } from "./report";
 import type { DoctorReport } from "./types";
 
@@ -25,6 +25,8 @@ const page = (report: DoctorReport | null, phase: DoctorPhase, extra: Partial<Do
       onRunAgain={noop}
       cliRunning={false}
       onRunCliDoctors={noop}
+      measuring={false}
+      onMeasure={noop}
       onUndo={noop}
       onShowDifferences={noop}
       onOpenAgents={noop}
@@ -39,6 +41,8 @@ export const NothingChosen: StoryObj = { render: () => <ThemePair label="Doctor:
 export const ReadyProblems: StoryObj = { render: () => <ThemePair label="Doctor: problems Marshell will not fix say why, in words, and Antigravity's row offers Open Agents" stack>{page(DOCTOR_PROBLEMS, "ready")}</ThemePair> };
 export const CliDoctorsRan: StoryObj = { render: () => <ThemePair label="Doctor: after Run CLI doctors, each CLI's problems are report-only rows that say Marshell only reports them, and the status line says when they ran" stack>{page(DOCTOR_CLI, "ready")}</ThemePair> };
 export const CliDoctorsRunning: StoryObj = { render: () => <ThemePair label="Doctor: while the CLI doctors run, the button reads Running CLI doctors… and stays focusable but does nothing" stack>{page(DOCTOR_CLI, "ready", { cliRunning: true })}</ThemePair> };
+export const MeasureRan: StoryObj = { render: () => <ThemePair label="Doctor: after Measure MCP servers, the cost is an Info row, a server that didn't start is an unchecked Broken row, and the status line says when it was measured" stack>{page(DOCTOR_MEASURED, "ready")}</ThemePair> };
+export const Measuring: StoryObj = { render: () => <ThemePair label="Doctor: while the MCP servers are measured, the button reads Measuring MCP servers… and stays focusable but does nothing" stack>{page(DOCTOR_MEASURED, "ready", { measuring: true })}</ThemePair> };
 export const AllClear: StoryObj = { render: () => <ThemePair label="Doctor: all clear, with only Run again" stack>{page(DOCTOR_CLEAR, "ready")}</ThemePair> };
 export const Running: StoryObj = { render: () => <ThemePair label="Doctor: a check that takes over 150 ms says what it is checking; a quicker one shows nothing" stack>{page(null, "running", { elapsedMs: 400 })}</ThemePair> };
 export const Failed: StoryObj = { render: () => <ThemePair label="Doctor: when it cannot run it says why and offers Run again" stack>{page(null, "failed", { failure: "The core is not running." })}</ThemePair> };

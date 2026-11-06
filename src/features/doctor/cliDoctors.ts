@@ -2,11 +2,16 @@ import type { DoctorReport } from "./types";
 
 const CONTACTS = "Codex's doctor contacts OpenAI.";
 
+/** How long ago `atMs` was, in whole seconds, or minutes from 60 s: `10 s`, `2 min`. */
+export function agoText(atMs: number, nowMs: number): string {
+  const s = Math.max(0, Math.round((nowMs - atMs) / 1000));
+  return s >= 60 ? `${Math.floor(s / 60)} min` : `${s} s`;
+}
+
 /** The status line under the summary: when the CLI doctors last ran, counted the way the header counts `Checked`. */
 export function cliLine(checkedAtMs: number | undefined, nowMs: number): string {
   if (checkedAtMs === undefined) return `CLI doctors haven't run. ${CONTACTS}`;
-  const s = Math.max(0, Math.round((nowMs - checkedAtMs) / 1000));
-  return `CLI doctors ran ${s >= 60 ? `${Math.floor(s / 60)} min` : `${s} s`} ago. ${CONTACTS}`;
+  return `CLI doctors ran ${agoText(checkedAtMs, nowMs)} ago. ${CONTACTS}`;
 }
 
 /** Whether the report shows a CLI doctors' run newer than `base`, the one the report had when the run was asked for. */

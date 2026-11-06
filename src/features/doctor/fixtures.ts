@@ -80,6 +80,17 @@ export const DOCTOR_CLI: DoctorReport = {
   ],
 };
 
+/** After "Measure MCP servers": a server's cost as an Info item and one that didn't start as an unchecked Broken item. */
+export const DOCTOR_MEASURED: DoctorReport = {
+  checked_at_ms: NOW - 12_000,
+  measured_at_ms: NOW - 20_000,
+  duration_ms: 1_840,
+  items: [
+    { id: "mcpfail.claude.docs", agent: "claude", group: "broken", title: "The MCP server docs didn't start", detail: "Its command wasn't found. Turn it off to stop Claude Code from trying.", fixable: true, unchecked: true, open_agents: false },
+    { id: "mcpcost.claude", agent: "claude", group: "info", title: "Claude Code's MCP servers add about 12,000 tokens to every session", detail: "Measured by starting each local server for a moment.", fixable: false, open_agents: false },
+  ],
+};
+
 export const DOCTOR_CLEAR: DoctorReport = { checked_at_ms: NOW - 4_000, duration_ms: 900, items: [] };
 
 export const UNDO_FIXED: DoctorLastFix = { snapshot_id: "snap-1", fixed_at_ms: NOW, item_ids: ["hooks.claude", "hooks.codex@Ubuntu", "retention.claude"], count: 3, restart: ["tab-1", "tab-2"], files_match: true };
