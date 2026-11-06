@@ -3,12 +3,14 @@
 
 use std::path::{Path, PathBuf};
 
+use serde_json::Value;
 use toml_edit::{DocumentMut, Item, TableLike};
 
 use crate::config::jsonc;
 use crate::doctor::ext::{
-    Caps, CommandState, CostRule, ExtRoots, Hints, Inventory, NoSwitch, NotMeasured, Origin, Server, Skill, SkillState,
-    Switch, Transport, UsedAs, skill_files, unreadable as ext_unreadable,
+    Caps, CommandState, CostRule, Expand, ExtRoots, Hints, Inherit, Inventory, Launch, Listing, NoSwitch, NotMeasured,
+    Origin, Server, Skill, SkillState, SkillUse, Switch, Transport, UsedAs, sanitize_tool_part, skill_files,
+    unreadable as ext_unreadable,
 };
 use crate::doctor::frontmatter::{self, Front};
 
@@ -36,14 +38,35 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
         servers: Vec::new(),
         skills: Vec::new(),
         unreadable: Vec::new(),
-        hints: Hints::default(),
+        hints: Hints {
+            move_server: |name, project| {
+                format!(
+                    "To load it only there, move its [mcp_servers.{name}] table to {}\\.codex\\config.toml. Codex reads that file only in a trusted project.",
+                    project.display()
+                )
+            },
+            move_skill: |_, project| {
+                format!(
+                    "To load it only there, move its folder to {}\\.agents\\skills.",
+                    project.display()
+                )
+            },
+        },
         cost_note: None,
     };
     let config = roots.codex_home.join("config.toml");
     let user = read_doc(&config, &mut inv.unreadable);
 
     if let Some(doc) = &user {
-        servers_of(doc, &config, &Origin::User, true, command, &mut inv.servers);
+        servers_of(
+            doc,
+            &config,
+            &Origin::User,
+            true,
+            Some(&roots.home),
+            command,
+            &mut inv.servers,
+        );
     }
     for project in projects {
         let file = project.join(".codex").join("config.toml");
@@ -53,6 +76,7 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
                 &file,
                 &Origin::Project(project.clone()),
                 false,
+                trusted(user.as_ref(), project).then_some(project.as_path()),
                 command,
                 &mut inv.servers,
             );
@@ -61,7 +85,7 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
 
     let plugins = enabled_plugins(user.as_ref(), &roots.codex_home);
     for (id, folder) in &plugins {
-        plugin_servers(id, folder, command, &mut inv.servers, &mut inv.unreadable);
+        plugin_servers(id, folder, &roots.home, command, &mut inv.servers, &mut inv.unreadable);
     }
 
     let rules = user.as_ref().map(skill_rules).unwrap_or_default();
@@ -109,11 +133,14 @@ fn read_doc(file: &Path, unreadable: &mut Vec<(PathBuf, String)>) -> Option<Docu
 }
 
 /// The `[mcp_servers.<name>]` tables of `doc`. Only the user's own file can be switched.
+/// `cwd` is the folder a server without its own `cwd` starts in; `None` means Codex doesn't read these servers
+/// (an untrusted project).
 fn servers_of(
     doc: &DocumentMut,
     file: &Path,
     origin: &Origin,
     switchable: bool,
+    cwd: Option<&Path>,
     command: &dyn Fn(&str) -> CommandState,
     out: &mut Vec<Server>,
 ) {
@@ -134,6 +161,8 @@ fn servers_of(
         } else {
             Transport::Nothing
         };
+        let json = item_json(item);
+        let remote = transport == Transport::Remote;
         let switch = if switchable {
             Ok(Switch::CodexServer {
                 file: file.to_path_buf(),
@@ -149,11 +178,160 @@ fn servers_of(
             transport,
             off: entry.get("enabled").and_then(Item::as_bool) == Some(false),
             switch,
-            launch: Err(NotMeasured::NotApproved),
-            cost: CostRule::names_only(),
-            used_as: UsedAs::Unknown,
+            launch: launch_of(&json, remote, cwd),
+            cost: cost_of(name, &json, false),
+            used_as: UsedAs::Server(name.to_string()),
         });
     }
+}
+
+/// Codex starts a stdio server with an empty environment plus these variables from its own (`WINDOWS_CORE_ENV_VARS`).
+const CORE_ENV_VARS: [&str; 23] = [
+    "PATH",
+    "PATHEXT",
+    "SHELL",
+    "COMSPEC",
+    "SYSTEMROOT",
+    "WINDIR",
+    "SYSTEMDRIVE",
+    "USERNAME",
+    "USERDOMAIN",
+    "USERPROFILE",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "PROGRAMW6432",
+    "PROGRAMDATA",
+    "LOCALAPPDATA",
+    "APPDATA",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "POWERSHELL",
+    "PWSH",
+];
+
+/// A config entry as JSON, so a config server and a plugin's `.mcp.json` entry are read by the same code.
+fn item_json(item: &Item) -> Value {
+    if let Some(t) = item.as_table_like() {
+        Value::Object(t.iter().map(|(k, v)| (k.to_string(), item_json(v))).collect())
+    } else if let Some(a) = item.as_array() {
+        Value::Array(a.iter().map(|v| item_json(&Item::Value(v.clone()))).collect())
+    } else if let Some(s) = item.as_str() {
+        Value::String(s.to_string())
+    } else if let Some(i) = item.as_integer() {
+        Value::from(i)
+    } else if let Some(f) = item.as_float() {
+        Value::from(f)
+    } else if let Some(b) = item.as_bool() {
+        Value::Bool(b)
+    } else {
+        Value::Null
+    }
+}
+
+fn strings(v: Option<&Value>) -> Vec<String> {
+    v.and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_string)).collect())
+        .unwrap_or_default()
+}
+
+/// How Codex starts a stdio server. `cwd` is where a server with no `cwd` of its own starts; `None` means Codex
+/// doesn't read the entry (an untrusted project).
+fn launch_of(entry: &Value, remote: bool, cwd: Option<&Path>) -> Result<Launch, NotMeasured> {
+    if remote {
+        return Err(NotMeasured::Remote);
+    }
+    let (Some(cwd), Some(command)) = (
+        cwd,
+        entry
+            .get("command")
+            .and_then(Value::as_str)
+            .filter(|c| !c.trim().is_empty()),
+    ) else {
+        return Err(NotMeasured::NotApproved);
+    };
+    let mut inherit: Vec<String> = CORE_ENV_VARS.iter().map(|s| s.to_string()).collect();
+    inherit.extend(strings(entry.get("env_vars")));
+    let env = entry
+        .get("env")
+        .and_then(Value::as_object)
+        .map(|m| {
+            m.iter()
+                .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
+    let secs = entry.get("startup_timeout_sec").and_then(Value::as_f64).map(f64::ceil);
+    let ms = entry
+        .get("startup_timeout_ms")
+        .and_then(Value::as_f64)
+        .map(|ms| (ms / 1000.0).ceil());
+    Ok(Launch {
+        command: command.to_string(),
+        args: strings(entry.get("args")),
+        env,
+        inherit: Inherit::Only(inherit),
+        set: Vec::new(),
+        cwd: Some(
+            entry
+                .get("cwd")
+                .and_then(Value::as_str)
+                .map_or_else(|| cwd.to_path_buf(), PathBuf::from),
+        ),
+        expand: Expand::None,
+        timeout_secs: secs.or(ms).unwrap_or(30.0).clamp(0.0, 60.0) as u64,
+    })
+}
+
+/// What Codex lists up front for a server: one namespace line, or every tool in full when a plugin's `.mcp.json`
+/// entry says `omit_tools_from: ["deferred"]`.
+fn cost_of(name: &str, entry: &Value, plugin: bool) -> CostRule {
+    let name = sanitize_tool_part(name);
+    let direct = plugin && strings(entry.get("omit_tools_from")).iter().any(|s| s == "deferred");
+    CostRule {
+        listing: if direct {
+            Listing::Full {
+                prefix: format!("mcp__{name}__"),
+                desc_cap: None,
+            }
+        } else {
+            Listing::Namespace {
+                namespace: format!("mcp__{name}"),
+                cap: 250,
+            }
+        },
+        always_load_meta: None,
+        only: entry.get("enabled_tools").map(|v| strings(Some(v))),
+        except: strings(entry.get("disabled_tools")),
+    }
+}
+
+/// A path as Codex's trust table compares it: without a `\\?\` prefix, `\` as `/`, without a trailing `/` or case.
+fn trust_key(path: &str) -> String {
+    let path = path.strip_prefix(r"\\?\").unwrap_or(path);
+    path.replace('\\', "/").trim_end_matches('/').to_lowercase()
+}
+
+/// Whether `[projects.'<key>'] trust_level = "trusted"` names the project folder or its git root, the nearest
+/// ancestor holding `.git`.
+fn trusted(user: Option<&DocumentMut>, project: &Path) -> bool {
+    let Some(table) = user.and_then(|d| d.get("projects")).and_then(Item::as_table_like) else {
+        return false;
+    };
+    let mut wanted = vec![trust_key(&project.display().to_string())];
+    if let Some(root) = project.ancestors().find(|a| a.join(".git").exists()) {
+        wanted.push(trust_key(&root.display().to_string()));
+    }
+    table.iter().any(|(key, item)| {
+        wanted.contains(&trust_key(key))
+            && item
+                .as_table_like()
+                .and_then(|t| t.get("trust_level"))
+                .and_then(Item::as_str)
+                == Some("trusted")
+    })
 }
 
 /// The plugins `[plugins."<plugin>@<market>"]` marks `enabled = true`, each with its folder in Codex's cache:
@@ -205,6 +383,7 @@ fn last_subfolder(dir: &Path) -> Option<PathBuf> {
 fn plugin_servers(
     id: &str,
     folder: &Path,
+    home: &Path,
     command: &dyn Fn(&str) -> CommandState,
     out: &mut Vec<Server>,
     unreadable: &mut Vec<(PathBuf, String)>,
@@ -243,12 +422,12 @@ fn plugin_servers(
             name: name.clone(),
             file: file.clone(),
             origin: Origin::Plugin(id.to_string()),
+            launch: launch_of(entry, transport == Transport::Remote, Some(home)),
             transport,
             off: false,
             switch: Err(NoSwitch::Plugin(id.to_string())),
-            launch: Err(NotMeasured::NotApproved),
-            cost: CostRule::names_only(),
-            used_as: UsedAs::Unknown,
+            cost: cost_of(name, entry, true),
+            used_as: UsedAs::Server(name.clone()),
         });
     }
 }
@@ -345,7 +524,7 @@ fn skill_of(
     };
     Skill {
         created_ms: crate::doctor::ext::created_ms(&file),
-        used_as: Vec::new(),
+        used_as: vec![SkillUse::File(file.clone())],
         name,
         file,
         origin,
@@ -640,6 +819,157 @@ mod tests {
         let ps = skill(&inv, "pl:ps");
         assert_eq!(ps.origin, Origin::Plugin("pl@mkt".into()));
         assert_eq!(ps.switch, Err(NoSwitch::Plugin("pl@mkt".into())));
+    }
+
+    fn project_server(project: &Path) {
+        write(
+            &project.join(".codex").join("config.toml"),
+            "[mcp_servers.pj]\ncommand = \"node\"\n",
+        );
+    }
+
+    #[test]
+    fn codex_project_trust() {
+        let slashed = |p: &Path| p.display().to_string().replace('\\', "/").to_lowercase();
+        let trusting = |key: &str| format!("[projects.'{key}']\ntrust_level = \"trusted\"\n");
+        let launch = |inv: &Inventory| server(inv, "pj").launch.clone();
+
+        // Trusted by its own folder, in lower-case forward slashes.
+        let (root, roots) = fake("trust-own");
+        let project = root.join("proj");
+        project_server(&project);
+        write(&root.join(".codex").join("config.toml"), &trusting(&slashed(&project)));
+        let inv = inventory(&roots, std::slice::from_ref(&project), &judge);
+        assert!(launch(&inv).is_ok(), "{:?}", launch(&inv));
+
+        // The same under a `\\?\` key with backslashes and capitals.
+        let (root, roots) = fake("trust-verbatim");
+        let project = root.join("proj");
+        project_server(&project);
+        let key = format!(
+            r"\\?\{}",
+            project.display().to_string().replace('/', "\\").to_uppercase()
+        );
+        write(&root.join(".codex").join("config.toml"), &trusting(&key));
+        let inv = inventory(&roots, std::slice::from_ref(&project), &judge);
+        assert!(launch(&inv).is_ok(), "{:?}", launch(&inv));
+
+        // A subfolder is trusted through its git root.
+        let (root, roots) = fake("trust-git");
+        let top = root.join("repo");
+        std::fs::create_dir_all(top.join(".git")).unwrap();
+        let project = top.join("sub");
+        project_server(&project);
+        write(&root.join(".codex").join("config.toml"), &trusting(&slashed(&top)));
+        let inv = inventory(&roots, std::slice::from_ref(&project), &judge);
+        assert!(launch(&inv).is_ok(), "{:?}", launch(&inv));
+
+        // Untrusted: no entry, another folder, or a level other than "trusted".
+        let (root, roots) = fake("trust-none");
+        let project = root.join("proj");
+        project_server(&project);
+        let other = format!(
+            "[projects.'{}']\ntrust_level = \"trusted\"\n\n[projects.'{}']\ntrust_level = \"untrusted\"\n",
+            slashed(&root.join("elsewhere")),
+            slashed(&project)
+        );
+        write(&root.join(".codex").join("config.toml"), &other);
+        let inv = inventory(&roots, std::slice::from_ref(&project), &judge);
+        assert_eq!(launch(&inv), Err(NotMeasured::NotApproved));
+    }
+
+    #[test]
+    fn codex_launch_and_cost() {
+        let (root, roots) = fake("launch");
+        write(
+            &root.join(".codex").join("config.toml"),
+            "[mcp_servers.a]\ncommand = \"node\"\nargs = [\"x.js\"]\nenv_vars = [\"FOO\"]\nstartup_timeout_ms = 1500\nenabled_tools = [\"t1\"]\ndisabled_tools = [\"t2\"]\n\n[mcp_servers.a.env]\nK = \"v\"\n\n[mcp_servers.slow]\ncommand = \"node\"\nstartup_timeout_sec = 500\ncwd = \"w\"\n\n[mcp_servers.remote]\nurl = \"https://x\"\n\n[plugins.\"pl@mkt\"]\nenabled = true\n",
+        );
+        let cache = root
+            .join(".codex")
+            .join("plugins")
+            .join("cache")
+            .join("mkt")
+            .join("pl")
+            .join("latest");
+        write(
+            &cache.join(".mcp.json"),
+            "{\"mcpServers\": {\"cua\": {\"command\": \"node\", \"startup_timeout_sec\": 45, \"omit_tools_from\": [\"deferred\"], \"enabled_tools\": [\"click\"]}, \"plain\": {\"command\": \"node\"}}}",
+        );
+        let inv = inventory(&roots, &[], &judge);
+
+        let a = server(&inv, "a");
+        let launch = a.launch.as_ref().unwrap();
+        let Inherit::Only(names) = &launch.inherit else {
+            panic!("{:?}", launch.inherit)
+        };
+        assert!(names.contains(&"PATH".to_string()) && names.contains(&"FOO".to_string()));
+        assert_eq!(names.len(), 24);
+        assert_eq!(launch.env, vec![("K".to_string(), "v".to_string())]);
+        assert_eq!(launch.args, vec!["x.js".to_string()]);
+        assert_eq!(launch.expand, Expand::None);
+        assert_eq!(launch.timeout_secs, 2);
+        assert_eq!(launch.cwd, Some(root.clone()));
+        assert_eq!(
+            a.cost.listing,
+            Listing::Namespace {
+                namespace: "mcp__a".into(),
+                cap: 250
+            }
+        );
+        assert_eq!(a.cost.only, Some(vec!["t1".to_string()]));
+        assert_eq!(a.cost.except, vec!["t2".to_string()]);
+        assert_eq!(a.used_as, UsedAs::Server("a".into()));
+
+        let slow = server(&inv, "slow").launch.as_ref().unwrap();
+        assert_eq!(slow.timeout_secs, 60);
+        assert_eq!(slow.cwd, Some(PathBuf::from("w")));
+        assert_eq!(server(&inv, "remote").launch, Err(NotMeasured::Remote));
+
+        let cua = server(&inv, "cua");
+        assert_eq!(
+            cua.cost.listing,
+            Listing::Full {
+                prefix: "mcp__cua__".into(),
+                desc_cap: None
+            }
+        );
+        assert_eq!(cua.cost.only, Some(vec!["click".to_string()]));
+        assert_eq!(cua.launch.as_ref().unwrap().timeout_secs, 45);
+        assert!(matches!(server(&inv, "plain").cost.listing, Listing::Namespace { .. }));
+        assert_eq!(server(&inv, "plain").launch.as_ref().unwrap().timeout_secs, 30);
+
+        // A project server starts in its project.
+        let project = root.join("proj");
+        project_server(&project);
+        let mut text = std::fs::read_to_string(root.join(".codex").join("config.toml")).unwrap();
+        text.push_str(&format!(
+            "\n[projects.'{}']\ntrust_level = \"trusted\"\n",
+            project.display().to_string().replace('\\', "/").to_lowercase()
+        ));
+        write(&root.join(".codex").join("config.toml"), &text);
+        let inv = inventory(&roots, std::slice::from_ref(&project), &judge);
+        assert_eq!(server(&inv, "pj").launch.as_ref().unwrap().cwd, Some(project.clone()));
+
+        // Hints and skill use.
+        let hint = (inv.hints.move_server)("pj", Path::new(r"C:\p"));
+        assert_eq!(
+            hint,
+            r"To load it only there, move its [mcp_servers.pj] table to C:\p\.codex\config.toml. Codex reads that file only in a trusted project."
+        );
+        assert_eq!(
+            (inv.hints.move_skill)("s", Path::new(r"C:\p")),
+            r"To load it only there, move its folder to C:\p\.agents\skills."
+        );
+    }
+
+    #[test]
+    fn codex_skill_use_is_its_file() {
+        let (root, roots) = fake("skill-use");
+        let file = root.join(".codex").join("skills").join("alpha").join("SKILL.md");
+        write(&file, "---\ndescription: d\n---\n");
+        let inv = inventory(&roots, &[], &judge);
+        assert_eq!(skill(&inv, "alpha").used_as, vec![SkillUse::File(file)]);
     }
 
     #[test]
