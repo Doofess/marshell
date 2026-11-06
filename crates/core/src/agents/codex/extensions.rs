@@ -7,8 +7,8 @@ use toml_edit::{DocumentMut, Item, TableLike};
 
 use crate::config::jsonc;
 use crate::doctor::ext::{
-    Caps, CommandState, ExtRoots, Inventory, NoSwitch, Origin, Server, Skill, SkillState, Switch, Transport,
-    skill_files, unreadable as ext_unreadable,
+    Caps, CommandState, CostRule, ExtRoots, Hints, Inventory, NoSwitch, NotMeasured, Origin, Server, Skill, SkillState,
+    Switch, Transport, UsedAs, skill_files, unreadable as ext_unreadable,
 };
 use crate::doctor::frontmatter::{self, Front};
 
@@ -36,6 +36,8 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
         servers: Vec::new(),
         skills: Vec::new(),
         unreadable: Vec::new(),
+        hints: Hints::default(),
+        cost_note: None,
     };
     let config = roots.codex_home.join("config.toml");
     let user = read_doc(&config, &mut inv.unreadable);
@@ -147,6 +149,9 @@ fn servers_of(
             transport,
             off: entry.get("enabled").and_then(Item::as_bool) == Some(false),
             switch,
+            launch: Err(NotMeasured::NotApproved),
+            cost: CostRule::names_only(),
+            used_as: UsedAs::Unknown,
         });
     }
 }
@@ -241,6 +246,9 @@ fn plugin_servers(
             transport,
             off: false,
             switch: Err(NoSwitch::Plugin(id.to_string())),
+            launch: Err(NotMeasured::NotApproved),
+            cost: CostRule::names_only(),
+            used_as: UsedAs::Unknown,
         });
     }
 }
@@ -336,6 +344,8 @@ fn skill_of(
         Origin::Plugin(id) => Err(NoSwitch::Plugin(id.clone())),
     };
     Skill {
+        created_ms: crate::doctor::ext::created_ms(&file),
+        used_as: Vec::new(),
         name,
         file,
         origin,
@@ -381,6 +391,9 @@ mod tests {
             claude_settings: root.join(".claude").join("settings.json"),
             codex_home: root.join(".codex"),
             qwen_dir: root.join(".qwen"),
+            claude_tool_search: None,
+            qwen_runtime: root.join(".qwen"),
+            gemini_dir: root.join(".gemini"),
         };
         (root, roots)
     }

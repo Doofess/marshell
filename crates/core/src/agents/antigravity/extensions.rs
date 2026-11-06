@@ -7,8 +7,8 @@ use serde_json::Value;
 
 use crate::config::jsonc;
 use crate::doctor::ext::{
-    Caps, CommandState, ExtRoots, Inventory, NoSwitch, Origin, Server, Skill, SkillState, Switch, Transport,
-    skill_files, unreadable as ext_unreadable,
+    Caps, CommandState, CostRule, ExtRoots, Hints, Inventory, NoSwitch, NotMeasured, Origin, Server, Skill, SkillState,
+    Switch, Transport, UsedAs, skill_files, unreadable as ext_unreadable,
 };
 use crate::doctor::frontmatter::{self, Front};
 
@@ -23,6 +23,8 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
         servers: Vec::new(),
         skills: Vec::new(),
         unreadable: Vec::new(),
+        hints: Hints::default(),
+        cost_note: None,
     };
     let gemini = roots.home.join(".gemini");
     let config = gemini.join("config");
@@ -167,6 +169,9 @@ fn servers_of(
             transport,
             off: entry.get("disabled").and_then(Value::as_bool) == Some(true),
             switch,
+            launch: Err(NotMeasured::NotApproved),
+            cost: CostRule::names_only(),
+            used_as: UsedAs::Unknown,
         });
     }
 }
@@ -208,6 +213,8 @@ fn skill_of(folder: &str, file: PathBuf, origin: Origin) -> Skill {
         _ => Err(NoSwitch::NoSkillSwitch),
     };
     Skill {
+        created_ms: crate::doctor::ext::created_ms(&file),
+        used_as: Vec::new(),
         name,
         file,
         origin,
@@ -239,6 +246,9 @@ mod tests {
             claude_settings: root.join(".claude").join("settings.json"),
             codex_home: root.join(".codex"),
             qwen_dir: root.join(".qwen"),
+            claude_tool_search: None,
+            qwen_runtime: root.join(".qwen"),
+            gemini_dir: root.join(".gemini"),
         };
         (root, roots)
     }

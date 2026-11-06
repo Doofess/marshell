@@ -25,6 +25,12 @@ pub struct ExtRoots {
     pub codex_home: PathBuf,
     /// QWEN_HOME or `<home>/.qwen`.
     pub qwen_dir: PathBuf,
+    /// Marshell's own `ENABLE_TOOL_SEARCH`, which Claude Code reads when the user settings don't set it.
+    pub claude_tool_search: Option<String>,
+    /// `QWEN_RUNTIME_DIR`, else `qwen_dir`: where Qwen Code keeps its chats.
+    pub qwen_runtime: PathBuf,
+    /// `<home>/.gemini`.
+    pub gemini_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,6 +93,140 @@ pub enum Transport {
     Nothing,
 }
 
+/// How a CLI starts a stdio server, for "Measure MCP servers".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Launch {
+    pub command: String,
+    pub args: Vec<String>,
+    /// The entry's own variables, as written. Never shown or logged.
+    pub env: Vec<(String, String)>,
+    pub inherit: Inherit,
+    /// Variables the CLI sets for the server itself (CLAUDE_PROJECT_DIR, CLAUDE_PLUGIN_ROOT).
+    pub set: Vec<(String, String)>,
+    pub cwd: Option<PathBuf>,
+    pub expand: Expand,
+    pub timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Inherit {
+    All,
+    Only(Vec<String>),
+}
+
+/// How the CLI expands variables in command, args, env values and cwd.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Expand {
+    None,
+    /// `${VAR}`, `${VAR:-default}`
+    Braces,
+    /// `$VAR`, `${VAR}`
+    Dollar,
+}
+
+/// Why a server isn't started by "Measure MCP servers".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotMeasured {
+    Remote,
+    NotApproved,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CostRule {
+    pub listing: Listing,
+    /// A tool whose `_meta` has this key set to `true` loads in full whatever `listing` says.
+    pub always_load_meta: Option<&'static str>,
+    /// When set, only these tools count.
+    pub only: Option<Vec<String>>,
+    /// These tools never count.
+    pub except: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Listing {
+    /// Each tool's full definition: `prefix` + name, its description cut at `desc_cap`, its input schema.
+    Full { prefix: String, desc_cap: Option<usize> },
+    /// Each tool's name (`prefix` + name), and the server's instructions cut at `instructions_cap` (Claude Code).
+    Names {
+        prefix: String,
+        instructions_cap: Option<usize>,
+    },
+    /// One line: `namespace`, and the first line of the instructions cut at `cap` (Codex).
+    Namespace { namespace: String, cap: usize },
+    /// `heading`, then each tool's name and the first line of its description, cut at `cap` (Qwen Code).
+    FirstLines { heading: String, cap: usize },
+    /// Each tool's name only (Antigravity).
+    NamesOnly,
+    /// Claude Code's `auto:N`: Full while every such server's full cost totals under `percent`% of 200,000 tokens,
+    /// else Names.
+    FullUnder {
+        percent: u32,
+        prefix: String,
+        desc_cap: Option<usize>,
+        instructions_cap: Option<usize>,
+    },
+}
+
+impl CostRule {
+    /// A rule that lists each tool's name only, with no filter.
+    pub fn names_only() -> CostRule {
+        CostRule {
+            listing: Listing::NamesOnly,
+            always_load_meta: None,
+            only: None,
+            except: Vec::new(),
+        }
+    }
+}
+
+/// How the CLI's history names a server's calls.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UsedAs {
+    ToolPrefix(String),
+    Server(String),
+    Unknown,
+}
+
+/// How the CLI's history names a skill's use.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SkillUse {
+    Name(String),
+    File(PathBuf),
+}
+
+/// The move hint of a broad-scope item: (name, project) -> the sentence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(unpredictable_function_pointer_comparisons)]
+pub struct Hints {
+    pub move_server: fn(&str, &Path) -> String,
+    pub move_skill: fn(&str, &Path) -> String,
+}
+
+impl Default for Hints {
+    fn default() -> Self {
+        fn generic(_: &str, _: &Path) -> String {
+            "Move it to that project.".to_string()
+        }
+        Hints {
+            move_server: generic,
+            move_skill: generic,
+        }
+    }
+}
+
+/// Claude Code and Qwen Code both name a tool's server with every character outside `[A-Za-z0-9_-]` turned into `_`.
+pub fn sanitize_tool_part(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Server {
     pub name: String,
@@ -95,6 +235,9 @@ pub struct Server {
     pub transport: Transport,
     pub off: bool,
     pub switch: Result<Switch, NoSwitch>,
+    pub launch: Result<Launch, NotMeasured>,
+    pub cost: CostRule,
+    pub used_as: UsedAs,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,6 +264,15 @@ pub struct Skill {
     pub off: bool,
     pub hidden: bool,
     pub switch: Result<Switch, NoSwitch>,
+    pub used_as: Vec<SkillUse>,
+    /// The skill folder's creation time, epoch ms.
+    pub created_ms: Option<u64>,
+}
+
+/// The skill folder's creation time in epoch ms, for `Skill::created_ms`.
+pub fn created_ms(skill_file: &Path) -> Option<u64> {
+    let t = std::fs::metadata(skill_file.parent()?).ok()?.created().ok()?;
+    u64::try_from(t.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis()).ok()
 }
 
 /// What a CLI cuts. Set by its reader.
@@ -141,6 +293,9 @@ pub struct Inventory {
     pub skills: Vec<Skill>,
     /// Config files that exist and don't parse: (file, message).
     pub unreadable: Vec<(PathBuf, String)>,
+    pub hints: Hints,
+    /// One sentence about how this CLI's cost is counted, if it needs one.
+    pub cost_note: Option<&'static str>,
 }
 
 /// What an `unreadable` file's message says, in one sentence that never quotes the file: the Info item shows it, and a
@@ -188,7 +343,7 @@ pub fn key(file: &Path, name: &str) -> String {
 
 /// An item's key: `key(file, name)`, with a project item's folder added to the name, because one file can hold the
 /// same name for several projects (Claude Code's local-scope servers in `~/.claude.json`).
-fn item_key(file: &Path, origin: &Origin, name: &str) -> String {
+pub(crate) fn item_key(file: &Path, origin: &Origin, name: &str) -> String {
     match origin {
         Origin::Project(p) => key(
             file,
@@ -505,6 +660,8 @@ mod tests {
             servers: vec![],
             skills: vec![],
             unreadable: vec![],
+            hints: Hints::default(),
+            cost_note: None,
         }
     }
 
@@ -516,6 +673,9 @@ mod tests {
             transport,
             off: false,
             switch,
+            launch: Err(NotMeasured::NotApproved),
+            cost: CostRule::names_only(),
+            used_as: UsedAs::Unknown,
         }
     }
 
@@ -538,6 +698,8 @@ mod tests {
             off: false,
             hidden: false,
             switch: Err(NoSwitch::NoSkillSwitch),
+            used_as: Vec::new(),
+            created_ms: None,
         }
     }
 

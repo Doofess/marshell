@@ -8,7 +8,8 @@ use serde_json::Value;
 
 use crate::config::jsonc::read_value;
 use crate::doctor::ext::{
-    Caps, CommandState, ExtRoots, Inventory, NoSwitch, Origin, Server, Skill, SkillState, Switch, Transport,
+    Caps, CommandState, CostRule, Expand, ExtRoots, Hints, Inherit, Inventory, Launch, Listing, NoSwitch, NotMeasured,
+    Origin, Server, Skill, SkillState, SkillUse, Switch, Transport, UsedAs, created_ms, sanitize_tool_part,
     skill_files, unreadable,
 };
 use crate::doctor::frontmatter::{self, Front, SkillMeta};
@@ -89,6 +90,117 @@ struct Where<'a> {
     origin: Origin,
 }
 
+/// What `launch_of` and `cost_of` need besides the entry.
+struct Ctx<'a> {
+    home: &'a Path,
+    timeout_secs: u64,
+    /// `ENABLE_TOOL_SEARCH`, from the user settings, else Marshell's own.
+    tool_search: Option<&'a str>,
+    /// The project folder, for project and local servers.
+    project: Option<&'a Path>,
+    /// The plugin's key and install folder, for a plugin server.
+    plugin: Option<(&'a str, &'a Path)>,
+    approved: &'a dyn Fn(&str) -> bool,
+}
+
+/// `MCP_TIMEOUT` (ms) rounded up to seconds, else 30, at most 60.
+fn timeout_of(user_settings: Option<&Value>) -> u64 {
+    let raw = user_settings.and_then(|s| s.get("env")?.get("MCP_TIMEOUT"));
+    let ms = match raw {
+        Some(Value::String(t)) => t.trim().parse::<u64>().ok(),
+        Some(v) => v.as_u64(),
+        None => None,
+    };
+    match ms {
+        Some(ms) if ms > 0 => ms.div_ceil(1000).min(60),
+        _ => 30,
+    }
+}
+
+fn pairs(v: Option<&Value>) -> Vec<(String, String)> {
+    v.and_then(Value::as_object)
+        .map(|m| {
+            m.iter()
+                .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string())))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn launch_of(name: &str, entry: &Value, remote: bool, ctx: &Ctx) -> Result<Launch, NotMeasured> {
+    if remote {
+        return Err(NotMeasured::Remote);
+    }
+    let Some(command) = entry
+        .get("command")
+        .and_then(Value::as_str)
+        .filter(|c| !c.trim().is_empty())
+    else {
+        // A server with no command has nothing to start.
+        return Err(NotMeasured::NotApproved);
+    };
+    if !(ctx.approved)(name) {
+        return Err(NotMeasured::NotApproved);
+    }
+    let mut set = Vec::new();
+    if let Some(project) = ctx.project {
+        set.push(("CLAUDE_PROJECT_DIR".to_string(), project.display().to_string()));
+    }
+    if let Some((_, install)) = ctx.plugin {
+        set.push(("CLAUDE_PLUGIN_ROOT".to_string(), install.display().to_string()));
+    }
+    Ok(Launch {
+        command: command.to_string(),
+        args: strings(entry.get("args")),
+        env: pairs(entry.get("env")),
+        inherit: Inherit::All,
+        set,
+        cwd: Some(ctx.project.unwrap_or(ctx.home).to_path_buf()),
+        expand: Expand::Braces,
+        timeout_secs: ctx.timeout_secs,
+    })
+}
+
+fn cost_of(prefix: String, entry: &Value, tool_search: Option<&str>) -> CostRule {
+    let names = Listing::Names {
+        prefix: prefix.clone(),
+        instructions_cap: Some(4096),
+    };
+    let full = Listing::Full {
+        prefix: prefix.clone(),
+        desc_cap: Some(4096),
+    };
+    let listing = if entry.get("alwaysLoad").and_then(Value::as_bool) == Some(true) {
+        full
+    } else {
+        match tool_search.map(|t| t.trim().to_lowercase()).as_deref() {
+            Some("false") => full,
+            Some("auto") => Listing::FullUnder {
+                percent: 10,
+                prefix,
+                desc_cap: Some(4096),
+                instructions_cap: Some(4096),
+            },
+            Some(t) if t.starts_with("auto:") => match t["auto:".len()..].parse::<u32>() {
+                Ok(percent) => Listing::FullUnder {
+                    percent,
+                    prefix,
+                    desc_cap: Some(4096),
+                    instructions_cap: Some(4096),
+                },
+                Err(_) => names,
+            },
+            _ => names,
+        }
+    };
+    CostRule {
+        listing,
+        always_load_meta: Some("anthropic/alwaysLoad"),
+        only: None,
+        except: Vec::new(),
+    }
+}
+
 /// The servers in an `mcpServers` object. `off` and `switch` are asked per name.
 fn servers_in(
     map: Option<&Value>,
@@ -96,17 +208,28 @@ fn servers_in(
     command: &dyn Fn(&str) -> CommandState,
     off: &dyn Fn(&str) -> bool,
     switch: &dyn Fn(&str) -> Result<Switch, NoSwitch>,
+    ctx: &Ctx,
     out: &mut Vec<Server>,
 ) {
     let Some(map) = map.and_then(Value::as_object) else {
         return;
     };
     for (name, entry) in map {
+        let transport = transport(entry, command);
+        // A plugin server reads `plugin:<plugin>:<server>` in the CLI.
+        let display = match ctx.plugin {
+            Some((key, _)) => format!("plugin:{}:{name}", key.split('@').next().unwrap_or(key)),
+            None => name.clone(),
+        };
+        let prefix = format!("mcp__{}__", sanitize_tool_part(&display));
         out.push(Server {
             name: name.clone(),
             file: at.file.to_path_buf(),
             origin: at.origin.clone(),
-            transport: transport(entry, command),
+            launch: launch_of(name, entry, transport == Transport::Remote, ctx),
+            cost: cost_of(prefix.clone(), entry, ctx.tool_search),
+            used_as: UsedAs::ToolPrefix(prefix),
+            transport,
             off: off(name),
             switch: switch(name),
         });
@@ -198,6 +321,8 @@ fn skills_in(
         };
         let ov = overrides(settings, &name);
         out.push(Skill {
+            created_ms: created_ms(&file),
+            used_as: vec![SkillUse::Name(name.clone())],
             file,
             origin: origin.clone(),
             state: SkillState::Ok,
@@ -228,6 +353,20 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
     let mut skills = Vec::new();
     let claude_json = files.json(&roots.claude_json);
     let user_settings = files.json(&roots.claude_settings);
+    let timeout_secs = timeout_of(user_settings.as_ref());
+    let tool_search = user_settings
+        .as_ref()
+        .and_then(|s| s.get("env")?.get("ENABLE_TOOL_SEARCH")?.as_str())
+        .or(roots.claude_tool_search.as_deref());
+    let everyone = |_: &str| true;
+    let base = || Ctx {
+        home: &roots.home,
+        timeout_secs,
+        tool_search,
+        project: None,
+        plugin: None,
+        approved: &everyone,
+    };
 
     // User-level servers.
     servers_in(
@@ -239,6 +378,7 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
         command,
         &|_| false,
         &|_| Err(NoSwitch::ClaudeUser),
+        &base(),
         &mut servers,
     );
 
@@ -285,6 +425,10 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
                 command,
                 &|_| false,
                 &|_| Err(NoSwitch::Plugin(key.clone())),
+                &Ctx {
+                    plugin: Some((&key, &install)),
+                    ..base()
+                },
                 &mut servers,
             );
             let plugin = key.split('@').next().unwrap_or(&key).to_string();
@@ -332,6 +476,10 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
                         name: n.to_string(),
                     })
                 },
+                &Ctx {
+                    project: Some(project),
+                    ..base()
+                },
                 &mut servers,
             );
         }
@@ -349,6 +497,20 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
         for (_, entry) in &entries {
             disabled.extend(strings(entry.get("disabledMcpjsonServers")));
         }
+        // Approval: the user settings and `settings.local.json` always count; the committed `settings.json` only in a
+        // folder whose trust dialog was accepted.
+        let trusted = entries
+            .iter()
+            .any(|(_, e)| e.get("hasTrustDialogAccepted").and_then(Value::as_bool) == Some(true));
+        let approved = |name: &str| {
+            let counts = |s: &Value| {
+                s.get("enableAllProjectMcpServers").and_then(Value::as_bool) == Some(true)
+                    || strings(s.get("enabledMcpjsonServers")).iter().any(|n| n == name)
+            };
+            [&user_settings, &local].into_iter().flatten().any(&counts)
+                || entries.iter().any(|(_, e)| counts(e))
+                || (trusted && shared.as_ref().is_some_and(counts))
+        };
         servers_in(
             mcp_json.as_ref().and_then(|v| v.get("mcpServers")),
             Where {
@@ -363,6 +525,11 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
                     pointer: "/disabledMcpjsonServers".to_string(),
                     name: n.to_string(),
                 })
+            },
+            &Ctx {
+                project: Some(project),
+                approved: &approved,
+                ..base()
             },
             &mut servers,
         );
@@ -389,6 +556,20 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
         servers,
         skills,
         unreadable: files.unreadable,
+        hints: Hints {
+            move_server: |name, _| {
+                format!(
+                    "To load it only there, add it in that project with claude mcp add -s local, and remove the user-level entry with claude mcp remove {name} -s user."
+                )
+            },
+            move_skill: |_, project| {
+                format!(
+                    "To load it only there, move its folder to {}\\.claude\\skills.",
+                    project.display()
+                )
+            },
+        },
+        cost_note: None,
     }
 }
 
@@ -416,6 +597,9 @@ mod tests {
             claude_settings: h.join(".claude").join("settings.json"),
             codex_home: h.join(".codex"),
             qwen_dir: h.join(".qwen"),
+            claude_tool_search: None,
+            qwen_runtime: h.join(".qwen"),
+            gemini_dir: h.join(".gemini"),
         }
     }
 
@@ -725,5 +909,132 @@ mod tests {
         };
         assert_eq!(message(&bad), "It doesn't parse (line 4).");
         assert_eq!(message(&binary), "It isn't UTF-8 text.");
+    }
+
+    #[test]
+    fn claude_mcpjson_approval() {
+        let h = fake_home("approval");
+        let r = roots(&h);
+        let proj = h.join("proj");
+        put(
+            &proj.join(".mcp.json"),
+            &json!({"mcpServers": {"a": {"command": "x"}, "b": {"command": "x"}, "c": {"command": "x"}, "d": {"command": "x"}}})
+                .to_string(),
+        );
+        put(
+            &proj.join(".claude").join("settings.local.json"),
+            &json!({"enabledMcpjsonServers": ["a"]}).to_string(),
+        );
+        put(
+            &proj.join(".claude").join("settings.json"),
+            &json!({"enabledMcpjsonServers": ["b", "c"]}).to_string(),
+        );
+        let setup = |trust: bool, all: bool| {
+            put(
+                &r.claude_json,
+                &json!({"projects": {proj.to_string_lossy().replace('\\', "/"): {"hasTrustDialogAccepted": trust}}})
+                    .to_string(),
+            );
+            let mut user = json!({});
+            if all {
+                user = json!({"enableAllProjectMcpServers": true});
+            }
+            put(&r.claude_settings, &user.to_string());
+        };
+
+        // a: approved in settings.local.json. b: only in the committed file, folder not trusted.
+        setup(false, false);
+        let inv = inventory(&r, std::slice::from_ref(&proj), &found);
+        assert!(server(&inv, "a").launch.is_ok());
+        assert_eq!(server(&inv, "b").launch, Err(NotMeasured::NotApproved));
+        assert_eq!(server(&inv, "d").launch, Err(NotMeasured::NotApproved));
+        // c: the same as b, with the trust dialog accepted.
+        setup(true, false);
+        let inv = inventory(&r, std::slice::from_ref(&proj), &found);
+        assert!(server(&inv, "c").launch.is_ok());
+        assert_eq!(server(&inv, "d").launch, Err(NotMeasured::NotApproved));
+        // d: enableAllProjectMcpServers in the user settings.
+        setup(false, true);
+        let inv = inventory(&r, std::slice::from_ref(&proj), &found);
+        assert!(server(&inv, "d").launch.is_ok());
+    }
+
+    #[test]
+    fn claude_launch_and_cost() {
+        let h = fake_home("launch");
+        let r = roots(&h);
+        let cache = h.join("plugcache");
+        put(
+            &r.claude_json,
+            &json!({"mcpServers": {
+                "usr": {"command": "u", "args": ["-y", "p"], "env": {"K": "v"}},
+                "always": {"command": "u", "alwaysLoad": true},
+                "remote": {"url": "https://example.test"}
+            }})
+            .to_string(),
+        );
+        put(
+            &r.claude_settings,
+            &json!({"enabledPlugins": {"plug@mk": true}, "env": {"ENABLE_TOOL_SEARCH": "auto:5", "MCP_TIMEOUT": "90000"}})
+                .to_string(),
+        );
+        put(
+            &r.claude_dir.join("plugins").join("installed_plugins.json"),
+            &json!({"plugins": {"plug@mk": [{"installPath": cache.to_string_lossy()}]}}).to_string(),
+        );
+        put(
+            &cache.join(".mcp.json"),
+            &json!({"mcpServers": {"srv": {"command": "p"}}}).to_string(),
+        );
+        put(
+            &r.claude_dir.join("skills").join("sk").join("SKILL.md"),
+            "---\ndescription: d\n---\n",
+        );
+
+        let inv = inventory(&r, &[], &found);
+        let p = server(&inv, "srv");
+        let launch = p.launch.as_ref().unwrap();
+        assert_eq!(
+            launch.set,
+            vec![("CLAUDE_PLUGIN_ROOT".to_string(), cache.display().to_string())]
+        );
+        assert_eq!(p.used_as, UsedAs::ToolPrefix("mcp__plugin_plug_srv__".into()));
+        assert_eq!(launch.timeout_secs, 60);
+        assert_eq!(launch.expand, Expand::Braces);
+        assert!(matches!(p.cost.listing, Listing::FullUnder { percent: 5, .. }));
+        assert_eq!(p.cost.always_load_meta, Some("anthropic/alwaysLoad"));
+        let u = server(&inv, "usr").launch.as_ref().unwrap();
+        assert_eq!(u.args, vec!["-y".to_string(), "p".to_string()]);
+        assert_eq!(u.env, vec![("K".to_string(), "v".to_string())]);
+        assert_eq!(u.cwd, Some(h.clone()));
+        assert!(matches!(
+            server(&inv, "always").cost.listing,
+            Listing::Full {
+                desc_cap: Some(4096),
+                ..
+            }
+        ));
+        assert_eq!(server(&inv, "remote").launch, Err(NotMeasured::Remote));
+        assert_eq!(skill(&inv, "sk").used_as, vec![SkillUse::Name("sk".into())]);
+        assert!(skill(&inv, "sk").created_ms.is_some());
+
+        // Without the user setting: names by default, 30 s, and Marshell's own value counts.
+        put(
+            &r.claude_settings,
+            &json!({"enabledPlugins": {"plug@mk": true}}).to_string(),
+        );
+        let inv = inventory(&r, &[], &found);
+        assert_eq!(server(&inv, "srv").launch.as_ref().unwrap().timeout_secs, 30);
+        assert!(matches!(
+            server(&inv, "usr").cost.listing,
+            Listing::Names {
+                instructions_cap: Some(4096),
+                ..
+            }
+        ));
+        let mut r2 = roots(&h);
+        r2.claude_tool_search = Some("false".into());
+        let inv = inventory(&r2, &[], &found);
+        assert!(matches!(server(&inv, "usr").cost.listing, Listing::Full { .. }));
     }
 }
