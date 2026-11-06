@@ -24,12 +24,7 @@ A PR body has "What it does", "Live check", "Known limits" and "Checks" sections
 
 ## Live check (Windows)
 
-1. In the worktree, run `pnpm tauri dev` in the background with `MARSHELL_HOME` set to a scratch folder, `MARSHELL_CLAUDE_SETTINGS` set to a scratch project's `.claude/settings.local.json`, and `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333`.
-2. Drive the webview over CDP at `http://127.0.0.1:9333`. Prefer evaluations that return small JSON over screenshots, and screenshot only to judge the look.
-3. Agent sessions in a live check are ones you start for it. Pressing Enter in one is part of the check, never part of the feature.
-4. Stop what you started by PID, then remove the scratch folder.
-
-The `marshell-live-check` skill runs these steps with a script that also sets a scratch `CLAUDE_CONFIG_DIR` for the Claude sessions it starts, and adds the `webview` MCP server for step 2.
+Run it with the `marshell-live-check` skill: `pnpm tauri dev` against scratch homes, the webview driven over CDP, and only what it started stopped. Agent sessions in a live check are ones you start for it. Pressing Enter in one is part of the check, never part of the feature.
 
 ## Gotchas
 

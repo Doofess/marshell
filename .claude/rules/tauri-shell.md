@@ -15,4 +15,4 @@ paths:
 - `tauri-plugin-store` is dropped; the core owns app settings in `~/.marshell/`. (PLAN.md §Corrections 7)
 - Enabling Tauri's native file drop disables in-page HTML5 drag and drop on Windows. (CLAUDE.md, Gotchas)
 - Don't start `pnpm tauri dev` or a release build unless the task is a live check or a release. (AGENTS.md)
-- A live check uses a scratch `MARSHELL_HOME`, never `~/.marshell`. Stop what you started by PID. (AGENTS.md; CLAUDE.md, Live check)
+- A live check uses scratch homes for Marshell and each CLI, never `~/.marshell`. Stop what you started by PID. (AGENTS.md, Verifying a change; the `marshell-live-check` skill)
