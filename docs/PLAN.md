@@ -1375,6 +1375,10 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      14. **A tab's inherited Windows Terminal variables are tracked in issue #100, not fixed in 6n1.**
          - What happens: a Marshell started from Windows Terminal passes `WT_SESSION` and `WT_PROFILE_ID` to its tabs, so Copilot offered to set up Windows Terminal from inside a Marshell tab.
          - The live-check script clears both variables before it starts the app.
+     15. **Decided at the final review (2026-11-07): a Copilot setup with "Keep my status line working" off reads Installed.**
+         - Marshell then writes only `hooks\marshell.json` and leaves the person's own status line as it is, as Qwen's setup does. The Agents section had read Partial from then on.
+         - Without Marshell's status line, Marshell can't follow a session past `/clear`. Copilot sends `sessionEnd` (`user_exit`) for both `/clear` and `/exit`, and only the status line names the new id. The row reads Ended until the next prompt.
+         - The consent card says so when that switch is off: "With your own status line left as it is, a Copilot CLI row reads Ended after /clear until your next prompt."
 7. **Doctor**: the fix actions, on top of the phase-3 config core: "Fix X issues" and one-click undo; folds in each CLI's own doctor; detects duplicate notifications and offers to turn off each CLI's own desktop notifications (brief §5.5, moved here by slice 4e decision 4); reports the tokens injected by project references; checks Codex hook trust; waste checks (unused MCP servers and skills, long descriptions, broad scopes, a token-cost estimate); offers to raise `cleanupPeriodDays`.
    - Added 2026-10-16 (research in `docs/research/2026-10-16-accounts-cloud-extensions.md`):
      - **One-click doctor per CLI.** It runs the CLI's own doctor (`claude doctor` text, `codex doctor --json`) and opens a summary window of suggested fixes. Every fix goes through preview, backup and undo; nothing is applied silently. Antigravity has no doctor command, so it gets none.
