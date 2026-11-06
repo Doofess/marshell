@@ -14,6 +14,8 @@ use crate::doctor::ext::ExtRoots;
 use crate::doctor::usage::{AgentStore, Cursor, Event, EventKind, Scan, UseKey, new_lines, norm_path, skill_md_paths};
 
 const BAD_DB: &str = "Its history database isn't in a form Marshell reads.";
+/// How far behind the cursor each scan of the history database reads again.
+const LATE_ROWS_MS: u64 = 24 * 60 * 60 * 1000;
 
 /// A rollout line is worth parsing only when it holds one of these (or while the file's first time is still unknown).
 const MARKERS: [&str; 6] = [
@@ -169,10 +171,12 @@ fn read_db(db: &Path, state: &Path, old: Option<&Cursor>) -> rusqlite::Result<(V
     )?;
     let to_u64 = |v: i64| v.max(0) as u64;
     let old_to = old.map_or(0, |o| o.read_to);
-    // A rebuilt database that now ends before the cursor is read from the start.
-    let start = match max {
-        Some(m) if to_u64(m) >= old_to => old_to,
-        _ => 0,
+    // Codex writes a row when its item ends, dated when it started, so a row can land behind the cursor: the last
+    // day before it is read again (merging a use twice changes nothing). A rebuilt database that now ends before the
+    // cursor is read from the start.
+    let (start, floor) = match max {
+        Some(m) if to_u64(m) >= old_to => (old_to.saturating_sub(LATE_ROWS_MS), old_to),
+        _ => (0, 0),
     };
     let mut st = c.prepare(
         "SELECT thread_id, created_at_ms, item_type, item_json FROM thread_items \
@@ -181,7 +185,7 @@ fn read_db(db: &Path, state: &Path, old: Option<&Cursor>) -> rusqlite::Result<(V
     )?;
     let mut rows = st.query([start as i64])?;
     let mut events = Vec::new();
-    let mut read_to = start;
+    let mut read_to = floor;
     while let Some(row) = rows.next()? {
         let at = to_u64(row.get::<_, i64>(1)?);
         read_to = read_to.max(at);
@@ -512,7 +516,7 @@ mod tests {
         assert_eq!(cur.read_to, e);
         assert_eq!(cur.first_ms, Some(a));
 
-        // A second scan from the cursor repeats only the rows at the cursor's own millisecond.
+        // A second scan from the cursor repeats only the rows of the day before it (d is exactly a day before e).
         let store = AgentStore {
             cursors: s.cursors,
             ..AgentStore::default()
@@ -520,7 +524,10 @@ mod tests {
         let s2 = scan(&r, &store);
         assert_eq!(
             s2.events,
-            vec![ev(EventKind::Used, UseKey::Server("codex_apps".into()), e, None)]
+            vec![
+                ev(EventKind::Used, UseKey::SkillFile("c:/x/baz/skill.md".into()), d, y),
+                ev(EventKind::Used, UseKey::Server("codex_apps".into()), e, None),
+            ]
         );
         assert_eq!(s2.cursors[&db_key(home)].first_ms, Some(a));
 
@@ -544,6 +551,7 @@ mod tests {
         assert_eq!(
             s3.events,
             vec![
+                ev(EventKind::Used, UseKey::SkillFile("c:/x/baz/skill.md".into()), d, y),
                 ev(EventKind::Used, UseKey::Server("codex_apps".into()), e, None),
                 ev(EventKind::Used, UseKey::Server("new".into()), later, x),
             ]
@@ -553,6 +561,64 @@ mod tests {
         // No Codex folder: no history, and not an error.
         let none = tempfile::tempdir().unwrap();
         assert_eq!(scan(&roots(none.path()), &AgentStore::default()), Scan::default());
+    }
+
+    // Found in the 7c2 final review: Codex writes a row when its item ends, dated when it started, so a slow MCP call
+    // can land after a scan whose cursor is already past its date.
+    #[test]
+    fn codex_db_rows_that_land_late_are_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path();
+        state_db(home);
+        let c = history_db(home, ITEMS);
+        let end = ms(T4);
+        put_item(
+            &c,
+            1,
+            "t1",
+            end,
+            "commandExecution",
+            json!({"type":"commandExecution","command":"dir"}),
+        );
+        drop(c);
+        let r = roots(home);
+        let s = scan(&r, &AgentStore::default());
+        assert_eq!(s.cursors[&db_key(home)].read_to, end);
+
+        // The slow call started 10 minutes before the row the scan ended on, and lands now.
+        let c = Connection::open(home.join(".codex").join("thread_history_1.sqlite")).unwrap();
+        put_item(
+            &c,
+            2,
+            "t2",
+            end - 600_000,
+            "mcpToolCall",
+            json!({"type":"mcpToolCall","server":"slow"}),
+        );
+        drop(c);
+        let store = AgentStore {
+            cursors: s.cursors,
+            ..AgentStore::default()
+        };
+        let s2 = scan(&r, &store);
+        assert!(
+            s2.events.contains(&ev(
+                EventKind::Used,
+                UseKey::Server("slow".into()),
+                end - 600_000,
+                Some(r"C:\dev\y")
+            )),
+            "{:?}",
+            s2.events
+        );
+        assert_eq!(s2.cursors[&db_key(home)].read_to, end, "the cursor doesn't move back");
+
+        // With nothing new, the cursor stays where it was, scan after scan.
+        let store = AgentStore {
+            cursors: s2.cursors,
+            ..AgentStore::default()
+        };
+        assert_eq!(scan(&r, &store).cursors[&db_key(home)].read_to, end);
     }
 
     #[test]
