@@ -314,8 +314,8 @@ fn trust_key(path: &str) -> String {
     path.replace('\\', "/").trim_end_matches('/').to_lowercase()
 }
 
-/// Whether `[projects.'<key>'] trust_level = "trusted"` names the project folder or its git root, the nearest
-/// ancestor holding `.git`.
+/// Whether Codex trusts the project: the first `[projects.'<key>']` entry found for the project folder, then for its
+/// git root (the nearest ancestor holding `.git`), decides, and only `trust_level = "trusted"` trusts.
 fn trusted(user: Option<&DocumentMut>, project: &Path) -> bool {
     let Some(table) = user.and_then(|d| d.get("projects")).and_then(Item::as_table_like) else {
         return false;
@@ -324,14 +324,15 @@ fn trusted(user: Option<&DocumentMut>, project: &Path) -> bool {
     if let Some(root) = project.ancestors().find(|a| a.join(".git").exists()) {
         wanted.push(trust_key(&root.display().to_string()));
     }
-    table.iter().any(|(key, item)| {
-        wanted.contains(&trust_key(key))
-            && item
-                .as_table_like()
+    let level = |want: &String| {
+        table.iter().find(|(key, _)| trust_key(key) == *want).map(|(_, item)| {
+            item.as_table_like()
                 .and_then(|t| t.get("trust_level"))
                 .and_then(Item::as_str)
                 == Some("trusted")
-    })
+        })
+    };
+    wanted.iter().find_map(level).unwrap_or(false)
 }
 
 /// The plugins `[plugins."<plugin>@<market>"]` marks `enabled = true`, each with its folder in Codex's cache:
@@ -874,6 +875,21 @@ mod tests {
             slashed(&project)
         );
         write(&root.join(".codex").join("config.toml"), &other);
+        let inv = inventory(&roots, std::slice::from_ref(&project), &judge);
+        assert_eq!(launch(&inv), Err(NotMeasured::NotApproved));
+
+        // The folder's own entry decides before its git root's: untrusted here, trusted above, is untrusted.
+        let (root, roots) = fake("trust-own-first");
+        let top = root.join("repo");
+        std::fs::create_dir_all(top.join(".git")).unwrap();
+        let project = top.join("sub");
+        project_server(&project);
+        let both = format!(
+            "{}\n[projects.'{}']\ntrust_level = \"untrusted\"\n",
+            trusting(&slashed(&top)),
+            slashed(&project)
+        );
+        write(&root.join(".codex").join("config.toml"), &both);
         let inv = inventory(&roots, std::slice::from_ref(&project), &judge);
         assert_eq!(launch(&inv), Err(NotMeasured::NotApproved));
     }
