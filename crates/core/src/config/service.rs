@@ -351,6 +351,23 @@ impl ConfigService {
         path_refusal(&self.shared.guard(), path)
     }
 
+    /// Whether a preview would get past its pre-checks for `path`: the guard admits it, and an existing file is within
+    /// the size the preview reads, isn't read-only and can be opened. A missing file is editable when the guard admits
+    /// the path. Reads nothing and stores nothing.
+    pub fn editable(&self, path: &Path) -> bool {
+        let Some(target) = self.resolve_target(path) else {
+            return false;
+        };
+        match std::fs::metadata(&target) {
+            Ok(meta) => {
+                meta.len() <= crate::config::preview::MAX_CONFIG_BYTES
+                    && !meta.permissions().readonly()
+                    && std::fs::File::open(&target).is_ok()
+            }
+            Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+        }
+    }
+
     /// Where a write to `path` would land: the guard's resolved path with links followed. None when the guard refuses
     /// the path.
     pub fn resolve_target(&self, path: &Path) -> Option<PathBuf> {
@@ -742,6 +759,36 @@ mod tests {
             home,
             svc,
         }
+    }
+
+    #[test]
+    fn editable_runs_the_previews_pre_checks_without_storing_anything() {
+        let e = env();
+        let dir = e.root.join("code");
+        std::fs::create_dir_all(&dir).unwrap();
+        // A missing file in an open folder, and a small file there.
+        assert!(e.svc.editable(&dir.join("missing.json")));
+        let small = dir.join("small.json");
+        std::fs::write(&small, "{}").unwrap();
+        assert!(e.svc.editable(&small));
+        // The guard refuses a path outside the home and project folders, and a relative one.
+        let outside = tempfile::tempdir().unwrap();
+        assert!(!e.svc.editable(&canonical(outside.path()).join("x.json")));
+        assert!(!e.svc.editable(Path::new("rel.json")));
+        // Over the size the preview reads, and read-only.
+        let big = dir.join("big.json");
+        std::fs::write(&big, vec![b' '; crate::config::preview::MAX_CONFIG_BYTES as usize + 1]).unwrap();
+        assert!(!e.svc.editable(&big));
+        let locked = dir.join("locked.json");
+        std::fs::write(&locked, "{}").unwrap();
+        let mut perms = std::fs::metadata(&locked).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&locked, perms.clone()).unwrap();
+        let editable = e.svc.editable(&locked);
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        std::fs::set_permissions(&locked, perms).unwrap();
+        assert!(!editable);
     }
 
     #[cfg(windows)]

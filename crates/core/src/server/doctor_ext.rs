@@ -6,7 +6,7 @@ use super::AppState;
 use crate::config::hash::hash_bytes;
 use crate::config::jsonc::read_value;
 use crate::doctor::AgentFacts;
-use crate::doctor::ext::{CommandState, ExtRoots, Inventory, Switch};
+use crate::doctor::ext::{CommandState, ExtRoots, Inventory, NoSwitch, Switch};
 use axum::http::StatusCode;
 use marshell_protocol::config::{Applies, ConfigScope, EditOp, FileEdit};
 use serde_json::Value;
@@ -135,6 +135,7 @@ pub(crate) fn inventories(st: &AppState, facts: &[AgentFacts], distro_homes: &[(
     let not_checked = |_: &str| CommandState::NotChecked;
 
     let mut out = Vec::new();
+    let mut cache = Applicable::default();
     for f in facts.iter().filter(|f| f.error.is_none()) {
         let inv = match &f.distro {
             None => windows
@@ -148,10 +149,80 @@ pub(crate) fn inventories(st: &AppState, facts: &[AgentFacts], distro_homes: &[(
         if let Some(mut inv) = inv {
             inv.found = f.found;
             inv.distro = f.distro.clone();
+            demote_unapplicable(st, &mut inv, &mut cache);
             out.push(inv);
         }
     }
     out
+}
+
+/// What decides whether a switch can be applied, so one answer serves the items that share it: the file, and for a
+/// JSON list or value its pointer (a Codex switch parses the whole file whichever item it is for).
+type SwitchKey = (PathBuf, String);
+
+#[derive(Default)]
+struct Applicable {
+    editable: Vec<(PathBuf, bool)>,
+    switches: Vec<(SwitchKey, bool)>,
+}
+
+fn switch_file(sw: &Switch) -> &Path {
+    match sw {
+        Switch::JsonAdd { file, .. }
+        | Switch::JsonSet { file, .. }
+        | Switch::CodexServer { file, .. }
+        | Switch::CodexSkill { file, .. } => file,
+    }
+}
+
+fn switch_key(sw: &Switch) -> SwitchKey {
+    let detail = match sw {
+        Switch::JsonAdd { pointer, .. } => format!("add {pointer}"),
+        Switch::JsonSet { pointer, .. } => format!("set {pointer}"),
+        Switch::CodexServer { name, .. } => format!("server {name}"),
+        Switch::CodexSkill { .. } => "skill".to_string(),
+    };
+    (switch_file(sw).to_path_buf(), detail)
+}
+
+/// A switch whose file Marshell can't edit (the config service refuses the path, or the file is too large, read-only
+/// or unreadable) or can't turn into an edit (the file doesn't parse, a list isn't an array) would make the fix
+/// refuse on every try and block every other picked fix. Such an item becomes report-only.
+fn demote_unapplicable(st: &AppState, inv: &mut Inventory, cache: &mut Applicable) {
+    let mut check = |sw: &Switch| -> bool {
+        let file = switch_file(sw);
+        let editable = match cache.editable.iter().find(|(f, _)| f == file) {
+            Some((_, ok)) => *ok,
+            None => {
+                let ok = st.0.config.editable(file);
+                cache.editable.push((file.to_path_buf(), ok));
+                ok
+            }
+        };
+        if !editable {
+            return false;
+        }
+        let key = switch_key(sw);
+        match cache.switches.iter().find(|(k, _)| *k == key) {
+            Some((_, ok)) => *ok,
+            None => {
+                let ok = edits(std::slice::from_ref(sw), &[]).is_ok();
+                cache.switches.push((key, ok));
+                ok
+            }
+        }
+    };
+    let servers = inv.servers.iter_mut().map(|s| &mut s.switch);
+    let skills = inv.skills.iter_mut().map(|s| &mut s.switch);
+    for switch in servers.chain(skills) {
+        let refused = match switch {
+            Ok(sw) => (!check(sw)).then(|| switch_file(sw).to_path_buf()),
+            Err(_) => None,
+        };
+        if let Some(file) = refused {
+            *switch = Err(NoSwitch::CantEdit(file));
+        }
+    }
 }
 
 /// The text of `file`, or None when it isn't there. A file that can't be read refuses.

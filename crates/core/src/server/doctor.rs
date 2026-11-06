@@ -1888,6 +1888,72 @@ mod tests {
         assert_eq!(after, before);
     }
 
+    fn ext_item<'a>(report: &'a DoctorReport, title_part: &str) -> &'a DoctorItem {
+        report
+            .items
+            .iter()
+            .find(|i| (i.id.starts_with("mcp.") || i.id.starts_with("skill.")) && i.title.contains(title_part))
+            .unwrap_or_else(|| panic!("no item for {title_part}: {:?}", report.items))
+    }
+
+    fn cant_edit_copy(file: &Path, kind: &str) -> String {
+        format!(
+            "Marshell can't edit {} safely, so it leaves the file alone. Turn the {kind} off in Qwen Code.",
+            file.display()
+        )
+    }
+
+    #[tokio::test]
+    async fn a_switch_in_a_file_that_does_not_parse_is_report_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, ext) = ext_state(dir.path());
+        let qwen_cfg = ext.join(".qwen").join("settings.json");
+        write(&qwen_cfg, "{");
+        write(
+            &ext.join(".qwen").join("skills").join("nodesc").join("SKILL.md"),
+            "---\nname: nodesc\n---\nbody\n",
+        );
+        write(
+            &ext.join(".codex").join("config.toml"),
+            "[mcp_servers.ghostly]\ncommand = \"ghost\"\n",
+        );
+
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        let report = last_report(&st);
+        let skill = ext_item(&report, "nodesc");
+        assert_eq!(skill.group, DoctorGroup::Broken);
+        assert!(!skill.fixable, "{skill:?}");
+        assert_eq!(skill.cannot_fix, Some(cant_edit_copy(&qwen_cfg, "skill")));
+        let codex = ext_item(&report, "ghostly");
+        assert!(codex.fixable, "{codex:?}");
+        fix_of(&st, vec![codex.id.clone()]).expect("the Codex fix alone");
+        let all: Vec<String> = report
+            .items
+            .iter()
+            .filter(|i| i.fixable)
+            .map(|i| i.id.clone())
+            .collect();
+        assert!(all.contains(&codex.id) && !all.contains(&skill.id), "{all:?}");
+        fix_of(&st, all).expect("every fixable id");
+    }
+
+    #[tokio::test]
+    async fn a_list_that_is_not_an_array_makes_its_server_report_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, ext) = ext_state(dir.path());
+        let qwen_cfg = ext.join(".qwen").join("settings.json");
+        write(
+            &qwen_cfg,
+            r#"{"mcp":{"excluded":"x"},"mcpServers":{"ghostly":{"command":"ghost"}}}"#,
+        );
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        let report = last_report(&st);
+        let server = ext_item(&report, "ghostly");
+        assert_eq!(server.group, DoctorGroup::Broken);
+        assert!(!server.fixable, "{server:?}");
+        assert_eq!(server.cannot_fix, Some(cant_edit_copy(&qwen_cfg, "server")));
+    }
+
     #[tokio::test]
     async fn report_only_items_are_refused() {
         let dir = tempfile::tempdir().unwrap();

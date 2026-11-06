@@ -63,6 +63,9 @@ pub enum NoSwitch {
     Plugin(String),
     NoSkillSwitch,
     Bundled,
+    /// The file the switch writes can't be edited safely: it doesn't parse, the config guard refuses it, or it is too
+    /// large, read-only or unreadable.
+    CantEdit(PathBuf),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -208,11 +211,15 @@ fn tokens(chars: usize) -> usize {
     chars.div_ceil(4)
 }
 
-fn cannot_fix_of(no: &NoSwitch, cli: &str, server_name: Option<&str>) -> String {
+/// Why an item can't be fixed. `kind` is `server` or `skill`, and `name` the item's name.
+fn cannot_fix_of(no: &NoSwitch, cli: &str, kind: &str, name: &str) -> String {
     match no {
         NoSwitch::ClaudeUser => format!(
-            "Claude Code can turn a user-level server off only per project. To remove it, run claude mcp remove {} -s user.",
-            server_name.unwrap_or("<name>")
+            "Claude Code can turn a user-level server off only per project. To remove it, run claude mcp remove {name} -s user."
+        ),
+        NoSwitch::CantEdit(f) => format!(
+            "Marshell can't edit {} safely, so it leaves the file alone. Turn the {kind} off in {cli}.",
+            f.display()
         ),
         NoSwitch::Shared(f) => format!(
             "Only {}, which the project shares, can turn it off. Marshell doesn't edit a project's shared files.",
@@ -255,7 +262,7 @@ fn inventory_items(inv: &Inventory, out: &mut Vec<(DoctorItem, Option<Switch>)>)
                 format!("extfile.{}.{}{suffix}", inv.agent, key(file, "")),
                 DoctorGroup::Info,
                 format!("{cli}'s {file_name}{place} can't be read"),
-                format!("{message} Its MCP servers and skills weren't checked."),
+                format!("{message} What it sets for MCP servers and skills wasn't checked."),
                 Some(file),
             ),
             None,
@@ -293,7 +300,7 @@ fn inventory_items(inv: &Inventory, out: &mut Vec<(DoctorItem, Option<Switch>)>)
             Some(&s.file),
         );
         item.unchecked = unchecked;
-        let switch = fixability(&mut item, &s.switch, cli, Some(&s.name));
+        let switch = fixability(&mut item, &s.switch, cli, "server", &s.name);
         out.push((item, switch));
     }
 
@@ -318,7 +325,7 @@ fn inventory_items(inv: &Inventory, out: &mut Vec<(DoctorItem, Option<Switch>)>)
             why,
             Some(&s.file),
         );
-        let switch = fixability(&mut item, &s.switch, cli, None);
+        let switch = fixability(&mut item, &s.switch, cli, "skill", &s.name);
         out.push((item, switch));
     }
 
@@ -420,7 +427,8 @@ fn fixability(
     item: &mut DoctorItem,
     switch: &Result<Switch, NoSwitch>,
     cli: &str,
-    server_name: Option<&str>,
+    kind: &str,
+    name: &str,
 ) -> Option<Switch> {
     match switch {
         Ok(sw) => {
@@ -429,7 +437,7 @@ fn fixability(
             Some(sw.clone())
         }
         Err(no) => {
-            item.cannot_fix = Some(cannot_fix_of(no, cli, server_name));
+            item.cannot_fix = Some(cannot_fix_of(no, cli, kind, name));
             None
         }
     }
@@ -895,7 +903,7 @@ mod tests {
         assert_eq!(items[0].title, "Antigravity's mcp_config.json can't be read");
         assert_eq!(
             items[0].detail,
-            "Expected a value. Its MCP servers and skills weren't checked."
+            "Expected a value. What it sets for MCP servers and skills wasn't checked."
         );
         assert_eq!(items[0].path.as_deref(), Some(file.display().to_string().as_str()));
     }
