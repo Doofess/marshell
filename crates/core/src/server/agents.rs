@@ -1,5 +1,5 @@
 //! What Marshell knows about an agent's hook setup, and the previews that install and remove it.
-//! Only `claude`, `codex`, `antigravity` and `qwen` have an adapter; any other agent is a 404. Applying goes through
+//! Only `claude`, `codex`, `antigravity`, `qwen` and `copilot` have an adapter; any other agent is a 404. Applying goes through
 //! `/v1/config/apply`.
 
 use super::{AppState, DistroTarget};
@@ -8,6 +8,7 @@ use crate::agents::antigravity::hooks as agy;
 use crate::agents::claude::{self, hooks};
 use crate::agents::codex::{self, trust};
 use crate::agents::common::Bridge;
+use crate::agents::copilot::hooks as copilot_hooks;
 use crate::agents::install::{codex_newer, install_kind, update_text};
 use crate::agents::qwen::hooks as qwen_hooks;
 use crate::agents::settings_view::{
@@ -51,6 +52,7 @@ const AGENT: &str = "claude";
 const CODEX: &str = "codex";
 const ANTIGRAVITY: &str = "antigravity";
 const QWEN: &str = "qwen";
+const COPILOT: &str = "copilot";
 const VERSION_TIMEOUT: Duration = Duration::from_secs(5);
 const WSL_VERSION_TIMEOUT: Duration = Duration::from_secs(8);
 const WSL_VERSION_TTL: Duration = Duration::from_secs(10 * 60);
@@ -107,6 +109,7 @@ pub(crate) enum Adapter {
     Codex,
     Antigravity,
     Qwen,
+    Copilot,
 }
 
 pub(super) fn adapter(agent: &str) -> Result<Adapter, Fail> {
@@ -115,6 +118,7 @@ pub(super) fn adapter(agent: &str) -> Result<Adapter, Fail> {
         CODEX => Ok(Adapter::Codex),
         ANTIGRAVITY => Ok(Adapter::Antigravity),
         QWEN => Ok(Adapter::Qwen),
+        COPILOT => Ok(Adapter::Copilot),
         _ => Err((StatusCode::NOT_FOUND, "no such agent".to_string())),
     }
 }
@@ -127,9 +131,18 @@ impl Adapter {
             Adapter::Codex => CODEX,
             Adapter::Antigravity => ANTIGRAVITY,
             Adapter::Qwen => QWEN,
+            Adapter::Copilot => return "Copilot CLI",
         };
         skill::cli_name(id).unwrap_or(id)
     }
+}
+
+/// Copilot CLI inside a WSL distro is not set up from here yet (slice 6n2).
+fn copilot_in_wsl() -> Fail {
+    (
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "Marshell doesn't set up Copilot CLI inside a WSL distro yet.".to_string(),
+    )
 }
 
 /// A plan the adapter refuses is a 422 that names the file and says nothing will change.
@@ -186,6 +199,29 @@ struct QwenInputs {
     chain_text: Option<String>,
 }
 
+/// Copilot CLI's three files and where they are; the text is `None` for a missing file.
+struct CopilotInputs {
+    hooks_path: PathBuf,
+    settings_path: PathBuf,
+    chain_path: PathBuf,
+    hooks_text: Option<String>,
+    settings_text: Option<String>,
+    chain_text: Option<String>,
+}
+
+impl CopilotInputs {
+    fn files(&self) -> copilot_hooks::Files<'_> {
+        copilot_hooks::Files {
+            hooks_path: &self.hooks_path,
+            hooks_text: self.hooks_text.as_deref(),
+            settings_path: &self.settings_path,
+            settings_text: self.settings_text.as_deref(),
+            chain_path: &self.chain_path,
+            chain_text: self.chain_text.as_deref(),
+        }
+    }
+}
+
 /// The user's home folder, Codex's `hooks.json` and its text.
 struct CodexInputs {
     hooks_path: PathBuf,
@@ -232,6 +268,21 @@ impl AppState {
             .qwen_system_settings
             .clone()
             .unwrap_or_else(|| PathBuf::from(crate::agents::qwen::system_settings_for(std::env::consts::OS)))
+    }
+
+    /// Copilot CLI's own folder, where its `settings.json` and `hooks` are: `COPILOT_HOME` from the environment when it
+    /// is set, else `<home>/.copilot`. A home a test named replaces both, and the environment is not read.
+    fn copilot_user_home(&self) -> Result<PathBuf, Fail> {
+        self.copilot_dir()
+            .ok_or_else(|| failed("the user's home folder is not known"))
+    }
+
+    /// A variable of the process environment that Copilot CLI reads, except where a test named a home.
+    fn copilot_env(&self, key: &str) -> Option<String> {
+        match self.copilot_home_named() {
+            Some(_) => None,
+            None => std::env::var(key).ok(),
+        }
     }
 
     /// Where `agent`'s `marshell` skill file goes. A skill home named by a test replaces the user's home and the
@@ -412,6 +463,7 @@ impl AppState {
                 let text = read_text(&path).map_err(|e| refused(&e))?;
                 qwen_hooks::install_plan(&path, &home, text.as_deref(), None, None, &bridge, want)
             }
+            Adapter::Copilot => return Err(copilot_in_wsl()),
         }
         .map_err(|e| refused(&e))
     }
@@ -424,6 +476,7 @@ impl AppState {
             Adapter::Codex => CODEX,
             Adapter::Antigravity => ANTIGRAVITY,
             Adapter::Qwen => QWEN,
+            Adapter::Copilot => return Err(copilot_in_wsl()),
         };
         // The same plan `marshell uninstall` makes (`agents::distro`), so the dialog and the CLI never differ.
         let (changes, statusline_left) =
@@ -458,6 +511,24 @@ impl AppState {
             user_home,
             settings_path,
             text,
+            chain_text,
+        })
+    }
+
+    fn copilot_inputs(&self) -> Result<CopilotInputs, Fail> {
+        let dir = self.copilot_user_home()?;
+        let (hooks_path, settings_path) = (copilot_hooks::hooks_path(&dir), copilot_hooks::settings_path(&dir));
+        let hooks_text = read_text(&hooks_path).map_err(|e| refused(&e))?;
+        let settings_text = read_text(&settings_path).map_err(|e| refused(&e))?;
+        let chain_path = paths::statusline_chain(&self.0.home, COPILOT);
+        // The chain is Marshell's own file; a chain that cannot be read is the same as none.
+        let chain_text = std::fs::read_to_string(&chain_path).ok();
+        Ok(CopilotInputs {
+            hooks_path,
+            settings_path,
+            chain_path,
+            hooks_text,
+            settings_text,
             chain_text,
         })
     }
@@ -998,9 +1069,85 @@ pub(crate) fn qwen_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
     Ok(setup)
 }
 
+/// Copilot CLI's setup: its `settings.json` and Marshell's `hooks/marshell.json`, read and never written here. There
+/// is no approve switch (decision 12) and no skill until slice 6n2.
+pub(crate) fn copilot_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
+    let home = &st.0.home;
+    let dir = st.copilot_user_home()?;
+    let (hooks_path, settings_path) = (copilot_hooks::hooks_path(&dir), copilot_hooks::settings_path(&dir));
+    let exe = st.agent_exe_of(COPILOT);
+    let version = st.agent_version(COPILOT, exe.as_deref());
+
+    // A file that can't be read as text reads as holding nothing, and the setup says so for the settings.
+    let hooks_text = std::fs::read_to_string(&hooks_path).ok();
+    let (settings_text, unreadable) = match std::fs::read_to_string(&settings_path) {
+        Ok(text) => (Some(text), None),
+        Err(e) if e.kind() == ErrorKind::NotFound => (None, None),
+        Err(e) => (None, Some(e.to_string())),
+    };
+    let chain_text = std::fs::read_to_string(paths::statusline_chain(home, COPILOT)).ok();
+
+    let mut setup = AgentSetup {
+        agent: COPILOT.to_string(),
+        admin_unavailable: None,
+        found: exe.is_some(),
+        version,
+        exe_path: exe.map(|p| p.to_string_lossy().into_owned()),
+        settings_path: settings_path.to_string_lossy().into_owned(),
+        skips_all: crate::agents::copilot::skips_all(settings_text.as_deref(), &|k| st.copilot_env(k)),
+        hooks_path: Some(hooks_path.to_string_lossy().into_owned()),
+        settings_state: SettingsState::Ok,
+        parse_error: None,
+        hooks: HookInstall::None,
+        approve_installed: false,
+        has_own_statusline: false,
+        chained: false,
+        statusline_preset: false,
+        needs_trust: false,
+        trust: None,
+        bridge_path: paths::bridge_exe(home).to_string_lossy().into_owned(),
+        snapshots_dir: paths::snapshots_dir(home).to_string_lossy().into_owned(),
+        skill: SkillInstall::Unavailable,
+        skill_path: String::new(),
+        skill_problem: Some("Marshell has no skill for Copilot CLI yet.".to_string()),
+    };
+    match (&settings_text, unreadable) {
+        (_, Some(message)) => {
+            setup.settings_state = SettingsState::Unparsable;
+            setup.parse_error = Some(ParseProblem { line: 1, message });
+        }
+        (None, None) => setup.settings_state = SettingsState::Missing,
+        (Some(text), None) => {
+            if let Some((line, message)) = parse_problem(text) {
+                setup.settings_state = SettingsState::Unparsable;
+                setup.parse_error = Some(ParseProblem { line, message });
+            } else if std::fs::metadata(&settings_path).is_ok_and(|m| m.permissions().readonly()) {
+                setup.settings_state = SettingsState::ReadOnly;
+            }
+        }
+    }
+    let chain_path = paths::statusline_chain(home, COPILOT);
+    let found = copilot_hooks::inspect(
+        &copilot_hooks::Files {
+            hooks_path: &hooks_path,
+            hooks_text: hooks_text.as_deref(),
+            settings_path: &settings_path,
+            settings_text: settings_text.as_deref(),
+            chain_path: &chain_path,
+            chain_text: chain_text.as_deref(),
+        },
+        &Bridge::local(home),
+    );
+    setup.hooks = found.install;
+    setup.has_own_statusline = found.has_own_statusline;
+    setup.chained = found.chained;
+    Ok(setup)
+}
+
 pub async fn setup(State(st): State<AppState>, UrlPath(agent): UrlPath<String>) -> Result<Json<AgentSetup>, Fail> {
     let adapter = adapter(&agent)?;
     let setup = tokio::task::spawn_blocking(move || match adapter {
+        Adapter::Copilot => copilot_setup_of(&st),
         Adapter::Claude => setup_of(&st),
         Adapter::Codex => codex_setup_of(&st),
         Adapter::Antigravity => agy_setup_of(&st),
@@ -1019,12 +1166,12 @@ pub async fn wsl_distros(State(st): State<AppState>) -> Json<WslDistros> {
     })
 }
 
-/// Which of the agent CLIs Marshell can start are on this machine, in the order claude, codex, antigravity, qwen.
+/// Which of the agent CLIs Marshell can start are on this machine, in the order claude, codex, antigravity, qwen, copilot.
 pub async fn found(State(st): State<AppState>) -> Result<Json<Vec<AgentFound>>, Fail> {
     let list = tokio::task::spawn_blocking(move || {
         let profiles = st.0.profiles.lock().unwrap().profiles.clone();
         let finder = st.agent_finder(&[]);
-        ["claude", "codex", "antigravity", "qwen"]
+        ["claude", "codex", "antigravity", "qwen", "copilot"]
             .into_iter()
             .map(|agent| {
                 let exe = st.adapter_exe(&profiles, agent, &finder);
@@ -1124,6 +1271,8 @@ fn account_of(st: &AppState, agent: &str, kind: Adapter) -> AccountStatus {
     match kind {
         // Antigravity has no status command, so nothing is run.
         Adapter::Antigravity => status.sign_in = SignIn::NoCommand,
+        // Copilot CLI's sign-in is not read until slice 6n2.
+        Adapter::Copilot => status.sign_in = SignIn::NoCommand,
         Adapter::Qwen => {
             status.sign_in = SignIn::NoCommand;
             let selected = |path: &Path| {
@@ -1195,6 +1344,7 @@ pub(super) fn settings_file(st: &AppState, kind: Adapter) -> Result<(PathBuf, Op
             let system = st.qwen_system_settings_path();
             (st.qwen_settings_path(&st.qwen_user_home()?), read_managed(&[system]))
         }
+        Adapter::Copilot => (copilot_hooks::settings_path(&st.copilot_user_home()?), None),
     })
 }
 
@@ -1287,6 +1437,10 @@ fn settings_plan_of(
     kind: Adapter,
     req: SettingsPlanRequest,
 ) -> Result<SettingsPlan, Refusal> {
+    // Copilot CLI's settings are shown, not edited, until slice 6n2.
+    if matches!(kind, Adapter::Copilot) {
+        return Err(unprocessable("Marshell doesn't change Copilot CLI's settings yet."));
+    }
     let (view, had_bom, crlf) = settings_read(st, agent, kind).map_err(Refusal::from)?;
     match view.state {
         ViewState::Unparsable { line } => {
@@ -1312,6 +1466,7 @@ fn settings_plan_of(
         Adapter::Codex => "Change Codex settings",
         Adapter::Antigravity => "Change Antigravity settings",
         Adapter::Qwen => "Change Qwen Code settings",
+        Adapter::Copilot => "Change Copilot CLI settings",
     };
     let cs = ChangeSet {
         title: title.to_string(),
@@ -1647,6 +1802,11 @@ pub(crate) fn hook_install_changes(st: &AppState, adapter: Adapter, want: &HookP
                 want,
             )
         }
+        Adapter::Copilot => {
+            let inputs = st.copilot_inputs()?;
+            st.ensure_bridge(want)?;
+            copilot_hooks::install_plan(&inputs.files(), &Bridge::local(&st.0.home), want)
+        }
     }
     .map_err(|e| refused(&e))
 }
@@ -1665,7 +1825,7 @@ pub async fn plan(
         };
         // The skill file is the Windows home's. A distro's skill is not planned here, so a request for one inside a
         // distro gets the hooks only.
-        if want.skill && distro.is_none() {
+        if want.skill && distro.is_none() && !matches!(adapter, Adapter::Copilot) {
             // A skill Marshell can't touch is left out: it must not block the hooks.
             let path = st.skill_file(&agent)?;
             if let Ok(bytes) = st.skill_bytes(&path) {
@@ -1789,6 +1949,14 @@ pub async fn remove_plan(
                 None,
             )
             .map_err(|e| refused(&e))?;
+            Ok(RemovePreview {
+                preview: st.0.config.preview(plan.changes),
+                statusline_left: plan.statusline_left,
+            })
+        }
+        (Adapter::Copilot, None) => {
+            let inputs = st.copilot_inputs()?;
+            let plan = copilot_hooks::remove_plan(&inputs.files()).map_err(|e| refused(&e))?;
             Ok(RemovePreview {
                 preview: st.0.config.preview(plan.changes),
                 statusline_left: plan.statusline_left,

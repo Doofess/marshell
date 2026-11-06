@@ -154,7 +154,7 @@ async fn setup_finds_claude_on_path_without_a_profile() {
     assert!(setup.get("version").is_none(), "{setup}");
 }
 
-/// The list names all three agents in order; Codex is absent, Antigravity is found by its program `agy`.
+/// The list names every agent in order; Codex is absent, Antigravity is found by its program `agy`.
 #[tokio::test]
 async fn found_lists_each_agent_by_its_program() {
     let e = env_with(|name| match name {
@@ -170,6 +170,7 @@ async fn found_lists_each_agent_by_its_program() {
             {"agent": "codex", "found": false},
             {"agent": "antigravity", "found": true, "exe_path": "Z:/nowhere/agy.exe"},
             {"agent": "qwen", "found": true, "exe_path": "Z:/nowhere/qwen.exe"},
+            {"agent": "copilot", "found": false},
         ])
     );
 }
@@ -997,6 +998,216 @@ async fn qwen_setup_reports_a_preset_status_line() {
     let after = std::fs::read_to_string(&e.settings).unwrap();
     assert!(after.contains(r#""preset""#) && after.contains("mshl1"), "{after}");
     assert!(!paths::statusline_chain(&e.home, "qwen").exists());
+}
+
+// ---- Copilot CLI ----
+
+struct CopilotEnv {
+    _dir: tempfile::TempDir,
+    app: axum::Router,
+    home: PathBuf,
+    /// `<copilot home>/settings.json`.
+    settings: PathBuf,
+    /// `<copilot home>/hooks/marshell.json`.
+    hooks: PathBuf,
+}
+
+/// A state whose Copilot user home is a folder inside the recorded project, so the config service may write it. The
+/// `.copilot` folder does not exist yet. The bridge file exists, so installs read as installed.
+fn copilot_env() -> CopilotEnv {
+    let dir = tempfile::tempdir().unwrap();
+    let root = canonical(dir.path());
+    let home = root.join("home");
+    let project = root.join("project");
+    let user_home = project.join("user");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&user_home).unwrap();
+    record(&home, &project, 1).unwrap();
+    let st = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home.clone(),
+        Vec::new(),
+    )
+    .with_claude_settings(project.join("settings.json"))
+    .with_copilot_home(user_home.clone())
+    .with_copilot_version(Some("1.0.106".into()))
+    .with_agent_path(|_| None);
+    let bridge = paths::bridge_exe(&home);
+    std::fs::create_dir_all(bridge.parent().unwrap()).unwrap();
+    std::fs::write(&bridge, "").unwrap();
+    let copilot = user_home.join(".copilot");
+    CopilotEnv {
+        _dir: dir,
+        app: router(st),
+        home,
+        settings: copilot.join("settings.json"),
+        hooks: copilot.join("hooks").join("marshell.json"),
+    }
+}
+
+/// The person's own settings: a BOM, CRLF, a comment, a theme and a status line command with another key.
+const COPILOT_OWN_LINE: &str = "\u{feff}{\r\n  // mine\r\n  \"theme\": \"dark\",\r\n  \"statusLine\": {\"type\": \"command\", \"command\": \"my-line\", \"padding\": 2}\r\n}\r\n";
+
+async fn install_copilot(e: &CopilotEnv) -> Value {
+    let (status, preview) = post(&e.app, "/v1/agents/copilot/hooks/plan", WANT()).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["can_apply"], true, "{preview}");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    preview
+}
+
+#[tokio::test]
+async fn copilot_setup_reports_none_then_installed_after_apply() {
+    let e = copilot_env();
+    let (status, setup) = get(&e.app, "/v1/agents/copilot/setup").await;
+    assert_eq!(status, StatusCode::OK, "{setup}");
+    assert_eq!(setup["agent"], "copilot");
+    assert_eq!(setup["found"], false);
+    assert_eq!(setup["version"], "1.0.106");
+    assert_eq!(setup["settings_state"], "missing");
+    assert_eq!(setup["hooks"], "none");
+    assert_eq!(setup["approve_installed"], false);
+    assert_eq!(setup["needs_trust"], false);
+    assert!(setup["skips_all"].is_null(), "{setup}");
+    assert_eq!(setup["settings_path"], e.settings.to_string_lossy().as_ref());
+    assert_eq!(setup["hooks_path"], e.hooks.to_string_lossy().as_ref());
+    assert!(!e.hooks.parent().unwrap().exists(), "the hooks folder is not there yet");
+
+    // Approving is asked for and ignored: Copilot asks in its own terminal (decision 12).
+    let (status, preview) = post(
+        &e.app,
+        "/v1/agents/copilot/hooks/plan",
+        json!({"status": true, "statusline": true, "approve": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    let hooks = std::fs::read_to_string(&e.hooks).unwrap();
+    assert!(hooks.contains("mshl1") && hooks.contains("preToolUse"), "{hooks}");
+    assert!(!hooks.to_lowercase().contains("permissionrequest"), "{hooks}");
+    let settings = std::fs::read_to_string(&e.settings).unwrap();
+    assert!(settings.contains("mshl1"), "{settings}");
+
+    let (_, setup) = get(&e.app, "/v1/agents/copilot/setup").await;
+    assert_eq!(setup["settings_state"], "ok", "{setup}");
+    assert_eq!(setup["hooks"], "installed", "{setup}");
+    assert_eq!(setup["approve_installed"], false, "{setup}");
+}
+
+#[tokio::test]
+async fn copilot_plan_shows_the_hooks_file_the_settings_diff_and_the_chain() {
+    let e = copilot_env();
+    std::fs::create_dir_all(e.settings.parent().unwrap()).unwrap();
+    std::fs::write(&e.settings, COPILOT_OWN_LINE).unwrap();
+    let (status, preview) = post(&e.app, "/v1/agents/copilot/hooks/plan", WANT()).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["title"], "Set up Copilot CLI hooks", "{preview}");
+    let files = preview["files"].as_array().unwrap();
+    let norm = |p: &std::path::Path| p.to_string_lossy().replace('\\', "/");
+    let path_of = |f: &Value| f["path"].as_str().unwrap().replace('\\', "/");
+    let find = |path: String| files.iter().find(|f| path_of(f) == path);
+    let hooks_file = find(norm(&e.hooks)).expect("the hooks file is in the plan");
+    assert!(
+        hooks_file["diff"].as_str().unwrap().contains("preToolUse"),
+        "{hooks_file}"
+    );
+    let settings_file = find(norm(&e.settings)).expect("the settings file is in the plan");
+    let diff = settings_file["diff"].as_str().unwrap();
+    assert!(diff.contains("mshl1"), "{diff}");
+    assert!(
+        find(norm(&paths::statusline_chain(&e.home, "copilot"))).is_some(),
+        "{preview}"
+    );
+    // Planning writes nothing.
+    assert_eq!(std::fs::read_to_string(&e.settings).unwrap(), COPILOT_OWN_LINE);
+    assert!(!e.hooks.exists() && !paths::statusline_chain(&e.home, "copilot").exists());
+}
+
+#[tokio::test]
+async fn copilot_remove_deletes_the_file_and_restores_the_status_line() {
+    let e = copilot_env();
+    std::fs::create_dir_all(e.settings.parent().unwrap()).unwrap();
+    std::fs::write(&e.settings, COPILOT_OWN_LINE).unwrap();
+    install_copilot(&e).await;
+    assert!(e.hooks.is_file());
+    let during = std::fs::read_to_string(&e.settings).unwrap();
+    assert!(during.contains("mshl1") && !during.contains("\"my-line\""), "{during}");
+    let (_, setup) = get(&e.app, "/v1/agents/copilot/setup").await;
+    assert_eq!(setup["chained"], true, "{setup}");
+    assert_eq!(setup["has_own_statusline"], true, "{setup}");
+
+    let (status, removal) = post(&e.app, "/v1/agents/copilot/hooks/remove-plan", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{removal}");
+    assert_eq!(removal["preview"]["title"], "Turn Copilot CLI hooks off", "{removal}");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&removal["preview"])).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert!(!e.hooks.exists());
+    assert!(!paths::statusline_chain(&e.home, "copilot").exists());
+    // The person's own file is byte-equal to what it was before the setup.
+    assert_eq!(std::fs::read_to_string(&e.settings).unwrap(), COPILOT_OWN_LINE);
+    let (_, setup) = get(&e.app, "/v1/agents/copilot/setup").await;
+    assert_eq!(setup["hooks"], "none", "{setup}");
+}
+
+#[tokio::test]
+async fn copilot_orphaned_entries_are_reported() {
+    let e = copilot_env();
+    install_copilot(&e).await;
+    // The hooks stay while the bridge they run is gone.
+    std::fs::remove_file(paths::bridge_exe(&e.home)).unwrap();
+    let (_, setup) = get(&e.app, "/v1/agents/copilot/setup").await;
+    assert_eq!(setup["hooks"], "orphaned", "{setup}");
+    // The removal is still offered and takes them out.
+    let (status, removal) = post(&e.app, "/v1/agents/copilot/hooks/remove-plan", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{removal}");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&removal["preview"])).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert!(!e.hooks.exists());
+    let left = std::fs::read_to_string(&e.settings).unwrap_or_default();
+    assert!(!left.contains("mshl1"), "{left}");
+}
+
+#[tokio::test]
+async fn a_marshell_json_the_person_wrote_is_reported_not_overwritten() {
+    let e = copilot_env();
+    std::fs::create_dir_all(e.hooks.parent().unwrap()).unwrap();
+    let mine =
+        "{\"version\":1,\"hooks\":{\"preToolUse\":[{\"type\":\"command\",\"exec\":\"mine.exe\",\"args\":[]}]}}\n";
+    std::fs::write(&e.hooks, mine).unwrap();
+    let (status, setup) = get(&e.app, "/v1/agents/copilot/setup").await;
+    assert_eq!(status, StatusCode::OK, "{setup}");
+    assert_eq!(setup["hooks"], "none", "{setup}");
+
+    for (uri, body) in [
+        ("/v1/agents/copilot/hooks/plan", WANT()),
+        ("/v1/agents/copilot/hooks/remove-plan", json!({})),
+    ] {
+        let (status, bytes) = post_raw(&e.app, uri, body).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{uri}");
+        let message = String::from_utf8_lossy(&bytes).replace('\\', "/");
+        assert!(
+            message.contains("marshell.json") && message.contains("holds hooks Marshell didn't write"),
+            "{message}"
+        );
+    }
+    assert_eq!(std::fs::read_to_string(&e.hooks).unwrap(), mine);
+}
+
+#[tokio::test]
+async fn copilot_setup_reports_skips_all() {
+    let e = copilot_env();
+    std::fs::create_dir_all(e.settings.parent().unwrap()).unwrap();
+    std::fs::write(&e.settings, "{\"defaultPermissionMode\": \"allow-all\"}\n").unwrap();
+    let (status, setup) = get(&e.app, "/v1/agents/copilot/setup").await;
+    assert_eq!(status, StatusCode::OK, "{setup}");
+    assert_eq!(setup["skips_all"], "defaultPermissionMode", "{setup}");
+    std::fs::write(&e.settings, "{\"defaultPermissionMode\": \"default\"}\n").unwrap();
+    let (_, setup) = get(&e.app, "/v1/agents/copilot/setup").await;
+    assert!(setup["skips_all"].is_null(), "{setup}");
 }
 
 // ---- Codex ----
