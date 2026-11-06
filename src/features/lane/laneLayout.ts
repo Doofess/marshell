@@ -36,19 +36,21 @@ export type LaneLayout = {
 
 /**
  * The lane never scrolls. It shows whole rows up to 40% of the sidebar and leaves the rest behind a "+N more" button.
- * When even one card would not fit in 40%, it shows one-liners only.
+ * When even one card would not fit in 40%, it shows one-liners only. `card` is whether a card can be targeted at all
+ * (`nextWaiting`): when every waiting session asks in its own terminal, no room is kept for one.
  */
-export function laneLayout(count: number, sidebarHeight: number): LaneLayout {
+export function laneLayout(count: number, sidebarHeight: number, card = true): LaneLayout {
   const n = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
   if (n === 0) return { height: LANE.header, clipped: false, hiddenCount: 0, expanded: false, visible: 0 };
   const max = Number.isFinite(sidebarHeight) && sidebarHeight > 0 ? Math.floor(sidebarHeight * LANE.maxShare) : 0;
   const natural = LANE.header + LANE.expanded + (n - 1) * LANE.collapsed;
-  if (natural <= max) return { height: natural, clipped: false, hiddenCount: 0, expanded: true, visible: n };
-  if (max >= LANE.header + LANE.expanded) {
+  if (card && natural <= max) return { height: natural, clipped: false, hiddenCount: 0, expanded: true, visible: n };
+  if (card && max >= LANE.header + LANE.expanded) {
     const fits = Math.floor((max - LANE.header - LANE.expanded) / LANE.collapsed);
     const visible = 1 + fits;
     return { height: LANE.header + LANE.expanded + fits * LANE.collapsed, clipped: true, hiddenCount: n - visible, expanded: true, visible };
   }
   const visible = Math.min(n, Math.max(0, Math.floor((max - LANE.header) / LANE.collapsed)));
-  return { height: LANE.header + visible * LANE.collapsed, clipped: true, hiddenCount: n - visible, expanded: false, visible };
+  // With no card to show, one-liners are the natural layout, so it is clipped only when a row is left out.
+  return { height: LANE.header + visible * LANE.collapsed, clipped: card || visible < n, hiddenCount: n - visible, expanded: false, visible };
 }
