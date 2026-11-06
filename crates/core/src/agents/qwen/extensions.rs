@@ -148,6 +148,21 @@ fn approval_hash(entry: &Value) -> String {
     hash_bytes(canonical(&Value::Object(top)).as_bytes())
 }
 
+/// What Qwen Code makes of a `.mcp.json` command entry before hashing it (`normalizeClaudeMcpServer`,
+/// chunk-XBXDDFWT.js): its `type` is dropped unless that is `sdk`.
+fn normalized_mcp_json(entry: &Value) -> Value {
+    let mut entry = entry.clone();
+    if let Some(m) = entry.as_object_mut() {
+        let command_like = ["command", "httpUrl", "tcp"]
+            .iter()
+            .any(|k| m.get(*k).is_some_and(|v| !v.is_null() && v != false && v != ""));
+        if command_like && m.get("type").is_some_and(|t| t != "sdk") {
+            m.remove("type");
+        }
+    }
+    entry
+}
+
 fn approved(cx: &Cx, project: &Path, name: &str, entry: &Value) -> bool {
     if cx.untrusted {
         return false;
@@ -191,7 +206,12 @@ fn launch_of(name: &str, entry: &Value, remote: bool, at: &Source, cx: &Cx) -> R
         let Origin::Project(project) = &at.origin else {
             return Err(NotMeasured::NotApproved);
         };
-        if !approved(cx, project, name, entry) {
+        let hashed = if at.file.file_name().is_some_and(|f| f == ".mcp.json") {
+            normalized_mcp_json(entry)
+        } else {
+            entry.clone()
+        };
+        if !approved(cx, project, name, &hashed) {
             return Err(NotMeasured::NotApproved);
         }
     }
@@ -957,6 +977,32 @@ mod tests {
         );
         let inv = inventory(&r, std::slice::from_ref(&proj), &found);
         assert!(server(&inv, "p").launch.is_ok());
+    }
+
+    /// Qwen Code hashes a `.mcp.json` command entry after `normalizeClaudeMcpServer`, which drops its `type` unless
+    /// that is `sdk`.
+    #[test]
+    fn qwen_mcp_json_type_is_dropped_before_hashing() {
+        let (_h, r, proj) = approval_setup("approval-type", "--flag", "approved");
+        put(
+            &proj.join(".mcp.json"),
+            &json!({"mcpServers": {"p": {
+                "type": "stdio", "command": "node", "env": {"B": "2", "A": "1"}, "args": ["srv.js", "--flag"]
+            }}})
+            .to_string(),
+        );
+        let inv = inventory(&r, std::slice::from_ref(&proj), &found);
+        assert!(server(&inv, "p").launch.is_ok());
+
+        put(
+            &proj.join(".mcp.json"),
+            &json!({"mcpServers": {"p": {
+                "type": "sdk", "command": "node", "env": {"B": "2", "A": "1"}, "args": ["srv.js", "--flag"]
+            }}})
+            .to_string(),
+        );
+        let inv = inventory(&r, std::slice::from_ref(&proj), &found);
+        assert_eq!(server(&inv, "p").launch, Err(NotMeasured::NotApproved));
     }
 
     #[test]
