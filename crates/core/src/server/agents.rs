@@ -145,6 +145,7 @@ fn refused(err: &hooks::PlanError) -> Fail {
             path.display()
         ),
         hooks::PlanError::BridgePath { .. } => format!("{err}."),
+        hooks::PlanError::NotMarshells { .. } => err.to_string(),
     };
     (StatusCode::UNPROCESSABLE_ENTITY, message)
 }

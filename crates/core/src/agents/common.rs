@@ -293,6 +293,8 @@ pub enum PlanError {
         path: PathBuf,
         reason: &'static str,
     },
+    /// A file Marshell would own whole holds hooks it didn't write (or isn't shaped like its own), so it stays.
+    NotMarshells { path: PathBuf },
 }
 
 impl fmt::Display for PlanError {
@@ -316,6 +318,13 @@ impl fmt::Display for PlanError {
             }
             PlanError::BridgePath { agent, path, reason } => {
                 write!(f, "{agent} can't run Marshell's hook from {}: {reason}", path.display())
+            }
+            PlanError::NotMarshells { path } => {
+                write!(
+                    f,
+                    "{} holds hooks Marshell didn't write, so Marshell leaves it as it is.",
+                    path.display()
+                )
             }
         }
     }
