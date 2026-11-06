@@ -571,7 +571,9 @@ impl ConfigService {
                     // The person's own TOML keys and whole-text edits aren't Marshell's entries, so
                     // `managed.json` records nothing for them.
                     EditOp::TomlSet { .. } | EditOp::TomlRemove { .. } | EditOp::ReplaceText { .. } => continue,
-                    EditOp::JsonSet { .. } | EditOp::JsonRemove { .. } if own => continue,
+                    // A file the person creates, such as the Doctor turning a skill off in a Codex config.toml
+                    // that isn't there yet, is theirs too: an uninstall must never treat it as Marshell's.
+                    EditOp::JsonSet { .. } | EditOp::JsonRemove { .. } | EditOp::CreateFile { .. } if own => continue,
                     EditOp::JsonSet { pointer, .. } => Change::Set {
                         path: &file.target,
                         pointer,
@@ -894,6 +896,24 @@ mod tests {
         apply_shown(&e.svc, &preview).unwrap();
         let value: serde_json::Value = serde_json::from_str(&read(&path)).unwrap();
         assert_eq!(value, serde_json::json!({"model": "b"}));
+        assert!(crate::config::managed::list(&e.home).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_file_the_person_creates_is_not_recorded_as_marshells() {
+        let e = env();
+        let path = e.root.join("config.toml");
+        let preview = e.svc.preview_mixed(
+            changeset(vec![edit(
+                &path,
+                EditOp::CreateFile {
+                    content: "[[skills.config]]\nenabled = false\n".into(),
+                },
+            )]),
+            &|_| true,
+        );
+        apply_shown(&e.svc, &preview).unwrap();
+        assert!(path.is_file());
         assert!(crate::config::managed::list(&e.home).unwrap().is_empty());
     }
 
