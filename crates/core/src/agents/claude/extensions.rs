@@ -212,7 +212,8 @@ fn skills_in(
             first_line_chars: p.first_line_chars,
             name_only: ov.contains(&"name-only"),
             off: ov.contains(&"off"),
-            hidden: p.hidden,
+            // "user-invocable-only" keeps the skill out of the model's listing, as `disable-model-invocation` does.
+            hidden: p.hidden || ov.contains(&"user-invocable-only"),
             switch: switch(&name),
             name,
         });
@@ -590,7 +591,7 @@ mod tests {
             &r.claude_settings,
             &json!({
                 "enabledPlugins": {"plug@mk": true},
-                "skillOverrides": {"nofm": "off", "renamed": "name-only"}
+                "skillOverrides": {"nofm": "off", "renamed": "name-only", "a/b~c": "user-invocable-only"}
             })
             .to_string(),
         );
@@ -633,6 +634,9 @@ mod tests {
 
         let x = skill(&inv, "a/b~c");
         assert!(!x.off);
+        // "user-invocable-only" keeps it out of the model's listing, like `disable-model-invocation`.
+        assert!(x.hidden);
+        assert!(!n.hidden);
         assert_eq!(
             x.switch,
             Ok(Switch::JsonSet {
