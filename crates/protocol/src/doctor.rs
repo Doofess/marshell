@@ -45,6 +45,14 @@ pub struct DoctorItem {
     pub path: Option<String>,
     /// The row offers "Open Agents".
     pub open_agents: bool,
+    /// A Broken item the page leaves unchecked at first: Marshell isn't sure enough to pick it for the person.
+    #[serde(default, skip_serializing_if = "is_false")]
+    #[ts(optional, as = "Option<bool>")]
+    pub unchecked: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// The result of one run of the checks.
@@ -128,6 +136,7 @@ mod tests {
             cannot_fix: None,
             path: None,
             open_agents: false,
+            unchecked: false,
         }
     }
 

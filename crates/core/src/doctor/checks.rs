@@ -112,6 +112,7 @@ pub fn items(facts: &[AgentFacts], stopped: &[String], banners_on: bool) -> Vec<
             cannot_fix: None,
             path: None,
             open_agents: false,
+            unchecked: false,
         });
     }
     out
@@ -134,6 +135,7 @@ fn cli_items(f: &AgentFacts, banners_on: bool, out: &mut Vec<DoctorItem>) {
         cannot_fix: None,
         path: None,
         open_agents: false,
+        unchecked: false,
     };
 
     if let Some(err) = &f.error {

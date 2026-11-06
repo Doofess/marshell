@@ -32,4 +32,8 @@ path?: string,
 /**
  * The row offers "Open Agents".
  */
-open_agents: boolean, };
+open_agents: boolean, 
+/**
+ * A Broken item the page leaves unchecked at first: Marshell isn't sure enough to pick it for the person.
+ */
+unchecked?: boolean, };

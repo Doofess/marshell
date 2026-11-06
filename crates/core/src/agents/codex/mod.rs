@@ -1,5 +1,6 @@
 //! Codex CLI's side: its rollout files, read into a common conversation, its hook entries and whether Codex trusts them, and its hook events folded into live status.
 
+pub mod extensions;
 pub mod hooks;
 pub mod request;
 pub mod rollout;

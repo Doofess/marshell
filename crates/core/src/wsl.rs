@@ -175,6 +175,16 @@ pub fn to_linux(distro: &str, windows: &Path) -> Option<String> {
     None
 }
 
+/// A `\\wsl.localhost\<distro>\..` or `\\wsl$\<distro>\..` path as that distro sees it, the distro read from the path.
+/// None for any other path.
+pub fn share_to_linux(path: &Path) -> Option<String> {
+    let text = path.to_str()?;
+    let rest = text.strip_prefix(r"\\").or_else(|| text.strip_prefix("//"))?;
+    let (_, rest) = rest.split_once(['\\', '/'])?;
+    let distro = rest.split(['\\', '/']).next()?;
+    under_share(distro, text).map(|parts| format!("/{}", parts.join("/")))
+}
+
 /// Whether the path is under the distro's UNC share, as `\\wsl.localhost\<distro>` or `\\wsl$\<distro>`.
 pub fn under_distro(distro: &str, path: &Path) -> bool {
     path.to_str().and_then(|text| under_share(distro, text)).is_some()
@@ -260,6 +270,19 @@ mod tests {
         assert_eq!(linux("Ubuntu", r"x\y"), None);
         assert_eq!(linux("Ubuntu", ""), None);
         assert_eq!(linux("", r"\\wsl.localhost\\x"), None);
+    }
+
+    #[test]
+    fn a_share_path_reads_as_its_distro_sees_it() {
+        let seen = |text| share_to_linux(Path::new(text));
+        assert_eq!(
+            seen(r"\\wsl.localhost\Ubuntu\home\a\.codex\skills\x\SKILL.md"),
+            Some("/home/a/.codex/skills/x/SKILL.md".into())
+        );
+        assert_eq!(seen(r"\\wsl$\My Distro\home\a"), Some("/home/a".into()));
+        assert_eq!(seen(r"C:\Users\a\.codex\skills\x\SKILL.md"), None);
+        assert_eq!(seen(r"\\server\share\x"), None);
+        assert_eq!(seen(r"\\wsl.localhost\Ubuntu\a\..\b"), None);
     }
 
     #[test]

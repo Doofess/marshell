@@ -1405,6 +1405,48 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
           - Amended 2026-11-05 after the final review: Codex has no Notification hook event (`docs/research/codex-cli.md`), so a group under it never runs and gets no item. Claude Code and Qwen Code have the event.
         - Terminal-sequence settings get no item: Claude Code's `preferredNotifChannel`, Qwen Code's `general.terminalBell` and Codex's `tui.notifications`.
      5. WSL follows 7a decision 7. The CLI doctors and the duplicate checks run in each distro that `managed.json` names, only while it is running, and only for the CLIs installed there. A stopped distro gets "Not checked: <distro> isn't running."
+   - **Slice 7c decisions (2026-11-06).** MCP servers and skills. The facts, checked on this PC and in each CLI's docs or source (claude 2.1.318, codex-cli 0.164.0, agy 1.4.12, qwen 0.26.5), are in `docs/research/2026-11-06-mcp-and-skills.md`. All four CLIs load MCP tool definitions on demand by default.
+
+     The decisions:
+     1. 7c is two slices:
+        - **7c1:** each CLI's servers and skills are listed. It covers the Broken checks (decision 3), long descriptions (decision 9), the skills' token cost (decision 10) and the turn-off fixes.
+        - **7c2:** the usage scan (unused in 30 days, broad scope), and "Measure MCP servers" with the servers' token cost.
+     2. **Measuring MCP servers (7c2)** is click-only and local, like "Run CLI doctors".
+        - A "Measure MCP servers" button starts each enabled local (stdio) server with a timeout, reads its tool list and ends its whole process tree.
+        - A remote server gets "Not measured: remote server." Measuring uses no network and no tokens.
+        - The cost is the definition characters divided by 4, cut down to what the CLI loads up front: a deferred server costs its tool names and its instructions.
+     3. **Broken items** are pre-checked (7a decision 2):
+        - a server whose command can't be found, or that fails to start when measured;
+        - a skill whose `SKILL.md` doesn't parse, or lacks a name or a description.
+
+        The fix turns the server or skill off through the CLI's own switch and never deletes it, with preview, backup and Undo. Where there is no switch, the item is report-only and says so.
+     4. **Unused items (7c2)** are Waste and unchecked, and the fix turns them off the same way. An item is called unused only when that CLI's history covers the whole 30 days, and not when it was added more recently.
+     5. **Broad scope (7c2)** is report-only: a user-level server or skill used in one project only. An Info item names the project and says how to move it. The Doctor doesn't move it, because a project's own files are shared with the team.
+     6. **Plugins and extensions.** Their servers and skills count toward cost and the usage check, and each item names its plugin. They get no fix, because a plugin update would undo it. Turning off a whole plugin waits for phase 8's Extensions.
+     7. **Which configs are read:** user level, plus project level for the up to 30 folders in Marshell's `projects.json`. In a WSL distro (7a decision 7), user level only.
+     8. **The turn-off fix writes only per-user files:**
+        - **Claude Code:**
+          - A user skill gets `skillOverrides.<name>: "off"` in `~/.claude/settings.json`, and a project skill gets it in the project's `.claude/settings.local.json`.
+          - A `.mcp.json` server goes in `disabledMcpjsonServers` in the project's `.claude/settings.local.json`.
+          - A local-scope server goes in `disabledMcpServers` in that project's entry in `~/.claude.json`, but only if the plan's check shows that a running Claude Code doesn't write over it. Otherwise it is report-only and points to `/mcp`. The 7c1 live check kept the switch: claude 2.1.318 rewrote the file and kept the key, and `claude mcp list` showed the server as "Disabled for this project" (`docs/research/2026-11-06-doctor-7c1-live-check.md`). A session already running when the fix applies wasn't checked; the user chose to ship and list that under the PR's Known limits (2026-11-06), since the item would only come back on the next check.
+          - A user-level server is report-only, because Claude Code can turn it off only per project. Its item gives `claude mcp remove <name> -s user`.
+        - **Codex:**
+          - A server in `~/.codex/config.toml` gets `enabled = false`.
+          - A skill, user or project, gets a `[[skills.config]]` entry with its `path` and `enabled = false` in `~/.codex/config.toml`.
+          - A server in a project's `.codex/config.toml` is report-only.
+        - **Antigravity:**
+          - A server in `~/.gemini/config/mcp_config.json` gets `"disabled": true`.
+          - A project server is report-only.
+          - Skills are report-only, because Antigravity has no switch for one skill.
+        - **Qwen Code:** a server's name goes in `mcp.excluded` and a skill's in `skills.disabled`, in the user's `settings.json`. This covers user and project items alike.
+     9. **Long descriptions** are Waste and report-only: BRIEF §5.4 says to suggest shortening. A description is long when the CLI cuts it:
+        - over 1,536 characters for Claude Code (`description` plus `when_to_use`);
+        - over 1,024 for Codex.
+
+        Qwen Code cuts the non-bundled descriptions to their first line once the whole listing passes 8,000 characters, so that gets one item for the listing. Antigravity documents no cut.
+     10. **The skills' token cost (7c1)** is one Info line per CLI. It estimates what the skill listing loads into each session: name and description characters divided by 4, each capped where the CLI cuts it. A skill that is off, or kept out of the listing (`disable-model-invocation`, or Claude Code's `skillOverrides` value `"user-invocable-only"`), costs nothing.
+     11. **A bare command missing from the PATH starts unchecked** (decided after the 7c1 review, 2026-11-06). The Doctor checks a bare command (`npx`, `node`, `uvx`) on the PATH Marshell's tabs get from the registry, but a CLI started from a shell gets that shell's PATH, which fnm or mise can extend in the PowerShell profile. So such a server is still Broken and fixable, but the page leaves it unchecked, and it says "Its command, npx, isn't on the PATH Marshell's tabs get." A missing absolute path stays pre-checked, and a command written with `${VAR}` or `%VAR%` isn't checked.
+     12. **A switch that can't be applied makes the item report-only** (7c1 review). This covers a file that doesn't parse, a list that isn't one, a path the config guard refuses, and a file over 4 MiB. So does Qwen Code's switch by name when another server or skill in use has the same name, because the name would turn that one off too.
 8. **Editors + instruction library** (wired per CLI with a content hash and drift check; settings raw mode validated against the SchemaStore schema), smart and native recaps, diff drawer, step timeline, saved prompts, broadcast, and Extensions (moved from phase 6 by slice 6a decision 2).
    - Diff drawer comments (added 2026-10-15, after the Codex app's review pane): a **+** on a diff line adds a comment. "Send comments" puts them all in the prompt line as one message, with `file:line` before each. Like phase 2.5, it fills the prompt line and never sends on its own.
    - Instruction library items: frontmatter form, "what loads here" view, token estimate with a 4k warning, templates and one-click project profiles, per-project toggles, agent filter, globs, and "Improve this file" (headless, opt-in).

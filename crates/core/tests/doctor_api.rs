@@ -139,6 +139,8 @@ fn state_on(
     .with_codex_hooks(codex)
     .with_agy_home(agy_home)
     .with_qwen_home(qwen_home)
+    // The MCP servers and skills are read under a scratch home, never the developer's.
+    .with_ext_home(root.join("ext-home"))
     .with_qwen_system_settings(root.join("qwen-system.json"))
     .with_skill_home(root.join("skill-home"))
     .with_claude_compact_paths(root.join("claude-home"), vec![root.join("claude-managed.json")])

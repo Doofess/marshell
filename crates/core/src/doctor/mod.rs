@@ -2,6 +2,8 @@
 
 pub mod checks;
 pub mod cli;
+pub mod ext;
+pub mod frontmatter;
 pub mod state;
 
 pub use checks::{AgentFacts, FileState, RETENTION_OTHERS, display_name, issues, items};
