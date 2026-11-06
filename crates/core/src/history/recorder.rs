@@ -203,11 +203,11 @@ impl History {
         at_ms: u64,
         distro: Option<&str>,
     ) -> Option<SessionMeta> {
-        // Codex's, Antigravity's and Qwen Code's sessions are linked by the first event that names them, whatever it is.
-        // A Qwen body is Claude-shaped, so it reads like Codex's.
+        // Codex's, Antigravity's, Qwen Code's and Copilot CLI's sessions are linked by the first event that names them,
+        // whatever it is. A Qwen body is Claude-shaped, so it reads like Codex's; so does Copilot's `copilot::link_body`.
         let (codex, antigravity) = match agent {
             "claude" => (false, false),
-            "codex" | "qwen" => (true, false),
+            "codex" | "qwen" | "copilot" => (true, false),
             "antigravity" => (true, true),
             _ => return None,
         };
@@ -311,7 +311,7 @@ impl History {
         let ends_turn = !codex && matches!(event, "Stop" | "StopFailure" | "SessionEnd");
         // An event of an agy conversation or a Qwen chat the tab went back to makes it the tab's latest again (the
         // latest is the row with the newest `updated_ms`); events of the tab's current one write nothing.
-        let returned = (antigravity || agent == "qwen")
+        let returned = (antigravity || matches!(agent, "qwen" | "copilot"))
             && !is_new
             && index
                 .latest_for_tab_of(tab_id, agent)
@@ -1520,6 +1520,73 @@ mod tests {
         // The tab goes back to the first chat: its event makes it the latest again.
         history.note_event("qwen", "t1", None, &qwen_body(QWEN_START, home.path(), ID), 3000, None);
         assert_eq!(history.latest_for_tab_of("t1", "qwen").unwrap().session_id, ID);
+    }
+
+    /// What the core hands the recorder for Copilot's session `id`: `copilot::link_body` of a hook body, with
+    /// Copilot's transcript under `dir`.
+    fn copilot_body(dir: &Path, id: &str, event: &str) -> Value {
+        crate::agents::copilot::link_body(
+            &json!({"sessionId": id, "cwd": dir.to_string_lossy(), "hook_event_name": event}),
+            &dir.join(".copilot"),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn copilot_is_linked_by_its_first_event() {
+        const B: &str = "00000000-0000-4000-8000-000000000002";
+        let home = tempfile::tempdir().unwrap();
+        let history = History::open(home.path());
+        // Whatever the first event is, it links the session; Copilot has no importer yet, so no copy is asked for.
+        let body = copilot_body(home.path(), ID, "agentStop");
+        assert_eq!(
+            history.note_event("copilot", "t1", Some("t1-1000.cast"), &body, 1000, None),
+            None
+        );
+        let row = history.get("copilot", ID).unwrap().unwrap();
+        assert_eq!((row.tab_id.as_str(), row.client), ("t1", Client::Marshell));
+        assert_eq!(row.transcript_path, body["transcript_path"].as_str().unwrap());
+        assert!(row.transcript_path.ends_with("events.jsonl"));
+        assert_eq!((row.started_ms, row.updated_ms), (1000, 1000));
+        assert_eq!(history.latest_for_tab_of("t1", "copilot").unwrap().session_id, ID);
+        assert_eq!(history.latest_for_tab_of("t1", "claude"), None);
+        let meta = crate::history::archive::read_meta(home.path(), "copilot", ID)
+            .unwrap()
+            .unwrap();
+        assert_eq!((meta.agent.as_str(), meta.tab_id.as_str()), ("copilot", "t1"));
+        // Later events of the same session write nothing and ask for no copy.
+        let later = copilot_body(home.path(), ID, "sessionEnd");
+        assert_eq!(history.note_event("copilot", "t1", None, &later, 2000, None), None);
+        assert_eq!(history.get("copilot", ID).unwrap().unwrap().updated_ms, 1000);
+        // A session the tab goes on under (`/clear`) is its latest, and the tab going back makes the first one so again.
+        history.note_event(
+            "copilot",
+            "t1",
+            None,
+            &copilot_body(home.path(), B, "agentStop"),
+            3000,
+            None,
+        );
+        assert_eq!(history.latest_for_tab_of("t1", "copilot").unwrap().session_id, B);
+        history.note_event(
+            "copilot",
+            "t1",
+            None,
+            &copilot_body(home.path(), ID, "agentStop"),
+            4000,
+            None,
+        );
+        assert_eq!(history.latest_for_tab_of("t1", "copilot").unwrap().session_id, ID);
+        // A transcript outside `session-state`, or a distro, links nothing.
+        let mut hostile = copilot_body(home.path(), "00000000-0000-4000-8000-000000000003", "agentStop");
+        hostile["transcript_path"] = json!(home.path().join("x.jsonl").to_string_lossy());
+        assert_eq!(history.note_event("copilot", "t1", None, &hostile, 5000, None), None);
+        assert!(
+            history
+                .get("copilot", "00000000-0000-4000-8000-000000000003")
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

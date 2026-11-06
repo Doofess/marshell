@@ -211,10 +211,19 @@ pub async fn post(
         if matches!(agent.as_str(), "claude" | "codex" | "antigravity" | "qwen" | "copilot")
             && let Some(tab) = tab.as_deref()
         {
+            // Copilot's session id changes inside one process (`/clear`): see `copilot_session`.
+            let session = if agent == "copilot" {
+                copilot_session(&st, role, tab, &json).await
+            } else {
+                CopilotSession::Current
+            };
+            if session == CopilotSession::Stale {
+                return;
+            }
             if !left_wsl {
                 fold_live_with(&st, &agent, role, tab, &json, at_ms, held).await;
             }
-            if role == HookRole::Event && st.registry().is_open(tab) {
+            if (role == HookRole::Event || session == CopilotSession::Newer) && st.registry().is_open(tab) {
                 record_history(&st, &agent, tab, &json, at_ms).await;
             }
         }
@@ -252,6 +261,45 @@ pub async fn post(
         return Ok(hold_permission(&st, Some(tab), agent, json).await);
     }
     Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// What a Copilot body says about the tab's session. `/clear` ends the old id and goes on under a new one in the same
+/// process, and its status line names the new id before any event does.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CopilotSession {
+    /// Nothing special: fold it as any other body.
+    Current,
+    /// A status line that names a session the tab is not linked to: link the tab to it.
+    Newer,
+    /// A `sessionEnd` of a session that is not the tab's latest linked one (a late one from `/clear`): change nothing.
+    Stale,
+}
+
+/// Compares the session `body` names with the tab's latest linked Copilot session. The index is a file, so it is read
+/// off the async workers. With history off, or no session linked yet, nothing is stale.
+async fn copilot_session(st: &AppState, role: HookRole, tab: &str, body: &serde_json::Value) -> CopilotSession {
+    let text = |key: &str| body.get(key).and_then(serde_json::Value::as_str);
+    let (named, ending) = match role {
+        HookRole::Statusline => (text("session_id"), false),
+        HookRole::Event => (text("sessionId"), text("hook_event_name") == Some("sessionEnd")),
+        _ => return CopilotSession::Current,
+    };
+    let Some(named) = named.map(str::to_string) else {
+        return CopilotSession::Current;
+    };
+    let (history, tab) = (st.history(), tab.to_string());
+    let latest = tokio::task::spawn_blocking(move || history.latest_for_tab_of(&tab, "copilot"))
+        .await
+        .ok()
+        .flatten()
+        .map(|meta| meta.session_id);
+    match latest {
+        Some(latest) if latest == named => CopilotSession::Current,
+        Some(_) if ending => CopilotSession::Stale,
+        _ if ending => CopilotSession::Current,
+        _ if role == HookRole::Statusline => CopilotSession::Newer,
+        _ => CopilotSession::Current,
+    }
 }
 
 /// Whether the tab's shell runs in a WSL distro. The first answer for a profile without `-d` asks `wsl.exe` for the default
@@ -309,6 +357,20 @@ async fn references_for(
 /// runs on its own and the response does not wait for it.
 async fn record_history(st: &AppState, agent: &str, tab: &str, body: &serde_json::Value, at_ms: u64) {
     let history = st.history();
+    // Copilot's bodies are camelCase and a status line's are snake_case: the recorder reads the one shape `link_body` makes.
+    let linked;
+    let body = if agent == "copilot" {
+        let Some(dir) = st.copilot_dir() else { return };
+        match copilot::link_body(body, &dir) {
+            Some(made) => {
+                linked = made;
+                &linked
+            }
+            None => return,
+        }
+    } else {
+        body
+    };
     let recording = st
         .session(tab)
         .and_then(|s| s.recording_path())

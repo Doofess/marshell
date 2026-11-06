@@ -1,5 +1,6 @@
 //! GitHub Copilot CLI (`copilot`): its own hooks file and its status line, planned as config changes.
 
+pub mod exe;
 pub mod hooks;
 pub mod status;
 
@@ -58,9 +59,128 @@ pub fn skips_all(settings_text: Option<&str>, env: &dyn Fn(&str) -> Option<Strin
     truthy.then(|| "COPILOT_ALLOW_ALL".to_string())
 }
 
+/// A new session id for `--session-id`: a lowercase v4 UUID.
+pub fn new_session_id() -> String {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).expect("the OS random number generator failed");
+    // Version 4, variant 10.
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[0..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..32]
+    )
+}
+
+/// The body that links a tab to the Copilot session `body` names: `{hook_event_name, session_id, transcript_path, cwd}`,
+/// the shape the history recorder reads. A hook body names the session `sessionId`, a status line `session_id`.
+/// `transcript_path` is the body's `transcriptPath` when it has one, otherwise
+/// `<copilot_home>/session-state/<id>/events.jsonl`; a status line's own `transcript_path` is the session's folder, not
+/// the file, so it is never used. None without a valid id.
+pub fn link_body(body: &Value, copilot_home: &Path) -> Option<Value> {
+    let text = |key: &str| body.get(key).and_then(Value::as_str);
+    let id = text("sessionId").or_else(|| text("session_id"))?;
+    // The id goes into a path and a command line.
+    if !crate::history::valid_session_id(id) {
+        return None;
+    }
+    let transcript = match text("transcriptPath") {
+        Some(path) => path.to_string(),
+        None => copilot_home
+            .join("session-state")
+            .join(id)
+            .join("events.jsonl")
+            .to_string_lossy()
+            .into_owned(),
+    };
+    Some(json!({
+        // A status line has no event name; any name links the session.
+        "hook_event_name": text("hook_event_name").unwrap_or("statusLine"),
+        "session_id": id,
+        "transcript_path": transcript,
+        "cwd": body.get("cwd").cloned().unwrap_or(Value::Null),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const ID: &str = "00000000-0000-4000-8000-000000000001";
+
+    fn transcript(home: &Path) -> String {
+        home.join("session-state")
+            .join(ID)
+            .join("events.jsonl")
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    #[test]
+    fn new_session_ids_are_v4_uuids() {
+        let shape = regex::Regex::new("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$").unwrap();
+        let (a, b) = (new_session_id(), new_session_id());
+        assert!(shape.is_match(&a), "{a}");
+        assert!(shape.is_match(&b), "{b}");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn link_body_derives_the_transcript_path() {
+        let home = Path::new("C:/Users/u/.copilot");
+        let body = json!({"sessionId": ID, "cwd": "C:\\proj", "hook_event_name": "sessionStart", "initialPrompt": "x"});
+        let linked = link_body(&body, home).unwrap();
+        assert_eq!(
+            linked,
+            json!({
+                "hook_event_name": "sessionStart",
+                "session_id": ID,
+                "transcript_path": transcript(home),
+                "cwd": "C:\\proj",
+            })
+        );
+        // The hook's own transcript path wins when it has one.
+        let mut with_path = body.clone();
+        with_path["transcriptPath"] = json!("D:\\c\\session-state\\x\\events.jsonl");
+        assert_eq!(
+            link_body(&with_path, home).unwrap()["transcript_path"],
+            "D:\\c\\session-state\\x\\events.jsonl"
+        );
+    }
+
+    #[test]
+    fn link_body_needs_a_session_id() {
+        let home = Path::new("C:/h");
+        for body in [
+            json!({"cwd": "C:\\p", "hook_event_name": "sessionStart"}),
+            json!({"sessionId": "../x", "cwd": "C:\\p", "hook_event_name": "sessionStart"}),
+            json!({"sessionId": "", "cwd": "C:\\p", "hook_event_name": "sessionStart"}),
+            json!({"sessionId": 7, "cwd": "C:\\p", "hook_event_name": "sessionStart"}),
+            json!({"sessionId": "a b", "cwd": "C:\\p", "hook_event_name": "sessionStart"}),
+        ] {
+            assert_eq!(link_body(&body, home), None, "{body}");
+        }
+    }
+
+    #[test]
+    fn link_body_reads_a_status_lines_session_id() {
+        let home = Path::new("C:/h");
+        let line = json!({
+            "session_id": ID,
+            "cwd": "C:\\proj",
+            "transcript_path": format!("C:\\h\\session-state\\{ID}"),
+        });
+        let linked = link_body(&line, home).unwrap();
+        assert_eq!(linked["session_id"], ID);
+        assert_eq!(linked["cwd"], "C:\\proj");
+        assert_eq!(linked["transcript_path"], transcript(home));
+        assert!(linked["hook_event_name"].as_str().is_some_and(|e| !e.is_empty()));
+    }
 
     #[test]
     fn the_home_follows_copilot_home() {

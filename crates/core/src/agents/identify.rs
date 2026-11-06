@@ -157,21 +157,24 @@ mod tests {
     }
 
     #[test]
-    fn copilot_shim_is_not_copilot() {
-        let copilot = manifest("copilot");
+    fn a_rejected_folder_matches_in_any_case_and_slash() {
+        // Copilot CLI's own shim search is `copilot::exe`; this is the manifests' generic rule, shown on a stand-in.
+        let mut other = manifest("cursor").clone();
+        other.commands = vec!["tool".into()];
+        other.reject_paths = vec![r"\other-shim\".into()];
         for shim in [
-            r"C:\Program Files\Microsoft VS Code\bin\copilot-shim\copilot.cmd",
-            "C:/Program Files/Microsoft VS Code/bin/copilot-shim/copilot.cmd",
-            r"C:\PROGRAM FILES\Microsoft VS Code\bin\Copilot-Shim\copilot.cmd",
+            r"C:\Program Files\Microsoft VS Code\bin\other-shim\tool.cmd",
+            "C:/Program Files/Microsoft VS Code/bin/other-shim/tool.cmd",
+            r"C:\PROGRAM FILES\Microsoft VS Code\bin\Other-Shim\tool.cmd",
         ] {
-            let path_of = |c: &str| (c == "copilot").then(|| PathBuf::from(shim));
+            let path_of = |c: &str| (c == "tool").then(|| PathBuf::from(shim));
             assert!(
-                matches!(find(copilot, &path_of, &no_version), Err(Missing::Rejected { .. })),
+                matches!(find(&other, &path_of, &no_version), Err(Missing::Rejected { .. })),
                 "{shim} is rejected"
             );
         }
         let none = |_: &str| None;
-        assert!(matches!(find(copilot, &none, &no_version), Err(Missing::NotOnPath)));
+        assert!(matches!(find(&other, &none, &no_version), Err(Missing::NotOnPath)));
     }
 
     #[test]

@@ -8,7 +8,7 @@ use crate::agents::presets::{self, PresetLaunch};
 use crate::auth;
 use crate::profiles::detect::{
     PresetArg, Program, ResumeTarget, agent_command, build_line, command_on_path, default_shell, line_argv,
-    mangles_double_quotes, mode_args, preset_line, resume_args,
+    mangles_double_quotes, mode_args, new_session_args, preset_line, resume_args,
 };
 use crate::pty::{FreezeError, Session, SpawnSpec};
 use crate::registry::{Relaunch, ResumeRefusal};
@@ -42,6 +42,7 @@ pub(super) fn agent_display_name(agent: &str) -> Option<&'static str> {
         "codex" => Some("Codex"),
         "antigravity" => Some("Antigravity"),
         "qwen" => Some("Qwen Code"),
+        "copilot" => Some("Copilot CLI"),
         _ => None,
     }
 }
@@ -143,6 +144,9 @@ pub(super) struct Resolved {
     marks: bool,
     /// The line a tool preset runs first: it holds what the person typed, so it goes to the spawn and nowhere else.
     initial_command: Option<String>,
+    /// The session id Marshell gave a new Copilot CLI conversation with `--session-id`; the tab is linked to it once the
+    /// process is running. None for every other start, and for a resumed one.
+    session_id: Option<String>,
 }
 
 impl Resolved {
@@ -194,13 +198,18 @@ pub(super) async fn resolve_with(
     }
     let no_daemon = daemonless && agent == Some("codex") && codex_takes_no_daemon(st, elevated).await?;
     let agents = st.agents();
-    // A manifest agent has a mode only where its manifest maps one.
-    if let (Some(m), Some(mode)) = (agent.and_then(|a| agents.manifest(a)), mode)
-        && mode_args(&agents, &m.id, mode).is_none()
+    // A manifest agent has a mode only where its manifest maps one; so has Copilot CLI, where it has no flag.
+    let flagged = match agent {
+        Some("copilot") => Some(("copilot", "Copilot CLI")),
+        Some(a) => agents.manifest(a).map(|m| (m.id.as_str(), m.name.as_str())),
+        None => None,
+    };
+    if let (Some((id, name)), Some(mode)) = (flagged, mode)
+        && mode_args(&agents, id, mode).is_none()
     {
         return Err((
             StatusCode::BAD_REQUEST,
-            format!("{} has no {} mode.", m.name, mode_label(mode)),
+            format!("{name} has no {} mode.", mode_label(mode)),
         ));
     }
     // Copy the profile out so the lock is gone before any await.
@@ -220,9 +229,17 @@ pub(super) async fn resolve_with(
             let spec = agent
                 .zip(command.as_deref())
                 .map(|(id, c)| (id, Program::of_command(c)));
+            // A new Copilot CLI conversation gets an id Marshell picked, so the tab can be linked to it at once. A WSL
+            // distro's Copilot is 6n2's.
+            let session_id = (agent == Some("copilot") && resume.is_none() && p.family != ShellFamily::Wsl)
+                .then(crate::agents::copilot::new_session_id);
             let command = spec
                 .map(|(id, program)| {
-                    let extra = resume.map_or_else(Vec::new, |target| resume_args(&agents, id, target));
+                    let extra = match (resume, &session_id) {
+                        (Some(target), _) => resume_args(&agents, id, target),
+                        (None, Some(session)) => new_session_args(id, session),
+                        (None, None) => Vec::new(),
+                    };
                     let prompt = if resume.is_some() { None } else { prompt };
                     build_line(&p, &agents, id, program, prompt, &extra, mode, no_daemon)
                 })
@@ -264,6 +281,7 @@ pub(super) async fn resolve_with(
                 cwd: p.cwd,
                 marks,
                 initial_command: None,
+                session_id,
             })
         }
         // A reopened session that started from an explicit argv has no argv to restore.
@@ -275,7 +293,13 @@ pub(super) async fn resolve_with(
     }
 }
 
-/// The program word an agent starts with. An adapter's is fixed. A manifest agent's is the first of its
+/// Only VS Code's `copilot-shim` is on PATH: it is never launched.
+const COPILOT_SHIM_ONLY: &str =
+    "Only VS Code's copilot shim was found. Install Copilot CLI with winget install GitHub.Copilot, then try again.";
+/// No Copilot CLI program was found.
+const COPILOT_NOT_FOUND: &str = "Copilot CLI isn't installed, or isn't on PATH.";
+
+/// The program word an agent starts with. An adapter's is fixed, except Copilot CLI's, which is the real program's full path. A manifest agent's is the first of its
 /// commands that resolves on PATH as that agent (off the async workers: a version check may run its
 /// `--version`); a WSL distro has its own PATH, so there it is the first command. An unknown id gets
 /// itself, and `launch_argv` refuses it.
@@ -285,6 +309,21 @@ async fn program_command(
     wsl: bool,
     profile_env: &[(String, String)],
 ) -> Result<String, ApiError> {
+    // Copilot CLI runs by the full path of the real program: a bare `copilot` can be VS Code's shim (decision 11). A WSL
+    // distro has its own PATH, so there it is the word.
+    if id == "copilot" && !wsl {
+        let finder = st.agent_finder(profile_env);
+        let found = tokio::task::spawn_blocking(move || finder.copilot_exe())
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        return match found {
+            Ok(path) => Ok(path.to_string_lossy().into_owned()),
+            Err(Missing::Rejected { .. }) => Err((StatusCode::BAD_REQUEST, COPILOT_SHIM_ONLY.into())),
+            Err(Missing::NotOnPath | Missing::WrongVersion { .. }) => {
+                Err((StatusCode::BAD_REQUEST, COPILOT_NOT_FOUND.into()))
+            }
+        };
+    }
     if let Some(command) = agent_command(id) {
         return Ok(command.to_string());
     }
@@ -338,6 +377,7 @@ fn custom(argv: Vec<String>) -> Resolved {
         cwd: None,
         marks: false,
         initial_command: None,
+        session_id: None,
     }
 }
 
@@ -542,6 +582,7 @@ pub(super) async fn resolve_tool(
         marks,
         // Watched from the first byte: no OSC 633;E arrives for a command nobody typed.
         initial_command: Some(line),
+        session_id: None,
     };
     Ok((run, preset.name))
 }
@@ -691,6 +732,30 @@ async fn start_session_as(
     Ok(CreateSessionResponse { tab_id, number })
 }
 
+/// Links `tab_id` to the Copilot CLI session Marshell named in the launch (`--session-id`), so a Restart finds it with the
+/// hooks off as well. Does nothing for any other start.
+async fn link_launched_session(st: &AppState, tab_id: &str, session_id: Option<&str>, cwd: &str) {
+    let Some(session_id) = session_id else { return };
+    let Some(dir) = st.copilot_dir() else { return };
+    let hello = serde_json::json!({ "sessionId": session_id, "cwd": cwd, "hook_event_name": "sessionStart" });
+    let Some(body) = crate::agents::copilot::link_body(&hello, &dir) else {
+        return;
+    };
+    let recording = st
+        .session(tab_id)
+        .and_then(|s| s.recording_path())
+        .and_then(|path| path.file_name().map(|name| name.to_string_lossy().into_owned()));
+    let at_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64);
+    // The index and the sidecar are files: off the async workers.
+    let (history, tab) = (st.history(), tab_id.to_string());
+    let _ = tokio::task::spawn_blocking(move || {
+        history.note_event("copilot", &tab, recording.as_deref(), &body, at_ms, None)
+    })
+    .await;
+}
+
 /// Starts the process for a tab that is already in the registry, and stores its session.
 /// The caller undoes the registry change when this fails.
 #[allow(clippy::too_many_arguments)]
@@ -707,10 +772,12 @@ async fn launch(
     record: bool,
     elevated: bool,
 ) -> Result<(), ApiError> {
+    let (session_id, folder) = (run.session_id.clone(), cwd.clone());
     spawn_into_map(
         st, tab_id, number, generation, run, agent, cwd, size, scheme, record, elevated,
     )
     .await?;
+    link_launched_session(st, tab_id, session_id.as_deref(), &folder).await;
     // A close can land between reserve and insert, when the map has nothing to kill yet.
     // Checking after the insert catches it: a later close finds the session in the map.
     if !st.0.registry.is_open(tab_id) {
@@ -1313,7 +1380,7 @@ impl Resume {
 ///   told from one Codex never wrote (slice 6a2 decision 4). So is agy's transcript: the file exists from the
 ///   first prompt, so a missing one starts fresh.
 pub(super) fn resume_session(st: &AppState, tab: &str, agent: Option<&str>) -> Result<Resume, &'static str> {
-    let Some(agent @ ("claude" | "codex" | "antigravity" | "qwen")) = agent else {
+    let Some(agent @ ("claude" | "codex" | "antigravity" | "qwen" | "copilot")) = agent else {
         return Ok(Resume::Last);
     };
     let Some(meta) = st.history().latest_for_tab_of(tab, agent) else {
@@ -2514,6 +2581,207 @@ mod tests {
         let st = AppState::new("t".into(), 1, Vec::new(), home.path().to_path_buf(), Vec::new());
         note_qwen(&st, "t1", QWEN_ID, work.path(), 1);
         assert_eq!(resume_session(&st, "t1", Some("qwen")), Ok(Resume::Fresh));
+    }
+
+    const COPILOT_ID: &str = "00000000-0000-4000-8000-000000000004";
+
+    /// A state whose Copilot search is exactly `dirs` and `local_app_data`, and whose Copilot files are under `home`.
+    /// Nothing here reads the real PATH, `LOCALAPPDATA` or `~/.copilot`, and nothing is run.
+    fn copilot_state(
+        family: ShellFamily,
+        dirs: Vec<PathBuf>,
+        local_app_data: Option<PathBuf>,
+        copilot_home: &std::path::Path,
+    ) -> AppState {
+        let profile = marshell_protocol::api::Profile {
+            id: "p".into(),
+            name: "p".into(),
+            command: vec!["pwsh.exe".into()],
+            family,
+            cwd: None,
+            env: Vec::new(),
+            shell_integration: false,
+            terminal_theme: None,
+            detected: true,
+        };
+        let home = tempfile::tempdir().unwrap().keep();
+        AppState::new("t".into(), 1, Vec::new(), home, vec![profile])
+            .with_copilot_search(dirs, local_app_data)
+            .with_copilot_home(copilot_home.to_path_buf())
+    }
+
+    /// An empty `file` in `<root>/<segments...>`; the folder is returned.
+    fn folder_with(root: &std::path::Path, segments: &[&str], file: &str) -> PathBuf {
+        let dir = segments.iter().fold(root.to_path_buf(), |dir, s| dir.join(s));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(file), "").unwrap();
+        dir
+    }
+
+    fn resolve_copilot(st: &AppState, resume: Option<ResumeTarget<'_>>) -> Result<Resolved, ApiError> {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(resolve(st, Some("p"), Some("copilot"), None, resume, None, None))
+    }
+
+    #[test]
+    fn a_new_copilot_tab_runs_the_real_exe_with_a_session_id() {
+        let root = tempfile::tempdir().unwrap();
+        let shim = folder_with(root.path(), &["VS Code", "copilot-shim"], "copilot.exe");
+        let real = folder_with(root.path(), &["npm"], "copilot.exe");
+        let st = copilot_state(ShellFamily::PowerShell, vec![shim, real.clone()], None, root.path());
+        let run = resolve_copilot(&st, None).unwrap();
+        let id = run
+            .session_id
+            .clone()
+            .expect("a new Copilot launch picks its session id");
+        let exe = real.join("copilot.exe");
+        assert_eq!(
+            run.command.as_deref(),
+            Some(format!("& '{}' --session-id {id}", exe.display()).as_str())
+        );
+        assert!(!run.command.as_deref().unwrap().contains("copilot-shim"));
+        assert_eq!(id.len(), 36);
+        // Each launch picks its own.
+        assert_ne!(resolve_copilot(&st, None).unwrap().session_id, Some(id.clone()));
+
+        // The core links the tab to that id at once, so a Restart finds it with the hooks off as well.
+        let work = root.path().join("work");
+        st.registry().reserve(
+            "t1",
+            crate::registry::Relaunch {
+                elevated: false,
+                profile_id: "p".into(),
+                agent: Some("copilot".into()),
+                cwd: work.to_string_lossy().into_owned(),
+                mode: None,
+                name: "Copilot CLI".into(),
+                preset: None,
+            },
+        );
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(link_launched_session(
+                &st,
+                "t1",
+                run.session_id.as_deref(),
+                &work.to_string_lossy(),
+            ));
+        let linked = st.history().latest_for_tab_of("t1", "copilot").expect("linked");
+        assert_eq!(linked.session_id, id);
+        assert_eq!(
+            std::path::PathBuf::from(&linked.transcript_path),
+            root.path()
+                .join(".copilot")
+                .join("session-state")
+                .join(&id)
+                .join("events.jsonl")
+        );
+        assert_eq!(linked.cwd, work.to_string_lossy());
+    }
+
+    #[test]
+    fn a_copilot_launch_with_only_the_shim_is_refused_with_the_copy() {
+        let root = tempfile::tempdir().unwrap();
+        let shim = folder_with(root.path(), &["VS Code", "copilot-shim"], "copilot.cmd");
+        let st = copilot_state(ShellFamily::PowerShell, vec![shim], None, root.path());
+        let refused = resolve_copilot(&st, None).err().expect("the shim is not launched");
+        assert_eq!(
+            refused,
+            (
+                StatusCode::BAD_REQUEST,
+                "Only VS Code's copilot shim was found. Install Copilot CLI with winget install GitHub.Copilot, then try again."
+                    .to_string()
+            )
+        );
+        let empty = copilot_state(ShellFamily::PowerShell, Vec::new(), None, root.path());
+        assert_eq!(
+            resolve_copilot(&empty, None).err().unwrap(),
+            (
+                StatusCode::BAD_REQUEST,
+                "Copilot CLI isn't installed, or isn't on PATH.".to_string()
+            )
+        );
+        // The shim is no way to know the program is there for anything else either.
+        let finder = st.agent_finder(&[]);
+        assert_eq!(finder.path_of("copilot"), None);
+        assert!(!finder.on_path("copilot"));
+    }
+
+    #[test]
+    fn a_copilot_launch_in_wsl_runs_the_distros_own_copilot() {
+        let root = tempfile::tempdir().unwrap();
+        let st = copilot_state(ShellFamily::Wsl, Vec::new(), None, root.path());
+        let run = resolve_copilot(&st, None).unwrap();
+        assert_eq!(run.session_id, None);
+        assert!(
+            run.command.as_deref().unwrap().ends_with("copilot"),
+            "{:?}",
+            run.command
+        );
+    }
+
+    /// A Copilot hook body for `id` in `tab`, given the way the core records it.
+    fn note_copilot(st: &AppState, tab: &str, id: &str, dir: &std::path::Path, at_ms: u64) -> std::path::PathBuf {
+        st.registry().reserve(
+            tab,
+            crate::registry::Relaunch {
+                elevated: false,
+                profile_id: "p".into(),
+                agent: Some("copilot".into()),
+                cwd: dir.to_string_lossy().into_owned(),
+                mode: None,
+                name: "Copilot CLI".into(),
+                preset: None,
+            },
+        );
+        let body = crate::agents::copilot::link_body(
+            &serde_json::json!({"sessionId": id, "cwd": dir.to_string_lossy(), "hook_event_name": "sessionStart"}),
+            st.copilot_dir().as_deref().unwrap(),
+        )
+        .unwrap();
+        st.history().note_event("copilot", tab, None, &body, at_ms, None);
+        st.copilot_dir()
+            .unwrap()
+            .join("session-state")
+            .join(id)
+            .join("events.jsonl")
+    }
+
+    #[test]
+    fn a_copilot_tab_resumes_its_chosen_session() {
+        let root = tempfile::tempdir().unwrap();
+        let real = folder_with(root.path(), &["npm"], "copilot.cmd");
+        let st = copilot_state(ShellFamily::PowerShell, vec![real], None, root.path());
+        let work = tempfile::tempdir().unwrap();
+        let events = note_copilot(&st, "t1", COPILOT_ID, work.path(), 1);
+        std::fs::create_dir_all(events.parent().unwrap()).unwrap();
+        std::fs::write(&events, "{}\n").unwrap();
+        let resume = resume_session(&st, "t1", Some("copilot"));
+        assert_eq!(resume, Ok(Resume::Session(COPILOT_ID.to_string())));
+        // The tab's own: another tab continues.
+        assert_eq!(resume_session(&st, "t2", Some("copilot")), Ok(Resume::Last));
+        assert_eq!(resume_session(&st, "t1", Some("claude")), Ok(Resume::Last));
+
+        // `--resume=<id>` is one argument, and a resumed session picks no id of its own.
+        let run = resolve_copilot(&st, resume.unwrap().target()).unwrap();
+        assert_eq!(run.session_id, None);
+        let command = run.command.unwrap();
+        assert!(command.ends_with(&format!("--resume={COPILOT_ID}")), "{command}");
+        assert!(!command.contains("--session-id"), "{command}");
+    }
+
+    /// Copilot writes `events.jsonl` with the session; one that is not a file is a session that is gone: start fresh,
+    /// never with `--continue`, which could pick up another tab's.
+    #[test]
+    fn a_copilot_tab_whose_transcript_is_gone_starts_fresh() {
+        let root = tempfile::tempdir().unwrap();
+        let st = copilot_state(ShellFamily::PowerShell, Vec::new(), None, root.path());
+        let work = tempfile::tempdir().unwrap();
+        note_copilot(&st, "t1", COPILOT_ID, work.path(), 1);
+        assert_eq!(resume_session(&st, "t1", Some("copilot")), Ok(Resume::Fresh));
     }
 
     #[test]

@@ -2318,6 +2318,92 @@ async fn copilot_events_fold_into_the_tabs_live_status() {
     assert_eq!(again.state, LiveState::Idle);
 }
 
+const COPILOT_A: &str = "00000000-0000-4000-8000-000000000001";
+const COPILOT_B: &str = "00000000-0000-4000-8000-000000000009";
+
+/// The recorded status line `name` as session `id` reports it.
+fn copilot_statusline_of(name: &str, id: &str) -> serde_json::Value {
+    let mut body = copilot_statusline_body(name);
+    body["session_id"] = id.into();
+    body
+}
+
+/// The session id the core has linked the tab to, if any.
+fn copilot_linked(st: &AppState, tab: &str) -> Option<String> {
+    st.history().latest_for_tab_of(tab, "copilot").map(|m| m.session_id)
+}
+
+#[tokio::test]
+async fn a_late_session_end_from_clear_is_ignored() {
+    let st = copilot_state(Some(COPILOT));
+    let app = router(st.clone());
+    let p = project();
+    let tab = reserve_copilot(&st, &p.repo);
+
+    // Session A runs, then `/clear`'s status line names B before A's `sessionEnd` is handled.
+    post_copilot(&app, &tab, "sessionStart", "sessionStart").await;
+    post_copilot(&app, &tab, "userPromptSubmitted", "userPromptSubmitted").await;
+    assert_eq!(copilot_linked(&st, &tab).as_deref(), Some(COPILOT_A));
+    post_copilot_as(
+        &app,
+        "statusline",
+        Some(&tab),
+        &copilot_statusline_of("idle", COPILOT_B),
+    )
+    .await;
+    assert_eq!(copilot_linked(&st, &tab).as_deref(), Some(COPILOT_B));
+    let before = row(&st, &tab).live.unwrap();
+
+    let (code, _) = post_copilot(&app, &tab, "sessionEnd-clear", "sessionEnd").await;
+    let after = row(&st, &tab).live.unwrap();
+    // A's `sessionEnd` changed nothing: the row is still live and B is still the tab's session.
+    assert_eq!(code, StatusCode::NO_CONTENT);
+    assert_eq!(copilot_linked(&st, &tab).as_deref(), Some(COPILOT_B));
+    stop(&st, &tab);
+    assert_ne!(after.state, LiveState::Ended);
+    assert_eq!((after.state, after.since_ms), (before.state, before.since_ms));
+}
+
+#[tokio::test]
+async fn a_copilot_tab_follows_its_session_after_clear() {
+    let st = copilot_state(Some(COPILOT));
+    let app = router(st.clone());
+    let p = project();
+    let tab = reserve_copilot(&st, &p.repo);
+
+    post_copilot(&app, &tab, "sessionStart", "sessionStart").await;
+    post_copilot(&app, &tab, "sessionEnd-clear", "sessionEnd").await;
+    let ended = row(&st, &tab).live.unwrap();
+    assert_eq!(copilot_linked(&st, &tab).as_deref(), Some(COPILOT_A));
+
+    // `/clear`'s status line names the new id before any event does.
+    post_copilot_as(
+        &app,
+        "statusline",
+        Some(&tab),
+        &copilot_statusline_of("idle", COPILOT_B),
+    )
+    .await;
+    let linked = copilot_linked(&st, &tab);
+    let again = row(&st, &tab).live.unwrap();
+    // The same id again changes no link.
+    let at = st.history().latest_for_tab_of(&tab, "copilot").unwrap().updated_ms;
+    post_copilot_as(
+        &app,
+        "statusline",
+        Some(&tab),
+        &copilot_statusline_of("working", COPILOT_B),
+    )
+    .await;
+    let still = st.history().latest_for_tab_of(&tab, "copilot").unwrap();
+    stop(&st, &tab);
+
+    assert_eq!(ended.state, LiveState::Ended);
+    assert_eq!(linked.as_deref(), Some(COPILOT_B));
+    assert_eq!(again.state, LiveState::Idle);
+    assert_eq!((still.session_id.as_str(), still.updated_ms), (COPILOT_B, at));
+}
+
 #[tokio::test]
 async fn a_copilot_prompt_is_never_logged_or_kept() {
     let st = copilot_state(Some(COPILOT));
