@@ -38,6 +38,15 @@ fn tool_phrase(body: &Value) -> String {
     phrase.unwrap_or_else(|| format!("Using `{}`", first_line(tool, 60)))
 }
 
+/// Why Copilot stopped, as the row says it: the first line of its own `error.message` (`error` is
+/// `{message, name, stack?}`), else "API error".
+fn error_phrase(body: &Value) -> String {
+    str_at(body, "/error/message")
+        .map(|message| first_line(message.trim(), 120))
+        .filter(|line| !line.is_empty())
+        .unwrap_or_else(|| "API error".to_string())
+}
+
 /// The status after one hook event. None for an event that says nothing about status. Any event can be the first
 /// one a tab sees, so `prev` may be None for all of them.
 pub fn fold_event(prev: Option<&LiveStatus>, body: &Value, now_ms: u64) -> Option<LiveStatus> {
@@ -61,7 +70,7 @@ pub fn fold_event(prev: Option<&LiveStatus>, body: &Value, now_ms: u64) -> Optio
         },
         "agentStop" => (LiveState::Done, "Done".to_string()),
         "errorOccurred" if body.get("recoverable").and_then(Value::as_bool) == Some(false) => {
-            (LiveState::Idle, crate::agents::claude::status::error_phrase(body))
+            (LiveState::Idle, error_phrase(body))
         }
         "sessionEnd" => (LiveState::Ended, "Ended".to_string()),
         _ => return None,
@@ -91,12 +100,13 @@ pub fn fold_statusline(prev: Option<&LiveStatus>, body: &Value, now_ms: u64) -> 
         .pointer("/context_window/context_window_size")
         .and_then(Value::as_f64)
         .unwrap_or(0.0);
-    if window > 0.0 {
-        next.context_pct = body
-            .pointer("/context_window/used_percentage")
+    next.context_pct = if window > 0.0 {
+        body.pointer("/context_window/used_percentage")
             .and_then(Value::as_f64)
-            .and_then(pct_of);
-    }
+            .and_then(pct_of)
+    } else {
+        None
+    };
     next
 }
 
@@ -274,8 +284,17 @@ mod tests {
         });
         let working = fold(None, &hook!("userPromptSubmitted", "userPromptSubmitted"), 5);
         let live = fold(Some(&working), &body, 9);
-        assert_eq!((live.state, live.phrase.as_str()), (LiveState::Idle, "API error"));
+        // Copilot's own message, first line only; Claude Code's error names are not Copilot's.
+        assert_eq!((live.state, live.phrase.as_str()), (LiveState::Idle, "boom"));
         assert_eq!(live.since_ms, 9);
+        let mut two_lines = body.clone();
+        two_lines["error"]["message"] = json!("Model call failed\nat stack");
+        assert_eq!(fold(Some(&working), &two_lines, 9).phrase, "Model call failed");
+        for error in [json!({"name": "Error"}), json!({"message": "  "}), json!("rate_limit")] {
+            let mut other = body.clone();
+            other["error"] = error;
+            assert_eq!(fold(Some(&working), &other, 9).phrase, "API error");
+        }
     }
 
     #[test]
@@ -349,5 +368,9 @@ mod tests {
             .unwrap()
             .remove("context_window_size");
         assert_eq!(fold_statusline(None, &gone, 5).context_pct, None);
+        // A known percentage doesn't linger once the window is unknown.
+        let known = fold_statusline(None, &fixture!("statusline", "working"), 5);
+        assert_eq!(known.context_pct, Some(1));
+        assert_eq!(fold_statusline(Some(&known), &gone, 6).context_pct, None);
     }
 }
