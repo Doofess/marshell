@@ -497,8 +497,9 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
         for (_, entry) in &entries {
             disabled.extend(strings(entry.get("disabledMcpjsonServers")));
         }
-        // Approval: the user settings and `settings.local.json` always count; the committed `settings.json` only in a
-        // folder whose trust dialog was accepted.
+        // Approval counts only in a folder whose trust dialog was accepted: Claude Code starts no project server before
+        // that, and a cloned repo can ship its own `settings.local.json` (decision 17). Trust is read from the folder's
+        // own entry; one inherited from a parent folder isn't, so such a server reads as not approved.
         let trusted = entries
             .iter()
             .any(|(_, e)| e.get("hasTrustDialogAccepted").and_then(Value::as_bool) == Some(true));
@@ -507,9 +508,9 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
                 s.get("enableAllProjectMcpServers").and_then(Value::as_bool) == Some(true)
                     || strings(s.get("enabledMcpjsonServers")).iter().any(|n| n == name)
             };
-            [&user_settings, &local].into_iter().flatten().any(&counts)
-                || entries.iter().any(|(_, e)| counts(e))
-                || (trusted && shared.as_ref().is_some_and(counts))
+            trusted
+                && ([&user_settings, &local, &shared].into_iter().flatten().any(&counts)
+                    || entries.iter().any(|(_, e)| counts(e)))
         };
         servers_in(
             mcp_json.as_ref().and_then(|v| v.get("mcpServers")),
@@ -942,19 +943,24 @@ mod tests {
             put(&r.claude_settings, &user.to_string());
         };
 
-        // a: approved in settings.local.json. b: only in the committed file, folder not trusted.
+        // Found in the 7c2 final review: Claude Code starts no project server in a folder whose trust dialog wasn't
+        // accepted, and a cloned repo can ship its own settings.local.json. So no approval counts without trust.
         setup(false, false);
         let inv = inventory(&r, std::slice::from_ref(&proj), &found);
-        assert!(server(&inv, "a").launch.is_ok());
-        assert_eq!(server(&inv, "b").launch, Err(NotMeasured::NotApproved));
+        for name in ["a", "b", "c", "d"] {
+            assert_eq!(server(&inv, name).launch, Err(NotMeasured::NotApproved), "{name}");
+        }
+        setup(false, true);
+        let inv = inventory(&r, std::slice::from_ref(&proj), &found);
         assert_eq!(server(&inv, "d").launch, Err(NotMeasured::NotApproved));
-        // c: the same as b, with the trust dialog accepted.
+        // Trusted: a is approved in settings.local.json, b and c in the committed file; d is not approved.
         setup(true, false);
         let inv = inventory(&r, std::slice::from_ref(&proj), &found);
+        assert!(server(&inv, "a").launch.is_ok());
         assert!(server(&inv, "c").launch.is_ok());
         assert_eq!(server(&inv, "d").launch, Err(NotMeasured::NotApproved));
-        // d: enableAllProjectMcpServers in the user settings.
-        setup(false, true);
+        // d: enableAllProjectMcpServers in the user settings, in a trusted folder.
+        setup(true, true);
         let inv = inventory(&r, std::slice::from_ref(&proj), &found);
         assert!(server(&inv, "d").launch.is_ok());
     }
