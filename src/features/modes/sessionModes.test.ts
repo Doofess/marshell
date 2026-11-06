@@ -188,6 +188,16 @@ describe("Antigravity never starts or switches in a Marshell-held strict mode (s
       expect(switchKind("qwen", "manual", "dont-ask", hooksOn)).toBe("unavailable");
     }
   });
+  it("Copilot starts Plan with --plan and Bypass with --allow-all", () => {
+    for (const hooksOn of [true, false]) {
+      expect(launchArgs("copilot", "plan", hooksOn), `plan ${hooksOn}`).toEqual({ args: ["--plan"], native: true });
+      expect(launchArgs("copilot", "bypass", hooksOn), `bypass ${hooksOn}`).toEqual({ args: ["--allow-all"], native: true });
+      expect(launchArgs("copilot", "manual", hooksOn), `manual ${hooksOn}`).toEqual({ args: [], native: true });
+      expect(launchArgs("copilot", "auto-edit", hooksOn)).toBeNull();
+      expect(launchArgs("copilot", "full-auto", hooksOn)).toBeNull();
+      expect(switchKind("copilot", "manual", "plan", hooksOn)).toBe("native");
+    }
+  });
   it("every_antigravity_mode_switch_is_native", () => {
     for (const hooksOn of [true, false]) for (const from of MODES) for (const to of MODES) expect(switchKind("antigravity", from, to, hooksOn), `${from} to ${to} ${hooksOn}`).toBe("native");
   });

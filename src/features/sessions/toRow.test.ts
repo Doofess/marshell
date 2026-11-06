@@ -59,6 +59,10 @@ describe("toRow", () => {
     const bell = toRow(info({ agent: "claude", live, attention: { message: null, since_ms: 1000 } }), PROFILES);
     expect(bell).toMatchObject({ status: "working" });
   });
+  it("a Copilot row waits for hooks and is not status limited", () => {
+    expect(toRow(info({ agent: "copilot" }), PROFILES)).toMatchObject({ agent: "copilot", status: "limited", phrase: "Status arrives with hooks" });
+    expect(toRow(info({ agent: "copilot" }), PROFILES, { copilot: "none" })).toMatchObject({ phrase: "Status limited · set up", setupLink: true });
+  });
   it("a Qwen row waits for hooks and is not status limited", () => {
     expect(toRow(info({ agent: "qwen" }), PROFILES)).toMatchObject({ agent: "qwen", status: "limited", phrase: "Status arrives with hooks" });
     expect(toRow(info({ agent: "qwen" }), PROFILES, { qwen: "none" })).toMatchObject({ phrase: "Status limited · set up", setupLink: true });

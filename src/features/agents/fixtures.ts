@@ -56,6 +56,18 @@ export const QWEN_SETUP: AgentSetup = {
   skill_path: "C:/h/.qwen/skills/marshell/SKILL.md",
 };
 
+/** Test input only: what the core sends for a Copilot CLI with no hooks of Marshell's yet. */
+export const COPILOT_SETUP: AgentSetup = {
+  ...SETUP,
+  agent: "copilot",
+  version: "1.0.106",
+  exe_path: "C:/l/GitHubCopilotCLI/copilot.exe",
+  settings_path: "C:/h/.copilot/settings.json",
+  hooks_path: "C:/h/.copilot/hooks/marshell.json",
+  skill: "unavailable",
+  skill_problem: "Marshell has no skill for Copilot CLI yet.",
+};
+
 const file = (path: string, diff: string): FilePreview => ({ path, scope: "user", applies: "newSessions", before_hash: "h0", diff, status: { kind: "changes" } }) as FilePreview;
 
 export const DIFF = '--- a/C:/h/.claude/settings.json\n+++ b/C:/h/.claude/settings.json\n@@ -1,1 +1,2 @@\n {\n+  "hooks": {}\n';

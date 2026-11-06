@@ -3,7 +3,7 @@ import type { AgentSetup } from "../../generated/AgentSetup";
 import { actions, consentProps, consentQueue, DEFAULT_WANT, hooksOffNotice, installRequest, liveStatusOn, rowSetupStart, setupLine, setupWant, startsOpen } from "./agentsState";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { FilePreview } from "../../generated/FilePreview";
-import { AGY_SETUP, CODEX_SETUP, PREVIEW, SETUP } from "./fixtures";
+import { AGY_SETUP, CODEX_SETUP, COPILOT_SETUP, PREVIEW, SETUP } from "./fixtures";
 
 const s = (patch: Partial<AgentSetup>): AgentSetup => ({ ...SETUP, ...patch });
 
@@ -286,5 +286,23 @@ describe("the skill in the consent card", () => {
     expect(startsOpen({ ...DEFAULT_WANT, skill: true }, "edited")).toBe(true);
     expect(startsOpen({ ...DEFAULT_WANT, skill: false }, "edited")).toBe(false);
     expect(startsOpen({ ...DEFAULT_WANT, skill: true }, "none")).toBe(false);
+  });
+});
+
+describe("Copilot CLI's setup line and actions", () => {
+  it("orphaned Copilot hooks say they block every tool call and name marshell.json", () => {
+    expect(setupLine({ ...COPILOT_SETUP, hooks: "orphaned" })).toBe(
+      "Marshell's hooks are in C:/h/.copilot/hooks/marshell.json, but the bridge at C:/m/bin/marshell-hook.exe is missing, so Copilot CLI blocks every tool call, outside Marshell too. Turn the hooks off, or set up again.",
+    );
+  });
+  it("installed Copilot hooks offer only Hooks off", () => {
+    expect(actions({ ...COPILOT_SETUP, hooks: "installed", approve_installed: false })).toEqual(["hooksOff"]);
+    expect(actions(COPILOT_SETUP)).toEqual(["setup"]);
+    expect(actions({ ...COPILOT_SETUP, hooks: "partial" })).toEqual(["setup", "hooksOff"]);
+    // The others offer Set up again while their approve hook is missing.
+    expect(actions({ ...AGY_SETUP, hooks: "installed", approve_installed: false })).toEqual(["setup", "hooksOff"]);
+  });
+  it("rowSetupStart opens Copilot's setup", () => {
+    expect(rowSetupStart("copilot")).toEqual({ setup: "copilot" });
   });
 });

@@ -21,7 +21,7 @@ import { catalogModes, offeredMode } from "../modes/sessionModes";
 import { shellKind } from "./toRow";
 
 /** The agents with a Rust adapter. Without a catalog these are all the live launcher lists, as before the core had one. */
-const ADAPTER_AGENTS = ["claude", "codex", "antigravity", "qwen"];
+const ADAPTER_AGENTS = ["claude", "codex", "antigravity", "qwen", "copilot"];
 const PROFILE_PREFIX = "profile:";
 const PRESET_PREFIX = "preset:";
 const TOOL_PREFIX = "tool:";
@@ -43,7 +43,7 @@ function agentProgram(a: CatalogAgent): LaunchProgram {
  */
 export function livePrograms(catalog: AgentCatalog | null, profiles: Profile[], tools?: ToolCatalog | null): LaunchProgram[] {
   const found = catalog === null ? null : catalog.agents.filter((a) => a.found);
-  const agents = found === null ? ADAPTER_AGENTS.filter((id) => id !== "qwen").map((id) => LAUNCH_PROGRAMS.find((p) => p.id === id)!) : found.map(agentProgram);
+  const agents = found === null ? ADAPTER_AGENTS.filter((id) => id !== "qwen" && id !== "copilot").map((id) => LAUNCH_PROGRAMS.find((p) => p.id === id)!) : found.map(agentProgram);
   const presets = (catalog?.presets ?? []).flatMap((preset): LaunchProgram[] => {
     const target = found?.find((a) => a.id === preset.agent);
     if (target === undefined) return [];

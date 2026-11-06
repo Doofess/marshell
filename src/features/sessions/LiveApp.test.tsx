@@ -99,7 +99,8 @@ describe("LiveApp: close", () => {
 
   it("names an agent for a sentence: the CLI's own name, the mark's name, or the id", () => {
     expect(agentLabel("claude")).toBe("Claude Code");
-    expect(agentLabel("copilot")).toBe("GitHub Copilot");
+    expect(agentLabel("copilot")).toBe("Copilot CLI");
+    expect(agentLabel("cursor")).toBe("Cursor");
     expect(agentLabel("my-cli")).toBe("my-cli");
   });
 
