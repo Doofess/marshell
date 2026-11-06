@@ -218,7 +218,7 @@ async fn run_once(st: &AppState, read: ReadFacts) -> Option<(u32, u64)> {
     match facts {
         Ok(facts) => {
             let mut items = checks::items(&facts.facts, &facts.stopped, banners_on(st));
-            items.extend(ext::items(&facts.ext));
+            items.extend(ext::items(&facts.ext, &ext::Signals::default()));
             // The CLI doctors' last findings ride along in every report. The lock is released at once.
             let (cli_items, cli_checked_at_ms) = {
                 let cli = doctor.cli.lock().unwrap_or_else(|e| e.into_inner());
@@ -726,7 +726,7 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
     // The files as they are now: the report may be minutes old.
     let gathered = facts_of(st);
     let mut now = checks::items(&gathered.facts, &gathered.stopped, banners_on(st));
-    now.extend(ext::items(&gathered.ext));
+    now.extend(ext::items(&gathered.ext, &ext::Signals::default()));
     let entries = managed_entries(st);
 
     let mut picked: Vec<(DoctorItem, &AgentFacts)> = Vec::new();
@@ -758,7 +758,9 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
             }
             Some("retention") => edits.push(retention_edit(facts)?),
             // A server or a skill turned off: the switch is read again from the inventory just gathered.
-            Some("mcp" | "skill") => switches.push(ext::switch_of(&gathered.ext, &item.id).ok_or_else(cant_fix)?),
+            Some("mcp" | "skill") => {
+                switches.push(ext::switch_of(&gathered.ext, &ext::Signals::default(), &item.id).ok_or_else(cant_fix)?)
+            }
             _ => return Err(cant_fix()),
         }
     }

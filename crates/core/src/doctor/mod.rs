@@ -4,8 +4,10 @@ pub mod checks;
 pub mod cli;
 pub mod ext;
 pub mod frontmatter;
+pub mod measure;
 pub mod probe;
 pub mod state;
+pub mod usage;
 
 pub use checks::{AgentFacts, FileState, RETENTION_OTHERS, display_name, issues, items};
 pub use state::{CliRun, DoctorState, PendingFix, RunFlags};
