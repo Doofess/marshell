@@ -1428,7 +1428,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
         - **Claude Code:**
           - A user skill gets `skillOverrides.<name>: "off"` in `~/.claude/settings.json`, and a project skill gets it in the project's `.claude/settings.local.json`.
           - A `.mcp.json` server goes in `disabledMcpjsonServers` in the project's `.claude/settings.local.json`.
-          - A local-scope server goes in `disabledMcpServers` in that project's entry in `~/.claude.json`, but only if the plan's check shows that a running Claude Code doesn't write over it. Otherwise it is report-only and points to `/mcp`.
+          - A local-scope server goes in `disabledMcpServers` in that project's entry in `~/.claude.json`, but only if the plan's check shows that a running Claude Code doesn't write over it. Otherwise it is report-only and points to `/mcp`. The 7c1 live check kept the switch: claude 2.1.318 rewrote the file and kept the key, and `claude mcp list` showed the server as "Disabled for this project" (`docs/research/2026-11-06-doctor-7c1-live-check.md`).
           - A user-level server is report-only, because Claude Code can turn it off only per project. Its item gives `claude mcp remove <name> -s user`.
         - **Codex:**
           - A server in `~/.codex/config.toml` gets `enabled = false`.
