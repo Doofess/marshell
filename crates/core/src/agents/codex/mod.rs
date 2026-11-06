@@ -6,6 +6,7 @@ pub mod request;
 pub mod rollout;
 pub mod status;
 pub mod trust;
+pub mod usage;
 
 pub use super::common::Gate;
 

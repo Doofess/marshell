@@ -9,6 +9,7 @@ use super::agents::{
     qwen_setup_of, settings_file, setup_of,
 };
 use super::doctor_ext;
+use super::doctor_usage;
 use crate::agents::common::Gate;
 use crate::config::guard::unverbatim;
 use crate::config::hash::{hash_bytes, hash_file};
@@ -52,6 +53,13 @@ pub async fn run(State(st): State<AppState>) -> (StatusCode, Json<DoctorSummary>
 /// `POST /v1/doctor/cli`: runs the CLI doctors, or joins the run that is going, and answers 202 with the summary.
 pub async fn cli_run(State(st): State<AppState>) -> (StatusCode, Json<DoctorSummary>) {
     request_cli_run(&st);
+    (StatusCode::ACCEPTED, Json(st.doctor().summary.borrow().clone()))
+}
+
+/// `POST /v1/doctor/measure`: starts "Measure MCP servers", or joins the run that is going, and answers 202 with the
+/// summary.
+pub async fn measure_run(State(st): State<AppState>) -> (StatusCode, Json<DoctorSummary>) {
+    super::doctor_measure::request_measure(&st);
     (StatusCode::ACCEPTED, Json(st.doctor().summary.borrow().clone()))
 }
 
@@ -218,7 +226,16 @@ async fn run_once(st: &AppState, read: ReadFacts) -> Option<(u32, u64)> {
     match facts {
         Ok(facts) => {
             let mut items = checks::items(&facts.facts, &facts.stopped, banners_on(st));
-            items.extend(ext::items(&facts.ext));
+            // The last measurement is cloned under the lock, which is released at once.
+            let measured = doctor.measure.lock().unwrap_or_else(|e| e.into_inner()).results.clone();
+            let measured_at_ms = measured.as_ref().map(|m| m.at_ms);
+            let signals = ext::Signals {
+                usage: Some(&facts.usage),
+                projects: &facts.projects,
+                now_ms: now_ms(),
+                measured: measured.as_ref(),
+            };
+            items.extend(ext::items(&facts.ext, &signals));
             // The CLI doctors' last findings ride along in every report. The lock is released at once.
             let (cli_items, cli_checked_at_ms) = {
                 let cli = doctor.cli.lock().unwrap_or_else(|e| e.into_inner());
@@ -232,6 +249,7 @@ async fn run_once(st: &AppState, read: ReadFacts) -> Option<(u32, u64)> {
                 checked_at_ms: now,
                 duration_ms: started.elapsed().as_millis() as u64,
                 cli_checked_at_ms,
+                measured_at_ms,
             });
             Some((issues, now))
         }
@@ -248,7 +266,7 @@ fn banners_on(st: &AppState) -> bool {
     n.needs_you.banner || n.done.banner || n.error.banner
 }
 
-fn now_ms() -> u64 {
+pub(super) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_millis() as u64)
@@ -269,13 +287,26 @@ pub(crate) fn facts_of(st: &AppState) -> Gathered {
     let facts: Vec<AgentFacts> = facts.into_iter().chain(distro).collect();
     // The MCP servers and skills are read after the facts, so an agent whose facts failed is left out.
     let ext = doctor_ext::inventories(st, &facts, &distro_homes);
-    let mut ext_homes: Vec<PathBuf> = doctor_ext::windows_roots(st).map(|r| r.home).into_iter().collect();
+    let roots = doctor_ext::windows_roots(st);
+    // What each CLI's history shows was used: the new lines are read now and kept in usage.json.
+    let usage = doctor_usage::scan_all(st, &ext, roots.as_ref(), now_ms());
+    let projects = if roots.is_some() {
+        crate::projects::list(&st.0.home)
+            .into_iter()
+            .map(|p| PathBuf::from(p.path))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let mut ext_homes: Vec<PathBuf> = roots.map(|r| r.home).into_iter().collect();
     ext_homes.extend(distro_homes.into_iter().map(|(_, home)| home));
     Gathered {
         facts,
         stopped,
         ext,
         ext_homes,
+        usage,
+        projects,
     }
 }
 
@@ -315,6 +346,10 @@ pub(crate) struct Gathered {
     pub ext: Vec<Inventory>,
     /// The user homes those were read under: Windows' and each distro's. A fix's edit is `User` scope under one.
     pub ext_homes: Vec<PathBuf>,
+    /// What the histories showed was used, as of this read (Windows CLIs only).
+    pub usage: crate::doctor::usage::UsageStore,
+    /// Marshell's projects, which tell where a user-level item was used.
+    pub projects: Vec<PathBuf>,
 }
 
 /// The distros Marshell set up: the detected ones that hold a path of `managed.json`. This reads no distro's file.
@@ -726,7 +761,21 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
     // The files as they are now: the report may be minutes old.
     let gathered = facts_of(st);
     let mut now = checks::items(&gathered.facts, &gathered.stopped, banners_on(st));
-    now.extend(ext::items(&gathered.ext));
+    // The same signals as the run that made the report, so the ids the report holds are the ids found here.
+    let measured = st
+        .doctor()
+        .measure
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .results
+        .clone();
+    let signals = ext::Signals {
+        usage: Some(&gathered.usage),
+        projects: &gathered.projects,
+        now_ms: now_ms(),
+        measured: measured.as_ref(),
+    };
+    now.extend(ext::items(&gathered.ext, &signals));
     let entries = managed_entries(st);
 
     let mut picked: Vec<(DoctorItem, &AgentFacts)> = Vec::new();
@@ -757,8 +806,14 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
                 edits.extend(changes.edits);
             }
             Some("retention") => edits.push(retention_edit(facts)?),
-            // A server or a skill turned off: the switch is read again from the inventory just gathered.
-            Some("mcp" | "skill") => switches.push(ext::switch_of(&gathered.ext, &item.id).ok_or_else(cant_fix)?),
+            // A server or a skill turned off: the switch is read again from the inventory just gathered. Two items for one
+            // server (a failed measurement and an unused server) give the same switch, which is taken once.
+            Some("mcp" | "skill" | "mcpfail" | "mcpunused" | "skillunused") => {
+                let switch = ext::switch_of(&gathered.ext, &signals, &item.id).ok_or_else(cant_fix)?;
+                if !switches.contains(&switch) {
+                    switches.push(switch);
+                }
+            }
             _ => return Err(cant_fix()),
         }
     }
@@ -1123,7 +1178,7 @@ fn undo_of(st: &AppState) -> Result<Option<ApplyResult>, Refusal> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(in crate::server) mod tests {
     use super::*;
     use marshell_protocol::doctor::DoctorGroup;
 
@@ -1282,6 +1337,8 @@ mod tests {
                 stopped: Vec::new(),
                 ext: Vec::new(),
                 ext_homes: Vec::new(),
+                usage: Default::default(),
+                projects: Vec::new(),
             }
         });
 
@@ -1442,11 +1499,11 @@ mod tests {
     }
 
     /// A state over folders under `root` with every path pinned, as the route tests do.
-    fn pinned(root: &Path) -> AppState {
+    pub(in crate::server) fn pinned(root: &Path) -> AppState {
         pinned_with(root, Vec::new())
     }
 
-    fn pinned_with(root: &Path, profiles: Vec<marshell_protocol::api::Profile>) -> AppState {
+    pub(in crate::server) fn pinned_with(root: &Path, profiles: Vec<marshell_protocol::api::Profile>) -> AppState {
         use crate::projects::{canonical, record};
         let root = canonical(root);
         let home = root.join("home");

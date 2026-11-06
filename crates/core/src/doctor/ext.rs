@@ -25,6 +25,12 @@ pub struct ExtRoots {
     pub codex_home: PathBuf,
     /// QWEN_HOME or `<home>/.qwen`.
     pub qwen_dir: PathBuf,
+    /// Marshell's own `ENABLE_TOOL_SEARCH`, which Claude Code reads when the user settings don't set it.
+    pub claude_tool_search: Option<String>,
+    /// `QWEN_RUNTIME_DIR`, else `qwen_dir`: where Qwen Code keeps its chats.
+    pub qwen_runtime: PathBuf,
+    /// `<home>/.gemini`.
+    pub gemini_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,6 +93,140 @@ pub enum Transport {
     Nothing,
 }
 
+/// How a CLI starts a stdio server, for "Measure MCP servers".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Launch {
+    pub command: String,
+    pub args: Vec<String>,
+    /// The entry's own variables, as written. Never shown or logged.
+    pub env: Vec<(String, String)>,
+    pub inherit: Inherit,
+    /// Variables the CLI sets for the server itself (CLAUDE_PROJECT_DIR, CLAUDE_PLUGIN_ROOT).
+    pub set: Vec<(String, String)>,
+    pub cwd: Option<PathBuf>,
+    pub expand: Expand,
+    pub timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Inherit {
+    All,
+    Only(Vec<String>),
+}
+
+/// How the CLI expands variables in command, args, env values and cwd.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Expand {
+    None,
+    /// `${VAR}`, `${VAR:-default}`
+    Braces,
+    /// `$VAR`, `${VAR}`
+    Dollar,
+}
+
+/// Why a server isn't started by "Measure MCP servers".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotMeasured {
+    Remote,
+    NotApproved,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CostRule {
+    pub listing: Listing,
+    /// A tool whose `_meta` has this key set to `true` loads in full whatever `listing` says.
+    pub always_load_meta: Option<&'static str>,
+    /// When set, only these tools count.
+    pub only: Option<Vec<String>>,
+    /// These tools never count.
+    pub except: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Listing {
+    /// Each tool's full definition: `prefix` + name, its description cut at `desc_cap`, its input schema.
+    Full { prefix: String, desc_cap: Option<usize> },
+    /// Each tool's name (`prefix` + name), and the server's instructions cut at `instructions_cap` (Claude Code).
+    Names {
+        prefix: String,
+        instructions_cap: Option<usize>,
+    },
+    /// One line: `namespace`, and the first line of the instructions cut at `cap` (Codex).
+    Namespace { namespace: String, cap: usize },
+    /// `heading`, then each tool's name and the first line of its description, cut at `cap` (Qwen Code).
+    FirstLines { heading: String, cap: usize },
+    /// Each tool's name only (Antigravity).
+    NamesOnly,
+    /// Claude Code's `auto:N`: Full while every such server's full cost totals under `percent`% of 200,000 tokens,
+    /// else Names.
+    FullUnder {
+        percent: u32,
+        prefix: String,
+        desc_cap: Option<usize>,
+        instructions_cap: Option<usize>,
+    },
+}
+
+impl CostRule {
+    /// A rule that lists each tool's name only, with no filter.
+    pub fn names_only() -> CostRule {
+        CostRule {
+            listing: Listing::NamesOnly,
+            always_load_meta: None,
+            only: None,
+            except: Vec::new(),
+        }
+    }
+}
+
+/// How the CLI's history names a server's calls.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UsedAs {
+    ToolPrefix(String),
+    Server(String),
+    Unknown,
+}
+
+/// How the CLI's history names a skill's use.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SkillUse {
+    Name(String),
+    File(PathBuf),
+}
+
+/// The move hint of a broad-scope item: (name, project) -> the sentence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(unpredictable_function_pointer_comparisons)]
+pub struct Hints {
+    pub move_server: fn(&str, &Path) -> String,
+    pub move_skill: fn(&str, &Path) -> String,
+}
+
+impl Default for Hints {
+    fn default() -> Self {
+        fn generic(_: &str, _: &Path) -> String {
+            "Move it to that project.".to_string()
+        }
+        Hints {
+            move_server: generic,
+            move_skill: generic,
+        }
+    }
+}
+
+/// Claude Code and Qwen Code both name a tool's server with every character outside `[A-Za-z0-9_-]` turned into `_`.
+pub fn sanitize_tool_part(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Server {
     pub name: String,
@@ -95,6 +235,9 @@ pub struct Server {
     pub transport: Transport,
     pub off: bool,
     pub switch: Result<Switch, NoSwitch>,
+    pub launch: Result<Launch, NotMeasured>,
+    pub cost: CostRule,
+    pub used_as: UsedAs,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,6 +264,15 @@ pub struct Skill {
     pub off: bool,
     pub hidden: bool,
     pub switch: Result<Switch, NoSwitch>,
+    pub used_as: Vec<SkillUse>,
+    /// The skill folder's creation time, epoch ms.
+    pub created_ms: Option<u64>,
+}
+
+/// The skill folder's creation time in epoch ms, for `Skill::created_ms`.
+pub fn created_ms(skill_file: &Path) -> Option<u64> {
+    let t = std::fs::metadata(skill_file.parent()?).ok()?.created().ok()?;
+    u64::try_from(t.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis()).ok()
 }
 
 /// What a CLI cuts. Set by its reader.
@@ -141,6 +293,9 @@ pub struct Inventory {
     pub skills: Vec<Skill>,
     /// Config files that exist and don't parse: (file, message).
     pub unreadable: Vec<(PathBuf, String)>,
+    pub hints: Hints,
+    /// One sentence about how this CLI's cost is counted, if it needs one.
+    pub cost_note: Option<&'static str>,
 }
 
 /// What an `unreadable` file's message says, in one sentence that never quotes the file: the Info item shows it, and a
@@ -188,7 +343,7 @@ pub fn key(file: &Path, name: &str) -> String {
 
 /// An item's key: `key(file, name)`, with a project item's folder added to the name, because one file can hold the
 /// same name for several projects (Claude Code's local-scope servers in `~/.claude.json`).
-fn item_key(file: &Path, origin: &Origin, name: &str) -> String {
+pub(crate) fn item_key(file: &Path, origin: &Origin, name: &str) -> String {
     match origin {
         Origin::Project(p) => key(
             file,
@@ -202,14 +357,24 @@ fn item_key(file: &Path, origin: &Origin, name: &str) -> String {
     }
 }
 
+/// What the report knows besides the inventories: the usage store, the last measurement, the projects Marshell has
+/// seen and the time. Every engine function takes `now_ms`; only the server reads the clock.
+#[derive(Default)]
+pub struct Signals<'a> {
+    pub usage: Option<&'a super::usage::UsageStore>,
+    pub measured: Option<&'a super::measure::Measurements>,
+    pub projects: &'a [PathBuf],
+    pub now_ms: u64,
+}
+
 /// The report's items for these inventories.
-pub fn items(inv: &[Inventory]) -> Vec<DoctorItem> {
-    build(inv).into_iter().map(|(item, _)| item).collect()
+pub fn items(inv: &[Inventory], sig: &Signals) -> Vec<DoctorItem> {
+    build(inv, sig).into_iter().map(|(item, _)| item).collect()
 }
 
 /// The switch of the fixable item `id` in these inventories, or None.
-pub fn switch_of(inv: &[Inventory], id: &str) -> Option<Switch> {
-    build(inv)
+pub fn switch_of(inv: &[Inventory], sig: &Signals, id: &str) -> Option<Switch> {
+    build(inv, sig)
         .into_iter()
         .find(|(item, _)| item.fixable && item.id == id)
         .and_then(|(_, sw)| sw)
@@ -237,17 +402,37 @@ fn rank(agent: &str) -> usize {
     ORDER.iter().position(|a| *a == agent).unwrap_or(ORDER.len())
 }
 
-fn build(inv: &[Inventory]) -> Vec<(DoctorItem, Option<Switch>)> {
+fn build(inv: &[Inventory], sig: &Signals) -> Vec<(DoctorItem, Option<Switch>)> {
     let mut sorted: Vec<&Inventory> = inv.iter().collect();
     sorted.sort_by(|a, b| (&a.distro, rank(a.agent)).cmp(&(&b.distro, rank(b.agent))));
     let mut out = Vec::new();
     for i in sorted.into_iter().filter(|i| i.found) {
+        let start = out.len();
         inventory_items(i, &mut out);
+        super::measure::items(i, sig.measured, &mut out);
+        // An item key that already has a Broken item ("can't start", "doesn't load", "didn't start") gets no usage verdict.
+        let broken: std::collections::HashSet<String> = out[start..]
+            .iter()
+            .filter_map(|(item, _)| {
+                ["mcp", "skill", "mcpfail"].iter().find_map(|kind| {
+                    let rest = item.id.strip_prefix(&format!("{kind}.{}.", i.agent))?;
+                    Some(rest.split('@').next().unwrap_or(rest).to_string())
+                })
+            })
+            .collect();
+        super::usage::items(
+            i,
+            sig.usage,
+            &|k| broken.contains(k),
+            sig.projects,
+            sig.now_ms,
+            &mut out,
+        );
     }
     out
 }
 
-fn tokens(chars: usize) -> usize {
+pub(crate) fn tokens(chars: usize) -> usize {
     chars.div_ceil(4)
 }
 
@@ -471,7 +656,7 @@ fn inventory_items(inv: &Inventory, out: &mut Vec<(DoctorItem, Option<Switch>)>)
 }
 
 /// Sets `fixable` and `cannot_fix` (and the fix note) on a Broken item from its switch.
-fn fixability(
+pub(crate) fn fixability(
     item: &mut DoctorItem,
     switch: &Result<Switch, NoSwitch>,
     cli: &str,
@@ -505,6 +690,8 @@ mod tests {
             servers: vec![],
             skills: vec![],
             unreadable: vec![],
+            hints: Hints::default(),
+            cost_note: None,
         }
     }
 
@@ -516,6 +703,9 @@ mod tests {
             transport,
             off: false,
             switch,
+            launch: Err(NotMeasured::NotApproved),
+            cost: CostRule::names_only(),
+            used_as: UsedAs::Unknown,
         }
     }
 
@@ -538,6 +728,8 @@ mod tests {
             off: false,
             hidden: false,
             switch: Err(NoSwitch::NoSkillSwitch),
+            used_as: Vec::new(),
+            created_ms: None,
         }
     }
 
@@ -577,7 +769,7 @@ mod tests {
             Err(NoSwitch::ClaudeUser),
         ));
         let inv = [i];
-        let items = items(&inv);
+        let items = items(&inv, &Signals::default());
         let ids: Vec<&str> = with_prefix(&items, "mcp.").iter().map(|i| i.id.as_str()).collect();
         assert_eq!(ids.len(), 3);
         let mut unique = ids.clone();
@@ -587,7 +779,7 @@ mod tests {
         let pointers: Vec<String> = with_prefix(&items, "mcp.")
             .iter()
             .filter(|it| it.fixable)
-            .map(|it| match switch_of(&inv, &it.id) {
+            .map(|it| match switch_of(&inv, &Signals::default(), &it.id) {
                 Some(Switch::JsonAdd { pointer, .. }) => pointer,
                 other => panic!("{other:?}"),
             })
@@ -616,7 +808,7 @@ mod tests {
         dup.state = SkillState::Missing("description");
         dup.switch = Err(NoSwitch::SameName);
         i.skills.push(dup);
-        let items = items(&[i]);
+        let items = items(&[i], &Signals::default());
         let said = |prefix: &str| with_prefix(&items, prefix)[0].cannot_fix.clone();
         assert_eq!(
             said("mcp.").as_deref(),
@@ -653,7 +845,7 @@ mod tests {
             missing("C:/x/gone.exe"),
             switch(),
         ));
-        let items = items(&[i]);
+        let items = items(&[i], &Signals::default());
         assert_eq!(items.len(), 2);
         let on_path = items.iter().find(|it| it.title.contains("files")).unwrap();
         assert_eq!(on_path.group, DoctorGroup::Broken);
@@ -684,7 +876,7 @@ mod tests {
                 name: "files".into(),
             }),
         ));
-        let items = items(&[i]);
+        let items = items(&[i], &Signals::default());
         assert_eq!(items.len(), 1);
         let it = &items[0];
         assert_eq!(it.id, format!("mcp.codex.{}", key(&file, "files")));
@@ -709,7 +901,7 @@ mod tests {
             Transport::Nothing,
             Err(NoSwitch::Shared(PathBuf::from("C:/p/.qwen/settings.json"))),
         ));
-        let items = items(&[i]);
+        let items = items(&[i], &Signals::default());
         assert_eq!(items[0].detail, "Its entry has no command and no URL.");
         assert!(!items[0].fixable);
     }
@@ -733,7 +925,7 @@ mod tests {
         for (no, expected) in cases {
             let mut i = inv("claude");
             i.servers.push(server("s", "C:/h/.claude.json", missing("zz"), Err(no)));
-            let items = items(&[i]);
+            let items = items(&[i], &Signals::default());
             assert_eq!(items.len(), 1);
             assert!(!items[0].fixable);
             assert_eq!(items[0].cannot_fix.as_deref(), Some(expected));
@@ -743,7 +935,7 @@ mod tests {
         let mut s = skill("bad", 5);
         s.state = SkillState::NoBlock;
         i.skills.push(s);
-        let items = items(&[i]);
+        let items = items(&[i], &Signals::default());
         let broken = with_prefix(&items, "skill.");
         assert_eq!(broken.len(), 1);
         assert_eq!(
@@ -770,7 +962,7 @@ mod tests {
         let mut b = skill("b", 1);
         b.state = SkillState::BadName;
         i.skills = vec![b, a];
-        let items = items(&[i]);
+        let items = items(&[i], &Signals::default());
         let broken = with_prefix(&items, "skill.");
         assert_eq!(broken[0].title, "Antigravity's skill a doesn't load");
         assert_eq!(
@@ -795,14 +987,14 @@ mod tests {
         off_skill.state = SkillState::NoBlock;
         off_skill.off = true;
         i.skills.push(off_skill);
-        assert!(items(&[i]).is_empty());
+        assert!(items(&[i], &Signals::default()).is_empty());
 
         let mut gone = inv("codex");
         gone.found = false;
         gone.servers
             .push(server("o", "f", missing("zz"), Err(NoSwitch::Bundled)));
         gone.unreadable.push((PathBuf::from("f"), "Bad.".into()));
-        assert!(items(&[gone]).is_empty());
+        assert!(items(&[gone], &Signals::default()).is_empty());
 
         let mut b = inv("codex");
         let mut sk = skill("imagegen", 0);
@@ -812,7 +1004,7 @@ mod tests {
         let mut loads = skill("pdf", 4);
         loads.origin = Origin::Bundled;
         b.skills.push(loads);
-        let items = items(&[b]);
+        let items = items(&[b], &Signals::default());
         assert!(with_prefix(&items, "skill.").is_empty());
         // A bundled skill that loads still counts toward the cost; one that doesn't load isn't listed.
         let cost = with_prefix(&items, "skillcost.");
@@ -832,7 +1024,7 @@ mod tests {
         let mut name_only = skill("nameonly", 5000);
         name_only.name_only = true;
         i.skills.push(name_only);
-        let items = items(&[i]);
+        let items = items(&[i], &Signals::default());
         let long = with_prefix(&items, "skilldesc.");
         assert_eq!(long.len(), 1);
         let it = long[0];
@@ -858,7 +1050,7 @@ mod tests {
         let mut bundled = skill("bb", 100);
         bundled.origin = Origin::Bundled;
         i.skills.push(bundled);
-        let items = items(&[i]);
+        let items = items(&[i], &Signals::default());
         let l = with_prefix(&items, "skilllisting.");
         assert_eq!(l.len(), 1);
         assert_eq!(l[0].id, "skilllisting.qwen");
@@ -884,7 +1076,7 @@ mod tests {
         let mut j = inv("qwen");
         j.caps.listing_first_line_over = Some(8000);
         j.skills.push(skill("a", 7999));
-        assert!(with_prefix(&super::items(&[j]), "skilllisting.").is_empty());
+        assert!(with_prefix(&super::items(&[j], &Signals::default()), "skilllisting.").is_empty());
     }
 
     #[test]
@@ -901,7 +1093,7 @@ mod tests {
         let mut hidden = skill("hid", 1000);
         hidden.hidden = true;
         i.skills.push(hidden);
-        let items = items(&[i]);
+        let items = items(&[i], &Signals::default());
         assert_eq!(items.len(), 1);
         let it = &items[0];
         assert_eq!(it.id, "skillcost.claude");
@@ -923,7 +1115,7 @@ mod tests {
         let mut broken = skill("broken", 1000);
         broken.state = SkillState::Missing("description");
         i.skills.push(broken);
-        let items = items(&[i]);
+        let items = items(&[i], &Signals::default());
         let cost = items.iter().find(|it| it.id == "skillcost.codex").unwrap();
         // Only `a`: 8 characters, 2 tokens.
         assert_eq!(cost.title, "Codex's skills add about 2 tokens to each session");
@@ -946,7 +1138,7 @@ mod tests {
         ));
         i.unreadable.push((file.clone(), "Bad.".into()));
         i.skills.push(skill("s", 4));
-        let items = items(&[i]);
+        let items = items(&[i], &Signals::default());
         assert_eq!(items.len(), 3);
         for it in &items {
             assert!(it.id.ends_with("@Ubuntu"), "{}", it.id);
@@ -967,7 +1159,7 @@ mod tests {
         let file = PathBuf::from("C:/h/.gemini/config/mcp_config.json");
         let mut i = inv("antigravity");
         i.unreadable.push((file.clone(), "Expected a value.".into()));
-        let items = items(&[i]);
+        let items = items(&[i], &Signals::default());
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id, format!("extfile.antigravity.{}", key(&file, "")));
         assert_eq!(items[0].group, DoctorGroup::Info);
@@ -996,7 +1188,10 @@ mod tests {
         let mut wsl = inv("claude");
         wsl.distro = Some("Debian".into());
         wsl.unreadable.push((PathBuf::from("w"), "Bad.".into()));
-        let ids: Vec<String> = items(&[wsl, qwen, claude]).into_iter().map(|i| i.title).collect();
+        let ids: Vec<String> = items(&[wsl, qwen, claude], &Signals::default())
+            .into_iter()
+            .map(|i| i.title)
+            .collect();
         assert_eq!(
             ids,
             [
@@ -1038,15 +1233,15 @@ mod tests {
         s.switch = Ok(skill_sw.clone());
         i.skills.push(s);
         let inv_all = [i];
-        let ids: Vec<String> = items(&inv_all).into_iter().map(|i| i.id).collect();
+        let ids: Vec<String> = items(&inv_all, &Signals::default()).into_iter().map(|i| i.id).collect();
         let server_id = format!("mcp.codex.{}", key(&file, "files"));
         let other_id = format!("mcp.codex.{}", key(&file, "other"));
         assert!(ids.contains(&server_id) && ids.contains(&other_id));
-        assert_eq!(switch_of(&inv_all, &server_id), Some(sw));
-        assert_eq!(switch_of(&inv_all, &other_id), None);
-        assert_eq!(switch_of(&inv_all, "mcp.codex.00000000"), None);
+        assert_eq!(switch_of(&inv_all, &Signals::default(), &server_id), Some(sw));
+        assert_eq!(switch_of(&inv_all, &Signals::default(), &other_id), None);
+        assert_eq!(switch_of(&inv_all, &Signals::default(), "mcp.codex.00000000"), None);
         let skill_id = ids.iter().find(|i| i.starts_with("skill.codex.")).unwrap();
-        assert_eq!(switch_of(&inv_all, skill_id), Some(skill_sw));
+        assert_eq!(switch_of(&inv_all, &Signals::default(), skill_id), Some(skill_sw));
     }
 
     #[test]
@@ -1074,5 +1269,54 @@ mod tests {
         assert_eq!(got, ["a", "b"]);
         assert!(skill_files(&dir.join("missing")).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn composed_switch_of_finds_mcpfail() {
+        use crate::doctor::measure::{Measured, Measurements, fingerprint};
+        use crate::doctor::probe::Failure;
+        let sw = Switch::CodexServer {
+            file: PathBuf::from("C:/h/config.toml"),
+            name: "pw".into(),
+        };
+        let mut s = server(
+            "pw",
+            "C:/h/config.toml",
+            Transport::Stdio {
+                command: "npx".into(),
+                state: CommandState::Found,
+            },
+            Ok(sw.clone()),
+        );
+        let launch = Launch {
+            command: "npx".into(),
+            args: vec![],
+            env: vec![],
+            inherit: Inherit::All,
+            set: vec![],
+            cwd: None,
+            expand: Expand::None,
+            timeout_secs: 20,
+        };
+        s.launch = Ok(launch.clone());
+        let key = item_key(&s.file, &s.origin, &s.name);
+        let mut i = inv("codex");
+        i.servers.push(s);
+        let m = Measurements {
+            at_ms: 1,
+            servers: vec![Measured {
+                agent: "codex",
+                key: key.clone(),
+                fingerprint: fingerprint(&launch),
+                outcome: Err(Failure::CantStart),
+            }],
+        };
+        let sig = Signals {
+            measured: Some(&m),
+            ..Signals::default()
+        };
+        let id = format!("mcpfail.codex.{key}");
+        assert_eq!(switch_of(&[i.clone()], &sig, &id), Some(sw));
+        assert_eq!(switch_of(&[i], &Signals::default(), &id), None);
     }
 }

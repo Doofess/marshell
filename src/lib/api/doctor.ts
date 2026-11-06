@@ -65,3 +65,6 @@ export async function undoFix(ep: Endpoint): Promise<UndoOutcome> {
 
 /** What the files say now against the backup: a preview only, nothing is written. */
 export const undoDifferences = (ep: Endpoint, snapshotId: string) => api<ConfigPreview>(ep, "POST", `/v1/snapshots/${encodeURIComponent(snapshotId)}/restore`);
+
+/** Starts measuring the MCP servers (each local one starts for a moment); a click while it runs joins that run. The finished one arrives as a `doctor` frame. */
+export const measureMcpServers = (ep: Endpoint) => api<DoctorSummary>(ep, "POST", "/v1/doctor/measure");

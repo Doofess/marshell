@@ -6,9 +6,11 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use crate::config::hash::hash_bytes;
 use crate::config::jsonc::read_value;
 use crate::doctor::ext::{
-    Caps, CommandState, ExtRoots, Inventory, NoSwitch, Origin, Server, Skill, SkillState, Switch, Transport,
+    Caps, CommandState, CostRule, Expand, ExtRoots, Hints, Inherit, Inventory, Launch, Listing, NoSwitch, NotMeasured,
+    Origin, Server, Skill, SkillState, SkillUse, Switch, Transport, UsedAs, created_ms, sanitize_tool_part,
     skill_files, unreadable,
 };
 use crate::doctor::frontmatter::{self, Front, SkillMeta};
@@ -103,6 +105,182 @@ struct Source<'a> {
     origin: Origin,
     /// Whether the user's `mcp.excluded` entry can be edited to turn these off.
     switchable: bool,
+    /// How the CLI expands variables in these entries.
+    expand: Expand,
+    /// The entries need an approval in `mcpApprovals.json` (project `.mcp.json` and `.qwen/settings.json`).
+    needs_approval: bool,
+}
+
+/// What the approval and cost rules read besides the entry.
+struct Cx<'a> {
+    /// `tools.toolSearch.enabled` isn't `false`.
+    tool_search: bool,
+    /// The parsed `mcpApprovals.json`.
+    approvals: &'a Option<Value>,
+    /// `security.folderTrust.enabled` is on and the project isn't trusted: no project server starts.
+    untrusted: bool,
+}
+
+/// The canonical form Qwen Code hashes an entry by (`hashMcpServerConfig`, chunk-VABYHACO.js): the entry without
+/// its top-level `scope`, `extensionName` and `description`, then `JSON.stringify` with a replacer that sorts the keys
+/// of every nested object (arrays keep their order).
+fn canonical(v: &Value) -> String {
+    match v {
+        Value::Object(m) => {
+            let mut keys: Vec<&String> = m.keys().collect();
+            keys.sort();
+            let body: Vec<String> = keys
+                .into_iter()
+                .map(|k| format!("{}:{}", Value::String(k.clone()), canonical(&m[k])))
+                .collect();
+            format!("{{{}}}", body.join(","))
+        }
+        Value::Array(a) => format!("[{}]", a.iter().map(canonical).collect::<Vec<_>>().join(",")),
+        other => other.to_string(),
+    }
+}
+
+fn approval_hash(entry: &Value) -> String {
+    let mut top = entry.as_object().cloned().unwrap_or_default();
+    for dropped in ["scope", "extensionName", "description"] {
+        top.remove(dropped);
+    }
+    hash_bytes(canonical(&Value::Object(top)).as_bytes())
+}
+
+/// What Qwen Code makes of a `.mcp.json` command entry before hashing it (`normalizeClaudeMcpServer`,
+/// chunk-XBXDDFWT.js): its `type` is dropped unless that is `sdk`.
+fn normalized_mcp_json(entry: &Value) -> Value {
+    let mut entry = entry.clone();
+    if let Some(m) = entry.as_object_mut() {
+        let command_like = ["command", "httpUrl", "tcp"]
+            .iter()
+            .any(|k| m.get(*k).is_some_and(|v| !v.is_null() && v != false && v != ""));
+        if command_like && m.get("type").is_some_and(|t| t != "sdk") {
+            m.remove("type");
+        }
+    }
+    entry
+}
+
+fn approved(cx: &Cx, project: &Path, name: &str, entry: &Value) -> bool {
+    if cx.untrusted {
+        return false;
+    }
+    let key = project.to_string_lossy().to_lowercase();
+    let Some(record) = cx
+        .approvals
+        .as_ref()
+        .and_then(|a| a.get(&key))
+        .and_then(|p| p.get(name))
+    else {
+        return false;
+    };
+    record.get("status").and_then(Value::as_str) == Some("approved")
+        && record.get("hash").and_then(Value::as_str) == Some(approval_hash(entry).as_str())
+}
+
+fn env_pairs(v: Option<&Value>) -> Vec<(String, String)> {
+    v.and_then(Value::as_object)
+        .map(|m| {
+            m.iter()
+                .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string())))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn launch_of(name: &str, entry: &Value, remote: bool, at: &Source, cx: &Cx) -> Result<Launch, NotMeasured> {
+    if remote {
+        return Err(NotMeasured::Remote);
+    }
+    let Some(command) = entry
+        .get("command")
+        .and_then(Value::as_str)
+        .filter(|c| !c.trim().is_empty())
+    else {
+        // A server with no command has nothing to start.
+        return Err(NotMeasured::NotApproved);
+    };
+    if at.needs_approval {
+        let Origin::Project(project) = &at.origin else {
+            return Err(NotMeasured::NotApproved);
+        };
+        let hashed = if at.file.file_name().is_some_and(|f| f == ".mcp.json") {
+            normalized_mcp_json(entry)
+        } else {
+            entry.clone()
+        };
+        if !approved(cx, project, name, &hashed) {
+            return Err(NotMeasured::NotApproved);
+        }
+    }
+    Ok(Launch {
+        command: command.to_string(),
+        args: strings(entry.get("args")),
+        env: env_pairs(entry.get("env")),
+        inherit: Inherit::All,
+        set: Vec::new(),
+        cwd: entry.get("cwd").and_then(Value::as_str).map(PathBuf::from),
+        expand: at.expand,
+        timeout_secs: 30,
+    })
+}
+
+fn cost_of(name: &str, entry: &Value, cx: &Cx) -> CostRule {
+    let full = Listing::Full {
+        prefix: format!("mcp__{}__", sanitize_tool_part(name)),
+        desc_cap: None,
+    };
+    let always = entry.get("alwaysLoadTools").and_then(Value::as_bool) == Some(true);
+    let listing = if cx.tool_search && !always {
+        Listing::FirstLines {
+            heading: name.to_string(),
+            cap: 160,
+        }
+    } else {
+        full
+    };
+    CostRule {
+        listing,
+        always_load_meta: None,
+        only: entry.get("includeTools").map(|v| strings(Some(v))),
+        except: strings(entry.get("excludeTools")),
+    }
+}
+
+/// Whether `project` is trusted by `trustedFolders.json` (`{ "<folder>": "TRUST_FOLDER" | "TRUST_PARENT" |
+/// "DO_NOT_TRUST" }`): the deepest rule whose folder holds the project wins, and on a tie a distrust wins. A project
+/// no rule names isn't trusted.
+fn folder_trusted(rules: &Option<Value>, project: &Path) -> bool {
+    let norm = |p: &str| p.replace('\\', "/").trim_end_matches('/').to_lowercase();
+    let here = norm(&project.to_string_lossy());
+    let mut best: Option<(usize, bool)> = None;
+    for (path, level) in rules.as_ref().and_then(Value::as_object).into_iter().flatten() {
+        let (root, trusted) = match level.as_str() {
+            Some("TRUST_FOLDER") => (norm(path), true),
+            Some("TRUST_PARENT") => (
+                norm(
+                    &Path::new(path)
+                        .parent()
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                ),
+                true,
+            ),
+            Some("DO_NOT_TRUST") => (norm(path), false),
+            _ => continue,
+        };
+        if root.is_empty() || !(here == root || here.starts_with(&format!("{root}/"))) {
+            continue;
+        }
+        let depth = root.split('/').filter(|s| !s.is_empty()).count();
+        best = match best {
+            Some((d, t)) if d > depth || (d == depth && !t) => Some((d, t)),
+            _ => Some((depth, trusted)),
+        };
+    }
+    best.is_some_and(|(_, trusted)| trusted)
 }
 
 fn servers_in(
@@ -111,17 +289,22 @@ fn servers_in(
     command: &dyn Fn(&str) -> CommandState,
     excluded: &[String],
     user_settings: &Path,
+    cx: &Cx,
     out: &mut Vec<Server>,
 ) {
     let Some(map) = map.and_then(Value::as_object) else {
         return;
     };
     for (name, entry) in map {
+        let transport = transport(entry, command);
         out.push(Server {
             name: name.clone(),
             file: at.file.to_path_buf(),
             origin: at.origin.clone(),
-            transport: transport(entry, command),
+            launch: launch_of(name, entry, transport == Transport::Remote, &at, cx),
+            cost: cost_of(name, entry, cx),
+            used_as: UsedAs::ToolPrefix(format!("mcp__{}__", sanitize_tool_part(name))),
+            transport,
             off: excluded.iter().any(|p| glob(p, name)),
             switch: match (&at.origin, at.switchable) {
                 (Origin::Plugin(p), _) => Err(NoSwitch::Plugin(p.clone())),
@@ -180,6 +363,8 @@ fn skills_in(
             .any(|d| d.eq_ignore_ascii_case(&bare) || (ext.is_some() && d.eq_ignore_ascii_case(&name)));
         let description = description.unwrap_or("");
         out.push(Skill {
+            created_ms: created_ms(&file),
+            used_as: vec![SkillUse::Name(name.clone())],
             switch: match origin {
                 Origin::Plugin(p) => Err(NoSwitch::Plugin(p.clone())),
                 _ => Ok(Switch::JsonAdd {
@@ -251,6 +436,19 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
             .and_then(|u| u.get("skills"))
             .and_then(|m| m.get("disabled")),
     );
+    let setting = |path: &[&str]| path.iter().try_fold(user.as_ref()?, |v, k| v.get(*k));
+    let approvals = files.json(&roots.qwen_dir.join("mcpApprovals.json"));
+    let folder_trust = setting(&["security", "folderTrust", "enabled"]).and_then(Value::as_bool) == Some(true);
+    let trusted_folders = if folder_trust {
+        files.json(&roots.qwen_dir.join("trustedFolders.json"))
+    } else {
+        None
+    };
+    let mut cx = Cx {
+        tool_search: setting(&["tools", "toolSearch", "enabled"]).and_then(Value::as_bool) != Some(false),
+        approvals: &approvals,
+        untrusted: false,
+    };
 
     // User level.
     servers_in(
@@ -259,10 +457,13 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
             file: &user_file,
             origin: Origin::User,
             switchable: true,
+            expand: Expand::Dollar,
+            needs_approval: false,
         },
         command,
         &user_excluded,
         &user_file,
+        &cx,
         &mut servers,
     );
     for dir in [roots.qwen_dir.join("skills"), roots.home.join(".agents").join("skills")] {
@@ -293,10 +494,13 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
                 file: &manifest,
                 origin: Origin::Plugin(name.clone()),
                 switchable: false,
+                expand: Expand::None,
+                needs_approval: false,
             },
             command,
             &user_excluded,
             &user_file,
+            &cx,
             &mut servers,
         );
         skills_in(
@@ -311,6 +515,7 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
 
     // Projects.
     for project in projects {
+        cx.untrusted = folder_trust && !folder_trusted(&trusted_folders, project);
         let own_file = project.join(".qwen").join("settings.json");
         let own = files.json(&own_file);
         let mut excluded = user_excluded.clone();
@@ -330,10 +535,13 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
                 file: &own_file,
                 origin: Origin::Project(project.clone()),
                 switchable: true,
+                expand: Expand::Dollar,
+                needs_approval: true,
             },
             command,
             &excluded,
             &user_file,
+            &cx,
             &mut servers,
         );
         let mcp_file = project.join(".mcp.json");
@@ -344,10 +552,13 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
                 file: &mcp_file,
                 origin: Origin::Project(project.clone()),
                 switchable: true,
+                expand: Expand::None,
+                needs_approval: true,
             },
             command,
             &excluded,
             &user_file,
+            &cx,
             &mut servers,
         );
         for dir in [
@@ -378,6 +589,21 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
         servers,
         skills,
         unreadable: files.unreadable,
+        hints: Hints {
+            move_server: |_, project| {
+                format!(
+                    "To load it only there, move its entry to mcpServers in {}\\.qwen\\settings.json.",
+                    project.display()
+                )
+            },
+            move_skill: |_, project| {
+                format!(
+                    "To load it only there, move its folder to {}\\.qwen\\skills.",
+                    project.display()
+                )
+            },
+        },
+        cost_note: None,
     }
 }
 
@@ -405,6 +631,9 @@ mod tests {
             claude_settings: h.join(".claude").join("settings.json"),
             codex_home: h.join(".codex"),
             qwen_dir: h.join(".qwen"),
+            claude_tool_search: None,
+            qwen_runtime: h.join(".qwen"),
+            gemini_dir: h.join(".gemini"),
         }
     }
 
@@ -688,5 +917,157 @@ mod tests {
         let message = |file: &Path| inv.unreadable.iter().find(|(f, _)| f == file).unwrap().1.clone();
         assert_eq!(message(&settings), "It doesn't parse (line 4).");
         assert_eq!(message(&manifest), "It isn't UTF-8 text.");
+    }
+
+    /// SHA-256 of `{"args":["srv.js","--flag"],"command":"node","env":{"A":"1","B":"2"}}`, computed with Python.
+    const HASH: &str = "d848d877eb27620aba3ea3b9d4e885dbb1a22a96ad43f07b249de5f8becf298e";
+
+    fn approval_setup(name: &str, arg: &str, status: &str) -> (PathBuf, ExtRoots, PathBuf) {
+        let h = fake_home(name);
+        let r = roots(&h);
+        let proj = h.join("proj");
+        put(
+            &proj.join(".mcp.json"),
+            &json!({"mcpServers": {"p": {
+                "command": "node", "env": {"B": "2", "A": "1"}, "description": "ignored", "args": ["srv.js", arg]
+            }}})
+            .to_string(),
+        );
+        put(
+            &r.qwen_dir.join("mcpApprovals.json"),
+            &json!({proj.to_string_lossy().to_lowercase(): {"p": {"hash": HASH, "status": status}}}).to_string(),
+        );
+        put(
+            &r.qwen_dir.join("settings.json"),
+            &json!({"mcpServers": {"u": {"command": "user-cmd"}}}).to_string(),
+        );
+        (h, r, proj)
+    }
+
+    #[test]
+    fn qwen_approval_hash() {
+        let (_h, r, proj) = approval_setup("approval-ok", "--flag", "approved");
+        let inv = inventory(&r, std::slice::from_ref(&proj), &found);
+        assert!(server(&inv, "p").launch.is_ok());
+        assert!(server(&inv, "u").launch.is_ok());
+
+        let (_h, r, proj) = approval_setup("approval-edited", "--other", "approved");
+        let inv = inventory(&r, std::slice::from_ref(&proj), &found);
+        assert_eq!(server(&inv, "p").launch, Err(NotMeasured::NotApproved));
+        assert!(server(&inv, "u").launch.is_ok());
+
+        let (_h, r, proj) = approval_setup("approval-rejected", "--flag", "rejected");
+        let inv = inventory(&r, std::slice::from_ref(&proj), &found);
+        assert_eq!(server(&inv, "p").launch, Err(NotMeasured::NotApproved));
+        assert!(server(&inv, "u").launch.is_ok());
+
+        // folderTrust on, and no trustedFolders.json: no project server starts, the user's still does.
+        let (_h, r, proj) = approval_setup("approval-trust", "--flag", "approved");
+        put(
+            &r.qwen_dir.join("settings.json"),
+            &json!({"mcpServers": {"u": {"command": "user-cmd"}}, "security": {"folderTrust": {"enabled": true}}})
+                .to_string(),
+        );
+        let inv = inventory(&r, std::slice::from_ref(&proj), &found);
+        assert_eq!(server(&inv, "p").launch, Err(NotMeasured::NotApproved));
+        assert!(server(&inv, "u").launch.is_ok());
+        put(
+            &r.qwen_dir.join("trustedFolders.json"),
+            &json!({proj.to_string_lossy(): "TRUST_FOLDER"}).to_string(),
+        );
+        let inv = inventory(&r, std::slice::from_ref(&proj), &found);
+        assert!(server(&inv, "p").launch.is_ok());
+    }
+
+    /// Qwen Code hashes a `.mcp.json` command entry after `normalizeClaudeMcpServer`, which drops its `type` unless
+    /// that is `sdk`.
+    #[test]
+    fn qwen_mcp_json_type_is_dropped_before_hashing() {
+        let (_h, r, proj) = approval_setup("approval-type", "--flag", "approved");
+        put(
+            &proj.join(".mcp.json"),
+            &json!({"mcpServers": {"p": {
+                "type": "stdio", "command": "node", "env": {"B": "2", "A": "1"}, "args": ["srv.js", "--flag"]
+            }}})
+            .to_string(),
+        );
+        let inv = inventory(&r, std::slice::from_ref(&proj), &found);
+        assert!(server(&inv, "p").launch.is_ok());
+
+        put(
+            &proj.join(".mcp.json"),
+            &json!({"mcpServers": {"p": {
+                "type": "sdk", "command": "node", "env": {"B": "2", "A": "1"}, "args": ["srv.js", "--flag"]
+            }}})
+            .to_string(),
+        );
+        let inv = inventory(&r, std::slice::from_ref(&proj), &found);
+        assert_eq!(server(&inv, "p").launch, Err(NotMeasured::NotApproved));
+    }
+
+    #[test]
+    fn qwen_launch_and_cost() {
+        let h = fake_home("launch");
+        let r = roots(&h);
+        let proj = h.join("proj");
+        put(
+            &proj.join(".qwen").join("settings.json"),
+            &json!({"mcpServers": {"s": {"command": "c", "cwd": "w", "includeTools": ["a"], "excludeTools": ["b"]}}})
+                .to_string(),
+        );
+        put(
+            &proj.join(".mcp.json"),
+            &json!({"mcpServers": {"m": {"command": "c"}}}).to_string(),
+        );
+        put(
+            &r.qwen_dir.join("settings.json"),
+            &json!({"mcpServers": {"u": {"command": "c", "alwaysLoadTools": true}, "my srv": {"command": "c"}}})
+                .to_string(),
+        );
+        // Approve both project servers by their hashes, whatever those are.
+        let inv = inventory(&r, std::slice::from_ref(&proj), &found);
+        let s = server(&inv, "s");
+        assert_eq!(s.launch, Err(NotMeasured::NotApproved));
+        assert_eq!(s.cost.only, Some(vec!["a".to_string()]));
+        assert_eq!(s.cost.except, vec!["b".to_string()]);
+        assert_eq!(
+            s.cost.listing,
+            Listing::FirstLines {
+                heading: "s".into(),
+                cap: 160
+            }
+        );
+        let key = proj.to_string_lossy().to_lowercase();
+        let hash = |v: Value| approval_hash(&v);
+        put(
+            &r.qwen_dir.join("mcpApprovals.json"),
+            &json!({key: {
+                "s": {"status": "approved", "hash": hash(json!({"command": "c", "cwd": "w", "includeTools": ["a"], "excludeTools": ["b"]}))},
+                "m": {"status": "approved", "hash": hash(json!({"command": "c"}))}
+            }})
+            .to_string(),
+        );
+        let inv = inventory(&r, std::slice::from_ref(&proj), &found);
+        let s = server(&inv, "s").launch.as_ref().unwrap();
+        assert_eq!(s.expand, Expand::Dollar);
+        assert_eq!(s.cwd, Some(PathBuf::from("w")));
+        assert_eq!(s.timeout_secs, 30);
+        assert_eq!(server(&inv, "m").launch.as_ref().unwrap().expand, Expand::None);
+        assert!(matches!(
+            server(&inv, "u").cost.listing,
+            Listing::Full { desc_cap: None, .. }
+        ));
+        assert_eq!(
+            server(&inv, "my srv").used_as,
+            UsedAs::ToolPrefix("mcp__my_srv__".into())
+        );
+        assert_eq!(server(&inv, "s").cost.only, Some(vec!["a".to_string()]));
+
+        put(
+            &r.qwen_dir.join("settings.json"),
+            &json!({"mcpServers": {"u": {"command": "c"}}, "tools": {"toolSearch": {"enabled": false}}}).to_string(),
+        );
+        let inv = inventory(&r, std::slice::from_ref(&proj), &found);
+        assert!(matches!(server(&inv, "u").cost.listing, Listing::Full { prefix: ref p, .. } if p == "mcp__u__"));
     }
 }

@@ -3,6 +3,7 @@ import { EmptyState } from "../../components/EmptyState/EmptyState";
 import { Page } from "../../components/Page/Page";
 import { EMPTY_STATES } from "../onboarding/emptyStates";
 import { cliLine } from "./cliDoctors";
+import { measureLine } from "./measure";
 import { DoctorRow } from "./DoctorRow";
 import { UndoToast } from "./UndoToast";
 import { showProgress } from "./doctorUi";
@@ -28,6 +29,9 @@ export type DoctorPageProps = {
   /** The CLI doctors are running (the button's own click or the core's). */
   cliRunning: boolean;
   onRunCliDoctors: () => void;
+  /** Measuring the MCP servers is running (the button's own click or the core's). */
+  measuring: boolean;
+  onMeasure: () => void;
   onUndo: () => void;
   onShowDifferences: () => void;
   onOpenAgents: () => void;
@@ -40,7 +44,7 @@ export type DoctorPageProps = {
  * 150 ms of a check; a failure says why and offers Run again; after a fix each fixed row says Fixed in words, the receipt toast
  * floats for 10 seconds and then Undo last fix stays in the header. Info (managed settings) is listed and never has a control.
  */
-export function DoctorPage({ report, phase, selected, undo, nowMs, elapsedMs = 0, failure, onToggle, onFix, onRunAgain, cliRunning, onRunCliDoctors, onUndo, onShowDifferences, onOpenAgents, onRestart }: DoctorPageProps) {
+export function DoctorPage({ report, phase, selected, undo, nowMs, elapsedMs = 0, failure, onToggle, onFix, onRunAgain, cliRunning, onRunCliDoctors, measuring, onMeasure, onUndo, onShowDifferences, onOpenAgents, onRestart }: DoctorPageProps) {
   const uid = useId();
   const c = report ? counts(report) : { issues: 0, fixable: 0, unfixable: 0, offered: 0 };
   const chosen = report ? selectedFixable(report, selected).length : 0;
@@ -78,6 +82,11 @@ export function DoctorPage({ report, phase, selected, undo, nowMs, elapsedMs = 0
           </button>
         )}
         {phase !== "fixing" && (
+          <button type="button" className="doctor__btn" aria-disabled={measuring ? "true" : undefined} onClick={measuring ? undefined : onMeasure}>
+            {measuring ? "Measuring MCP servers…" : "Measure MCP servers"}
+          </button>
+        )}
+        {phase !== "fixing" && (
           <button type="button" className="doctor__btn" onClick={onRunAgain}>
             Run again
           </button>
@@ -100,6 +109,7 @@ export function DoctorPage({ report, phase, selected, undo, nowMs, elapsedMs = 0
             </p>
           )}
           {listed && <p className="doctor__cli">{cliLine(report?.cli_checked_at_ms, nowMs)}</p>}
+          {listed && <p className="doctor__cli">{measureLine(report?.measured_at_ms, nowMs)}</p>}
           {offer?.kind === "stale" && (
             <p className="doctor__stale">
               {offer.text.replace(" Show differences.", "")}{" "}

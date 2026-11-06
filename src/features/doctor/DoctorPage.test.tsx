@@ -11,7 +11,7 @@ const noop = () => {};
 type Props = Parameters<typeof DoctorPage>[0];
 const page = (report: DoctorReport | null, phase: Props["phase"], extra: Partial<Props> = {}) =>
   renderToStaticMarkup(
-    <DoctorPage report={report} phase={phase} selected={report ? initialSelection(report) : new Set()} nowMs={(report?.checked_at_ms ?? 0) + 12_000} onToggle={noop} onFix={noop} onRunAgain={noop} onUndo={noop} onShowDifferences={noop} onOpenAgents={noop} cliRunning={false} onRunCliDoctors={noop} {...extra} />,
+    <DoctorPage report={report} phase={phase} selected={report ? initialSelection(report) : new Set()} nowMs={(report?.checked_at_ms ?? 0) + 12_000} onToggle={noop} onFix={noop} onRunAgain={noop} onUndo={noop} onShowDifferences={noop} onOpenAgents={noop} cliRunning={false} onRunCliDoctors={noop} measuring={false} onMeasure={noop} {...extra} />,
   );
 const at = (ms: number) => UNDO_FIXED.fixed_at_ms + ms;
 
@@ -133,6 +133,29 @@ describe("DoctorPage", () => {
       expect(h).not.toContain("CLI doctors…");
       expect(h).not.toContain(">Run CLI doctors<");
     });
+  });
+
+  describe("Measure MCP servers", () => {
+    it("sits between Run CLI doctors and Run again", () => {
+      expect(page(DOCTOR_REPORT, "ready")).toMatch(/>Run CLI doctors<\/button>[\s\S]*>Measure MCP servers<\/button>[\s\S]*>Run again</);
+    });
+    it("while measuring, reads Measuring MCP servers… with aria-disabled", () => {
+      const h = page(DOCTOR_REPORT, "ready", { measuring: true });
+      expect(h).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Measuring MCP servers…<\/button>/);
+    });
+    it("is absent while fixing", () => {
+      const h = page(DOCTOR_REPORT, "fixing");
+      expect(h).not.toContain("Measure MCP servers");
+      expect(h).not.toContain("Measuring MCP servers");
+    });
+    it("shows its line below the CLI line", () => {
+      const h = page(DOCTOR_REPORT, "ready");
+      expect(h).toContain(`<p class="doctor__cli">MCP servers haven&#x27;t been measured.`);
+      expect(h.indexOf("CLI doctors haven")).toBeLessThan(h.indexOf("MCP servers haven"));
+    });
+  });
+
+  describe("CLI items", () => {
     it("renders a CLI item with no checkbox and its cannot_fix text", () => {
       const h = page(DOCTOR_CLI, "ready");
       expect((h.match(/type="checkbox"/g) ?? []).length).toBe(0);

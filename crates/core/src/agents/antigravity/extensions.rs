@@ -7,8 +7,8 @@ use serde_json::Value;
 
 use crate::config::jsonc;
 use crate::doctor::ext::{
-    Caps, CommandState, ExtRoots, Inventory, NoSwitch, Origin, Server, Skill, SkillState, Switch, Transport,
-    skill_files, unreadable as ext_unreadable,
+    Caps, CommandState, CostRule, Expand, ExtRoots, Hints, Inherit, Inventory, Launch, NoSwitch, NotMeasured, Origin,
+    Server, Skill, SkillState, SkillUse, Switch, Transport, UsedAs, skill_files, unreadable as ext_unreadable,
 };
 use crate::doctor::frontmatter::{self, Front};
 
@@ -23,13 +23,46 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
         servers: Vec::new(),
         skills: Vec::new(),
         unreadable: Vec::new(),
+        hints: Hints {
+            move_server: |_, project| {
+                format!(
+                    "To load it only there, move its entry to {}\\.agents\\mcp_config.json.",
+                    project.display()
+                )
+            },
+            move_skill: |_, project| {
+                format!(
+                    "To load it only there, move its folder to {}\\.agents\\skills.",
+                    project.display()
+                )
+            },
+        },
+        cost_note: Some("Counted from tool names: Antigravity doesn't document what else it loads."),
     };
     let gemini = roots.home.join(".gemini");
     let config = gemini.join("config");
+    // `trustedWorkspaces` (an array of folder paths) is in `~/.gemini/antigravity-cli/settings.json`. A broken
+    // settings file isn't reported on, and trusts nothing.
+    let trusted: Vec<String> = read_json(&gemini.join("antigravity-cli").join("settings.json"), &mut Vec::new())
+        .and_then(|v| v.get("trustedWorkspaces").cloned())
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|v| v.as_str().map(same_folder))
+        .collect();
 
     let user = config.join("mcp_config.json");
     if let Some(value) = read_json(&user, &mut inv.unreadable) {
-        servers_of(&value, &user, &Origin::User, true, command, &mut inv.servers);
+        servers_of(
+            &value,
+            &user,
+            &Origin::User,
+            true,
+            true,
+            &roots.home,
+            command,
+            &mut inv.servers,
+        );
     }
     for project in projects {
         let file = project.join(".agents").join("mcp_config.json");
@@ -39,6 +72,8 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
                 &file,
                 &Origin::Project(project.clone()),
                 false,
+                trusted.contains(&same_folder(&project.display().to_string())),
+                &roots.home,
                 command,
                 &mut inv.servers,
             );
@@ -53,6 +88,8 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
                 &file,
                 &Origin::Plugin(dir.clone()),
                 false,
+                true,
+                &roots.home,
                 command,
                 &mut inv.servers,
             );
@@ -128,12 +165,66 @@ fn enabled_plugins(config: &Path, unreadable: &mut Vec<(PathBuf, String)>) -> Ve
     out
 }
 
-/// The `mcpServers` of `value`.
+/// A folder path compared the way a trust list is: `\` as `/`, without a trailing `/` or case.
+fn same_folder(path: &str) -> String {
+    path.replace('\\', "/").trim_end_matches('/').to_lowercase()
+}
+
+fn strings(v: Option<&Value>) -> Vec<String> {
+    v.and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_string)).collect())
+        .unwrap_or_default()
+}
+
+/// How Antigravity starts a stdio server; `approved` is false for a workspace server its workspace doesn't trust.
+fn launch_of(entry: &Value, remote: bool, approved: bool, home: &Path) -> Result<Launch, NotMeasured> {
+    if remote {
+        return Err(NotMeasured::Remote);
+    }
+    let Some(command) = entry
+        .get("command")
+        .and_then(Value::as_str)
+        .filter(|c| !c.trim().is_empty())
+    else {
+        return Err(NotMeasured::NotApproved);
+    };
+    if !approved {
+        return Err(NotMeasured::NotApproved);
+    }
+    Ok(Launch {
+        command: command.to_string(),
+        args: strings(entry.get("args")),
+        env: entry
+            .get("env")
+            .and_then(Value::as_object)
+            .map(|m| {
+                m.iter()
+                    .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        inherit: Inherit::All,
+        set: Vec::new(),
+        cwd: Some(
+            entry
+                .get("cwd")
+                .and_then(Value::as_str)
+                .map_or_else(|| home.to_path_buf(), PathBuf::from),
+        ),
+        expand: Expand::Braces,
+        timeout_secs: 60,
+    })
+}
+
+/// The `mcpServers` of `value`. `approved` is whether Antigravity starts them (a workspace's need its trust).
+#[allow(clippy::too_many_arguments)]
 fn servers_of(
     value: &Value,
     file: &Path,
     origin: &Origin,
     switchable: bool,
+    approved: bool,
+    home: &Path,
     command: &dyn Fn(&str) -> CommandState,
     out: &mut Vec<Server>,
 ) {
@@ -160,6 +251,7 @@ fn servers_of(
             Origin::Plugin(dir) => Err(NoSwitch::Plugin(dir.clone())),
             _ => Err(NoSwitch::Shared(file.to_path_buf())),
         };
+        let remote = transport == Transport::Remote;
         out.push(Server {
             name: name.clone(),
             file: file.to_path_buf(),
@@ -167,6 +259,12 @@ fn servers_of(
             transport,
             off: entry.get("disabled").and_then(Value::as_bool) == Some(true),
             switch,
+            launch: launch_of(entry, remote, approved, home),
+            cost: CostRule {
+                always_load_meta: Some("antigravity/alwaysLoad"),
+                ..CostRule::names_only()
+            },
+            used_as: UsedAs::Unknown,
         });
     }
 }
@@ -208,6 +306,8 @@ fn skill_of(folder: &str, file: PathBuf, origin: Origin) -> Skill {
         _ => Err(NoSwitch::NoSkillSwitch),
     };
     Skill {
+        created_ms: crate::doctor::ext::created_ms(&file),
+        used_as: vec![SkillUse::File(file.clone())],
         name,
         file,
         origin,
@@ -224,6 +324,7 @@ fn skill_of(folder: &str, file: PathBuf, origin: Origin) -> Skill {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::doctor::ext::Listing;
 
     /// A fresh fake home under the repo's target folder.
     fn fake(name: &str) -> (PathBuf, ExtRoots) {
@@ -239,6 +340,9 @@ mod tests {
             claude_settings: root.join(".claude").join("settings.json"),
             codex_home: root.join(".codex"),
             qwen_dir: root.join(".qwen"),
+            claude_tool_search: None,
+            qwen_runtime: root.join(".qwen"),
+            gemini_dir: root.join(".gemini"),
         };
         (root, roots)
     }
@@ -370,6 +474,74 @@ mod tests {
         assert_eq!(skills, ["onp-sk", "plain-sk"]);
         assert_eq!(inv.skills[0].origin, Origin::Plugin("onp".into()));
         assert_eq!(inv.skills[0].switch, Err(NoSwitch::Plugin("onp".into())));
+    }
+
+    #[test]
+    fn antigravity_launch_and_cost() {
+        let (root, roots) = fake("launch");
+        let gemini = root.join(".gemini");
+        let trusted = root.join("trusted");
+        let stranger = root.join("stranger");
+        for p in [&trusted, &stranger] {
+            write(
+                &p.join(".agents").join("mcp_config.json"),
+                "{\"mcpServers\": {\"ws\": {\"command\": \"node\", \"args\": [\"a\"], \"env\": {\"K\": \"${V}\"}, \"cwd\": \"w\"}}}",
+            );
+        }
+        write(
+            &gemini.join("config").join("mcp_config.json"),
+            "{\"mcpServers\": {\"u\": {\"command\": \"node\"}, \"rem\": {\"url\": \"https://x\"}}}",
+        );
+        let listed = trusted.display().to_string().replace('\\', "/").to_uppercase();
+        write(
+            &gemini.join("antigravity-cli").join("settings.json"),
+            &format!("{{\"trustedWorkspaces\": [\"{listed}\"]}}"),
+        );
+        let skill_file = gemini.join("config").join("skills").join("s").join("SKILL.md");
+        write(&skill_file, "---\nname: s\ndescription: d\n---\n");
+
+        let projects = [trusted.clone(), stranger.clone()];
+        let inv = inventory(&roots, &projects, &judge);
+        let ws = |p: &Path| {
+            inv.servers
+                .iter()
+                .find(|s| s.name == "ws" && s.origin == Origin::Project(p.to_path_buf()))
+                .unwrap()
+        };
+        assert_eq!(ws(&stranger).launch, Err(NotMeasured::NotApproved));
+        let ok = ws(&trusted).launch.as_ref().unwrap();
+        assert_eq!(
+            (ok.inherit.clone(), ok.expand, ok.timeout_secs),
+            (Inherit::All, Expand::Braces, 60)
+        );
+        assert_eq!(ok.cwd, Some(PathBuf::from("w")));
+        assert_eq!(ok.env, vec![("K".to_string(), "${V}".to_string())]);
+
+        let u = inv.servers.iter().find(|s| s.name == "u").unwrap();
+        assert_eq!(u.launch.as_ref().unwrap().cwd, Some(root.clone()));
+        assert_eq!(u.used_as, UsedAs::Unknown);
+        assert_eq!(u.cost.listing, Listing::NamesOnly);
+        assert_eq!(u.cost.always_load_meta, Some("antigravity/alwaysLoad"));
+        assert_eq!(
+            inv.servers.iter().find(|s| s.name == "rem").unwrap().launch,
+            Err(NotMeasured::Remote)
+        );
+        assert_eq!(
+            inv.cost_note,
+            Some("Counted from tool names: Antigravity doesn't document what else it loads.")
+        );
+        assert_eq!(
+            inv.skills.iter().find(|s| s.name == "s").unwrap().used_as,
+            vec![SkillUse::File(skill_file)]
+        );
+        assert_eq!(
+            (inv.hints.move_server)("ws", Path::new(r"C:\p")),
+            r"To load it only there, move its entry to C:\p\.agents\mcp_config.json."
+        );
+        assert_eq!(
+            (inv.hints.move_skill)("s", Path::new(r"C:\p")),
+            r"To load it only there, move its folder to C:\p\.agents\skills."
+        );
     }
 
     #[test]

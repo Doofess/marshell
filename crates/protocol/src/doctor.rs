@@ -69,6 +69,11 @@ pub struct DoctorReport {
     #[ts(optional)]
     #[ts(type = "number")]
     pub cli_checked_at_ms: Option<u64>,
+    /// When "Measure MCP servers" last ended in this run of the app; absent before the first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    #[ts(type = "number")]
+    pub measured_at_ms: Option<u64>,
 }
 
 /// What the sidebar and the tray show: whether a run is going and how many issues the last one found.
@@ -79,6 +84,9 @@ pub struct DoctorSummary {
     /// The CLI doctors are running.
     #[serde(default)]
     pub cli_running: bool,
+    /// "Measure MCP servers" is running.
+    #[serde(default)]
+    pub measuring: bool,
     /// Broken and Waste items in the last report.
     pub issues: u32,
     /// When the last run ended; absent before the first run ends.
@@ -162,6 +170,7 @@ mod tests {
         let summary = DoctorSummary {
             running: true,
             cli_running: true,
+            measuring: true,
             issues: 3,
             checked_at_ms: Some(1_762_300_000_000),
         };
@@ -170,5 +179,6 @@ mod tests {
         let first: DoctorSummary = serde_json::from_str(r#"{"running":false,"issues":0}"#).unwrap();
         assert_eq!(first.checked_at_ms, None);
         assert!(!first.cli_running);
+        assert!(!first.measuring);
     }
 }

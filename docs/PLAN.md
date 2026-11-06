@@ -1447,6 +1447,23 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      10. **The skills' token cost (7c1)** is one Info line per CLI. It estimates what the skill listing loads into each session: name and description characters divided by 4, each capped where the CLI cuts it. A skill that is off, or kept out of the listing (`disable-model-invocation`, or Claude Code's `skillOverrides` value `"user-invocable-only"`), costs nothing.
      11. **A bare command missing from the PATH starts unchecked** (decided after the 7c1 review, 2026-11-06). The Doctor checks a bare command (`npx`, `node`, `uvx`) on the PATH Marshell's tabs get from the registry, but a CLI started from a shell gets that shell's PATH, which fnm or mise can extend in the PowerShell profile. So such a server is still Broken and fixable, but the page leaves it unchecked, and it says "Its command, npx, isn't on the PATH Marshell's tabs get." A missing absolute path stays pre-checked, and a command written with `${VAR}` or `%VAR%` isn't checked.
      12. **A switch that can't be applied makes the item report-only** (7c1 review). This covers a file that doesn't parse, a list that isn't one, a path the config guard refuses, and a file over 4 MiB. So does Qwen Code's switch by name when another server or skill in use has the same name, because the name would turn that one off too.
+
+     7c2's questions, answered 2026-11-06 at the start of 7c2:
+
+     13. **The usage scan runs with the background checks** (7a decision 3). It keeps, under `MARSHELL_HOME`, how far it has read each history file. So only the first run reads everything, and later runs read only new lines.
+     14. **Marshell remembers usage.** The scan keeps each item's last use, and the oldest history it has seen for each CLI. So the 30 days of decision 4 can be covered past a CLI's own cleanup. Claude Code deletes transcripts after 30 days by default, which on this PC left 28 days of history.
+     15. **When an item was added** is the earliest sign that it was there:
+         - a skill folder's creation date;
+         - the CLI's history listing it as available (Claude Code records each session's deferred tools and skill listing);
+         - Marshell's own first sight.
+
+         An item with no sign 30 days old isn't called unused.
+     16. **Formats not yet seen.** Claude Code and Codex are judged in full, Antigravity's skills as reads of their `SKILL.md`, and Qwen Code from its source, since it has no chats on this PC. Antigravity's servers are never called unused, because no Antigravity MCP call has been seen. An Info line says that Marshell can't yet tell when Antigravity uses one.
+     17. **Measure starts only what the CLI itself would start:** user-level and local-scope servers, and the project servers that the CLI approved or trusts. A project file can come from a cloned repo, so any other server gets "Not measured: <CLI> hasn't approved it."
+     18. **A server that fails to start when measured starts unchecked**, as in decision 11. A CLI started from a shell can have an environment that Marshell's doesn't have. The item is Broken and fixable, and it names what failed.
+     19. **The servers' token cost is one Info line per CLI**, like the skills' line (decision 10). It names the costliest servers and says how many weren't measured.
+     20. **Measuring is Windows only.** A distro's servers get "Not measured: in <distro>." Measuring through `wsl.exe` waits for a later slice.
+     21. **Measurements stay in memory until the app restarts**, as the CLI doctors' findings do (7b). This was the lead's default, which the user didn't change.
 8. **Editors + instruction library** (wired per CLI with a content hash and drift check; settings raw mode validated against the SchemaStore schema), smart and native recaps, diff drawer, step timeline, saved prompts, broadcast, and Extensions (moved from phase 6 by slice 6a decision 2).
    - Diff drawer comments (added 2026-10-15, after the Codex app's review pane): a **+** on a diff line adds a comment. "Send comments" puts them all in the prompt line as one message, with `file:line` before each. Like phase 2.5, it fills the prompt line and never sends on its own.
    - Instruction library items: frontmatter form, "what loads here" view, token estimate with a 4k warning, templates and one-click project profiles, per-project toggles, agent filter, globs, and "Improve this file" (headless, opt-in).

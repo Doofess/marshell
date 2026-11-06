@@ -33,6 +33,9 @@ fn roots_under(home: &Path, claude_settings: Option<PathBuf>) -> ExtRoots {
         claude_settings: claude_settings.unwrap_or_else(|| home.join(".claude").join("settings.json")),
         codex_home: home.join(".codex"),
         qwen_dir: home.join(".qwen"),
+        claude_tool_search: None,
+        qwen_runtime: home.join(".qwen"),
+        gemini_dir: home.join(".gemini"),
     }
 }
 
@@ -56,10 +59,14 @@ pub(crate) fn windows_roots(st: &AppState) -> Option<ExtRoots> {
         }
         None => (home.join(".claude"), home.join(".claude.json")),
     };
+    let qwen_dir = crate::agents::qwen::home(&|k| std::env::var(k).ok(), &home);
     Some(ExtRoots {
+        claude_tool_search: env("ENABLE_TOOL_SEARCH"),
+        qwen_runtime: env("QWEN_RUNTIME_DIR").map_or_else(|| qwen_dir.clone(), PathBuf::from),
+        gemini_dir: home.join(".gemini"),
         claude_settings: st.claude_settings_path(&home),
         codex_home: env("CODEX_HOME").map_or_else(|| home.join(".codex"), PathBuf::from),
-        qwen_dir: crate::agents::qwen::home(&|k| std::env::var(k).ok(), &home),
+        qwen_dir,
         claude_dir,
         claude_json,
         home,

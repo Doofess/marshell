@@ -8,4 +8,8 @@ export type DoctorReport = { items: Array<DoctorItem>, checked_at_ms: number, du
 /**
  * When the CLI doctors last ran in this run of the app; absent before the first CLI run ends.
  */
-cli_checked_at_ms?: number, };
+cli_checked_at_ms?: number, 
+/**
+ * When "Measure MCP servers" last ended in this run of the app; absent before the first.
+ */
+measured_at_ms?: number, };
