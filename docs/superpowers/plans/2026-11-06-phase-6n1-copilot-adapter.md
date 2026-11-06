@@ -149,7 +149,7 @@ These come from the research note. Task 1 checks each one against a real Copilot
    - Tests in Tasks 2 and 4.
 2. **The person's own Copilot files.**
    - Their `settings.json` stays byte-equal apart from `statusLine.command`, on install and on removal: comments, BOM, CRLF, `padding` and `refreshInterval`.
-   - Their own files in `hooks\` are never read for writing.
+   - Their own files in `hooks\` are never touched.
    - A `marshell.json` they wrote is neither replaced nor deleted.
    - Tests in Task 3.
 3. **A card released, timed out, or whose core goes away.** Each gives no decision, so Copilot goes on to its own flow and the call never runs unasked. The core's hold deadline ends before the bridge's wait, and the bridge's wait ends before the entry's 600 s `timeoutSec`. Tests in Task 4.
@@ -191,6 +191,7 @@ This task runs in the main thread, not through a worker.
     - the names only of every other variable.
   - It prints `answer\<event>.txt` (empty when missing), sleeps `answer\<event>.sleep` seconds, and exits with `answer\<event>.exit` (0 when missing).
   - Write `<Scratch>\home\.copilot\hooks\rec.json`. It points the 10 events of Task 3's table at `node.exe` with `args` `["<Scratch>\rec dir\rec.mjs", "<event>"]`, a folder with a space in it (Q2). Add one `powershell` entry to time Q2's fallback.
+  - If no recording appears, 1.0.106 has no `exec`. Switch `rec.json` to the `powershell` form and record Q2's fallback.
   - Point `statusLine` at a second recorder that logs each stdin with a timestamp.
 - [ ] **Step 4: Drive it.**
   - Start the check with a fresh literal scratch folder and `-CopilotFake`.
@@ -347,8 +348,8 @@ The status line in `settings.json` (JSONC):
   - Removal never deletes `settings.json`.
 - **Never written:** Marshell never writes `footer`, `hooks`, `disableAllHooks` or any other key.
 
-`inspect`:
-- **Installed:** the file holds every entry `want` would write, with the current bridge path, and the status line is Marshell's, or the status line is left by the "any other shape" rule.
+`inspect`, as Qwen's:
+- **Installed:** the file holds the 9 `event` entries with the current bridge path, and the status line is Marshell's or is left by the "any other shape" rule. `approve_installed` separately says whether `permissionRequest` is there.
 - **Orphaned:** entries are present but their `exec` file doesn't exist, as for Claude.
 - **Partial:** anything else that has entries.
 - **None:** no file.
@@ -397,6 +398,8 @@ The status line in `settings.json` (JSONC):
     - the version-gate table;
     - `fold_live_with`, with its status-line gate;
     - the hold, with the pass rules below.
+
+    The WSL agent match stays as it is: Copilot in WSL is 6n2.
   - `crates/core/src/server/mod.rs`: `copilot_home: Option<PathBuf>`, `with_copilot_home`, and Copilot in the version cache.
 - Test: `crates/core/tests/hook.rs`, `crates/core/tests/permissions.rs`, and inline tests
 
@@ -420,7 +423,7 @@ The fold reads `hook_event_name` from Q3's bodies:
 | `preToolUse` | Working, with a phrase from the tool and Q3's `toolArgs` (a JSON string is parsed first): "Running <command>" for the shell tool, "Editing <relative file>" for writes and edits, "Reading <relative file>" for reads, and Qwen's phrase for any other tool. |
 | `postToolUse`, `postToolUseFailure` | Working |
 | `permissionRequest` | Needs permission |
-| `notification` with `permission_prompt` | Needs permission. This is Copilot's own dialog, with no card behind it. |
+| `notification` with `permission_prompt` (its body names the event `Notification`, which the fold takes as `notification`) | Needs permission. This is Copilot's own dialog, with no card behind it. |
 | `notification`, any other type | No change. `agent_idle` is a background agent, not the turn ending. |
 | `agentStop` | Idle (Done, as Claude's) |
 | `errorOccurred` with `recoverable: false` | Idle, with the error phrase Claude's `StopFailure` uses. With `recoverable: true`, no change. |
@@ -506,10 +509,13 @@ The prompt:
     - `pub fn new_session_args(agent: &str, id: &str) -> Vec<String>`: `["--session-id", id]` for `copilot`, empty for every other agent.
   - `crates/core/src/server/sessions.rs`:
     - the display name "Copilot CLI";
-    - `program_command`: for `copilot` off WSL, `exe::resolve` in `spawn_blocking` with the finder's PATH folders and `LOCALAPPDATA`, returning the full path. `Missing::Rejected` gives a 400 with the shim copy, and `Missing::NotOnPath` the not-found copy. On WSL it is `copilot`.
+    - `program_command`: for `copilot` off WSL, `exe::resolve` in `spawn_blocking` returns the full path. It searches the PATH folders the finder searches (the profile's PATH when set, otherwise the process's), then `LOCALAPPDATA`. `Missing::Rejected` gives a 400 with the shim copy, and `Missing::NotOnPath` the not-found copy. On WSL it is `copilot`.
     - a new, not resumed, Copilot launch gets `new_session_args` with `new_session_id()`. The core then links the tab to that id at once, through `history().note_event("copilot", …, &link_body(…))`, so Restart finds it with the hooks off as well (decision 10).
     - the `resume_session` gate gains `copilot`.
-  - `crates/core/src/server/hook.rs`: for `copilot`, the body given to `history().note_event` is `link_body` of it.
+  - `crates/core/src/server/hook.rs`:
+    - For `copilot`, the body given to `history().note_event` is `link_body` of it.
+    - A Copilot `sessionEnd` whose `sessionId` isn't the tab's latest linked session (`history().latest_for_tab_of(tab, "copilot")`) changes nothing. Copilot sends `/clear`'s `sessionEnd` detached, so it can arrive after the new session's `sessionStart`.
+  - `AppState::agent_exe_of("copilot")`, the program whose `--version` the version cache reads, is `exe::resolve`'s path.
   - `crates/core/src/history/recorder.rs`: `"codex" | "qwen" | "copilot"` link by the first event that names them, and ask for no copy.
   - `crates/core/src/history/mod.rs`: `sidecar_allowed_in` for `copilot`:
     - the id is a UUID;
@@ -562,6 +568,7 @@ The prompt:
     - `a_copilot_launch_with_only_the_shim_is_refused_with_the_copy`
     - `a_copilot_tab_resumes_its_chosen_session`: its `events.jsonl` exists, and `--resume=<id>` follows.
     - `a_copilot_tab_whose_transcript_is_gone_starts_fresh`
+  - `tests/hook.rs`: `a_late_session_end_from_clear_is_ignored`. A `sessionStart` for id B comes after id A's, then A's `sessionEnd` arrives: the row stays live.
   - `agents_api.rs`:
     - `copilot_setup_reports_none_then_installed_after_apply`
     - `copilot_plan_shows_the_hooks_file_the_settings_diff_and_the_chain`
@@ -647,6 +654,6 @@ The prompt:
     - `hooks\marshell.json` is gone;
     - the scratch `settings.json` is byte-equal to what it was before the setup;
     - the chain file is gone.
-- [ ] **Step 2:** Write `docs/research/2026-11-06-copilot-adapter-live-check.md`: each check with its evidence, and the findings numbered.
+- [ ] **Step 2:** Write `docs/research/2026-11-06-copilot-adapter-live-check.md`: each check with its evidence, and the findings numbered. Wherever `docs/PLAN.md` lists the CLIs Marshell installs hooks for, add Copilot CLI.
 - [ ] **Step 3:** Stop the check by PID, after listing the tree and looking for agent CLIs the person started. Ask before removing the scratch folder.
 - [ ] **Step 4:** Commit: `docs(research): record slice 6n1's live check`. Then run the final whole-branch review (marshell-reviewer, Opus), one fix pass, and `marshell-ship`.
