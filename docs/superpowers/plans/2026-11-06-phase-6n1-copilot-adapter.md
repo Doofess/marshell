@@ -5,7 +5,7 @@
 **Goal:** GitHub Copilot CLI (`copilot`) gets what Claude Code, Codex, Antigravity and Qwen Code have:
 - hooks and a chained status line, installed and removed through the config service;
 - live status in its row;
-- permission requests answered from the approve card, Departures and banners;
+- Needs permission in its row and the lane's one-liner while Copilot asks in its own terminal (decision 12: no approve cards);
 - Resume and Restart that pick up the tab's exact session;
 - project references that reach its model.
 
@@ -16,7 +16,6 @@ Every piece is first checked against a real Copilot CLI 1.0.106 driven by a fake
 - A new `crates/core/src/agents/copilot/` module reads Copilot's own camelCase hook events (decision 9). Its files:
   - `hooks.rs`: the whole Marshell-owned `hooks/marshell.json`, the `statusLine` key of Copilot's `settings.json`, and the chain file.
   - `status.rs`: events and the status line folded into `LiveStatus`.
-  - `request.rs`: the card's view and Copilot's answer JSON.
   - `exe.rs`: finds the real `copilot.exe`, never VS Code's shim.
   - `mod.rs`: home, version gate, context output, session ids, history link.
 - The bridge runs as a direct `exec` with `args`, so no shell sits between Copilot and the bridge.
@@ -24,7 +23,7 @@ Every piece is first checked against a real Copilot CLI 1.0.106 driven by a fake
 
 **Tech Stack:** Rust (axum, serde_json, `getrandom`, the `config` service and its JSONC edits), ts-rs, React + TypeScript, and Vitest through `renderToStaticMarkup`. The fake model server is the Node script from 6l1.
 
-**Spec:** `docs/PLAN.md` §9, "Slice 6n1 decisions (2026-11-06)" (decisions 1 to 11), plus "Session modes" and "Config safety copy". Evidence: `docs/research/2026-11-06-copilot-cli.md`, Part 1. Task 1 adds what the spike saw. The pattern to follow is `docs/superpowers/plans/2026-11-03-phase-6l1-qwen-adapter.md`.
+**Spec:** `docs/PLAN.md` §9, "Slice 6n1 decisions (2026-11-06)" (decisions 1 to 14; 12 replaces 4 and 5), plus "Session modes" and "Config safety copy". Evidence: `docs/research/2026-11-06-copilot-cli.md`, Part 1, whose "What 6n1's spike saw" Task 1 wrote. The pattern to follow is `docs/superpowers/plans/2026-11-03-phase-6l1-qwen-adapter.md`.
 
 **Checked before planning (2026-11-06):**
 - The winget install of Copilot CLI 1.0.106 is at `%LOCALAPPDATA%\GitHubCopilotCLI\copilot.exe`. The user PATH has VS Code's `copilot-shim` folder first, and that shim forwards to the real CLI. No Copilot account is signed in on this PC. The real `~/.copilot` exists, because Copilot has run once, and neither tests nor live checks may touch it.
@@ -48,6 +47,8 @@ Every piece is first checked against a real Copilot CLI 1.0.106 driven by a fake
   - The person's own keys, comments, BOM and CRLF stay byte-equal outside `statusLine`.
 - Each hook entry's `args` hold `--tag mshl1`, read by `common::is_ours`.
 - **The bridge never exits non-zero, and with no answer it prints nothing.** Copilot denies a tool call when a `preToolUse` hook exits non-zero (research Q3). The bridge already does this; Task 2 pins it for Copilot.
+- **A missing bridge blocks Copilot.** While `marshell.json` names a bridge that isn't there, Copilot refuses every tool call, `--allow-all-tools` included (spike Q6). So `marshell uninstall` keeps `~/.marshell/bin` while Copilot's file may remain (decision 13), and orphaned hooks say they block every tool call.
+- **No approve cards for Copilot (decision 12).** Marshell installs no `permissionRequest` entry, and `supports_permissions("copilot")` stays false. Copilot asks in its own terminal. The row's Needs permission comes from the `permission_prompt` notification.
 - Tests and live checks never read or write the real `~/.copilot`, `~/.claude`, `~/.codex` or `~/.marshell`. Tests inject paths with `AppState::with_copilot_home(<temp>)`.
 - No new dependency, in Rust or in `package.json`. Session ids come from `getrandom`, which `marshell-core` already uses.
 - New protocol fields go in `crates/protocol`, and `pnpm check:generated` passes afterwards.
@@ -66,7 +67,9 @@ Every piece is first checked against a real Copilot CLI 1.0.106 driven by a fake
     - "Copilot CLI's version could not be read"
     - "Copilot CLI <v> is older than the versions Marshell knows"
     - "Copilot CLI <v> is not one Marshell has recorded yet"
-  - "Always allow" refused (decision 5): "Copilot CLI can't keep an always-allow rule from Marshell. Allow this once instead."
+  - The consent card's approve switch, off and disabled (decision 12): "Copilot CLI asks in its own terminal. Its hook can't tell which requests Copilot would allow by itself."
+  - Orphaned hooks (decision 13), as Antigravity's: "Marshell's hooks are in <marshell.json>, but the bridge at <path> is missing, so Copilot CLI blocks every tool call, outside Marshell too. Turn the hooks off, or set up again."
+  - `marshell uninstall`, when bin stays: "The folder <path> was left in place, because Codex's, Antigravity's, Qwen Code's or Copilot CLI's hooks may still point at it."
   - Removal: "Marshell removes the hook entries it added and puts your own status line back from statusline-chain.json; the rest of the file stays as it is" (the shared wording).
   - A `marshell.json` Marshell didn't write: "<path> holds hooks Marshell didn't write, so Marshell leaves it as it is."
   - Only the shim was found: "Only VS Code's copilot shim was found. Install Copilot CLI with winget install GitHub.Copilot, then try again."
@@ -75,6 +78,8 @@ Every piece is first checked against a real Copilot CLI 1.0.106 driven by a fake
 ## Assumptions Task 1 confirms or corrects
 
 These come from the research note. Task 1 checks each one against a real Copilot 1.0.106 and records the evidence. If a finding differs, Task 1 amends this plan (shapes, constants, copy) and commits the change before Task 2 starts.
+
+Task 1 ran on 2026-11-06. Its answers are in the research note's "What 6n1's spike saw", and the tasks below are amended where they differ: Q4 led to decision 12, Q6 to decision 13, and Q12's Windows Terminal prompt to decision 14. The list below stays as it was planned.
 
 - **Q1. The file.**
   - Copilot loads `<COPILOT_HOME>\hooks\marshell.json` at session start, beside any other `*.json` there.
@@ -152,8 +157,15 @@ These come from the research note. Task 1 checks each one against a real Copilot
    - Their own files in `hooks\` are never touched.
    - A `marshell.json` they wrote is neither replaced nor deleted.
    - Tests in Task 3.
-3. **A card released, timed out, or whose core goes away.** Each gives no decision, so Copilot goes on to its own flow and the call never runs unasked. The core's hold deadline ends before the bridge's wait, and the bridge's wait ends before the entry's 600 s `timeoutSec`. Tests in Task 4.
-4. **A request that Copilot would have handled itself never waits on a card.** That covers what Step 8 rules for Q4 (a Bypass tab, a rule), and a `requestSandboxBypass` request, which a hook's allow can't approve. Tests in Task 4.
+3. **A session's id changes inside one Copilot process.** `/clear` ends the old id and goes on under a new one, and a resumed Copilot reports nothing but its status line until the first prompt.
+   - The row is never left Ended while Copilot runs.
+   - Restart after `/clear` resumes the new id.
+   - A late `sessionEnd` for the old id changes nothing.
+   - Tests in Tasks 4 and 5.
+4. **A bridge that has gone.** Copilot refuses every tool call while `marshell.json` points at a missing bridge.
+   - `marshell uninstall` keeps the bin folder whenever Copilot's file can't be read, planned or deleted.
+   - The Agents section names the file and says it blocks every tool call.
+   - Tests in Tasks 5 and 6.
 5. **VS Code's shim first on PATH, or alone.** The launch runs the real `copilot.exe` by its full path, or refuses with the shim copy. It never runs the shim. Tests in Task 5.
 
 ---
@@ -213,7 +225,7 @@ This task runs in the main thread, not through a worker.
     - `sessionStart`, `sessionStart-clear`, `userPromptSubmitted`;
     - `preToolUse-<shell tool>`, `preToolUse-<write tool>`, `preToolUse-<edit tool>`, `preToolUse-<read tool>`;
     - `postToolUse`, `postToolUseFailure`;
-    - `permissionRequest-<shell tool>`, `permissionRequest-<edit tool>`, and `permissionRequest-sandbox` if seen;
+    - `permissionRequest-<shell tool>`, `permissionRequest-<edit tool>`, and `permissionRequest-sandbox` if seen (not committed: decision 12 installs no `permissionRequest` entry, and the research note keeps its shape);
     - `notification-permission_prompt`, `agentStop`, `errorOccurred` if seen;
     - `sessionEnd`, `sessionEnd-clear`.
   - Copy the status-line bodies into `statusline/1.0.106/` as `idle.json` and `working.json`.
@@ -227,6 +239,7 @@ This task runs in the main thread, not through a worker.
   - Where a finding differs from an assumption, amend the plan: Task 3's table and entry form, Task 4's fold and answers, Task 5's arguments, and the copy.
   - **Decision gate (Q4).** If `permissionRequest` fires for a request Copilot would have allowed by itself (a rule, a session approval, `--allow-all`), ask the person through AskUserQuestion before Task 4. Decision 4 would otherwise raise cards Copilot never shows.
     - The recommended option: a Copilot request from a tab whose mode is Bypass passes with no decision. Copilot's own rules are not read, and that limit is recorded.
+    - Asked on 2026-11-06, with the finding that the hook fires for `echo` and `git status` in Manual too. The person chose no cards at all (decision 12, which replaces decisions 4 and 5). The person also answered the gate's two other questions: decision 13, the bin folder, from Q6, and decision 14, Windows Terminal's variables, from Q12.
     - Record the answer as a new 6n1 decision in PLAN §9, and add the rule to Task 4's approvals.
   - Any other finding that changes a §9 decision (Q7's fallback, say) goes to the person through AskUserQuestion first.
 
@@ -240,32 +253,29 @@ git commit -m "docs(research): record what Copilot CLI's hooks, status line and 
 **Files:**
 - Modify:
   - `crates/hook/src/context.rs` (`accepted`)
-  - `crates/hook/src/permission.rs` (`accepted`)
   - `crates/hook/src/statusline.rs` (`shell_for`)
   - `crates/hook/src/lib.rs` (the filter beside Grok's)
+- Not touched: `crates/hook/src/permission.rs`. Copilot has no approve cards (decision 12), so `permission::accepted` gets no `"copilot"` arm.
 - Test: `crates/hook/tests/bridge.rs`, and inline tests in each file
 
 **Interfaces:**
 - Produces:
   - `context::accepted("copilot", answer)` is true only for an object whose one key is `additionalContext`, with a string value (Q7's shape).
-  - `permission::accepted("copilot", answer, request, elevated)` is true only for `{"behavior":"allow"}` exactly, or for `{"behavior":"deny"}` with at most a string `message`. It never passes `interrupt` or any other key, and never a `hookSpecificOutput` wrapper.
   - `statusline::shell_for("copilot")` on Windows runs a chained line through `cmd.exe /d /s /c`, as for `qwen` (Q8).
-  - A call with `--agent claude` made by Copilot prints nothing, as Grok's does. The test is Q3's variable (expected `COPILOT_HOOK_DIR`) being set and not empty.
+  - A call with `--agent claude` made while `COPILOT_CLI` is set and not empty prints nothing, as Grok's does. Copilot runs a trusted project's `.claude\settings.json` hooks with `COPILOT_CLI=1` but without `COPILOT_HOOK_DIR` (spike Q14), so `COPILOT_CLI` is the test.
 
 - [ ] **Step 1: Write the failing tests.**
   - `context::tests::copilot_takes_only_top_level_additional_context`: `{"additionalContext":"x"}` passes. Refused for `"copilot"`: the `hookSpecificOutput` form, `{"additionalContext":1}`, `{"additionalContext":"x","decision":"block"}` and `{"injectSteps":[]}`.
-  - `permission::tests::copilot_allow_and_deny_are_its_top_level_behavior`
-  - `permission::tests::copilot_interrupt_or_extra_keys_are_refused`: the answers `{"behavior":"deny","interrupt":true}`, `{"behavior":"allow","message":"x"}` and the Claude-shaped answer.
   - In `tests/bridge.rs`:
     - `a_copilot_call_with_no_core_prints_nothing_and_exits_0`: roles `event` (with `--event preToolUse`) and `permission`, and `MARSHELL_HOME` with no `run/endpoint.json`. Assert empty stdout and exit status 0.
-    - `a_copilot_permission_allow_from_the_core_is_printed`
-    - `a_claude_call_made_by_copilot_prints_nothing`
+    - `a_copilot_permission_call_prints_nothing_whatever_the_core_answers`: the core answers `{"behavior":"allow"}`, and the bridge still prints nothing.
+    - `a_claude_call_made_by_copilot_prints_nothing`: `COPILOT_CLI=1` with no `COPILOT_HOOK_DIR`, and the core holds an answer.
     - `a_copilot_body_gets_its_event_name_from_the_flag`: the core receives `hook_event_name: "agentStop"`. A body that already holds `"Notification"` keeps it.
   - `statusline::tests::copilot_runs_its_chained_line_through_cmd_on_windows` (`#[cfg(windows)]`).
-- [ ] **Step 2: Run them.** `cargo test -p marshell-hook -j 4 copilot`. Expected: FAIL for the context, permission, filter and status-line cases.
-- [ ] **Step 3: Implement.** Add a `"copilot"` arm to each function. In `permission::accepted`, check Copilot's answer before the `hookSpecificOutput` path, as Antigravity's is. Leave `with_event` as it is.
+- [ ] **Step 2: Run them.** `cargo test -p marshell-hook -j 4 copilot`. Expected: FAIL for the context, filter and status-line cases. The two "prints nothing" tests may already pass, since nothing accepts a Copilot permission answer yet.
+- [ ] **Step 3: Implement.** Add a `"copilot"` arm to `context::accepted` and `statusline::shell_for`, and the `COPILOT_CLI` filter beside Grok's. Leave `with_event` as it is.
 - [ ] **Step 4: Run.** `cargo test -p marshell-hook -j 4`. Expected: PASS.
-- [ ] **Step 5: Commit.** `cargo fmt --all`, then `feat(hook): the bridge answers Copilot CLI's permission requests and prompt context and runs its chained status line`
+- [ ] **Step 5: Commit.** `cargo fmt --all`, then `feat(hook): the bridge gives Copilot CLI its prompt context and runs its chained status line`
 
 ### Task 3: The Copilot hooks file and status-line plan
 
@@ -289,12 +299,12 @@ git commit -m "docs(research): record what Copilot CLI's hooks, status line and 
     - `Some("COPILOT_ALLOW_ALL")` when that variable is truthy (`true` or `1`, any case);
     - otherwise None, per Q13.
 - Produces, in `agents::copilot::hooks`:
-  - `pub const EVENTS: [(&str, &str, u32); 10]`: event, bridge role and `timeoutSec`, from the table below.
+  - `pub const EVENTS: [(&str, &str, u32); 9]`: event, bridge role and `timeoutSec`, from the table below.
   - `pub fn hooks_path(copilot_home: &Path) -> PathBuf` (`hooks/marshell.json`) and `pub fn settings_path(copilot_home: &Path) -> PathBuf` (`settings.json`).
   - `pub fn hooks_file(bridge: &Bridge, want: &HookPlanRequest) -> String`: the whole file. It is `serde_json::to_string_pretty` of the layout below, plus `\n`.
   - `pub fn statusline_command(bridge: &Bridge) -> Result<String, PlanError>`: `<common::bridge_prefix_of("Copilot CLI", bridge)> statusline --agent copilot --tag mshl1`.
   - `pub struct Files<'a> { pub hooks_path: &'a Path, pub hooks_text: Option<&'a str>, pub settings_path: &'a Path, pub settings_text: Option<&'a str>, pub chain_path: &'a Path, pub chain_text: Option<&'a str> }`
-  - `pub struct Found { pub install: HookInstall, pub approve_installed: bool, pub has_own_statusline: bool, pub chained: bool }`
+  - `pub struct Found { pub install: HookInstall, pub has_own_statusline: bool, pub chained: bool }`. There is no `approve_installed`: Copilot has no approval entry (decision 12).
   - `pub fn inspect(files: &Files, bridge: &Bridge) -> Found`
   - `pub fn install_plan(files: &Files, bridge: &Bridge, want: &HookPlanRequest) -> Result<ChangeSet, PlanError>`
   - `pub fn remove_plan(files: &Files) -> Result<RemovePlan, PlanError>`, using `claude::hooks::RemovePlan`, re-exported as Qwen does.
@@ -305,7 +315,8 @@ The entries:
 | --- | --- | --- |
 | `sessionStart`, `userPromptSubmitted`, `preToolUse`, `postToolUse`, `postToolUseFailure`, `notification`, `agentStop`, `errorOccurred` | `event` | 5 |
 | `sessionEnd` | `event` | 2 |
-| `permissionRequest` | `permission` | 600 |
+
+There is no `permissionRequest` entry (decision 12). It fires for requests Copilot then allows by itself, with the same body (spike Q4). Its body also stays out of the fixtures.
 
 The layout, shown for one entry:
 
@@ -325,7 +336,7 @@ The layout, shown for one entry:
 }
 ```
 
-The entries are written in the table's order. No entry has a `matcher`, `command`, `bash` or `powershell` (Q2). `want.status` false leaves out every `event` entry. `want.approve` false leaves out `permissionRequest`.
+The entries are written in the table's order. No entry has a `matcher`, `command`, `bash` or `powershell` (Q2). `want.status` false leaves out every entry. `want.approve` changes nothing for Copilot.
 
 The hooks file:
 - **Install:**
@@ -349,8 +360,8 @@ The status line in `settings.json` (JSONC):
 - **Never written:** Marshell never writes `footer`, `hooks`, `disableAllHooks` or any other key.
 
 `inspect`, as Qwen's:
-- **Installed:** the file holds the 9 `event` entries with the current bridge path, and the status line is Marshell's or is left by the "any other shape" rule. `approve_installed` separately says whether `permissionRequest` is there.
-- **Orphaned:** entries are present but their `exec` file doesn't exist, as for Claude.
+- **Installed:** the file holds the 9 entries with the current bridge path, and the status line is Marshell's or is left by the "any other shape" rule.
+- **Orphaned:** entries are present but their `exec` file doesn't exist, as for Claude. For Copilot this blocks every tool call (decision 13), which Task 6's copy says.
 - **Partial:** anything else that has entries.
 - **None:** no file.
 
@@ -361,7 +372,8 @@ The status line in `settings.json` (JSONC):
     - `settings.json` holding only `statusLine`;
     - the chain `{"statusLine": null}`.
   - `each_entry_runs_the_bridge_by_exec_with_its_event_and_tag`: no entry has `command`, `bash`, `powershell` or `matcher`.
-  - `want_picks_the_entries`: status only, approve only, and status line off.
+  - `want_picks_the_entries`: status off plans no hooks file, status line off plans no settings edit, and `approve` on or off gives the same plan.
+  - `no_entry_is_a_permission_request`
   - `reinstall_with_the_same_bridge_plans_nothing`
   - `a_moved_bridge_replaces_the_file_against_its_hash`
   - `a_marshell_json_the_person_wrote_is_refused`: one untagged entry gives `NotMarshells` with the copy.
@@ -384,23 +396,22 @@ The status line in `settings.json` (JSONC):
 - [ ] **Step 4: Run.** `cargo test -p marshell-core -j 4 agents::`. Expected: PASS, including the existing Claude, Antigravity and Qwen tests.
 - [ ] **Step 5: Commit.** `cargo fmt --all`, then `feat(agents): plan Copilot CLI's own hooks file and chained status line`
 
-### Task 4: Live status, approvals and references from Copilot's hooks
+### Task 4: Live status and references from Copilot's hooks
 
 **Files:**
-- Create: `crates/core/src/agents/copilot/status.rs`, `crates/core/src/agents/copilot/request.rs`
+- Create: `crates/core/src/agents/copilot/status.rs`
 - Modify:
-  - `crates/core/src/agents/mod.rs`: `supports_permissions`, `permission_view`, `permission_output`, `release_output`.
   - `crates/core/src/server/hook.rs`:
     - the prompt take-out;
     - `starts_prompt`;
     - the fold match;
     - the context match;
     - the version-gate table;
-    - `fold_live_with`, with its status-line gate;
-    - the hold, with the pass rules below.
+    - `fold_live_with`, with its status-line gate.
 
     The WSL agent match stays as it is: Copilot in WSL is 6n2.
   - `crates/core/src/server/mod.rs`: `copilot_home: Option<PathBuf>`, `with_copilot_home`, and Copilot in the version cache.
+- Not touched: `supports_permissions`, `permission_view`, `permission_output` and `release_output` in `agents/mod.rs`. Copilot has no cards (decision 12), so it gets no arm there.
 - Test: `crates/core/tests/hook.rs`, `crates/core/tests/permissions.rs`, and inline tests
 
 **Interfaces:**
@@ -408,42 +419,32 @@ The status line in `settings.json` (JSONC):
 - Produces:
   - `copilot::status::fold_event(prev: Option<&LiveStatus>, body: &Value, now_ms: u64) -> Option<LiveStatus>`
   - `copilot::status::fold_statusline(prev: Option<&LiveStatus>, body: &Value, now_ms: u64) -> LiveStatus`
-  - `copilot::request::detail(request: &Value) -> PermissionDetail`
-  - `copilot::request::view(p: &PendingPermission) -> Option<PermissionView>`
-  - `copilot::request::permission_output(decision: &PermissionDecision, request: &Value) -> Result<Value, &'static str>`
-  - `copilot::request::passes(request: &Value) -> bool`: true for a request no card may hold.
   - `AppState::with_copilot_home(self, user_home: PathBuf) -> Self`
 
-The fold reads `hook_event_name` from Q3's bodies:
+The fold reads `hook_event_name` from Q3's bodies. Copilot's order around a tool is `preToolUse`, then (when it asks) `notification`, then `postToolUse`:
 
 | Event | Result |
 | --- | --- |
-| `sessionStart` | Idle. After an Ended from `/clear` (Q9), the row is live again. |
+| `sessionStart` | Idle. It comes at the first prompt, not at launch (Q3). After `/clear` its `source` is `new`. |
 | `userPromptSubmitted` | Working |
-| `preToolUse` | Working, with a phrase from the tool and Q3's `toolArgs` (a JSON string is parsed first): "Running <command>" for the shell tool, "Editing <relative file>" for writes and edits, "Reading <relative file>" for reads, and Qwen's phrase for any other tool. |
+| `preToolUse` | Working, with a phrase from the tool and Q3's `toolArgs` (a JSON string is parsed first): "Running <command>" for `powershell` (and `bash` or `shell`), "Editing <relative file>" for `create` and `edit`, "Reading <relative file>" for `view`, and Qwen's phrase for any other tool. |
 | `postToolUse`, `postToolUseFailure` | Working |
-| `permissionRequest` | Needs permission |
-| `notification` with `permission_prompt` (its body names the event `Notification`, which the fold takes as `notification`) | Needs permission. This is Copilot's own dialog, with no card behind it. |
+| `notification` with `permission_prompt` (its body names the event `Notification`, which the fold takes as `notification`) | Needs permission. This is Copilot's own dialog, and the lane shows its "asks in its own terminal" one-liner. |
 | `notification`, any other type | No change. `agent_idle` is a background agent, not the turn ending. |
 | `agentStop` | Idle (Done, as Claude's) |
 | `errorOccurred` with `recoverable: false` | Idle, with the error phrase Claude's `StopFailure` uses. With `recoverable: true`, no change. |
 | `sessionEnd` | Ended |
+| A status line, on an Ended row | Idle, with the status line's model and context %. Only a running Copilot runs its status line, and none runs after `/exit`'s `sessionEnd` (Q9). It covers `/clear`, whose status line with the new id comes 0.2 s after the old id's `sessionEnd`. It also covers a resumed Copilot, which sends nothing else until its first prompt. |
 
-- The bodies carry no mode, so the row's mode stays the launch mode. There's no `mode_of` and no `set_live_mode` call for Copilot. If Q8 finds `allow_all_enabled` or a mode in the status line, `fold_statusline` leaves it unread in 6n1, and the finding notes it for later.
-- The status line sets the model and context % from Q8's keys. A context window size of 0 or missing leaves context % unknown, not 0 %. There's no plan meter.
+- The bodies carry no mode, so the row's mode stays the launch mode. There's no `mode_of` and no `set_live_mode` call for Copilot. The status line's `allow_all_enabled` (Q8) stays unread in 6n1.
+- The status line sets the model (`model.display_name`) and context % (`context_window.used_percentage`). A context window size of 0 or missing leaves context % unknown, not 0 %. There's no plan meter.
+- Known limits, recorded in the live check's note:
+  - Esc in Copilot's dialog fires no hook (spike), so the row keeps Needs permission until the next event.
+  - Each of autopilot's continuations is a `userPromptSubmitted` with Copilot's own text, so each counts as a prompt and gets the references note.
 
-Approvals:
-- A Copilot `permissionRequest` from an open tab whose effective agent is `copilot` is held for a card (decision 4), unless `passes` says otherwise:
-  - `toolInput.requestSandboxBypass` is `true`, because Copilot ignores a hook's allow for it;
-  - the rule Step 8 records for Q4, if any.
-
-  A request that passes is answered at once with 204, so the bridge prints nothing.
-- Allow gives `{"behavior":"allow"}`.
-- Deny gives `{"behavior":"deny","message": common::DENIED_TEXT}`.
-- Always allow gives `Err` with decision 5's copy.
-- `release_output("copilot", _)` is `None`.
-- The card's detail comes from `toolName` and `toolInput`. An unknown tool shows as other, with its raw arguments flattened by `common::flatten_input`. Nothing keys on a tool id unless Q3 found one.
-- The card's risk line uses the same risky-command rules the Claude card uses.
+Approvals (decision 12):
+- No card is ever held for Copilot. No `permissionRequest` entry is installed, and `supports_permissions("copilot")` is false.
+- A body that reaches the permission role with `--agent copilot` anyway (a hooks file of the person's own, say) gets 204 at once, so the bridge prints nothing and Copilot goes on to its own dialog.
 
 The prompt:
 - For `copilot`, `prompt` and `initialPrompt` are taken out of the body before anything else sees it.
@@ -452,16 +453,14 @@ The prompt:
 
 - [ ] **Step 1: Write the failing tests.**
   - In `copilot/status.rs`, one test per table row, each fed the Task 1 fixture for that event:
-    - `session_start_is_idle`, `a_prompt_is_working`, `a_shell_tool_says_running_its_command`;
+    - `session_start_is_idle`, `a_prompt_is_working`, `a_shell_tool_says_running_its_command`, `create_and_edit_say_editing_and_view_says_reading`;
     - `tool_args_as_a_json_string_are_read`;
-    - `a_permission_request_needs_permission`, `a_permission_prompt_notification_needs_permission`, `agent_idle_changes_nothing`;
+    - `a_permission_prompt_notification_needs_permission`, `agent_idle_changes_nothing`;
+    - `post_tool_use_after_a_permission_prompt_is_working`;
     - `agent_stop_is_done`, `an_unrecoverable_error_is_idle_with_its_phrase`, `a_recoverable_error_changes_nothing`;
-    - `session_end_ends_it`, `clear_ends_then_starts_again`;
+    - `session_end_ends_it`;
+    - `a_status_line_after_an_end_is_idle_again`: `sessionEnd-clear.json`, then `statusline/1.0.106/idle.json`.
     - `the_status_line_sets_model_and_context`, `a_status_line_with_no_window_size_leaves_context_unknown`.
-  - In `copilot/request.rs`:
-    - `a_shell_request_shows_its_command`, `a_write_shows_the_file`, `an_unknown_tool_shows_raw_arguments`;
-    - `allow_and_deny_answer_in_copilots_shape`, `always_allow_is_refused_with_the_copy`;
-    - `a_sandbox_bypass_request_passes`.
   - In `tests/hook.rs`, through the real router with `with_copilot_home(<temp>)` and a fixed version `1.0.106`:
     - `copilot_events_fold_into_the_tabs_live_status`
     - `a_copilot_prompt_is_never_logged_or_kept`: the hook log and the event ring hold no `prompt` and no `initialPrompt` key.
@@ -469,22 +468,14 @@ The prompt:
     - `no_other_copilot_event_gets_the_note`: a `notification`, a `preToolUse` and an `agentStop` naming an alias each answer 204.
     - `an_unrecorded_copilot_version_gets_the_note_and_no_status`
     - `copilot_status_off_says_so`
-  - In `tests/permissions.rs`:
-    - `a_copilot_permission_request_is_held_for_a_card`
-    - `allow_from_the_card_answers_copilot`
-    - `a_released_copilot_card_answers_nothing`: 204, so the bridge prints nothing.
-    - `a_copilot_request_from_an_unknown_tab_or_a_tab_running_another_agent_passes`
-    - `a_copilot_sandbox_bypass_request_is_not_held`
-    - `two_copilot_tabs_get_their_own_answers`
-    - `a_held_copilot_request_times_out_before_the_bridge`: the core's deadline is less than the bridge's wait, and the bridge's wait is less than 600 s.
-    - Plus Step 8's Q4 rule, if any (for example `a_copilot_request_from_a_bypass_tab_is_not_held`).
-- [ ] **Step 2: Run them.** `cargo test -p marshell-core -j 4 copilot`. Expected: FAIL.
+  - In `tests/permissions.rs`: `a_copilot_permission_request_is_never_held`. A body from an open Copilot tab gets 204 at once, and no card is listed.
+- [ ] **Step 2: Run them.** `cargo test -p marshell-core -j 4 copilot`. Expected: FAIL. `a_copilot_permission_request_is_never_held` may already pass.
 - [ ] **Step 3: Implement.**
-  - Write `status.rs` and `request.rs`, then the `"copilot"` arms at each listed spot.
+  - Write `status.rs`, then the `"copilot"` arms at each listed spot.
   - In `fold_live_with`, the status-line role is admitted for `claude | antigravity | qwen | copilot`.
   - Copilot gets its own `Gate::Known if agent == "copilot"` arm. It has no Done hold, subagent count or stuck check.
 - [ ] **Step 4: Run.** `cargo test -p marshell-core -j 4`. Expected: PASS. Note in the ledger any test that already failed on `origin/main`.
-- [ ] **Step 5: Commit.** `cargo fmt --all`, then `feat(agents): Copilot CLI's hooks drive live status, approve cards and project references`
+- [ ] **Step 5: Commit.** `cargo fmt --all`, then `feat(agents): Copilot CLI's hooks drive live status and project references`
 
 ### Task 5: Setup, removal and launch: Copilot becomes an adapter agent
 
@@ -498,7 +489,7 @@ The prompt:
     - an own agent may not take `copilot`.
   - `crates/core/src/agents/copilot/mod.rs`:
     - `pub fn new_session_id() -> String`: a lowercase v4 UUID from `getrandom`.
-    - `pub fn link_body(body: &Value, copilot_home: &Path) -> Option<Value>`: `{hook_event_name, session_id, transcript_path, cwd}`, read from `sessionId` and `cwd`. `transcript_path` is the body's `transcriptPath` when present, otherwise `<copilot_home>/session-state/<sessionId>/events.jsonl` (Q9). None without a valid `sessionId`.
+    - `pub fn link_body(body: &Value, copilot_home: &Path) -> Option<Value>`: `{hook_event_name, session_id, transcript_path, cwd}`, read from `sessionId` and `cwd`, or from a status line's `session_id` and `cwd`. `transcript_path` is the body's `transcriptPath` when present, otherwise `<copilot_home>/session-state/<id>/events.jsonl` (Q9). A status line's `transcript_path` is the session folder, not the file, so it is never used. None without a valid id.
   - `crates/core/src/profiles/detect.rs`:
     - `agent_command`: `"copilot" => Some("copilot")`, the word for WSL and for copy.
     - `adapter_of_exe`: `"copilot"`.
@@ -514,7 +505,8 @@ The prompt:
     - the `resume_session` gate gains `copilot`.
   - `crates/core/src/server/hook.rs`:
     - For `copilot`, the body given to `history().note_event` is `link_body` of it.
-    - A Copilot `sessionEnd` whose `sessionId` isn't the tab's latest linked session (`history().latest_for_tab_of(tab, "copilot")`) changes nothing. Copilot sends `/clear`'s `sessionEnd` detached, so it can arrive after the new session's `sessionStart`.
+    - `/clear` changes the session id inside one process, and its status line names the new id before any event does (Q9). So a Copilot status line whose `session_id` isn't the tab's latest linked session (`history().latest_for_tab_of(tab, "copilot")`) links the tab to it through `link_body`, and Restart after `/clear` resumes the new id. This amends decision 10: Marshell picks the first id and follows the later ones.
+    - A Copilot `sessionEnd` whose `sessionId` isn't the tab's latest linked session changes nothing. It covers a status line with the new id that arrives before the old id's `sessionEnd`.
   - `AppState::agent_exe_of("copilot")`, the program whose `--version` the version cache reads, is `exe::resolve`'s path.
   - `crates/core/src/history/recorder.rs`: `"codex" | "qwen" | "copilot"` link by the first event that names them, and ask for no copy.
   - `crates/core/src/history/mod.rs`: `sidecar_allowed_in` for `copilot`:
@@ -524,12 +516,15 @@ The prompt:
   - `crates/core/src/history/index.rs`: `filters()` also excludes `'copilot'` until 6n2's importer.
   - `crates/core/src/server/agents.rs`:
     - `Adapter::Copilot`, `adapter()`, `cli_name` "Copilot CLI".
-    - Setup, plan and remove arms, with a `copilot_user_home` resolver that honours `with_copilot_home`. `AgentSetup.settings_path` is `settings.json` and `hooks_path` is `marshell.json`. `skips_all` comes from Task 3.
+    - Setup, plan and remove arms, with a `copilot_user_home` resolver that honours `with_copilot_home`. `AgentSetup.settings_path` is `settings.json`, `hooks_path` is `marshell.json`, and `approve_installed` is always false (decision 12). `skips_all` comes from Task 3.
     - The list of CLIs that can start.
     - `sign_in = SignIn::NoCommand`, the settings view not editable, and no skill, until 6n2.
   - `crates/core/src/server/catalog.rs`: `("copilot", "GitHub Copilot", "Copilot CLI", PromptStyle::Flag { flag: "-i".into() })`, found through `exe::resolve`.
   - `crates/core/src/diagnostics/export.rs`: `CLIS` gains `copilot`.
-  - `crates/cli/src/uninstall.rs`: delete Copilot's `marshell.json` and restore its status line, in the same order and with the same error handling as Qwen's. A file it can't read or plan is reported, and the rest goes on.
+  - `crates/cli/src/uninstall.rs`: delete Copilot's `marshell.json` and restore its status line, in the same order and with the same error handling as Qwen's.
+    - A file it can't read or plan is reported, and the rest goes on.
+    - Decision 13: such a file sets `hooks_failed`, so `~/.marshell/bin` stays. A missing bridge would block every Copilot tool call (spike Q6). A `marshell.json` the person wrote counts, because it may hold Marshell's entries too.
+    - The note when bin stays is the global constraints' copy, which now names Copilot CLI.
   - Not touched (6n2 and 6n3): `agents/install.rs`, `agents/distro.rs`, `agents/settings_view.rs`, `agents/skill.rs`, `server/history.rs`, and every Doctor file.
 - Test: `crates/core/tests/agents_api.rs`, `crates/core/tests/catalog_api.rs`, `crates/cli` tests, and inline tests in `exe.rs`, `detect.rs`, `sessions.rs` and `history`.
 
@@ -568,7 +563,10 @@ The prompt:
     - `a_copilot_launch_with_only_the_shim_is_refused_with_the_copy`
     - `a_copilot_tab_resumes_its_chosen_session`: its `events.jsonl` exists, and `--resume=<id>` follows.
     - `a_copilot_tab_whose_transcript_is_gone_starts_fresh`
-  - `tests/hook.rs`: `a_late_session_end_from_clear_is_ignored`. A `sessionStart` for id B comes after id A's, then A's `sessionEnd` arrives: the row stays live.
+  - `copilot/mod.rs`: `link_body_reads_a_status_lines_session_id`, which also checks that the status line's folder `transcript_path` is not used.
+  - `tests/hook.rs`:
+    - `a_late_session_end_from_clear_is_ignored`: a status line for id B comes after id A's events, then A's `sessionEnd` arrives, and the row stays live.
+    - `a_copilot_tab_follows_its_session_after_clear`: A's `sessionEnd`, then a status line for B. The tab's latest linked session is B, and the row is Idle.
   - `agents_api.rs`:
     - `copilot_setup_reports_none_then_installed_after_apply`
     - `copilot_plan_shows_the_hooks_file_the_settings_diff_and_the_chain`
@@ -577,13 +575,15 @@ The prompt:
     - `a_marshell_json_the_person_wrote_is_reported_not_overwritten`
     - `copilot_setup_reports_skips_all`
   - `catalog_api.rs`: `copilot_is_found_past_the_shim`
-  - `uninstall`: `uninstall_removes_copilots_hooks_and_restores_its_status_line`
+  - `uninstall`:
+    - `uninstall_removes_copilots_hooks_and_restores_its_status_line`
+    - `uninstall_keeps_the_bridge_while_copilots_hooks_may_remain`: an unparsable `marshell.json`, then one the person wrote. Each time bin stays, and the note names Copilot CLI.
 - [ ] **Step 2: Run them.** `cargo test --workspace -j 4 copilot`. Expected: FAIL.
 - [ ] **Step 3: Implement** each listed arm.
 - [ ] **Step 4: Run.** `cargo test --workspace -j 4`, then `pnpm check:generated`. Expected: PASS, and `cargo test -p marshell-core -j 4 doctor` is unchanged.
 - [ ] **Step 5: Commit.** `cargo fmt --all`, then `feat(agents): Copilot CLI is set up, launched past VS Code's shim and resumed by its own session id`
 
-### Task 6: Copilot in the Agents section, onboarding, launcher, rows and cards
+### Task 6: Copilot in the Agents section, onboarding, launcher, rows and the lane
 
 **Files:**
 - Modify:
@@ -596,13 +596,17 @@ The prompt:
       - the `setups`, `skillFlows` and `installs` maps.
 
       Copilot's skill row says the skill isn't available for Copilot CLI yet (6n2).
-    - `src/features/agents/agentsState.ts`
+    - `src/features/agents/agentsState.ts`:
+      - the orphaned line for `copilot` uses Antigravity's effect, "blocks every tool call, outside Marshell too" (decision 13);
+      - `actions`: an installed CLI whose approve capability isn't available offers only Hooks off, because `approve_installed` is always false for Copilot.
     - `src/features/onboarding/LiveOnboarding.tsx`: the state, the flows, `consentQueue` (after Qwen), and `getSetup`.
-    - `src/features/onboarding/consent.ts`: `CLI_NAME` "Copilot CLI", `CAPABILITIES`, `entryCount`.
+    - `src/features/onboarding/consent.ts`:
+      - `CLI_NAME` "Copilot CLI";
+      - `CAPABILITIES.copilot`: status 9 entries, statusline and skill as Qwen's, and `approve: no(<the consent copy in the global constraints>)`;
+      - `entryCount`.
     - `src/features/onboarding/Detected.tsx` and `src/features/onboarding/emptyStates.ts`
     - `src/features/settings/ProjectsSection.tsx`: `CLIS_HELP` lists Copilot CLI as taking references. If Q7 failed, it says "Copilot CLI can't take project references yet."
-  - Approve card:
-    - `src/features/approval/ApproveCard.tsx`: a Copilot card offers Allow and Deny, with no Always allow. Its release text is the "asking in its own terminal now" one.
+  - Approvals: no card (decision 12). `src/features/approval/ApproveCard.tsx` is not touched. A Copilot row in Needs permission gets the lane's existing one-liner for a session asking in its own terminal, which names "Copilot CLI".
   - Modes, launcher and sessions:
     - `src/features/modes/sessionModes.ts`: `isAdapter`, the mode map (Manual, Plan, Bypass), `launchArgs` (`--plan`, `--allow-all`), `classifies`, `switchKind`.
     - `src/features/launcher/launchChoice.ts`: the entry comes from the adapter list, not the manifest list.
@@ -621,8 +625,14 @@ The prompt:
   - `AgentsSection.test.tsx`:
     - `lists Copilot CLI with its hook state and a Set up button`
     - `Copilot's skill row says the skill isn't available for Copilot CLI yet`
-  - `ConsentCard.test.tsx` and `consentCopy.test.ts`: `Copilot's card is titled "Set up Copilot CLI hooks" and its removal uses the removal copy`
-  - `ApproveCard.test.tsx`: `a Copilot card has Allow and Deny and no Always allow`
+  - `agentsState.test.ts`:
+    - `orphaned Copilot hooks say they block every tool call and name marshell.json`
+    - `installed Copilot hooks offer only Hooks off`
+  - `ConsentCard.test.tsx` and `consentCopy.test.ts`:
+    - `Copilot's card is titled "Set up Copilot CLI hooks" and its removal uses the removal copy`
+    - `Copilot's approve switch is off and disabled, with its reason`
+    - `Copilot's status adds 9 entries`
+  - `fromCore.test.ts` (or the lane's test): `a Copilot session in Needs permission is a one-liner that names Copilot CLI`
   - `sessionModes.test.ts`: `Copilot starts Plan with --plan and Bypass with --allow-all`
   - `toRow.test.ts`: `a Copilot row waits for hooks and is not status limited`
   - `resumeCommand.test.ts`: `copilot --continue`
@@ -631,29 +641,26 @@ The prompt:
 - [ ] **Step 2: Run them.** `pnpm test src/features src/lib`. Expected: FAIL.
 - [ ] **Step 3: Implement** each arm. The copy is exactly as in the global constraints. A new button or line works by keyboard and in forced colours, using the existing classes.
 - [ ] **Step 4: Run.** `pnpm test`, then `pnpm build`. Expected: PASS.
-- [ ] **Step 5: Commit.** `feat(ui): Copilot CLI is set up, launched and answered like the other adapter agents`
+- [ ] **Step 5: Commit.** `feat(ui): Copilot CLI is set up and launched like the other adapter agents, and asks in its own terminal`
 
 ### Task 7: Live check and exit (main thread)
 
 - [ ] **Step 1:** Run `marshell-live-check` with a fresh literal scratch folder and `-CopilotFake`. Put a status line of the person's own in the scratch `settings.json` first.
   - Over CDP:
-    - Set up Copilot's hooks from the Agents section, and read the diff for `marshell.json`, `settings.json` and the chain.
+    - Set up Copilot's hooks from the Agents section. Read the diff for `marshell.json` (9 entries, no `permissionRequest`), `settings.json` and the chain, and the approve switch's reason.
     - Open a Copilot tab in Manual from the launcher.
       - The argv runs `%LOCALAPPDATA%\GitHubCopilotCLI\copilot.exe` by its full path, with `--session-id <uuid>`.
-      - Send `RUN echo marshell`. The row goes Working, then Needs permission.
-      - The card shows the command, and Allow runs it.
-      - The row returns to Idle with the model and context %.
-    - Send another `RUN` and release the card: Copilot's own dialog appears in the terminal.
-    - Deny one: the model got the message (fake log).
-    - Try "Always allow", and read decision 5's copy.
+      - Send `RUN New-Item a.txt`. The row goes Working, then Needs permission, and the lane shows the one-liner with no card.
+      - Answer Copilot's dialog in the terminal. The row goes Working, then Idle with the model and context %.
+    - Send `RUN echo marshell`, which Copilot allows by itself. No Needs permission and no card.
     - With a project alias, send a prompt naming it: the note is in the fake log.
-    - Check Step 8's Q4 rule in a Bypass tab, if there is one.
-  - Restart the tab and read the argv: `--resume=<the same uuid>`.
-  - Two Copilot tabs ask at once, and each card answers its own.
+  - `/clear` in the tab: the row is Idle within a second, and Restart's argv is `--resume=<the new id>`.
+  - Restart the tab after `/exit` and read the argv: `--resume=<the same uuid>`. The row is Idle before the first prompt.
+  - Two Copilot tabs ask at once. Each row shows Needs permission, and the lane lists both.
   - Turn the hooks off:
     - `hooks\marshell.json` is gone;
     - the scratch `settings.json` is byte-equal to what it was before the setup;
     - the chain file is gone.
-- [ ] **Step 2:** Write `docs/research/2026-11-06-copilot-adapter-live-check.md`: each check with its evidence, and the findings numbered. Wherever `docs/PLAN.md` lists the CLIs Marshell installs hooks for, add Copilot CLI.
+- [ ] **Step 2:** Write `docs/research/2026-11-06-copilot-adapter-live-check.md`: each check with its evidence, the findings numbered, and Task 4's known limits. Wherever `docs/PLAN.md` lists the CLIs Marshell installs hooks for, add Copilot CLI.
 - [ ] **Step 3:** Stop the check by PID, after listing the tree and looking for agent CLIs the person started. Ask before removing the scratch folder.
 - [ ] **Step 4:** Commit: `docs(research): record slice 6n1's live check`. Then run the final whole-branch review (marshell-reviewer, Opus), one fix pass, and `marshell-ship`.

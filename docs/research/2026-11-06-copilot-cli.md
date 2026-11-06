@@ -1,6 +1,6 @@
 # GitHub Copilot CLI 1.0.106: hooks, sessions and surfaces
 
-Research for the Copilot CLI slices (PLAN §9, "Slice 6n1 decisions (2026-11-06)"). Two read-only passes on 2026-11-06 over Copilot CLI 1.0.106 as installed by `winget install GitHub.Copilot`: one for the adapter (6n1), one for the surfaces and the Doctor (6n2, 6n3). The adapter facts here are assumptions until 6n1's spike runs a real Copilot against a fake model; the spike's findings amend this file.
+Research for the Copilot CLI slices (PLAN §9, "Slice 6n1 decisions (2026-11-06)"). Two read-only passes on 2026-11-06 over Copilot CLI 1.0.106 as installed by `winget install GitHub.Copilot`: one for the adapter (6n1), one for the surfaces and the Doctor (6n2, 6n3). 6n1's spike ran a real Copilot against a fake model on 2026-11-06. Its findings open Part 1, and where they differ from the read-only passes below, they win.
 
 Where the source is:
 - The winget package puts a Node single-executable `copilot.exe` (184 MB) in `%LOCALAPPDATA%\GitHubCopilotCLI\`, beside `copilot-taskbar-activator.exe` and `GitHubCopilotCLI.sparse.msix`. Its `sea-loader.js` unpacks an embedded `copilot.tgz` on first run into the first writable of `COPILOT_PKG_CACHE_HOME`, `COPILOT_CACHE_HOME`, the platform cache (`%LOCALAPPDATA%\copilot\pkg` here), `COPILOT_HOME` and `~/.copilot/pkg`.
@@ -16,6 +16,111 @@ Corrections made by the main thread after the passes:
 Evidence tags: [help] CLI help output; [src] a string or code in 1.0.106; [docs] GitHub docs (main branch, may be newer than 1.0.106); [chg] a changelog entry.
 
 ## Part 1: the adapter (6n1)
+
+### What 6n1's spike saw (2026-11-06)
+
+Method:
+- Copilot CLI 1.0.106 (winget, `%LOCALAPPDATA%\GitHubCopilotCLI\copilot.exe`) ran against `fake-openai.mjs` through BYOK, with `COPILOT_HOME`, `COPILOT_CACHE_HOME`, `USERPROFILE` and `HOME` in scratch folders.
+- Headless runs a1 to a36 (`-p`) used `C:\dev\scratch-6n1-spike-1`. The interactive runs used two PowerShell tabs in the dev app (`live-check.ps1 start -CopilotFake`, scratch `C:\dev\scratch-6n1-lc-1`). Text went in through the scratch core's input API, and Enter, arrows and Esc as CDP keys into the tab's terminal.
+- A recorder, `rec.mjs`, run by `node.exe` from a folder with a space in its name, saved each hook's stdin, its chosen variables, the names of the rest, and its cwd. A second recorder was the status line.
+- Afterwards the real `~/.copilot` (10 entries) and `~/.claude/settings.json` had the same modified times as before.
+- Fixtures: `crates/core/tests/fixtures/copilot/hooks/1.0.106/` and `statusline/1.0.106/`, scrubbed.
+
+The hooks file that ran, `<COPILOT_HOME>\hooks\rec.json`, had one entry per event like this one: `timeoutSec` 5, 2 for `sessionEnd` and 600 for `permissionRequest`, and no `matcher`:
+
+```json
+{"version": 1, "hooks": {"sessionStart": [{"type": "command", "exec": "C:/Program Files/nodejs/node.exe", "args": ["C:/dev/scratch-6n1-spike-1/rec dir/rec.mjs", "sessionStart"], "timeoutSec": 5}]}}
+```
+
+The events were `sessionStart`, `userPromptSubmitted`, `preToolUse`, `postToolUse`, `postToolUseFailure`, `notification`, `agentStop`, `errorOccurred`, `sessionEnd` and `permissionRequest`. The `settings.json` that ran:
+
+```json
+{"autoUpdate": false, "taskbarPresence": false, "statusLine": {"type": "command", "command": "node \"C:/dev/scratch-6n1-lc-1/rec dir/sl.mjs\""}}
+```
+
+- **Q1. Loading.** A `*.json` file in `<COPILOT_HOME>\hooks\` holding `{"version":1,"hooks":{...}}` loads, headless and interactive, in a trusted and an untrusted folder. Hooks run with the project folder as their cwd.
+- **Q2. Entry form.** `exec` + `args` runs the program with no shell, from a folder with a space. A `powershell` entry for the same event started about 600 ms later (631 ms and 576 ms).
+- **Q3. Bodies.**
+  - Every body has `sessionId`, an epoch-ms `timestamp` and `cwd`.
+  - Only `notification` names its event: `"hook_event_name": "Notification"`, with `notification_type` (`permission_prompt`), `title` ("Permission needed") and `message` ("Run command: New-Item ...", "Edit file: <path>"). `permissionRequest` has `"hookName": "permissionRequest"` instead.
+  - `sessionStart` has `source` (`new` or `resume`) and `initialPrompt`. In an interactive session it fires at the first prompt, not at launch.
+  - `userPromptSubmitted` has `prompt`.
+  - `preToolUse` has `toolCallId` (`call_<n>`), `toolName` and `toolArgs`, which is an object. The Windows tool names are:
+    - `powershell` `{command, description}`;
+    - `create` `{path, file_text}`;
+    - `edit` `{path, old_str, new_str}`;
+    - `view` `{path}`.
+  - `postToolUse` adds `toolResult {resultType: "success", textResultForLlm}`. A shell command that fails is still a `postToolUse`; its exit code is in the text. `postToolUseFailure` (a `view` of a missing file) adds `error`.
+  - `permissionRequest` has `toolName`, `toolInput` and `permissionSuggestions: []`. Its `toolName` is the kind of permission, not the tool: `powershell` with `{command}`, or `edit` with `{file_path, diff}` for a `create`. It has no tool call id. `requestSandboxBypass` never appeared.
+  - `agentStop` has `transcriptPath` (`<COPILOT_HOME>\session-state\<id>\events.jsonl`), `stopReason: "end_turn"` and `stop_hook_active: false`.
+  - `sessionEnd` has `reason`: `complete` in `-p`, and `user_exit` for `/exit` and `/clear`.
+  - Every hook process gets these variables:
+    - `COPILOT_HOOK_DIR` (`<COPILOT_HOME>\hooks`);
+    - `COPILOT_PROJECT_DIR` and `CLAUDE_PROJECT_DIR`, both the project;
+    - `COPILOT_HOOK_DEPTH=1` and `COPILOT_CLI=1`;
+    - `COPILOT_HOME`, `MARSHELL_TAB_ID` and `MARSHELL_HOME`, inherited.
+
+    Two tabs reported their own tab ids.
+- **Q4. When `permissionRequest` fires.** It fires before Copilot's own rules, for every shell call and file write, whether Copilot then asks or not:
+  - Commands Copilot ran by itself after an empty answer still fired it: `echo`, `git status`, `git log -1`, `Get-ChildItem`, `Get-Content` and `Select-String`. `dir`, `npm --version` and `New-Item` fired it and then asked.
+  - It fired after "Yes, and don't ask again for file operations when in this directory".
+  - It fired under `--allow-tool=shell(New-Item)`, `--allow-all-tools`, `COPILOT_ALLOW_ALL=true`, `/allow-all on`, `"defaultPermissionMode": "allow-all"`, `--autopilot`, and an `echo` in plan mode.
+  - It didn't fire for a `view` inside the folder. Plan mode refuses a write itself, before any hook.
+
+  The body is the same in every case, so a hook can't tell which requests Copilot would ask about. This led to 6n1 decision 12.
+- **Q5. Answers to `permissionRequest`.**
+  - `{"behavior":"allow"}` runs the call.
+  - `{"behavior":"deny","message":"..."}` refuses it with "Permission denied by a PermissionRequest hook: <message>", and the model sees the message.
+  - Empty stdout goes on to Copilot's own flow: its dialog, or "Denied, no one to approve" in `-p`.
+  - Exit 1 refuses with "Permission request hook failed".
+  - A timeout is no answer: Copilot's own flow.
+- **Q6. Neutral answers and failures.**
+  - Empty stdout with exit 0 changes nothing, for every event.
+  - A `preToolUse` that exits 1 refuses the call: 'Denied by preToolUse hook from "<file>" (hook errored)'.
+  - A missing exe refuses the same way, for `preToolUse` and `permissionRequest`, even under `--allow-all-tools`. A missing exe on `postToolUse`, `agentStop` or `userPromptSubmitted` does no harm. This led to 6n1 decision 13.
+- **Q7. Context.** `{"additionalContext":"<note>"}` from `userPromptSubmitted` reaches the model, appended to the user message as `<system_reminder>` `<note>` `</system_reminder>`. Autopilot's continuations also fire `userPromptSubmitted`, with Copilot's own text ("You have not yet marked the task as complete..."), so the note goes with each of them too.
+- **Q8. Status line.**
+  - The command runs through `cmd`: `%OS%` is expanded, `$HOME` is not, `"a b"` arrives as one argument, and `^&` arrives as `&`.
+  - It runs at start, around each tool, after the turn and after a mode change. `settings.json` is read at launch only.
+  - It gets `MARSHELL_TAB_ID` and `COPILOT_HOME`, but no `COPILOT_HOOK_DIR`.
+  - Its stdin (`statusline/1.0.106/idle.json`) has these keys:
+    - `cwd`, `session_id`, `session_name`, and `transcript_path`, which is the session folder, not `events.jsonl`;
+    - `model {id, display_name, auto_tier, pending_auto_tier}`, `workspace.current_dir`, `username`, `remote.connected` and `version`;
+    - `cost {total_api_duration_ms, total_lines_added, total_lines_removed, total_duration_ms, total_premium_requests}`;
+    - `context_window {..., context_window_size, used_percentage, remaining_percentage, current_context_used_percentage, displayed_context_limit}`;
+    - `ai_used`, and `allow_all_enabled`, which `/allow-all on` and the settings default turn true.
+  - After `/clear` it reports the new session id at once.
+- **Q9. Sessions.**
+  - `--session-id <uuid>` names the new session, headless and interactive: the events, the status line and `session-state\<uuid>\` all use it.
+  - Exit prints `Resume copilot --resume=<id>`.
+  - `--resume=<id>` reopens the session in a new process. Its `sessionStart` says `resume`, at the first prompt. An allow-all turned on with `/allow-all on` comes back with it.
+  - `/clear` sends `sessionEnd` (`user_exit`) for the old id at once, and a status line with a new id follows 0.2 s later. The new id's `sessionStart`, with `source: "new"`, waits for the next prompt.
+  - No status line runs after `/exit`'s `sessionEnd`. A resumed Copilot runs one at launch, with the resumed id, before its `sessionStart`.
+  - `--continue` from a folder with no session resumes the most recent session from any folder, in the new cwd.
+  - `--trust-folder` can't be combined with `--session-id`.
+- **Q10. Version.** "GitHub Copilot CLI 1.0.106." then "Run 'copilot update' to check for updates."
+- **Q11. Processes.**
+  - Launched by its full path, Copilot runs as one `copilot.exe` under the tab's shell.
+  - A bare `copilot` here runs VS Code's shim (`...\Microsoft VS Code\bin\copilot-shim\copilot.exe`), which starts the real `copilot.exe` as its child.
+  - Marshell's foreground reader reports `program: "copilot", agent: "copilot"` for both. On this PC the session PATH holds only the shim.
+  - The taskbar relaunch wasn't exercised.
+- **Q12. The fake model.**
+  - The minimal set works with no sign-in prompt: `COPILOT_PROVIDER_BASE_URL`, `COPILOT_PROVIDER_TYPE=openai`, `COPILOT_PROVIDER_WIRE_API=completions`, `COPILOT_MODEL` and `COPILOT_OFFLINE=true`.
+  - Copilot calls only `POST /v1/chat/completions`, streamed.
+  - A first interactive run asks for folder trust ("1. Yes / 2. Yes, and remember this folder for future sessions / 3. No"). It also warns that the model isn't in the built-in catalog.
+  - In a tab that inherited `WT_SESSION`, it offered "Set up terminal for multi-line input support" for Windows Terminal (default No). This led to 6n1 decision 14.
+- **Q13. Skip-all settings.** `"defaultPermissionMode": "allow-all"` makes a launch with no mode flag "Allow All", and the status line's `allow_all_enabled` true. It has no effect in `-p`. `COPILOT_ALLOW_ALL=true` approves in `-p`. Neither stops `permissionRequest` from firing.
+- **Q14. Claude Code's hooks.**
+  - Copilot never ran a hook from the scratch `~/.claude\settings.json` or `CLAUDE_CONFIG_DIR`.
+  - It runs a trusted project's `.claude\settings.json` hooks interactively, but not in `-p`, even trusted.
+  - It rejects an empty `matcher` on `PreToolUse` and `PermissionRequest` ("matcher cannot be empty") and then ignores the whole file.
+  - Those hook processes get `COPILOT_CLI=1`, `COPILOT_PROJECT_DIR` and `MARSHELL_TAB_ID`, but no `COPILOT_HOOK_DIR`. Their cwd is the project's parent folder. `PreToolUse` arrives in Claude's shape (`tool_name: "Bash"`), `PermissionRequest` in Copilot's camelCase shape.
+
+Also seen:
+- Esc in Copilot's own dialog prints "Operation cancelled by user" and fires no hook (no `postToolUseFailure`, no `agentStop`); only the status line runs.
+- Trust chosen with "remember" goes to `config.json`'s `trustedFolders`.
+
+---
 
 Method: read-only. `copilot --version` printed "GitHub Copilot CLI 1.0.106."; `--help`, `help <topic>` were run on the real exe
 (`C:\Users\Home Office\AppData\Local\GitHubCopilotCLI\copilot.exe`). Source evidence comes from strings in the shipped JS bundle
@@ -219,19 +324,19 @@ Common: `sessionId`, `timestamp`, `cwd`; subagent hooks add `agentId`, `agentTyp
 
 ### UNVERIFIED list
 - Hook PowerShell argv; behaviour of a `bash`-only entry on Windows.
-- Whether user hooks run in an untrusted folder.
-- `permissionRequest` input shape; whether it fires under `--allow-all`/autopilot; its timeout behaviour.
-- `userPromptSubmitted` `additionalContext` for command hooks.
+- ~~Whether user hooks run in an untrusted folder.~~ They do (spike Q1).
+- ~~`permissionRequest` input shape; whether it fires under `--allow-all`/autopilot; its timeout behaviour.~~ Spike Q3, Q4 and Q5.
+- ~~`userPromptSubmitted` `additionalContext` for command hooks.~~ It reaches the model (spike Q7).
 - Accepted PascalCase spellings.
-- Env vars stripped vs set for hook processes.
-- Status line JSON nesting and ANSI support.
-- Exit resume-hint label text.
+- Env vars stripped vs set for hook processes. The set ones are in spike Q3; which are stripped wasn't checked.
+- Status line ANSI support. ~~JSON nesting~~ is in spike Q8.
+- ~~Exit resume-hint label text.~~ `Resume copilot --resume=<id>` (spike Q9).
 - "Always" persistence key and file.
 - Stale-session reaper policy.
 - Whether `remoteExport` actually syncs here.
 - Taskbar presence activation.
-- Shim candidate search order and forwarding.
-- `transcriptPath` target.
+- Shim candidate search order. ~~Forwarding~~: the shim starts the real exe as its child (spike Q11).
+- ~~`transcriptPath` target.~~ `<COPILOT_HOME>\session-state\<id>\events.jsonl` (spike Q3).
 
 ## Part 2: surfaces and the Doctor (6n2, 6n3)
 

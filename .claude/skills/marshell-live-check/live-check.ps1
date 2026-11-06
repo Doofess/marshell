@@ -24,6 +24,11 @@ Nothing here deletes a folder. With -CodexAuth, start copies ~/.codex/auth.json 
        logging every request to <Scratch>\qwen-fake.jsonl), points OPENAI_BASE_URL, OPENAI_API_KEY and OPENAI_MODEL
        at it for the app and its tabs, and writes <Scratch>\home\.qwen\settings.json selecting that provider, so
        Qwen Code starts with no account. stop ends the fake model by its recorded PID.
+       start always sets COPILOT_HOME=<Scratch>\home\.copilot. With -CopilotFake, it also runs a second fake model on
+       -CopilotPort (log <Scratch>\copilot-fake.jsonl), sets Copilot CLI's BYOK variables for it (COPILOT_PROVIDER_*,
+       COPILOT_MODEL, COPILOT_OFFLINE) and COPILOT_CACHE_HOME=<Scratch>\copilot-cache, and writes
+       <Scratch>\home\.copilot\settings.json with auto-update and the taskbar helper off, so Copilot CLI starts with
+       no sign-in (slice 6n1 decision 6). stop ends it by its recorded PID.
 
 .EXAMPLE
 pwsh -NoProfile -File live-check.ps1 start -Scratch C:\Users\me\AppData\Local\Temp\lc-5b-1
@@ -48,12 +53,15 @@ param(
     # start only: runs the fake model for Qwen Code (slice 6l1 decision 8); stop ends it.
     [switch]$QwenFake,
     [int]$QwenPort = 47612,
+    # start only: runs the fake model for Copilot CLI (slice 6n1 decision 6); stop ends it.
+    [switch]$CopilotFake,
+    [int]$CopilotPort = 47613,
     # The checkout to run; defaults to the one holding this script.
     [string]$Repo = (Join-Path $PSScriptRoot '..\..\..'),
     [int]$Port = 9333
 )
 $ErrorActionPreference = 'Stop'
-$AgentNames = @('claude.exe', 'codex.exe', 'node_repl.exe', 'agy.exe')
+$AgentNames = @('claude.exe', 'codex.exe', 'node_repl.exe', 'agy.exe', 'copilot.exe')
 
 if (-not [System.IO.Path]::IsPathRooted($Scratch)) { throw "Scratch must be an absolute path: $Scratch" }
 # In PowerShell 7, GetFullPath also expands 8.3 short names (C:\Users\JANEDO~1) in the part that exists.
@@ -63,7 +71,7 @@ if ($CodexHome) {
     $CodexHome = [System.IO.Path]::GetFullPath($CodexHome).TrimEnd('\')
     if ($CodexHome.Length -gt 60) { throw "CodexHome is $($CodexHome.Length) characters; Codex needs at most 60: $CodexHome" }
 }
-foreach ($real in @("$HOME\.marshell", "$HOME\.claude", "$HOME\.codex", "$HOME\.gemini", "$HOME\.qwen")) {
+foreach ($real in @("$HOME\.marshell", "$HOME\.claude", "$HOME\.codex", "$HOME\.gemini", "$HOME\.qwen", "$HOME\.copilot")) {
     $r = [System.IO.Path]::GetFullPath($real).TrimEnd('\')
     foreach ($path in @($Scratch, $CodexHome) | Where-Object { $_ }) {
         if ($path -ieq $r -or $path.StartsWith("$r\", 'OrdinalIgnoreCase')) { throw "$path is inside a real config folder: $real" }
@@ -133,16 +141,27 @@ function Remove-AuthCopy($rec) {
     }
 }
 
-# The fake model runs outside the app's tree: it is stopped by its recorded PID, after checking it is still that process.
-function Stop-QwenFake($rec) {
-    if (-not $rec.qwenFake.pid) { return }
-    $p = Get-CimInstance Win32_Process -Filter "ProcessId = $($rec.qwenFake.pid)" -Property Name, CreationDate, CommandLine
-    if (-not $p) { Write-Output "The fake model (pid $($rec.qwenFake.pid)) is already gone."; return }
+function Start-FakeModel([int]$FakePort, [string]$Name) {
+    $fake = Start-Process -FilePath 'node' -ArgumentList "`"$(Join-Path $PSScriptRoot 'fake-openai.mjs')`"", $FakePort, "`"$(Join-Path $Scratch "$Name.jsonl")`"" `
+        -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $Scratch "$Name.out.log") -RedirectStandardError (Join-Path $Scratch "$Name.err.log")
+    [ordered]@{ pid = $fake.Id; port = $FakePort }
+}
+
+# A fake model runs outside the app's tree: it is stopped by its recorded PID, after checking it is still that process.
+function Stop-FakeModel($fakeRec, [string]$For) {
+    if (-not $fakeRec.pid) { return }
+    $p = Get-CimInstance Win32_Process -Filter "ProcessId = $($fakeRec.pid)" -Property Name, CreationDate, CommandLine
+    if (-not $p) { Write-Output "The fake model for $For (pid $($fakeRec.pid)) is already gone."; return }
     if ($p.Name -ne 'node.exe' -or $p.CommandLine -notlike '*fake-openai.mjs*') {
-        Write-Output "PID $($rec.qwenFake.pid) is now $($p.Name), not the fake model; not touching it."; return
+        Write-Output "PID $($fakeRec.pid) is now $($p.Name), not the fake model; not touching it."; return
     }
-    Stop-Process -Id $rec.qwenFake.pid -Force
-    Write-Output "Stopped the fake model, pid $($rec.qwenFake.pid)."
+    Stop-Process -Id $fakeRec.pid -Force
+    Write-Output "Stopped the fake model for $For, pid $($fakeRec.pid)."
+}
+
+function Stop-FakeModels($rec) {
+    Stop-FakeModel $rec.qwenFake 'Qwen'
+    Stop-FakeModel $rec.copilotFake 'Copilot'
 }
 
 function Show-Tree($tree) {
@@ -194,12 +213,26 @@ switch ($Mode) {
             # Without enableAutoUpdate false, a Qwen session that found a newer version updates the real install
             # when it exits. The variable also skips the check, in case a check rewrites the settings file.
             $env:QWEN_CODE_SKIP_UPDATE_CHECK_ONCE = 'true'
-            $fake = Start-Process -FilePath 'node' -ArgumentList "`"$(Join-Path $PSScriptRoot 'fake-openai.mjs')`"", $QwenPort, "`"$(Join-Path $Scratch 'qwen-fake.jsonl')`"" `
-                -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $Scratch 'qwen-fake.out.log') -RedirectStandardError (Join-Path $Scratch 'qwen-fake.err.log')
-            $fakeRec = [ordered]@{ pid = $fake.Id; port = $QwenPort }
+            $fakeRec = Start-FakeModel $QwenPort 'qwen-fake'
             $env:OPENAI_API_KEY = 'marshell-fake'
             $env:OPENAI_BASE_URL = "http://127.0.0.1:$QwenPort/v1"
             $env:OPENAI_MODEL = 'marshell-fake'
+        }
+        # Always a scratch Copilot home, so neither Copilot nor the core's Copilot adapter reads the real ~/.copilot.
+        $copilotDir = (New-Item -ItemType Directory -Path (Join-Path $agyHome '.copilot')).FullName
+        $env:COPILOT_HOME = $copilotDir
+        $copilotFakeRec = $null
+        if ($CopilotFake) {
+            # autoUpdate false keeps a session from updating the real install; taskbarPresence false keeps its taskbar
+            # helper from starting outside the app's tree.
+            Set-Content -LiteralPath (Join-Path $copilotDir 'settings.json') -Encoding utf8NoBOM -Value '{"autoUpdate": false, "taskbarPresence": false}'
+            $copilotFakeRec = Start-FakeModel $CopilotPort 'copilot-fake'
+            $env:COPILOT_PROVIDER_BASE_URL = "http://127.0.0.1:$CopilotPort/v1"
+            $env:COPILOT_PROVIDER_TYPE = 'openai'
+            $env:COPILOT_PROVIDER_WIRE_API = 'completions'
+            $env:COPILOT_MODEL = 'marshell-fake'
+            $env:COPILOT_OFFLINE = 'true'
+            $env:COPILOT_CACHE_HOME = Join-Path $Scratch 'copilot-cache'
         }
         $settings = Join-Path (New-Item -ItemType Directory -Path (Join-Path $Scratch 'proj\.claude')).FullName 'settings.local.json'
         Set-Content -LiteralPath $settings -Value '{}' -Encoding utf8NoBOM
@@ -221,13 +254,21 @@ switch ($Mode) {
             Remove-Item Env:NO_COLOR -ErrorAction SilentlyContinue
             Write-Output 'NO_COLOR cleared'
         }
+        # A tool running inside Windows Terminal passes WT_SESSION and WT_PROFILE_ID on, and a CLI in a tab then takes
+        # the tab for Windows Terminal (Copilot CLI offered to set it up). Issue #100 tracks the app's own fix.
+        foreach ($wt in 'WT_SESSION', 'WT_PROFILE_ID') {
+            if (Test-Path "Env:$wt") {
+                Remove-Item "Env:$wt" -ErrorAction SilentlyContinue
+                Write-Output "$wt cleared"
+            }
+        }
         $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/d', '/c', 'pnpm tauri dev' -WorkingDirectory $repo `
             -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $Scratch 'dev.out.log') `
             -RedirectStandardError (Join-Path $Scratch 'dev.err.log')
         $created = (Get-CimInstance Win32_Process -Filter "ProcessId = $($proc.Id)" -Property CreationDate).CreationDate
         [ordered]@{
             root = $proc.Id; name = 'cmd.exe'; created = $created.ToUniversalTime().ToString('o')
-            repo = $repo; marshellHome = $mh.FullName; claudeConfigDir = $cc.FullName; codexHome = $cx.FullName; codexAuth = [bool]$CodexAuth; agyAuth = [bool]$AgyAuth; agyHome = $agyHome; qwenFake = $fakeRec; claudeSettings = $settings; cdp = "http://127.0.0.1:$Port"
+            repo = $repo; marshellHome = $mh.FullName; claudeConfigDir = $cc.FullName; codexHome = $cx.FullName; codexAuth = [bool]$CodexAuth; agyAuth = [bool]$AgyAuth; agyHome = $agyHome; qwenFake = $fakeRec; copilotFake = $copilotFakeRec; copilotHome = $copilotDir; claudeSettings = $settings; cdp = "http://127.0.0.1:$Port"
         } | ConvertTo-Json | Set-Content -LiteralPath $PidsFile -Encoding utf8NoBOM
         Write-Output "Started pnpm tauri dev in $repo, root PID $($proc.Id)."
         Write-Output "MARSHELL_HOME=$($mh.FullName)"
@@ -235,7 +276,9 @@ switch ($Mode) {
         Write-Output "CODEX_HOME=$($cx.FullName)"
         Write-Output "MARSHELL_CLAUDE_SETTINGS=$settings"
         Write-Output "USERPROFILE=$agyHome (agy's and Qwen's scratch home)"
+        Write-Output "COPILOT_HOME=$copilotDir"
         if ($fakeRec) { Write-Output "Fake model for Qwen: pid $($fakeRec.pid), http://127.0.0.1:$QwenPort/v1, log $Scratch\qwen-fake.jsonl" }
+        if ($copilotFakeRec) { Write-Output "Fake model for Copilot: pid $($copilotFakeRec.pid), http://127.0.0.1:$CopilotPort/v1, log $Scratch\copilot-fake.jsonl" }
         Write-Output "Logs: $Scratch\dev.out.log, $Scratch\dev.err.log. CDP: http://127.0.0.1:$Port/json/version"
     }
     'tree' {
@@ -248,7 +291,7 @@ switch ($Mode) {
             # The tree is gone already (stopped some other way), but the sign-in copy may not be.
             $old = Get-Content -LiteralPath $PidsFile -Raw | ConvertFrom-Json
             Remove-AuthCopy $old
-            Stop-QwenFake $old
+            Stop-FakeModels $old
             return
         }
         $tree = @(Get-Tree $rec.root)
@@ -272,7 +315,7 @@ switch ($Mode) {
         $left = @($tree | Where-Object { Get-Process -Id $_.PID -ErrorAction SilentlyContinue })
         if ($left.Count) { Write-Output "Still running: $(($left | ForEach-Object { "$($_.Name) $($_.PID)" }) -join ', ')"; exit 1 }
         Remove-AuthCopy $rec
-        Stop-QwenFake $rec
+        Stop-FakeModels $rec
         Write-Output "All $($tree.Count) recorded processes are gone. $Scratch was left in place."
     }
 }
