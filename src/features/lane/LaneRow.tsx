@@ -5,8 +5,11 @@ import { formatAge } from "../sidebar/format";
 
 /** A waiting request that is not the target: a 36 px one-liner. */
 export function LaneRow({ request, onJump }: { request: ApprovalRequest; onJump?: (request: ApprovalRequest) => void }) {
-  const isQuestion = request.detail.kind === "question";
-  const what = headline(request.detail);
+  // A session asking for permission in its own terminal (Copilot CLI's every request) shows its row's phrase, not "Has a question".
+  const { detail } = request;
+  const terminalPermission = request.asks === "permission" && detail.kind === "question";
+  const isQuestion = detail.kind === "question" && !terminalPermission;
+  const what = terminalPermission ? detail.question || "Needs permission" : headline(detail);
   return (
     <button type="button" className="lane-row" aria-label={`${request.session.name} ${what} ${formatAge(request.waitingMs)}. ${isQuestion ? "Has a question" : "Needs permission"}.`} data-agent={request.session.agent} onClick={() => onJump?.(request)}>
       <StatusGlyph kind={isQuestion ? "needs-question" : "needs-permission"} />
