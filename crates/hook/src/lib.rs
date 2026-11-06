@@ -73,6 +73,11 @@ fn call(args: &Args, stdin: &mut dyn Read, env: Env, ancestors: Ancestors, home:
     if args.agent == "claude" && env("GROK_HOOK_EVENT").is_some_and(|v| !v.is_empty()) {
         return Vec::new();
     }
+    // Copilot CLI runs a trusted project's `.claude/settings.json` hooks with `COPILOT_CLI` set and no
+    // `COPILOT_HOOK_DIR` (6n1 spike Q14); its events are not Claude's either.
+    if args.agent == "claude" && env("COPILOT_CLI").is_some_and(|v| !v.is_empty()) {
+        return Vec::new();
+    }
     let body = match post::read_capped(stdin) {
         Ok(Some(b)) => with_event(b, args.event.as_deref()),
         Ok(None) => return fail("stdin is over 1 MiB, nothing posted"),
