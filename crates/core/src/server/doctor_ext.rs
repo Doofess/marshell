@@ -11,7 +11,7 @@ use axum::http::StatusCode;
 use marshell_protocol::config::{Applies, ConfigScope, EditOp, FileEdit};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-use toml_edit::{ArrayOfTables, DocumentMut, InlineTable, Item, Table, value};
+use toml_edit::{ArrayOfTables, DocumentMut, InlineTable, Item, Table, TableLike, value};
 
 type Fail = (StatusCode, String);
 
@@ -269,15 +269,17 @@ pub(crate) fn edits(switches: &[Switch], homes: &[PathBuf]) -> Result<Vec<FileEd
     Ok(out)
 }
 
-/// The table `parent.key` of `doc`, made when it is missing. Something there that is not a table refuses.
-fn table_in<'a>(parent: &'a mut Table, key: &str) -> Result<&'a mut Table, Fail> {
+/// The table `parent.key` of `doc`, made when it is missing; a `{ .. }` inline table counts, as the reader takes it.
+/// Something there that is not a table refuses.
+fn table_in<'a>(parent: &'a mut dyn TableLike, key: &str) -> Result<&'a mut dyn TableLike, Fail> {
     if !parent.contains_key(key) {
         let mut table = Table::new();
-        // Only the leaf tables print a header: `[mcp_servers."my.server"]`, not an empty `[mcp_servers]` above it.
+        // A table that holds no value prints no header: `[mcp_servers."my.server"]`, not an empty `[mcp_servers]`
+        // above it.
         table.set_implicit(true);
         parent.insert(key, Item::Table(table));
     }
-    parent.get_mut(key).and_then(Item::as_table_mut).ok_or_else(refuse)
+    parent.get_mut(key).and_then(Item::as_table_like_mut).ok_or_else(refuse)
 }
 
 fn codex_edit(file: &Path, group: &[&Switch], homes: &[PathBuf]) -> Result<FileEdit, Fail> {
@@ -290,12 +292,10 @@ fn codex_edit(file: &Path, group: &[&Switch], homes: &[PathBuf]) -> Result<FileE
         match sw {
             Switch::CodexServer { name, .. } => {
                 let servers = table_in(doc.as_table_mut(), "mcp_servers")?;
-                let server = table_in(servers, name)?;
-                server.set_implicit(false);
-                server.insert("enabled", value(false));
+                table_in(servers, name)?.insert("enabled", value(false));
             }
             Switch::CodexSkill { skill, .. } => {
-                let path = skill.to_string_lossy().into_owned();
+                let path = crate::agents::codex::extensions::rule_path(skill);
                 let skills = table_in(doc.as_table_mut(), "skills")?;
                 if !skills.contains_key("config") {
                     skills.insert("config", Item::ArrayOfTables(ArrayOfTables::new()));
@@ -490,6 +490,47 @@ mod tests {
         write(&file, "mcp_servers = 3\n");
         let (status, _) = edits(&[Switch::CodexServer { file, name: "a".into() }], &[]).unwrap_err();
         assert_eq!(status, StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn a_distro_skill_is_named_by_the_path_codex_sees_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("config.toml");
+        let skill = PathBuf::from(r"\\wsl.localhost\Ubuntu\home\a\.codex\skills\x\SKILL.md");
+        let out = edits(&[Switch::CodexSkill { file, skill }], &[]).unwrap();
+        let EditOp::CreateFile { content } = &out[0].op else {
+            panic!("not a CreateFile: {:?}", out[0].op);
+        };
+        let doc: toml::Table = content.parse().unwrap();
+        let rules = doc["skills"]["config"].as_array().unwrap();
+        assert_eq!(rules[0]["path"].as_str(), Some("/home/a/.codex/skills/x/SKILL.md"));
+    }
+
+    #[test]
+    fn a_codex_server_written_inline_is_turned_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("config.toml");
+        for (text, name) in [
+            ("[mcp_servers]\nfoo = { command = \"ghost\" } # mine\n", "foo"),
+            ("mcp_servers = { bar = { command = \"ghost\" } } # mine\n", "bar"),
+        ] {
+            write(&file, text);
+            let out = edits(
+                &[Switch::CodexServer {
+                    file: file.clone(),
+                    name: name.into(),
+                }],
+                &[],
+            )
+            .unwrap_or_else(|e| panic!("{text}: {e:?}"));
+            let EditOp::ReplaceText { content } = &out[0].op else {
+                panic!("not a ReplaceText: {:?}", out[0].op);
+            };
+            assert!(content.contains("# mine"), "{content}");
+            let doc: toml::Table = content.parse().unwrap();
+            assert_eq!(doc["mcp_servers"][name]["enabled"].as_bool(), Some(false), "{content}");
+            assert_eq!(doc["mcp_servers"][name]["command"].as_str(), Some("ghost"), "{content}");
+        }
     }
 
     #[test]

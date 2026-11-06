@@ -278,6 +278,20 @@ fn same_path(path: &str) -> String {
     path.replace('\\', "/").to_lowercase()
 }
 
+/// A skill's path as Codex names it in a rule: in a distro, the distro's own path, not the `\\wsl.localhost` one.
+pub(crate) fn rule_path(file: &Path) -> String {
+    crate::wsl::share_to_linux(file).unwrap_or_else(|| file.display().to_string())
+}
+
+/// Whether the last rule naming the skill, by its path or its name, turns it off.
+fn turned_off(rules: &[SkillRule], file: &Path, name: &str) -> bool {
+    let here = same_path(&rule_path(file));
+    rules
+        .iter()
+        .rfind(|r| r.path.as_deref().is_some_and(|p| same_path(p) == here) || r.name.as_deref() == Some(name))
+        .is_some_and(|r| !r.enabled)
+}
+
 fn skill_of(
     folder: &str,
     file: PathBuf,
@@ -312,11 +326,7 @@ fn skill_of(
         None => own.to_string(),
     };
     let description = meta.description.as_deref().unwrap_or("");
-    let here = same_path(&file.display().to_string());
-    let off = rules
-        .iter()
-        .rfind(|r| r.path.as_deref().is_some_and(|p| same_path(p) == here) || r.name.as_deref() == Some(name.as_str()))
-        .is_some_and(|r| !r.enabled);
+    let off = turned_off(rules, &file, &name);
     let switch = match &origin {
         Origin::User | Origin::Project(_) => Ok(Switch::CodexSkill {
             file: config.to_path_buf(),
@@ -342,6 +352,20 @@ fn skill_of(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_distro_skill_turned_off_by_its_linux_path_reads_off() {
+        let rule = |path: &str| SkillRule {
+            path: Some(path.into()),
+            name: None,
+            enabled: false,
+        };
+        let file = Path::new(r"\\wsl.localhost\Ubuntu\home\a\.codex\skills\x\SKILL.md");
+        assert!(turned_off(&[rule("/home/a/.codex/skills/x/SKILL.md")], file, "x"));
+        assert!(!turned_off(&[rule("/home/a/.codex/skills/y/SKILL.md")], file, "x"));
+        let windows = Path::new(r"C:\Users\a\.codex\skills\x\SKILL.md");
+        assert!(turned_off(&[rule("c:/users/a/.codex/skills/x/SKILL.md")], windows, "x"));
+    }
 
     /// A fresh fake home under the repo's target folder.
     fn fake(name: &str) -> (PathBuf, ExtRoots) {
