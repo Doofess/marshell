@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { commandShortcut } from "../../lib/appShortcuts";
 import { COMMANDS, type Os } from "../../lib/keymap";
+import { MODE_IDS, paletteEscape, withModeStep } from "../palette/paletteList";
 import { Palette, type QuickFiles } from "../palette/Palette";
 import { useQuickFiles } from "../preview/quickFiles";
 import type { PaletteSession } from "../palette/fixtures";
@@ -9,7 +10,7 @@ import type { PaletteSession } from "../palette/fixtures";
  * Commands the window runs from the palette that have no key of their own: remove the focused pane, open the layout menu, resume an
  * Ended or Exited session, group the sidebar by project, restart an agent in another mode, and open the removal of a task whose folder is gone.
  */
-const PALETTE_ONLY = ["settings", "profiles", "appearance", "agents", "notifications", "history-settings", "pause-notifications", "diagnostics", "departures", "doctor", "unsplit", "layout", "resume", "group-by-project", "clean-up-task", "copy-recording-path", "run-script", "stop-script", "edit-references", "pause", "continue", "mode-manual", "mode-plan", "mode-auto-edit", "mode-full-auto", "mode-bypass", "new-session-admin"];
+const PALETTE_ONLY = ["settings", "profiles", "appearance", "agents", "notifications", "history-settings", "pause-notifications", "diagnostics", "departures", "doctor", "unsplit", "layout", "resume", "group-by-project", "clean-up-task", "copy-recording-path", "run-script", "stop-script", "edit-references", "pause", "continue", "change-mode", "mode-manual", "mode-plan", "mode-auto-edit", "mode-full-auto", "mode-bypass", "new-session-admin"];
 
 /**
  * The commands the live window runs: the ones with a session shortcut, the pane commands, and the shell profiles and Appearance pages. Listing any other would
@@ -37,6 +38,8 @@ export function LivePalette({
   os,
   labels,
   hidden,
+  recent,
+  moved,
   tab = null,
   filesOnly = false,
   onOpenFile,
@@ -47,6 +50,9 @@ export function LivePalette({
   os: Os;
   labels?: Record<string, string>;
   hidden?: readonly string[];
+  /** Command ids run lately, and the ids the empty box leaves out. */
+  recent?: readonly string[];
+  moved?: readonly string[];
   /** The focused session, whose files and output quick open lists. */
   tab?: string | null;
   /** "Open file…": only files are listed. */
@@ -58,20 +64,38 @@ export function LivePalette({
 }) {
   const quick = useQuickFiles(tab);
   const files: QuickFiles | undefined = quick ? { ...quick.files, only: filesOnly } : filesOnly ? { seen: [], list: [], folder: "", status: "error", only: true } : undefined;
-  const run = (id: string) => (id.startsWith("file:") ? quick && onOpenFile?.(quick.pathOf(id.slice("file:".length))) : onRun(id));
+  const [list, setList] = useState<"commands" | "modes">("commands");
+  const listRef = useRef(list);
+  listRef.current = list;
+  const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(0);
+  const run = (id: string) => {
+    if (id === "change-mode") {
+      setList("modes");
+      setQuery("");
+      setActiveIndex(0);
+      return;
+    }
+    return id.startsWith("file:") ? quick && onOpenFile?.(quick.pathOf(id.slice("file:".length))) : onRun(id);
+  };
   // A command whose words depend on the window's state (the sidebar command names what it will do next) gets its label from the window.
   // One that has nothing to do right now (Resume, with a running session focused) is left out, not listed as a row that does nothing.
   const commands = useMemo(() => {
     const shown = hidden?.length ? LIVE_COMMANDS.filter((c) => !hidden.includes(c.id)) : LIVE_COMMANDS;
-    return labels ? shown.map((c) => (labels[c.id] === undefined ? c : { ...c, label: labels[c.id]! })) : shown;
+    return withModeStep(labels ? shown.map((c) => (labels[c.id] === undefined ? c : { ...c, label: labels[c.id]! })) : shown);
   }, [labels, hidden]);
-  const [query, setQuery] = useState("");
-  const [activeIndex, setActiveIndex] = useState(0);
+  const shownCommands = list === "modes" ? commands.filter((c) => MODE_IDS.includes(c.id)) : commands;
   const root = useRef<HTMLDivElement>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
   useEffect(() => {
-    const onKey = escapeCloses(() => closeRef.current());
+    const onKey = escapeCloses(() => {
+      if (paletteEscape(listRef.current) === "back") {
+        setList("commands");
+        setQuery("");
+        setActiveIndex(0);
+      } else closeRef.current();
+    });
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
   }, []);
@@ -87,7 +111,10 @@ export function LivePalette({
       <Palette
         view={{ query, activeIndex }}
         sessions={sessions}
-        commands={commands}
+        commands={shownCommands}
+        list={list === "modes" ? { title: "Modes", prompt: "Type a mode" } : undefined}
+        recent={recent}
+        moved={moved}
         os={os}
         onQuery={(q) => {
           setQuery(q);

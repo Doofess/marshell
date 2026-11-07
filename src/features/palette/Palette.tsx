@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, type KeyboardEvent, type ReactElement } from "react";
 import { selectedProps } from "../../components/a11y/SelectedMark";
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
@@ -6,6 +6,7 @@ import { GLYPHS } from "../../components/StatusGlyph/glyphs";
 import { COMMANDS, commandById, shortcutLabel, type Command, type Os } from "../../lib/keymap";
 import { usePopupFocus } from "../../lib/usePopupFocus";
 import { filterCommands, filterSessions, highlight, parseSessionNumber, sessionDetail, type Hit, type Range, type SessionHit } from "../launcher/filter";
+import { emptyBox } from "./paletteList";
 import { rankFiles, splitPath, type FileHit } from "../preview/quickOpen";
 import type { PaletteSession } from "./fixtures";
 import "./Palette.css";
@@ -29,7 +30,6 @@ export function keepActiveInView(list: { querySelector: (sel: string) => { scrol
   list?.querySelector(`[id="${id}"]`)?.scrollIntoView?.({ block: "nearest" });
 }
 
-const GROUPS: Command["group"][] = ["Session", "Terminal", "Window", "App"];
 const FOCUS_SESSION = /^focus-session-\d+$/;
 
 /** The files quick open offers, as display paths (`displayPath`): the ones seen in the session's output, and its folder's list. */
@@ -47,7 +47,7 @@ export type QuickFiles = {
 /** Files shown per group. */
 const FILE_LIMIT = 20;
 
-type Item = { type: "session"; hit: SessionHit<PaletteSession> } | { type: "command"; hit: Hit<Command> } | { type: "file"; hit: FileHit; group: string };
+type Item = { type: "session"; hit: SessionHit<PaletteSession> } | { type: "command"; hit: Hit<Command>; head?: string } | { type: "file"; hit: FileHit; group: string };
 const itemId = (i: Item) => (i.type === "session" ? `session:${i.hit.item.id}` : i.type === "file" ? `file:${i.hit.path}` : i.hit.item.id);
 
 const Marked = ({ text, ranges }: { text: string; ranges: Range[] }) => (
@@ -150,6 +150,9 @@ export function Palette({
   commands = COMMANDS,
   os = "windows",
   files,
+  recent,
+  moved,
+  list: second,
   onQuery,
   onRun,
   onActive,
@@ -162,6 +165,12 @@ export function Palette({
   os?: Os;
   /** Quick open: with 2 or more characters typed the palette also lists these; with `only` it lists nothing else. */
   files?: QuickFiles;
+  /** Command ids run lately; the empty box lists them first. Leaving out `recent` and `moved` lists every command as before. */
+  recent?: readonly string[];
+  /** Ids the empty box leaves out (typing still finds them). */
+  moved?: readonly string[];
+  /** A second list: `commands` as one group with this title and prompt, and no sessions, files or Recent. */
+  list?: { title: string; prompt: string };
   onQuery?: (q: string) => void;
   /** Receives a command's id, `session:<id>` for a session row, or `file:<display path>` for a file. */
   onRun?: (id: string) => void;
@@ -179,14 +188,17 @@ export function Palette({
   const filtering = query.trim() !== "";
   const wanted = sessions ? parseSessionNumber(query) : null;
 
-  const only = files?.only === true;
-  const sessionHits = sessions && !only ? filterSessions(query, sessions) : [];
+  const only = files?.only === true && !second;
+  const sessionHits = sessions && !only && !second ? filterSessions(query, sessions) : [];
   const pool = sessions ? commands.filter((c) => !FOCUS_SESSION.test(c.id)) : commands;
   // A number means a session: no command should answer to "4" because its label says "up to 4".
-  const commandHits = only || wanted !== null ? [] : filterCommands(query, pool);
+  const lean = !second && !filtering && (recent !== undefined || moved !== undefined);
+  const box = lean ? emptyBox(pool, recent ?? [], moved ?? []) : null;
+  const asHits = (cs: Command[], head: (c: Command) => string): Item[] => cs.map((item) => ({ type: "command", hit: { item, ranges: [] }, head: head(item) }));
+  const commandHits = only || wanted !== null || box ? [] : filterCommands(query, pool);
   // One character matches too much to be worth a group; "Open file…" starts at one, and shows the seen paths before any.
   const fileGroups: Array<{ title: string; hits: FileHit[] }> = [];
-  if (files && (only || query.trim().length >= 2)) {
+  if (files && !second && (only || query.trim().length >= 2)) {
     // A seen path leaves the Files group only once that group exists.
     const seenSet = new Set(files.status === undefined || files.status === "ready" ? files.seen : []);
     const seenHits = rankFiles(query, [], files.seen, FILE_LIMIT);
@@ -194,9 +206,10 @@ export function Palette({
     if (seenHits.length > 0) fileGroups.push({ title: "Seen in output", hits: seenHits });
     if (listHits.length > 0) fileGroups.push({ title: `Files in ${files.folder}`, hits: listHits });
   }
+  const sessionItems = sessionHits.map((hit): Item => ({ type: "session", hit }));
+  // One array, in the order shown: the rows' ids, the active mark and Enter all read it.
   const items: Item[] = [
-    ...sessionHits.map((hit): Item => ({ type: "session", hit })),
-    ...commandHits.map((hit): Item => ({ type: "command", hit })),
+    ...(box ? [...asHits(box.recent, () => "Recent"), ...sessionItems, ...asHits(box.rest, (c) => c.group)] : [...sessionItems, ...commandHits.map((hit): Item => ({ type: "command", hit, head: second?.title ?? hit.item.group }))]),
     ...fileGroups.flatMap((g) => g.hits.map((hit): Item => ({ type: "file", hit, group: g.title }))),
   ];
 
@@ -249,19 +262,31 @@ export function Palette({
 
   usePopupFocus(sheet, () => input.current);
 
-  const prompt = only ? "Type a file name" : sessions ? "Type a command, or a session number" : "Type a command";
-  let index = -1;
-  const fileList = () =>
-    fileGroups.map((g) => (
-      <li key={g.title} role="presentation" className="palette__group-item">
-        <span className="palette__group" role="presentation">
-          {g.title}
-        </span>
-        <ul role="group" aria-label={g.title} className="palette__sub">
-          {items.filter((i) => i.type === "file" && i.group === g.title).map((item) => option(item, ++index))}
-        </ul>
-      </li>
-    ));
+  const prompt = second ? second.prompt : only ? "Type a file name" : sessions ? "Type a command, or a session number" : "Type a command";
+  const headOf = (i: Item) => (i.type === "session" ? "Open sessions" : i.type === "file" ? i.group : (i.head ?? ""));
+  /** One pass over `items`, opening a heading wherever the group changes. */
+  const grouped = (from: number, to: number) => {
+    const out: ReactElement[] = [];
+    for (let i = from; i < to; ) {
+      const head = headOf(items[i]!);
+      let j = i;
+      while (j < to && headOf(items[j]!) === head) j++;
+      out.push(
+        <li key={`${head}:${i}`} role="presentation" className="palette__group-item">
+          <span className="palette__group" role="presentation">
+            {head}
+          </span>
+          <ul role="group" aria-label={head} className="palette__sub">
+            {items.slice(i, j).map((item, k) => option(item, i + k))}
+          </ul>
+        </li>,
+      );
+      i = j;
+    }
+    return out;
+  };
+  const firstFile = items.findIndex((i) => i.type === "file");
+  const fileList = () => (firstFile < 0 ? null : grouped(firstFile, items.length));
   return (
     <div className="palette" onMouseDown={(e) => pressInPalette(e, onClose)}>
       <div className="palette__backdrop" />
@@ -283,37 +308,16 @@ export function Palette({
             {empty}
           </p>
         ) : (
-          <ul ref={list} className="palette__list" id={listId} role="listbox" aria-label={only ? "Files" : sessions ? "Sessions and commands" : "Commands"}>
+          <ul ref={list} className="palette__list" id={listId} role="listbox" aria-label={second ? second.title : only ? "Files" : sessions ? "Sessions and commands" : "Commands"}>
             {only ? (
               fileList()
             ) : filtering ? (
               <>
-                {items.filter((i) => i.type !== "file").map((item) => option(item, ++index))}
+                {items.map((item, index) => (item.type === "file" ? null : option(item, index)))}
                 {fileList()}
               </>
             ) : (
-              <>
-                {sessionHits.length > 0 && (
-                  <li role="presentation" className="palette__group-item">
-                    <span className="palette__group" role="presentation">
-                      Open sessions
-                    </span>
-                    <ul role="group" aria-label="Open sessions" className="palette__sub">
-                      {items.filter((i) => i.type === "session").map((item) => option(item, ++index))}
-                    </ul>
-                  </li>
-                )}
-                {GROUPS.map((g) => (
-                  <li key={g} role="presentation" className="palette__group-item">
-                    <span className="palette__group" role="presentation">
-                      {g}
-                    </span>
-                    <ul role="group" aria-label={g} className="palette__sub">
-                      {items.filter((i): i is Extract<Item, { type: "command" }> => i.type === "command" && i.hit.item.group === g).map((item) => option(item, ++index))}
-                    </ul>
-                  </li>
-                ))}
-              </>
+              grouped(0, items.length)
             )}
           </ul>
         )}

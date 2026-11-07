@@ -41,7 +41,7 @@ import { findCommand } from "../../lib/bindings";
 import { cancelsCloseBar, commandShortcut, sessionShortcut, type SessionShortcut } from "../../lib/appShortcuts";
 import { nextWaiting } from "../lane/laneLayout";
 import { focusPendingCard } from "../approval/focusPendingCard";
-import { osOfPlatform } from "../../lib/keymap";
+import { MOVED_COMMANDS, osOfPlatform } from "../../lib/keymap";
 import { paletteSessions } from "../palette/sessions";
 import { LiveHistory } from "../history/LiveHistory";
 import { LiveDoctor } from "../doctor/LiveDoctor";
@@ -98,6 +98,7 @@ import { adminCommandHidden, launcherFromPalette, launcherOpens, passesLauncher,
 import { REOPEN_AS_ADMIN } from "../../lib/adminCopy";
 import { LiveLauncher } from "./LiveLauncher";
 import { LivePalette } from "./LivePalette";
+import { recordsRecent } from "../palette/paletteList";
 import { LiveShortcuts } from "./LiveShortcuts";
 import { ResumeBar } from "./ResumeBar";
 import { recordSetupDetection, type SetupDetections } from "./setupDetections";
@@ -1376,6 +1377,7 @@ export function LiveApp() {
 
   // A palette row: a session to go to, the profiles page, or a command the window runs (LivePalette lists only those).
   const runFromPalette = (id: string) => {
+    if (recordsRecent(id)) dispatch({ type: "ranCommand", id });
     setSettingsCwd(id === "edit-references" ? focusedInfo?.cwd : undefined);
     const section = paletteSection(id);
     if (section) return openSettings(section);
@@ -1824,7 +1826,7 @@ export function LiveApp() {
           onClose={() => setLauncherOpen(false)}
         />
       )}
-      {overlay === "palette" && os && <LivePalette sessions={paletteSessions(rows)} os={os} labels={liveLabels} hidden={hiddenCommands} tab={focusedId ?? null} filesOnly={filesOnly} onOpenFile={(path) => { setOverlay(null); preview.open({ path }); }} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
+      {overlay === "palette" && os && <LivePalette recent={view.recent_commands} moved={MOVED_COMMANDS} sessions={paletteSessions(rows)} os={os} labels={liveLabels} hidden={hiddenCommands} tab={focusedId ?? null} filesOnly={filesOnly} onOpenFile={(path) => { setOverlay(null); preview.open({ path }); }} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
       {overlay === "departures" && (
         <LiveDepartures
           rows={taskRows}

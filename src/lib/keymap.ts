@@ -65,6 +65,7 @@ export const COMMANDS: Command[] = [
   // Session modes, the same five for every agent CLI (docs/PLAN.md "Session modes"); unbound, so a person picks the keys.
   { id: "pause", label: "Pause session", group: "Session" },
   { id: "continue", label: "Continue session", group: "Session" },
+  { id: "change-mode", label: "Change mode…", group: "Session" },
   { id: "mode-manual", label: "Mode: Manual, ask before each change", group: "Session" },
   { id: "mode-plan", label: "Mode: Plan, read and plan without changing anything", group: "Session" },
   { id: "mode-auto-edit", label: "Mode: Auto-edit, edits in the project go ahead", group: "Session" },
