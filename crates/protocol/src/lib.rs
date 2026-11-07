@@ -12,7 +12,6 @@ pub mod host;
 pub mod install;
 pub mod manifest;
 pub mod settings_view;
-pub mod tools;
 
 /// TypeScript source for the constants ts-rs cannot export (names and frame opcodes).
 pub fn constants_ts() -> String {

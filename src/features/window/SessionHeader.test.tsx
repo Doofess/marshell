@@ -33,7 +33,7 @@ describe("modeLabel / headerDanger", () => {
 
 describe("SessionHeader: Run and Stop", () => {
   const w = (control?: ComponentProps<typeof SessionHeader>["scriptControl"]) =>
-    renderToStaticMarkup(<SessionHeader row={row("working")} ports={[{ port: 3000, url: "http://localhost:3000/", announced: false }]} {...(control === undefined ? {} : { scriptControl: control })} onRun={() => {}} onStop={() => {}} />);
+    renderToStaticMarkup(<SessionHeader row={row("working")} ports={[{ port: 3000, url: "http://localhost:3000/" }]} {...(control === undefined ? {} : { scriptControl: control })} onRun={() => {}} onStop={() => {}} />);
   it("shows no button without a run script", () => {
     const out = w();
     expect(out).not.toContain(">Run<");
@@ -55,7 +55,7 @@ describe("SessionHeader: Run and Stop", () => {
 });
 
 describe("SessionHeader", () => {
-  const h = renderToStaticMarkup(<SessionHeader row={row("working")} ports={[{ port: 3000, url: "http://localhost:3000/", announced: false }]} />);
+  const h = renderToStaticMarkup(<SessionHeader row={row("working")} ports={[{ port: 3000, url: "http://localhost:3000/" }]} />);
   it("says one subagent in the singular", () => {
     const one = renderToStaticMarkup(<SessionHeader row={{ ...row("working"), subagents: 1 }} />);
     expect(one).toContain("1 subagent<");

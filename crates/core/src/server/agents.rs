@@ -21,7 +21,7 @@ use crate::config::jsonc::{has_lone_lf, lf_to_crlf, parse_problem, read_value};
 use crate::config::preview::{MAX_CONFIG_BYTES, PlannedFile, TOO_LARGE_DETAIL, unified_diff};
 use crate::config::service::ApplyError;
 use crate::paths;
-use crate::profiles::detect::{agent_command, agent_exe, run_wsl};
+use crate::profiles::detect::{agent_command, agent_exe, run_wsl, run_wsl_capture};
 use axum::Json;
 use axum::extract::{Path as UrlPath, Query, State};
 use axum::http::StatusCode;
@@ -57,10 +57,34 @@ const VERSION_TIMEOUT: Duration = Duration::from_secs(5);
 const WSL_VERSION_TIMEOUT: Duration = Duration::from_secs(8);
 const WSL_VERSION_TTL: Duration = Duration::from_secs(10 * 60);
 
-/// Run by `sh -c` inside the distro; `$0` is the program and `$@` its arguments. WSL appends the Windows PATH, whose
-/// npm folder holds a `claude` or `codex` shim that would report the Windows version, so every `/mnt/` entry goes
-/// first. The usual install folders of a Linux CLI come before what is left, because `--exec` starts no login shell.
-const WSL_SCRIPT: &str = r#"set -f; p=; IFS=:; for d in $PATH; do case $d in /mnt/*|'') ;; *) p="${p:+$p:}$d";; esac; done; unset IFS; set +f; [ -n "$p" ] || p=/usr/local/bin:/usr/bin:/bin; n=; for d in "$HOME"/.nvm/versions/node/*/bin; do [ -d "$d" ] && n="$n$d:"; done; PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/.bun/bin:$n$p"; exec "$0" "$@""#;
+/// The PATH a `sh -c` script inside the distro needs. WSL appends the Windows PATH, whose npm folder holds a `claude`
+/// or `codex` shim that would report the Windows version, so every `/mnt/` entry goes first. The usual install folders
+/// of a Linux CLI come before what is left, because `--exec` starts no login shell.
+macro_rules! wsl_path {
+    () => {
+        r#"set -f; p=; IFS=:; for d in $PATH; do case $d in /mnt/*|'') ;; *) p="${p:+$p:}$d";; esac; done; unset IFS; set +f; [ -n "$p" ] || p=/usr/local/bin:/usr/bin:/bin; n=; for d in "$HOME"/.nvm/versions/node/*/bin; do [ -d "$d" ] && n="$n$d:"; done; PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$HOME/.bun/bin:$n$p""#
+    };
+}
+
+/// The PATH prelude alone, for a script that looks programs up and starts none.
+const WSL_PATH: &str = wsl_path!();
+
+/// Run by `sh -c` inside the distro; `$0` is the program and `$@` its arguments, started on `WSL_PATH`.
+const WSL_SCRIPT: &str = concat!(wsl_path!(), r#"; exec "$0" "$@""#);
+
+/// What follows `WSL_PATH` in the lookup script: for each word (`$@`) the distro's PATH has, print it on a line.
+const WSL_WHICH_BODY: &str = r#"; for c do command -v "$c" >/dev/null 2>&1 && printf '%s\n' "$c"; done; exit 0"#;
+
+/// The arguments of the `wsl.exe` run that prints which of `words` the distro's own PATH has. The words go only after
+/// `sh`, as its arguments, and never into the script: an own agent's command can hold shell metacharacters.
+pub(crate) fn wsl_which_argv(distro: &str, words: &[String]) -> Vec<String> {
+    let script = format!("{WSL_PATH}{WSL_WHICH_BODY}");
+    ["-d", distro, "--exec", "sh", "-c", script.as_str(), "sh"]
+        .into_iter()
+        .map(String::from)
+        .chain(words.iter().cloned())
+        .collect()
+}
 
 /// The arguments of the `wsl.exe` run that prints `<exe> <args>` inside `distro`. `exe` is a constant program name and
 /// `args` constants too.
@@ -381,6 +405,30 @@ impl AppState {
             }
         }
         found
+    }
+
+    /// Which of `words` the distro's own PATH has, or the answer a test pinned. Runs `wsl.exe` (which starts a stopped
+    /// distro), so async callers go through `spawn_blocking`. None is no answer, or a non-zero exit. Nothing is kept:
+    /// a CLI installed a moment ago shows up the next time the launcher asks.
+    pub(crate) fn agents_in_distro(&self, distro: &str, words: &[String]) -> Option<Vec<String>> {
+        if let Some(pinned) = self.0.distro_which {
+            return pinned(distro, words);
+        }
+        // A unit test that gets here would start the developer's real distro.
+        if cfg!(test) {
+            panic!("a test reached wsl.exe for {distro}; pin it with with_distro_which");
+        }
+        let argv = wsl_which_argv(distro, words);
+        let args: Vec<&str> = argv.iter().map(String::as_str).collect();
+        let (code, out) = run_wsl_capture(&args, WSL_VERSION_TIMEOUT)?;
+        // A Linux program's output through `--exec` is UTF-8.
+        (code == 0).then(|| {
+            String::from_utf8_lossy(&out)
+                .lines()
+                .map(|line| line.trim_end_matches('\r').to_string())
+                .filter(|line| !line.is_empty())
+                .collect()
+        })
     }
 
     /// Where Marshell's hooks go in `distro`: its home as a UNC path and the bridge as the distro sees it, or the one
@@ -1972,6 +2020,19 @@ pub async fn remove_plan(
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn the_words_reach_sh_as_arguments() {
+        let words = vec!["claude".to_string(), "a;rm -rf ~".to_string()];
+        let argv = wsl_which_argv("Ubuntu", &words);
+        assert_eq!(argv[..5], ["-d", "Ubuntu", "--exec", "sh", "-c"]);
+        assert_eq!(argv[argv.len() - 3..], ["sh", "claude", "a;rm -rf ~"]);
+        let script = &argv[5];
+        assert!(!script.contains("claude") && !script.contains("rm -rf"), "{script}");
+        assert!(script.contains(r#"command -v "$c""#));
+        // The `/mnt/` entries of the Windows PATH are dropped, as for the version asks.
+        assert!(script.starts_with(WSL_PATH));
+    }
 
     /// The content a raw save of `typed` would write over `file`, with the flags `settings_read` derives.
     fn raw_content(agent: &str, file: &str, typed: &str) -> String {

@@ -14,10 +14,6 @@
   white-space: nowrap;
   cursor: pointer;
 }
-/* A port the CLI itself announced reads a little stronger than one found by looking at what listens. */
-.port-chip[data-announced] {
-  background: color-mix(in oklch, var(--accent) 16%, var(--fill));
-}
 .port-chip:focus-visible {
   outline: 2px solid var(--focus, var(--accent));
   outline-offset: 2px;

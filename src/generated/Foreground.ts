@@ -15,8 +15,4 @@ command_line: string | null,
 /**
  * "claude", "codex" or "antigravity" when the program is a known agent CLI.
  */
-agent: string | null, 
-/**
- * The id of the tool profile the running command matched ("vercel", "terraform"), if one did.
- */
-tool?: string, };
+agent: string | null, };

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { PortChip } from "../../generated/PortChip";
 import { chipLabel, chipMenuItems, isLoopbackUrl } from "./ports";
 
-const chip = (port: number, url = `http://localhost:${port}/`): PortChip => ({ port, url, announced: false });
+const chip = (port: number, url = `http://localhost:${port}/`): PortChip => ({ port, url });
 
 describe("isLoopbackUrl", () => {
   it("refuses_a_non_loopback_url", () => {

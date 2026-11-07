@@ -273,7 +273,7 @@ Decided 2026-10-15: **Marshell sets the mode**, the same five for every agent CL
 
 **Launch a session:**
 - Ctrl+Shift+T opens a 560 px sheet at 20% from the top.
-- It reads as one sentence of chips: `[Claude] in [my-app · main] · [Plan] · [Quick] · [worktree ☐]`, followed by a prompt box.
+- It reads as one sentence of chips: `[Claude] in [my-app · main] · [Plan] · [Quick] · [worktree ☐]`, followed by a prompt box. Since slice 6o the shell comes first, `[PowerShell 7] running [Claude] in [my-app · main] · …`, and a Name field sits beside Start (6o decisions 4 to 8).
 - Typing filters projects. Tab moves between chips, and letters pick values.
 - The folder field also takes a full path in the running OS's syntax, offered as a "Use <path>" row. A "Browse…" row at the end of the list, and Ctrl+O in the field, open the OS folder picker (decided 2026-10-18; built in slice 3f).
 - Enter launches. The tab appears **in under 100 ms** showing "Starting Claude Code in my-app…" and never waits for the process.
@@ -313,7 +313,7 @@ Every choice is monospace and falls back to the system monospace font and then t
 **Colour tokens:** the source of truth is `src/styles/tokens.css` (oklch, `light-dark()`), `accents.css` and the Storybook Colours story; this plan holds no hex values. Rules that stay binding:
 - Surfaces: true-black dark, warm-white light. Hover and selected are low-alpha overlays of the text colour. Text has three levels, and `--text-3` must pass AA on every surface.
 - **The accent follows the vendor.** Everything in a session's row, card or pane (its header, composer and status bar too) takes that CLI's signal colour; the window's own controls (the layout menu, the palette, the shell panel, the navigation cursor) keep the app accent: focus rings, the active-pane ring, primary buttons, the needs-you tint. Where no session is in play (onboarding, settings, doctor) the user's chosen accent applies; the default is sand, a warm dark grey in light mode and a beige in dark mode, kept apart from Codex's neutral grey and OpenAI's pale yellow (9 accents: sand, amber, blue, indigo, violet, magenta, cyan, teal, slate). Vendor colours are checked for 4.5:1 text on their button fill and 3:1 for rings and bars on every surface (`accentFollowsVendor.test.ts`).
-- **No boxed outlines.** Cards, buttons, chips and keys are told apart by fill and tint, never by a 1 px box; a risky request is a tinted card with a red bar on its start edge. Hairlines stay as dividers between regions, and the keyboard focus ring stays. `noBoxedOutlines.test.ts` enforces it.
+- **No boxed outlines.** Cards, buttons, chips and keys are told apart by fill and tint, never by a 1 px box; a risky request is a tinted card with a red bar on its start edge. Hairlines stay as dividers between regions, and the keyboard focus ring stays everywhere but the launcher. There, slice 6o decision 9's look replaces it: focus turns a control's colours over. A chip or Back fills with the agent's accent and takes its ink, Start turns to ink with accent text, and a text field or the prompt line drops to the terminal's surface tinted with the accent, under an accent caret; forced colors draw a 2 px Highlight outline instead. A later slice carries it to the other stylesheets once the user has judged it. `noBoxedOutlines.test.ts` enforces it.
 - **Scrollbars:** the main window never shows a scrollbar: only the terminal conversation and the session list scroll, both by wheel, keys and touch, with the bar invisible. Menus, settings and the request-details drawer, which may scroll, keep a quiet 12 px pill that follows the theme and strengthens on hover and drag. `noScrollInMainWindow.test.ts` scans every feature and component stylesheet.
 - Status colours (error, ok, caution) are separate from the accent. Caution is yellow (dark) or olive (light) so it stays distinct from amber; `contrast.test.ts` checks AA and CIEDE2000 distance for every pair, including amber vs caution.
 - Brand colours are for marks, stripes and dots and, as the accent, for the focused session's rings, bars and primary buttons (see the accent rule above). Claude's is a muted terracotta, never a status colour; Codex and Antigravity have their own tokens (OpenAI is a pale yellow in dark mode and a deep teal in light; a yellow that passes 3:1 on white looked like muddy gold). All are user-changeable.
@@ -1169,7 +1169,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
         - Install opencode, Qwen Code, Crush and Kimi Code into a scratch prefix, and check their launch, resume and mode flags against `--help` and a real start, without signing in.
         - Grok runs a real session in a scratch folder on the person's own account.
         - Copilot, Cursor and Amp are checked from their docs only, and the pull request lists them under Known limits.
-   - **Slice 6c decisions (2026-10-25).** Tool profiles. Decisions 1 and 2 were made with 6b; 3 to 10 when 6c started. Evidence: `docs/research/2026-10-25-agent-and-tool-cli-manifests.md`, "Tool profiles".
+   - **Slice 6c decisions (2026-10-25).** Tool profiles. Decisions 1 and 2 were made with 6b; 3 to 10 when 6c started. Evidence: `docs/research/2026-10-25-agent-and-tool-cli-manifests.md`, "Tool profiles". Slice 6o removed tool profiles (6o decisions 2 and 3): decisions 1 and 5 to 9 and the announced-URL half of 3 no longer apply; listener port chips, secret handling and decision 11 stay.
      1. A tool profile can carry three things:
         - launch presets: start the tool from the picker with saved arguments and a folder;
         - needs-you patterns: the text that marks the tab as waiting on the person, such as a `y/N` question or a sign-in prompt;
@@ -1379,6 +1379,89 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
          - Marshell then writes only `hooks\marshell.json` and leaves the person's own status line as it is, as Qwen's setup does. The Agents section had read Partial from then on.
          - Without Marshell's status line, Marshell can't follow a session past `/clear`. Copilot sends `sessionEnd` (`user_exit`) for both `/clear` and `/exit`, and only the status line names the new id. The row reads Ended until the next prompt.
          - The consent card says so when that switch is off: "With your own status line left as it is, a Copilot CLI row reads Ended after /clear until your next prompt."
+   - **Slice 6o decisions (2026-11-07).** The shell-first launcher: the shell is picked first, Tools are removed, a session is named before it starts, and the launcher gets a new focus look. Asked of the user on 2026-11-07, after 6n1 merged.
+     1. One slice, with its own plan, live check and pull request. It runs now, before 6n2, 6n3 and 7d.
+     2. **Tool profiles (slice 6c) are removed.** Gone:
+        - the shipped profiles (`crates/core/src/tools/profiles.json`) and own ones (`~/.marshell/tools.json`);
+        - launch presets: the launcher's Tools group and its fill-in fields, `CreateSessionRequest.tool` and the `/v1/tools` routes;
+        - Needs you from matched prompt text (Status limited), and port chips from a tool's announced URLs;
+        - the Agents dialog's Tools list and its own-tools editor;
+        - `SessionInfo.tool`, the profile a running command matched.
+
+        A `tools.json` already on disk is left there and no longer read. This replaces 6c decisions 1 and 5 to 9, and the announced-URL half of decision 3.
+     3. **Three parts of 6c work without a profile and stay**, moved out of the tools module:
+        - port chips for the ports a tab's own processes listen on (6c decisions 3 and 4, the listener half), and auth-callback ports such as a `login` command's still get no chip;
+        - not recording the output of a command that prints secrets, with the marker saying why (decision 2; there are no prompts or announced ports left to skip);
+        - scrubbing secret flags from the tab title, the foreground phrase, the recording marker and the logs (decision 10).
+
+        Decision 11's OS reads stay for these.
+     4. **The launcher picks the shell first.** The sentence starts with two chips, for example `[PowerShell 7] running [Claude] in [my-app · main] · [Manual] · [Administrator ☐]`.
+        - The shell chip lists the detected shell profiles: PowerShell 7, Windows PowerShell, Command Prompt, Git Bash and each WSL distro.
+        - The agent chip lists "Just the shell" first, then the agents available in that shell. Changing the shell filters the list again.
+        - The default shell is Settings' default profile. The last shell and agent are remembered, as the program is today.
+     5. **An agent is offered in a shell when it is installed there and Marshell drives it there.**
+        - Windows shells (PowerShell 7, Windows PowerShell, Command Prompt, Git Bash) offer the agents found on the Windows PATH.
+        - A WSL distro offers the CLIs Marshell drives in WSL (Claude Code, Codex, Antigravity and Qwen Code; Copilot CLI with 6n2) and own agents, when that distro's PATH has them. The check runs when the distro is picked and can start a stopped distro.
+        - Command Prompt offers agents without the first-prompt line, because it can't pass a prompt safely.
+        - An agent preset (DeepSeek, which starts Claude Code) follows its agent.
+     6. **An agent that isn't available in the chosen shell is not a row.** One line under the agent list names each one with the reason, for example "Not in Ubuntu: Antigravity (not installed), GitHub Copilot (Marshell runs it in WSL later)".
+     7. **The session's name can be set in the launcher.**
+        - The footer's "Session N" becomes a Name field beside Start. It comes after the prompt line in Tab order, and Alt+N moves to it from anywhere in the sheet.
+        - Empty keeps the default name, which is shown as the placeholder.
+        - The name follows the sidebar's rename rules: trimmed, control characters dropped, at most 120 characters. It goes in `CreateSessionRequest.name`, which already exists.
+     8. **With the worktree chip on, Task name and Name stay separate fields.** While Name is untouched, the session takes the task name and Name shows it as the default; typing in Name stops that. The branch comes only from Task name, as today.
+     9. **The launcher's focus look: no box and no rule.**
+        - A focused field or chip changes its fill and tint, and a text field shows an accent caret. In forced colors, focus is a system-colour Highlight outline.
+        - frontend-design and good-css settle the exact look.
+        - Every focusable thing in the launcher gets it: the prompt line, the Name, Task name and folder fields, the chips, Back and Start.
+        - The visual system records it as the app's focus style. A later slice carries it to the other stylesheets once the user has judged it in this slice's live check, and the app's ring stays everywhere else until then.
+   - **Slice 6p decisions (2026-11-07).** A menu at the bottom left of the window, and a cleaner command palette. Asked of the user on 2026-11-07, while 6o ran. Today the palette has about 60 rows. "History" (Ctrl+Shift+Y) and "Search all sessions" (Ctrl+Shift+Alt+F) open the same view, seven rows open the same Settings page, and Tools holds 25 unrelated commands.
+     1. Its own slice, with its own plan, live check and pull request. It runs right after 6o, before 6n2, 6n3 and 7d. It is planned once 6o merges.
+     2. **A menu at the bottom left takes four destinations out of the palette's list:**
+        - Settings, as one item that lists its sections. It replaces Settings…, Appearance…, Agents…, Shell profiles…, Notifications…, History settings… and Diagnostics….
+        - History, with its search. "History" and "Search all sessions" become one command.
+        - Doctor.
+        - Departures.
+
+        Keyboard shortcuts and Pause or resume notifications stay in the palette.
+     3. **A moved item is found by typing, not listed.** With an empty box the palette doesn't list it, but typing finds it: "appear" finds Settings: Appearance. Every action is still in the palette, as the review checklist asks.
+     4. **The palette gets four fixes:**
+        1. The five Mode rows become one "Change mode…" command that opens a second list with the modes.
+        2. With an empty box, the palette starts with the last few commands run.
+        3. Sessions, View and Tools become the groups Session, Terminal, Window and App.
+        4. A command that can't run now is left out, for example one that needs a focused session, a split, a task or a run script, when that is missing.
+     5. To ask when the slice is planned:
+        - the menu button's form, and where it sits on the rail and in focus mode;
+        - whether the menu has a shortcut;
+        - whether Ctrl+Shift+Alt+F stays;
+        - what the sidebar footer's Doctor glyph becomes.
+   - **Slice 6q decisions (2026-11-07, first round).** Split view is removed, and a tabbed pane on the right takes its place. Asked of the user on 2026-11-07, while 6o ran. A planning workflow researches the options first; the user decides the follow-up questions, and then the slices are planned.
+     1. **The order:** it comes after 6o and 6p, before 6n2. The research runs now.
+     2. **Split view is removed completely.** Gone:
+        - the layout menu, split (Ctrl+Shift+D) and zoom pane (Ctrl+Shift+P);
+        - pane headers and the compact prompt lines;
+        - the row menu's "Split into a pane", and Ctrl+click or Ctrl+Space on a row.
+
+        A saved split opens as its focused session. This replaces the split parts of slice 2e and the row-menu decisions that name a split.
+     3. **The Preview (slice 2.5) grows into the tabbed pane** and keeps all its kinds. The three main kinds are a web browser, PDF and text files; Markdown and images stay as extra kinds. Ctrl+Shift+Q shows and hides the pane.
+     4. **Tabs belong to their session.** Switching sessions swaps the pane's tabs, and a restart restores them.
+     5. **The pane is resizable,** by a divider you can drag or move with the keyboard, and its width is remembered. It can be shown and hidden, and the terminal keeps at least 80 columns where the window allows.
+     6. **The browser is a real one:** it opens any website, with an address bar, Back, Forward and Reload, and a port chip opens its localhost page. It runs isolated, with no access to Marshell's own API. It also:
+        - stays signed in across restarts, in a profile kept apart from the person's own browser;
+        - opens DevTools with F12;
+        - offers region to prompt on a page;
+        - opens pages an agent asks for, through the marshell CLI or the local API. Every CLI gets this equally.
+     7. **Text tabs edit and save.** They have syntax colours for the file types Sublime Text knows, line numbers, find and replace, undo, and Ctrl+S to save. A file an agent changes reloads; with unsaved edits, the tab offers a merge.
+     8. **Syntax colours follow Marshell's theme:** one light and one dark scheme, built from its tokens and tuned for contrast.
+     9. **A PDF tab adds three things** to the slice 2.5b viewer:
+        - find (Ctrl+F);
+        - an outline and page thumbnails;
+        - highlights and notes, saved back into the file.
+     10. **A tab opens:**
+         - with Ctrl+click on a path or URL in terminal output;
+         - from a port chip;
+         - by dropping a file on the pane, from quick open, or with Open file… or Open URL…;
+         - from a + menu on the tab strip: New browser tab, Open file… and recent files.
 7. **Doctor**: the fix actions, on top of the phase-3 config core: "Fix X issues" and one-click undo; folds in each CLI's own doctor; detects duplicate notifications and offers to turn off each CLI's own desktop notifications (brief §5.5, moved here by slice 4e decision 4); reports the tokens injected by project references; checks Codex hook trust; waste checks (unused MCP servers and skills, long descriptions, broad scopes, a token-cost estimate); offers to raise `cleanupPeriodDays`.
    - Added 2026-10-16 (research in `docs/research/2026-10-16-accounts-cloud-extensions.md`):
      - **One-click doctor per CLI.** It runs the CLI's own doctor (`claude doctor` text, `codex doctor --json`) and opens a summary window of suggested fixes. Every fix goes through preview, backup and undo; nothing is applied silently. Antigravity has no doctor command, so it gets none.

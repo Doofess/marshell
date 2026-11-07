@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LAUNCH_PROGRAMS } from "../launcher/launchChoice";
+import { LAUNCH_AGENTS as LAUNCH_PROGRAMS } from "../launcher/launchChoice";
 import type { Detection } from "../onboarding/types";
 import { launcherSetup, shownNumber } from "./launcherSetup";
 
@@ -7,10 +7,10 @@ const detected = (skipsAll = false): Detection => ({ cli: "antigravity", install
 const programs = [...LAUNCH_PROGRAMS, { ...LAUNCH_PROGRAMS[2]!, id: "preset:agy", agent: "antigravity" }];
 
 describe("launcher setup read state", () => {
-  it("carries an administrator refusal to the agent and tool presets that use it", () => {
+  it("carries an administrator refusal to the agent and presets that use it", () => {
     const reason = "Marshell couldn't read this Codex's version, so it can't start it as administrator.";
     const codex: Detection = { cli: "codex", installed: true, configPath: "config.toml", configState: "ok", adminUnavailable: reason };
-    const choices = [...programs, { ...LAUNCH_PROGRAMS[1]!, id: "preset:codex", agent: "codex", group: "Tools" as const }];
+    const choices = [...programs, { ...LAUNCH_PROGRAMS[1]!, id: "preset:codex", agent: "codex", group: "Agents" as const }];
     const result = launcherSetup(choices, false, [codex]);
     expect(result.filter((p) => p.adminUnavailable).map((p) => p.id)).toEqual(["codex", "preset:codex"]);
     expect(result.find((p) => p.id === "codex")?.adminUnavailable).toBe(reason);

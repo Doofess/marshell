@@ -1798,6 +1798,38 @@ export function LiveApp() {
           }}
         />
       )}
+      {/* Window-wide layers share z 20, so this order is their stacking: onboarding, then the launcher over it, then every dialog over
+          both (overlayStacking.test.ts). */}
+      {onboarding && endpoint && (
+        <div className="live-app__onboarding">
+          <LiveOnboarding
+            endpoint={endpoint}
+            onDone={() => {
+              setOnboardingShown("done");
+              refreshSetup();
+              void sync?.markOnboarded().catch(() => {});
+            }}
+          />
+        </div>
+      )}
+      {launcherOpen && !reopening && (
+        <LiveLauncher
+          detections={detections}
+          detectionFailed={detectionFailed}
+          endpoint={endpoint}
+          initialElevated={launcherElevated}
+          os={os}
+          nextNumber={nextSessionNumber(infos.map((i) => i.number))}
+          size={() => size.current}
+          onStarted={started}
+          onSetupStarted={({ tabId, request, text }) => {
+            pendingAgents.current.set(tabId, { seen: false, request, text });
+            setPendingTick((n) => n + 1);
+          }}
+          announce={announce}
+          onClose={() => setLauncherOpen(false)}
+        />
+      )}
       {overlay === "palette" && os && <LivePalette sessions={paletteSessions(rows)} os={os} labels={liveLabels} hidden={hiddenCommands} tab={focusedId ?? null} filesOnly={filesOnly} onOpenFile={(path) => { setOverlay(null); preview.open({ path }); }} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
       {overlay === "departures" && (
         <LiveDepartures
@@ -1888,39 +1920,9 @@ export function LiveApp() {
           }}
         />
       )}
-      {onboarding && endpoint && (
-        <div className="live-app__onboarding">
-          <LiveOnboarding
-            endpoint={endpoint}
-            onDone={() => {
-              setOnboardingShown("done");
-              refreshSetup();
-              void sync?.markOnboarded().catch(() => {});
-            }}
-          />
-        </div>
-      )}
       {overlay === "shortcuts" && os && <LiveShortcuts os={os} onClose={() => setOverlay(null)} />}
       {runAsk && <ScriptsTrustDialog scripts={runAsk.scripts} busy={runAsk.busy} error={runAsk.error} allowLabel="Allow and run" cancelLabel="Cancel" onAllow={() => void allowRun()} onCancel={() => setRunAsk(null)} />}
       {closeAsk && <CloseDialog busy={closeAsk.busy} error={closeAsk.error} onChoose={(keep) => void chooseClose(keep)} onCancel={cancelCloseAsk} />}
-      {launcherOpen && !reopening && (
-        <LiveLauncher
-          detections={detections}
-          detectionFailed={detectionFailed}
-          endpoint={endpoint}
-          initialElevated={launcherElevated}
-          os={os}
-          nextNumber={nextSessionNumber(infos.map((i) => i.number))}
-          size={() => size.current}
-          onStarted={started}
-          onSetupStarted={({ tabId, request, text }) => {
-            pendingAgents.current.set(tabId, { seen: false, request, text });
-            setPendingTick((n) => n + 1);
-          }}
-          announce={announce}
-          onClose={() => setLauncherOpen(false)}
-        />
-      )}
     </div>
     </PreviewContext.Provider>
   );

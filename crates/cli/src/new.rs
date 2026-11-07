@@ -47,7 +47,6 @@ pub fn create_request(
         setup: None,
         preset: None,
         color_scheme: None,
-        tool: None,
         cli_task: None,
     }
 }

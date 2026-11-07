@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { PortChip } from "../../generated/PortChip";
 import { PortChips } from "./PortChips";
 
-const chip = (port: number): PortChip => ({ port, url: `http://localhost:${port}/`, announced: false });
+const chip = (port: number): PortChip => ({ port, url: `http://localhost:${port}/` });
 const noMenu = () => {};
 
 describe("PortChips", () => {

@@ -12,11 +12,9 @@ import { ConsentCard } from "../onboarding/ConsentCard";
 import { CLI_NAME, type Capability } from "../onboarding/consent";
 import { actions, consentProps, DEFAULT_WANT, hooksOffNotice, leftover, liveStatusOn, removalBlock, setupLine, setupWant, type InstallFlow, type SetupStart } from "./agentsState";
 import { OwnAgentsSection } from "./OwnAgentsSection";
-import { ToolsSection } from "./ToolsSection";
 import { SkillRow, type SkillRowHandlers } from "./SkillRow";
 import { failureText, useInstallFlow } from "./useInstallFlow";
 import { useSkillFlow, type SkillFlow } from "./useSkillFlow";
-import { OwnToolsSection } from "./OwnToolsSection";
 import "./AgentsSection.css";
 
 /** The name a section and the change titles use: "Antigravity" (as "Set up Antigravity hooks"), where the consent card's own is "Antigravity CLI". */
@@ -61,7 +59,7 @@ export function escapeLeavesPanel(e: { key: string; preventDefault: () => void }
 
 /**
  * Settings → Agents (docs/PLAN.md slice 3c, decision 5), one section of the Settings page: each CLI's install state, with Set up,
- * Hooks off (preview, then apply) and the orphaned-hooks warning, then the own agents and the tools. Presentational: `AgentsSection` fetches and acts, this draws.
+ * Hooks off (preview, then apply) and the orphaned-hooks warning, then the own agents. Presentational: `AgentsSection` fetches and acts, this draws.
  */
 export function AgentsSectionView({
   setup,
@@ -81,7 +79,6 @@ export function AgentsSectionView({
   copilotLiveStatus = null,
   copilotLiveStatusError,
   own,
-  tools,
   rootRef,
   skills,
   wslDistros: distros,
@@ -91,8 +88,6 @@ export function AgentsSectionView({
   wslDistros?: string[];
   /** Each agent's marshell skill flow and handlers; without it the rows are left out. */
   skills?: Record<HookAgent, { flow: SkillFlow | null; on: SkillRowHandlers }>;
-  /** The tools, after the own agents. */
-  tools?: ReactNode;
   rootRef?: Ref<HTMLDivElement>;
   /** Antigravity's setup; its section shows only when it was read and agy is found. */
   antigravity?: AgentSetup | null;
@@ -138,7 +133,6 @@ export function AgentsSectionView({
           {qwen && (qwen.found || (distros?.length ?? 0) > 0 || leftover(qwen)) && <AgentList setup={qwen} agent="qwen" liveStatus={qwenLiveStatus} error={qwenLiveStatusError} on={on} skill={skills?.qwen} distros={distros} />}
           {copilot && (copilot.found || leftover(copilot)) && <AgentList setup={copilot} agent="copilot" liveStatus={copilotLiveStatus} error={copilotLiveStatusError} on={on} skill={skills?.copilot} />}
           {own}
-          {tools}
         </>
       )}
       {target && panel.kind === "setup" && <SetupPanel setup={target} flow={panel.flow} on={on} />}
@@ -541,7 +535,6 @@ export function AgentsSection({
       setup={setup}
       codex={codex}
       own={<OwnAgentsSection endpoint={endpoint} onNotice={announce} />}
-      tools={<ToolsSection endpoint={endpoint} ownEditor={<OwnToolsSection endpoint={endpoint} announce={announce} />} />}
       panel={panel}
       liveStatus={liveStatus.claude}
       liveStatusError={saveError?.agent === "claude" ? saveError.text : null}

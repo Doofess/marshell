@@ -1,12 +1,13 @@
-/** Where the launcher's highlighted option is being moved: the folder field (a text input) or the program grid. */
-export type OpenList = "folder" | "programs" | null;
+import type { Os } from "../../lib/keymap";
+/** Where the launcher's highlighted option is being moved: the folder field (a text input), or the shell or agent list. */
+export type OpenList = "shells" | "agents" | "folder";
 
 /**
  * The keys that move the highlighted option. In the folder field Left and Right belong to the caret, so a typo in the
- * query can be fixed; only the program grid, which has no caret, uses all four arrows.
+ * query can be fixed; only the shell and agent lists, which have no caret, use all four arrows.
  */
-export function listNavKeys(open: OpenList): readonly string[] {
-  if (open === "programs") return ["ArrowDown", "ArrowUp", "ArrowRight", "ArrowLeft"];
+export function listNavKeys(open: OpenList | null): readonly string[] {
+  if (open === "shells" || open === "agents") return ["ArrowDown", "ArrowUp", "ArrowRight", "ArrowLeft"];
   if (open === "folder") return ["ArrowDown", "ArrowUp"];
   return [];
 }
@@ -19,17 +20,21 @@ export function stepActive(index: number, key: string, size: number): number {
   return (from + step + size) % size;
 }
 
-/** Which of the launcher's two lists is open: the folder field when `query` is not null, the program grid when `programsOpen`. */
-export type OpenLists = { query: string | null; programsOpen: boolean };
+/** Which of the launcher's three lists is open: the folder field when `query` is not null, the shell list, the agent list. At most one is. */
+export type OpenLists = { query: string | null; shellsOpen: boolean; agentsOpen: boolean };
 
-/** Opens or closes the program grid. The launcher hides the grid while the folder field is open, so opening it closes the field. */
-export function openPrograms(lists: OpenLists, open: boolean): OpenLists {
-  return { query: open ? null : lists.query, programsOpen: open };
+/** Opens or closes the shell or agent list. The launcher shows one list at a time, so opening one closes the others. */
+export function openList(lists: OpenLists, which: "shells" | "agents", open: boolean): OpenLists {
+  return {
+    query: open ? null : lists.query,
+    shellsOpen: which === "shells" ? open : open ? false : lists.shellsOpen,
+    agentsOpen: which === "agents" ? open : open ? false : lists.agentsOpen,
+  };
 }
 
-/** Sets the folder field's text, null to close it. Opening it closes the program grid, which would otherwise come back after a pick. */
+/** Sets the folder field's text, null to close it. Opening it closes the other lists, which would otherwise come back after a pick. */
 export function openFolder(lists: OpenLists, query: string | null): OpenLists {
-  return { query, programsOpen: query === null ? lists.programsOpen : false };
+  return query === null ? { ...lists, query } : { query, shellsOpen: false, agentsOpen: false };
 }
 
 /**
@@ -40,6 +45,16 @@ export function focusFellOut({ wasOpen, isOpen, activeIsBody }: { wasOpen: boole
   return wasOpen && !isOpen && activeIsBody;
 }
 
+/** The open list, if any: the one Esc closes, and the one Alt+N closes before it moves to Name (its Enter and arrows would act on a list left behind). */
+export function listToClose({ folderOpen, shellsOpen, agentsOpen }: { folderOpen: boolean; shellsOpen: boolean; agentsOpen: boolean }): OpenList | null {
+  return folderOpen ? "folder" : shellsOpen ? "shells" : agentsOpen ? "agents" : null;
+}
+
+/** The letter a focused chip picks by. A held Alt, Ctrl or Meta makes the key a shortcut (Alt+N, Alt+A), never a pick; Shift is a capital. */
+export function chipLetter(e: { key: string; altKey: boolean; ctrlKey: boolean; metaKey: boolean }): string | null {
+  return e.altKey || e.ctrlKey || e.metaKey ? null : e.key;
+}
+
 /** Alt+A, by its physical key so it sits in the same place on every layout: toggles the Administrator chip from anywhere in the sheet. */
 export function adminKey(e: { code: string; altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }): boolean {
   return e.code === "KeyA" && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
@@ -48,4 +63,14 @@ export function adminKey(e: { code: string; altKey: boolean; ctrlKey: boolean; m
 /** Alt+A is the chip's key only while the chip works; when it is off (macOS, Linux, a CLI that can't run elevated) the key is left alone, as Option+A is a letter on a Mac. */
 export function adminKeyClaimed(e: { code: string; altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }, enabled: boolean): boolean {
   return enabled && adminKey(e);
+}
+
+/** Alt+N, by its physical key: moves to the Name field from anywhere in the sheet. */
+export function nameKey(e: { code: string; altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }): boolean {
+  return e.code === "KeyN" && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+}
+
+/** Alt+N is the Name field's key except on a Mac, where Option+N is the dead key for a tilde (as Option+A is left alone for the Administrator chip). Tab still reaches the field. */
+export function nameKeyClaimed(e: Parameters<typeof nameKey>[0], os: Os): boolean {
+  return os !== "mac" && nameKey(e);
 }

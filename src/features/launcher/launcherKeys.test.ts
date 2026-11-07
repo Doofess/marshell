@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adminKey, adminKeyClaimed, focusFellOut, listNavKeys, openFolder, openPrograms, stepActive } from "./launcherKeys";
+import { adminKey, adminKeyClaimed, chipLetter, focusFellOut, listNavKeys, listToClose, nameKey, nameKeyClaimed, openFolder, openList, stepActive } from "./launcherKeys";
 
 describe("launcherKeys: which keys move the highlighted option", () => {
   it("in the folder field only Up and Down do: Left and Right move the caret, so a typo can be fixed", () => {
@@ -7,8 +7,8 @@ describe("launcherKeys: which keys move the highlighted option", () => {
     expect(listNavKeys("folder")).not.toContain("ArrowLeft");
     expect(listNavKeys("folder")).not.toContain("ArrowRight");
   });
-  it("in the program grid all four arrows do", () => {
-    expect([...listNavKeys("programs")].sort()).toEqual(["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp"]);
+  it("in the shell and agent lists all four arrows do", () => {
+    for (const list of ["shells", "agents"] as const) expect([...listNavKeys(list)].sort()).toEqual(["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp"]);
   });
   it("with no list open, none do", () => {
     expect(listNavKeys(null)).toEqual([]);
@@ -41,17 +41,20 @@ describe("launcherKeys: focus when the folder field closes", () => {
 });
 
 describe("launcherKeys: one list open at a time", () => {
-  it("opening the program list closes the folder field, so the program chip works while choosing a folder", () => {
-    expect(openPrograms({ query: "air", programsOpen: false }, true)).toEqual({ query: null, programsOpen: true });
-    expect(openPrograms({ query: "", programsOpen: false }, true)).toEqual({ query: null, programsOpen: true });
+  const closed = { query: null, shellsOpen: false, agentsOpen: false };
+  it("opening_one_list_closes_the_others", () => {
+    expect(openList({ ...closed, query: "air" }, "shells", true)).toEqual({ query: null, shellsOpen: true, agentsOpen: false });
+    expect(openList({ ...closed, query: "" }, "agents", true)).toEqual({ query: null, shellsOpen: false, agentsOpen: true });
+    expect(openList({ ...closed, shellsOpen: true }, "agents", true)).toEqual({ query: null, shellsOpen: false, agentsOpen: true });
+    expect(openList({ ...closed, agentsOpen: true }, "shells", true)).toEqual({ query: null, shellsOpen: true, agentsOpen: false });
+    expect(openFolder({ ...closed, shellsOpen: true }, "")).toEqual({ query: "", shellsOpen: false, agentsOpen: false });
+    expect(openFolder({ ...closed, agentsOpen: true }, "")).toEqual({ query: "", shellsOpen: false, agentsOpen: false });
+    expect(openFolder({ query: "", shellsOpen: false, agentsOpen: false }, "ai")).toEqual({ query: "ai", shellsOpen: false, agentsOpen: false });
   });
-  it("opening the folder field closes the program list, so it does not pop back once a folder is picked", () => {
-    expect(openFolder({ query: null, programsOpen: true }, "")).toEqual({ query: "", programsOpen: false });
-    expect(openFolder({ query: "", programsOpen: false }, "ai")).toEqual({ query: "ai", programsOpen: false });
-  });
-  it("closing either one leaves the other as it was", () => {
-    expect(openPrograms({ query: null, programsOpen: true }, false)).toEqual({ query: null, programsOpen: false });
-    expect(openFolder({ query: "ai", programsOpen: false }, null)).toEqual({ query: null, programsOpen: false });
+  it("closing one leaves the others as they were", () => {
+    expect(openList({ ...closed, shellsOpen: true }, "shells", false)).toEqual(closed);
+    expect(openList({ ...closed, query: "ai" }, "agents", false)).toEqual({ ...closed, query: "ai" });
+    expect(openFolder({ ...closed, query: "ai" }, null)).toEqual(closed);
   });
 });
 
@@ -73,5 +76,44 @@ describe("the Administrator chip's key", () => {
       // AltGr+A arrives as Ctrl+Alt on Windows.
       expect(adminKeyClaimed(key({ ctrlKey: true, altKey: true }), enabled)).toBe(false);
     }
+  });
+});
+
+describe("the Name field's key", () => {
+  const key = (p: Partial<Parameters<typeof nameKey>[0]> = {}) => ({ code: "KeyN", altKey: true, ctrlKey: false, metaKey: false, shiftKey: false, ...p });
+  it("alt_n_is_the_name_key", () => {
+    expect(nameKey(key())).toBe(true);
+    expect(nameKey(key({ ctrlKey: true }))).toBe(false);
+    expect(nameKey(key({ metaKey: true }))).toBe(false);
+    expect(nameKey(key({ shiftKey: true }))).toBe(false);
+    expect(nameKey(key({ altKey: false }))).toBe(false);
+    expect(nameKey(key({ code: "KeyA" }))).toBe(false);
+  });
+  it("is left alone on a Mac, where Option+N is the dead key for a tilde", () => {
+    expect(nameKeyClaimed(key(), "windows")).toBe(true);
+    expect(nameKeyClaimed(key(), "linux")).toBe(true);
+    expect(nameKeyClaimed(key(), "mac")).toBe(false);
+  });
+});
+
+describe("launcherKeys: a held modifier is a shortcut, not a letter pick", () => {
+  const press = (key: string, mods: Partial<{ altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }> = {}) => ({ key, altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, ...mods });
+  it("a_chip_letter_ignores_alt_ctrl_and_meta", () => {
+    // Alt+N moves to Name and Alt+A toggles Administrator: neither may also pick "NixOS" or "Antigravity" on the focused chip.
+    expect(chipLetter(press("n"))).toBe("n");
+    expect(chipLetter(press("N", { shiftKey: true }))).toBe("N");
+    expect(chipLetter(press("n", { altKey: true }))).toBeNull();
+    expect(chipLetter(press("a", { ctrlKey: true }))).toBeNull();
+    expect(chipLetter(press("a", { metaKey: true }))).toBeNull();
+  });
+});
+
+describe("launcherKeys: leaving a list closes it", () => {
+  it("alt_n_and_esc_close_the_one_open_list", () => {
+    // Alt+N from an open list goes to Name; left open, the list would take Name's Enter and arrows.
+    expect(listToClose({ folderOpen: true, shellsOpen: false, agentsOpen: false })).toBe("folder");
+    expect(listToClose({ folderOpen: false, shellsOpen: true, agentsOpen: false })).toBe("shells");
+    expect(listToClose({ folderOpen: false, shellsOpen: false, agentsOpen: true })).toBe("agents");
+    expect(listToClose({ folderOpen: false, shellsOpen: false, agentsOpen: false })).toBeNull();
   });
 });

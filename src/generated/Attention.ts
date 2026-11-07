@@ -13,6 +13,7 @@ message: string | null,
  */
 since_ms: number, 
 /**
- * True when the attention comes from a tool's prompt text matched on screen: a guess from text, not a hook.
+ * True when the attention is an agent's own prompt that only the person can answer in the terminal: reported by
+ * the agent's status line, not by a hook's permission request.
  */
 limited?: boolean, };

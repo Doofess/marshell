@@ -13,6 +13,7 @@ import type { Endpoint } from "../../generated/Endpoint";
 import type { FolderInfo } from "../../generated/FolderInfo";
 import type { LayoutDoc } from "../../generated/LayoutDoc";
 import type { ProfilesDoc } from "../../generated/ProfilesDoc";
+import type { ShellAgents } from "../../generated/ShellAgents";
 import { catalogApi } from "../../lib/api/catalog";
 import { ApiError } from "../../lib/api/client";
 import { folders as foldersApi } from "../../lib/api/folders";
@@ -22,27 +23,28 @@ import { projects as projectsApi } from "../../lib/api/projects";
 import { createSession } from "../../lib/api/elevated";
 import { sessions as sessionsApi } from "../../lib/api/sessions";
 import { tasksApi } from "../../lib/api/tasks";
-import { toolsApi } from "../../lib/api/tools";
-import type { ToolCatalog } from "../../generated/ToolCatalog";
 import { pickFolder } from "../../lib/folderPicker";
 import { useAppearance } from "../appearance/AppearanceProvider";
 import { withColorScheme } from "../appearance/terminalSettings";
 import type { Project } from "../launcher/filter";
 import { Launcher, type TaskConfirm } from "../launcher/Launcher";
 import { typedPath, type PathCheck } from "../launcher/folderRows";
-import { openFolder, openPrograms, type OpenLists } from "../launcher/launcherKeys";
+import { openFolder, openList, type OpenLists } from "../launcher/launcherKeys";
+import { effectiveAgent, firstAgent, offerFor } from "../launcher/shellAgents";
 import { offeredMode } from "../modes/sessionModes";
 import { taskNameFor } from "../tasks/taskName";
 import { appScheme } from "../terminal/terminalTheme";
-import { adminChip, programById, startingText, WAITING_FOR_ADMIN, type LauncherChoice } from "../launcher/launchChoice";
+import { adminChip, defaultSessionName, programById, sessionNameFor, startingText, WAITING_FOR_ADMIN, type LauncherChoice } from "../launcher/launchChoice";
 import type { Os } from "../../lib/keymap";
-import { fieldsFilled, browseFolder, checkState, chooseFolder, latestOnly, createRequest, createThenLaunch, initialFocus, launchRequest, listedProgram, progressText, refocus, rememberTasks, replansAfter, type FocusState, livePrograms, nameSource, preselect, preselectMode, startFailure, startProblem, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
+import { browseFolder, checkState, chooseFolder, latestOnly, createRequest, createThenLaunch, focusStateOf, initialFocus, launchRequest, lostFocus, progressText, refocus, rememberTasks, replansAfter, type FocusState, liveAgents, liveShells, nameSource, preselect, preselectMode, startFailure, startProblem, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
 
 // The worktree flag is part of this state and nothing else: it is never read from or written to the remembered choices, so the chip starts off every time.
-const INITIAL: LauncherChoice = { program: "claude", projectId: "", mode: "manual", pace: "Balanced", worktree: false };
+// The shell is empty until the profiles load: then the default one (or the remembered one) is shown. The agent is the remembered one, else the
+// shell's first (`firstAgent`); this one is read only after a pick. An agent the shell lacks becomes Just the shell.
+const INITIAL: LauncherChoice = { shell: "", agent: null, projectId: "", mode: "manual", pace: "Balanced", worktree: false };
 
 /** `layout` is read on every opening, so a folder used a moment ago is already remembered; null when it could not be read. */
-type Loaded = { projects: Project[]; doc: ProfilesDoc; layout: LayoutDoc | null; catalog: AgentCatalog | null; tools: ToolCatalog | null };
+type Loaded = { projects: Project[]; doc: ProfilesDoc; layout: LayoutDoc | null; catalog: AgentCatalog | null };
 
 type Props = {
   detections?: Detection[];
@@ -79,17 +81,21 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
   // Launcher state only: not in the choice, not remembered, gone when the launcher closes.
   const [bypassAck, setBypassAck] = useState<string | null>(null);
   const [elevatedWanted, setElevatedWanted] = useState(initialElevated);
-  // Once the user picks a program here, the remembered one no longer applies.
-  const [programPicked, setProgramPicked] = useState(false);
+  // Once the user picks a shell or an agent here, the remembered one no longer applies.
+  const [shellPicked, setShellPicked] = useState(false);
+  const [agentPicked, setAgentPicked] = useState(false);
   const [modePicked, setModePicked] = useState(false);
-  // One state for both lists, so opening one closes the other.
-  const [lists, setLists] = useState<OpenLists>({ query: null, programsOpen: false });
-  const { query, programsOpen } = lists;
+  // How many shell and agent picks were made here: focus moves on after a pick, never after a shell's answer alone.
+  const [picks, setPicks] = useState(0);
+  // One state for the three lists, so opening one closes the others.
+  const [lists, setLists] = useState<OpenLists>({ query: null, shellsOpen: false, agentsOpen: false });
+  const { query, shellsOpen, agentsOpen } = lists;
+  // What each shell said it can start, asked once per shell per opening and kept under the profile id the answer names. "failed" is under the id asked.
+  const [answers, setAnswers] = useState<Record<string, ShellAgents | "failed">>({});
+  const asked = useRef(new Set<string>());
   const [activeIndex, setActiveIndex] = useState(0);
   const [prompt, setPrompt] = useState("");
   const [error, setError] = useState<string>();
-  // What was typed for a tool preset's fields, by field id. Kept here only: it goes into the create request and nowhere else.
-  const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   // Why the lists did not load. Unlike `error` no edit clears it: Start stays disabled until they do.
   const [loadError, setLoadError] = useState<string>();
   const [starting, setStarting] = useState(false);
@@ -97,6 +103,8 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
   const frozen = useRef<number | undefined>(undefined);
   // The task name once the user has typed in the field; until then it follows the prompt.
   const [nameEdit, setNameEdit] = useState<string | null>(null);
+  // The session's own Name field ("" until typed). Apart from `nameEdit`, which is the task's name.
+  const [sessionName, setSessionName] = useState("");
   // The confirm view of a task, or null while the launcher shows its sentence.
   const [confirm, setConfirm] = useState<TaskConfirm | null>(null);
   // Each plan request gets a number, so a late answer to a plan the user has left is dropped.
@@ -128,10 +136,8 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
     const remembered = layoutApi.get(endpoint).catch(() => null);
     // So are the agents found on this machine: if the catalog cannot be read the launcher lists the three adapters, as it did before it had one.
     const catalog = catalogApi.get(endpoint).catch(() => null);
-    // And the tool presets: without the list the launcher simply offers none.
-    const tools = toolsApi.get(endpoint).catch(() => null);
-    Promise.all([projectsApi.list(endpoint), profilesApi.get(endpoint), remembered, catalog, tools])
-      .then(([list, doc, layout, agents, toolList]) => current && setLoaded({ projects: list.map(toLauncherProject), doc, layout, catalog: agents, tools: toolList }))
+    Promise.all([projectsApi.list(endpoint), profilesApi.get(endpoint), remembered, catalog])
+      .then(([list, doc, layout, agents]) => current && setLoaded({ projects: list.map(toLauncherProject), doc, layout, catalog: agents }))
       .catch((e: unknown) => current && setLoadError(`Couldn't load the launcher: ${startFailure(e)}`));
     return () => {
       current = false;
@@ -149,15 +155,22 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
 
   const recent = useMemo(() => loaded?.projects ?? [], [loaded]);
   const projects = useMemo(() => (extra && !recent.some((p) => p.id === extra.id) ? [extra, ...recent] : recent), [extra, recent]);
-  const programs = useMemo(() => {
-    const wsl = loaded?.doc.profiles.find((profile) => profile.id === loaded.doc.default_id)?.family === "wsl";
-    return launcherSetup(livePrograms(loaded?.catalog ?? null, loaded?.doc.profiles ?? [], loaded?.tools ?? null), wsl, detections, detectionFailed);
-  }, [loaded, detections, detectionFailed]);
+  const shells = useMemo(() => liveShells(loaded?.doc.profiles ?? []), [loaded]);
   // The most recent folder until one is picked.
   const projectId = projects.some((p) => p.id === choice.projectId) ? choice.projectId : (projects[0]?.id ?? "");
-  // The program last started in this folder, unless the user has picked one themselves; an agent that is not listed (not installed) is replaced by the first that is.
-  const program = listedProgram(programPicked ? choice.program : (preselect(loaded?.layout ?? null, projectId, programs) ?? choice.program), programs);
-  const admin = adminChip(elevatedWanted, os, programById(program, programs)?.adminUnavailable);
+  // The shell and agent last started in this folder, unless the user has picked them here; a shell that is gone is replaced by the default.
+  const defaultShell = loaded?.doc.default_id ?? "";
+  const remembered = preselect(loaded?.layout ?? null, projectId, shells, defaultShell);
+  const wantedShell = shellPicked ? choice.shell : (remembered?.shell ?? defaultShell);
+  const shell = shells.some((x) => x.id === wantedShell) ? wantedShell : defaultShell;
+  const shellFamily = shells.find((x) => x.id === shell)?.family;
+  const programs = useMemo(() => launcherSetup(liveAgents(loaded?.catalog ?? null), shellFamily === "wsl", detections, detectionFailed), [loaded, shellFamily, detections, detectionFailed]);
+  const offer = offerFor(programs, answers[shell], shell);
+  // Only an agent the shell offers is shown or sent; one it lacks becomes Just the shell once the answer is in.
+  const found = useMemo(() => (loaded?.catalog?.agents ?? []).filter((a) => a.found).map((a) => a.id), [loaded]);
+  const wantedAgent: LauncherChoice["agent"] = agentPicked ? choice.agent : remembered !== undefined ? remembered.agent : firstAgent(offer, found);
+  const agent = effectiveAgent({ agent: wantedAgent }, offer);
+  const admin = adminChip(elevatedWanted, os, programById(agent ?? "", programs)?.adminUnavailable);
   const elevated = admin.on;
   useEffect(() => {
     if (!admin.enabled) setElevatedWanted(false);
@@ -165,25 +178,39 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
   // The worktree chip is offered only in a folder in git: leaving for another folder must not keep a flag the user can no longer see.
   const wantedMode = modePicked ? choice.mode : (preselectMode(loaded?.layout ?? null, projectId) ?? choice.mode);
   // Only a mode the agent offers is shown or sent; one it doesn't map falls back to the first it does.
-  const mode = elevated ? "manual" : (offeredMode(programById(program, programs)?.modes, wantedMode) ?? wantedMode);
+  const mode = elevated ? "manual" : (offeredMode(programById(agent ?? "", programs)?.modes, wantedMode) ?? wantedMode);
   const worktree = choice.worktree && projects.find((p) => p.id === projectId)?.branch !== undefined;
-  const shown: LauncherChoice = { ...choice, projectId, program, mode, worktree };
-  const skipSetting = programById(program, programs)?.skipsAll?.setting ?? (programById(program, programs)?.adminSetupFailed ? "unknown" : undefined);
-  const ackKey = elevated && skipSetting !== undefined ? `${program}:${skipSetting}` : null;
+  const shown: LauncherChoice = { ...choice, projectId, shell, agent, mode, worktree };
+  const agentProgram = programById(agent ?? "", programs);
+  const skipSetting = agentProgram?.skipsAll?.setting ?? (agentProgram?.adminSetupFailed ? "unknown" : undefined);
+  const ackKey = elevated && skipSetting !== undefined ? `${agent}:${skipSetting}` : null;
   const bypassAcknowledged = ackKey !== null && bypassAck === ackKey;
   useEffect(() => setBypassAck(null), [ackKey]);
 
-  // A pick leaves focus on the program chip, where Enter reopens the list; and Start is disabled until the lists load.
-  const focusState: FocusState = { program: shown.program, prompt: !programById(shown.program, programs)?.noFirst, ready: loaded !== null };
+  // Each shell is asked once per opening, when it is first shown; a distro's answer can take a while, so Start waits for it.
+  useEffect(() => {
+    if (!endpoint || shell === "" || asked.current.has(shell)) return;
+    asked.current.add(shell);
+    profilesApi
+      .agents(endpoint, shell)
+      .then((a) => setAnswers((m) => ({ ...m, [a.profile_id]: a })))
+      .catch(() => setAnswers((m) => ({ ...m, [shell]: "failed" })));
+  }, [endpoint, shell]);
+
+  // A pick leaves focus on its chip, where Enter reopens the list; and Start is disabled until the lists load. Command Prompt has no prompt line.
+  const focusState: FocusState = focusStateOf({ picks, program: agentProgram, shellFamily, loaded: loaded !== null });
   const lastFocus = useRef<FocusState | null>(null);
   useEffect(() => {
     const target = refocus(lastFocus.current, focusState);
+    const looked = lastFocus.current !== null;
     lastFocus.current = focusState;
-    // A tool preset with boxes to fill takes the cursor in its first box; Start would be disabled anyway.
-    const firstBox = programById(focusState.program, programs)?.fields?.length ? ".launcher__field-input" : undefined;
-    if (target) root.current?.querySelector<HTMLElement>(target === "prompt" ? ".launcher__prompt" : (firstBox ?? ".launcher__start"))?.focus();
+    const at = root.current;
+    if (!at) return;
+    if (target) at.querySelector<HTMLElement>(target === "prompt" ? ".launcher__prompt" : ".launcher__start")?.focus();
+    // No pick, but the focused control went (a shell's answer took the prompt, or Start was still disabled at the opening).
+    else if (looked && (document.activeElement === null || document.activeElement === document.body)) lostFocus(at)?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- focusState is rebuilt every render; its three fields are the dependencies.
-  }, [focusState.program, focusState.prompt, focusState.ready]);
+  }, [focusState.picks, focusState.prompt, focusState.ready]);
 
   // Check the typed path 150 ms after the last keystroke. Closing the field (query null) or unmounting cancels the timer and drops any answer on its way.
   useEffect(() => {
@@ -209,10 +236,9 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
   const shownCheck = query !== null && pathCheck !== null && pathCheck.path === typedPath(query) ? pathCheck : null;
 
   const patch = (p: Partial<LauncherChoice>) => {
-    if (p.program !== undefined) {
-      setProgramPicked(true);
-      setFieldValues({});
-    }
+    if (p.shell !== undefined) setShellPicked(true);
+    if (p.agent !== undefined) setAgentPicked(true);
+    if (p.shell !== undefined || p.agent !== undefined) setPicks((n) => n + 1);
     if (p.mode !== undefined) setModePicked(true);
     setChoice((c) => ({ ...c, ...p }));
     setError(undefined);
@@ -245,44 +271,12 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
     }
   };
 
-  const chosen = programById(shown.program, programs);
-  const toolFields = chosen?.fields ?? [];
-  const filled = fieldsFilled(chosen, fieldValues);
-  const setField = (id: string, value: string) => {
-    setFieldValues((v) => ({ ...v, [id]: value }));
-    setError(undefined);
-  };
-  const fieldBoxes =
-    toolFields.length === 0 ? undefined : (
-      <>
-        {toolFields.map((f, i) => (
-          <div key={f.id} className="launcher__task">
-            <label className="launcher__task-label" htmlFor={`launcher-field-${f.id}`}>
-              {f.label}
-            </label>
-            <input
-              id={`launcher-field-${f.id}`}
-              className="launcher__task-input launcher__field-input"
-              type="text"
-              value={fieldValues[f.id] ?? ""}
-              spellCheck={false}
-              autoComplete="off"
-              onChange={(e) => setField(f.id, e.target.value)}
-              onKeyDown={(e) => {
-                // Enter in a box other than the last moves on; in the last one it reaches the launcher, which starts.
-                if (e.key !== "Enter" || e.shiftKey || i === toolFields.length - 1) return;
-                e.preventDefault();
-                e.stopPropagation();
-                root.current?.querySelectorAll<HTMLElement>(".launcher__field-input")[i + 1]?.focus();
-              }}
-            />
-          </div>
-        ))}
-      </>
-    );
-
   // A shell takes no first prompt, so text typed for an agent before switching doesn't name its task.
-  const taskName = taskNameFor(nameEdit, nameSource(shown, prompt, programs));
+  const taskName = taskNameFor(nameEdit, nameSource(shown, prompt, programs, shells));
+
+  // With a task, an untouched Name takes the task's name and shows it as the default; else the core's default shows.
+  const taskNamed = wantsTask(shown, projects) && taskName.trim() !== "";
+  const namePlaceholder = taskNamed ? taskName.trim() : defaultSessionName(shown.agent === null ? null : shown.agent, programs, shells.find((x) => x.id === shown.shell) ?? { id: shown.shell, label: shown.shell, kind: "program", family: "posix" });
 
   // Back from the confirm view puts focus where Enter starts again.
   const wasConfirming = useRef(false);
@@ -403,9 +397,9 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
       const task = await tasks.get(req, () => tasksApi.create(endpoint, req));
       made = true;
       setPhase("starting");
-      const request = withColorScheme(launchRequest(shown, prompt, programs, loaded.doc, projects, size(), task.path, fieldValues, elevated), loaded.doc.profiles, appearance, appScheme());
+      const request = withColorScheme(launchRequest(shown, prompt, programs, loaded.doc, projects, size(), task.path, elevated, sessionNameFor(sessionName, taskName)), loaded.doc.profiles, appearance, appScheme());
       const folder = projects.find((p) => p.id === shown.projectId)?.name ?? "your home folder";
-      const text = startingText(shown.program, folder, programs);
+      const text = startText(folder);
       if (!setupWanted) return await startAgent(request, text);
       // The confirm view read the main checkout's file; the new worktree holds its own committed copy.
       await settle(task, scripts.scripts.hash, request, text, await getScripts(endpoint, task.path).catch(() => null));
@@ -443,8 +437,11 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
     }
   };
 
+  /** What the new tab says until the process answers: the agent, or the shell alone. */
+  const startText = (folder: string) => (shown.agent === null ? startingText(shells.find((x) => x.id === shown.shell)?.label ?? shown.shell, folder, []) : startingText(shown.agent, folder, programs));
+
   const start = async () => {
-    if (!endpoint || !loaded || inFlight.current || (elevated && programById(program, programs)?.adminSetupPending) || (ackKey !== null && !bypassAcknowledged)) return;
+    if (!endpoint || !loaded || inFlight.current || (offer.state === "checking" && agent !== null) || (elevated && agentProgram?.adminSetupPending) || (ackKey !== null && !bypassAcknowledged)) return;
     // A program that can't start yet says why and sends nothing; no worktree is made for it either.
     const problem = startProblem(shown, programs);
     if (problem !== undefined) {
@@ -452,7 +449,6 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
       return;
     }
     // Enter reaches here even while Start is disabled: an empty box starts nothing.
-    if (!filled) return;
     if (wantsTask(shown, projects)) {
       plan();
       return;
@@ -462,11 +458,11 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
     setStarting(true);
     setError(undefined);
     try {
-      const request = launchRequest(shown, prompt, programs, loaded.doc, projects, size(), undefined, fieldValues, elevated);
+      const request = launchRequest(shown, prompt, programs, loaded.doc, projects, size(), undefined, elevated, sessionName);
       const sent = withColorScheme(request, loaded.doc.profiles, appearance, appScheme());
       const created = await createSession(sent, () => sessionsApi.create(endpoint, sent));
       const folder = projects.find((p) => p.id === shown.projectId)?.name ?? "your home folder";
-      onStarted(created, startingText(shown.program, folder, programs));
+      onStarted(created, startText(folder));
     } catch (e) {
       setError(startFailure(e));
       inFlight.current = false;
@@ -478,17 +474,18 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
   return (
     <div ref={root} className="live-app__launcher">
       <Launcher
-        view={{ choice: shown, elevated, bypassAcknowledged, projects, query, pathCheck: shownCheck, activeIndex, programsOpen, prompt, nextNumber: shownNumber(nextNumber, starting, frozen.current), taskName, ...(confirm === null ? {} : { confirm }) }}
-        programs={programs}
+        view={{ choice: shown, elevated, bypassAcknowledged, projects, query, pathCheck: shownCheck, activeIndex, shellsOpen, agentsOpen, prompt, name: sessionName, namePlaceholder, nextNumber: shownNumber(nextNumber, starting, frozen.current), taskName, ...(confirm === null ? {} : { confirm }) }}
+        shells={shells}
+        agents={programs}
+        offer={offer}
         paceChip={false}
         os={os}
         pending={starting}
         onElevated={setElevatedWanted}
         onBypassAck={(on) => setBypassAck(on ? ackKey : null)}
         error={error ?? loadError}
-        busy={starting || loaded === null || !filled}
-        fields={fieldBoxes}
-        busyText={elevated && phase === "starting" ? WAITING_FOR_ADMIN : progressText(phase, programById(shown.program, programs)?.label ?? shown.program)}
+        busy={starting || loaded === null}
+        busyText={elevated && phase === "starting" ? WAITING_FOR_ADMIN : progressText(phase, agentProgram?.label ?? shells.find((x) => x.id === shown.shell)?.label ?? shown.shell)}
         onChange={patch}
         onQuery={(q) => {
           setLists((l) => openFolder(l, q));
@@ -500,9 +497,14 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
         }}
         onUsePath={takeFolder}
         onBrowse={() => void browse()}
-        onPrograms={(open) => {
-          setLists((l) => openPrograms(l, open));
-          if (open) setActiveIndex(Math.max(0, programs.findIndex((p) => p.id === shown.program)));
+        onShells={(open) => {
+          setLists((l) => openList(l, "shells", open));
+          if (open) setActiveIndex(Math.max(0, shells.findIndex((x) => x.id === shown.shell)));
+        }}
+        onAgents={(open) => {
+          setLists((l) => openList(l, "agents", open));
+          // Row 0 is Just the shell, so an agent's row is one further on.
+          if (open) setActiveIndex(Math.max(0, (offer.state === "ready" ? offer.offered : offer.state === "checking" ? programs : []).findIndex((p) => p.id === shown.agent) + 1));
         }}
         onActive={setActiveIndex}
         onPrompt={(text) => {
@@ -512,6 +514,10 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
         onStart={() => void start()}
         onTaskName={(text) => {
           setNameEdit(text);
+          setError(undefined);
+        }}
+        onName={(text) => {
+          setSessionName(text);
           setError(undefined);
         }}
         onConfirm={() => void createAndStart()}

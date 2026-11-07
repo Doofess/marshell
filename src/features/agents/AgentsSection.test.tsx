@@ -57,12 +57,17 @@ describe("AgentsSectionView", () => {
     expect(h).not.toContain("aria-live");
     expect(h).not.toContain("role=\"status\"");
   });
-  it("lists setup per CLI, then the own agents, then the tools", () => {
-    const h = renderToStaticMarkup(<AgentsSectionView setup={SETUP} panel={{ kind: "list" }} liveStatus={true} own={<h3>Your own agents</h3>} tools={<h3>Tools</h3>} {...handlers} />);
+  it("lists setup per CLI, then the own agents", () => {
+    const h = renderToStaticMarkup(<AgentsSectionView setup={SETUP} panel={{ kind: "list" }} liveStatus={true} own={<h3>Your own agents</h3>} {...handlers} />);
     const at = (t: string) => h.indexOf(t);
     expect(at('aria-label="Claude Code"')).toBeGreaterThan(-1);
     expect(at('aria-label="Claude Code"')).toBeLessThan(at("Your own agents"));
-    expect(at("Your own agents")).toBeLessThan(at("<h3>Tools</h3>"));
+  });
+  it("has no Tools list and no own-tools editor: the view takes no slot for one", () => {
+    const stale = { tools: <h3>Tools</h3> };
+    const h = renderToStaticMarkup(<AgentsSectionView setup={SETUP} panel={{ kind: "list" }} liveStatus={true} {...stale} {...handlers} />);
+    expect(h).not.toContain("<h3>Tools</h3>");
+    expect(h).not.toContain("Your own tools");
   });
   it("does not say to close a dialog when the setup cannot be read", () => {
     expect(SETUP_UNREADABLE).not.toMatch(/close this/i);

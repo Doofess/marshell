@@ -3,6 +3,40 @@
 //! Only loopback or unspecified local addresses count: a server bound to a LAN address alone doesn't answer on
 //! `localhost`, so a chip for it would open nothing. Nothing here logs a port or a URL.
 
+use crate::secrets::{split_command, tokenize};
+
+/// Whether a command line is a login: the words after the program start with `login` or `auth login` (`vercel login`,
+/// `gh auth login`). A runner and its package come first (`npx vercel login`). Its listener is an auth callback that
+/// lives for seconds, so it makes no chip.
+pub fn quiet_line(line: &str) -> bool {
+    quiet_words(&tokenize(line))
+}
+
+/// `quiet_line` for a process's argument vector.
+pub fn quiet_argv(argv: &[String]) -> bool {
+    quiet_words(argv)
+}
+
+fn quiet_words(words: &[String]) -> bool {
+    let cmd = split_command(words);
+    if cmd.program.is_none() {
+        return false;
+    }
+    // A script runtime and its script stand for the program the script is: `node …\vercel\dist\index.js login` is how
+    // vercel.cmd shows in the process table.
+    let runtime = matches!(
+        cmd.program.as_deref(),
+        Some("node" | "bun" | "python" | "python3" | "py")
+    );
+    let args = match cmd.args.split_first() {
+        Some((script, rest)) if runtime && !script.starts_with('-') => rest,
+        _ if runtime => return false,
+        _ => cmd.args,
+    };
+    let is = |at: usize, word: &str| args.get(at).is_some_and(|w| w.eq_ignore_ascii_case(word));
+    is(0, "login") || (is(0, "auth") && is(1, "login"))
+}
+
 /// The ports in `listeners` (pid, local port) owned by a process of the tab's `tree` (pid, name) that is not in
 /// `agent_pids`, ascending and without repeats. Empty when `quiet`: the command's own port lines are transient (a login
 /// callback), so its listener makes no chip either.
@@ -230,6 +264,61 @@ fn linux_listeners() -> Option<Vec<(u32, u16)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const QUIET: &[&str] = &[
+        "vercel login",
+        "npx vercel login",
+        "pnpm dlx netlify-cli login",
+        "gh auth login",
+        "gcloud auth login --no-launch-browser",
+        "docker login -u x",
+    ];
+    const NOT_QUIET: &[&str] = &["vercel dev", "npx vite", "docker compose up", "login", "gh auth status"];
+
+    #[test]
+    fn a_login_run_by_a_script_runtime_is_quiet() {
+        let argv = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // A shim such as vercel.cmd shows in the process table as node and the package's script: Command Prompt has no
+        // shell integration, so this reading is all the session has.
+        let shimmed = argv(&[
+            "C:\\Program Files\\nodejs\\node.exe",
+            "C:\\Users\\x\\AppData\\Roaming\\npm\\node_modules\\vercel\\dist\\index.js",
+            "login",
+        ]);
+        assert!(quiet_argv(&shimmed));
+        assert!(quiet_argv(&argv(&["python", "C:\\tools\\gcloud.py", "auth", "login"])));
+        // az.cmd runs a module, not a script file, so only the shared script table names it.
+        assert!(quiet_argv(&argv(&["python.exe", "-IBm", "azure.cli", "login"])));
+        assert!(!quiet_argv(&argv(&["node", "server.js"])));
+        assert!(!quiet_argv(&argv(&["python", "-m", "http.server", "8765"])));
+        assert!(
+            !quiet_argv(&argv(&["node", "login"])),
+            "a bare word after the runtime is the script"
+        );
+    }
+
+    #[test]
+    fn quiet_commands_are_logins_after_the_program_word() {
+        for line in QUIET {
+            assert!(quiet_line(line), "{line}");
+        }
+        for line in NOT_QUIET {
+            assert!(!quiet_line(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn quiet_argv_matches_the_same_commands_as_argv() {
+        let argv = |line: &str| line.split(' ').map(String::from).collect::<Vec<_>>();
+        for line in QUIET {
+            assert!(quiet_argv(&argv(line)), "{line}");
+        }
+        for line in NOT_QUIET {
+            assert!(!quiet_argv(&argv(line)), "{line}");
+        }
+        let exe = ["C:\\Program Files\\GitHub CLI\\gh.exe", "auth", "login"].map(String::from);
+        assert!(quiet_argv(&exe));
+    }
 
     #[cfg(any(windows, target_os = "linux"))]
     #[test]

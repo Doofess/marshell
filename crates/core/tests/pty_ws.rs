@@ -49,7 +49,6 @@ async fn create(core: &RunningCore, shell: Vec<String>, cwd: Option<String>) -> 
         mode: None,
         setup: None,
         color_scheme: None,
-        tool: None,
         preset: None,
         cli_task: None,
     };

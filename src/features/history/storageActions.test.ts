@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../lib/api/client";
 import { READ_FAILED, SettingsReadError } from "../appearance/settingsSync";
 import type { StorageReport } from "../../generated/StorageReport";
-import { chooseBackupFolder, proposeLimits, removalQuestion, reportAfterCleanup, storageErrorText } from "./storageActions";
+import { chooseBackupFolder, escapeCancels, proposeLimits, removalQuestion, reportAfterCleanup, storageErrorText } from "./storageActions";
 
 const limits = { limit_gb: 5, limit_days: null };
 
@@ -82,5 +82,17 @@ describe("reportAfterCleanup", () => {
     const get = vi.fn().mockResolvedValue(at(100));
     expect((await reportAfterCleanup(get, 100, noWait)).last_cleanup?.at_ms).toBe(100);
     expect(get).toHaveBeenCalledTimes(20);
+  });
+});
+
+describe("escapeCancels", () => {
+  it("Esc on a question cancels and prevents the default", () => {
+    let prevented = false;
+    let cancelled = false;
+    escapeCancels({ key: "Escape", preventDefault: () => (prevented = true) }, () => (cancelled = true));
+    expect([prevented, cancelled]).toEqual([true, true]);
+    cancelled = false;
+    escapeCancels({ key: "a", preventDefault: () => {} }, () => (cancelled = true));
+    expect(cancelled).toBe(false);
   });
 });

@@ -5,7 +5,7 @@ use crate::agents::identify::find;
 use crate::agents::manifest::{AgentManifest, PromptStyle, shipped};
 use crate::agents::own::{self, SaveError};
 use crate::agents::presets;
-use crate::profiles::detect::mode_args;
+use crate::profiles::detect::{agent_command, mode_args};
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -62,15 +62,24 @@ fn manifest_entry(st: &AppState, finder: &AgentFinder, m: &AgentManifest, own: b
 
 /// Runs processes (`--version`) on a cold cache, so it goes through `spawn_blocking`.
 fn build(st: &AppState) -> AgentCatalog {
+    build_for(st, &[], true)
+}
+
+/// The catalog as seen from a shell whose own environment is `profile_env` (its PATH wins). `versions` false leaves
+/// an adapter's version unread, for a caller that only wants `found`.
+pub(super) fn build_for(st: &AppState, profile_env: &[(String, String)], versions: bool) -> AgentCatalog {
     let agents = st.agents();
     // One PATH for the whole catalog: the one a tab gets, read once.
-    let finder = st.agent_finder(&[]);
+    let finder = st.agent_finder(profile_env);
     let profiles = st.0.profiles.lock().unwrap_or_else(|e| e.into_inner()).profiles.clone();
     let mut list: Vec<CatalogAgent> = adapters()
         .into_iter()
         .map(|(id, name, cli, prompt)| {
             let exe = st.adapter_exe(&profiles, id, &finder);
-            let version = exe.as_deref().and_then(|exe| st.agent_version(id, Some(exe)));
+            let version = exe
+                .as_deref()
+                .filter(|_| versions)
+                .and_then(|exe| st.agent_version(id, Some(exe)));
             CatalogAgent {
                 id: id.into(),
                 name: name.into(),
@@ -107,6 +116,27 @@ fn build(st: &AppState) -> AgentCatalog {
             problem: presets::problem(presets::DEEPSEEK, (st.0.deepseek_key)()),
         }],
     }
+}
+
+/// What a WSL distro is asked for, per catalog agent in catalog order: the id and the word its shell starts, or None for
+/// an agent Marshell doesn't drive in WSL yet (Copilot CLI, slice 6n2). A manifest agent's word is its first command.
+pub(super) fn wsl_words(st: &AppState) -> Vec<(String, Option<String>)> {
+    let mut list: Vec<(String, Option<String>)> = adapters()
+        .into_iter()
+        .map(|(id, ..)| {
+            let word = if id == "copilot" {
+                None
+            } else {
+                agent_command(id).map(String::from)
+            };
+            (id.to_string(), word)
+        })
+        .collect();
+    list.extend(st.agents().manifests().map(|m| {
+        let word = m.commands.first().cloned().unwrap_or_else(|| m.id.clone());
+        (m.id.clone(), Some(word))
+    }));
+    list
 }
 
 fn failed(err: impl std::fmt::Display) -> (StatusCode, String) {

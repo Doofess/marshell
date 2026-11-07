@@ -619,7 +619,7 @@ impl<'a> Program<'a> {
 }
 
 /// True when `word` can go into a command line as it is: `[A-Za-z0-9._:/\\=-]` and not empty.
-fn is_plain_word(word: &str) -> bool {
+pub(crate) fn is_plain_word(word: &str) -> bool {
     !word.is_empty()
         && word
             .chars()
@@ -854,11 +854,6 @@ fn is_cmd_safe(text: &str) -> bool {
         && text
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '/' | '=' | '@' | ',' | '+' | '-'))
-}
-
-/// True when the profile runs `powershell.exe` (Windows PowerShell 5): it mangles double quotes in a native call.
-pub(crate) fn mangles_double_quotes(profile: &Profile) -> bool {
-    is_windows_powershell_5(profile)
 }
 
 /// The line that runs `program` with `args` in a shell of `family`. The program comes from the preset only. Each argument

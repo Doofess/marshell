@@ -1,6 +1,6 @@
-import { isTool, type SessionKind } from "../../components/AgentMark/kinds";
+import type { SessionKind } from "../../components/AgentMark/kinds";
 import { TOOL_NAMES, type ToolId } from "../../components/AgentMark/tools";
-import type { PresetField } from "../../generated/PresetField";
+import type { ShellFamily } from "../../generated/ShellFamily";
 import { MODES, effectiveMode, offeredMode } from "../modes/sessionModes";
 import type { Mode } from "../sidebar/types";
 import { modeLabel } from "../window/SessionHeader";
@@ -16,17 +16,16 @@ export type Pace = "Quick" | "Balanced" | "Deep";
 export { MODES };
 export const PACES: Pace[] = ["Quick", "Balanced", "Deep"];
 
-/** The first chip lists AI agents, shells and tools under these headings. Dev tools and cloud tools share "Tools". */
-export const LAUNCH_GROUPS = ["Agents", "Shells", "Tools"] as const;
-export type LaunchGroup = (typeof LAUNCH_GROUPS)[number];
+/** What the agent chip lists: agents only. The shell is the first chip's own list (`LaunchShell`). */
+export type LaunchGroup = "Agents";
 
-/**
- * What the launcher picks by: a built-in agent or tool (its kind), any other agent the core lists (its id, such as an agent of the
- * person's own), a live shell profile as `profile:<id>`, or a preset as `preset:<id>`.
- */
+/** What the agent chip picks by: a built-in agent (its kind), any other agent the core lists (its id, such as an agent of the person's own), or a preset as `preset:<id>`. */
 export type ProgramId = string;
 
-/** Something the launcher can start: an AI agent, or a manual CLI that is just a terminal. */
+/** A shell the launcher can start in: a profile of the core's (its id is the profile id) or, in the design, a stand-in. */
+export type LaunchShell = { id: string; label: string; kind: ToolId; family: ShellFamily };
+
+/** Something the launcher can start inside a shell: an AI agent. */
 export type LaunchProgram = {
   /** The built-in programs use their kind. */
   id: ProgramId;
@@ -36,9 +35,9 @@ export type LaunchProgram = {
   /** What the tab says while it starts, e.g. "Starting Claude Code in my-app…". */
   cli: string;
   group: LaunchGroup;
-  /** The hint in the box under the sentence: what to say first, or the command to run first. */
+  /** The hint in the box under the sentence: what to say first. */
   first: string;
-  /** True when there is nothing to type first: a shell profile takes no prompt, and neither does an agent CLI with no way to take one. */
+  /** True when there is nothing to type first: an agent CLI with no way to take a first prompt. */
   noFirst?: boolean;
   /** The modes the agent offers, in `MODES` order. Absent means the five; empty means none, so there is no mode chip. */
   modes?: Mode[];
@@ -56,18 +55,13 @@ export type LaunchProgram = {
   adminSetupPending?: boolean;
   /** Antigravity's settings could not be read, so an administrator start needs the Bypass confirmation. */
   adminSetupFailed?: boolean;
-  /** The values a tool preset asks for before it starts, one box each. */
-  fields?: PresetField[];
-  /** The tool preset this program starts. */
-  toolLaunch?: { tool: string; preset: string };
 };
 
 const agent = (id: SessionKind, label: string, cli: string): LaunchProgram => ({ id, kind: id, label, cli, group: "Agents", first: `What should ${label} do first? (optional)` });
-const shell = (id: ToolId): LaunchProgram => ({ id, kind: id, label: TOOL_NAMES[id], cli: TOOL_NAMES[id], group: "Shells", first: "Run a command first (optional)" });
-const tool = (id: ToolId, first: string, label = TOOL_NAMES[id], cli = label): LaunchProgram => ({ id, kind: id, label, cli, group: "Tools", first });
+const shell = (id: ToolId, family: ShellFamily): LaunchShell => ({ id, label: TOOL_NAMES[id], kind: id, family });
 
-/** The agents the launcher design lists. The live launcher builds its own list from the core's catalog (`livePrograms`). DeepSeek has no command line of its own; it is a preset that starts Claude Code. Google's agent is Antigravity (`agy`), Gemini CLI is dropped. */
-export const LAUNCH_PROGRAMS: LaunchProgram[] = [
+/** The agents the launcher design lists. The live launcher builds its own list from the core's catalog (`liveAgents`). DeepSeek has no command line of its own; it is a preset that starts Claude Code. Google's agent is Antigravity (`agy`), Gemini CLI is dropped. */
+export const LAUNCH_AGENTS: LaunchProgram[] = [
   agent("claude", "Claude", "Claude Code"),
   agent("codex", "Codex", "Codex CLI"),
   agent("antigravity", "Antigravity", "Antigravity CLI"),
@@ -77,59 +71,50 @@ export const LAUNCH_PROGRAMS: LaunchProgram[] = [
   agent("amp", "Amp", "Amp"),
   agent("qwen", "Qwen", "Qwen Code"),
   agent("grok", "Grok", "Grok CLI"),
-  shell("powershell"),
-  shell("cmd"),
-  shell("gitbash"),
-  shell("wsl"),
-  shell("bash"),
-  shell("zsh"),
-  tool("python", "Run a script or start the prompt (optional)"),
-  tool("node", "Run a script or start the prompt (optional)"),
-  tool("docker", "Command to run, e.g. compose up (optional)"),
-  tool("kubectl", "Command to run, e.g. get pods (optional)"),
-  tool("terraform", "Command to run, e.g. plan (optional)"),
-  tool("ssh", "Where to connect, e.g. user@host"),
-  tool("aws", "Command to run, e.g. sso login (optional)"),
-  tool("program", "Executable and arguments, e.g. htop", "Other program", "your program"),
 ];
 
-export const programsIn = (group: LaunchGroup, programs: LaunchProgram[] = LAUNCH_PROGRAMS) => programs.filter((p) => p.group === group);
-export const programById = (id: ProgramId, programs: LaunchProgram[] = LAUNCH_PROGRAMS) => programs.find((p) => p.id === id);
-/** Only AI agents have a mode and a pace; a manual CLI is a plain terminal. Any program can start in a worktree. */
-export const isAgentProgram = (id: ProgramId, programs: LaunchProgram[] = LAUNCH_PROGRAMS) => {
-  const p = programById(id, programs);
-  return p ? p.group === "Agents" : !isTool(id);
-};
+/** The shells the launcher design lists. The live launcher lists the core's shell profiles (`liveShells`). */
+export const LAUNCH_SHELLS: LaunchShell[] = [
+  shell("powershell", "power_shell"),
+  shell("cmd", "cmd"),
+  shell("gitbash", "posix"),
+  shell("wsl", "wsl"),
+  shell("bash", "posix"),
+  shell("zsh", "posix"),
+];
 
-export type LauncherChoice = { program: ProgramId; projectId: string; mode: Mode; pace: Pace; worktree: boolean };
+export const programById = (id: ProgramId, programs: LaunchProgram[] = LAUNCH_AGENTS) => programs.find((p) => p.id === id);
+/** Only an AI agent has a mode and a pace; no agent means just the shell. Any choice can start in a worktree. */
+export const isAgentProgram = (id: ProgramId | null): id is ProgramId => id !== null;
+
+/** A null `agent` is "Just the shell". */
+export type LauncherChoice = { shell: string; agent: ProgramId | null; projectId: string; mode: Mode; pace: Pace; worktree: boolean };
 /** What is remembered per folder. The worktree choice is never remembered: the chip starts off every time. */
 export type Remembered = Partial<Pick<LauncherChoice, "mode" | "pace">>;
 
-/** The launcher as one sentence, for the dialog's accessible description. */
-export function launcherSentence(c: LauncherChoice, projects: Project[], programs: LaunchProgram[] = LAUNCH_PROGRAMS, elevated = false): string {
-  const label = programById(c.program, programs)?.label ?? c.program;
+/** The launcher as one sentence, for the dialog's accessible description: `[Shell] running [Agent] in [folder]`, or `[Shell] with no agent in [folder]`. */
+export function launcherSentence(c: LauncherChoice, projects: Project[], programs: LaunchProgram[] = LAUNCH_AGENTS, elevated = false, shells: LaunchShell[] = LAUNCH_SHELLS): string {
+  const shellLabel = shells.find((x) => x.id === c.shell)?.label ?? c.shell;
   const p = projects.find((x) => x.id === c.projectId);
   const where = p ? (p.branch ? `${p.name} on ${p.branch}` : p.name) : "an unknown folder";
-  const start = `Start ${label} in ${where}`;
   const admin = elevated ? ", as administrator" : "";
-  if (isAgentProgram(c.program, programs)) {
-    const program = programById(c.program, programs);
-    const offered = offeredMode(program?.modes, c.mode);
-    const mode = offered === undefined ? undefined : effectiveMode(offered, program?.skipsAll !== undefined);
-    return `${start}, ${mode === undefined ? "" : `${modeLabel(mode)} mode, `}${c.pace}, ${c.worktree ? "in a new worktree" : "no worktree"}${admin}`;
-  }
-  return `${c.worktree ? `${start}, in a new worktree` : start}${admin}`;
+  const program = c.agent === null ? undefined : programById(c.agent, programs);
+  if (program === undefined) return `Start ${shellLabel} with no agent in ${where}${c.worktree ? ", in a new worktree" : ""}${admin}`;
+  const start = `Start ${shellLabel} running ${program.label} in ${where}`;
+  const offered = offeredMode(program.modes, c.mode);
+  const mode = offered === undefined ? undefined : effectiveMode(offered, program.skipsAll !== undefined);
+  return `${start}, ${mode === undefined ? "" : `${modeLabel(mode)} mode, `}${c.pace}, ${c.worktree ? "in a new worktree" : "no worktree"}${admin}`;
 }
 
 /** What the new tab shows within 100 ms, before the process answers. */
-export function startingText(program: ProgramId, projectName: string, programs: LaunchProgram[] = LAUNCH_PROGRAMS): string {
+export function startingText(program: ProgramId, projectName: string, programs: LaunchProgram[] = LAUNCH_AGENTS): string {
   return `Starting ${programById(program, programs)?.cli ?? program} in ${projectName}…`;
 }
 
-export function applyRemembered(c: LauncherChoice, r: Remembered | undefined, programs: LaunchProgram[] = LAUNCH_PROGRAMS): LauncherChoice {
+export function applyRemembered(c: LauncherChoice, r: Remembered | undefined, programs: LaunchProgram[] = LAUNCH_AGENTS): LauncherChoice {
   // Only mode and pace: an old entry that still carries a worktree flag must not turn the chip on.
   // A remembered mode the program does not offer falls back to the first it does; a program with none keeps the remembered one, unsent.
-  const mode = r?.mode === undefined ? undefined : (offeredMode(programById(c.program, programs)?.modes, r.mode) ?? r.mode);
+  const mode = r?.mode === undefined ? undefined : (offeredMode(c.agent === null ? undefined : programById(c.agent, programs)?.modes, r.mode) ?? r.mode);
   return { ...c, ...(mode === undefined ? {} : { mode }), ...(r?.pace === undefined ? {} : { pace: r.pace }) };
 }
 
@@ -147,4 +132,30 @@ export function adminChip(elevated: boolean | undefined, os: Os, unavailable?: s
   const reason = os === "windows" ? unavailable : ADMIN_OFF_WINDOWS;
   const enabled = reason === undefined;
   return { enabled, on: enabled && elevated === true, ...(reason === undefined ? {} : { reason }) };
+}
+
+/** The longest session name, as in the sidebar's rename. */
+export const MAX_SESSION_NAME = 120;
+
+/** Control characters and the bidi controls the rename rules turn into spaces (`label_text` in the core's `history/marks.rs`). */
+const NAME_DROPPED = /[\p{Cc}\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu;
+
+/** Typed text as the field keeps it: those characters dropped, at most 120 characters. The core applies the rename rules again on create, so any caller holds to them. */
+export function cleanName(text: string): string {
+  return Array.from(text.replace(NAME_DROPPED, "")).slice(0, MAX_SESSION_NAME).join("");
+}
+
+/** The core's name for an agent session that is given none (`agent_display_name`, server/sessions.rs). */
+const AGENT_NAMES: Record<string, string> = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity", qwen: "Qwen Code", copilot: "Copilot CLI" };
+
+/** The name a session gets when none is typed: the agent's (a preset takes the agent it starts), else the shell's own name. Null is Just the shell. */
+export function defaultSessionName(agent: ProgramId | null, agents: LaunchProgram[], shell: LaunchShell): string {
+  const program = agent === null ? undefined : programById(agent, agents);
+  const id = program?.agent ?? program?.id ?? agent;
+  return (id === null ? undefined : AGENT_NAMES[id]) ?? shell.label;
+}
+
+/** The name to send: what was typed (cleaned, trimmed), else the task's name while a task is made for this launch, else nothing so the core names it. */
+export function sessionNameFor(typed: string, taskName: string): string {
+  return cleanName(typed).trim() || taskName.trim();
 }

@@ -7,8 +7,156 @@
 //! The lists follow the research note "Secret-printing commands"; an `[unverified]` entry ships too, because
 //! hiding output is the safe failure.
 
-use super::profile::{split_command, tokenize};
 use std::borrow::Cow;
+
+/// A command line's words from the program on, with a leading `&` and a runner (`npx`, `pnpm dlx`, ...) and its
+/// flags skipped, or a known tool's runtime and script (`SCRIPTS`) taken as that tool.
+pub(crate) struct Command<'a> {
+    /// The program word, for a runner the package it runs, or for a node or python child the tool its script is
+    /// (basename, lowercase, no `.exe .cmd .bat .ps1`, no `@version`). None when no word is left.
+    pub program: Option<String>,
+    /// The words after the program.
+    pub args: &'a [String],
+}
+
+pub(crate) fn split_command(words: &[String]) -> Command<'_> {
+    let mut start = 0;
+    while words.get(start).is_some_and(|w| w == "&") {
+        start += 1;
+    }
+    let mut cmd = Command {
+        program: None,
+        args: &[],
+    };
+    let Some(first) = words.get(start) else {
+        return cmd;
+    };
+    if let Some((program, at)) = by_script(&words[start..]) {
+        cmd.program = Some(program.to_string());
+        cmd.args = &words[start + at + 1..];
+        return cmd;
+    }
+    let mut at = start;
+    if let Some(used) = runner_words(&normalize_word(first), words.get(start + 1).map(|w| normalize_word(w))) {
+        at = start + used;
+        while words.get(at).is_some_and(|w| w.starts_with('-')) {
+            at += 1;
+        }
+    }
+    if let Some(program) = words.get(at) {
+        cmd.program = Some(package_name(&normalize_word(program)).to_string());
+        cmd.args = &words[at + 1..];
+    }
+    cmd
+}
+
+/// The tools whose Windows shim runs a script: a path part of the script, lowercase with forward slashes, and the
+/// program the rules name. `az.cmd` runs `python -IBm azure.cli`, `gcloud.cmd` runs `python ...\lib\gcloud.py`, and
+/// an npm-installed CLI runs `node ...\node_modules\<package>\...`. Command Prompt is read from its processes alone,
+/// so without these the rules never saw the tool.
+const SCRIPTS: &[(&str, &str)] = &[
+    ("node_modules/supabase/", "supabase"),
+    ("node_modules/vercel/", "vercel"),
+    ("node_modules/wrangler/", "wrangler"),
+    ("node_modules/netlify-cli/", "netlify"),
+    ("node_modules/firebase-tools/", "firebase"),
+    ("google-cloud-sdk/lib/gcloud.py", "gcloud"),
+    ("azure.cli", "az"),
+    ("azure-cli", "az"),
+];
+
+/// For a node or python process whose first non-flag word is a known tool's script: that tool's program word and
+/// the script word's index, so the words after it are the tool's own.
+fn by_script(words: &[String]) -> Option<(&'static str, usize)> {
+    let runtime = normalize_word(words.first()?);
+    if !(matches!(runtime.as_str(), "node" | "nodejs" | "py") || runtime.starts_with("python")) {
+        return None;
+    }
+    let at = 1 + words[1..].iter().position(|w| !w.starts_with('-'))?;
+    let script = collapse_dots(&words[at].replace('\\', "/").to_lowercase());
+    SCRIPTS
+        .iter()
+        .find(|(part, _)| script.contains(part))
+        .map(|(_, program)| (*program, at))
+}
+
+/// A path with its `.` and `name/..` segments removed: `gcloud.cmd` runs `bin\..\lib\gcloud.py`.
+fn collapse_dots(path: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    for segment in path.split('/') {
+        match segment {
+            "." => {}
+            ".." if out.last().is_some_and(|s| !s.is_empty() && *s != "..") => {
+                out.pop();
+            }
+            _ => out.push(segment),
+        }
+    }
+    out.join("/")
+}
+
+/// How many words a runner form takes (`npx` is 1, `pnpm dlx` is 2), or None when the first word is no runner.
+fn runner_words(first: &str, second: Option<String>) -> Option<usize> {
+    match (first, second.as_deref()) {
+        ("npx" | "bunx", _) => Some(1),
+        ("pnpm", Some("dlx" | "exec")) | ("npm", Some("exec")) | ("yarn", Some("dlx")) => Some(2),
+        _ => None,
+    }
+}
+
+/// Splits a command line into words, honouring single and double quotes (a backslash is not an escape).
+pub(crate) fn tokenize(line: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    let mut in_word = false;
+    for c in line.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => cur.push(c),
+            None if c == '"' || c == '\'' => {
+                quote = Some(c);
+                in_word = true;
+            }
+            None if c.is_whitespace() => {
+                if in_word {
+                    words.push(std::mem::take(&mut cur));
+                    in_word = false;
+                }
+            }
+            None => {
+                cur.push(c);
+                in_word = true;
+            }
+        }
+    }
+    if in_word {
+        words.push(cur);
+    }
+    words
+}
+
+/// A program word as rules name it: no leading `&`, no quotes, the basename, lowercase, without one of
+/// `.exe .cmd .bat .ps1`.
+fn normalize_word(word: &str) -> String {
+    let w = word.trim().trim_start_matches('&').trim();
+    let w = w.trim_matches(|c| c == '"' || c == '\'');
+    let base = w.rsplit(['\\', '/']).next().unwrap_or(w).to_lowercase();
+    for ext in [".exe", ".cmd", ".bat", ".ps1"] {
+        if let Some(stem) = base.strip_suffix(ext) {
+            return stem.to_string();
+        }
+    }
+    base
+}
+
+/// `vercel@latest` is `vercel`. A leading `@` (a scope) stays.
+fn package_name(word: &str) -> &str {
+    match word.char_indices().skip(1).find(|(_, c)| *c == '@') {
+        Some((i, _)) => &word[..i],
+        None => word,
+    }
+}
 
 /// How many positional words (non-flags) after the program a rule's subcommand words are looked for in.
 const WORD_WINDOW: usize = 8;
@@ -600,5 +748,67 @@ mod tests {
         assert_eq!(shown("git"), "git …");
         assert_eq!(shown("git status --short"), "git status …");
         assert_eq!(shown(""), "…");
+    }
+
+    #[test]
+    fn a_node_or_python_child_is_named_by_its_script() {
+        let argv = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // What `supabase.cmd`, `az.cmd` and `gcloud.cmd` really run: Command Prompt is read by its processes alone.
+        for (words, label) in [
+            (
+                argv(&["node", r"C:\x\node_modules\supabase\bin\main.js", "status"]),
+                "supabase status …",
+            ),
+            (
+                argv(&[
+                    r"C:\Program Files\Microsoft SDKs\Azure\CLI2\python.exe",
+                    "-IBm",
+                    "azure.cli",
+                    "account",
+                    "get-access-token",
+                ]),
+                "az account get-access-token …",
+            ),
+            (
+                argv(&[
+                    "python.exe",
+                    "-S",
+                    r"C:\Program Files (x86)\Google\Cloud SDK\google-cloud-sdk\bin\..\lib\gcloud.py",
+                    "auth",
+                    "print-access-token",
+                ]),
+                "gcloud auth print-access-token …",
+            ),
+            (
+                argv(&[
+                    "node.exe",
+                    r"C:\Users\a b\AppData\Roaming\npm\node_modules\firebase-tools\lib\bin\firebase.js",
+                    "login:ci",
+                ]),
+                "firebase login:ci …",
+            ),
+            (
+                argv(&["node", "/home/a/.npm/node_modules/netlify-cli/bin/run.js", "env:list"]),
+                "netlify env:list …",
+            ),
+        ] {
+            assert!(prints_secrets_words(&words), "{words:?}");
+            assert_eq!(shown_words(&words), label, "{words:?}");
+        }
+        // A script that is no tool, and a runtime with no script, stay the runtime.
+        assert!(!prints_secrets_words(&argv(&[
+            "node",
+            r"C:\x\node_modules\vercel-like\x.js",
+            "env",
+            "pull"
+        ])));
+        assert!(!prints_secrets_words(&argv(&["python", "-m", "http.server", "8765"])));
+        assert_eq!(shown_words(&argv(&["python", "-m", "http.server"])), "python …");
+        // A typed line names it the same way, and a token on it is scrubbed.
+        assert!(prints_secrets("node node_modules/supabase/bin/main.js status"));
+        assert_eq!(
+            scrub("node node_modules/vercel/dist/index.js env pull --token hunter2"),
+            "vercel env pull …"
+        );
     }
 }

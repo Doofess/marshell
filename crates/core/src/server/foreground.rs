@@ -14,7 +14,7 @@ use super::shell_panel::{PANEL_GENERATION, take_and_adopt};
 use crate::agents::manifest::Agents;
 use crate::profiles::detect::{agent_in, agent_of_node_argv, program_of};
 use crate::pty::Session;
-use crate::tools::{Tools, Watch, watch_for, watch_for_argv};
+use crate::watch::{Watch, watch_for, watch_for_argv};
 use marshell_protocol::api::Foreground;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -99,7 +99,6 @@ async fn tick(st: &AppState, pending: &mut Option<(String, u64, Instant)>) {
     }
     // One blocking task for the whole pass: reading a process list and a process's arguments is not async.
     let agents = st.agents();
-    let tools = st.tools();
     let readings = tokio::task::spawn_blocking(move || {
         let shells = work
             .into_iter()
@@ -107,7 +106,7 @@ async fn tick(st: &AppState, pending: &mut Option<(String, u64, Instant)>) {
                 let prompt = at_prompt(session.ever_executed(), session.command_running());
                 let mut watch = None;
                 let reading = reading_for(prompt, || {
-                    let (reading, read_watch) = read(&agents, &tools, &session);
+                    let (reading, read_watch) = read(&agents, &session);
                     watch = read_watch;
                     reading
                 });
@@ -143,15 +142,10 @@ async fn tick(st: &AppState, pending: &mut Option<(String, u64, Instant)>) {
         let Some(foreground) = fresh(epoch, session.command_epoch(), reading) else {
             continue;
         };
-        // What the command is, for the matcher and the secret check. `set_watch` refuses a reading of an older epoch.
+        // What the command is, for the secret check and the port watcher. `set_watch` refuses a reading of an older epoch.
         if let Some(watch) = watch {
             session.set_watch(epoch, watch);
         }
-        // The tool the session settled on (the command line's, when it named one), not the reading's.
-        let foreground = foreground.map(|mut f| {
-            f.tool = session.watch_tool();
-            f
-        });
         match target {
             Target::Row { tab, generation } => st.0.registry.set_foreground(&tab, generation, foreground),
             Target::Panel { tab } => {
@@ -241,7 +235,7 @@ fn seen_twice(pending: &mut Option<(String, u64, Instant)>, tab: &str, epoch: u6
 
 /// Reads the session's process chain, the deepest process's arguments and the reported command line. Blocking.
 /// The watch is what the processes say the command is; `None` when they could not be read, so the watch stays as it was.
-fn read(agents: &Agents, tools: &Tools, session: &Session) -> (Reading, Option<Watch>) {
+fn read(agents: &Agents, session: &Session) -> (Reading, Option<Watch>) {
     let (chain, argv) = session.foreground_reading();
     let mut reading = foreground_of(agents, chain.as_deref(), session.command_line());
     // A standalone or npm Qwen Code, or an npm Claude Code, runs as `node`, which names no agent: its script, in the
@@ -254,19 +248,19 @@ fn read(agents: &Agents, tools: &Tools, session: &Session) -> (Reading, Option<W
     let watch = match &reading {
         // Nothing runs in front of the shell: a watch set by an earlier reading goes.
         Some(None) if chain.is_some() => Some(Watch::default()),
-        _ => watch_of_reading(tools, argv.as_deref(), chain.as_deref()),
+        _ => watch_of_reading(argv.as_deref(), chain.as_deref()),
     };
     (reading, watch)
 }
 
-/// The watch for what the foreground processes run: the deepest process's words when they could be read (a node or
-/// python child is named by its script), else the chain's names as a command line. `None` when nothing was read.
-fn watch_of_reading(tools: &Tools, argv: Option<&[String]>, chain: Option<&[String]>) -> Option<Watch> {
+/// The watch for what the foreground processes run: the deepest process's words when they could be read, else the
+/// chain's names as a command line. `None` when nothing was read.
+fn watch_of_reading(argv: Option<&[String]>, chain: Option<&[String]>) -> Option<Watch> {
     match argv {
-        Some(argv) if !argv.is_empty() => Some(watch_for_argv(tools, argv)),
+        Some(argv) if !argv.is_empty() => Some(watch_for_argv(argv)),
         _ => {
             let chain = chain.filter(|c| !c.is_empty())?;
-            Some(watch_for(tools, &chain.join(" ")))
+            Some(watch_for(&chain.join(" ")))
         }
     }
 }
@@ -291,7 +285,6 @@ fn foreground_of(
         program,
         command_line,
         agent,
-        tool: None,
     }))
 }
 
@@ -304,7 +297,6 @@ mod tests {
             program: program.into(),
             command_line: None,
             agent: None,
-            tool: None,
         }
     }
 
@@ -436,30 +428,24 @@ mod tests {
     }
 
     #[test]
-    fn a_node_child_running_vercel_sets_the_vercel_watch() {
-        let tools = Tools::shipped();
-        let argv = names(&[
-            "C:\\Program Files\\nodejs\\node.exe",
-            "C:\\Users\\a b\\AppData\\Roaming\\npm\\node_modules\\vercel\\dist\\index.js",
-            "login",
-        ]);
-        let chain = names(&["node"]);
-        let watch = watch_of_reading(&tools, Some(&argv), Some(&chain)).unwrap();
-        assert_eq!(watch.tool.as_deref(), Some("vercel"));
+    fn a_reading_sets_the_secret_and_quiet_watch() {
+        // A login is quiet, from the process's arguments.
+        let argv = names(&["C:\\Program Files\\Vercel\\vercel.exe", "login"]);
+        let watch = watch_of_reading(Some(&argv), Some(&names(&["vercel"]))).unwrap();
         assert!(!watch.secret);
         assert!(watch.quiet_ports, "vercel login is a quiet command");
         // The same reading, but taken before a mark moved the epoch, is dropped whole.
-        assert!(fresh(4, 5, Some(Some(shown("node")))).is_none());
+        assert!(fresh(4, 5, Some(Some(shown("vercel")))).is_none());
         // A process whose arguments cannot be read falls back to the chain's names.
-        let chain = names(&["npx", "vercel"]);
-        let watch = watch_of_reading(&tools, None, Some(&chain)).unwrap();
-        assert_eq!(watch.tool.as_deref(), Some("vercel"));
+        let chain = names(&["vercel", "dev"]);
+        let watch = watch_of_reading(None, Some(&chain)).unwrap();
+        assert!(!watch.secret && !watch.quiet_ports);
         // A secret command is seen from its arguments.
         let argv = names(&["C:\\Program Files\\GitHub CLI\\gh.exe", "auth", "token"]);
-        assert!(watch_of_reading(&tools, Some(&argv), None).unwrap().secret);
+        assert!(watch_of_reading(Some(&argv), None).unwrap().secret);
         // Nothing read, nothing to set.
-        assert!(watch_of_reading(&tools, None, None).is_none());
-        assert!(watch_of_reading(&tools, None, Some(&[])).is_none());
+        assert!(watch_of_reading(None, None).is_none());
+        assert!(watch_of_reading(None, Some(&[])).is_none());
     }
 
     #[test]

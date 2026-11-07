@@ -31,7 +31,6 @@ mod sessions;
 mod settings;
 mod shell_panel;
 mod tasks;
-mod tools;
 mod view;
 
 pub(crate) use files::existing_file as local_file;
@@ -129,6 +128,10 @@ pub struct AppState(Arc<Inner>);
 /// When `wsl.exe` last answered for an agent in a distro, and the version it printed (None when none could be read).
 type WslVersion = (std::time::Instant, Option<String>);
 
+/// Which of the words a WSL distro's own PATH has: the distro and the words asked for in, the words found out. None is a
+/// distro that doesn't answer.
+pub type DistroWhich = fn(&str, &[String]) -> Option<Vec<String>>;
+
 /// Where Marshell's hooks go in a WSL distro: its home as a Windows (UNC) path the core can read and write, and the
 /// bridge's path as the distro's Linux sees it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -218,10 +221,6 @@ struct Inner {
     own_agents: crate::agents::own::OwnCache,
     /// One save of `agents.json` at a time, so the changed-since-read check and the write are not interleaved.
     own_agents_write: Mutex<()>,
-    /// `~/.marshell/tools.json`, read again when the file's modified time or length changes.
-    own_tools: crate::tools::own::ToolsCache,
-    /// One save of `tools.json` at a time, so the changed-since-read check and the write are not interleaved.
-    own_tools_write: Mutex<()>,
     /// `--version` of the manifest agents' programs, for telling a program from another with the same name.
     agent_versions: Arc<crate::agents::identify::VersionCache>,
     /// The last events the bridge sent, per live tab.
@@ -296,6 +295,9 @@ struct Inner {
     /// The target of a distro that a test pins, in place of asking `wsl.exe`. `Some(None)` is a distro that can't be
     /// reached.
     distro_target: Option<Option<DistroTarget>>,
+    /// Which of the words a WSL distro's own PATH has, as a test pins it, in place of asking `wsl.exe`. Returns None for
+    /// a distro that doesn't answer.
+    distro_which: Option<DistroWhich>,
     /// The distros that are running now, which the Doctor asks only when a distro holds Marshell's hooks. Tests swap it,
     /// so none runs `wsl.exe`.
     running_distros: fn() -> Vec<String>,
@@ -385,8 +387,6 @@ impl AppState {
             probe: crate::doctor::probe::probe,
             own_agents: crate::agents::own::OwnCache::default(),
             own_agents_write: Mutex::new(()),
-            own_tools: crate::tools::own::ToolsCache::default(),
-            own_tools_write: Mutex::new(()),
             agent_versions: Arc::new(crate::agents::identify::VersionCache::default()),
             hook_log: crate::hooks::log::HookLog::default(),
             holds: crate::hooks::holds::Holds::default(),
@@ -418,6 +418,7 @@ impl AppState {
             wsl_version: None,
             wsl_versions: Mutex::new(HashMap::new()),
             distro_target: None,
+            distro_which: None,
             running_distros: running_distros_of_wsl,
             sampler: Mutex::new(crate::diagnostics::perf::Sampler::new()),
             previews: crate::diagnostics::export::Previews::default(),
@@ -637,6 +638,14 @@ impl AppState {
             .distro_target = Some(target);
         self
     }
+    /// Pins which agents a WSL distro's PATH has, so a test never runs `wsl.exe`. The function gets the distro and the words
+    /// asked for and returns the ones found, or None for a distro that doesn't answer. Call it before the state is cloned.
+    pub fn with_distro_which(mut self, which: DistroWhich) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_distro_which runs before the state is shared")
+            .distro_which = Some(which);
+        self
+    }
     /// Pins the list of running distros, so a test never runs `wsl.exe`. Call it before the state is cloned.
     pub fn with_running_distros(mut self, list: fn() -> Vec<String>) -> Self {
         Arc::get_mut(&mut self.0)
@@ -793,21 +802,6 @@ impl AppState {
     /// file shows without a restart: the file's modified time is checked on each call.
     pub(crate) fn agents(&self) -> crate::agents::manifest::Agents {
         self.0.own_agents.get(&self.0.home).agents.clone()
-    }
-    /// The shipped tool profiles and the valid own ones of `tools.json`. A hand-edited file shows without a restart: the
-    /// file's modified time and length are checked on each call.
-    pub fn tools(&self) -> Arc<crate::tools::Tools> {
-        self.0.own_tools.get(&self.0.home).tools.clone()
-    }
-    /// `tools` for a callback that outlives the call, such as a session's classifier. It holds a weak handle, not the
-    /// state: the state owns the sessions that own the callback. It reads the cache at each call, so an edited
-    /// `tools.json` applies to the next command. If the state is gone it answers with the shipped profiles.
-    pub(crate) fn tools_reader(&self) -> impl Fn() -> Arc<crate::tools::Tools> + Send + Sync + 'static {
-        let inner = Arc::downgrade(&self.0);
-        move || match inner.upgrade() {
-            Some(inner) => AppState(inner).tools(),
-            None => Arc::new(crate::tools::Tools::shipped()),
-        }
     }
     /// The sessions index and the transcript archive.
     pub fn history(&self) -> Arc<crate::history::recorder::History> {
@@ -1223,6 +1217,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/profiles", get(profiles::get).put(profiles::put))
         .route("/v1/profiles/detected", get(profiles::detected))
         .route("/v1/profiles/integration", post(profiles::integration))
+        .route("/v1/profiles/{id}/agents", get(profiles::agents))
         .route("/v1/settings", get(settings::get).put(settings::put))
         .route("/v1/notify/paused", get(get_notify_paused).put(put_notify_paused))
         .route("/v1/layout", get(layout::get))
@@ -1300,8 +1295,6 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/agents/wsl-distros", get(agents::wsl_distros))
         .route("/v1/agents/catalog", get(catalog::catalog))
         .route("/v1/agents/own", get(catalog::get_own).put(catalog::put_own))
-        .route("/v1/tools", get(tools::catalog))
-        .route("/v1/tools/own", get(tools::get_own).put(tools::put_own))
         .route("/v1/agents/{agent}/setup", get(agents::setup))
         .route("/v1/agents/{agent}/install", get(agents::install))
         .route("/v1/agents/{agent}/account", get(agents::account))
