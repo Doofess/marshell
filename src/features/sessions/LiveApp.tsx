@@ -107,7 +107,7 @@ import { recordSetupDetection, type SetupDetections } from "./setupDetections";
 import { fetchSessionCommand, sessionResumeCommand } from "./resumeCommand";
 import { holdsResume, offersModeChange, offersResume, resumeBlockedReason, resumeStateOf, sessionRunning } from "./resumeState";
 import { PAUSED_TYPING_TEXT, SessionActions, closeBarText, needsCloseConfirm, pauseBarStale, pauseBarText, reopenBarText, restartBarStale, restartBarText, tabIdOfNumber } from "./sessionActions";
-import { useNavigation } from "./useNavigation";
+import { topAction, useNavigation } from "./useNavigation";
 import type { NavEffect } from "../../lib/navigation/types";
 import { Toast } from "./Toast";
 import { pruneClosed, without, type StartingTexts } from "./startingTexts";
@@ -1134,8 +1134,15 @@ export function LiveApp() {
         return;
       }
       case "activate":
-        if (effect.id === "palette") setOverlay("palette");
-        else if (effect.id === "launcher") setLauncherOpen(true);
+        switch (topAction(effect.id)) {
+          case "palette":
+            return void setOverlay("palette");
+          case "launcher":
+            return void setLauncherOpen(true);
+          case "sidebar":
+            // As the button's click: fold or open, or say why a narrow window cannot open it.
+            return void toggleSidebar(view);
+        }
         return;
       case "deselect":
         // No terminal selected: the keys stop going to a program until a pane is chosen again.

@@ -6,6 +6,7 @@ import { SCENARIO_REQUESTS, SCENARIO_ROWS } from "./scenario";
 import { windowTitle } from "./windowTitle";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import { offersModeChange } from "../sessions/resumeState";
+import { topAction } from "../sessions/useNavigation";
 
 const BIG = { width: 1700, height: 900 } as const;
 const html = (p: Partial<Parameters<typeof MainWindow>[0]> = {}) => renderToStaticMarkup(<MainWindow width={1180} height={800} selectedId="working" {...p} />);
@@ -502,6 +503,14 @@ describe("MainWindow: one terminal", () => {
     expect(h).not.toContain("Split layout");
     expect(h).not.toContain('data-nav-top="layout"');
     expect(h).not.toContain('class="split');
+  });
+  it("every top-bar control the cursor reaches does something when the cursor is released on it", () => {
+    const ids = new Set<string>();
+    for (const p of [{}, { sidebarPref: "rail" as const }, { width: 900 }]) {
+      for (const m of html({ rows: SCENARIO_ROWS.slice(0, 3), ...p }).matchAll(/data-nav-top="([^"]+)"/g)) ids.add(m[1]!);
+    }
+    expect([...ids].sort()).toEqual(["palette", "sidebar"]);
+    for (const id of ids) expect(topAction(id), id).not.toBeNull();
   });
   it("the preview divider keeps its role and value", () => {
     const h = html({ preview: <aside className="preview-stand-in" /> });

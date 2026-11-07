@@ -41,6 +41,13 @@ export function step(state: NavState, events: NavEvent[], ctx: NavContext): Resu
 
 const TOP_NAMES: Record<string, string> = { palette: "Command palette", sidebar: "Sidebar", launcher: "New session" };
 
+export type TopAction = "palette" | "launcher" | "sidebar";
+
+/** What releasing the cursor on a top-bar control does: the same as clicking it. Null for an id with no action. */
+export function topAction(id: string): TopAction | null {
+  return id === "palette" || id === "launcher" || id === "sidebar" ? id : null;
+}
+
 /** What the hint under the cursor names: "Session 3, api-server", "Empty slot 2", "Command palette". */
 function labelOf(t: Target, ctx: NavContext): string {
   const session = (n: number) => (ctx.names?.[n] ? `Session ${n}, ${ctx.names[n]}` : `Session ${n}`);
