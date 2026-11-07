@@ -1,8 +1,8 @@
 /*
  * The launcher sheet: one sentence of chips over a prompt line. Chips, keys and lists are told apart by fill, never a box.
- * The prompt line is the same flat command line the panes have: square, on the terminal's surface, an edge on top that takes
- * the vendor's colour while it has focus. The sheet carries `data-agent`, so --accent is the agent's own (the shared
- * [data-agent] rule); a shell or tool has none and keeps the app accent.
+ * The prompt line is the same flat command line the panes have: square, on the terminal's surface, under a hairline.
+ * The sheet carries `data-agent`, so --accent is the agent's own (the shared [data-agent] rule); Just the shell has none and
+ * keeps the app accent. Focus has no ring and no rule: it turns a control's colours over (the Focus section below).
  */
 @property --fade-start {
   syntax: "<length>";
@@ -84,11 +84,7 @@
 .launcher__input {
   inline-size: 14em;
   background: var(--fill-strong);
-}
-.launcher__chip:focus-visible,
-.launcher__input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  caret-color: var(--accent);
 }
 .launcher__chip:active {
   background: var(--fill-strong);
@@ -111,25 +107,13 @@
   background: var(--accent);
 }
 
-/* The first chip's list: agents, shells and tools in wrapping rows. The line under the active program is the shape that does not rely on colour. */
+/* The shell and agent lists: choices in wrapping rows. The line under the active one is the shape that does not rely on colour. */
 .launcher__programs {
   display: grid;
   gap: var(--space-2);
   padding: var(--space-2);
   border-radius: var(--radius);
   background: var(--bg-raised);
-}
-.launcher__group {
-  display: grid;
-  gap: 2px;
-}
-.launcher__group-name {
-  padding-inline: var(--space-2);
-  color: var(--text-2);
-  font-size: var(--text-11);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 .launcher__choices {
   display: flex;
@@ -259,9 +243,6 @@
   border-block-start: 2px solid var(--hairline);
   background: var(--bg-base);
 }
-.launcher__line:focus-within {
-  border-block-start-color: var(--focus, var(--accent));
-}
 .launcher__glyph {
   flex: none;
   margin-block-start: 2px;
@@ -305,12 +286,9 @@
   border-radius: var(--radius);
   background: var(--fill-strong);
   color: var(--text-1);
+  caret-color: var(--accent);
   font-family: var(--font-mono);
   font-size: var(--text-13);
-}
-.launcher__task-input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 .launcher__task-hint {
   margin: 0;
@@ -355,10 +333,6 @@
   font: inherit;
   font-weight: 500;
 }
-.launcher__back:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
 .launcher__back:active {
   background: var(--fill-strong);
 }
@@ -393,7 +367,7 @@
   gap: var(--space-3);
   margin-inline-start: auto;
 }
-/* The Name field beside Start: layout only. */
+/* The Name field beside Start. Its placeholder is the name the session gets when nothing is typed, so it is read at AA. */
 .launcher__name {
   display: inline-flex;
   align-items: center;
@@ -411,12 +385,13 @@
   border: 0;
   border-radius: var(--radius);
   background: var(--fill-strong);
+  caret-color: var(--accent);
   color: var(--text-1);
   font-size: var(--text-13);
 }
-.launcher__name-input:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+.launcher__name-input::placeholder {
+  color: var(--text-2);
+  opacity: 1;
 }
 .launcher kbd {
   padding-inline: 4px;
@@ -444,10 +419,6 @@
   padding-inline: 0;
   background: none;
 }
-.launcher__start:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
 .launcher__start:active {
   box-shadow: inset 0 0 0 100vmax var(--selected);
 }
@@ -463,6 +434,54 @@
   .launcher__program:hover {
     background: var(--hover);
   }
+}
+
+/*
+ * Focus turns a control's colours over (slice 6o decision 9). A chip or Back fills with the agent's accent and takes its ink;
+ * Start, already the accent, turns to ink with accent text; a text field and the prompt line drop to the terminal's surface,
+ * tinted with the accent, under an accent caret. The base ring is hidden with a transparent outline, never removed, so
+ * forced colors can draw it: the High Contrast block makes it a 2px Highlight outline. After the hover rules, so a hovered
+ * control still shows its focus.
+ */
+.launcher__chip:focus-visible,
+.launcher__back:focus-visible {
+  outline-color: transparent;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+/* A locked chip shows where focus is without the accent fill an open choice gets. */
+.launcher__chip[aria-disabled="true"]:focus-visible {
+  outline-color: transparent;
+  background: color-mix(in oklch, var(--accent) 14%, var(--bg-base));
+  color: var(--text-2);
+}
+/* What sits in a focused chip takes its ink, so a vendor mark or a caution sign never vanishes into the accent fill. */
+.launcher__chip:focus-visible :is(.launcher__mark, .agent-mark, .launcher__risk, .launcher__shield) {
+  color: currentColor;
+}
+.launcher__chip:focus-visible .launcher__box {
+  background: color-mix(in oklch, var(--accent-ink) 30%, transparent);
+}
+.launcher__chip:focus-visible .launcher__box[data-checked] {
+  background: var(--accent-ink);
+}
+.launcher__chip:focus-visible:active,
+.launcher__back:focus-visible:active {
+  background: color-mix(in oklch, var(--accent) 82%, var(--accent-ink));
+}
+.launcher__start:focus-visible {
+  outline-color: transparent;
+  background: var(--accent-ink);
+  color: var(--accent);
+}
+.launcher__input:focus-visible,
+.launcher__task-input:focus-visible,
+.launcher__name-input:focus-visible {
+  outline-color: transparent;
+  background: color-mix(in oklch, var(--accent) 14%, var(--bg-base));
+}
+.launcher__line:focus-within {
+  background: color-mix(in oklch, var(--accent) 14%, var(--bg-base));
 }
 
 /* Why a chip is locked (Administrator off Windows, Mode while Administrator is on): a line under the sentence, read with the chip. */
@@ -508,6 +527,19 @@
   .launcher__opt[data-active],
   .launcher__program[data-active] {
     outline: 2px solid Highlight;
+  }
+  .launcher__chip:focus-visible,
+  .launcher__chip[aria-disabled="true"]:focus-visible,
+  .launcher__back:focus-visible,
+  .launcher__start:focus-visible,
+  .launcher__input:focus-visible,
+  .launcher__task-input:focus-visible,
+  .launcher__name-input:focus-visible,
+  .launcher__line:focus-within {
+    outline: 2px solid Highlight;
+  }
+  .launcher__chip:focus-visible .launcher__box[data-checked] {
+    background: Highlight;
   }
   .launcher__opt[aria-disabled="true"] .launcher__opt-name,
   .launcher__opt[aria-disabled="true"] .launcher__opt-path {
