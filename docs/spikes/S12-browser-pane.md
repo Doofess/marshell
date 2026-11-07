@@ -64,6 +64,24 @@ Driver:
 13. **The page sees a dark color scheme.** example.com drew its dark scheme, so `prefers-color-scheme` was `dark` in the page. Whether that came from Windows' setting or from the app's window theme was not checked. 6q-3 decides which one pages follow; the profile's `PreferredColorScheme` can set it.
 14. **A capability doesn't cover the app's own commands.** Scoping the capability to `"webviews": ["main"]` took the plugin permissions away from every page, but a page at a local origin could still call Marshell's own commands (`spike_log` here). Tauri leaves the app's commands open to every webview at a local origin unless the app lists them in an app manifest (`tauri_build`'s `AppManifest::commands`), which puts them under the capabilities too. Today two things keep a page off them: commands from a remote origin are refused, and the allow-list refuses the app's own origins (`tauri.localhost`, `ipc.localhost`, `tauri://`). In dev, though, `http://localhost:1420` is both local and allowed. 6q-3 should add the app manifest and grant the app's commands to `"webviews": ["main"]` only, so the allow-list isn't the only lock. Whether the app manifest works that way was not tried here.
 15. **Every page gets the IPC bridge.** `__TAURI_INTERNALS__` was there at both origins and under both capabilities. The ACL decides every call; nothing keeps a page from trying.
+16. **Once a page exists, the main window is no longer a "webview window".** Tauri counts a window as one only while every webview on it carries the window's label (`Window::is_webview_window`, `tauri-2.12.2/src/window/mod.rs:1257`). The child breaks that, so from the first page on:
+    - `get_webview_window("main")` returns None. The spike's anchor hook found it: it looked the window up that way and never moved the page.
+    - A command that takes a `WebviewWindow` argument fails with "current webview is not a WebviewWindow".
+    - The window's drag-and-drop events go to the window instead of to the labelled webview (`manager/window.rs:212`). Task 8 checks what that does to `useFileDrop`.
+
+    Marshell looks the window up that way in five places:
+    - the taskbar badge (`attention.rs:73`);
+    - the taskbar flash (`attention.rs:91`);
+    - close to tray (`main.rs:230`);
+    - the tray's show (`tray.rs:215`);
+    - turning off the browser shortcuts (`main.rs:335`). This one runs at setup, before any page, so it still works.
+
+    So once a page has opened, the first four would quietly do nothing. That comes from Tauri's source and the anchor hook; the four weren't run with a page open (7b runs close to tray). 6q-3 moves them to `get_window("main")` (`unstable`'s `Manager::get_window`) and keeps the main webview's own calls on `get_webview("main")`. The spike's hooks already take the window from the event or from `get_window`.
+17. **At the window's resize event the app's layout is still the old one.** Marshell sizes its main layout from a `ResizeObserver` (`LiveApp`'s `useElementSize` passes `width` and `height` to `MainWindow`). So when the window's `resize` event fires, `innerWidth` is already new, but the pane is still at its old place and width. React draws the new layout a frame later. A report taken at the resize event moved the page to where it already was, and in anchor mode it pulled the page back. The spike now reports from the placeholder's `ResizeObserver` alone. In this layout the pane's width follows the window's (the preview ratio is in `fr`), so every window resize also resizes the pane. A pure move still needs finding 3's position source. Measured on a 120 px resize with `SetWindowPos` (no input):
+    - Follow mode moved the page once, 16 to 17 ms after the resize.
+    - Anchor mode moved it at 2 ms, with the right edge already in place, and then at 13 ms. The second move fixed the width, because anchoring keeps the old width while the pane's width grows with the window. During those 11 ms the left edge was 60 px off.
+
+    Which looks better during a real drag is 4a and 4b's question.
 
 ## What 6q-2 and 6q-3 take from this
 
