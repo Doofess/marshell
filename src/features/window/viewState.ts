@@ -26,7 +26,9 @@ export type ViewAction =
   | { type: "resetSidebarWidth" }
   | { type: "toggleFocus" }
   | { type: "toggleShell" }
-  | { type: "toggleGrouped" };
+  | { type: "toggleGrouped" }
+  /** The palette ran this command; it goes to the front of the recent list. */
+  | { type: "ranCommand"; id: string };
 
 /** What a window with nothing saved starts from. Matches the core's `ViewLayout::default()`. */
 export const DEFAULT_VIEW: ViewLayout = {
@@ -39,7 +41,16 @@ export const DEFAULT_VIEW: ViewLayout = {
   sidebar_width: SIDEBAR.default,
   shell_hidden: false,
   grouped: false,
+  recent_commands: [],
 };
+
+/** How many recent commands the palette remembers. */
+export const RECENT_LIMIT = 5;
+
+/** The recent list after running `id`: it moves to the front, its duplicates go, and the list is cut to RECENT_LIMIT. */
+export function recentAfter(list: readonly string[], id: string): string[] {
+  return [id, ...list.filter((x) => x !== id)].slice(0, RECENT_LIMIT);
+}
 
 /** The saved sidebar choice; a value this build does not know is the expanded sidebar. */
 export function sidebarPrefOf(view: Pick<ViewLayout, "sidebar">): SidebarPref {
@@ -251,6 +262,8 @@ export function viewReducer(s: ViewState, a: ViewAction): ViewState {
       return { ...s, shell_hidden: !s.shell_hidden };
     case "toggleGrouped":
       return { ...s, grouped: !s.grouped };
+    case "ranCommand":
+      return { ...s, recent_commands: recentAfter(s.recent_commands, a.id) };
   }
 }
 

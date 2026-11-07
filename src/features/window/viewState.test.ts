@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ViewLayout } from "../../generated/ViewLayout";
 import { RATIO } from "./splitLayout";
-import { type ViewAction, type ViewState, adoptTarget, checkedView, fillsEmptyPane, focusedIndex, paneToggle, railToggle, ratiosOf, roomForPane, sidebarPrefOf, sidebarToggleFor, toRatioList, toSaved, viewReducer, visibleSessions } from "./viewState";
+import { DEFAULT_VIEW, type ViewAction, type ViewState, adoptTarget, checkedView, fillsEmptyPane, focusedIndex, paneToggle, railToggle, ratiosOf, recentAfter, roomForPane, sidebarPrefOf, sidebarToggleFor, toRatioList, toSaved, viewReducer, visibleSessions } from "./viewState";
 
 const base: ViewLayout = {
   panes: ["a"],
@@ -13,6 +13,7 @@ const base: ViewLayout = {
   sidebar_width: 288,
   shell_hidden: false,
   grouped: false,
+  recent_commands: [],
 };
 const state = (patch: Partial<ViewState> = {}): ViewState => ({ ...base, ...patch });
 const run = (s: ViewState, ...actions: ViewAction[]) => actions.reduce(viewReducer, s);
@@ -336,5 +337,14 @@ describe("paneToggle", () => {
 
   it("reports a full window", () => {
     expect(paneToggle(view(["a", "b"]), "x", 2, 2)).toEqual({ kind: "full" });
+  });
+});
+
+describe("recent commands", () => {
+  it("keeps the last five commands run, newest first, each once", () => {
+    expect(recentAfter(["a", "b", "c", "d", "e"], "c")).toEqual(["c", "a", "b", "d", "e"]);
+    expect(recentAfter(["a", "b", "c", "d", "e"], "f")).toEqual(["f", "a", "b", "c", "d"]);
+    const s = viewReducer(DEFAULT_VIEW, { type: "ranCommand", id: "find" });
+    expect(toSaved(s).recent_commands).toEqual(["find"]);
   });
 });

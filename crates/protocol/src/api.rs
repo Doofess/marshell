@@ -434,6 +434,9 @@ pub struct ViewLayout {
     pub sidebar_width: u32,
     pub shell_hidden: bool,
     pub grouped: bool,
+    /// The palette's recent commands, newest first: at most 5 command ids.
+    #[serde(default)]
+    pub recent_commands: Vec<String>,
 }
 
 impl Default for ViewLayout {
@@ -448,6 +451,7 @@ impl Default for ViewLayout {
             sidebar_width: 288,
             shell_hidden: false,
             grouped: false,
+            recent_commands: Vec::new(),
         }
     }
 }
