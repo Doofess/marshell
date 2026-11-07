@@ -72,12 +72,12 @@ export function pressMenuButton(open: MenuState, request: NonNullable<MenuState>
   return open ? { menu: null, focus: request.back } : { menu: request, focus: null };
 }
 
-export type AppMenuKey = { do: "move"; index: number } | { do: "open" } | { do: "run"; id: string } | { do: "up" } | { do: "close"; keepDefault: boolean } | null;
+export type AppMenuKey = { do: "move"; index: number } | { do: "open" } | { do: "run"; id: string } | { do: "up" } | { do: "close" } | null;
 
 /**
  * What a key does in the menu (`top`) or its Settings submenu (`sub`). Left and Esc in the submenu go up to the menu; Left in
- * the menu does nothing, as in a native menu. Esc closes the menu and puts the focus back where it was. Tab and Shift+Tab do
- * the same and keep their default, so the focus moves on from there and never falls to the page.
+ * the menu does nothing, as in a native menu. Esc, Tab and Shift+Tab close the menu and put the focus back where it was
+ * opened. Tab doesn't move on from there: from the terminal, the last stop in the Tab order, it would leave the page.
  */
 export function appMenuKey(r: MenuKeyResult, level: "top" | "sub"): AppMenuKey {
   if (!r) return null;
@@ -91,6 +91,6 @@ export function appMenuKey(r: MenuKeyResult, level: "top" | "sub"): AppMenuKey {
     case "back":
       return level === "sub" ? { do: "up" } : null;
     case "close":
-      return level === "sub" && r.refocus ? { do: "up" } : { do: "close", keepDefault: !r.refocus };
+      return level === "sub" && r.refocus ? { do: "up" } : { do: "close" };
   }
 }

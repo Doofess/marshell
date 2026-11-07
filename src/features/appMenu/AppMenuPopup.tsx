@@ -82,12 +82,11 @@ export function AppMenu({ os, anchor, doctorIssues, onRun, onClose, isTrigger = 
     if (e.ctrlKey || e.metaKey) e.preventDefault();
     const k = appMenuKey(level === "top" ? menuKey(e.key, items, active, e) : menuKey(e.key, SUB_ITEMS, subActive, e), level);
     if (!k) return;
-    if (!(k.do === "close" && k.keepDefault)) e.preventDefault();
+    e.preventDefault();
     if (k.do === "move") (level === "top" ? setActive : setSubActive)(k.index);
     else if (k.do === "open") openSub();
     else if (k.do === "run") onRun((level === "top" ? k.id : `settings:${k.id}`) as AppMenuRun);
     else if (k.do === "up") setSubOpen(false);
-    // Focus goes back before a kept Tab runs, so Tab moves on from where the menu was opened.
     else onClose({ refocus: true });
   };
   const onTopKey = onKey("top");

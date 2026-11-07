@@ -73,10 +73,11 @@ describe("toggleMenu", () => {
 describe("appMenuKey", () => {
   const top = appMenuItems("windows");
   const sub = SETTINGS_ITEMS.map((s) => ({ id: s.section, label: s.label }));
-  it("tab_closes_the_menu_with_the_focus_back_and_lets_tab_move_on_from_there", () => {
-    expect(appMenuKey(menuKey("Tab", top, 0), "top")).toEqual({ do: "close", keepDefault: true });
-    expect(appMenuKey(menuKey("Tab", sub, 2), "sub")).toEqual({ do: "close", keepDefault: true });
-    expect(appMenuKey(menuKey("Escape", top, 0), "top")).toEqual({ do: "close", keepDefault: false });
+  it("tab_closes_the_menu_and_puts_the_focus_back_where_it_was_opened", () => {
+    // Moving on from there would leave the page when the menu came from the terminal, the last stop in the Tab order.
+    expect(appMenuKey(menuKey("Tab", top, 0), "top")).toEqual({ do: "close" });
+    expect(appMenuKey(menuKey("Tab", sub, 2), "sub")).toEqual({ do: "close" });
+    expect(appMenuKey(menuKey("Escape", top, 0), "top")).toEqual({ do: "close" });
   });
   it("left_does_nothing_at_the_top_and_left_or_esc_go_up_from_the_submenu", () => {
     expect(appMenuKey(menuKey("ArrowLeft", top, 1), "top")).toBeNull();
