@@ -17,7 +17,7 @@ arrangement: string | null,
  */
 ratios: Array<number>, 
 /**
- * Index of the focused pane.
+ * Index into `panes` of the terminal on screen: always 0 while `panes` holds one entry.
  */
 active: number, 
 /**

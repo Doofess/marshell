@@ -39,7 +39,7 @@ describe("MainWindow.css", () => {
     expect(r).toContain("flex-direction: column");
     expect(r).toContain("flex: 1 1 0");
   });
-  it("docks the full prompt line flat at the foot of its slot, like the compact one: no inset, no lift, no shadow", () => {
+  it("docks the prompt line flat at the foot of its slot: no inset, no lift, no shadow", () => {
     const r = rule(".window__composer > .composer");
     expect(r).toContain("inset-inline: 0");
     expect(r).toContain("inset-block-end: 0");

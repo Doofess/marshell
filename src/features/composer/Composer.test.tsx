@@ -125,13 +125,6 @@ describe("Composer: states", () => {
     expect(e).toContain("scratch has ended");
     expect(e).toContain("Resume");
   });
-  it("an empty pane: nothing to write to, so the field is off and it says why", () => {
-    const e = renderToStaticMarkup(<Composer row={null} />);
-    expect(e).toMatch(/<textarea[^>]*disabled/);
-    expect(e).toContain("Choose a session for this pane first");
-    expect(e).toContain("This pane is empty");
-    expect(e).toMatch(/class="composer__send"[^>]*aria-disabled="true"/);
-  });
   it("keeps its height in every state: the notice lives in the tools row, never a new row", () => {
     for (const id of ["idle", "working", "needs-permission", "needs-question", "ended"]) {
       const s = h(id);
@@ -148,7 +141,6 @@ describe("Composer: one live region for the whole window, not one per prompt lin
   it("never carries a live region of its own, in any state (the window announces the focused session once)", () => {
     for (const id of ["idle", "working", "needs-permission", "needs-question", "ended"])
       expect(html(id), id).not.toMatch(/role="(status|alert|log)"|aria-live=/);
-    expect(renderToStaticMarkup(<Composer row={null} />)).not.toMatch(/role="status"|aria-live=/);
   });
 });
 

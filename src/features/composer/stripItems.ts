@@ -4,7 +4,7 @@ import type { RowModel } from "../sidebar/types";
 
 /**
  * The window's status strip (the status bar): the facts the user's own status line shows (model and effort, context, the two plan limits,
- * cost, session time, MCP health, skills, environment, ports), for the session of the focused pane. Built from known data only:
+ * cost, session time, MCP health, skills, environment, ports), for the session on screen. Built from known data only:
  * an unknown value leaves its item out, never a dash. It fits itself to the room by dropping the least important item first and
  * never wraps.
  */

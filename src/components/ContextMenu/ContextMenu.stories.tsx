@@ -17,7 +17,7 @@ const noop = () => {};
 
 export const Default: StoryObj = {
   render: () => (
-    <ThemePair label="Session row menu: Rename, Split, Resume, Review, a rule, then Close; the first item is active" stack>
+    <ThemePair label="Session row menu: Rename, Resume, Review changes, a rule, then Close; the first item is active" stack>
       {/* A transform makes this the containing block, so the menu's fixed position stays inside the frame. */}
       <div style={{ blockSize: 240, position: "relative", transform: "translate(0)", background: "var(--bg-base)" }}>
         <ContextMenu items={ITEMS} label="Session actions" anchor={{ x: 24, y: 24 }} onRun={noop} onClose={noop} />

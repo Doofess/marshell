@@ -425,7 +425,7 @@ pub struct ViewLayout {
     pub arrangement: Option<String>,
     /// Unused since slice 6q-1 removed split view: always None (or empty). Kept so an older build can still read the file.
     pub ratios: Vec<f32>,
-    /// Index of the focused pane.
+    /// Index into `panes` of the terminal on screen: always 0 while `panes` holds one entry.
     pub active: u32,
     /// Unused since slice 6q-1 removed split view: always None (or empty). Kept so an older build can still read the file.
     pub zoomed: Option<u32>,

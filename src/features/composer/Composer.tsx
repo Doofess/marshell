@@ -26,8 +26,8 @@ const prompt = (
 );
 
 export type ComposerProps = {
-  /** The session this prompt writes to; null for an empty pane. */
-  row: RowModel | null;
+  /** The session this prompt writes to. */
+  row: RowModel;
   value?: string;
   os?: Os;
 };
@@ -41,15 +41,14 @@ export type ComposerProps = {
  */
 export function Composer({ row, value = "", os = "windows" }: ComposerProps) {
   const focusKeys = shortcutLabel(commandById("focus-prompt").binding!, os);
-  const state: ComposerState = row ? composerState(row, value) : "waiting";
-  const blocked = row === null || state === "waiting" || state === "ended";
+  const state: ComposerState = composerState(row, value);
+  const blocked = state === "waiting" || state === "ended";
   const canSend = !blocked && (state === "typing" || (state === "working" && value.trim() !== ""));
-  const name = row?.name ?? "this pane";
-  const caution = row ? modeCaution(row.mode) : false;
+  const name = row.name;
+  const caution = modeCaution(row.mode);
 
-  const placeholder = !row
-    ? "Choose a session for this pane first"
-    : state === "waiting"
+  const placeholder =
+    state === "waiting"
       ? row.status === "needs-question"
         ? "Answer the question in the lane, or in the terminal"
         : "Answer the request in the lane, or in the terminal"
@@ -57,9 +56,8 @@ export function Composer({ row, value = "", os = "windows" }: ComposerProps) {
         ? "This session has ended"
         : `Message ${row.name}…`;
 
-  const notice = !row
-    ? { glyph: null, text: "This pane is empty" }
-    : state === "working"
+  const notice =
+    state === "working"
       ? null // the button already says Queue; no extra words
       : state === "waiting"
         ? { glyph: <StatusGlyph kind={row.status} />, text: `${row.name} ${row.status === "needs-question" ? "has a question" : "is waiting for your approval"}` }
@@ -81,7 +79,7 @@ export function Composer({ row, value = "", os = "windows" }: ComposerProps) {
     ) : null;
 
   return (
-    <form className="composer" aria-label={`Write to ${name}`} data-agent={row?.agent} data-state={row ? state : "empty-pane"}>
+    <form className="composer" aria-label={`Write to ${name}`} data-agent={row.agent} data-state={state}>
       <div className="composer__line">
         {prompt}
         <textarea
@@ -102,15 +100,13 @@ export function Composer({ row, value = "", os = "windows" }: ComposerProps) {
       </div>
 
       <div className="composer__tools">
-        {row && (
-          <span className="composer__target" title={`Sends to ${row.name}`}>
-            <AgentMark agent={row.agent} size={16} />
-            <span className="composer__target-name" dir="auto">
-              {row.name}
-            </span>
+        <span className="composer__target" title={`Sends to ${row.name}`}>
+          <AgentMark agent={row.agent} size={16} />
+          <span className="composer__target-name" dir="auto">
+            {row.name}
           </span>
-        )}
-        {row?.mode && (
+        </span>
+        {row.mode && (
           <span className="composer__mode" data-tone={caution ? "caution" : undefined}>
             {caution && <AuxGlyph kind="caution" />}
             {modeLabel(row.mode)}

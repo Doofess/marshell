@@ -187,21 +187,21 @@ export function LiveApp() {
   useEffect(refreshSetup, [refreshSetup]);
   const [maximized, setMaximized] = useState(false);
   useEffect(() => onMaximizedChange(setMaximized), []);
-  // The window's saved layout: which sessions are in which pane. `undefined` until the list has answered, so an empty first list is never "everything closed".
+  // The window's saved layout: which session is on screen. `undefined` until the list has answered, so an empty first list is never "everything closed".
   const [view, dispatch, , settled] = useViewState(endpoint, loaded ? infos.map((i) => i.tab_id) : undefined);
   const viewRef = useRef(view);
   viewRef.current = view;
-  // The session the window is about is the one in the pane; the store's choice only stands in for an empty pane.
+  // The session the window is about is the one on screen; the store's choice only stands in when none is.
   const focusedId = view.panes[0] ?? selectedId;
   // The preview pane: its history lives here so it outlasts a session switch. Open, it is about the focused session's window only.
   const preview = usePreview();
   const previewRef = useRef(preview);
   previewRef.current = preview;
   const previewEntry = preview.state.open ? currentOf(preview.state) : undefined;
-  // Going to a session is two things: the store's selection and the view's, which puts it in the one pane.
+  // Going to a session is two things: the store's selection and the view's, which puts it on screen.
   const selectRef = useRef(select);
   selectRef.current = select;
-  // A link or a banner put focus on a row: no terminal takes it on its own until the person picks a session or a pane.
+  // A link or a banner put focus on a row: no terminal takes it on its own until the person picks a session.
   const [linkHeld, setLinkHeld] = useState(false);
   // What the main area shows: the sessions, or the History view over them (the sidebar stays). Going to any session closes it.
   const [mainView, setMainView] = useState<"sessions" | "history">("sessions");
@@ -454,8 +454,7 @@ export function LiveApp() {
     <LiveCard key={r.id + (inDrawer ? "-drawer" : "")} request={r} inDrawer={inDrawer} onAnswer={answerRequest} onJump={jumpToRequest} onExpand={(x) => setDrawerId(x.id)} onRestoreFocus={restoreFocus} />
   );
 
-  // A window of one empty pane takes the store's selection (a first start, or the only open session closed and another opened).
-  // With several panes a closed session's pane stays empty.
+  // A window with no session on screen takes the store's selection (a first start, or the only open session closed and another opened).
   useEffect(() => {
     if (settled && loaded && fillsEmptyPane(view.panes, selectedId)) dispatch({ type: "select", tabId: selectedId! });
   }, [settled, loaded, selectedId, view.panes, dispatch]);
@@ -466,7 +465,7 @@ export function LiveApp() {
     if (reopening) setLauncherOpen(false);
     else if (launcherOpens(loaded, rows.length, onboardingShown, reopening !== null)) setLauncherOpen(true);
   }, [loaded, rows.length, onboardingShown, reopening]);
-  // Asking for the terminal (a pane, a command) ends a link's hold.
+  // Asking for the terminal (a command) ends a link's hold.
   useEffect(() => setLinkHeld(false), [focusToken]);
   // The Ended or Exited row each tab had when Resume was pressed, and how many resumes of it had come back ok by then. The core says
   // Running before the session exists (and may say it after the answer), but the strip, and the button that has the focus, stay put
@@ -857,7 +856,7 @@ export function LiveApp() {
   useEffect(() => {
     if (closing !== null && (closing !== focusedId || !infos.some((i) => i.tab_id === closing))) actions.cancelClose();
   }, [closing, focusedId, infos, actions]);
-  // The same for the restart bar and the Pause bar (they share the pane's bar slot); a close question and either of them are never
+  // The same for the restart bar and the Pause bar (they share the terminal's bar slot); a close question and either of them are never
   // up together. A session that askRestart or pauseSession is bringing on screen is not focused yet for a render or two
   // (the selection lands after the click's update); that is not a move away, as long as the focus has not moved since the question.
   const showingForRestart = useRef<{ id: string; from: string | undefined } | null>(null);
@@ -914,7 +913,7 @@ export function LiveApp() {
   // running and the same terminal comes back, with no second request. "Open as a session" turns the shell into a tab; the panel then has
   // no shell, and asks for a fresh one (in whatever folder is focused by then) while it is shown.
   const [panel, setPanel] = useState<{ endpoint: Endpoint; tabId: string; folder: string } | null>(null);
-  // The shell the core has turned into a tab, waiting to be listed so a pane can show it.
+  // The shell the core has turned into a tab, waiting to be listed so the window can show it.
   const [adopted, setAdopted] = useState<{ endpoint: Endpoint; tabId: string } | null>(null);
   const shellShown = settled && loaded && sidebarExpanded && !view.shell_hidden;
   const focusedCwd = infos.find((i) => i.tab_id === focusedId)?.cwd;
@@ -1008,7 +1007,7 @@ export function LiveApp() {
         menuFacts(id, { infos, profiles, rows: taskRows, offered: modesOf }),
         os ?? "windows",
       ),
-    [infos, profiles, taskRows, view.panes, os, modesOf],
+    [infos, profiles, taskRows, os, modesOf],
   );
   // Where focus goes when the mode menu ends without a bar: back to the row or the chip it came from.
   const returnFromModeMenu = (m: { id: string; from: "row" | "chip" }) => {
@@ -1027,7 +1026,7 @@ export function LiveApp() {
       actions.focusTerminal();
     }
   }, [modeMenu, infos, rows, actions]);
-  // Asks "Restart … in <mode>?" for a session. The bar is on the focused session's pane, so a session that is off screen or not
+  // Asks "Restart … in <mode>?" for a session. The bar is on the focused session's terminal, so a session that is off screen or not
   // focused is shown first, as a plain click would. False (a plain shell, or the mode it is already in) changes nothing.
   const askRestart = useCallback(
     (id: string, mode: Mode): boolean => {
@@ -1046,7 +1045,7 @@ export function LiveApp() {
     },
     [actions, focusedId, pick, rows, infos, modesOf],
   );
-  // Pause: the first one ever asks first, on the session's pane like the restart question; after that it acts at once.
+  // Pause: the first one ever asks first, on the session's terminal like the restart question; after that it acts at once.
   const pauseSession = useCallback(
     (id: string): "asked" | "sent" | null => {
       const r = actions.pause(id);
@@ -1145,7 +1144,7 @@ export function LiveApp() {
         }
         return;
       case "deselect":
-        // No terminal selected: the keys stop going to a program until a pane is chosen again.
+        // No terminal selected: the keys stop going to a program until a session is chosen again.
         if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
         document.querySelector<HTMLElement>(".window__main")?.focus();
         return;
@@ -1166,8 +1165,8 @@ export function LiveApp() {
   });
   const sendNav = nav.send;
 
-  // The split view's shortcuts and commands. True when it was one of them.
-  const paneCommand = useCallback(
+  // The window's shortcuts and commands (preview, shell panel, history, menu, next waiting). True when it was one of them.
+  const windowCommand = useCallback(
     (shortcut: SessionShortcut | null): boolean => {
       const v = viewRef.current;
       switch (shortcut?.kind) {
@@ -1295,11 +1294,11 @@ export function LiveApp() {
       else if (shortcut.kind === "palette") setOverlay("palette");
       else if (shortcut.kind === "cheatsheet") setOverlay("shortcuts");
       else if (shortcut.kind === "prompt") jumpPrompt(shortcut.by);
-      else if (!paneCommand(shortcut)) actions.handle(shortcut);
+      else if (!windowCommand(shortcut)) actions.handle(shortcut);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [os, launcherOpen, overlay, review, closeAsk, actions, jumpPrompt, paneCommand]);
+  }, [os, launcherOpen, overlay, review, closeAsk, actions, jumpPrompt, windowCommand]);
 
   // The other shortcuts are off under the Settings page, but a jump to a session still works: it closes the page and goes there.
   // A field that takes text keeps its own keys; a radio or a switch does not.
@@ -1312,12 +1311,12 @@ export function LiveApp() {
       e.preventDefault();
       if (e.repeat) return;
       setOverlay(null);
-      if (!paneCommand(shortcut)) actions.handle(shortcut);
+      if (!windowCommand(shortcut)) actions.handle(shortcut);
       if (shortcut.kind === "goto") setTimeout(() => actions.focusTerminal(), 0);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [os, overlay, actions, paneCommand]);
+  }, [os, overlay, actions, windowCommand]);
 
   // A palette row: a session to go to, the profiles page, or a command the window runs (LivePalette lists only those).
   const runFromPalette = (id: string) => {
@@ -1352,9 +1351,9 @@ export function LiveApp() {
       return void (gone && setTimeout(() => void openReview("", gone), 0));
     }
     const shortcut = commandShortcut(id);
-    // These move the focus (or open a pane that takes it), so they wait for the palette to hand it back first.
-    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "menu") return void setTimeout(() => paneCommand(shortcut), 0);
-    if (paneCommand(shortcut)) return;
+    // These move the focus (or open a panel that takes it), so they wait for the palette to hand it back first.
+    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "menu") return void setTimeout(() => windowCommand(shortcut), 0);
+    if (windowCommand(shortcut)) return;
     if (shortcut?.kind === "launcher") setLauncherOpen(true);
     else if (shortcut?.kind === "prompt") jumpPrompt(shortcut.by);
     // After the palette has given focus back, so a rename box or the terminal keeps the focus it is given.
@@ -1395,7 +1394,7 @@ export function LiveApp() {
   useTrayActions((action: TrayAction) => {
     if (trayClosesOverlay(action, overlay)) setOverlay(null);
     if (action.kind === "goto") actions.handle({ kind: "goto", number: action.number });
-    else if (action.kind === "nextWaiting") paneCommand({ kind: "nextWaiting" });
+    else if (action.kind === "nextWaiting") windowCommand({ kind: "nextWaiting" });
     else if (action.kind === "overlay") action.overlay === "settings" ? openSettings(null) : setOverlay(action.overlay);
     else void togglePause();
   });
@@ -1506,13 +1505,13 @@ export function LiveApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the pending map is a ref; it changes together with the overlay.
   }, [infos, overlay]);
 
-  // One tab's content, in the single window and in every split pane: its terminal, and under it the Resume strip while it is Ended or
+  // One tab's content, in the window: its terminal, and under it the Resume strip while it is Ended or
   // Exited. An Ended tab has no terminal at all. The wrapper is the same for every state, so a session that exits keeps its terminal
   // (and its scrollback) mounted when the strip appears.
   const renderTerminal = useCallback(
     (row: RowModel, shown = true) => {
       if (!endpoint) return null;
-      // The shell panel's terminal still holds this tab's pty (it was just adopted): a pane draws the tab once the panel lets go.
+      // The shell panel's terminal still holds this tab's pty (it was just adopted): the window draws the tab once the panel lets go.
       if (panelTab?.tabId === row.id) return null;
       const info = infos.find((i) => i.tab_id === row.id);
       // While Resume is out the core already says Running, but the strip stays and the terminal waits (see `resuming` in sessionActions).
