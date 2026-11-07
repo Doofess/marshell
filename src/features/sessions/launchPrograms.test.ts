@@ -510,3 +510,16 @@ describe("an administrator start", () => {
     expect(launchRequest(choice("profile:pwsh"), "", programs, DOC, PROJECTS, SIZE, undefined, true)).toMatchObject({ elevated: true, profile_id: "pwsh" });
   });
 });
+
+describe("the name in the request", () => {
+  const programs = liveAgents(CATALOG);
+  it("the_name_sent_is_trimmed_and_empty_means_the_default", () => {
+    const send = (name?: string) => launchRequest(choice("claude"), "", programs, DOC, PROJECTS, SIZE, undefined, false, name);
+    expect(send()).not.toHaveProperty("name");
+    expect(send("  ")).not.toHaveProperty("name");
+    expect(send("\t\n")).not.toHaveProperty("name");
+    expect(send(" fix ").name).toBe("fix");
+    expect(send("a\tb\nc").name).toBe("abc");
+    expect(launchRequest({ ...choice("claude"), agent: null }, "", programs, DOC, PROJECTS, SIZE, undefined, false, " sh ").name).toBe("sh");
+  });
+});

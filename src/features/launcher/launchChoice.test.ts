@@ -8,6 +8,9 @@ import {
   MODES,
   PACES,
   applyRemembered,
+  cleanName,
+  defaultSessionName,
+  sessionNameFor,
   adminChip,
   isAgentProgram,
   launcherSentence,
@@ -141,5 +144,33 @@ describe("Administrator is launcher state only", () => {
     expect(WAITING_FOR_ADMIN).toBe("Waiting for administrator approval…");
     expect(launcherSentence(base, PROJECTS, LAUNCH_AGENTS, true)).toContain("as administrator");
     expect(launcherSentence(base, PROJECTS)).not.toContain("administrator");
+  });
+});
+
+describe("the session's name", () => {
+  const pwsh = { id: "pwsh", label: "PowerShell 7", kind: "powershell" as const, family: "power_shell" as const };
+  it("the default mirrors the core's agent names, a preset takes its agent's, anything else the shell's", () => {
+    expect(defaultSessionName("claude", LAUNCH_AGENTS, pwsh)).toBe("Claude Code");
+    expect(defaultSessionName("codex", LAUNCH_AGENTS, pwsh)).toBe("Codex");
+    expect(defaultSessionName("antigravity", LAUNCH_AGENTS, pwsh)).toBe("Antigravity");
+    expect(defaultSessionName("qwen", LAUNCH_AGENTS, pwsh)).toBe("Qwen Code");
+    expect(defaultSessionName("copilot", LAUNCH_AGENTS, pwsh)).toBe("Copilot CLI");
+    const preset: LaunchProgram = { ...LAUNCH_AGENTS[0]!, id: "preset:deepseek", preset: "deepseek", agent: "claude" };
+    expect(defaultSessionName("preset:deepseek", [preset], pwsh)).toBe("Claude Code");
+    expect(defaultSessionName(null, LAUNCH_AGENTS, pwsh)).toBe("PowerShell 7");
+  });
+  it("an_own_agent_defaults_to_the_shell_name", () => {
+    expect(defaultSessionName("my-agent", [{ ...LAUNCH_AGENTS[0]!, id: "my-agent", label: "Mine" }], pwsh)).toBe("PowerShell 7");
+    expect(defaultSessionName("cursor", LAUNCH_AGENTS, pwsh)).toBe("PowerShell 7");
+  });
+  it("cleanName drops control and bidi characters, and keeps 120", () => {
+    expect(cleanName("a\tb\nc\u202ed\u200fe\u061cf")).toBe("abcdef");
+    expect(cleanName("x".repeat(130))).toHaveLength(120);
+  });
+  it("name_follows_the_task_until_typed", () => {
+    expect(sessionNameFor("", "fix-login")).toBe("fix-login");
+    expect(sessionNameFor("   ", "fix-login")).toBe("fix-login");
+    expect(sessionNameFor(" mine ", "fix-login")).toBe("mine");
+    expect(sessionNameFor("", "")).toBe("");
   });
 });

@@ -34,7 +34,7 @@ import { effectiveAgent, offerFor } from "../launcher/shellAgents";
 import { offeredMode } from "../modes/sessionModes";
 import { taskNameFor } from "../tasks/taskName";
 import { appScheme } from "../terminal/terminalTheme";
-import { adminChip, programById, startingText, WAITING_FOR_ADMIN, type LauncherChoice } from "../launcher/launchChoice";
+import { adminChip, defaultSessionName, programById, sessionNameFor, startingText, WAITING_FOR_ADMIN, type LauncherChoice } from "../launcher/launchChoice";
 import type { Os } from "../../lib/keymap";
 import { browseFolder, checkState, chooseFolder, latestOnly, createRequest, createThenLaunch, initialFocus, launchRequest, progressText, refocus, rememberTasks, replansAfter, type FocusState, liveAgents, liveShells, nameSource, preselect, preselectMode, startFailure, startProblem, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
 
@@ -100,6 +100,8 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
   const frozen = useRef<number | undefined>(undefined);
   // The task name once the user has typed in the field; until then it follows the prompt.
   const [nameEdit, setNameEdit] = useState<string | null>(null);
+  // The session's own Name field ("" until typed). Apart from `nameEdit`, which is the task's name.
+  const [sessionName, setSessionName] = useState("");
   // The confirm view of a task, or null while the launcher shows its sentence.
   const [confirm, setConfirm] = useState<TaskConfirm | null>(null);
   // Each plan request gets a number, so a late answer to a plan the user has left is dropped.
@@ -262,6 +264,10 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
   // A shell takes no first prompt, so text typed for an agent before switching doesn't name its task.
   const taskName = taskNameFor(nameEdit, nameSource(shown, prompt, programs, shells));
 
+  // With a task, an untouched Name takes the task's name and shows it as the default; else the core's default shows.
+  const taskNamed = wantsTask(shown, projects) && taskName.trim() !== "";
+  const namePlaceholder = taskNamed ? taskName.trim() : defaultSessionName(shown.agent === null ? null : shown.agent, programs, shells.find((x) => x.id === shown.shell) ?? { id: shown.shell, label: shown.shell, kind: "program", family: "posix" });
+
   // Back from the confirm view puts focus where Enter starts again.
   const wasConfirming = useRef(false);
   useEffect(() => {
@@ -381,7 +387,7 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
       const task = await tasks.get(req, () => tasksApi.create(endpoint, req));
       made = true;
       setPhase("starting");
-      const request = withColorScheme(launchRequest(shown, prompt, programs, loaded.doc, projects, size(), task.path, elevated), loaded.doc.profiles, appearance, appScheme());
+      const request = withColorScheme(launchRequest(shown, prompt, programs, loaded.doc, projects, size(), task.path, elevated, sessionNameFor(sessionName, taskName)), loaded.doc.profiles, appearance, appScheme());
       const folder = projects.find((p) => p.id === shown.projectId)?.name ?? "your home folder";
       const text = startText(folder);
       if (!setupWanted) return await startAgent(request, text);
@@ -442,7 +448,7 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
     setStarting(true);
     setError(undefined);
     try {
-      const request = launchRequest(shown, prompt, programs, loaded.doc, projects, size(), undefined, elevated);
+      const request = launchRequest(shown, prompt, programs, loaded.doc, projects, size(), undefined, elevated, sessionName);
       const sent = withColorScheme(request, loaded.doc.profiles, appearance, appScheme());
       const created = await createSession(sent, () => sessionsApi.create(endpoint, sent));
       const folder = projects.find((p) => p.id === shown.projectId)?.name ?? "your home folder";
@@ -458,7 +464,7 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
   return (
     <div ref={root} className="live-app__launcher">
       <Launcher
-        view={{ choice: shown, elevated, bypassAcknowledged, projects, query, pathCheck: shownCheck, activeIndex, shellsOpen, agentsOpen, prompt, nextNumber: shownNumber(nextNumber, starting, frozen.current), taskName, ...(confirm === null ? {} : { confirm }) }}
+        view={{ choice: shown, elevated, bypassAcknowledged, projects, query, pathCheck: shownCheck, activeIndex, shellsOpen, agentsOpen, prompt, name: sessionName, namePlaceholder, nextNumber: shownNumber(nextNumber, starting, frozen.current), taskName, ...(confirm === null ? {} : { confirm }) }}
         shells={shells}
         agents={programs}
         offer={offer}
@@ -498,6 +504,10 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
         onStart={() => void start()}
         onTaskName={(text) => {
           setNameEdit(text);
+          setError(undefined);
+        }}
+        onName={(text) => {
+          setSessionName(text);
           setError(undefined);
         }}
         onConfirm={() => void createAndStart()}

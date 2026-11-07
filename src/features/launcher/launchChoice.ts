@@ -133,3 +133,29 @@ export function adminChip(elevated: boolean | undefined, os: Os, unavailable?: s
   const enabled = reason === undefined;
   return { enabled, on: enabled && elevated === true, ...(reason === undefined ? {} : { reason }) };
 }
+
+/** The longest session name, as in the sidebar's rename. */
+export const MAX_SESSION_NAME = 120;
+
+/** Control characters and the bidi controls the rename rules turn into spaces (`label_text` in the core's `history/marks.rs`). */
+const NAME_DROPPED = /[\p{Cc}\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu;
+
+/** Typed text as the field keeps it: those characters dropped, at most 120 characters. The core applies the rename rules again on create, so any caller holds to them. */
+export function cleanName(text: string): string {
+  return Array.from(text.replace(NAME_DROPPED, "")).slice(0, MAX_SESSION_NAME).join("");
+}
+
+/** The core's name for an agent session that is given none (`agent_display_name`, server/sessions.rs). */
+const AGENT_NAMES: Record<string, string> = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity", qwen: "Qwen Code", copilot: "Copilot CLI" };
+
+/** The name a session gets when none is typed: the agent's (a preset takes the agent it starts), else the shell's own name. Null is Just the shell. */
+export function defaultSessionName(agent: ProgramId | null, agents: LaunchProgram[], shell: LaunchShell): string {
+  const program = agent === null ? undefined : programById(agent, agents);
+  const id = program?.agent ?? program?.id ?? agent;
+  return (id === null ? undefined : AGENT_NAMES[id]) ?? shell.label;
+}
+
+/** The name to send: what was typed (cleaned, trimmed), else the task's name while a task is made for this launch, else nothing so the core names it. */
+export function sessionNameFor(typed: string, taskName: string): string {
+  return cleanName(typed).trim() || taskName.trim();
+}

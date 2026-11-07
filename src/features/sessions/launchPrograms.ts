@@ -15,7 +15,7 @@ import type { Project } from "../launcher/filter";
 import type { PathCheck } from "../launcher/folderRows";
 import { samePath } from "../tasks/taskOf";
 import type { TaskConfirm } from "../launcher/Launcher";
-import { LAUNCH_AGENTS, programById, type LaunchProgram, type LaunchShell, type LauncherChoice, type Mode, type ProgramId } from "../launcher/launchChoice";
+import { LAUNCH_AGENTS, programById, sessionNameFor, type LaunchProgram, type LaunchShell, type LauncherChoice, type Mode, type ProgramId } from "../launcher/launchChoice";
 import { catalogModes, offeredMode } from "../modes/sessionModes";
 import { shellKind } from "./toRow";
 
@@ -181,9 +181,12 @@ export function launchRequest(
   taskPath?: string,
   /** The launcher's Administrator chip. It is not part of `choice`: it is never remembered. */
   elevated = false,
+  /** The session's name: sent only when it is not empty once cleaned and trimmed; empty leaves the core's default. */
+  name?: string,
 ): CreateSessionRequest {
   const cwd = taskPath ?? projects.find((p) => p.id === choice.projectId)?.path;
-  const base: CreateSessionRequest = { cols: size.cols, rows: size.rows, elevated, ...(cwd === undefined ? {} : { cwd }) };
+  const named = sessionNameFor(name ?? "", "");
+  const base: CreateSessionRequest = { cols: size.cols, rows: size.rows, elevated, ...(cwd === undefined ? {} : { cwd }), ...(named === "" ? {} : { name: named }) };
   if (choice.agent === null) return { ...base, profile_id: choice.shell };
   const program = programById(choice.agent, programs);
   const id = program?.id ?? choice.agent;

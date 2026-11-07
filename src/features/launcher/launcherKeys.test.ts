@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adminKey, adminKeyClaimed, focusFellOut, listNavKeys, openFolder, openList, stepActive } from "./launcherKeys";
+import { adminKey, adminKeyClaimed, focusFellOut, listNavKeys, nameKey, nameKeyClaimed, openFolder, openList, stepActive } from "./launcherKeys";
 
 describe("launcherKeys: which keys move the highlighted option", () => {
   it("in the folder field only Up and Down do: Left and Right move the caret, so a typo can be fixed", () => {
@@ -76,5 +76,22 @@ describe("the Administrator chip's key", () => {
       // AltGr+A arrives as Ctrl+Alt on Windows.
       expect(adminKeyClaimed(key({ ctrlKey: true, altKey: true }), enabled)).toBe(false);
     }
+  });
+});
+
+describe("the Name field's key", () => {
+  const key = (p: Partial<Parameters<typeof nameKey>[0]> = {}) => ({ code: "KeyN", altKey: true, ctrlKey: false, metaKey: false, shiftKey: false, ...p });
+  it("alt_n_is_the_name_key", () => {
+    expect(nameKey(key())).toBe(true);
+    expect(nameKey(key({ ctrlKey: true }))).toBe(false);
+    expect(nameKey(key({ metaKey: true }))).toBe(false);
+    expect(nameKey(key({ shiftKey: true }))).toBe(false);
+    expect(nameKey(key({ altKey: false }))).toBe(false);
+    expect(nameKey(key({ code: "KeyA" }))).toBe(false);
+  });
+  it("is left alone on a Mac, where Option+N is the dead key for a tilde", () => {
+    expect(nameKeyClaimed(key(), "windows")).toBe(true);
+    expect(nameKeyClaimed(key(), "linux")).toBe(true);
+    expect(nameKeyClaimed(key(), "mac")).toBe(false);
   });
 });

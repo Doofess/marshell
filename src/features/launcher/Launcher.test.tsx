@@ -290,17 +290,34 @@ describe("Launcher: remembered for this project", () => {
   });
 });
 
-describe("Launcher: the number the new session takes", () => {
-  it("says which session number it becomes, so you know what to call it", () => {
+describe("Launcher: the session's name", () => {
+  it("the_footer_has_a_name_field_where_session_n_was", () => {
     const h = html(view({ nextNumber: 4 }));
-    expect(h).toContain("Session 4");
-    expect(h).toContain("launcher__next");
+    expect(h).toMatch(/<label[^>]*>Name<\/label>/);
+    expect(h).toMatch(/<input[^>]*placeholder="Claude Code"/);
+    expect(h).toContain('maxLength="120"');
+    expect(h).toContain('aria-keyshortcuts="Alt+N"');
+    expect(h).not.toContain("launcher__next");
+    expect(h).toContain("It becomes session 4");
   });
-  it("shows the number while the start is pending", () => {
-    expect(renderToStaticMarkup(<Launcher view={view({ nextNumber: 2 })} pending />)).toContain("Session 2");
+  it("leaves out Alt+N on a Mac", () => {
+    const h = renderToStaticMarkup(<Launcher view={view()} os="mac" />);
+    expect(h).not.toContain("Alt+N");
+    expect(h).toMatch(/<input[^>]*placeholder="Claude Code"/);
   });
-  it("says nothing when the parent does not know it", () => {
-    expect(html()).not.toContain("launcher__next");
+  it("shows what was typed, and the given placeholder", () => {
+    const h = html(view({ name: "fix", namePlaceholder: "fix-login" }));
+    expect(h).toMatch(/<input[^>]*placeholder="fix-login"/);
+    expect(h).toContain('value="fix"');
+  });
+  it("the_name_comes_after_the_prompt_in_tab_order", () => {
+    const h = html(view({ choice: { ...DEFAULT_CHOICE, worktree: true }, taskName: "fix" }));
+    const at = (s: string) => h.indexOf(s);
+    expect(at("First prompt")).toBeGreaterThan(-1);
+    expect(at("First prompt")).toBeLessThan(at(">Task name<"));
+    expect(at(">Task name<")).toBeLessThan(at(">Name<"));
+    expect(at(">Name<")).toBeLessThan(at("launcher__start"));
+    expect(h).not.toMatch(/tabindex="[1-9]/);
   });
 });
 
@@ -618,7 +635,7 @@ describe("Launcher: the Administrator chip", () => {
     const programs = LAUNCH_AGENTS.map((p) => p.id === "codex" ? { ...p, adminUnavailable: reason } : p);
     const off = renderToStaticMarkup(<Launcher agents={programs} view={view({ choice: { ...DEFAULT_CHOICE, agent: "codex" } })} />);
     expect(off).toContain('aria-disabled="true"');
-    expect(off).not.toContain("aria-keyshortcuts");
+    expect(off).not.toContain('aria-keyshortcuts="Alt+A"');
     expect(admin()).toContain('aria-keyshortcuts="Alt+A"');
   });
   it("shows for a shell too", () => {

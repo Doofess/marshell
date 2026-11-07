@@ -17,8 +17,11 @@ import {
   LAUNCH_AGENTS,
   LAUNCH_SHELLS,
   MODES,
+  MAX_SESSION_NAME,
   PACES,
   adminChip,
+  cleanName,
+  defaultSessionName,
   launcherSentence,
   programById,
   rememberedNote,
@@ -29,7 +32,7 @@ import {
 } from "./launchChoice";
 import { effectiveAgent, missingLine, type ShellOffer } from "./shellAgents";
 import { effectiveMode, nextOffered, offeredMode } from "../modes/sessionModes";
-import { adminKeyClaimed, focusFellOut, listNavKeys, stepActive } from "./launcherKeys";
+import { adminKeyClaimed, nameKeyClaimed, focusFellOut, listNavKeys, stepActive } from "./launcherKeys";
 import "./Launcher.css";
 import "../sessions/CloseBar.css";
 
@@ -64,6 +67,10 @@ export type LauncherView = {
   nextNumber?: number;
   /** The task name field's text. The field shows while the worktree chip is on in a folder in git; without this it never shows. */
   taskName?: string;
+  /** What was typed in the Name field; "" while untouched. */
+  name?: string;
+  /** What an empty Name means: the Task name while a task is made, else the name the core gives. Absent, the launcher works out the core's default. */
+  namePlaceholder?: string;
   /** When set, the confirm view replaces the sentence, the lists and the prompt line. */
   confirm?: TaskConfirm;
 };
@@ -86,6 +93,8 @@ type Props = {
   onElevated?: (on: boolean) => void;
   onBypassAck?: (on: boolean) => void;
   onTaskName?: (text: string) => void;
+  /** The Name field changed (Alt+N moves to it). */
+  onName?: (text: string) => void;
   /** Create and start, in the confirm view. */
   onConfirm?: () => void;
   /** Back to the sentence, in the confirm view. */
@@ -142,7 +151,7 @@ const cycle = <T,>(all: T[], now: T) => all[(all.indexOf(now) + 1) % all.length]
  * (it can still run in a worktree). The prompt line is set like the one in every pane (a flat command line), in the vendor's colour for an
  * agent. Presentational: the parent owns the state.
  */
-export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse, onShells, onAgents, onActive, onPrompt, onStart, onElevated, onBypassAck, onTaskName, onConfirm, onBack, onAllow, onSkipScripts, onClose, paceChip = true, os = "windows", pending = false, shells = LAUNCH_SHELLS, agents = LAUNCH_AGENTS, offer: offerProp, error, busy = false, busyText = "Creating the worktree…" }: Props) {
+export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse, onShells, onAgents, onActive, onPrompt, onStart, onElevated, onBypassAck, onTaskName, onName, onConfirm, onBack, onAllow, onSkipScripts, onClose, paceChip = true, os = "windows", pending = false, shells = LAUNCH_SHELLS, agents = LAUNCH_AGENTS, offer: offerProp, error, busy = false, busyText = "Creating the worktree…" }: Props) {
   const { choice, projects, query, activeIndex, remembered, nextNumber, taskName, confirm } = view;
   const project = projects.find((p) => p.id === choice.projectId);
   const offer: ShellOffer = offerProp ?? { state: "ready", offered: agents, missing: [] };
@@ -169,6 +178,8 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
   const needsAck = admin.on && agentRun && (mode === "bypass" || program?.adminSetupFailed === true);
   // While the shell is asked, only an agent waits: it may be one the shell lacks. Just the shell always starts.
   const canStart = !busy && !(checking && agentRun) && !(admin.on && program?.adminSetupPending) && (!needsAck || view.bypassAcknowledged === true);
+  const namePlaceholder = view.namePlaceholder ?? defaultSessionName(agentId, agents, shell);
+  const nameField = useRef<HTMLInputElement>(null);
   const start = () => {
     if (canStart) onStart?.();
   };
@@ -248,6 +259,11 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
         e.preventDefault();
         create();
       }
+      return;
+    }
+    if (nameKeyClaimed(e, os)) {
+      e.preventDefault();
+      nameField.current?.focus();
       return;
     }
     if (adminKeyClaimed(e, admin.enabled)) {
@@ -670,7 +686,24 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
                 <kbd>Tab</kbd> moves between choices {"·"} type a letter to pick {"·"} <kbd>Esc</kbd> closes
               </span>
               <span className="launcher__go">
-                {nextNumber !== undefined && <span className="launcher__next">Session {nextNumber}</span>}
+                <span className="launcher__name">
+                  <label className="launcher__name-label" htmlFor={id("name")}>
+                    Name
+                  </label>
+                  <input
+                    id={id("name")}
+                    ref={nameField}
+                    className="launcher__name-input"
+                    type="text"
+                    value={view.name ?? ""}
+                    placeholder={namePlaceholder}
+                    maxLength={MAX_SESSION_NAME}
+                    spellCheck={false}
+                    autoComplete="off"
+                    {...(os === "mac" ? {} : { "aria-keyshortcuts": "Alt+N" })}
+                    onChange={(e) => onName?.(cleanName(e.target.value))}
+                  />
+                </span>
                 <button type="button" className="launcher__start" disabled={!canStart} onClick={start}>
                   Start <kbd>Enter</kbd>
                 </button>

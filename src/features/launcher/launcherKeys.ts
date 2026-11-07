@@ -1,3 +1,4 @@
+import type { Os } from "../../lib/keymap";
 /** Where the launcher's highlighted option is being moved: the folder field (a text input), or the shell or agent list. */
 export type OpenList = "shells" | "agents" | "folder";
 
@@ -52,4 +53,14 @@ export function adminKey(e: { code: string; altKey: boolean; ctrlKey: boolean; m
 /** Alt+A is the chip's key only while the chip works; when it is off (macOS, Linux, a CLI that can't run elevated) the key is left alone, as Option+A is a letter on a Mac. */
 export function adminKeyClaimed(e: { code: string; altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }, enabled: boolean): boolean {
   return enabled && adminKey(e);
+}
+
+/** Alt+N, by its physical key: moves to the Name field from anywhere in the sheet. */
+export function nameKey(e: { code: string; altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }): boolean {
+  return e.code === "KeyN" && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+}
+
+/** Alt+N is the Name field's key except on a Mac, where Option+N is the dead key for a tilde (as Option+A is left alone for the Administrator chip). Tab still reaches the field. */
+export function nameKeyClaimed(e: Parameters<typeof nameKey>[0], os: Os): boolean {
+  return os !== "mac" && nameKey(e);
 }

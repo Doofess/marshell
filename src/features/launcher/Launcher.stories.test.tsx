@@ -12,7 +12,7 @@ describe("the launcher stories", () => {
     for (const n of names) expect((render(n).match(/class="theme-pair__panel"/g) ?? []).length, n).toBeGreaterThanOrEqual(n === "Interactive" ? 0 : 2);
   });
   it("show the new session's number, 4, because 4 is the lowest one free", () => {
-    expect(render("Empty")).toContain("Session 4");
+    expect(render("Empty")).toContain("session 4");
   });
   it("show a typed path that exists and one that doesn't", () => {
     expect(render("TypedPathFound")).toContain("Use");
