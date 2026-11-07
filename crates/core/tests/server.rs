@@ -729,6 +729,32 @@ async fn reopen_restores_profile_and_name() {
 }
 
 #[tokio::test]
+async fn a_created_name_follows_the_rename_rules() {
+    let app = sessions_app();
+    let long = "x".repeat(130);
+    let names = ["a\tb\nc\u{202e}d", "  padded  ", long.as_str(), " \t\u{200f} "];
+    for n in names {
+        let (status, _) = create_session(&app, serde_json::json!({ "name": n })).await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    let (status, _) = create_session(&app, serde_json::json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    let list = list_sessions(&app).await;
+    let got: Vec<&str> = list["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(got[0], "a b c d");
+    assert_eq!(got[1], "padded");
+    assert_eq!(got[2], "x".repeat(120));
+    // A name with nothing left after normalizing gets the default, as an empty one does.
+    // (The second unnamed session only gains its number, because the first holds the name.)
+    assert!(!got[3].trim().is_empty() && got[4].starts_with(got[3]));
+}
+
+#[tokio::test]
 async fn reopen_by_tab_id() {
     let app = sessions_app();
     let (_, a) = create_session(&app, serde_json::json!({ "name": "first" })).await;

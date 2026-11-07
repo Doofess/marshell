@@ -574,9 +574,9 @@ async fn start_session_as(
     check_agent_installed(st, &run, agent.as_deref())?;
     let cwd = start_folder(&run, cwd);
     // The base name: the requested one, else the agent, else the profile.
+    // A requested name follows the rename rules, whoever asks: control characters dropped, trimmed, 120 characters.
     let name = name
-        .map(|n| n.trim().to_string())
-        .filter(|n| !n.is_empty())
+        .and_then(|n| crate::history::marks::normalize_name(&n))
         .unwrap_or_else(|| {
             let agent_name = agent.as_deref().and_then(agent_display_name);
             agent_name.map_or_else(|| run.profile_name.clone(), String::from)
