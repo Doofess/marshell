@@ -1462,6 +1462,47 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
          - from a port chip;
          - by dropping a file on the pane, from quick open, or with Open file… or Open URL…;
          - from a + menu on the tab strip: New browser tab, Open file… and recent files.
+   - **Slice 6q decisions (2026-11-07, second round).** Asked of the user on 2026-11-07, after the research in `docs/research/2026-11-07-tabs-pane-options.md`. They settle what the first round left open.
+     1. **The order is risk first.** Each part has its own plan, live check and pull request:
+        1. 6q-1 removes split view;
+        2. the 6q-0 browser spike runs, with no merge;
+        3. 6q-2 adds the pane and the tabs foundation;
+        4. 6q-3 adds the browser;
+        5. 6q-4 adds the text editor;
+        6. 6q-5 adds PDF find, outline and thumbnails;
+        7. 6q-6 adds PDF notes.
+
+        The spike's answer shapes the foundation's geometry.
+     2. **The browser starts as a spike, and the user decides after it.** A throwaway prototype on the real frameless window tests:
+        - keys;
+        - focus after Alt+Tab;
+        - resize at 125% and 150%;
+        - file drop;
+        - F12.
+
+        The browser kind is built only if the spike passes and the user approves it. If it fails, links and port chips open the system browser instead. Tauri's `unstable` feature and the capability change from `windows` to `webviews` still need the user's approval under SCOPE.md.
+     3. **An overlay over a browser tab freezes the page as a picture.** While the palette, a menu, a dialog or the + menu is open, the page is hidden and a screenshot stands in, with a short flash. Region to prompt works on that frozen picture.
+     4. **The page keeps the browser's keys.** While a page has focus:
+        - F5, Ctrl+R, Ctrl+F and Ctrl+P work in the page;
+        - Marshell's chords (Ctrl+Shift+K, Ctrl+Shift+Q and the like), Ctrl+L for the address bar, and Esc go to the app.
+     5. **A popup opens as a new tab.** Sign-in flows that need a link back to their opener fail; the person signs in on the site's own page instead.
+     6. **A page an agent asks for opens in the background.** The request comes through the marshell CLI or the local API.
+        - Only http and https are opened.
+        - Tabs per session are capped.
+        - Focus is never taken.
+        - The tab is marked with the agent's name.
+
+        It uses the signed-in profile.
+     7. **Ctrl+S saves at once, anywhere the person can write.**
+        - A backup snapshot and Undo come first.
+        - Marshell's own folder, managed settings files, UNC paths and device paths stay refused.
+
+        This lifts `.claude/rules/local-api.md`'s "No route takes a file path to write" for the user-file save route alone. Config writes keep their preview.
+     8. **In a text tab, Tab indents, and Esc then Tab leaves.** The way out is in the tab's help text, and Ctrl+M toggles it, as in CodeMirror.
+     9. **The first PDF notes are highlights, comments and free text.**
+        - A highlight can carry a comment, which works in any script.
+        - Free text warns when its text is non-Latin, since Chrome and Edge may show nothing for it.
+        - Ink, stamps and signatures stay out.
 7. **Doctor**: the fix actions, on top of the phase-3 config core: "Fix X issues" and one-click undo; folds in each CLI's own doctor; detects duplicate notifications and offers to turn off each CLI's own desktop notifications (brief §5.5, moved here by slice 4e decision 4); reports the tokens injected by project references; checks Codex hook trust; waste checks (unused MCP servers and skills, long descriptions, broad scopes, a token-cost estimate); offers to raise `cleanupPeriodDays`.
    - Added 2026-10-16 (research in `docs/research/2026-10-16-accounts-cloud-extensions.md`):
      - **One-click doctor per CLI.** It runs the CLI's own doctor (`claude doctor` text, `codex doctor --json`) and opens a summary window of suggested fixes. Every fix goes through preview, backup and undo; nothing is applied silently. Antigravity has no doctor command, so it gets none.
