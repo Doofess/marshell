@@ -287,6 +287,8 @@ mod tests {
         ]);
         assert!(quiet_argv(&shimmed));
         assert!(quiet_argv(&argv(&["python", "C:\\tools\\gcloud.py", "auth", "login"])));
+        // az.cmd runs a module, not a script file, so only the shared script table names it.
+        assert!(quiet_argv(&argv(&["python.exe", "-IBm", "azure.cli", "login"])));
         assert!(!quiet_argv(&argv(&["node", "server.js"])));
         assert!(!quiet_argv(&argv(&["python", "-m", "http.server", "8765"])));
         assert!(

@@ -82,6 +82,14 @@ mod tests {
         assert!(w.secret);
         assert_eq!(w.label, "gh auth token …");
         assert!(watch_for_argv(&argv(&["gh", "auth", "login"])).quiet_ports);
+        // A node child is named by its script: Command Prompt's supabase.cmd shows only as node and main.js.
+        let w = watch_for_argv(&argv(&[
+            "node",
+            "C:\\x\\node_modules\\supabase\\bin\\main.js",
+            "status",
+        ]));
+        assert!(w.secret);
+        assert_eq!(w.label, "supabase status …");
         assert!(!watch_for_argv(&argv(&["vercel", "dev"])).secret);
     }
 }
