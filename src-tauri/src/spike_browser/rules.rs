@@ -1,6 +1,29 @@
 //! Spike 6q-0: the pure rules the browser child follows. Kept apart so 6q-3 can lift them as they are.
 
+use super::PaneRect;
 use tauri::Url;
+
+/// A rect in CSS (logical) pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LogicalRect {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+/// Anchor mode: where the pane goes when the window becomes `win_width`×`win_height`, before the front has measured
+/// again. It keeps its width and its right and bottom insets, so it rides the right edge, and its height stretches.
+pub fn anchored(rect: PaneRect, win_width: f64, win_height: f64) -> LogicalRect {
+    let right = rect.win_width - (rect.x + rect.width);
+    let bottom = rect.win_height - (rect.y + rect.height);
+    LogicalRect {
+        x: (win_width - right - rect.width).max(0.0),
+        y: rect.y,
+        width: rect.width,
+        height: (win_height - bottom - rect.y).max(0.0),
+    }
+}
 
 /// Where the page may go: web pages and a blank page. The app's own `*.localhost` hosts (its assets, its IPC) are never a
 /// page, and `localhost` itself is, for port chips. Every way in (typed, a link, a redirect, a drop) passes through here.
@@ -241,6 +264,50 @@ mod tests {
         // One rule for every way in: on_navigation sees redirects and drops as plain URLs.
         assert!(!allowed_navigation(&Url::parse("file://server/share/a.pdf").unwrap()));
         assert!(!allowed_navigation(&Url::parse("http://sub.tauri.localhost/").unwrap()));
+    }
+
+    #[test]
+    fn the_pane_rides_the_right_edge() {
+        let r = PaneRect {
+            x: 700.0,
+            y: 40.0,
+            width: 480.0,
+            height: 700.0,
+            win_width: 1200.0,
+            win_height: 780.0,
+        };
+        assert_eq!(
+            anchored(r, 1200.0, 780.0),
+            LogicalRect {
+                x: 700.0,
+                y: 40.0,
+                width: 480.0,
+                height: 700.0
+            }
+        );
+        assert_eq!(
+            anchored(r, 1300.0, 830.0),
+            LogicalRect {
+                x: 800.0,
+                y: 40.0,
+                width: 480.0,
+                height: 750.0
+            }
+        );
+    }
+
+    #[test]
+    fn a_tiny_window_never_gives_negative_bounds() {
+        let r = PaneRect {
+            x: 700.0,
+            y: 40.0,
+            width: 480.0,
+            height: 700.0,
+            win_width: 1200.0,
+            win_height: 780.0,
+        };
+        let a = anchored(r, 300.0, 60.0);
+        assert!(a.x >= 0.0 && a.height >= 0.0);
     }
 
     #[test]

@@ -110,6 +110,58 @@ pub fn set_bounds(app: &AppHandle, x: f64, y: f64, width: f64, height: f64, why:
     Ok(())
 }
 
+/// Anchor mode (Task 4): when the app's window is resized, the page moves at once from the last measured rect, without
+/// waiting for the front. The front's next report still corrects it.
+pub fn on_resized(app: &AppHandle, size: tauri::PhysicalSize<u32>) {
+    let Some(state) = app.try_state::<SpikeState>() else {
+        return;
+    };
+    if !state.anchor.load(Ordering::SeqCst) {
+        return;
+    }
+    let Some(rect) = state.rect.lock().ok().and_then(|r| *r) else {
+        return;
+    };
+    let Some(main) = app.get_webview_window("main") else {
+        return;
+    };
+    let size = size.to_logical::<f64>(main.scale_factor().unwrap_or(1.0));
+    let a = rules::anchored(rect, size.width, size.height);
+    let _ = set_bounds(app, a.x, a.y, a.width, a.height, "anchor");
+}
+
+/// Task 8: every file drag over any webview, with the webview's label. The paths stay out of the log; their count and
+/// extensions say enough.
+pub fn on_drag_drop(webview: &tauri::Webview, event: &tauri::DragDropEvent) {
+    let files = |paths: &[PathBuf]| -> Vec<String> {
+        paths
+            .iter()
+            .map(|p| {
+                p.extension()
+                    .map(|e| e.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            })
+            .collect()
+    };
+    let (kind, data) = match event {
+        tauri::DragDropEvent::Enter { paths, position } => (
+            "enter",
+            json!({ "files": files(paths), "x": position.x, "y": position.y }),
+        ),
+        tauri::DragDropEvent::Drop { paths, position } => (
+            "drop",
+            json!({ "files": files(paths), "x": position.x, "y": position.y }),
+        ),
+        tauri::DragDropEvent::Leave => ("leave", json!({})),
+        // Over comes on every mouse move; enter, drop and leave say what happened.
+        _ => return,
+    };
+    let mut line = data;
+    line["label"] = webview.label().into();
+    line["kind"] = kind.into();
+    log(webview.app_handle(), "rust", "drag-drop", line);
+}
+
 #[tauri::command]
 pub async fn spike_browser_open(app: AppHandle, url: String, rect: PaneRect) -> Result<(), String> {
     let url: Url = url.parse().map_err(|e| format!("not a URL: {e}"))?;

@@ -314,6 +314,16 @@ fn main() {
             if matches!(event, tauri::WindowEvent::ThemeChanged(_)) {
                 tray::theme_changed(window.app_handle());
             }
+            if let tauri::WindowEvent::Resized(size) = event
+                && window.label() == "main"
+            {
+                spike_browser::on_resized(window.app_handle(), *size); // spike 6q-0
+            }
+        })
+        .on_webview_event(|webview, event| {
+            if let tauri::WebviewEvent::DragDrop(e) = event {
+                spike_browser::on_drag_drop(webview, e); // spike 6q-0
+            }
         })
         .setup(|app| {
             if let Err(e) = notify::init(app.handle()) {
