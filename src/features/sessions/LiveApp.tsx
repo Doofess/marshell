@@ -118,6 +118,7 @@ import { ENDED_PHRASE, lastSegment, nameAgents, planRing } from "./toRow";
 import { useSessions } from "./useSessions";
 import { BrowserSpike } from "../spike/BrowserSpike"; // spike 6q-0
 import { useBrowserSpike } from "../spike/useBrowserSpike"; // spike 6q-0
+import { useSpikeKeys } from "../spike/useSpikeKeys"; // spike 6q-0
 
 /** The size a new session starts at until a terminal has been measured. */
 const DEFAULT_SIZE = { cols: 120, rows: 30 };
@@ -198,6 +199,8 @@ export function LiveApp() {
   // The preview pane: its history lives here so it outlasts a session switch. Open, it is about the focused session's window only.
   const preview = usePreview();
   const spike = useBrowserSpike(); // spike 6q-0
+  const spikeRef = useRef(spike); // spike 6q-0
+  spikeRef.current = spike;
   const previewRef = useRef(preview);
   previewRef.current = preview;
   const previewEntry = preview.state.open ? currentOf(preview.state) : undefined;
@@ -418,7 +421,9 @@ export function LiveApp() {
   useAttention(needsYou);
   const [drawerId, setDrawerId] = useState<string | undefined>(undefined);
   const drawerRequest = requests.find((r) => r.id === drawerId && r.state.phase === "pending");
+  // spike 6q-0 (below)
   const actions = useMemo(() => new SessionActions({ api: sessions, context: () => context.current, select: (id) => pickRef.current(id), size: () => size.current, settings: sync ?? undefined }), []);
+  useSpikeKeys({ spike, overlay, focusTerminal: () => actions.focusTerminal(), closeOverlay: () => setOverlay(null) }); // spike 6q-0
 
   const answerRequest = useCallback(
     (r: ApprovalRequest, a: Answer) => {
@@ -1175,6 +1180,11 @@ export function LiveApp() {
       switch (shortcut?.kind) {
         // With nothing opened yet there is nothing to bring back: the palette is where a file is picked.
         case "preview":
+          // spike 6q-0: Ctrl+Shift+Q shows and hides the browser pane while the spike is open.
+          if (spikeRef.current.active) {
+            spikeRef.current.toggle();
+            return true;
+          }
           if (previewRef.current.state.entries.length === 0) {
             setFilesOnly(true);
             setOverlay("palette");

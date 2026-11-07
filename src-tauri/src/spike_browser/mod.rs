@@ -187,6 +187,16 @@ pub async fn spike_browser_close(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// `reason`: "next", "previous" or "programmatic" (COREWEBVIEW2_MOVE_FOCUS_REASON_*).
+#[tauri::command]
+pub async fn spike_browser_focus(app: AppHandle, reason: String) -> Result<(), String> {
+    log(&app, "rust", "focus-page", json!({ "reason": reason }));
+    #[cfg(windows)]
+    return com::focus_page(&app, &reason);
+    #[cfg(not(windows))]
+    return page(&app)?.set_focus().map_err(|e| e.to_string());
+}
+
 #[tauri::command]
 pub async fn spike_log(app: AppHandle, event: String, data: Value) -> Result<(), String> {
     log(&app, "front", &event, data);
