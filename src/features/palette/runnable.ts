@@ -4,8 +4,6 @@ export type RunFacts = {
   focused: boolean;
   /** How many sessions the list shows. */
   sessions: number;
-  /** The view shows more than one pane. */
-  split: boolean;
   /** A session or request is waiting for the person. */
   waiting: boolean;
   /** A closed session can be reopened. */
@@ -22,7 +20,6 @@ const NEEDS: ReadonlyArray<[Need, readonly string[]]> = [
   ["focused", ["close", "rename", "focus-prompt", "find", "bookmark", "announce-status", "prompt-prev", "prompt-next", "move-up", "move-down"]],
   ["any session", ["go-to-session"]],
   ["two sessions", ["move-up", "move-down"]],
-  ["split", ["unsplit", "zoom-pane", "layout"]],
   ["waiting", ["next-waiting"]],
   ["closed", ["reopen"]],
   ["shellPanel", ["shell-panel"]],

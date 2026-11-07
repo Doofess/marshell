@@ -41,15 +41,15 @@ export type ShellPanelProps = {
   openDisabled?: boolean;
   /** The toggle button: hide the panel, or show it again. */
   onToggle?: () => void;
-  /** The "open in a pane" button. */
-  onOpenInPane?: () => void;
+  /** The "open as a session" button. */
+  onOpenAsSession?: () => void;
 };
 
 /**
  * A plain command prompt in the sidebar, for the commands a person still runs by hand. It belongs to no agent: no vendor
- * stripe or accent, no prompt bar, and nothing typed here ever reaches a session. It can open in a pane, and it can hide.
+ * stripe or accent, no prompt bar, and nothing typed here ever reaches a session. It can open as a session, and it can hide.
  */
-export function ShellPanel({ height, cwd, shellName = "PowerShell", collapsed = false, auto = false, os = "windows", setting = "follow-app", terminal, failed = false, onRetry, openDisabled = false, onToggle, onOpenInPane }: ShellPanelProps) {
+export function ShellPanel({ height, cwd, shellName = "PowerShell", collapsed = false, auto = false, os = "windows", setting = "follow-app", terminal, failed = false, onRetry, openDisabled = false, onToggle, onOpenAsSession }: ShellPanelProps) {
   const keys = shortcutLabel(commandById("shell-panel").binding!, os);
   return (
     <section className="shell-panel" aria-label="Shell" style={{ blockSize: height }} data-collapsed={collapsed || undefined} data-auto={(collapsed && auto) || undefined}>
@@ -62,7 +62,7 @@ export function ShellPanel({ height, cwd, shellName = "PowerShell", collapsed = 
           </span>
         )}
         <span className="shell-panel__spacer" />
-        <button type="button" className="shell-panel__button" aria-label={`Open ${shellName} in a pane`} title={`Open ${shellName} in a pane`} aria-disabled={openDisabled || undefined} onClick={openDisabled ? undefined : onOpenInPane}>
+        <button type="button" className="shell-panel__button" aria-label={`Open ${shellName} as a session`} title={`Open ${shellName} as a session`} aria-disabled={openDisabled || undefined} onClick={openDisabled ? undefined : onOpenAsSession}>
           {icon(SPLIT)}
         </button>
         <button

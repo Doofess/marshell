@@ -18,9 +18,7 @@ const EDGES: Record<string, string[]> = {
   "features/departures/Board.css": [".board__status", ".board__waiting", ".board__all"],
   "features/notifications/OsBanner.css": [".os-banner", ".os-banner__btn"],
   "features/tray/Tray.css": [".tray-menu"],
-  "features/window/SplitView.css": [".pane__new", ".pane__choice"],
   "features/window/MainWindow.css": [".window", ".window__palette", ".focus-pill"],
-  "features/window/LayoutMenu.css": [".layout-menu", ".layout-menu__option", ".layout-menu__count"],
   "features/composer/Composer.css": [".composer", ".composer__send"],
   "features/composer/StatusBar.css": [".status-bar"],
   "features/window/Rail.css": [".rail__tool"],
@@ -82,10 +80,6 @@ describe("forced colours: every filled control keeps an edge", () => {
   it("features/window/SessionHeader.css: a risky-mode header keeps a 2px CanvasText outline", () => {
     const blocks = forcedColorsBlocks(read("features/window/SessionHeader.css"));
     expect(blocks.some((b) => /\.session-header\[data-danger\]\s*\{[^}]*outline:\s*2px solid CanvasText/.test(b))).toBe(true);
-  });
-  it("features/window/SplitView.css: a risky-mode pane header keeps the same 2px CanvasText outline", () => {
-    const blocks = forcedColorsBlocks(read("features/window/SplitView.css"));
-    expect(blocks.some((b) => /\.pane__header\[data-danger\]\s*\{[^}]*outline:\s*2px solid CanvasText/.test(b))).toBe(true);
   });
 
   /** The selected rail item and the selected session row are marked by an inset fill, which High Contrast drops, so each takes a 2 px Highlight outline. */

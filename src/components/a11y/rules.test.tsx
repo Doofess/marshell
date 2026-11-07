@@ -65,25 +65,10 @@ function toggles(html: string): string[] {
 }
 
 describe("a toggle keeps one name across its states", () => {
-  const win = (p: Partial<Parameters<typeof MainWindow>[0]>) =>
-    renderToStaticMarkup(<MainWindow width={1700} height={900} rows={SCENARIO_ROWS} requests={SCENARIO_REQUESTS} selectedId="working" layout="split" splitCount={4} {...p} />);
-
-  it("zoom pane: the same buttons are named the same zoomed and not zoomed", () => {
-    const a = toggles(win({ zoomedPane: undefined }));
-    const b = toggles(win({ zoomedPane: 1 }));
-    expect(a.length).toBeGreaterThan(0);
-    expect(b.filter((n) => a.includes(n)).length).toBeGreaterThan(0);
-    for (const name of b) expect(a, `"${name}" exists with the zoom off too`).toContain(name);
-  });
   it("shell panel: hidden and shown give the same name", () => {
     const shown = toggles(renderToStaticMarkup(<ShellPanel height={284} cwd="my-app" collapsed={false} />));
     const hidden = toggles(renderToStaticMarkup(<ShellPanel height={40} cwd="my-app" collapsed />));
     expect(shown).toEqual(hidden);
-  });
-  it("the layout button keeps its name open and closed", () => {
-    const closed = toggles(win({}));
-    const open = toggles(win({ layoutMenuOpen: true } as never));
-    for (const name of open) expect(closed).toContain(name);
   });
 });
 
@@ -92,7 +77,7 @@ describe("the window has exactly one live region", () => {
   const live = (h: string) => (h.match(/role="(status|alert)"|aria-live=/g) ?? []).length;
   const WIN = { width: 1700, height: 900, rows: SCENARIO_ROWS, requests: SCENARIO_REQUESTS, selectedId: "working" } as const;
   it("in every layout the markup has role=status/aria-live once (role and aria-live sit on the same element, so the pair counts as one)", () => {
-    for (const p of [{}, { layout: "split", splitCount: 2 }, { layout: "split", splitCount: 4 }, { layout: "split", splitCount: 4, zoomedPane: 1 }, { focusMode: true }, { mode: "rail" }] as const) {
+    for (const p of [{}, { focusMode: true }, { mode: "rail" }] as const) {
       const h = renderToStaticMarkup(<MainWindow {...WIN} {...(p as object)} />);
       expect((h.match(/role="status"/g) ?? []).length, JSON.stringify(p)).toBe(1);
       expect((h.match(/aria-live=/g) ?? []).length, JSON.stringify(p)).toBe(1);

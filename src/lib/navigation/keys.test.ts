@@ -42,8 +42,14 @@ describe("the navigation modifier going down and up", () => {
 });
 
 describe("keys with the modifier held", () => {
-  it("Tab cycles the terminals on screen, even from inside a terminal, and is kept from the program", () => {
+  it("Tab selects the terminal on screen, even from inside a terminal, and is kept from the program", () => {
     for (const focus of ["terminal", "editable", "control", "none"] as FocusKind[]) expect(down(ev("Tab", CS), focus, held()), focus).toEqual({ events: [{ type: "tab" }], preventDefault: true });
+  });
+  it("nav Tab starts the cursor from a terminal with one slot", () => {
+    const first = down(ev("Tab", CS), "terminal");
+    expect(first).toEqual({ events: [{ type: "modifier-down" }, { type: "tab" }], preventDefault: true });
+    // The modifier is still held and Tab has started navigation: an arrow in the terminal now moves the cursor.
+    expect(down(ev("ArrowLeft", CS), "terminal", held({ selectedPane: 0, engaged: true }))?.events).toEqual([{ type: "arrow", dir: "left" }]);
   });
   it("sends modifier-down first when the press of Tab is the first the page has heard of the modifier", () => {
     expect(down(ev("Tab", CS))).toEqual({ events: [{ type: "modifier-down" }, { type: "tab" }], preventDefault: true });

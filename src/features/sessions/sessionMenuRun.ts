@@ -2,7 +2,6 @@ import type { Profile } from "../../generated/Profile";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import type { SessionMenuFacts } from "../sidebar/sessionMenu";
 import type { RowModel } from "../sidebar/types";
-import { roomForPane } from "../window/viewState";
 import { MODES } from "../modes/sessionModes";
 import type { Mode } from "../sidebar/types";
 import type { Endpoint } from "../../generated/Endpoint";
@@ -10,21 +9,17 @@ import { sessions } from "../../lib/api/sessions";
 import { ENDED_FIRST, copyResumeCommand, openInSystemTerminal } from "./resumeActions";
 import { offersModeChange, resumeBlockedReason } from "./resumeState";
 
-/** What the window knows about a session, as the row menu's item list needs it. `shown` panes are on screen; `fit` is the most the window has room for. */
+/** What the window knows about a session, as the row menu's item list needs it. */
 export function menuFacts(
   id: string,
   ctx: {
     infos: SessionInfo[];
     profiles: Profile[];
     rows: RowModel[];
-    panes: (string | null)[];
-    shown: number;
-    fit: number;
     /** The modes the session's agent can switch to; absent means the five. */
     offered?: (agent: string) => readonly Mode[];
   },
 ): SessionMenuFacts {
-  const onScreen = ctx.panes.slice(0, ctx.shown);
   const info = ctx.infos.find((i) => i.tab_id === id);
   const row = ctx.rows.find((r) => r.id === id);
   const offered = info?.agent && ctx.offered ? ctx.offered(info.agent) : MODES;
@@ -39,12 +34,10 @@ export function menuFacts(
     setupOutput: row?.setupNote?.tabId !== undefined,
     muted: info?.muted === true,
     bookmarkable: info?.agent === "claude",
-    inShownPane: onScreen.includes(id),
     pausable: info !== undefined && info.state.kind === "running" && !info.paused && info.elevated !== true,
     pauseUnavailable: info !== undefined && info.state.kind === "running" && !info.paused && info.elevated === true,
     elevated: info?.elevated === true,
     paused: info !== undefined && info.state.kind === "running" && info.paused,
-    paneAvailable: onScreen.includes(null) || roomForPane(ctx.panes.length, ctx.fit),
   };
 }
 
@@ -76,7 +69,6 @@ export function focusAfterMenu(itemId: string, confirms: boolean): "row" | "term
     case "mute":
     case "unmute":
       return "row";
-    case "split":
     case "continue":
       return "terminal";
     case "close":

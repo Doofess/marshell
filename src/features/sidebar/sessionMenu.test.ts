@@ -5,8 +5,8 @@ import { menuFacts } from "../sessions/sessionMenuRun";
 import { FIXTURES } from "./fixtures";
 import { modeMenuItems, resumeLabel, sessionMenuItems, type SessionMenuFacts } from "./sessionMenu";
 
-const all: SessionMenuFacts = { agent: true, modeChangeable: true, resumable: true, task: true, inShownPane: false, paneAvailable: true, pausable: true, paused: false, muted: false, bookmarkable: true, setupOutput: false };
-const none: SessionMenuFacts = { agent: false, modeChangeable: true, resumable: false, task: false, inShownPane: false, paneAvailable: false, pausable: false, paused: false, muted: false, bookmarkable: false, setupOutput: false };
+const all: SessionMenuFacts = { agent: true, modeChangeable: true, resumable: true, task: true, pausable: true, paused: false, muted: false, bookmarkable: true, setupOutput: false };
+const none: SessionMenuFacts = { agent: false, modeChangeable: true, resumable: false, task: false, pausable: false, paused: false, muted: false, bookmarkable: false, setupOutput: false };
 
 const ids = (facts: SessionMenuFacts) =>
   sessionMenuItems(facts, "windows").map((i) => ("separator" in i ? "-" : i.id));
@@ -14,10 +14,9 @@ const ids = (facts: SessionMenuFacts) =>
 describe("sessionMenuItems", () => {
   it("shows every item in order with its shortcut", () => {
     const items = sessionMenuItems(all, "windows");
-    expect(ids(all)).toEqual(["rename", "split", "resume", "copy-resume", "open-outside", "mode", "pause", "bookmark", "mute", "review-task", "-", "close"]);
+    expect(ids(all)).toEqual(["rename", "resume", "copy-resume", "open-outside", "mode", "pause", "bookmark", "mute", "review-task", "-", "close"]);
     expect(items.map((i) => ("separator" in i ? undefined : i.shortcut))).toEqual([
       "F2",
-      undefined,
       undefined,
       undefined,
       undefined,
@@ -43,11 +42,11 @@ describe("sessionMenuItems", () => {
     const labels = sessionMenuItems(all, "windows").flatMap((i) => ("separator" in i ? [] : [i.label]));
     expect(labels).toEqual(expect.arrayContaining(["Copy resume command", "Open in system terminal"]));
   });
-  it("hides Split for a session already in a shown pane", () => {
-    expect(ids({ ...all, inShownPane: true })).not.toContain("split");
-  });
-  it("hides Split when no pane is available", () => {
-    expect(ids({ ...all, paneAvailable: false })).not.toContain("split");
+  it("no row menu offers Split into a pane", () => {
+    for (const facts of [all, none, { ...all, resumable: false }, { ...all, paused: true, pausable: false }]) {
+      expect(ids(facts)).not.toContain("split");
+      expect(sessionMenuItems(facts, "windows").flatMap((i) => ("separator" in i ? [] : [i.label]))).not.toContain("Split into a pane");
+    }
   });
   it("hides Resume when the session is not resumable", () => {
     expect(ids({ ...all, resumable: false })).not.toContain("resume");
@@ -68,7 +67,7 @@ describe("Mode ▸", () => {
   it("hides Mode for an ended agent in a running shell, then restores it when the shell exits", () => {
     const row = { ...FIXTURES[0]!, status: "ended" as const };
     const info = { tab_id: row.id, agent: "claude", state: { kind: "running" }, paused: false } as SessionInfo;
-    const ctx = { infos: [info], rows: [row], profiles: [], panes: [row.id], shown: 1, fit: 4 };
+    const ctx = { infos: [info], rows: [row], profiles: [] };
     expect(ids(menuFacts(row.id, ctx))).not.toContain("mode");
     expect(ids(menuFacts(row.id, { ...ctx, infos: [{ ...info, state: { kind: "exited", code: 0 } }] }))).toContain("mode");
     expect(ids(menuFacts(row.id, { ...ctx, rows: [{ ...row, status: "working" }] }))).toContain("mode");
@@ -180,7 +179,7 @@ describe("a session running as administrator", () => {
   });
   it("the window's facts say it from the session", () => {
     const info = { tab_id: "a", agent: "claude", state: { kind: "running" }, paused: false, elevated: true, mode: "manual", profile_id: "pwsh" } as SessionInfo;
-    const facts = menuFacts("a", { infos: [info], profiles: [], rows: [], panes: [], shown: 1, fit: 4 });
+    const facts = menuFacts("a", { infos: [info], profiles: [], rows: [] });
     expect(facts).toMatchObject({ pausable: false, pauseUnavailable: true, elevated: true });
   });
 });

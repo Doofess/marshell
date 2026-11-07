@@ -415,19 +415,19 @@ pub struct SavedTab {
     pub preset: Option<String>,
 }
 
-/// How the window was laid out: which tabs sit in which panes, and the sidebar.
+/// How the window was laid out: the selected tab and the sidebar.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ViewLayout {
-    /// One entry per pane (1 to 4): the tab shown there, or None for an empty pane.
+    /// Always one entry: the selected tab, or None. A file from before slice 6q-1 can hold up to four; the core keeps only the focused one.
     pub panes: Vec<Option<String>>,
-    /// An Arrangement name, or None for automatic.
+    /// Unused since slice 6q-1 removed split view: always None (or empty). Kept so an older build can still read the file.
     pub arrangement: Option<String>,
-    /// Pane size ratios. Empty means even.
+    /// Unused since slice 6q-1 removed split view: always None (or empty). Kept so an older build can still read the file.
     pub ratios: Vec<f32>,
     /// Index of the focused pane.
     pub active: u32,
-    /// Index of the zoomed pane, if one is zoomed.
+    /// Unused since slice 6q-1 removed split view: always None (or empty). Kept so an older build can still read the file.
     pub zoomed: Option<u32>,
     /// "expanded", "rail" or "focus".
     pub sidebar: String,

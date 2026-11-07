@@ -2,7 +2,7 @@ import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
 import { MenuIcon } from "./MenuIcon";
-import { togglesPane, togglesPaneKey } from "../sidebar/rowPick";
+import { selectsByCtrlSpace } from "../sidebar/rowPick";
 import { rowLabel } from "../sidebar/labels";
 import { SessionNumber } from "../../components/SessionNumber/SessionNumber";
 import type { RowModel } from "../sidebar/types";
@@ -22,7 +22,6 @@ export function Rail({
   visibleIds,
   os = "windows",
   onSelect,
-  onToggle,
   onOpenMenu,
   menuOpen,
 }: {
@@ -34,7 +33,6 @@ export function Rail({
   visibleIds?: readonly string[];
   os?: Os;
   onSelect?: (id: string) => void;
-  onToggle?: (id: string) => void;
 }) {
   return (
     <div className="rail">
@@ -65,20 +63,14 @@ export function Rail({
               data-number={r.number}
               data-nav-row={r.number}
               aria-label={rowLabel(r)}
-              onClick={
-                (onSelect || onToggle) &&
-                ((e) =>
-                  onToggle && togglesPane(e, os)
-                    ? onToggle(r.id)
-                    : onSelect?.(r.id))
-              }
+              onClick={onSelect && (() => onSelect(r.id))}
               onKeyDown={
-                onToggle &&
+                onSelect &&
                 ((e) => {
-                  if (!togglesPaneKey(e)) return;
+                  if (!selectsByCtrlSpace(e)) return;
                   // Held off the button's own Space press, which would also click it.
                   e.preventDefault();
-                  onToggle(r.id);
+                  onSelect(r.id);
                 })
               }
             >

@@ -31,9 +31,9 @@ describe("ShellPanel", () => {
     expect(loading).not.toContain("didn&#x27;t start");
     expect(loading).toContain("shell-panel__terminal");
   });
-  it("can't open in a pane while there is no live shell", () => {
+  it("can't open as a session while there is no live shell", () => {
     const open = html({ openDisabled: true });
-    expect(open).toMatch(/aria-label="Open PowerShell in a pane"[^>]*aria-disabled="true"|aria-disabled="true"[^>]*aria-label="Open PowerShell in a pane"/);
+    expect(open).toMatch(/aria-label="Open PowerShell as a session"[^>]*aria-disabled="true"|aria-disabled="true"[^>]*aria-label="Open PowerShell as a session"/);
     expect(html()).not.toContain("aria-disabled");
   });
   it("shows no live terminal while it is folded to its header", () => {
@@ -60,9 +60,9 @@ describe("ShellPanel", () => {
     expect(h).not.toContain("shell-panel__stripe");
     expect(h).not.toContain("composer");
   });
-  it("opens in a pane with a button named for what it does", () => {
-    expect(html()).toContain('aria-label="Open PowerShell in a pane"');
-    expect(html({ shellName: "bash" })).toContain('aria-label="Open bash in a pane"');
+  it("opens as a session with a button named for what it does", () => {
+    expect(html()).toContain('aria-label="Open PowerShell as a session"');
+    expect(html({ shellName: "bash" })).toContain('aria-label="Open bash as a session"');
   });
   it("hides and shows with one toggle that keeps one name; its state is aria-expanded, and its tooltip says what it will do", () => {
     const open = html();

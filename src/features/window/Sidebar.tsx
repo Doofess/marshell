@@ -25,7 +25,7 @@ export const ROW_HEIGHT = 56;
 export type SidebarFooter = { planPct?: number; fiveHourPct?: number; doctorIssues?: number };
 
 /** The plain shell under the list. Left out, the sidebar is just the lane, the list and the footer. */
-export type SidebarShell = { shellName?: ShellName; cwd?: string; collapsed?: boolean; os?: Os; terminal?: ReactNode; failed?: boolean; onRetry?: () => void; openDisabled?: boolean; forceOpen?: boolean; onToggle?: () => void; onOpenInPane?: () => void };
+export type SidebarShell = { shellName?: ShellName; cwd?: string; collapsed?: boolean; os?: Os; terminal?: ReactNode; failed?: boolean; onRetry?: () => void; openDisabled?: boolean; forceOpen?: boolean; onToggle?: () => void; onOpenAsSession?: () => void };
 
 /**
  * The expanded sidebar: the needs-you lane, the session list, an optional plain shell, and a 40 px footer with plan use
@@ -50,7 +50,6 @@ export function Sidebar({
   onRenameCancel,
   onReorder,
   onSelect,
-  onToggle,
   onReview,
   onSetup,
   menuItems,
@@ -75,7 +74,7 @@ export function Sidebar({
   width: number;
   /** The focused pane's session. */
   selectedId?: string;
-  /** Every session on screen: each is marked selected and the list becomes multi-select. Left out, only `selectedId` is marked. */
+  /** The session on screen, which is marked selected (none while History is shown). Left out, `selectedId` is marked. */
   visibleIds?: readonly string[];
   /** Decides which click toggles a pane. Defaults to Windows (Ctrl+click). */
   os?: Os;
@@ -96,7 +95,6 @@ export function Sidebar({
   /** A click on a row gives its session id. */
   onSelect?: (id: string) => void;
   /** Ctrl+click (Cmd on macOS) or Ctrl+Space on a row gives its session id: add or remove its pane. */
-  onToggle?: (id: string) => void;
   /** Opens the review of a task row's session (its Review changes button). */
   onReview?: (id: string) => void;
   /** Opens the hooks setup from a Claude Code row that says "Status limited". */
@@ -236,11 +234,9 @@ export function Sidebar({
       // With visible ids, a session in no pane on screen (the store's choice standing in for an empty pane) is not marked.
       selected={visibleIds ? visibleIds.includes(r.id) : r.id === selectedId}
       focused={visibleIds ? visibleIds.includes(r.id) && r.id === selectedId : false}
-      os={os}
       tabStop={r.id === tabStop}
       drag={dragFor(r.id)}
       onSelect={onSelect && (() => onSelect(r.id))}
-      onToggle={onToggle && (() => onToggle(r.id))}
       onReview={onReview && (() => onReview(r.id))}
       onSetup={onSetup && (() => onSetup(r.id))}
       peek={readScreen ? { onOpen: (el) => peek.openFromKey(r.id, el), onHover: (el) => peek.hoverRow(r.id, el), onLeave: peek.leaveRow } : undefined}
@@ -265,7 +261,6 @@ export function Sidebar({
         className="sidebar__list"
         role="listbox"
         aria-label="Sessions"
-        aria-multiselectable={visibleIds ? true : undefined}
         onKeyDown={(e) => {
           // Esc on a row while Peek is open (a hover opened it): close it and go back to the terminal.
           if (e.key === "Escape" && peek.state && !e.defaultPrevented) {
@@ -286,7 +281,7 @@ export function Sidebar({
             ))
           : rows.map(row)}
       </div>
-      {panel && shell && <ShellPanel height={panel.height} collapsed={panel.collapsed} auto={panel.auto} cwd={shell.cwd} shellName={shell.shellName} os={shell.os} terminal={shell.terminal} failed={shell.failed} onRetry={shell.onRetry} openDisabled={shell.openDisabled} onToggle={shell.onToggle} onOpenInPane={shell.onOpenInPane} />}
+      {panel && shell && <ShellPanel height={panel.height} collapsed={panel.collapsed} auto={panel.auto} cwd={shell.cwd} shellName={shell.shellName} os={shell.os} terminal={shell.terminal} failed={shell.failed} onRetry={shell.onRetry} openDisabled={shell.openDisabled} onToggle={shell.onToggle} onOpenAsSession={shell.onOpenAsSession} />}
       {peek.state && (() => {
         const r = rows.find((x) => x.id === peek.state!.id);
         return r ? <Peek row={r} rows={peek.state.rows} failed={peek.state.failed} focusOnOpen={peek.state.via === "key"} at={peek.state.at} onClose={closePeek} onPointerEnter={peek.hoverPeek} onPointerLeave={peek.leavePeek} /> : null;

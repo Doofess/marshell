@@ -7,7 +7,6 @@ export default meta;
 
 const ITEMS: MenuItem[] = [
   { id: "rename", label: "Rename", shortcut: "F2" },
-  { id: "split", label: "Split into a pane" },
   { id: "resume", label: "Resume" },
   { id: "review", label: "Review changes", shortcut: "Ctrl+Shift+R" },
   { separator: true },

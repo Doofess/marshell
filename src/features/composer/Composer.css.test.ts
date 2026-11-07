@@ -49,9 +49,6 @@ describe("Composer.css: a command line, not a floating card", () => {
     expect(css).toContain("@container (inline-size < 640px)");
     expect(css).not.toContain("@container (max-width");
   });
-  it("hides the compact notice's words, not its glyph, when the pane is narrow", () => {
-    expect(css).toMatch(/@container \(inline-size < \d+px\)\s*\{[^}]*\.composer\[data-variant="compact"\] \.composer__notice > span/);
-  });
   it("draws the key hint's divider on the start side in any writing direction, if it draws one", () => {
     expect(css).not.toMatch(/box-shadow:\s*inset 1px 0 0/);
   });

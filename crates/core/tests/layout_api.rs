@@ -60,9 +60,9 @@ async fn get_on_a_fresh_home_is_the_default_layout() {
 }
 
 #[tokio::test]
-async fn put_view_rejects_five_panes() {
+async fn put_view_rejects_two_panes() {
     let home = tempfile::tempdir().unwrap();
-    let body = view(serde_json::json!([null, null, null, null, null]));
+    let body = view(serde_json::json!([null, null]));
     let res = app_in(home.path())
         .oneshot(request("PUT", "/v1/layout/view", Some(body)))
         .await
@@ -76,7 +76,7 @@ async fn put_view_rejects_five_panes() {
 async fn put_view_then_get_returns_it() {
     let home = tempfile::tempdir().unwrap();
     let app = app_in(home.path());
-    let body = view(serde_json::json!([null, null]));
+    let body = view(serde_json::json!([null]));
     let res = app
         .clone()
         .oneshot(request("PUT", "/v1/layout/view", Some(body.clone())))

@@ -81,7 +81,7 @@ export const sessions = {
    */
   shellPanel: async (ep: Endpoint, cwd: string, size: { cols: number; rows: number }): Promise<string> =>
     (await api<{ tab_id: string }>(ep, "POST", "/v1/shell-panel", { cwd, ...size })).tab_id,
-  /** Turns the panel shell into a tab ("Open in a pane"). Rejects with a 404 ApiError when there is none. */
+  /** Turns the panel shell into a tab ("Open as a session"). Rejects with a 404 ApiError when there is none. */
   adoptShellPanel: async (ep: Endpoint): Promise<string> =>
     (await api<{ tab_id: string }>(ep, "POST", "/v1/shell-panel/adopt")).tab_id,
   /** The session's asciicast file. Rejects with a 404 ApiError ("This session has no recording.") when there is none. */

@@ -16,9 +16,23 @@ describe("MainWindow.css", () => {
     expect(r).toContain("inline-size: 46px");
     expect(r).toContain("block-size: 40px");
   });
-  it("puts the layout menu in a popover that hangs from the bar's end, above the panes", () => {
-    expect(rule(".window__popover")).toContain("position: absolute");
-    expect(rule(".window__popover")).toMatch(/z-index:\s*3/);
+  it("draws the preview divider as a hairline with an 8 px hit area, a focus ring and a press colour", () => {
+    expect(rule(".preview__divider")).toContain("--hit: 8px");
+    expect(css).toContain(".preview__divider::before");
+    expect(css).toContain(".preview__divider:focus-visible");
+    expect(css).toContain(".preview__divider:active");
+    expect(css).not.toContain("split__handle");
+  });
+  it("keeps the divider visible in forced colours while it is hovered or dragged, in a system colour", () => {
+    const block = (media: string) => {
+      const start = css.indexOf(`${media} {`, css.indexOf(".preview__divider {"));
+      return start < 0 ? "" : css.slice(start, css.indexOf("\n}", start));
+    };
+    const forced = block("@media (forced-colors: active)");
+    expect(forced).toMatch(/\.preview__divider \{\s*background: CanvasText;/);
+    expect(forced).toMatch(/\.preview__divider:active \{\s*background: Highlight;/);
+    // The hover stays where hover exists, like every :hover rule.
+    expect(block("@media (forced-colors: active) and (hover: hover) and (pointer: fine)")).toMatch(/\.preview__divider:hover \{\s*background: Highlight;/);
   });
   it("stacks the terminals above the prompt bar in one centre column", () => {
     const r = rule(".window__center");

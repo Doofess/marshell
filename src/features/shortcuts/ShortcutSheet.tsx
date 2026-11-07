@@ -23,7 +23,7 @@ export function sheetGroups(os: Os, nav: NavModifier = DEFAULT_NAV_MODIFIER, run
     title: "Navigation",
     rows: [
       ...COMMANDS.filter((c) => isNav(c) && runs(c.id)).map(row),
-      ...(runs("nav-next-pane") ? [{ key: "nav-arrows", label: "Move the cursor to any terminal, session or control", keys: join("←↑↓→") }] : []),
+      ...(runs("nav-next-pane") ? [{ key: "nav-arrows", label: "Move the cursor to the terminal, a session or a control", keys: join("←↑↓→") }] : []),
     ],
   };
   const rest = GROUPS.map((title): Group => {

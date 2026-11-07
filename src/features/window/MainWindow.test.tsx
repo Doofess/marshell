@@ -6,6 +6,7 @@ import { SCENARIO_REQUESTS, SCENARIO_ROWS } from "./scenario";
 import { windowTitle } from "./windowTitle";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import { offersModeChange } from "../sessions/resumeState";
+import { topAction } from "../sessions/useNavigation";
 
 const BIG = { width: 1700, height: 900 } as const;
 const html = (p: Partial<Parameters<typeof MainWindow>[0]> = {}) => renderToStaticMarkup(<MainWindow width={1180} height={800} selectedId="working" {...p} />);
@@ -76,26 +77,6 @@ describe("MainWindow: layouts", () => {
   it("uses the Mac shortcut label on macOS", () => {
     expect(html({ layout: "focus", sidebarPref: "focus", os: "mac" })).toContain("⌘N");
   });
-  it("split view has two panes, a separator and exactly one active pane", () => {
-    const h = html({ layout: "split" });
-    expect((h.match(/class="scripted-terminal" role="group" aria-label="Terminal for/g) ?? []).length).toBe(2);
-    expect(h).toContain('role="separator"');
-    expect((h.match(/data-active="true"/g) ?? []).length).toBe(1);
-    expect(h).toContain('data-active="false"');
-  });
-  it("with two or more panes on screen, the top bar names no session: each pane's own header does", () => {
-    expect(html({ layout: "split" })).not.toContain("session-header");
-    expect(html({ layout: "split", splitCount: 4, ...BIG })).not.toContain("session-header");
-  });
-  it("keeps the top bar's session header when one pane is on screen: zoomed, or a split too small for two", () => {
-    expect(html({ layout: "split", splitCount: 4, zoomedPane: 1, ...BIG })).toContain("session-header");
-    expect(html({ layout: "split", splitCount: 2, width: 720, height: 480 })).toContain("session-header");
-  });
-  it("tints a bypass or auto session's pane header, since the top bar no longer carries the warning", () => {
-    const rows = SCENARIO_ROWS.map((r) => (r.name === "billing" ? { ...r, mode: "bypass" as const } : r));
-    const h = html({ layout: "split", splitCount: 2, rows, ...BIG });
-    expect((h.match(/<header class="pane__header"[^>]*data-danger="true"/g) ?? []).length).toBe(1);
-  });
   it("the drawer shows the first request in full and pushes or overlays by width", () => {
     expect(html({ drawer: true, width: 1700 })).toContain('data-placement="push"');
     expect(html({ drawer: true, width: 1180 })).toContain('data-placement="overlay"');
@@ -152,80 +133,6 @@ describe("MainWindow: the palette button says what it is", () => {
   });
 });
 
-describe("MainWindow: split view up to four", () => {
-  const panes = (h: string) => (h.match(/<section class="pane"/g) ?? []).length;
-  it("shows two panes by default and up to four, in a window big enough for them", () => {
-    expect(panes(html({ layout: "split", ...BIG }))).toBe(2);
-    expect(panes(html({ layout: "split", splitCount: 3, ...BIG }))).toBe(3);
-    expect(panes(html({ layout: "split", splitCount: 4, ...BIG }))).toBe(4);
-  });
-  it("shows fewer than asked for when the window is too small to make them useful", () => {
-    expect(panes(html({ layout: "split", splitCount: 4, width: 720, height: 480 }))).toBe(1);
-    expect(panes(html({ layout: "split", splitCount: 3, width: 1180, height: 800 }))).toBe(2);
-    expect(panes(html({ layout: "split", splitCount: 4, width: 1500, height: 860 }))).toBe(4);
-  });
-  it("says in the header of the focused pane how many more are running out of sight", () => {
-    expect(html({ layout: "split", splitCount: 4, width: 720, height: 480 })).toContain("3 more running");
-    expect(html({ layout: "split", splitCount: 3, width: 1180, height: 800 })).toContain("1 more running");
-  });
-  it("counts each pane's own prompt line when it decides what fits", () => {
-    // Four panes need two stacked panes' worth of height (header, prompt line, padding and 14 terminal rows each) under the bar and the status bar.
-    // At 650 px tall the window falls short with prompt lines on; with them off the terminals get those rows back.
-    expect(panes(html({ layout: "split", splitCount: 4, width: 1500, height: 650 }))).toBeLessThan(4);
-    expect(panes(html({ layout: "split", splitCount: 4, width: 1500, height: 650, composer: false }))).toBe(4);
-  });
-  it("counts the status bar's height too: the same window holds four once the bar is off", () => {
-    expect(panes(html({ layout: "split", splitCount: 4, width: 1500, height: 700 }))).toBeLessThan(4);
-    expect(panes(html({ layout: "split", splitCount: 4, width: 1500, height: 700, statusBar: false }))).toBe(4);
-  });
-  it("starts with the selected session and fills the rest from the others in order, never twice", () => {
-    const h = html({ layout: "split", splitCount: 4, selectedId: "working", width: 1700, height: 900 });
-    expect(h.indexOf("terminal: api-server")).toBeLessThan(h.indexOf("terminal: billing"));
-    const names = [...h.matchAll(/aria-label="Session \d+, terminal: ([^"]+)"/g)].map((m) => m[1]);
-    expect(new Set(names).size).toBe(4);
-  });
-  it("leaves the window in the app accent with panes split: each pane carries its own vendor", () => {
-    expect(html({ layout: "split", splitCount: 2, activePane: 1 })).not.toMatch(/class="window"[^>]*data-agent/);
-  });
-  it("chooses the arrangement from the space the panes share, after the sidebar and bar", () => {
-    expect(html({ layout: "split", splitCount: 4, width: 1700, height: 900 })).toContain('data-arrangement="grid"');
-    expect(html({ layout: "split", splitCount: 2, width: 1700, height: 900 })).toContain('data-arrangement="columns"');
-  });
-  it("zooms one pane to fill the view", () => {
-    const h = html({ layout: "split", splitCount: 4, zoomedPane: 1, width: 1700, height: 900 });
-    expect(panes(h)).toBe(1);
-    expect(h).toContain("3 more running");
-  });
-  it("offers an empty pane the sessions that are not on screen", () => {
-    const h = html({ layout: "split", splitCount: 3, emptySlot: true, ...BIG });
-    expect(h).toContain("Choose a session for this pane");
-    expect(h).toContain("pane--empty");
-  });
-});
-
-describe("MainWindow: layout button", () => {
-  it("is in the bar, named, and closed by default", () => {
-    const h = html({ layout: "split" });
-    expect(h).toMatch(/aria-label="Split layout"[^>]*aria-haspopup="dialog"[^>]*aria-expanded="false"/);
-    expect(h).not.toContain('role="dialog"');
-  });
-  it("opens the layout menu with the current count and arrangement", () => {
-    const h = html({ layout: "split", splitCount: 4, layoutMenu: true, ...BIG });
-    expect(h).toContain('aria-expanded="true"');
-    expect(h).toContain('role="dialog"');
-    expect(h).toMatch(/aria-checked="true"[^>]*aria-label="4 panes"/);
-  });
-  it("tells the menu what the window can hold, so the counts it cannot are off", () => {
-    const h = html({ layout: "split", splitCount: 4, layoutMenu: true, width: 1180, height: 800 });
-    expect(h).toContain("This window fits 2");
-    expect(h).toContain("Showing 2 of 4");
-    expect(h).toMatch(/aria-disabled="true"[^>]*aria-label="3 panes"/);
-  });
-  it("is there in a single-pane window too, since that is where a user first splits", () => {
-    expect(html()).toContain('aria-label="Split layout"');
-  });
-});
-
 describe("MainWindow: the prompt line", () => {
   const BIG = { width: 1700, height: 900 } as const;
   const forms = (h: string) => (h.match(/<form class="composer"/g) ?? []).length;
@@ -241,94 +148,27 @@ describe("MainWindow: the prompt line", () => {
     expect(forms(html({ layout: "focus", sidebarPref: "focus" }))).toBe(0);
     expect(forms(html({ composer: false }))).toBe(0);
   });
-  it("in split view is individual: every pane has its own, and there is no window-level one", () => {
-    for (const n of [2, 3, 4] as const) {
-      const h = html({ layout: "split", splitCount: n, ...BIG });
-      expect(forms(h), String(n)).toBe(n);
-      expect(h, String(n)).not.toContain("window__composer");
-    }
-  });
-  it("names each pane's own session on its own line, so text typed in a pane goes to that pane's session", () => {
-    const h = html({ layout: "split", splitCount: 4, ...BIG });
-    const names = [...h.matchAll(/aria-label="Session \d+, terminal: ([^"]+)"/g)].map((m) => m[1]);
-    expect(names).toHaveLength(4);
-    for (const n of names) expect(h).toContain(`aria-label="Write to ${n}"`);
-  });
-  it("keeps the blocked state per pane: the pane whose session needs you is off while the others stay live", () => {
-    const h = html({ layout: "split", splitCount: 3, ...BIG });
-    const sections = h.split("</section>");
-    const off = (name: string) => /<textarea[^>]*disabled/.test(sections.find((x) => x.includes(`aria-label="Session ${NUM[name]}, terminal: ${name}"`))!);
-    expect(off("billing")).toBe(true);
-    expect(off("api-server")).toBe(false);
-  });
-  it("has none in an empty pane", () => {
-    const h = html({ layout: "split", splitCount: 3, emptySlot: true, ...BIG });
-    expect(forms(h)).toBe(2);
-    expect(h).toContain("Choose a session for this pane");
-  });
-  it("shows the text typed in a single window, and the text typed in each pane by session id", () => {
+  it("shows the text typed in the window", () => {
     expect(html({ composerValue: "Add retry tests" })).toContain("Add retry tests");
-    const h = html({ layout: "split", splitCount: 2, composerValues: { working: "run the tests again" }, ...BIG });
-    expect(h).toContain("run the tests again");
-    expect((h.match(/run the tests again/g) ?? []).length).toBe(1);
-  });
-  it("is off in every pane when the window turns prompt lines off", () => {
-    expect(forms(html({ layout: "split", splitCount: 4, composer: false, ...BIG }))).toBe(0);
   });
 });
 
-describe("MainWindow: the status bar follows the focused pane", () => {
+describe("MainWindow: the status bar follows the selected session", () => {
   const BIG = { width: 1700, height: 900 } as const;
   const bar = (h: string) => /<div class="window__status"[^>]*>([\s\S]*?)<\/div><\/div>/.exec(h)?.[0] ?? "";
+  it("shows the selected session: its model", () => {
+    expect(bar(html({ selectedId: "working" }))).toContain("Opus 5.5");
+    expect(bar(html({ selectedId: "needs-permission" }))).toContain("Sonnet 5.5");
+  });
   it("is a 24 px bar at the foot of the centre column, with the window's own height from the layout constants", () => {
     const h = html();
     expect(h).toMatch(/class="window__status"[^>]*style="block-size:\d+px"/);
     expect(h).toContain(`block-size:${STATUS_BAR_HEIGHT}px`);
   });
-  it("shows in the single window and in split view, and is gone in focus mode or when turned off", () => {
+  it("shows in the window, and is gone in focus mode or when turned off", () => {
     expect(html()).toContain("window__status");
-    expect(html({ layout: "split", ...BIG })).toContain("window__status");
     expect(html({ layout: "focus", sidebarPref: "focus" })).not.toContain("window__status");
     expect(html({ statusBar: false })).not.toContain("window__status");
-  });
-  it("shows the focused pane's session: its model, not the first pane's", () => {
-    expect(bar(html({ layout: "split", splitCount: 2, activePane: 0, ...BIG }))).toContain("Opus 5.5");
-    expect(bar(html({ layout: "split", splitCount: 2, activePane: 1, ...BIG }))).toContain("Sonnet 5.5");
-  });
-  it("follows a zoom: the zoomed pane is the focused one", () => {
-    expect(bar(html({ layout: "split", splitCount: 4, zoomedPane: 1, activePane: 0, ...BIG }))).toContain("Sonnet 5.5");
-  });
-});
-
-describe("MainWindow: the review's critical findings", () => {
-  const BIG = { width: 1700, height: 900 } as const;
-  it("zoom makes the zoomed pane the focused one: header, accent bar, its prompt line and the status bar all agree", () => {
-    const h = html({ layout: "split", splitCount: 4, zoomedPane: 1, activePane: 0, ...BIG });
-    expect(h).toContain('aria-label="Session 1, terminal: billing"');
-    expect(h).toMatch(/<section class="pane" data-active="true"[^>]*aria-label="Session 1, terminal: billing"/);
-    expect(h).toContain('aria-label="Write to billing"');
-    expect(h).not.toContain('aria-label="Write to api-server"');
-  });
-  it("a chosen arrangement that no longer suits the number of panes falls back to automatic instead of crashing", () => {
-    expect(() => html({ layout: "split", splitCount: 3, arrangement: "main-left", width: 1180, height: 800 })).not.toThrow();
-    const h = html({ layout: "split", splitCount: 3, arrangement: "main-left", width: 1180, height: 800, layoutMenu: true });
-    expect(h).toContain('data-auto="true"');
-    expect(h).toContain("Showing 2 of 3");
-  });
-  it("copes with an arrangement picked for four after the window shrinks to one", () => {
-    expect(() => html({ layout: "split", splitCount: 4, arrangement: "grid", width: 720, height: 480 })).not.toThrow();
-  });
-  it("copes with a focused pane index that is out of range: it clamps to the first or the last pane", () => {
-    for (const [activePane, name] of [[-1, "api-server"], [9, "billing"]] as const) {
-      const h = html({ layout: "split", splitCount: 2, activePane, ...BIG });
-      expect((h.match(/data-active="true"/g) ?? []).length, String(activePane)).toBe(1);
-      expect(h, String(activePane)).toMatch(new RegExp(`<section class="pane" data-active="true"[^>]*aria-label="Session ${NUM[name]}, terminal: ${name}"`));
-    }
-  });
-  it("tells the layout menu how many sessions could be shown, not how many were asked for", () => {
-    const two = SCENARIO_ROWS.slice(0, 2);
-    const h = html({ layout: "split", splitCount: 4, rows: two, layoutMenu: true, ...BIG });
-    expect(h).not.toContain("Showing 2 of 4");
   });
 });
 
@@ -366,8 +206,8 @@ describe("MainWindow: the shell panel in the sidebar", () => {
   it("is not an agent: its panel carries no vendor, so the window's vendor accent does not make it look like a session", () => {
     expect(shellOf(html(tall))).not.toContain("data-agent");
   });
-  it("follows the focused pane in split view", () => {
-    const h = html({ layout: "split", splitCount: 2, activePane: 1, width: 1700, height: 900 });
+  it("follows the selected session", () => {
+    const h = html({ selectedId: "needs-permission", width: 1700, height: 900 });
     expect(shellOf(h)).toContain(">payments<");
   });
   it("is zsh on macOS and bash on Linux", () => {
@@ -423,25 +263,25 @@ describe("MainWindow: the shell panel in the sidebar", () => {
       expect(h).not.toContain('data-testid="live"');
     }
   });
-  it("has its own button for opening it in a pane, named for the shell", () => {
-    expect(html(tall)).toContain('aria-label="Open PowerShell in a pane"');
+  it("has its own button for opening it as a session, named for the shell", () => {
+    expect(html(tall)).toContain('aria-label="Open PowerShell as a session"');
   });
 });
 
 describe("MainWindow: hygiene", () => {
   it("never puts a literal colour in markup", () => {
-    for (const layout of ["default", "split", "focus", "rail"] as const)
+    for (const layout of ["default", "focus", "rail"] as const)
       expect(html({ layout, sidebarPref: layout === "focus" ? "focus" : layout === "rail" ? "rail" : "expanded" })).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(|oklch\(/i);
   });
 });
 
 describe("MainWindow (accessibility gate)", () => {
-  it("gives the focusable split separator the values a separator needs", () => {
-    const h = html({ layout: "split" });
+  it("gives the focusable preview separator the values a separator needs", () => {
+    const h = html({ preview: <aside className="preview-stand-in" /> });
     expect(h).toContain('role="separator"');
     expect(h).toContain('aria-valuenow="50"');
-    expect(h).toContain('aria-valuemin="20"');
-    expect(h).toContain('aria-valuemax="80"');
+    expect(h).toContain('aria-valuemin="30"');
+    expect(h).toContain('aria-valuemax="70"');
   });
   it("names the focus pill with the text it shows", () => {
     const h = html({ layout: "focus", sidebarPref: "focus" });
@@ -453,10 +293,8 @@ describe("MainWindow (accessibility gate)", () => {
 describe("MainWindow: with no sessions", () => {
   const variants = {
     single: {},
-    split: { layout: "split" as const, splitCount: 3 as const },
     rail: { layout: "rail" as const },
     focus: { layout: "focus" as const, sidebarPref: "focus" as const },
-    "split in a small window": { layout: "split" as const, splitCount: 4 as const, width: 720, height: 480 },
   };
   for (const [name, p] of Object.entries(variants)) {
     it(`renders the empty state instead of throwing (${name})`, () => {
@@ -469,21 +307,10 @@ describe("MainWindow: with no sessions", () => {
   it("says the launcher shortcut for the platform", () => {
     expect(html({ rows: [], requests: [], selectedId: "none", os: "mac" })).toContain("No sessions yet. Start one with ⌘T.");
   });
-  it("still has the bar, the layout button and the window controls", () => {
+  it("still has the bar and the window controls", () => {
     const h = html({ rows: [], requests: [], selectedId: "none" });
-    for (const s of ["Marshell menu", "Split layout", "Minimize", "Command palette"]) expect(h, s).toContain(`aria-label="${s}"`);
+    for (const s of ["Marshell menu", "Minimize", "Command palette"]) expect(h, s).toContain(`aria-label="${s}"`);
     expect(h).not.toContain("session-header");
-  });
-});
-
-describe("MainWindow: the layout menu while a pane is zoomed", () => {
-  it("does not say 'Showing 1 of N' as if the window were too small: the pane header already says the others keep running", () => {
-    const h = html({ layout: "split", splitCount: 3, width: 1700, height: 900, zoomedPane: 0, layoutMenu: true });
-    expect(h).toContain("more running");
-    expect(h).not.toMatch(/Showing \d+ of \d+/);
-  });
-  it("still says it when the window really is too small for the count asked for", () => {
-    expect(html({ layout: "split", splitCount: 4, width: 720, height: 480, layoutMenu: true })).toMatch(/Showing 1 of 4/);
   });
 });
 
@@ -512,11 +339,6 @@ describe("MainWindow: renderTerminal", () => {
     expect(h).toMatch(/<div class="window__terminal"><div data-live="working"/);
     expect(h).not.toMatch(/<div[^>]* hidden[ =>][^>]*><div data-live/);
   });
-  it("replaces the scripted terminal in every pane of the split view", () => {
-    const h = html({ layout: "split", splitCount: 2, ...BIG, renderTerminal: live });
-    expect((h.match(/data-live="/g) ?? []).length).toBe(2);
-    expect(h).not.toContain("aria-label=\"Terminal for");
-  });
   it("shows the ports it is given, and none of its own", () => {
     expect(html()).not.toContain("localhost:3000");
     expect(html({ ports: ["localhost:3000"] })).toContain("localhost:3000");
@@ -526,14 +348,11 @@ describe("MainWindow: renderTerminal", () => {
 
 describe("MainWindow: one live region, and the window's title follows the focused session", () => {
   const live = (h: string) => (h.match(/data-session-announcer/g) ?? []).length;
-  it("has exactly one session announcer, whether it shows one terminal or four, and none of its prompt lines or panes is a live region", () => {
-    for (const p of [{}, { layout: "split" as const, splitCount: 2 as const, ...BIG }, { layout: "split" as const, splitCount: 4 as const, ...BIG }]) {
-      const h = html(p);
-      expect(live(h)).toBe(1);
-      const body = h.slice(h.indexOf('class="window__body"'));
-      for (const sec of body.match(/<section class="pane[\s\S]*?<\/section>/g) ?? []) expect(sec).not.toMatch(/role="status"|aria-live=/);
-      expect(body.match(/<form class="composer"[\s\S]*?<\/form>/g)?.join("") ?? "").not.toMatch(/role="status"|aria-live=/);
-    }
+  it("has exactly one session announcer, and none of its prompt lines is a live region", () => {
+    const h = html();
+    expect(live(h)).toBe(1);
+    const body = h.slice(h.indexOf('class="window__body"'));
+    expect(body.match(/<form class="composer"[\s\S]*?<\/form>/g)?.join("") ?? "").not.toMatch(/role="status"|aria-live=/);
   });
   it("renders the announcer empty on first render, so nothing is read out as the window opens", () => {
     const h = html({ selectedId: "needs-permission" });
@@ -544,58 +363,19 @@ describe("MainWindow: one live region, and the window's title follows the focuse
   });
 });
 
-describe("MainWindow: panes from the view state", () => {
-  const ids = SCENARIO_ROWS.map((r) => r.id);
-  const panes = (h: string) => (h.match(/<section class="pane"/g) ?? []).length;
-  it("paneIds beyond the fit are hidden, not dropped", () => {
-    const h = html({ layout: "split", paneIds: ids.slice(0, 4), layoutMenu: true, width: 760, height: 520 });
-    expect(panes(h)).toBeLessThan(4);
-    expect(h).toContain("Showing");
-    const focused = h.split("</header>").find((part) => part.includes('data-active="true"'))!;
-    expect(focused).toContain("more running");
+describe("MainWindow: the window's title", () => {
+  const [a, b] = [SCENARIO_ROWS[0]!, SCENARIO_ROWS[1]!];
+  const title = (selectedId: string, needsYou = 0) => html({ selectedId, needsYou }).match(/class="window"[^>]*data-title="([^"]*)"/)?.[1];
+  it("names the selected session", () => {
+    expect(title(a.id)).toBe(windowTitle(a, 0));
+    expect(title(b.id)).toBe(windowTitle(b, 0));
   });
-  it("shows the panes in paneIds order, not selected-first", () => {
-    const [a, b] = [SCENARIO_ROWS[0]!, SCENARIO_ROWS[1]!];
-    const h = html({ layout: "split", paneIds: [b.id, a.id], selectedId: a.id, ...BIG });
-    const labels = [...h.matchAll(/<section class="pane"[^>]*aria-label="([^"]+)"/g)].map((m) => m[1]);
-    expect(labels[0]).toContain(`terminal: ${b.name}`);
-    expect(labels[1]).toContain(`terminal: ${a.name}`);
-  });
-  it("paneIds null renders the empty pane with the other sessions", () => {
-    const h = html({ layout: "split", paneIds: [ids[0]!, null], ...BIG });
-    expect(panes(h)).toBe(1);
-    expect(h).toContain("pane--empty");
-    const choices = h.slice(h.indexOf("pane--empty"));
-    expect(choices).toContain("pane__choices");
-    for (const r of SCENARIO_ROWS.slice(1, 3)) expect(choices).toContain(r.name);
-  });
-  it("a pane id that is no longer a session is an empty pane, not a crash", () => {
-    const h = html({ layout: "split", paneIds: [ids[0]!, "gone"], ...BIG });
-    expect(h).toContain("pane--empty");
-  });
-  it("window title follows the focused pane", () => {
-    const [a, b] = [SCENARIO_ROWS[0]!, SCENARIO_ROWS[1]!];
-    const title = (activePane: number) => html({ layout: "split", paneIds: [a.id, b.id], activePane, ...BIG }).match(/class="window"[^>]*data-title="([^"]*)"/)?.[1];
-    expect(title(0)).toBe(windowTitle(a, 0));
-    expect(title(1)).toBe(windowTitle(b, 0));
-  });
-  it("window title leads with the needs-you count it is given", () => {
-    const a = SCENARIO_ROWS[0]!;
-    const title = (needsYou: number) => html({ layout: "split", paneIds: [a.id], activePane: 0, needsYou, ...BIG }).match(/class="window"[^>]*data-title="([^"]*)"/)?.[1];
-    expect(title(2)).toBe(windowTitle(a, 2));
-    expect(title(2)).toMatch(/^\(2\) /);
-    expect(title(0)).toBe(windowTitle(a, 0));
-  });
-  it("drives the arrangement, ratios and zoom from its props", () => {
-    const h = html({ layout: "split", paneIds: ids.slice(0, 2), arrangement: "rows", ratios: { row: 0.3 }, ...BIG });
-    expect(h).toContain('data-arrangement="rows"');
-    expect(h).toContain("0.3fr");
-    const z = html({ layout: "split", paneIds: ids.slice(0, 3), zoomedPane: 1, ...BIG });
-    expect(panes(z)).toBe(1);
-    expect(z).toContain('data-arrangement="single"');
+  it("leads with the needs-you count it is given", () => {
+    expect(title(a.id, 2)).toBe(windowTitle(a, 2));
+    expect(title(a.id, 2)).toMatch(/^\(2\) /);
   });
   it("makes the main area a focus target for the no-terminal shortcut", () => {
-    expect(html({ layout: "split", paneIds: ids.slice(0, 2), ...BIG })).toMatch(/<main class="window__main"[^>]*tabindex="-1"/);
+    expect(html()).toMatch(/<main class="window__main"[^>]*tabindex="-1"/);
   });
 });
 
@@ -608,10 +388,6 @@ describe("MainWindow: focus mode and the sidebar width", () => {
     expect(h).not.toContain("window__composer");
     expect(h).not.toContain('role="separator"');
     expect(h).toContain("--side-w:0px");
-  });
-  it("keeps the pane headers in focus mode", () => {
-    const h = html({ width: 1280, height: 800, sidebarPref: "focus", layout: "split" });
-    expect(h).toContain("pane__header");
   });
   it("offers an 8 px strip at the top edge to peek at the header, in focus mode only", () => {
     expect(html({ sidebarPref: "focus" })).toContain("window__peek");
@@ -646,52 +422,38 @@ describe("MainWindow: focus mode and the sidebar width", () => {
 });
 
 describe("MainWindow: keyboard navigation", () => {
-  it("shows that nothing is selected: no pane is active, and the status bar says so", () => {
-    const h = html({ layout: "split", noneSelected: true });
-    expect(h).toContain("No session selected · Tab to select a terminal");
-    expect(h).not.toContain('data-active="true"');
+  it("shows that nothing is selected, and the status bar says so", () => {
+    expect(html({ noneSelected: true })).toContain("No session selected · Tab to select a terminal");
   });
   it("says it without a status bar too (the live window has none)", () => {
-    expect(html({ layout: "split", noneSelected: true, statusBar: false })).toContain("No session selected · Tab to select a terminal");
+    expect(html({ noneSelected: true, statusBar: false })).toContain("No session selected · Tab to select a terminal");
   });
   it("draws the cursor and its hint inside the window", () => {
     const h = html({ navCursor: { rect: { x: 0, y: 40, w: 288, h: 56 }, label: "Session 1, billing" } });
     expect(h).toContain('class="nav-cursor"');
     expect(h).toContain("Release Ctrl+Shift to select · Backspace for none");
   });
-  it("marks what the cursor can reach: every pane, every session row and the top bar's controls", () => {
-    const h = html({ layout: "split" });
+  it("marks what the cursor can reach: the terminal, every session row and the top bar's controls", () => {
+    const h = html();
     expect(h).toContain('data-nav-pane="0"');
-    expect(h).toContain('data-nav-pane="1"');
+    expect(h).not.toContain('data-nav-pane="1"');
     expect(h).toMatch(/data-nav-row="\d+"/);
     expect(h).toContain('data-nav-top="palette"');
-    expect(h).toContain('data-nav-top="layout"');
     expect(html({ width: 940 })).toMatch(/<button[^>]*rail__item[^>]*data-nav-row="\d+"|<button[^>]*data-nav-row="\d+"[^>]*rail__item/);
-    expect(html()).toContain('data-nav-pane="0"');
   });
 });
 
 describe("MainWindow: the restart bar", () => {
   const bar = <div className="close-bar">Restart 1 billing in Plan?</div>;
-  it("with two panes, replaces the target pane's header and the top bar holds no bar", () => {
-    const h = html({ layout: "split", splitCount: 2, ...BIG, paneBar: { id: "needs-permission", node: bar } });
-    const at = h.indexOf('class="split"');
-    expect(h.slice(0, at)).not.toContain("close-bar");
-    expect((h.match(/close-bar/g) ?? []).length).toBe(1);
-    const billing = h.slice(at).split("<section").find((s) => s.includes("terminal: billing"));
-    expect(billing).toContain("close-bar");
-    expect(billing).not.toContain("<header");
-    expect((h.match(/<header class="pane__header"/g) ?? []).length).toBe(1);
-  });
-  it("with one pane, goes in the top bar", () => {
+  it("goes in the top bar in place of the session header", () => {
     const h = html({ paneBar: { id: "working", node: bar } });
     const from = h.indexOf("window__bar-main");
     const top = h.slice(from, h.indexOf("</header>", from));
     expect(top).toContain("close-bar");
     expect(top).not.toContain("session-header");
   });
-  it("a bar for a session on no pane on screen goes in the top bar too", () => {
-    const h = html({ layout: "split", splitCount: 2, ...BIG, paneBar: { id: "not-shown", node: bar } });
+  it("a bar for a session that is not on screen goes in the top bar too", () => {
+    const h = html({ paneBar: { id: "not-shown", node: bar } });
     expect((h.match(/close-bar/g) ?? []).length).toBe(1);
   });
 });
@@ -732,6 +494,30 @@ describe("MainWindow: the sidebar toggle", () => {
   });
   it("the rail no longer renders a palette button", () => {
     expect(html({ width: 1280, sidebarPref: "rail" })).not.toContain("rail__tool");
+  });
+});
+
+describe("MainWindow: one terminal", () => {
+  it("the top bar has no layout button", () => {
+    const h = html({ rows: SCENARIO_ROWS.slice(0, 3) });
+    expect(h).not.toContain("Split layout");
+    expect(h).not.toContain('data-nav-top="layout"');
+    expect(h).not.toContain('class="split');
+  });
+  it("every top-bar control the cursor reaches does something when the cursor is released on it", () => {
+    const ids = new Set<string>();
+    for (const p of [{}, { sidebarPref: "rail" as const }, { width: 900 }]) {
+      for (const m of html({ rows: SCENARIO_ROWS.slice(0, 3), ...p }).matchAll(/data-nav-top="([^"]+)"/g)) ids.add(m[1]!);
+    }
+    expect([...ids].sort()).toEqual(["palette", "sidebar"]);
+    for (const id of ids) expect(topAction(id), id).not.toBeNull();
+  });
+  it("the preview divider keeps its role and value", () => {
+    const h = html({ preview: <aside className="preview-stand-in" /> });
+    expect(h).toContain('class="preview__divider"');
+    expect(h).toContain('role="separator"');
+    expect(h).toContain('aria-label="Resize the preview"');
+    expect(h).toContain('aria-valuenow="50"');
   });
 });
 

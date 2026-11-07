@@ -1,7 +1,7 @@
 import { useId, useRef, type KeyboardEvent } from "react";
 import { commandShortcut, sessionShortcut } from "../../lib/appShortcuts";
 import type { KeyEventLike } from "../../lib/bindings";
-import type { Os } from "../../lib/keymap";
+import { NAV_COMMAND_IDS, type Os } from "../../lib/keymap";
 import type { NavModifier } from "../../lib/navigation/modifier";
 import { useDialogFocus } from "../../lib/useDialogFocus";
 import { ShortcutSheet } from "../shortcuts/ShortcutSheet";
@@ -9,9 +9,10 @@ import "./LiveShortcuts.css";
 
 /**
  * The keys the live window runs: every command it takes as a shortcut, the palette's own key, the navigation chords and the
- * session numbers among them. Any other key is not taught.
+ * session numbers among them. The chords are run by the navigation machine, not as shortcuts, so they are named here. Any other
+ * key is not taught.
  */
-const runs = (id: string) => commandShortcut(id) !== null;
+const runs = (id: string) => (NAV_COMMAND_IDS as readonly string[]).includes(id) || commandShortcut(id) !== null;
 
 /** Ctrl+Shift+O (Cmd+O) pressed while the sheet is up: the window's listener stands down for an overlay, so the sheet closes itself. */
 export const closesShortcuts = (e: KeyEventLike, os: Os): boolean => sessionShortcut(e, os)?.kind === "cheatsheet";
