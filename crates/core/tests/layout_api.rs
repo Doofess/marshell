@@ -41,7 +41,7 @@ async fn body_bytes(res: axum::response::Response) -> Vec<u8> {
 fn view(panes: serde_json::Value) -> serde_json::Value {
     serde_json::json!({
         "panes": panes, "arrangement": null, "ratios": [], "active": 0, "zoomed": null,
-        "sidebar": "rail", "sidebar_width": 320, "shell_hidden": true, "grouped": true
+        "sidebar": "rail", "sidebar_width": 320, "shell_hidden": true, "grouped": true, "recent_commands": []
     })
 }
 

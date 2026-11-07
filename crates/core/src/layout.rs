@@ -315,8 +315,10 @@ mod tests {
     #[test]
     fn validate_refuses_a_bad_recent_command() {
         let bad = |ids: Vec<String>| {
-            let mut v = ViewLayout::default();
-            v.recent_commands = ids;
+            let v = ViewLayout {
+                recent_commands: ids,
+                ..ViewLayout::default()
+            };
             validate_view(&v).unwrap_err()
         };
         assert!(bad(vec!["a b".into()]).contains("recent_commands"));
