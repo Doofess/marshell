@@ -204,6 +204,10 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
   // Ids belong to one launcher (the review page shows many at once).
   const uid = useId();
   const id = (name: string) => `${uid}-${name}`;
+  // Focus stays on a chip while its list is open (aria-activedescendant), so a note is read only through the chip it is about.
+  const cmdNote = agentRun && cmdShell;
+  const notes = (...shown: [boolean, string][]) => shown.filter(([on]) => on).map(([, name]) => id(name)).join(" ") || undefined;
+  const agentNotes = notes([checking, "checking"], [offer.state === "unreached", "unreached"], [agentsOpen && missing !== null, "missing"], [cmdNote, "cmd-note"]);
   const toggleAdmin = () => {
     if (admin.enabled) onElevated?.(!admin.on);
   };
@@ -395,6 +399,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
                 aria-expanded={shellsOpen}
                 aria-controls={shellsOpen ? id("shells") : undefined}
                 aria-activedescendant={shellsOpen ? id(`shell-${activeIndex}`) : undefined}
+                aria-describedby={notes([cmdNote, "cmd-note"])}
                 onClick={() => onShells?.(!shellsOpen)}
                 onKeyDown={chipKeys(
                   shells.map((x) => x.label),
@@ -417,7 +422,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
                 aria-expanded={agentsOpen}
                 aria-controls={agentsOpen ? id("agents") : undefined}
                 aria-activedescendant={agentsOpen ? id(`agent-${activeIndex}`) : undefined}
-                aria-describedby={checking ? id("checking") : undefined}
+                aria-describedby={agentNotes}
                 onClick={() => onAgents?.(!agentsOpen)}
                 onKeyDown={chipKeys(agentLabels, agentIndex, pickAgent)}
               >
@@ -577,7 +582,11 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
                   </div>
                 </div>
                 {/* Outside the listbox: only options may live inside one. */}
-                {missing !== null && <p className="launcher__reason">{missing}</p>}
+                {missing !== null && (
+                  <p className="launcher__reason" id={id("missing")}>
+                    {missing}
+                  </p>
+                )}
               </>
             )}
 
@@ -586,7 +595,11 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
                 Checking which agents {shell.label} has…
               </p>
             )}
-            {offer.state === "unreached" && <p className="launcher__reason">Marshell couldn't reach {shell.label}, so only the shell is offered.</p>}
+            {offer.state === "unreached" && (
+              <p className="launcher__reason" id={id("unreached")}>
+                Marshell couldn't reach {shell.label}, so only the shell is offered.
+              </p>
+            )}
 
             {folderOpen && options.length === 0 && !view.pathCheck && (
               // Outside the listbox: only options may live inside one.
@@ -643,7 +656,11 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
 
             {note && !folderOpen && !shellsOpen && !agentsOpen && <p className="launcher__note">{note}</p>}
 
-            {agentRun && cmdShell && <p className="launcher__reason">Command Prompt can't pass a first prompt. Type it once {program?.label} starts.</p>}
+            {cmdNote && (
+              <p className="launcher__reason" id={id("cmd-note")}>
+                Command Prompt can't pass a first prompt. Type it once {program?.label} starts.
+              </p>
+            )}
             {agentRun && !cmdShell && !program?.noFirst && (
               <div className="launcher__line">
                 {/* A drawn chevron, as in the prompt line: a drawing needs 3:1, a text glyph would need 4.5:1 in the vendor colour. */}

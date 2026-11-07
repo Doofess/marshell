@@ -179,6 +179,24 @@ describe("Launcher: what the shell offers", () => {
     expect(h).not.toContain("<textarea");
     expect(html()).toContain("<textarea");
   });
+  it("each_note_is_tied_to_its_chip_so_a_screen_reader_hears_it_from_the_chip", () => {
+    // Focus stays on the chip (the lists use aria-activedescendant), so a note nobody references is never read.
+    const describedBy = (h: string, label: string) => {
+      const ids = new RegExp(`aria-label="${label}"[^>]*aria-describedby="([^"]+)"`).exec(h)?.[1]?.split(" ") ?? [];
+      return ids.map((ref) => new RegExp(`<p class="launcher__reason" id="${ref}">([^<]*)</p>`).exec(h)?.[1] ?? `missing #${ref}`);
+    };
+    expect(describedBy(on({}, { offer: { state: "unreached" } }), "Agent: none")).toEqual(["Marshell couldn&#x27;t reach Ubuntu, so only the shell is offered."]);
+    expect(describedBy(on({ agentsOpen: true }, { offer: ready }), "Agent: Claude")).toEqual([
+      "Not in Ubuntu: Antigravity (not installed), GitHub Copilot (Marshell runs it in WSL later)",
+    ]);
+    const cmd: LaunchShell[] = [{ id: "cmd", label: "Command Prompt", kind: "cmd", family: "cmd" }];
+    const h = renderToStaticMarkup(<Launcher shells={cmd} view={view({ choice: { ...DEFAULT_CHOICE, shell: "cmd" } })} />);
+    const note = "Command Prompt can&#x27;t pass a first prompt. Type it once Claude starts.";
+    expect(describedBy(h, "Agent: Claude")).toEqual([note]);
+    expect(describedBy(h, "Shell: Command Prompt")).toEqual([note]);
+    // With the list closed, the missing line is gone and nothing points at it.
+    expect(describedBy(on({}, { offer: ready }), "Agent: Claude")).toEqual([]);
+  });
   it("with_no_agent_the_sentence_reads_with_no_agent", () => {
     const h = html(view({ choice: { ...DEFAULT_CHOICE, agent: null } }));
     expect(h).toContain("<span> with </span>");
