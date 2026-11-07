@@ -25,3 +25,22 @@ describe("command palette layer", () => {
     expect(pct).toBeLessThanOrEqual(12);
   });
 });
+
+// Every window-wide layer is at z 20, so the order LiveApp renders them in is the order they stack in.
+describe("window-wide layer order", () => {
+  const app = readFileSync(new URL("../features/sessions/LiveApp.tsx", import.meta.url), "utf8");
+  const at = (needle: string) => {
+    const i = app.indexOf(needle);
+    expect(i, needle).toBeGreaterThan(-1);
+    return i;
+  };
+  it("puts the launcher over onboarding, so the key never opens a sheet the person can't see", () => {
+    expect(at("<LiveLauncher")).toBeGreaterThan(at('className="live-app__onboarding"'));
+  });
+  it("puts every dialog over the launcher, so a dialog the tray or the close button opens is the one seen and typed into", () => {
+    const launcher = at("<LiveLauncher");
+    for (const dialog of ["<LivePalette", "<LiveDepartures", "<ReviewSheet", "<LiveDoctor", "<LiveSettings", "<LiveShortcuts", "<ScriptsTrustDialog", "<CloseDialog"]) {
+      expect(at(dialog), dialog).toBeGreaterThan(launcher);
+    }
+  });
+});
