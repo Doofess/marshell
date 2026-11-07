@@ -23,11 +23,11 @@ Driver:
 | 2d | Browser keys stay | F5, Ctrl+R, Ctrl+F and Ctrl+P act in the page | Pass. F5 and Ctrl+R: 5 of 5 reloads each (site log). Ctrl+F opened the find bar ("Find on page"), a popup window of the WebView2 process that takes the foreground while it is open. Ctrl+P opened the print preview inside the page, with focus on its Save button; leaving the page closed it. Each F5 reached the page as one keydown plus two `repeat` keydowns around the reload. |
 | 2e | F12 | A DevTools window for the page; Ctrl+Shift+I reaches the app | Pass. F12 opened a DevTools window for the page only ("DevTools - 127.0.0.1:47620/…"); closing it gave the foreground back to Marshell, with focus in the page. Ctrl+Shift+I toggled focus mode (`data-mode` went expanded, focus, expanded). |
 | 2f | AltGr | AltGr+Q types `@` in the page and forwards nothing | Partial. The user chose not to add a German layout. Ctrl+Alt+Q and Ctrl+Alt+Shift+K reached the page as keydowns with Ctrl and Alt set, and nothing was forwarded. Typing `@` with a real AltGr layout is not verified. |
-| 3a | Tab in and out | 10 of 10 each way | |
+| 3a | Tab in and out | 10 of 10 each way | Pass. 10 of 10 at every stage. Ctrl+L focused the address box. Tab entered the page (`page-focus`), with focus on its first link, "Page one". Shift+Tab went back out to the address box. Tab past the page's last link (`focus-out next`) landed on the "Marshell menu" button. The pane's Reload button is disabled until Task 6, so Shift+Tab lands on the element before the page, the address box. |
 | 3b | Alt+Tab, page focused | Typing lands in the page's box afterwards | |
 | 3c | Alt+Tab, terminal focused | Typing lands in the shell afterwards | |
 | 3d | Clicks | Typing follows each click, page or terminal | |
-| 3e | UI Automation | Both documents listed; focus sits under the page's document after 3a | |
+| 3e | UI Automation | Both documents listed; focus sits under the page's document after 3a | Pass. `uia.ps1` listed both documents: the page ("Spike home") and the app ("PowerShell 7 3 — Marshell"). After 3a, the focused element was the page's link "Page two in a new window", under "Spike home". The first query after the app started missed the page's document; see finding 10. |
 | 4a | Frame edges | The frame resizes where the page touches the edge; the smallest inset that works | |
 | 4b | Divider drag | Follow mode against anchor mode | |
 | 4c | Window moves | Maximize, snaps, minimize and the tray: bounds within 1 px | |
@@ -56,6 +56,9 @@ Driver:
 5. **The app's keymap needs no copy in Rust.** The page's `AcceleratorKeyPressed` handler only decides who owns a key (`route_key`). The app re-dispatches the key as a synthetic `KeyboardEvent`, and the existing keymap acts on it: the palette, the pane toggle and focus mode all worked that way. Ctrl+L and Esc are the two keys the spike handles directly, because they are about the page itself.
 6. **A forwarded key ends the page's turn at the keyboard.** The forward moves focus to the app, so a held chord's repeats and the next key land in the app, not the page. When the app is done (the palette closes, the pane shows again), it has to put focus back in the page itself with `MoveFocus`. The spike's key test did, and 6q-3 must decide where that happens.
 7. **The find bar is a window of its own.** Ctrl+F's bar is a popup owned by the WebView2 browser process, and it holds the foreground while it is open. Whether Marshell's chords pressed in the find bar reach the handler was not tested. Anything that checks the foreground window's process, such as the key script's guard, sees `msedgewebview2`, not Marshell.
+8. **The app's document can't tell that the page has the keyboard.** While the child holds focus, the main webview's `document.hasFocus()` stays true. Only the child's `GotFocus` and `LostFocus` say where the keys go; the spike relays them as `page-focus` and `page-blur`. 6q-3 keeps that state in the app, and anything that asks "is the terminal focused?" has to ask it too.
+9. **Tab off either end of the page arrives as `MoveFocusRequested`**, with the reason Next or Previous. With `Handled(true)` set, WebView2 leaves the focus to the app, and the app puts it on its own element on that side. Tab into the page is the app's own `focus` event on the placeholder, which calls `MoveFocus` with the matching reason, so the page starts at its first or last element.
+10. **UI Automation builds the page's tree on first use.** The first `uia.ps1` query after the app started listed only the app's document. Later queries listed both. Whether a screen reader meets the same gap is for the release's NVDA pass.
 
 ## What 6q-2 and 6q-3 take from this
 
