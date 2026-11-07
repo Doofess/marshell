@@ -79,4 +79,12 @@ describe("Rail: the list scrolls", () => {
     expect(h.indexOf("rail__badge")).toBeGreaterThan(h.indexOf('class="rail__list"'));
     expect(h.indexOf("rail__badge")).toBeLessThan(h.indexOf("rail__item"));
   });
+
+  it("puts a Menu button after the sessions nav and outside it, only when the window can open the menu", () => {
+    const h = renderToStaticMarkup(<Rail rows={rows} needsYou={0} onOpenMenu={() => {}} />);
+    expect(h).toMatch(/<button[^>]*class="rail__menu"[^>]*aria-label="Menu"[^>]*aria-haspopup="menu"[^>]*aria-expanded="false"/);
+    expect(h.indexOf("rail__menu")).toBeGreaterThan(h.indexOf("</nav>"));
+    expect(h.indexOf('aria-label="Sessions"')).toBeGreaterThan(-1);
+    expect(renderToStaticMarkup(<Rail rows={rows} needsYou={0} />)).not.toContain("rail__menu");
+  });
 });

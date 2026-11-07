@@ -33,7 +33,7 @@ describe("ShortcutSheet", () => {
   });
   it("puts navigation first, and writes its chords with the navigation modifier", () => {
     const groups = sheetGroups("windows").map((g) => g.title);
-    expect(groups).toEqual(["Navigation", "Sessions", "View", "Tools"]);
+    expect(groups).toEqual(["Navigation", "Session", "Terminal", "Window", "App"]);
     const w = html("windows");
     expect(w).toContain("Select the next terminal on screen");
     expect(w).toContain("Ctrl+Shift+Tab");
@@ -45,13 +45,13 @@ describe("ShortcutSheet", () => {
     const w = html("linux");
     const id = /aria-labelledby="([^"]+)"/.exec(w)![1]!;
     expect(w).toContain(`id="${id}"`);
-    expect((w.match(/<h3/g) ?? []).length).toBe(4);
+    expect((w.match(/<h3/g) ?? []).length).toBe(5);
   });
   it("names the navigation modifier that is set", () => {
     expect(renderToStaticMarkup(<ShortcutSheet os="linux" nav="ctrl+alt" />)).toContain("Hold Ctrl+Alt, then");
   });
   it("lists only the commands that run, when told which do", () => {
-    const off = ["history", "find", "global-search", "next-waiting"];
+    const off = ["history", "find", "next-waiting"];
     const labels = sheetGroups("windows", undefined, (id) => !off.includes(id)).flatMap((g) => g.rows.map((r) => r.label));
     for (const id of off) expect(labels).not.toContain(COMMANDS.find((c) => c.id === id)!.label);
     expect(labels).toContain("Command palette");
@@ -59,8 +59,8 @@ describe("ShortcutSheet", () => {
     expect(labels).toContain("Go to session 1 to 9");
   });
   it("drops a group with nothing left in it, and the rows that stand for commands that do not run", () => {
-    const groups = sheetGroups("windows", undefined, (id) => COMMANDS.find((c) => c.id === id)?.group === "Tools");
-    expect(groups.map((g) => g.title)).toEqual(["Tools"]);
+    const groups = sheetGroups("windows", undefined, (id) => COMMANDS.find((c) => c.id === id)?.group === "App");
+    expect(groups.map((g) => g.title)).toEqual(["App"]);
     const none = sheetGroups("windows", undefined, () => false);
     expect(none).toEqual([]);
   });

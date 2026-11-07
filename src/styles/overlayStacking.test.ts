@@ -37,6 +37,10 @@ describe("window-wide layer order", () => {
   it("puts the launcher over onboarding, so the key never opens a sheet the person can't see", () => {
     expect(at("<LiveLauncher")).toBeGreaterThan(at('className="live-app__onboarding"'));
   });
+  it("puts the menu over the launcher and under the palette", () => {
+    expect(at("<AppMenu")).toBeGreaterThan(at("<LiveLauncher"));
+    expect(at("<AppMenu")).toBeLessThan(at("<LivePalette"));
+  });
   it("puts every dialog over the launcher, so a dialog the tray or the close button opens is the one seen and typed into", () => {
     const launcher = at("<LiveLauncher");
     for (const dialog of ["<LivePalette", "<LiveDepartures", "<ReviewSheet", "<LiveDoctor", "<LiveSettings", "<LiveShortcuts", "<ScriptsTrustDialog", "<CloseDialog"]) {

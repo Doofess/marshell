@@ -6,6 +6,42 @@
   background: var(--bg-raised);
   border-inline-end: 1px solid var(--hairline);
 }
+.rail__nav {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-block-size: 0;
+}
+/* The Menu button: a 28 px square in a 40 px row pinned to the rail's bottom, like the sidebar's footer button. */
+.rail__menu {
+  display: grid;
+  place-items: center;
+  place-self: center;
+  inline-size: 28px;
+  block-size: 28px;
+  margin-block: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-2);
+}
+.rail__menu[aria-expanded="true"] {
+  background: var(--selected);
+  color: var(--text-1);
+}
+.rail__menu:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+.rail__menu:active {
+  background: var(--selected);
+}
+@media (hover: hover) and (pointer: fine) {
+  .rail__menu:hover {
+    background: var(--hover);
+    color: var(--text-1);
+  }
+}
 /* The list scrolls with no scrollbar; a fade at an edge says there is more that way, and only at an edge that has more. */
 @property --rail-fade-start {
   syntax: "<length>";
@@ -126,6 +162,9 @@
 }
 
 @media (forced-colors: active) {
+  .rail__menu {
+    color: ButtonText;
+  }
   .rail__tool {
     outline: 1px solid CanvasText;
   }

@@ -236,4 +236,16 @@ describe("Sidebar: the plan ring from live status", () => {
     expect(h.slice(h.indexOf("sidebar__footer"))).not.toContain("context-ring");
     expect(h).not.toContain("5h ");
   });
+
+  it("opens the menu from a 28 px button at the footer's left, before the ring, even with no footer data", () => {
+    const h = html({ footer: undefined, onOpenMenu: () => {} });
+    expect(h).toMatch(/<footer class="sidebar__footer"><button type="button" class="sidebar__menu" aria-label="Menu" aria-haspopup="menu" aria-expanded="false"/);
+    expect(html({ onOpenMenu: () => {}, menuOpen: true })).toContain('aria-expanded="true"');
+    expect(html({ footer: undefined })).not.toContain("sidebar__footer");
+  });
+  it("leaves the doctor button as it was beside the menu button", () => {
+    const h = html({ footer: { doctorIssues: 2 }, onOpenDoctor: () => {}, onOpenMenu: () => {} });
+    expect(h).toMatch(/<button[^>]*class="sidebar__doctor"[^>]*aria-label="Doctor: 2 issues"/);
+    expect(h.indexOf("sidebar__menu")).toBeLessThan(h.indexOf("sidebar__doctor"));
+  });
 });

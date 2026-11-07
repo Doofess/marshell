@@ -62,6 +62,7 @@ export function ContextMenu({ items, label, anchor, onRun, onClose }: Props) {
     if (!(r.kind === "close" && !r.refocus)) e.preventDefault();
     if (r.kind === "move") setActive(r.index);
     else if (r.kind === "run") onRun(r.id);
+    else if (r.kind === "open" || r.kind === "back") return;
     else onClose({ refocus: r.refocus });
   };
 

@@ -41,7 +41,7 @@ import { findCommand } from "../../lib/bindings";
 import { cancelsCloseBar, commandShortcut, sessionShortcut, type SessionShortcut } from "../../lib/appShortcuts";
 import { nextWaiting } from "../lane/laneLayout";
 import { focusPendingCard } from "../approval/focusPendingCard";
-import { osOfPlatform } from "../../lib/keymap";
+import { MOVED_COMMANDS, osOfPlatform } from "../../lib/keymap";
 import { paletteSessions } from "../palette/sessions";
 import { LiveHistory } from "../history/LiveHistory";
 import { LiveDoctor } from "../doctor/LiveDoctor";
@@ -97,7 +97,11 @@ import { RestartBar } from "./RestartBar";
 import { adminCommandHidden, launcherFromPalette, launcherOpens, passesLauncher, type OnboardingShown } from "./launcherOpens";
 import { REOPEN_AS_ADMIN } from "../../lib/adminCopy";
 import { LiveLauncher } from "./LiveLauncher";
+import { AppMenu } from "../appMenu/AppMenuPopup";
+import { pressMenuButton, toggleMenu, type AppMenuRun, type MenuState } from "../appMenu/appMenu";
 import { LivePalette } from "./LivePalette";
+import { recordsRecent } from "../palette/paletteList";
+import { cannotRun } from "../palette/runnable";
 import { LiveShortcuts } from "./LiveShortcuts";
 import { ResumeBar } from "./ResumeBar";
 import { recordSetupDetection, type SetupDetections } from "./setupDetections";
@@ -122,6 +126,9 @@ const SIDEBAR_NEEDS_WIDTH = "Widen the window to open the sidebar.";
 const SHELL_PANEL_ELSEWHERE = "The shell panel is in the expanded sidebar.";
 /** What the announcer says when a split is asked for and the window has no room to show another pane. */
 const NO_PANE_ROOM = "No room for another pane.";
+// The footer's and the rail's Menu buttons: a press on one is the toggle's own, so it doesn't count as leaving the menu.
+const MENU_BUTTONS = ".sidebar__menu, .rail__menu";
+const isMenuButton = (n: object) => n instanceof Element && n.closest(MENU_BUTTONS) !== null;
 
 /** Wait for the core's command before opening the bar; a failed request still opens it with the local text. */
 function SessionResumeBar({ endpoint, info, profileName, ...props }: Omit<ComponentProps<typeof ResumeBar>, "command" | "folder"> & { endpoint: Endpoint | null; info: SessionInfo; profileName: string }) {
@@ -215,9 +222,10 @@ export function LiveApp() {
   const [linkHeld, setLinkHeld] = useState(false);
   // What the main area shows: the sessions, or the History view over them (the sidebar stays). Going to any session closes it.
   const [mainView, setMainView] = useState<"sessions" | "history">("sessions");
+  // The Menu: where it sits and what had the focus, so Esc and the menu key put it back.
+  const [menu, setMenu] = useState<MenuState>(null);
   const mainViewRef = useRef(mainView);
   mainViewRef.current = mainView;
-  const [searchFocus, setSearchFocus] = useState(0);
   const pick = useCallback(
     (id: string) => {
       setMainView("sessions");
@@ -668,7 +676,17 @@ export function LiveApp() {
   });
   // Only the script command the header would show is listed.
   const os = endpoint ? osOfPlatform(endpoint.platform) : undefined;
-  const hiddenCommands = useMemo(() => [...baseHidden, ...(adminCommandHidden(os) ? ["new-session-admin"] : []), ...(scriptControl?.kind === "run" ? [] : ["run-script"]), ...(scriptControl?.kind === "stop" ? [] : ["stop-script"])], [baseHidden, scriptControl?.kind, os]);
+  // A command that would do nothing now (Close with no session in focus, Reopen with nothing closed) is left out too.
+  const idle = cannotRun({
+    focused: focusedInfo !== undefined,
+    sessions: rows.length,
+    split: view.panes.length > 1,
+    waiting: nextWaiting(requests) !== null,
+    closed: (closed?.length ?? 0) > 0,
+    shellPanel: sidebarExpanded,
+    sidebarToggle: sidebarToggleFor(sidebarPref, sidebarMode(width, sidebarPref)) !== null,
+  });
+  const hiddenCommands = useMemo(() => [...baseHidden, ...idle, ...(adminCommandHidden(os) ? ["new-session-admin"] : []), ...(scriptControl?.kind === "run" ? [] : ["run-script"]), ...(scriptControl?.kind === "stop" ? [] : ["stop-script"])], [baseHidden, idle, scriptControl?.kind, os]);
   // An Ended administrator row's Resume reads "Reopen as administrator" in the palette too.
   const liveLabels = useMemo(() => (focusedRow?.elevated ? { ...paletteLabels, resume: REOPEN_AS_ADMIN } : paletteLabels), [paletteLabels, focusedRow?.elevated]);
 
@@ -1230,15 +1248,17 @@ export function LiveApp() {
         case "capture":
           void runCaptureRef.current();
           return true;
+        case "menu": {
+          const button = Array.from(document.querySelectorAll<HTMLElement>(MENU_BUTTONS)).find((b) => b.getClientRects().length > 0);
+          const r = button?.getBoundingClientRect();
+          setMenu((m) => toggleMenu(m, { anchor: r ? { left: r.left, top: r.top } : null, back: document.activeElement instanceof HTMLElement ? document.activeElement : null }));
+          return true;
+        }
         case "history":
           if (mainViewRef.current === "history") {
             setMainView("sessions");
             setTimeout(() => actions.focusTerminal(), 0);
           } else setMainView("history");
-          return true;
-        case "globalSearch":
-          setMainView("history");
-          setSearchFocus((n) => n + 1);
           return true;
         case "split":
           if (!roomForPane(v.panes.length, fitRef.current)) {
@@ -1346,8 +1366,8 @@ export function LiveApp() {
       // Review is read above.
       if (!shortcut || shortcut.kind === "review") return;
       // A text box (the rename box, the launcher's fields) keeps its own keys; xterm's own hidden textarea is the terminal, not a box.
-      // The History view's search box is a text box, and Ctrl+Shift+Y and Ctrl+Shift+Alt+F are the keys that leave it and come back to it.
-      if (isTextBox(e.target as HTMLElement | null) && shortcut.kind !== "history" && shortcut.kind !== "globalSearch") return;
+      // The History view's search box is a text box, and Ctrl+Shift+Y is the key that leaves it and comes back to it.
+      if (isTextBox(e.target as HTMLElement | null) && shortcut.kind !== "history") return;
       e.preventDefault();
       // Holding the key repeats it; only moving a session along the list, or from prompt to prompt, should.
       if (e.repeat && shortcut.kind !== "move" && shortcut.kind !== "prompt") return;
@@ -1381,6 +1401,7 @@ export function LiveApp() {
 
   // A palette row: a session to go to, the profiles page, or a command the window runs (LivePalette lists only those).
   const runFromPalette = (id: string) => {
+    if (recordsRecent(id)) dispatch({ type: "ranCommand", id });
     setSettingsCwd(id === "edit-references" ? focusedInfo?.cwd : undefined);
     const section = paletteSection(id);
     if (section) return openSettings(section);
@@ -1412,7 +1433,7 @@ export function LiveApp() {
     }
     const shortcut = commandShortcut(id);
     // These move the focus (or open a pane that takes it), so they wait for the palette to hand it back first.
-    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "globalSearch") return void setTimeout(() => paneCommand(shortcut), 0);
+    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "menu") return void setTimeout(() => paneCommand(shortcut), 0);
     if (paneCommand(shortcut)) return;
     if (shortcut?.kind === "launcher") setLauncherOpen(true);
     else if (shortcut?.kind === "prompt") jumpPrompt(shortcut.by);
@@ -1695,7 +1716,6 @@ export function LiveApp() {
                 os={os}
                 theme={themeFor(undefined)}
                 font={terminalFont}
-                searchFocus={searchFocus}
                 size={() => size.current}
                 announce={announce}
                 onGoTo={(tabId) => {
@@ -1729,6 +1749,13 @@ export function LiveApp() {
           onDrawerClose={() => setDrawerId(undefined)}
           footer={footer}
           onOpenDoctor={() => setOverlay("doctor")}
+          onOpenMenu={(button) => {
+            const r = button.getBoundingClientRect();
+            const next = pressMenuButton(menu, { anchor: { left: r.left, top: r.top }, back: button });
+            setMenu(next.menu);
+            next.focus?.focus();
+          }}
+          menuOpen={menu !== null}
           shell={{ terminal: shellTerminal, cwd: panelTab?.folder, hidden: view.shell_hidden, failed: shellFailed, onRetry: retryShell, openDisabled: !panelTab, forceOpen: shellForced, onToggle: toggleShell, onOpenInPane: () => void openInPane() }}
           composer={false}
           statusBar={false}
@@ -1830,7 +1857,31 @@ export function LiveApp() {
           onClose={() => setLauncherOpen(false)}
         />
       )}
-      {overlay === "palette" && os && <LivePalette sessions={paletteSessions(rows)} os={os} labels={liveLabels} hidden={hiddenCommands} tab={focusedId ?? null} filesOnly={filesOnly} onOpenFile={(path) => { setOverlay(null); preview.open({ path }); }} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
+      {menu && os && (
+        <AppMenu
+          os={os}
+          anchor={menu.anchor}
+          doctorIssues={doctorIssues}
+          isTrigger={isMenuButton}
+          onRun={(item: AppMenuRun) => {
+            const { back } = menu;
+            setMenu(null);
+            if (item === "history") {
+              // Already open: the menu closes and focus goes back. Otherwise the view takes the focus when it mounts.
+              if (mainViewRef.current === "history") return void (back?.isConnected ? back.focus() : actions.focusTerminal());
+              return void setMainView("history");
+            }
+            if (item === "doctor" || item === "departures") return void setOverlay(item);
+            openSettings(item.slice("settings:".length) as SettingsSection);
+          }}
+          onClose={({ refocus }) => {
+            const { back } = menu;
+            setMenu(null);
+            if (refocus) back?.isConnected ? back.focus() : actions.focusTerminal();
+          }}
+        />
+      )}
+      {overlay === "palette" && os && <LivePalette recent={view.recent_commands} moved={MOVED_COMMANDS} sessions={paletteSessions(rows)} os={os} labels={liveLabels} hidden={hiddenCommands} tab={focusedId ?? null} filesOnly={filesOnly} onOpenFile={(path) => { setOverlay(null); preview.open({ path }); }} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
       {overlay === "departures" && (
         <LiveDepartures
           rows={taskRows}

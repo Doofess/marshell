@@ -12,10 +12,11 @@ import { groupBounds, groupedOrder, groupRows } from "../sidebar/grouping";
 import { Peek } from "../peek/Peek";
 import { usePeek } from "../peek/usePeek";
 import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import type { Os } from "../../lib/keymap";
+import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
 import type { ShellName } from "../terminal/scriptedShell";
 import { shellLayout } from "./shellLayout";
 import { ShellPanel } from "./ShellPanel";
+import { MenuIcon } from "./MenuIcon";
 import "./Sidebar.css";
 
 /** Height of a comfortable row: the `--row-comfortable` token (a test keeps the two equal). */
@@ -41,6 +42,8 @@ export function Sidebar({
   os,
   footer,
   onOpenDoctor,
+  onOpenMenu,
+  menuOpen,
   shell,
   renamingId,
   onRename,
@@ -79,6 +82,10 @@ export function Sidebar({
   footer?: SidebarFooter;
   /** A click on the footer's Doctor count opens the Doctor. Left out, the count is only read. */
   onOpenDoctor?: () => void;
+  /** The Menu button at the footer's left; left out, there is none. Gets the button, to anchor the menu on. */
+  onOpenMenu?: (button: HTMLElement) => void;
+  /** The menu is open: the button says so. */
+  menuOpen?: boolean;
   shell?: SidebarShell;
   /** F2: the row whose name is a text box, and what its Enter and its Escape or blur do. */
   renamingId?: string | null;
@@ -250,7 +257,7 @@ export function Sidebar({
   );
   const lane = laneLayout(pending(requests).length, height, nextWaiting(requests)?.kind === "card");
   const panel = shell ? shellLayout(height, lane.height, shell.collapsed, ROW_HEIGHT, shell.forceOpen) : null;
-  const style = { inlineSize: width, ...(panel ? { "--shell-h": `${panel.height}px` } : {}), ...(footer ? {} : { "--footer-h": "0px" }) } as CSSProperties;
+  const style = { inlineSize: width, ...(panel ? { "--shell-h": `${panel.height}px` } : {}), ...(footer || onOpenMenu ? {} : { "--footer-h": "0px" }) } as CSSProperties;
   return (
     <aside ref={root} className="sidebar" style={style} data-shell={panel ? "" : undefined} aria-label="Sessions and approvals">
       <Lane requests={requests} sidebarHeight={height} renderCard={renderCard} onJump={onJumpRequest} />
@@ -300,17 +307,22 @@ export function Sidebar({
           }}
         />
       )}
-      {footer && (
+      {(footer || onOpenMenu) && (
         <footer className="sidebar__footer">
-          <ContextRing pct={footer.planPct} label="5-hour plan" />
+          {onOpenMenu && (
+            <button type="button" className="sidebar__menu" aria-label="Menu" aria-haspopup="menu" aria-expanded={menuOpen === true} aria-keyshortcuts={shortcutLabel(commandById("menu").binding!, os ?? "windows")} title={`Menu (${shortcutLabel(commandById("menu").binding!, os ?? "windows")})`} onClick={(e) => onOpenMenu(e.currentTarget)}>
+              <MenuIcon />
+            </button>
+          )}
+          {footer && <ContextRing pct={footer.planPct} label="5-hour plan" />}
           {/* The ring says the same to a screen reader, when it shows. */}
-          {footer.fiveHourPct !== undefined && (
+          {footer?.fiveHourPct !== undefined && (
             <span className="sidebar__plan" aria-hidden={footer.planPct !== undefined ? "true" : undefined}>
               5h {Math.round(footer.fiveHourPct)}%
             </span>
           )}
           <span className="sidebar__spacer" />
-          {footer.doctorIssues !== undefined &&
+          {footer?.doctorIssues !== undefined &&
             (() => {
               const label = issues > 0 ? `Doctor: ${issues} ${issues === 1 ? "issue" : "issues"}` : "Doctor: no issues";
               const inner = (

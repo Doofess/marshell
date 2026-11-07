@@ -38,7 +38,6 @@ const base: HistoryViewProps = {
   liveTabFor: () => null,
   now: NOW,
   os: "windows",
-  searchFocus: 0,
   onQuery: noop,
   onFilter: noop,
   onToggle: noop,

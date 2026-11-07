@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { COMMANDS } from "../../lib/keymap";
+import { COMMANDS, MOVED_COMMANDS } from "../../lib/keymap";
 import { PALETTE_SESSIONS } from "./fixtures";
 import { Palette, keepActiveInView, pressInPalette, type QuickFiles } from "./Palette";
 
@@ -20,7 +20,7 @@ describe("Palette: empty", () => {
   });
   it("lists every command, grouped, in the keymap's order", () => {
     for (const c of COMMANDS) expect(h, c.id).toContain(c.label.replace(/'/g, "&#x27;"));
-    for (const g of ["Sessions", "View", "Tools"]) expect(h).toContain(g);
+    for (const g of ["Session", "Terminal", "Window", "App"]) expect(h).toContain(g);
   });
   it("shows each command's shortcut, rebindable, per OS", () => {
     expect(h).toContain("Ctrl+Shift+T");
@@ -33,6 +33,47 @@ describe("Palette: empty", () => {
   });
   it("shows commands that have no shortcut without a gap or a dash", () => {
     expect(h).toContain("Open Doctor");
+  });
+});
+
+describe("Palette: recent, moved and second list", () => {
+  const MOVED = MOVED_COMMANDS;
+  const lean = (query = "", activeIndex = 0, recent: string[] = ["find"]) =>
+    renderToStaticMarkup(<Palette view={{ query, activeIndex }} sessions={PALETTE_SESSIONS.slice(0, 1)} recent={recent} moved={MOVED} />);
+  const labelOfActive = (h: string) => /data-active="true"[^>]*>(?:<span[^>]*>\d+<\/span> ?<span[^>]*>.*?<\/span>)?<span class="palette__label"[^>]*>(.*?)<\/span>/.exec(h)?.[1] ?? "";
+  const text = (s: string) => s.replace(/<[^>]*>/g, "");
+
+  it("an_empty_box_starts_with_recent_then_sessions_then_the_groups", () => {
+    const h = lean();
+    const at = (t: string) => h.indexOf(`>${t}</span>`);
+    expect(at("Recent")).toBeGreaterThan(-1);
+    expect(at("Recent")).toBeLessThan(at("Open sessions"));
+    expect(at("Open sessions")).toBeLessThan(at("Session"));
+    expect(at("Session")).toBeLessThan(at("App"));
+    expect(h).not.toContain("Settings: Appearance…");
+    expect(h).not.toContain("Mode: Plan…");
+    expect(h).not.toContain("Mode: Plan,");
+  });
+  it("typing_finds_a_moved_item_and_a_mode", () => {
+    expect(text(lean("appear"))).toContain("Settings: Appearance…");
+    expect(text(lean("bypass"))).toContain("Mode: Bypass, only risky commands ask");
+  });
+  it("enter_runs_the_row_shown_active_in_every_group", () => {
+    const first = COMMANDS.find((c) => c.group === "Session")!;
+    const firstSessionCmd = text(first.label);
+    const shown = [0, 1, 2].map((i) => text(labelOfActive(lean("", i))));
+    expect(shown[0]).toBe("Search in scrollback");
+    expect(shown[1]).toContain("api-server");
+    expect(shown[2]).toBe(firstSessionCmd);
+  });
+  it("a_second_list_shows_one_group_and_its_prompt", () => {
+    const modes = COMMANDS.filter((c) => c.id.startsWith("mode-"));
+    const h = renderToStaticMarkup(<Palette view={{ query: "", activeIndex: 0 }} sessions={PALETTE_SESSIONS} commands={modes} list={{ title: "Modes", prompt: "Type a mode" }} recent={["find"]} moved={MOVED} />);
+    expect(h).toContain(">Modes</span>");
+    expect(h).toContain('aria-label="Type a mode"');
+    expect(h).not.toContain("Open sessions");
+    expect(h).not.toContain("Recent");
+    expect(options(h)).toBe(modes.length);
   });
 });
 

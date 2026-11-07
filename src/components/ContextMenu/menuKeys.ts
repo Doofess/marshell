@@ -1,11 +1,13 @@
 /** One row of a context menu: an action, or a rule between groups. */
 /** `disabled` is the reason the item cannot run: it is still listed and reachable, so the reason can be read, but it never runs. */
-export type MenuItem = { id: string; label: string; shortcut?: string; disabled?: string } | { separator: true };
+export type MenuItem = { id: string; label: string; shortcut?: string; disabled?: string; submenu?: true } | { separator: true };
 
 export type MenuKeyResult =
   | { kind: "move"; index: number }
   | { kind: "run"; id: string }
   | { kind: "close"; refocus: boolean }
+  | { kind: "open"; id: string }
+  | { kind: "back" }
   | null;
 
 const isAction = (i: MenuItem): i is Exclude<MenuItem, { separator: true }> => !("separator" in i);
@@ -38,8 +40,15 @@ export function menuKey(key: string, items: MenuItem[], active: number, mods: Mo
     case "Enter":
     case " ": {
       const it = items[active];
-      return it && isAction(it) && it.disabled === undefined ? { kind: "run", id: it.id } : null;
+      if (!it || !isAction(it) || it.disabled !== undefined) return null;
+      return it.submenu ? { kind: "open", id: it.id } : { kind: "run", id: it.id };
     }
+    case "ArrowRight": {
+      const it = items[active];
+      return it && isAction(it) && it.submenu && it.disabled === undefined ? { kind: "open", id: it.id } : null;
+    }
+    case "ArrowLeft":
+      return { kind: "back" };
     case "Escape":
       return { kind: "close", refocus: true };
     case "Tab":

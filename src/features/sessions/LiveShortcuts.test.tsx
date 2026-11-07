@@ -29,7 +29,6 @@ describe("LiveShortcuts", () => {
     expect(h).toContain("Go to session 1 to 9");
     expect(h).not.toContain("Search in scrollback");
     expect(h).toContain("History");
-    expect(h).toContain("Search all sessions");
     expect(h).toContain("Bookmark this point");
   });
   it("is a command the palette runs", () => {

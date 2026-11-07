@@ -123,6 +123,10 @@ export type MainWindowProps = {
   footer?: SidebarFooter | null;
   /** A click on the sidebar footer's Doctor count. */
   onOpenDoctor?: () => void;
+  /** The Menu button in the sidebar footer and at the rail's bottom. Left out, there is none. */
+  onOpenMenu?: (button: HTMLElement) => void;
+  /** The menu is open: both buttons say so. */
+  menuOpen?: boolean;
   /** The needs-you count the window title leads with. The live app passes the one count it also gives the taskbar badge. */
   needsYou?: number;
   /** The 24 px status bar at the foot of the window (the focused session's strip); on by default, never in focus mode. */
@@ -257,6 +261,8 @@ export function MainWindow({
   ports,
   footer = SCENARIO_FOOTER,
   onOpenDoctor,
+  onOpenMenu,
+  menuOpen,
   needsYou = 0,
   headerBar,
   paneBar,
@@ -535,7 +541,7 @@ export function MainWindow({
       </header>
 
       <div ref={bodyRef} className="window__body">
-        {mode === "expanded" && <Sidebar rows={rows} requests={requests} renderCard={renderCard} onJumpRequest={onJumpRequest} readScreen={readScreen} onPeekClose={onPeekClose} height={height - BAR} width={sideW} selectedId={selected?.id} visibleIds={visibleIds} os={os} footer={footer ?? undefined} onOpenDoctor={onOpenDoctor} shell={shell ? { cwd: shellOptions.cwd ?? active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed || shellOptions.hidden === true, os, terminal: shellOptions.terminal, failed: shellOptions.failed, onRetry: shellOptions.onRetry, openDisabled: shellOptions.openDisabled, forceOpen: shellOptions.forceOpen, onToggle: shellOptions.onToggle, onOpenInPane: shellOptions.onOpenInPane } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} onSelect={onSelect} onToggle={onToggle} onReview={onReview} onSetup={onSetup} menuItems={menuItems} onMenuRun={onMenuRun} grouped={grouped} />}
+        {mode === "expanded" && <Sidebar rows={rows} requests={requests} renderCard={renderCard} onJumpRequest={onJumpRequest} readScreen={readScreen} onPeekClose={onPeekClose} height={height - BAR} width={sideW} selectedId={selected?.id} visibleIds={visibleIds} os={os} footer={footer ?? undefined} onOpenDoctor={onOpenDoctor} onOpenMenu={onOpenMenu} menuOpen={menuOpen} shell={shell ? { cwd: shellOptions.cwd ?? active?.project, shellName: shellNameFor(os), collapsed: shellCollapsed || shellOptions.hidden === true, os, terminal: shellOptions.terminal, failed: shellOptions.failed, onRetry: shellOptions.onRetry, openDisabled: shellOptions.openDisabled, forceOpen: shellOptions.forceOpen, onToggle: shellOptions.onToggle, onOpenInPane: shellOptions.onOpenInPane } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} onSelect={onSelect} onToggle={onToggle} onReview={onReview} onSetup={onSetup} menuItems={menuItems} onMenuRun={onMenuRun} grouped={grouped} />}
         {mode === "expanded" && (
           <div
             className="window__side-handle"
@@ -552,7 +558,7 @@ export function MainWindow({
             onDoubleClick={onSidebarReset}
           />
         )}
-        {mode === "rail" && <Rail rows={rows} needsYou={waiting} selectedId={selected?.id} visibleIds={visibleIds} os={os} onSelect={onSelect} onToggle={onToggle} />}
+        {mode === "rail" && <Rail rows={rows} needsYou={waiting} selectedId={selected?.id} visibleIds={visibleIds} os={os} onSelect={onSelect} onToggle={onToggle} onOpenMenu={onOpenMenu} menuOpen={menuOpen} />}
 
         <div className="window__center">
         {/* A single terminal is slot 0 to the keyboard cursor; in split view each pane is its own slot. */}

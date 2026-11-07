@@ -109,7 +109,20 @@ pub fn repair(mut doc: LayoutDoc) -> LayoutDoc {
     if view.arrangement.as_deref().is_some_and(|a| !ARRANGEMENTS.contains(&a)) {
         view.arrangement = None;
     }
+    let mut kept: Vec<String> = Vec::new();
+    for id in std::mem::take(&mut view.recent_commands) {
+        if is_command_id(&id) && !kept.contains(&id) && kept.len() < MAX_RECENT {
+            kept.push(id);
+        }
+    }
+    view.recent_commands = kept;
     doc
+}
+
+const MAX_RECENT: usize = 5;
+
+fn is_command_id(id: &str) -> bool {
+    (1..=64).contains(&id.len()) && id.bytes().all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-'))
 }
 
 /// The same rules as `repair`, but a bad value is an error naming the field. Whether a pane's tab
@@ -155,6 +168,9 @@ pub fn validate_view(v: &ViewLayout) -> Result<(), String> {
         && !ARRANGEMENTS.contains(&a.as_str())
     {
         return Err(format!("arrangement must be one of {ARRANGEMENTS:?}, not \"{a}\""));
+    }
+    if v.recent_commands.len() > MAX_RECENT || v.recent_commands.iter().any(|id| !is_command_id(id)) {
+        return Err("recent_commands must hold at most 5 command ids of a-z, 0-9 and -".into());
     }
     Ok(())
 }
@@ -270,6 +286,43 @@ mod tests {
         assert_eq!(repair(doc.clone()).view.panes, vec![None::<String>]);
         doc.view.panes = vec![Some("a".into()); 6];
         assert_eq!(repair(doc).view.panes.len(), 4);
+    }
+
+    #[test]
+    fn repair_trims_recent_commands() {
+        let mut doc = LayoutDoc::default();
+        doc.view.recent_commands = [
+            "close",
+            "close",
+            "Bad Id",
+            "",
+            "find",
+            "rename",
+            "history",
+            "focus-mode",
+            "split",
+            "preview",
+        ]
+        .map(String::from)
+        .to_vec();
+        let fixed = repair(doc);
+        assert_eq!(
+            fixed.view.recent_commands,
+            ["close", "find", "rename", "history", "focus-mode"]
+        );
+    }
+
+    #[test]
+    fn validate_refuses_a_bad_recent_command() {
+        let bad = |ids: Vec<String>| {
+            let v = ViewLayout {
+                recent_commands: ids,
+                ..ViewLayout::default()
+            };
+            validate_view(&v).unwrap_err()
+        };
+        assert!(bad(vec!["a b".into()]).contains("recent_commands"));
+        assert!(bad(vec!["x".into(); 6]).contains("recent_commands"));
     }
 
     #[test]

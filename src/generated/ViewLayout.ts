@@ -27,4 +27,8 @@ zoomed: number | null,
 /**
  * "expanded", "rail" or "focus".
  */
-sidebar: string, sidebar_width: number, shell_hidden: boolean, grouped: boolean, };
+sidebar: string, sidebar_width: number, shell_hidden: boolean, grouped: boolean, 
+/**
+ * The palette's recent commands, newest first: at most 5 command ids.
+ */
+recent_commands: Array<string>, };
