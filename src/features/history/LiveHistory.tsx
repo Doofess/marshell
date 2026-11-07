@@ -82,8 +82,6 @@ export type LiveHistoryProps = {
   /** The window's sessions: an entry whose tab is a live row among them offers "Go to session". */
   rows: RowModel[];
   os: Os;
-  /** Each new value puts the cursor in the search box. */
-  searchFocus: number;
   /** The size a resumed session starts at. */
   size: () => { cols: number; rows: number };
   /** Says something through the window's announcer. */
@@ -102,7 +100,7 @@ export type LiveHistoryProps = {
 };
 
 /** The History view wired to the core: it fetches the list on open and on each filter change, searches 150 ms after the last keystroke, opens a conversation on Enter or a click, and resumes it. */
-export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, onGoTo, onResumed, onOpenFile, onClose, onSettings, theme, font }: LiveHistoryProps) {
+export function LiveHistory({ endpoint, rows, os, size, announce, onGoTo, onResumed, onOpenFile, onClose, onSettings, theme, font }: LiveHistoryProps) {
   const [filters, setFilters] = useState<HistoryFilters>({ when: "any", bookmarked: false, archived: false, place: "any", headless: false });
   const [importState, setImportState] = useState<ImportStatus | null>(null);
   const [listed, setListed] = useState<Listed>({ entries: [], now: Date.now(), loaded: false, error: null });
@@ -451,7 +449,6 @@ export function LiveHistory({ endpoint, rows, os, searchFocus, size, announce, o
       liveTabFor={liveTabFor(rows)}
       now={listed.now}
       os={os}
-      searchFocus={searchFocus}
       onQuery={setQuery}
       onFilter={filter}
       onToggle={toggle}

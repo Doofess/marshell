@@ -217,7 +217,6 @@ export function LiveApp() {
   const [mainView, setMainView] = useState<"sessions" | "history">("sessions");
   const mainViewRef = useRef(mainView);
   mainViewRef.current = mainView;
-  const [searchFocus] = useState(0);
   const pick = useCallback(
     (id: string) => {
       setMainView("sessions");
@@ -1691,7 +1690,6 @@ export function LiveApp() {
                 os={os}
                 theme={themeFor(undefined)}
                 font={terminalFont}
-                searchFocus={searchFocus}
                 size={() => size.current}
                 announce={announce}
                 onGoTo={(tabId) => {

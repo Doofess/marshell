@@ -36,7 +36,6 @@ export type SessionShortcut =
   | { kind: "capture" }
   /** Show or hide the History view in the main area (Ctrl+Shift+Y). */
   | { kind: "history" }
-  /** Open the History view with the cursor in its search box (Ctrl+Shift+Alt+F). */
   /** Bookmark the current point of the focused Claude Code session (Ctrl+Shift+B). */
   | { kind: "bookmark" }
   /** Focus the needs-you lane's target card, the oldest waiting request (Ctrl+Shift+N; Cmd+N on macOS). */

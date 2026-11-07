@@ -46,8 +46,6 @@ export type HistoryViewProps = {
   liveTabFor: (e: Pick<HistoryEntry, "tab_id">) => string | null;
   now: number;
   os: Os;
-  /** Each new value puts the cursor in the search box. */
-  searchFocus: number;
   onQuery: (q: string) => void;
   /** An empty value clears the filter. */
   onFilter: (name: FilterName, value: string) => void;
@@ -131,10 +129,11 @@ export function HistoryView(p: HistoryViewProps) {
   const domId = (key: string) => `${uid}-opt-${keys.indexOf(key)}`;
   const selected = rows.find((r) => r.key === p.selectedId);
 
+  // Opening the view (Ctrl+Shift+Y, the menu, the palette) puts the cursor in the search box.
   useEffect(() => {
     searchRef.current?.focus();
     searchRef.current?.select();
-  }, [p.searchFocus]);
+  }, []);
 
   // In a narrow view the list is hidden while a conversation is open (and the conversation while none is): focus must follow,
   // or it falls to the page and Esc, which is handled here, never arrives.
