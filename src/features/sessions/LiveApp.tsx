@@ -126,6 +126,9 @@ const SIDEBAR_NEEDS_WIDTH = "Widen the window to open the sidebar.";
 const SHELL_PANEL_ELSEWHERE = "The shell panel is in the expanded sidebar.";
 /** What the announcer says when a split is asked for and the window has no room to show another pane. */
 const NO_PANE_ROOM = "No room for another pane.";
+// The footer's and the rail's Menu buttons: a press on one is the toggle's own, so it doesn't count as leaving the menu.
+const MENU_BUTTONS = ".sidebar__menu, .rail__menu";
+const isMenuButton = (n: object) => n instanceof Element && n.closest(MENU_BUTTONS) !== null;
 
 /** Wait for the core's command before opening the bar; a failed request still opens it with the local text. */
 function SessionResumeBar({ endpoint, info, profileName, ...props }: Omit<ComponentProps<typeof ResumeBar>, "command" | "folder"> & { endpoint: Endpoint | null; info: SessionInfo; profileName: string }) {
@@ -1246,7 +1249,7 @@ export function LiveApp() {
           void runCaptureRef.current();
           return true;
         case "menu": {
-          const button = Array.from(document.querySelectorAll<HTMLElement>(".sidebar__menu, .rail__menu")).find((b) => b.getClientRects().length > 0);
+          const button = Array.from(document.querySelectorAll<HTMLElement>(MENU_BUTTONS)).find((b) => b.getClientRects().length > 0);
           const r = button?.getBoundingClientRect();
           setMenu((m) => toggleMenu(m, { anchor: r ? { left: r.left, top: r.top } : null, back: document.activeElement instanceof HTMLElement ? document.activeElement : null }));
           return true;
@@ -1857,6 +1860,7 @@ export function LiveApp() {
           os={os}
           anchor={menu.anchor}
           doctorIssues={doctorIssues}
+          isTrigger={isMenuButton}
           onRun={(item: AppMenuRun) => {
             const { back } = menu;
             setMenu(null);

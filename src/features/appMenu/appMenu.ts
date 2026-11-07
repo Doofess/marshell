@@ -1,4 +1,6 @@
-import { placeMenu, type MenuItem } from "../../components/ContextMenu/menuKeys";
+import { leavesMenu, placeMenu, type MenuItem } from "../../components/ContextMenu/menuKeys";
+import { sessionShortcut } from "../../lib/appShortcuts";
+import type { KeyEventLike } from "../../lib/bindings";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
 import type { SettingsSection } from "../settings/settingsSections";
 
@@ -53,4 +55,14 @@ export type MenuState = { anchor: { left: number; top: number } | null; back: { 
 /** The menu key: closes an open menu, else opens with `request`. */
 export function toggleMenu(open: MenuState, request: NonNullable<MenuState>): MenuState {
   return open ? null : request;
+}
+
+/** A press or a focus move to `next` leaves the menu, unless it lands on the button that toggles it: that button's own click closes the menu. */
+export function leavesAppMenu(next: object | null, menu: { contains: (n: never) => boolean }, isTrigger: (n: object) => boolean): boolean {
+  return leavesMenu(next, menu) && !isTrigger(next!);
+}
+
+/** The menu key (Ctrl+Shift+M, ⌘E, or what it was rebound to) pressed inside the menu closes it, as it opened it. */
+export function menuKeyCloses(e: KeyEventLike, os: Os): boolean {
+  return sessionShortcut(e, os)?.kind === "menu";
 }

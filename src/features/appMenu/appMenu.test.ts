@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appMenuItems, doctorItemLabel, menuPlace, SETTINGS_ITEMS, submenuPlace, toggleMenu, type MenuState } from "./appMenu";
+import { appMenuItems, doctorItemLabel, leavesAppMenu, menuKeyCloses, menuPlace, SETTINGS_ITEMS, submenuPlace, toggleMenu, type MenuState } from "./appMenu";
 
 describe("appMenu", () => {
   it("the_menu_lists_settings_history_doctor_departures", () => {
@@ -37,5 +37,23 @@ describe("toggleMenu", () => {
     const open = toggleMenu(null, { anchor: null, back: el });
     expect(open).toEqual({ anchor: null, back: el });
     expect(toggleMenu(open as MenuState, { anchor: null, back: el })).toBeNull();
+  });
+  it("a_press_on_the_menu_button_leaves_the_closing_to_its_click", () => {
+    const inside = { name: "item" };
+    const button = { name: "menu button" };
+    const elsewhere = { name: "terminal" };
+    const menu = { contains: (n: never) => n === (inside as never) };
+    const isTrigger = (n: object) => n === button;
+    expect(leavesAppMenu(elsewhere, menu, isTrigger)).toBe(true);
+    expect(leavesAppMenu(button, menu, isTrigger)).toBe(false);
+    expect(leavesAppMenu(inside, menu, isTrigger)).toBe(false);
+    expect(leavesAppMenu(null, menu, isTrigger)).toBe(false);
+  });
+  it("the_menu_key_pressed_in_the_menu_closes_it", () => {
+    const key = (code: string, mods: { ctrlKey?: boolean; shiftKey?: boolean; metaKey?: boolean } = {}) => ({ code, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, ...mods });
+    expect(menuKeyCloses(key("KeyM", { ctrlKey: true, shiftKey: true }), "windows")).toBe(true);
+    expect(menuKeyCloses(key("KeyE", { metaKey: true }), "mac")).toBe(true);
+    expect(menuKeyCloses(key("KeyM"), "windows")).toBe(false);
+    expect(menuKeyCloses(key("KeyY", { ctrlKey: true, shiftKey: true }), "windows")).toBe(false);
   });
 });

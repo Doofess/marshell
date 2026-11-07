@@ -1,11 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { leavesMenu, menuKey, type MenuItem } from "../../components/ContextMenu/menuKeys";
+import { menuKey, type MenuItem } from "../../components/ContextMenu/menuKeys";
 import { AuxGlyph, StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { usePopupFocus } from "../../lib/usePopupFocus";
 import type { Os } from "../../lib/keymap";
 import "../../components/ContextMenu/ContextMenu.css";
 import "./AppMenu.css";
-import { appMenuItems, doctorItemLabel, menuPlace, SETTINGS_ITEMS, submenuPlace, type AppMenuRun } from "./appMenu";
+import { appMenuItems, doctorItemLabel, leavesAppMenu, menuKeyCloses, menuPlace, SETTINGS_ITEMS, submenuPlace, type AppMenuRun } from "./appMenu";
 
 type Props = {
   os: Os;
@@ -15,13 +15,17 @@ type Props = {
   doctorIssues?: number;
   onRun: (r: AppMenuRun) => void;
   onClose: (o: { refocus: boolean }) => void;
+  /** The button that toggles the menu: a press on it is left to its click, which closes the menu, so the press doesn't close it first. */
+  isTrigger?: (n: object) => boolean;
 };
+
+const NO_TRIGGER = () => false;
 
 const SUB_ITEMS: MenuItem[] = SETTINGS_ITEMS.map((s) => ({ id: s.section, label: s.label }));
 const view = () => ({ w: window.innerWidth, h: window.innerHeight });
 
 /** The app menu: Settings (a submenu), History, Doctor and Departures. Real focus roves through the items. */
-export function AppMenu({ os, anchor, doctorIssues, onRun, onClose }: Props) {
+export function AppMenu({ os, anchor, doctorIssues, onRun, onClose, isTrigger = NO_TRIGGER }: Props) {
   const items = appMenuItems(os);
   const wrap = useRef<HTMLDivElement>(null);
   const top = useRef<HTMLUListElement>(null);
@@ -54,19 +58,27 @@ export function AppMenu({ os, anchor, doctorIssues, onRun, onClose }: Props) {
 
   useEffect(() => {
     const away = (e: PointerEvent) => {
-      if (!wrap.current?.contains(e.target as Node)) onClose({ refocus: false });
+      if (wrap.current && e.target && leavesAppMenu(e.target, wrap.current, isTrigger)) onClose({ refocus: false });
     };
     window.addEventListener("pointerdown", away, true);
     return () => window.removeEventListener("pointerdown", away, true);
-  }, [onClose]);
+  }, [onClose, isTrigger]);
 
   const openSub = () => {
     setSubActive(0);
     setSubOpen(true);
   };
 
+  // The menu key closes the menu it opened, from either list, and puts the focus back.
+  const menuKeyClose = (e: React.KeyboardEvent) => {
+    if (!menuKeyCloses(e.nativeEvent, os)) return false;
+    e.preventDefault();
+    onClose({ refocus: true });
+    return true;
+  };
   const onTopKey = (e: React.KeyboardEvent) => {
     e.stopPropagation();
+    if (menuKeyClose(e)) return;
     if (e.ctrlKey || e.metaKey) e.preventDefault();
     const r = menuKey(e.key, items, active, e);
     if (!r) return;
@@ -79,6 +91,7 @@ export function AppMenu({ os, anchor, doctorIssues, onRun, onClose }: Props) {
   };
   const onSubKey = (e: React.KeyboardEvent) => {
     e.stopPropagation();
+    if (menuKeyClose(e)) return;
     if (e.ctrlKey || e.metaKey) e.preventDefault();
     const r = menuKey(e.key, SUB_ITEMS, subActive, e);
     if (!r) return;
@@ -89,7 +102,7 @@ export function AppMenu({ os, anchor, doctorIssues, onRun, onClose }: Props) {
     else if (r.kind === "close") onClose({ refocus: false });
   };
   const onBlur = (e: React.FocusEvent) => {
-    if (wrap.current && leavesMenu(e.relatedTarget, wrap.current)) onClose({ refocus: false });
+    if (wrap.current && leavesAppMenu(e.relatedTarget, wrap.current, isTrigger)) onClose({ refocus: false });
   };
 
   return (
