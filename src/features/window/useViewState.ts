@@ -4,7 +4,7 @@ import type { LayoutDoc } from "../../generated/LayoutDoc";
 import type { ViewLayout } from "../../generated/ViewLayout";
 import { ApiError } from "../../lib/api/client";
 import { layout } from "../../lib/api/layout";
-import { DEFAULT_VIEW, type ViewAction, type ViewState, checkedView, toSaved, viewReducer } from "./viewState";
+import { DEFAULT_VIEW, type ViewAction, type ViewState, toSaved, viewReducer } from "./viewState";
 
 const SAVE_DELAY_MS = 300;
 
@@ -36,7 +36,7 @@ export function useViewState(endpoint: Endpoint | null, openIds: string[] | unde
       .get(endpoint)
       .then((d) => {
         if (!live) return;
-        const view = checkedView(d.view);
+        const view = d.view;
         saved.current = JSON.stringify(view);
         setDoc(d);
         dispatch({ type: "loaded", view });

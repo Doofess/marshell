@@ -25,7 +25,7 @@ export const ROW_HEIGHT = 56;
 export type SidebarFooter = { planPct?: number; fiveHourPct?: number; doctorIssues?: number };
 
 /** The plain shell under the list. Left out, the sidebar is just the lane, the list and the footer. */
-export type SidebarShell = { shellName?: ShellName; cwd?: string; collapsed?: boolean; os?: Os; terminal?: ReactNode; failed?: boolean; onRetry?: () => void; openDisabled?: boolean; forceOpen?: boolean; onToggle?: () => void; onOpenInPane?: () => void };
+export type SidebarShell = { shellName?: ShellName; cwd?: string; collapsed?: boolean; os?: Os; terminal?: ReactNode; failed?: boolean; onRetry?: () => void; openDisabled?: boolean; forceOpen?: boolean; onToggle?: () => void; onOpenAsSession?: () => void };
 
 /**
  * The expanded sidebar: the needs-you lane, the session list, an optional plain shell, and a 40 px footer with plan use
@@ -282,7 +282,7 @@ export function Sidebar({
             ))
           : rows.map(row)}
       </div>
-      {panel && shell && <ShellPanel height={panel.height} collapsed={panel.collapsed} auto={panel.auto} cwd={shell.cwd} shellName={shell.shellName} os={shell.os} terminal={shell.terminal} failed={shell.failed} onRetry={shell.onRetry} openDisabled={shell.openDisabled} onToggle={shell.onToggle} onOpenInPane={shell.onOpenInPane} />}
+      {panel && shell && <ShellPanel height={panel.height} collapsed={panel.collapsed} auto={panel.auto} cwd={shell.cwd} shellName={shell.shellName} os={shell.os} terminal={shell.terminal} failed={shell.failed} onRetry={shell.onRetry} openDisabled={shell.openDisabled} onToggle={shell.onToggle} onOpenAsSession={shell.onOpenAsSession} />}
       {peek.state && (() => {
         const r = rows.find((x) => x.id === peek.state!.id);
         return r ? <Peek row={r} rows={peek.state.rows} failed={peek.state.failed} focusOnOpen={peek.state.via === "key"} at={peek.state.at} onClose={closePeek} onPointerEnter={peek.hoverPeek} onPointerLeave={peek.leavePeek} /> : null;

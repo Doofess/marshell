@@ -51,10 +51,8 @@ describe("Composer: one command line", () => {
     expect(h).toMatch(/<svg[^>]*class="composer__prompt"[^>]*aria-hidden="true"/);
     expect(h.indexOf("composer__prompt")).toBeLessThan(h.indexOf("<textarea"));
   });
-  it("carries the vendor for the accent, and says whether it is the focused prompt", () => {
+  it("carries the vendor for the accent", () => {
     expect(html("idle")).toContain('data-agent="codex"');
-    expect(render("idle")).not.toContain('data-focused="true"');
-    expect(render("idle", { focused: true })).toContain('data-focused="true"');
   });
   it("has a visible Send button with the Enter keycap drawn on it", () => {
     const h = html("idle");
@@ -85,10 +83,8 @@ describe("Composer: the line and its quiet tools row", () => {
     expect(h).toContain(">attach<");
     expect(h).not.toContain('aria-label="Slash commands"');
   });
-  it("names the focused pane when more than one is on screen, and stays plain for one", () => {
-    expect(render("idle", { pane: { index: 1, count: 4 } })).toContain("Pane 2 of 4");
+  it("names no pane number: there is one terminal", () => {
     expect(h).not.toContain("Pane ");
-    expect(render("idle", { pane: { index: 0, count: 1 } })).not.toContain("Pane ");
   });
   it("shows the session's mode as plain text, a caution mark for a risky one, and leaves an unknown one out", () => {
     expect(html("working")).toContain("Plan");
@@ -130,7 +126,7 @@ describe("Composer: states", () => {
     expect(e).toContain("Resume");
   });
   it("an empty pane: nothing to write to, so the field is off and it says why", () => {
-    const e = renderToStaticMarkup(<Composer row={null} pane={{ index: 2, count: 3 }} />);
+    const e = renderToStaticMarkup(<Composer row={null} />);
     expect(e).toMatch(/<textarea[^>]*disabled/);
     expect(e).toContain("Choose a session for this pane first");
     expect(e).toContain("This pane is empty");

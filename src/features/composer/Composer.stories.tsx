@@ -40,9 +40,8 @@ export const WorkingQueued = story("The session is working: the reason sits in t
 export const WaitingPermission = story("Waiting on an approval: the field is off so a typed line can never be read as the answer; the placeholder says where to answer", <Composer row={row("needs-permission")} />);
 export const WaitingQuestion = story("Waiting on a question: same, and the notice names a question", <Composer row={row("needs-question")} />);
 export const Ended = story("Ended: the field is off and the way back is Resume", <Composer row={row("ended")} />);
-export const SplitFocusedPane = story("Full line naming the focused pane (Pane 2 of 4) and taking that session's colour", <Composer row={row("idle")} pane={{ index: 1, count: 4 }} />);
-export const EmptyPane = story("The focused pane is empty: nothing to write to yet", <Composer row={null} pane={{ index: 2, count: 3 }} />);
-export const Narrow = story("At 560 px the hint hides and the target and tools keep their place", <Composer row={row("working")} value="x" pane={{ index: 0, count: 2 }} />, 560);
+export const EmptyPane = story("The pane is empty: nothing to write to yet", <Composer row={null} />);
+export const Narrow = story("At 560 px the hint hides and the target and tools keep their place", <Composer row={row("working")} value="x" />, 560);
 
 const data = { plan: SCENARIO_PLAN, ports: SCENARIO_PORTS } as const;
 /** The status bar under everything, at the width of the window's centre column. */

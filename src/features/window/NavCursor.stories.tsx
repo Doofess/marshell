@@ -57,7 +57,7 @@ export const HeldAcrossPanes: StoryObj = {
 
 export const HeldOnTheTopBar: StoryObj = {
   render: () => (
-    <ThemePair label="↑ from the first row of panes reaches the top bar; releasing activates the control (here the layout button) and leaves the selection where it was" stack>
+    <ThemePair label="↑ from the first row of panes reaches the top bar; releasing activates the control (here the sidebar button) and leaves the selection where it was" stack>
       {demo(run(start(1), [DOWN, arrow("up")], GRID_CONTEXT).state)}
     </ThemePair>
   ),

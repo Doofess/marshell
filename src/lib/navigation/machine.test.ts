@@ -99,7 +99,7 @@ describe("holding the modifier and pressing an arrow starts a cursor that can go
   });
   it("activates a top bar control on release instead of selecting anything", () => {
     const r = run(at(1), [DOWN, arrow("up"), UP], GRID_CONTEXT);
-    expect(without(r.effects)).toEqual([{ type: "activate", id: "layout" }]);
+    expect(without(r.effects)).toEqual([{ type: "activate", id: "sidebar" }]);
     expect(r.state.selectedPane).toBe(1);
   });
   it("starts on the first terminal when nothing is selected, without moving yet", () => {

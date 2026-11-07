@@ -88,9 +88,8 @@ import { appScheme, resolveTerminalTheme } from "../terminal/terminalTheme";
 import type { Notice } from "../window/announce";
 import { sidebarMode } from "../window/layout";
 import { MainWindow } from "../window/MainWindow";
-import { PANE_LIMIT, type Arrangement } from "../window/splitLayout";
 import { useViewState } from "../window/useViewState";
-import { adoptTarget, fillsEmptyPane, focusedIndex, paneToggle, ratiosOf, roomForPane, sidebarPrefOf, sidebarToggleFor, viewReducer, visibleSessions, type ViewState } from "../window/viewState";
+import { fillsEmptyPane, sidebarPrefOf, sidebarToggleFor, viewReducer, type ViewState } from "../window/viewState";
 import { CloseBar } from "./CloseBar";
 import { PauseBar } from "./PauseBar";
 import { RestartBar } from "./RestartBar";
@@ -108,7 +107,7 @@ import { recordSetupDetection, type SetupDetections } from "./setupDetections";
 import { fetchSessionCommand, sessionResumeCommand } from "./resumeCommand";
 import { holdsResume, offersModeChange, offersResume, resumeBlockedReason, resumeStateOf, sessionRunning } from "./resumeState";
 import { PAUSED_TYPING_TEXT, SessionActions, closeBarText, needsCloseConfirm, pauseBarStale, pauseBarText, reopenBarText, restartBarStale, restartBarText, tabIdOfNumber } from "./sessionActions";
-import { navPanesOf, useNavigation } from "./useNavigation";
+import { useNavigation } from "./useNavigation";
 import type { NavEffect } from "../../lib/navigation/types";
 import { Toast } from "./Toast";
 import { pruneClosed, without, type StartingTexts } from "./startingTexts";
@@ -192,28 +191,14 @@ export function LiveApp() {
   const [view, dispatch, , settled] = useViewState(endpoint, loaded ? infos.map((i) => i.tab_id) : undefined);
   const viewRef = useRef(view);
   viewRef.current = view;
-  // The session the window is about is the one in the focused pane; the store's choice only stands in for an empty pane.
-  // A small window shows fewer panes than the layout holds; the focus is the pane it shows, never one out of sight (MainWindow reports how many).
-  const [shownCount, setShownCount] = useState<number | undefined>(undefined);
-  // How many panes the window has room for (the most it could show). Both counts are also kept in refs, for the callbacks below.
-  const [fitCount, setFitCount] = useState<number | undefined>(undefined);
-  const shownRef = useRef(shownCount);
-  shownRef.current = shownCount;
-  const fitRef = useRef(fitCount);
-  fitRef.current = fitCount;
-  const shownPanes = view.panes.slice(0, shownCount ?? view.panes.length);
-  const focusIdx = focusedIndex(shownPanes, view.active, view.zoomed);
-  const focusIdxRef = useRef(focusIdx);
-  focusIdxRef.current = focusIdx;
-  const focusedId = view.panes[focusIdx] ?? selectedId;
+  // The session the window is about is the one in the pane; the store's choice only stands in for an empty pane.
+  const focusedId = view.panes[0] ?? selectedId;
   // The preview pane: its history lives here so it outlasts a session switch. Open, it is about the focused session's window only.
   const preview = usePreview();
   const previewRef = useRef(preview);
   previewRef.current = preview;
   const previewEntry = preview.state.open ? currentOf(preview.state) : undefined;
-  // Every session on screen, which the sidebar and the rail mark.
-  const visibleIds = useMemo(() => visibleSessions(view.panes, shownCount ?? view.panes.length, view.zoomed), [view.panes, shownCount, view.zoomed]);
-  // Going to a session is two things: the store's selection and the view's, where it focuses the pane showing it or fills the focused one.
+  // Going to a session is two things: the store's selection and the view's, which puts it in the one pane.
   const selectRef = useRef(select);
   selectRef.current = select;
   // A link or a banner put focus on a row: no terminal takes it on its own until the person picks a session or a pane.
@@ -229,8 +214,7 @@ export function LiveApp() {
       setMainView("sessions");
       setLinkHeld(false);
       selectRef.current(id);
-      // The view is told how many panes are on screen, so the session never lands in one that is not.
-      dispatch({ type: "select", tabId: id, visible: shownRef.current });
+      dispatch({ type: "select", tabId: id });
     },
     [dispatch],
   );
@@ -846,7 +830,7 @@ export function LiveApp() {
   const runCaptureRef = useRef(runCapture);
   runCaptureRef.current = runCapture;
   useEffect(() => () => stopWatch.current?.(), []);
-  // The pane under a dragged file gets the dashed outline and its label (Drop.css).
+  // The terminal under a dragged file gets the dashed outline and its label (Drop.css).
   const dropOver = useRef<Element | null>(null);
   const dropHover = (target: DropTarget | null) => {
     let next: Element | null = null;
@@ -854,7 +838,7 @@ export function LiveApp() {
     if (target?.kind === "terminal") {
       const host = Array.from(document.querySelectorAll("[data-drop-tab]")).find((h) => h.getAttribute("data-drop-tab") === target.tabId);
       const name = deliveryTo(target.tabId, stateRef.current.rows, panelIdRef.current)?.name;
-      next = host?.closest(".pane") ?? host ?? null;
+      next = host ?? null;
       label = `Drop to paste the path into ${name ?? "the session"}`;
     } else if (target) {
       next = document.querySelector("[data-drop-preview]");
@@ -874,8 +858,8 @@ export function LiveApp() {
     if (closing !== null && (closing !== focusedId || !infos.some((i) => i.tab_id === closing))) actions.cancelClose();
   }, [closing, focusedId, infos, actions]);
   // The same for the restart bar and the Pause bar (they share the pane's bar slot); a close question and either of them are never
-  // up together. A session that askRestart or pauseSession is bringing on screen is not focused yet for a render or two (a split
-  // waits for the pane count); that is not a move away, as long as the focus has not moved since the question.
+  // up together. A session that askRestart or pauseSession is bringing on screen is not focused yet for a render or two
+  // (the selection lands after the click's update); that is not a move away, as long as the focus has not moved since the question.
   const showingForRestart = useRef<{ id: string; from: string | undefined } | null>(null);
   const slotId = restarting?.id ?? restartLoading ?? pauseBar?.id ?? null;
   const slotSession = infos.find((i) => i.tab_id === slotId);
@@ -927,7 +911,7 @@ export function LiveApp() {
 
   // The shell panel in the sidebar. Its shell is a pty the core keeps out of the tab list. It is asked for the first time the panel is
   // shown, in the folder of the session in focus then, and is never moved after that. Hiding the panel only folds it: the shell keeps
-  // running and the same terminal comes back, with no second request. "Open in a pane" turns the shell into a tab; the panel then has
+  // running and the same terminal comes back, with no second request. "Open as a session" turns the shell into a tab; the panel then has
   // no shell, and asks for a fresh one (in whatever folder is focused by then) while it is shown.
   const [panel, setPanel] = useState<{ endpoint: Endpoint; tabId: string; folder: string } | null>(null);
   // The shell the core has turned into a tab, waiting to be listed so a pane can show it.
@@ -979,7 +963,7 @@ export function LiveApp() {
   }, [dispatch]);
 
   const adopting = useRef(false);
-  const openInPane = useCallback(async () => {
+  const openAsSession = useCallback(async () => {
     // Nothing to open while the shell is still starting or failed to start.
     if (!endpoint || !panelTab || adopting.current) return;
     adopting.current = true;
@@ -987,32 +971,12 @@ export function LiveApp() {
       setAdopted({ endpoint, tabId: await sessions.adoptShellPanel(endpoint) });
     } catch (e) {
       // A 404 means the core has no panel shell (it was adopted already): there is nothing to open.
-      console.warn("Could not open the shell in a pane", e);
+      console.warn("Could not open the shell as a session", e);
     } finally {
       adopting.current = false;
     }
   }, [endpoint, panelTab]);
-  // Shows a session in a pane: where it already is, else an empty pane on screen, else a new pane if the window has room, else the
-  // focused pane (what it held stays in the sidebar). The adopted shell panel and the row menu's "Split into a pane" both use it.
-  const showInPane = useCallback(
-    (id: string) => {
-      const v = viewRef.current;
-      if (v.panes.includes(id)) {
-        pick(id);
-        return;
-      }
-      const fit = fitRef.current ?? PANE_LIMIT;
-      const target = adoptTarget(v, shownRef.current ?? v.panes.length, fit);
-      // A zoomed pane would hide a different one.
-      if (v.zoomed !== null && target.index !== v.zoomed) dispatch({ type: "zoom" });
-      if (target.split) dispatch({ type: "split", fit });
-      dispatch({ type: "assign", index: target.index, tabId: id });
-      if (!target.split) dispatch({ type: "focusPane", index: target.index });
-      selectRef.current(id);
-    },
-    [pick, dispatch],
-  );
-  // The adopted tab is listed: in one update the panel lets go of its terminal and a pane takes the tab. Until then the window draws
+  // The adopted tab is listed: in one update the panel lets go of its terminal and the window takes the tab. Until then the window draws
   // nothing for that tab (see renderTerminal), so the pty only ever has one terminal attached. (Adopting earlier would let the
   // view's own clean-up drop an id the list does not hold yet.)
   useEffect(() => {
@@ -1022,9 +986,9 @@ export function LiveApp() {
     if (!infos.some((i) => i.tab_id === id)) return;
     setAdopted(null);
     setPanel(null);
-    showInPane(id);
-  }, [adopted, endpoint, infos, showInPane]);
-  // The core adopted the panel's shell because it runs a known agent: its tab is listed, so treat it like "Open in a pane".
+    pick(id);
+  }, [adopted, endpoint, infos, pick]);
+  // The core adopted the panel's shell because it runs a known agent: its tab is listed, so treat it like "Open as a session".
   // Idempotent: `handedOff` is null once the adopt is pending, and the effect above clears it when done.
   const handed = handedOff(panelTab?.tabId, adopted?.tabId, infos);
   useEffect(() => {
@@ -1074,25 +1038,25 @@ export function LiveApp() {
       if (info?.agent && !modesOf(info.agent).includes(mode)) return false;
       if (!actions.askRestart(id, mode)) return false;
       actions.cancelClose();
-      if (!(shownPanes.includes(id) && id === focusedId)) {
+      if (id !== focusedId) {
         showingForRestart.current = { id, from: focusedId };
-        showInPane(id);
+        pick(id);
       }
       return true;
     },
-    [actions, shownPanes, focusedId, showInPane, rows, infos, modesOf],
+    [actions, focusedId, pick, rows, infos, modesOf],
   );
   // Pause: the first one ever asks first, on the session's pane like the restart question; after that it acts at once.
   const pauseSession = useCallback(
     (id: string): "asked" | "sent" | null => {
       const r = actions.pause(id);
-      if (r === "asked" && !(shownPanes.includes(id) && id === focusedId)) {
+      if (r === "asked" && id !== focusedId) {
         showingForRestart.current = { id, from: focusedId };
-        showInPane(id);
+        pick(id);
       }
       return r;
     },
-    [actions, shownPanes, focusedId, showInPane],
+    [actions, focusedId, pick],
   );
   const onMenuRun = useCallback(
     (id: string, itemId: string, anchor: { x: number; y: number }) => {
@@ -1150,27 +1114,22 @@ export function LiveApp() {
       if (to === "terminal") actions.focusTerminal();
       else if (to === "row") document.querySelector<HTMLElement>(`[data-nav-row="${rows.find((r) => r.id === id)?.number}"]`)?.focus();
     },
-    [actions, showInPane, rows, infos, pick, startResume, reviewSession, pauseSession, endpoint, announce],
+    [actions, rows, infos, pick, startResume, reviewSession, pauseSession, endpoint, announce],
   );
 
-  // Keyboard navigation (hold Ctrl+Shift): the cursor reaches the panes on screen, the session rows and the top bar.
-  const split = view.panes.length > 1;
+  // Keyboard navigation (hold Ctrl+Shift): the cursor reaches the terminal, the session rows and the top bar.
   const numberOf = (id: string | null | undefined) => (id ? (infos.find((i) => i.tab_id === id)?.number ?? null) : null);
-  const navPanes = split ? navPanesOf(shownPanes.map(numberOf), view.zoomed) : [numberOf(focusedId)];
+  const navPanes = [numberOf(focusedId)];
   const navNames = useMemo(() => Object.fromEntries(rows.map((r) => [r.number, r.name])), [rows]);
   const applyNav = (effect: NavEffect) => {
     switch (effect.type) {
       case "select-pane":
-        if (split) dispatch({ type: "focusPane", index: effect.index });
         actions.focusTerminal();
         return;
       case "bring-into-view": {
         const id = tabIdOfNumber(infos, effect.number);
         if (id === undefined) return;
-        if (!split) return void (pick(id), actions.focusTerminal());
-        selectRef.current(id);
-        dispatch({ type: "assign", index: effect.pane, tabId: id });
-        dispatch({ type: "focusPane", index: effect.pane });
+        pick(id);
         actions.focusTerminal();
         return;
       }
@@ -1193,7 +1152,7 @@ export function LiveApp() {
     os: os ?? "windows",
     enabled: os !== undefined && !launcherOpen && overlay === null && review === null,
     panes: navPanes,
-    selectedPane: split ? focusIdx : 0,
+    selectedPane: 0,
     names: navNames,
     root: ref,
     apply: applyNav,
@@ -1629,7 +1588,7 @@ export function LiveApp() {
     ) : undefined;
   // The core decides whether a banner is worth showing from this: whether the window has focus and which sessions are on screen.
   // Under the History view the terminals stay mounted but none is on screen, so none is reported (or marked in the sidebar) as seen.
-  const onScreenIds = mainView === "history" ? [] : previewPane && focusedId ? [focusedId] : visibleIds;
+  const onScreenIds = mainView === "history" || !focusedId ? [] : [focusedId];
   useViewReport(endpoint, onScreenIds);
   return (
     <PreviewContext.Provider value={preview.open}>
@@ -1695,7 +1654,7 @@ export function LiveApp() {
             next.focus?.focus();
           }}
           menuOpen={menu !== null}
-          shell={{ terminal: shellTerminal, cwd: panelTab?.folder, hidden: view.shell_hidden, failed: shellFailed, onRetry: retryShell, openDisabled: !panelTab, forceOpen: shellForced, onToggle: toggleShell, onOpenInPane: () => void openInPane() }}
+          shell={{ terminal: shellTerminal, cwd: panelTab?.folder, hidden: view.shell_hidden, failed: shellFailed, onRetry: retryShell, openDisabled: !panelTab, forceOpen: shellForced, onToggle: toggleShell, onOpenAsSession: () => void openAsSession() }}
           composer={false}
           statusBar={false}
           renderTerminal={renderTerminal}

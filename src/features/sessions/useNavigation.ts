@@ -34,17 +34,12 @@ export function focusKindOf(el: Element | null): FocusKind {
   return "none";
 }
 
-/** The panes the cursor can reach. A zoomed pane hides the others, so only it keeps its session; Tab cannot select one that is not shown. */
-export function navPanesOf(shown: (number | null)[], zoomed: number | null): (number | null)[] {
-  return zoomed === null ? shown : shown.map((n, i) => (i === zoomed ? n : null));
-}
-
 /** The navigation model run over a batch of events: what the hook does on each key, without React or a DOM. */
 export function step(state: NavState, events: NavEvent[], ctx: NavContext): Result {
   return run(state, events, ctx);
 }
 
-const TOP_NAMES: Record<string, string> = { palette: "Command palette", layout: "Split layout", launcher: "New session" };
+const TOP_NAMES: Record<string, string> = { palette: "Command palette", sidebar: "Sidebar", launcher: "New session" };
 
 /** What the hint under the cursor names: "Session 3, api-server", "Empty slot 2", "Command palette". */
 function labelOf(t: Target, ctx: NavContext): string {

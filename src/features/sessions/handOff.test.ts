@@ -17,7 +17,7 @@ describe("handedOff", () => {
     expect(handedOff("p", undefined, infos("a", "p"))).toBe("p");
   });
 
-  it("is null when Open in a pane is already completing it", () => {
+  it("is null when Open as a session is already completing it", () => {
     expect(handedOff("p", "p", infos("p"))).toBeNull();
   });
 });

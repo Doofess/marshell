@@ -25,11 +25,11 @@ describe("moveCursor: arrows move to the nearest thing in that direction", () =>
     expect(go({ kind: "pane", index: 3 }, "up")).toEqual({ kind: "pane", index: 1 });
   });
   it("reaches the top bar from above, and comes back down onto what is below it", () => {
-    expect(go({ kind: "pane", index: 1 }, "up")).toEqual({ kind: "top", id: "layout" });
+    expect(go({ kind: "pane", index: 1 }, "up")).toEqual({ kind: "top", id: "sidebar" });
     expect(go({ kind: "row", number: 1 }, "up")).toEqual({ kind: "top", id: "palette" });
     expect(go({ kind: "pane", index: 0 }, "up")).toEqual({ kind: "top", id: "palette" });
     expect(go({ kind: "top", id: "brand" }, "down")).toEqual({ kind: "row", number: 1 });
-    expect(go({ kind: "top", id: "layout" }, "down")).toEqual({ kind: "pane", index: 1 });
+    expect(go({ kind: "top", id: "sidebar" }, "down")).toEqual({ kind: "pane", index: 1 });
     expect(go({ kind: "top", id: "brand" }, "right")).toEqual({ kind: "top", id: "palette" });
   });
   it("stays put at an edge: there is nothing further, so it answers null", () => {

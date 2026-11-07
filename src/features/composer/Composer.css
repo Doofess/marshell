@@ -126,13 +126,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.composer__pane {
-  flex: none;
-  color: var(--text-2);
-  font-size: var(--text-11);
-  font-weight: 400;
-  white-space: nowrap;
-}
 .composer__mode {
   display: inline-flex;
   flex: none;

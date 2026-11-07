@@ -30,10 +30,6 @@ export type ComposerProps = {
   row: RowModel | null;
   value?: string;
   os?: Os;
-  /** Whether this is the focused prompt, which gets the vendor-coloured edge. Off by default: the edge follows real focus (:focus-within). */
-  focused?: boolean;
-  /** Full variant, split view: which pane this is, so the target is never a guess. */
-  pane?: { index: number; count: number };
 };
 
 /**
@@ -43,14 +39,13 @@ export type ComposerProps = {
  * session's state (notices sit in the row), so the terminal above never resizes. The facts about the session are not here:
  * they are the status bar's.
  */
-export function Composer({ row, value = "", os = "windows", focused = false, pane }: ComposerProps) {
+export function Composer({ row, value = "", os = "windows" }: ComposerProps) {
   const focusKeys = shortcutLabel(commandById("focus-prompt").binding!, os);
   const state: ComposerState = row ? composerState(row, value) : "waiting";
   const blocked = row === null || state === "waiting" || state === "ended";
   const canSend = !blocked && (state === "typing" || (state === "working" && value.trim() !== ""));
   const name = row?.name ?? "this pane";
   const caution = row ? modeCaution(row.mode) : false;
-  const inSplit = pane !== undefined && pane.count > 1;
 
   const placeholder = !row
     ? "Choose a session for this pane first"
@@ -86,7 +81,7 @@ export function Composer({ row, value = "", os = "windows", focused = false, pan
     ) : null;
 
   return (
-    <form className="composer" aria-label={`Write to ${name}`} data-agent={row?.agent} data-state={row ? state : "empty-pane"} data-focused={focused || undefined}>
+    <form className="composer" aria-label={`Write to ${name}`} data-agent={row?.agent} data-state={row ? state : "empty-pane"}>
       <div className="composer__line">
         {prompt}
         <textarea
@@ -108,16 +103,11 @@ export function Composer({ row, value = "", os = "windows", focused = false, pan
 
       <div className="composer__tools">
         {row && (
-          <span className="composer__target" title={inSplit ? `Sends to the focused pane, ${row.name}` : `Sends to ${row.name}`}>
+          <span className="composer__target" title={`Sends to ${row.name}`}>
             <AgentMark agent={row.agent} size={16} />
             <span className="composer__target-name" dir="auto">
               {row.name}
             </span>
-            {inSplit && (
-              <span className="composer__pane">
-                Pane {pane.index + 1} of {pane.count}
-              </span>
-            )}
           </span>
         )}
         {row?.mode && (

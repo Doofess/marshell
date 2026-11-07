@@ -262,8 +262,8 @@ describe("MainWindow: the shell panel in the sidebar", () => {
       expect(h).not.toContain('data-testid="live"');
     }
   });
-  it("has its own button for opening it in a pane, named for the shell", () => {
-    expect(html(tall)).toContain('aria-label="Open PowerShell in a pane"');
+  it("has its own button for opening it as a session, named for the shell", () => {
+    expect(html(tall)).toContain('aria-label="Open PowerShell as a session"');
   });
 });
 
