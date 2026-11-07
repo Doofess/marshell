@@ -213,7 +213,7 @@ export function HistoryView(p: HistoryViewProps) {
   const shownConversation = typeof shown === "object" && shown !== null && "session_id" in shown ? shown : null;
   const scrollToTurn = selected?.kind === "hit" && shownConversation?.session_id === selected.hit.session_id ? selected.hit.turn : undefined;
 
-  const searchHint = `Search conversations (${shortcutLabel(commandById("global-search")!.binding!, p.os)})`;
+  const searchHint = "Search conversations";
 
   return (
     <section ref={rootRef} className="history" aria-labelledby={`${uid}-title`} onKeyDown={onRootKey}>

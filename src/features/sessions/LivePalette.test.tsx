@@ -13,7 +13,7 @@ describe("LivePalette", () => {
     for (const id of ["run-script", "stop-script", "edit-references", "pause-notifications", "mode-manual", "mode-plan", "mode-auto-edit", "mode-full-auto", "mode-bypass"]) expect(ids, id).toContain(id);
     expect(ids).toContain("doctor");
     expect(ids).not.toContain("go-to-session");
-    for (const id of ["history", "global-search"]) expect(ids, id).toContain(id);
+    for (const id of ["history"]) expect(ids, id).toContain(id);
   });
   it("offers Settings… in Tools, with no shortcut", () => {
     const h = renderToStaticMarkup(<LivePalette sessions={PALETTE_SESSIONS} os="windows" onRun={() => {}} onClose={() => {}} />);

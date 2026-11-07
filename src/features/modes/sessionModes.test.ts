@@ -15,7 +15,7 @@ describe("the five modes", () => {
   it("each has a palette command that names the mode and says in plain words what asks", () => {
     for (const mode of MODES) {
       const c = commandById(`mode-${mode}`);
-      expect(c.group).toBe("Sessions");
+      expect(c.group).toBe("Session");
       expect(c.label).toMatch(/^Mode: (Manual|Plan|Auto-edit|Full auto|Bypass), /);
     }
     expect(commandById("mode-bypass").label).toContain("risky");

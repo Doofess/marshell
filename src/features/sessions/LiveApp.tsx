@@ -217,7 +217,7 @@ export function LiveApp() {
   const [mainView, setMainView] = useState<"sessions" | "history">("sessions");
   const mainViewRef = useRef(mainView);
   mainViewRef.current = mainView;
-  const [searchFocus, setSearchFocus] = useState(0);
+  const [searchFocus] = useState(0);
   const pick = useCallback(
     (id: string) => {
       setMainView("sessions");
@@ -1236,10 +1236,6 @@ export function LiveApp() {
             setTimeout(() => actions.focusTerminal(), 0);
           } else setMainView("history");
           return true;
-        case "globalSearch":
-          setMainView("history");
-          setSearchFocus((n) => n + 1);
-          return true;
         case "split":
           if (!roomForPane(v.panes.length, fitRef.current)) {
             announce(NO_PANE_ROOM);
@@ -1346,8 +1342,8 @@ export function LiveApp() {
       // Review is read above.
       if (!shortcut || shortcut.kind === "review") return;
       // A text box (the rename box, the launcher's fields) keeps its own keys; xterm's own hidden textarea is the terminal, not a box.
-      // The History view's search box is a text box, and Ctrl+Shift+Y and Ctrl+Shift+Alt+F are the keys that leave it and come back to it.
-      if (isTextBox(e.target as HTMLElement | null) && shortcut.kind !== "history" && shortcut.kind !== "globalSearch") return;
+      // The History view's search box is a text box, and Ctrl+Shift+Y is the key that leaves it and comes back to it.
+      if (isTextBox(e.target as HTMLElement | null) && shortcut.kind !== "history") return;
       e.preventDefault();
       // Holding the key repeats it; only moving a session along the list, or from prompt to prompt, should.
       if (e.repeat && shortcut.kind !== "move" && shortcut.kind !== "prompt") return;
@@ -1412,7 +1408,7 @@ export function LiveApp() {
     }
     const shortcut = commandShortcut(id);
     // These move the focus (or open a pane that takes it), so they wait for the palette to hand it back first.
-    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "globalSearch") return void setTimeout(() => paneCommand(shortcut), 0);
+    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history") return void setTimeout(() => paneCommand(shortcut), 0);
     if (paneCommand(shortcut)) return;
     if (shortcut?.kind === "launcher") setLauncherOpen(true);
     else if (shortcut?.kind === "prompt") jumpPrompt(shortcut.by);

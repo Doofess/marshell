@@ -103,9 +103,9 @@ describe("the shipped commands", () => {
   });
   it("reports a duplicate and a reserved key when there are some", () => {
     const bad: Command[] = [
-      { id: "a", label: "A", group: "Tools", binding: { code: "KeyK" } },
-      { id: "b", label: "B", group: "Tools", binding: { code: "KeyK" } },
-      { id: "c", label: "C", group: "Tools", binding: { code: "KeyM" } },
+      { id: "a", label: "A", group: "App", binding: { code: "KeyK" } },
+      { id: "b", label: "B", group: "App", binding: { code: "KeyK" } },
+      { id: "c", label: "C", group: "App", binding: { code: "KeyM" } },
     ];
     const p = problemsIn(bad, "mac");
     expect(p).toHaveLength(2);

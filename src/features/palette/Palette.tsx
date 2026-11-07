@@ -29,7 +29,7 @@ export function keepActiveInView(list: { querySelector: (sel: string) => { scrol
   list?.querySelector(`[id="${id}"]`)?.scrollIntoView?.({ block: "nearest" });
 }
 
-const GROUPS: Command["group"][] = ["Sessions", "View", "Tools"];
+const GROUPS: Command["group"][] = ["Session", "Terminal", "Window", "App"];
 const FOCUS_SESSION = /^focus-session-\d+$/;
 
 /** The files quick open offers, as display paths (`displayPath`): the ones seen in the session's output, and its folder's list. */

@@ -6,7 +6,7 @@ import "./ShortcutSheet.css";
 type Row = { key: string; label: string; keys: string };
 type Group = { title: string; rows: Row[] };
 
-const GROUPS: Array<Command["group"]> = ["Sessions", "View", "Tools"];
+const GROUPS: Array<Command["group"]> = ["Session", "Terminal", "Window", "App"];
 const isNav = (c: Command) => (NAV_COMMAND_IDS as readonly string[]).includes(c.id);
 
 /**
@@ -28,7 +28,7 @@ export function sheetGroups(os: Os, nav: NavModifier = DEFAULT_NAV_MODIFIER, run
   };
   const rest = GROUPS.map((title): Group => {
     const rows = COMMANDS.filter((c) => c.group === title && c.binding && !isNav(c) && !c.id.startsWith("focus-session-") && runs(c.id)).map(row);
-    if (title === "Sessions" && runs("focus-session-1")) rows.splice(1, 0, { key: "focus-sessions", label: "Go to session 1 to 9", keys: `${first} to 9` });
+    if (title === "Session" && runs("focus-session-1")) rows.splice(1, 0, { key: "focus-sessions", label: "Go to session 1 to 9", keys: `${first} to 9` });
     return { title, rows };
   });
   return [navigation, ...rest].filter((g) => g.rows.length > 0);

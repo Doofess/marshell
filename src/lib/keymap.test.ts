@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { problemsIn } from "./bindings";
-import { COMMANDS, NAV_COMMAND_IDS, commandById, keyText, osOfPlatform, shortcutLabel } from "./keymap";
+import { COMMANDS, MOVED_COMMANDS, NAV_COMMAND_IDS, commandById, keyText, osOfPlatform, shortcutLabel } from "./keymap";
 
 describe("osOfPlatform", () => {
   it("maps the core's platform names to the shortcut families", () => {
@@ -56,7 +56,7 @@ describe("COMMANDS", () => {
     expect(win("launcher")).toBe("Ctrl+Shift+T");
     expect(win("reopen")).toBe("Ctrl+Shift+Alt+T");
     expect(win("close")).toBe("Ctrl+Shift+W");
-    expect(win("global-search")).toBe("Ctrl+Shift+Alt+F");
+    expect(COMMANDS.some((c) => c.binding?.code === "KeyF" && c.binding.alt)).toBe(false);
     expect(win("next-waiting")).toBe("Ctrl+Shift+N");
     expect(win("rename")).toBe("F2");
   });
@@ -75,7 +75,7 @@ describe("COMMANDS", () => {
 
   it("binds Review this task's changes to Ctrl+Shift+R (Cmd+R on macOS) in the Sessions group", () => {
     const c = commandById("review-task");
-    expect(c).toMatchObject({ label: "Review this task's changes", group: "Sessions", binding: { code: "KeyR" } });
+    expect(c).toMatchObject({ label: "Review this task's changes", group: "Session", binding: { code: "KeyR" } });
     expect(win("review-task")).toBe("Ctrl+Shift+R");
     expect(mac("review-task")).toBe("⌘R");
     // The cheat sheet lists every command in COMMANDS, so this one is on it.
@@ -102,26 +102,26 @@ describe("COMMANDS", () => {
   it("moves a session up or down the list with Alt+Shift+Up and Down", () => {
     expect(win("move-up")).toBe("Alt+Shift+↑");
     expect(win("move-down")).toBe("Alt+Shift+↓");
-    expect(commandById("move-up").group).toBe("Sessions");
+    expect(commandById("move-up").group).toBe("Session");
   });
 
   it("keeps the other split commands", () => {
     expect(win("split")).toBe("Ctrl+Shift+D");
     expect(win("cheatsheet")).toBe("Ctrl+Shift+O");
-    for (const id of ["layout", "unsplit"]) expect(commandById(id).group).toBe("View");
+    for (const id of ["layout", "unsplit"]) expect(commandById(id).group).toBe("Window");
   });
 
-  it("binds the shell panel under Tools", () => {
+  it("binds the shell panel under Window", () => {
     const c = commandById("shell-panel");
-    expect(c.group).toBe("Tools");
+    expect(c.group).toBe("Window");
     expect(c.label).toBe("Show or focus the shell panel");
   });
 
-  it("jumps between prompts with PageUp and PageDown under Tools", () => {
+  it("jumps between prompts with PageUp and PageDown under Terminal", () => {
     const prev = commandById("prompt-prev");
     const next = commandById("prompt-next");
-    expect(prev).toMatchObject({ label: "Jump to the previous prompt", group: "Tools", binding: { code: "PageUp" } });
-    expect(next).toMatchObject({ label: "Jump to the next prompt", group: "Tools", binding: { code: "PageDown" } });
+    expect(prev).toMatchObject({ label: "Jump to the previous prompt", group: "Terminal", binding: { code: "PageUp" } });
+    expect(next).toMatchObject({ label: "Jump to the next prompt", group: "Terminal", binding: { code: "PageDown" } });
     expect(shortcutLabel(prev.binding!, "windows")).toBe("Ctrl+Shift+PageUp");
     expect(shortcutLabel(next.binding!, "mac")).toBe("⌘PageDown");
   });
@@ -173,10 +173,10 @@ describe("focus mode key", () => {
 });
 
 describe("capture", () => {
-  it("is Capture screen region under Tools, on Ctrl+Shift+X, and clashes with nothing on any system", () => {
+  it("is Capture screen region under Terminal, on Ctrl+Shift+X, and clashes with nothing on any system", () => {
     const c = commandById("capture");
     expect(c.label).toBe("Capture screen region");
-    expect(c.group).toBe("Tools");
+    expect(c.group).toBe("Terminal");
     expect(c.binding?.code).toBe("KeyX");
     expect(shortcutLabel(c.binding!, "windows")).toBe("Ctrl+Shift+X");
     expect(shortcutLabel(c.binding!, "linux")).toBe("Ctrl+Shift+X");
@@ -187,41 +187,62 @@ describe("capture", () => {
 });
 
 describe("diagnostics command", () => {
-  it("sits right after agents, in Tools, with no key of its own", () => {
+  it("sits right after agents, in App, with no key of its own", () => {
     const i = COMMANDS.findIndex((c) => c.id === "agents");
-    expect(COMMANDS[i + 1]).toMatchObject({ id: "diagnostics", label: "Diagnostics…", group: "Tools" });
+    expect(COMMANDS[i + 1]).toMatchObject({ id: "diagnostics", label: "Settings: Diagnostics…", group: "App" });
     expect(commandById("diagnostics")?.binding).toBeUndefined();
   });
 });
 
 describe("edit-references command", () => {
   it("is in Tools with no key of its own", () => {
-    expect(commandById("edit-references")).toMatchObject({ label: "Edit this project's references", group: "Tools" });
+    expect(commandById("edit-references")).toMatchObject({ label: "Edit this project's references", group: "Session" });
     expect(commandById("edit-references").binding).toBeUndefined();
   });
 });
 
 describe("repo script commands", () => {
-  it("are Run and Stop in Tools, with no key of their own", () => {
-    expect(commandById("run-script")).toMatchObject({ label: "Run the repo's run script", group: "Tools" });
-    expect(commandById("stop-script")).toMatchObject({ label: "Stop the repo's run script", group: "Tools" });
+  it("are Run and Stop in App, with no key of their own", () => {
+    expect(commandById("run-script")).toMatchObject({ label: "Run the repo's run script", group: "Session" });
+    expect(commandById("stop-script")).toMatchObject({ label: "Stop the repo's run script", group: "Session" });
     expect(commandById("run-script").binding).toBeUndefined();
     expect(commandById("stop-script").binding).toBeUndefined();
   });
 });
 
 describe("history settings command", () => {
-  it("is History settings… in Tools, with no key of its own", () => {
-    expect(commandById("history-settings")).toMatchObject({ label: "History settings…", group: "Tools" });
+  it("is History settings… in App, with no key of its own", () => {
+    expect(commandById("history-settings")).toMatchObject({ label: "Settings: History…", group: "App" });
     expect(commandById("history-settings")?.binding).toBeUndefined();
   });
 });
 
 describe("settings command", () => {
-  it("is Settings… in Tools, with no key of its own, and every id is listed once", () => {
-    expect(commandById("settings")).toMatchObject({ label: "Settings…", group: "Tools" });
+  it("is Settings… in App, with no key of its own, and every id is listed once", () => {
+    expect(commandById("settings")).toMatchObject({ label: "Settings…", group: "App" });
     expect(commandById("settings")?.binding).toBeUndefined();
     const ids = COMMANDS.map((c) => c.id);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe("the four groups", () => {
+  it("puts every command in one of the four groups, each group contiguous and in order", () => {
+    const order = ["Session", "Terminal", "Window", "App"];
+    const seen = COMMANDS.map((c) => order.indexOf(c.group));
+    expect(seen.every((g) => g >= 0)).toBe(true);
+    expect([...seen].sort((a, b) => a - b)).toEqual(seen);
+  });
+  it("names the Settings pages so typing a section finds them", () => {
+    expect(["appearance", "agents", "profiles", "notifications", "history-settings", "diagnostics"].map((id) => commandById(id).label)).toEqual([
+      "Settings: Appearance…", "Settings: Agents…", "Settings: Shell profiles…", "Settings: Notifications…", "Settings: History…", "Settings: Diagnostics…",
+    ]);
+  });
+  it("has no Search all sessions command", () => {
+    expect(COMMANDS.some((c) => c.id === "global-search")).toBe(false);
+  });
+  it("lists the commands the menu holds", () => {
+    expect(MOVED_COMMANDS).toEqual(["settings", "appearance", "agents", "profiles", "notifications", "history-settings", "diagnostics", "history", "doctor", "departures"]);
+    for (const id of MOVED_COMMANDS) expect(commandById(id).id).toBe(id);
   });
 });

@@ -20,7 +20,7 @@ describe("Palette: empty", () => {
   });
   it("lists every command, grouped, in the keymap's order", () => {
     for (const c of COMMANDS) expect(h, c.id).toContain(c.label.replace(/'/g, "&#x27;"));
-    for (const g of ["Sessions", "View", "Tools"]) expect(h).toContain(g);
+    for (const g of ["Session", "Terminal", "Window", "App"]) expect(h).toContain(g);
   });
   it("shows each command's shortcut, rebindable, per OS", () => {
     expect(h).toContain("Ctrl+Shift+T");
