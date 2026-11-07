@@ -50,7 +50,6 @@ export function Sidebar({
   onRenameCancel,
   onReorder,
   onSelect,
-  onToggle,
   onReview,
   onSetup,
   menuItems,
@@ -96,7 +95,6 @@ export function Sidebar({
   /** A click on a row gives its session id. */
   onSelect?: (id: string) => void;
   /** Ctrl+click (Cmd on macOS) or Ctrl+Space on a row gives its session id: add or remove its pane. */
-  onToggle?: (id: string) => void;
   /** Opens the review of a task row's session (its Review changes button). */
   onReview?: (id: string) => void;
   /** Opens the hooks setup from a Claude Code row that says "Status limited". */
@@ -236,11 +234,9 @@ export function Sidebar({
       // With visible ids, a session in no pane on screen (the store's choice standing in for an empty pane) is not marked.
       selected={visibleIds ? visibleIds.includes(r.id) : r.id === selectedId}
       focused={visibleIds ? visibleIds.includes(r.id) && r.id === selectedId : false}
-      os={os}
       tabStop={r.id === tabStop}
       drag={dragFor(r.id)}
       onSelect={onSelect && (() => onSelect(r.id))}
-      onToggle={onToggle && (() => onToggle(r.id))}
       onReview={onReview && (() => onReview(r.id))}
       onSetup={onSetup && (() => onSetup(r.id))}
       peek={readScreen ? { onOpen: (el) => peek.openFromKey(r.id, el), onHover: (el) => peek.hoverRow(r.id, el), onLeave: peek.leaveRow } : undefined}

@@ -1016,23 +1016,6 @@ export function LiveApp() {
     },
     [pick, dispatch],
   );
-  // Ctrl+click or Ctrl+Space on a session: drop its pane if it is on screen (never the last one), else show it as Split does.
-  const togglePane = useCallback(
-    (id: string) => {
-      const v = viewRef.current;
-      const toggle = paneToggle(v, id, shownRef.current ?? v.panes.length, fitRef.current ?? PANE_LIMIT);
-      if (toggle.kind === "remove") {
-        const action = { type: "remove", index: toggle.index } as const;
-        dispatch(action);
-        // The store's selection follows the pane that has the focus now, so it never names the session whose pane went.
-        const after = viewReducer(v, action);
-        const next = after.panes[focusedIndex(after.panes.slice(0, shownRef.current ?? after.panes.length), after.active, after.zoomed)];
-        if (next) selectRef.current(next);
-      } else if (toggle.kind === "show") showInPane(id);
-      else if (toggle.kind === "full") announce(NO_PANE_ROOM);
-    },
-    [dispatch, showInPane, announce],
-  );
   // The adopted tab is listed: in one update the panel lets go of its terminal and a pane takes the tab. Until then the window draws
   // nothing for that tab (see renderTerminal), so the pty only ever has one terminal attached. (Adopting earlier would let the
   // view's own clean-up drop an id the list does not hold yet.)
@@ -1062,7 +1045,7 @@ export function LiveApp() {
   const menuItems = useCallback(
     (id: string) =>
       sessionMenuItems(
-        menuFacts(id, { infos, profiles, rows: taskRows, panes: view.panes, shown: shownRef.current ?? view.panes.length, fit: fitRef.current ?? PANE_LIMIT, offered: modesOf }),
+        menuFacts(id, { infos, profiles, rows: taskRows, offered: modesOf }),
         os ?? "windows",
       ),
     [infos, profiles, taskRows, view.panes, os, modesOf],
@@ -1126,9 +1109,6 @@ export function LiveApp() {
         // No timeout: the rename box mounts in the same update that closes the menu, and the menu closes without handing focus back.
         case "rename":
           actions.startRename(id);
-          break;
-        case "split":
-          showInPane(id);
           break;
         case "resume": {
           const row = rows.find((r) => r.id === id);
@@ -1788,7 +1768,6 @@ export function LiveApp() {
           onReorder={(ids) => actions.reorder(ids)}
           grouped={view.grouped}
           onSelect={pick}
-          onToggle={togglePane}
           onReview={reviewSession}
           scriptControl={scriptControl}
           onRunScript={runRepoScript}

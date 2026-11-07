@@ -3,10 +3,9 @@ import { AuxGlyph, StatusGlyph } from "../../components/StatusGlyph/StatusGlyph"
 import { ContextRing } from "../../components/ContextRing/ContextRing";
 import { SessionNumber } from "../../components/SessionNumber/SessionNumber";
 import type { PointerEventHandler } from "react";
-import type { Os } from "../../lib/keymap";
 import { RenameBox } from "./RenameBox";
 import { inRenameBox, keyboardAnchor, opensRowMenu } from "./rowMenu";
-import { togglesPane, togglesPaneKey } from "./rowPick";
+import { selectsByCtrlSpace } from "./rowPick";
 import { formatAge, formatUsage, modeCaution, subagentsText } from "./format";
 import { rowLabel, rowTitle } from "./labels";
 import { SESSION_NUMBER_HINT } from "./sessionNumber";
@@ -42,12 +41,10 @@ export function SessionRow({
   density,
   selected = false,
   focused = false,
-  os = "windows",
   tabStop = false,
   drag,
   rename,
   onSelect,
-  onToggle,
   onReview,
   onSetup,
   onMenu,
@@ -58,15 +55,11 @@ export function SessionRow({
   selected?: boolean;
   /** The row of the focused pane: with several rows selected, the one that also gets the bar. */
   focused?: boolean;
-  /** Decides which click toggles a pane (Cmd on macOS, Ctrl elsewhere). */
-  os?: Os;
   tabStop?: boolean;
   drag?: RowDrag;
   rename?: RowRename;
-  /** A click on the row. Left out, a click does nothing (stories). */
+  /** A click on the row (Ctrl+click and Cmd+click too), or Ctrl+Space. Left out, a click does nothing (stories). */
   onSelect?: () => void;
-  /** Ctrl+click (Cmd on macOS) or Ctrl+Space: add or remove this session's pane. Left out, a click is always a plain click. */
-  onToggle?: () => void;
   /** Opens the review of this row's task. Left out, a task row shows its tag but no button (stories). */
   onReview?: () => void;
   /** Opens the hooks setup. Shown on a row with `setupLink`; left out, there is no button (stories). */
@@ -116,7 +109,7 @@ export function SessionRow({
       data-drop={drag?.dropEdge}
       // Not while the name is a text box: a press there selects text.
       onPointerDown={drag && !rename ? drag.onPointerDown : undefined}
-      onClick={onToggle ? (e) => (togglesPane(e, os) ? onToggle() : onSelect?.()) : onSelect}
+      onClick={onSelect}
       onContextMenu={
         onMenu &&
         ((e) => {
@@ -129,7 +122,7 @@ export function SessionRow({
       onPointerEnter={peek && !rename ? (e) => e.pointerType === "mouse" && peek.onHover(e.currentTarget) : undefined}
       onPointerLeave={peek ? () => peek.onLeave() : undefined}
       onKeyDown={
-        (onMenu || onToggle || peek) &&
+        (onMenu || onSelect || peek) &&
         ((e) => {
           if (peek && !rename && e.key === " " && e.target === e.currentTarget && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
             e.preventDefault();
@@ -138,9 +131,9 @@ export function SessionRow({
             e.preventDefault();
             e.stopPropagation();
             onMenu(keyboardAnchor(e.currentTarget.getBoundingClientRect()));
-          } else if (onToggle && togglesPaneKey(e)) {
+          } else if (onSelect && selectsByCtrlSpace(e)) {
             e.preventDefault();
-            onToggle();
+            onSelect();
           }
         })
       }

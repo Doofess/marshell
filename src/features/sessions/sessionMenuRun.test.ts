@@ -13,9 +13,6 @@ const ctx = (over: Partial<Parameters<typeof menuFacts>[1]> = {}) => ({
   infos: [info("x")],
   profiles: [{ id: "pwsh" }] as Profile[],
   rows: [row("x")],
-  panes: ["x", null] as (string | null)[],
-  shown: 2,
-  fit: 4,
   ...over,
 });
 
@@ -29,19 +26,6 @@ describe("menuFacts", () => {
   it("task follows the row", () => {
     expect(menuFacts("x", ctx()).task).toBe(false);
     expect(menuFacts("x", ctx({ rows: [row("x", true)] })).task).toBe(true);
-  });
-  it("a session in a shown pane is inShownPane; one in a pane out of sight is not", () => {
-    expect(menuFacts("x", ctx()).inShownPane).toBe(true);
-    expect(menuFacts("x", ctx({ panes: [null, "x"], shown: 1 })).inShownPane).toBe(false);
-  });
-  it("four panes with no empty one leave no room", () => {
-    expect(menuFacts("z", ctx({ panes: ["a", "b", "c", "d"], shown: 4, fit: 4 })).paneAvailable).toBe(false);
-  });
-  it("an empty shown pane is available", () => {
-    expect(menuFacts("z", ctx({ panes: ["x", null] })).paneAvailable).toBe(true);
-  });
-  it("room for another pane is available", () => {
-    expect(menuFacts("z", ctx({ panes: ["a"], shown: 1, fit: 4 })).paneAvailable).toBe(true);
   });
 });
 
@@ -77,8 +61,7 @@ describe("focusAfterMenu", () => {
   it("puts focus back on the row after Resume, as Esc does", () => {
     expect(focusAfterMenu("resume", false)).toBe("row");
   });
-  it("puts focus in the terminal after Split and after a Close that goes straight through", () => {
-    expect(focusAfterMenu("split", false)).toBe("terminal");
+  it("puts focus in the terminal after a Close that goes straight through", () => {
     expect(focusAfterMenu("close", false)).toBe("terminal");
   });
   it("leaves it to the close bar when Close needs the bar, which focuses Cancel itself", () => {
