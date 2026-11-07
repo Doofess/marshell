@@ -34,7 +34,7 @@ Use pnpm for the frontend and Cargo for Rust; both versions are pinned (`package
 - `pnpm tauri dev`: run the desktop app.
 - `pnpm test`: frontend tests (Vitest in a node environment with no DOM; components are tested through `renderToStaticMarkup`). One file: `pnpm test <path>`.
 - `pnpm build`: TypeScript check and Vite production build.
-- `cargo test --workspace`: Rust tests. One crate: `cargo test -p marshell-core`.
+- `cargo test --workspace -j 4`: Rust tests. One crate: `cargo test -p marshell-core -j 4`. More jobs can run rustc out of memory on the development PC.
 - `pnpm check:generated`: fails when `src/generated/` is stale or uses `bigint`.
 - `cargo fmt --all` and `cargo clippy --workspace --all-targets -- -D warnings`.
 
@@ -45,7 +45,7 @@ CI (`.github/workflows/ci.yml`, Windows only for now) runs the format check, cli
 - Before calling a change done, run the checks that cover it and report the command and what it printed: the crate's `cargo test` for Rust, `pnpm test <file>` for the frontend, `pnpm check:generated` after a protocol change.
 - Before a pull request, run what CI runs. Run `cargo fmt --all` before every Rust commit.
 - Don't start `pnpm tauri dev`, a release build, or the accessibility matrix unless the task calls for it (a live check or a release).
-- A live check runs with `MARSHELL_HOME` set to a scratch folder, so it never touches the real `~/.marshell`.
+- A live check gives Marshell and every CLI it starts a scratch home, so it never touches the real ones: `MARSHELL_HOME`, `MARSHELL_CLAUDE_SETTINGS`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME`, and `USERPROFILE` for Antigravity's `~/.gemini` and Qwen Code's `~/.qwen`. Stop only what it started, by PID.
 
 ## Working rules
 
