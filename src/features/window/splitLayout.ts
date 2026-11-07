@@ -8,13 +8,12 @@
 export const PANE_LIMIT = 4;
 export const HANDLE = 1;
 export const HIT = 8;
-import { COMPOSER } from "./layout";
 
 /**
- * Terminal cell metrics at 13 px mono, the pane header, the pane's own compact prompt line (every pane in split view has
- * one), and the terminal's own padding.
+ * Terminal cell metrics at 13 px mono, the pane header, the pane's own compact prompt line (42 px; the compact variant is gone
+ * from the composer, and this file goes with the split state), and the terminal's own padding.
  */
-export const CELL = { w: 8, h: 17, header: 28, composer: COMPOSER.compact, padX: 16, padY: 16 } as const;
+export const CELL = { w: 8, h: 17, header: 28, composer: 42, padX: 16, padY: 16 } as const;
 const COMFORT = { cols: 80, rows: 24 } as const;
 /** Below this a pane is not worth showing: most CLIs wrap or scroll their own UI. A count is offered only if some arrangement keeps every pane at least this big. */
 export const MIN_USABLE = { cols: 60, rows: 14 } as const;

@@ -4,11 +4,10 @@ export const AUTO_COLLAPSE_BELOW = 960;
 export const MIN_WINDOW = { width: 720, height: 480 } as const;
 export const DRAWER = { default: 360, min: 300, max: 560 } as const;
 /**
- * The prompt line. One in a single-terminal window (`full`, under the terminal) and one inside every pane in split view
- * (`compact`). Both are flat docked bars, not floating cards, and their height never changes with the session's state.
- * The status bar under everything shows the focused session's strip.
+ * The prompt line under the terminal: a flat docked bar, not a floating card, whose height never changes with the session's state.
+ * The status bar under everything shows the shown session's strip.
  */
-export const COMPOSER = { full: 66, compact: 42 } as const;
+export const COMPOSER = { full: 66 } as const;
 export const STATUS_BAR_HEIGHT = 24;
 /** @deprecated the single-terminal prompt line; kept until every caller reads COMPOSER.full. */
 export const COMPOSER_HEIGHT: number = COMPOSER.full;

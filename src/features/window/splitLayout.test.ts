@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { COMPOSER } from "./layout";
 import { ARRANGEMENTS, CELL, HANDLE, HIT, MIN_USABLE, PANE_LIMIT, RATIO, chooseArrangement, dragRatio, fitsPanes, maxPanes, paneCells, planFor, scoreArrangement, tracks, type Arrangement } from "./splitLayout";
 
 describe("split limits", () => {
@@ -79,9 +78,6 @@ describe("paneCells: how many columns and rows each pane really gets", () => {
     expect(only).toEqual({ cols: Math.floor((816 - CELL.padX) / CELL.w), rows: Math.floor((540 - CELL.header - CELL.composer - CELL.padY) / CELL.h) });
     const two = paneCells(planFor(2, "columns"), { w: 816, h: 540 });
     expect(two[0]!.cols).toBe(Math.floor(((816 - HANDLE) / 2 - CELL.padX) / CELL.w));
-  });
-  it("takes the prompt line's height from the layout constants: every pane in split view has its own compact one", () => {
-    expect(CELL.composer).toBe(COMPOSER.compact);
   });
   it("gives the terminal its rows back when the prompt lines are off", () => {
     const withLine = paneCells(planFor(1, "single"), { w: 816, h: 540 })[0]!;

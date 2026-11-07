@@ -22,13 +22,8 @@ describe("the prompt line's heights are what its CSS adds up to", () => {
   const line = px(composer, ".composer__line", "min-block-size");
   const tools = px(composer, ".composer__tools", "min-block-size");
 
-  it("is the 2 px edge, padding, the prompt line, the gap and the tools row: that is the full variant", () => {
+  it("is the 2 px edge, padding, the prompt line, the gap and the tools row", () => {
     expect(COMPOSER.full).toBe(edge + padTop! + line + gap + tools + padBottom!);
-  });
-  it("is the edge, even padding and the prompt line alone: that is the compact variant", () => {
-    const compact = rule(composer, '.composer[data-variant="compact"]');
-    const [cTop, cBottom] = /padding-block:\s*(var\(--space-\d\)|\d+px)(?:\s+(var\(--space-\d\)|\d+px))?/.exec(compact)!.slice(1).map((v, i, a) => len(v ?? a[0]!));
-    expect(COMPOSER.compact).toBe(edge + cTop! + line + cBottom!);
   });
   it("makes the line and the tools row the 24 px target, and the field one 20 px line inside a 24 px line", () => {
     expect([line, tools]).toEqual([24, 24]);

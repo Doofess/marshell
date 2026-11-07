@@ -52,16 +52,6 @@
   display: flex;
   align-items: center;
 }
-.window__layout {
-  position: relative;
-  padding-inline: var(--space-1);
-}
-.window__popover {
-  position: absolute;
-  inset-block-start: calc(100% + var(--space-1));
-  inset-inline-end: 0;
-  z-index: 3;
-}
 .window__controls {
   display: flex;
 }
@@ -151,11 +141,6 @@
     color: var(--text-1);
   }
 }
-.window__control--menu {
-  inline-size: 32px;
-  block-size: 32px;
-  border-radius: var(--radius);
-}
 /* The icon and the name are one button: the app menu. In the 52 px rail only the icon fits. */
 .window__brand {
   display: flex;
@@ -229,6 +214,41 @@
 }
 .window__main[data-preview="full"] {
   grid-template-columns: minmax(0, 1fr);
+}
+
+/* The preview's divider: a 1 px hairline whose 8 px hit area overhangs both sides, so it costs one pixel of the terminal. */
+.preview__divider {
+  --hit: 8px;
+  position: relative;
+  z-index: 1;
+  background: var(--hairline);
+  cursor: col-resize;
+  /* A drag moves the divider; it must not scroll the page or select text. */
+  touch-action: none;
+  user-select: none;
+}
+.preview__divider::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline: calc((var(--hit) - 1px) / -2);
+}
+.preview__divider:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 0;
+}
+.preview__divider:active {
+  background: var(--accent);
+}
+@media (hover: hover) and (pointer: fine) {
+  .preview__divider:hover {
+    background: var(--accent);
+  }
+}
+@media (forced-colors: active) {
+  .preview__divider {
+    background: CanvasText;
+  }
 }
 /* One kept terminal. The `hidden` attribute (no display set here) takes the ones behind the selected session off screen. */
 .window__terminal {

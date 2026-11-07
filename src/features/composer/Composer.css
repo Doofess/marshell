@@ -2,7 +2,7 @@
  * The prompt line, set like a command line and not like a chat card: a flat bar docked to the edge of its terminal on the
  * terminal's own surface, a 2 px edge on top that is the vendor's colour while this prompt is the focused one, a prompt glyph
  * in that colour, the field in the terminal's mono font, and Send with the Enter key drawn on it. Fills and the edge tell
- * things apart, never a box or a shadow. `full` (one session) adds a quiet row of tools; `compact` (one in each pane) is the line.
+ * things apart, never a box or a shadow. A quiet row of tools sits under the line.
  */
 .composer {
   container-type: inline-size;
@@ -13,9 +13,6 @@
   border-block-start: 2px solid var(--hairline);
   background: var(--bg-base);
   color: var(--text-1);
-}
-.composer[data-variant="compact"] {
-  padding-block: var(--space-2);
 }
 .composer[data-focused="true"],
 .composer:focus-within {
@@ -200,19 +197,6 @@
   overflow: clip;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.composer[data-variant="compact"] .composer__notice {
-  flex: 0 1 auto;
-  max-inline-size: 45%;
-}
-/* A narrow pane keeps the glyph and leaves the words to screen readers; the placeholder already says why. */
-@container (inline-size < 520px) {
-  .composer[data-variant="compact"] .composer__notice > span {
-    position: absolute;
-    inline-size: 1px;
-    block-size: 1px;
-    clip-path: inset(50%);
-  }
 }
 .composer__resume {
   flex: none;

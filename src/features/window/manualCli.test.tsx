@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { nextSessionNumber } from "../sidebar/sessionNumber";
@@ -13,7 +12,6 @@ import { Rail } from "./Rail";
 import { StatusBar } from "../composer/StatusBar";
 import { SCENARIO_PORTS, SCENARIO_ROWS, SCENARIO_ROWS_WITH_TOOLS } from "./scenario";
 import { SessionHeader } from "./SessionHeader";
-import { SplitView } from "./SplitView";
 
 const row = (id: string) => FIXTURES.find((f) => f.id === id)!;
 const docker = row("tool-docker");
@@ -50,15 +48,6 @@ describe("session numbers: every surface that names a session shows one", () => 
     expect(h.indexOf("session-number")).toBeLessThan(h.indexOf("session-header__name"));
     expect(h).toContain('aria-label="Session 3, api-server"');
   });
-  it("every pane header shows it before the name", () => {
-    const h = renderToStaticMarkup(<SplitView panes={[claude, docker]} size={{ w: 1400, h: 800 }} />);
-    for (const section of h.split("<section").slice(1)) {
-      const header = section.slice(section.indexOf("<header"), section.indexOf("</header>"));
-      expect(header.indexOf("session-number")).toBeGreaterThan(-1);
-      expect(header.indexOf("session-number")).toBeLessThan(header.indexOf("pane__name"));
-    }
-    expect(h).toContain('aria-label="Session 8, terminal: compose"');
-  });
   it("the lane card (and so the drawer) shows it, so a request says which session it is from", () => {
     const h = renderToStaticMarkup(<ApproveCard request={APPROVALS.safeBash} />);
     expect(h).toContain('class="session-number"');
@@ -70,9 +59,9 @@ describe("session numbers: every surface that names a session shows one", () => 
     expect(count(h, /class="session-number"/g)).toBe(8);
     expect(h).toContain('aria-label="Session 9, prod-box');
   });
-  it("the window shows it in the sidebar, the header and the panes at once", () => {
-    const h = renderToStaticMarkup(<MainWindow width={1500} height={900} layout="split" rows={SCENARIO_ROWS_WITH_TOOLS} />);
-    expect(count(h, /class="session-number"/g)).toBeGreaterThan(10);
+  it("the window shows it in the sidebar and the header at once", () => {
+    const h = renderToStaticMarkup(<MainWindow width={1500} height={900} rows={SCENARIO_ROWS_WITH_TOOLS} />);
+    expect(count(h, /class="session-number"/g)).toBeGreaterThan(8);
   });
   it("teaches the phrase in the badge's tooltip", () => {
     expect(renderToStaticMarkup(<SessionRow row={claude} density="comfortable" />)).toContain("Say “session 6” to an agent");
@@ -121,20 +110,6 @@ describe("manual CLIs: a plain terminal with its program's mark", () => {
 
 describe("manual CLIs have no prompt line: the terminal is where you type", () => {
   const forms = (h: string) => count(h, /<form class="composer"/g);
-  it("in split view only the agent's pane carries one, and the plain pane's terminal takes its rows", () => {
-    const h = renderToStaticMarkup(<SplitView panes={[claude, docker]} size={{ w: 1400, h: 800 }} />);
-    expect(forms(h)).toBe(1);
-    const sections = h.split("<section").slice(1);
-    const plain = sections.find((s) => s.includes('data-agent="docker"'))!;
-    const agent = sections.find((s) => s.includes('data-agent="claude"'))!;
-    expect(plain).toContain('data-plain="true"');
-    expect(plain).not.toContain("pane__composer");
-    expect(plain).not.toContain("grid-template-rows:28px minmax(0, 1fr) 42px");
-    expect(agent).toContain("grid-template-rows:28px minmax(0, 1fr) 42px");
-  });
-  it("a split of only manual CLIs has no prompt line anywhere", () => {
-    expect(forms(renderToStaticMarkup(<SplitView panes={[pwsh, docker]} size={{ w: 1400, h: 800 }} />))).toBe(0);
-  });
   it("a single manual CLI hides the full prompt line but keeps the status bar", () => {
     const h = renderToStaticMarkup(<MainWindow width={1400} height={800} rows={SCENARIO_ROWS_WITH_TOOLS} selectedId="tool-docker" />);
     expect(h).not.toContain("window__composer");
@@ -152,8 +127,5 @@ describe("manual CLIs have no prompt line: the terminal is where you type", () =
     const h = renderToStaticMarkup(<MainWindow width={1400} height={800} rows={SCENARIO_ROWS_WITH_TOOLS} selectedId="working" />);
     expect(h).toContain("window__composer");
     expect(forms(h)).toBe(1);
-  });
-  it("the pane decides from hasPromptLine, in one place", () => {
-    expect(readFileSync(new URL("./Pane.tsx", import.meta.url), "utf8")).toContain("hasPromptLine(row)");
   });
 });

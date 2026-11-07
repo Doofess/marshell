@@ -33,7 +33,7 @@ describe("renderReview 2b", () => {
   });
   it("renders every window story", () => {
     const html = renderReview("2b");
-    for (const name of ["Five agents", "Split view", "Focus mode", "Collapsed rail", "Auto collapse at 940", "Minimum window 720", "Drawer pushes", "Drawer overlays", "Light terminal in dark app"])
+    for (const name of ["Five agents", "Focus mode", "Collapsed rail", "Auto collapse at 940", "Minimum window 720", "Drawer pushes", "Drawer overlays", "Light terminal in dark app"])
       expect(html, name).toContain(name);
   });
   it("leaves terminals as empty labelled hosts for the page script", () => {

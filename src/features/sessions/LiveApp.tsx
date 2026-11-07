@@ -234,7 +234,6 @@ export function LiveApp() {
     },
     [dispatch],
   );
-  const [layoutMenu, setLayoutMenu] = useState(false);
   const { ref, width, height } = useElementSize();
   const { appearance, wtFiles, sync } = useAppearance();
   // A session's theme is the setting with its profile's override. One object per override, kept until the setting changes,
@@ -1177,7 +1176,6 @@ export function LiveApp() {
       }
       case "activate":
         if (effect.id === "palette") setOverlay("palette");
-        else if (effect.id === "layout") setLayoutMenu(true);
         else if (effect.id === "launcher") setLauncherOpen(true);
         return;
       case "deselect":
@@ -1641,25 +1639,10 @@ export function LiveApp() {
           needsYou={needsYou}
           width={width}
           height={height}
-          layout={view.panes.length > 1 ? "split" : "default"}
           sidebarPref={sidebarPref}
           sidebarWidth={view.sidebar_width}
           onSidebarWidth={(w) => dispatch({ type: "sidebarWidth", width: w })}
           onSidebarReset={() => dispatch({ type: "resetSidebarWidth" })}
-          paneIds={view.panes}
-          activePane={view.active}
-          zoomedPane={view.zoomed ?? undefined}
-          arrangement={(view.arrangement ?? undefined) as Arrangement | undefined}
-          ratios={ratiosOf(view)}
-          layoutMenu={layoutMenu}
-          onLayoutMenu={setLayoutMenu}
-          onVisible={setShownCount}
-          onFit={setFitCount}
-          onLayout={(count, arrangement) => {
-            if (count !== viewRef.current.panes.length) dispatch({ type: "count", count });
-            dispatch({ type: "arrange", arrangement });
-          }}
-          onPane={dispatch}
           rows={sidebarRows}
           selectedId={focusedId}
           visibleIds={onScreenIds}
