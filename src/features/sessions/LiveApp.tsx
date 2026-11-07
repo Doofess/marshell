@@ -99,6 +99,7 @@ import { REOPEN_AS_ADMIN } from "../../lib/adminCopy";
 import { LiveLauncher } from "./LiveLauncher";
 import { LivePalette } from "./LivePalette";
 import { recordsRecent } from "../palette/paletteList";
+import { cannotRun } from "../palette/runnable";
 import { LiveShortcuts } from "./LiveShortcuts";
 import { ResumeBar } from "./ResumeBar";
 import { recordSetupDetection, type SetupDetections } from "./setupDetections";
@@ -668,7 +669,17 @@ export function LiveApp() {
   });
   // Only the script command the header would show is listed.
   const os = endpoint ? osOfPlatform(endpoint.platform) : undefined;
-  const hiddenCommands = useMemo(() => [...baseHidden, ...(adminCommandHidden(os) ? ["new-session-admin"] : []), ...(scriptControl?.kind === "run" ? [] : ["run-script"]), ...(scriptControl?.kind === "stop" ? [] : ["stop-script"])], [baseHidden, scriptControl?.kind, os]);
+  // A command that would do nothing now (Close with no session in focus, Reopen with nothing closed) is left out too.
+  const idle = cannotRun({
+    focused: focusedInfo !== undefined,
+    sessions: rows.length,
+    split: view.panes.length > 1,
+    waiting: nextWaiting(requests) !== null,
+    closed: (closed?.length ?? 0) > 0,
+    shellPanel: sidebarExpanded,
+    sidebarToggle: sidebarToggleFor(sidebarPref, sidebarMode(width, sidebarPref)) !== null,
+  });
+  const hiddenCommands = useMemo(() => [...baseHidden, ...idle, ...(adminCommandHidden(os) ? ["new-session-admin"] : []), ...(scriptControl?.kind === "run" ? [] : ["run-script"]), ...(scriptControl?.kind === "stop" ? [] : ["stop-script"])], [baseHidden, idle, scriptControl?.kind, os]);
   // An Ended administrator row's Resume reads "Reopen as administrator" in the palette too.
   const liveLabels = useMemo(() => (focusedRow?.elevated ? { ...paletteLabels, resume: REOPEN_AS_ADMIN } : paletteLabels), [paletteLabels, focusedRow?.elevated]);
 
