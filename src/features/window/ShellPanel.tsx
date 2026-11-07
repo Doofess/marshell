@@ -16,7 +16,8 @@ const icon = (d: string) => (
 /** Also what the window announces when the shell panel's shell could not be started. */
 export const SHELL_FAILED = "The shell didn't start.";
 const PROMPT = "M2 3.5L5 6L2 8.5M6.5 9h3.5";
-const SPLIT = "M1.5 2.5h9v7h-9zM6 2.5v7";
+/** An arrow leaving a box: the shell moves out into a session of its own. */
+const POP_OUT = "M5.5 2.5h-3v7h7v-3M7.5 2.5h2v2M9.5 2.5L6 6";
 const CHEVRON_DOWN = "M3 4.5L6 7.5L9 4.5";
 const CHEVRON_UP = "M3 7.5L6 4.5L9 7.5";
 
@@ -63,7 +64,7 @@ export function ShellPanel({ height, cwd, shellName = "PowerShell", collapsed = 
         )}
         <span className="shell-panel__spacer" />
         <button type="button" className="shell-panel__button" aria-label={`Open ${shellName} as a session`} title={`Open ${shellName} as a session`} aria-disabled={openDisabled || undefined} onClick={openDisabled ? undefined : onOpenAsSession}>
-          {icon(SPLIT)}
+          {icon(POP_OUT)}
         </button>
         <button
           type="button"
