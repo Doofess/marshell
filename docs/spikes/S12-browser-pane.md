@@ -30,7 +30,13 @@ Driver:
 | 3e | UI Automation | Both documents listed; focus sits under the page's document after 3a | Pass. `uia.ps1` listed both documents: the page ("Spike home") and the app ("PowerShell 7 3 — Marshell"). After 3a, the focused element was the page's link "Page two in a new window", under "Spike home". The first query after the app started missed the page's document; see finding 10. |
 | 4a | Frame edges | The frame resizes where the page touches the edge; the smallest inset that works | |
 | 4b | Divider drag | Follow mode against anchor mode | |
-| 4c | Window moves | Maximize, snaps, minimize and the tray: bounds within 1 px | |
+| 4c | Window moves | Maximize, snaps, minimize and the tray: bounds within 1 px | Partial; snaps are still to do by hand. The page's WebView2 host window was compared with the placeholder on screen. Every case was within 1 px, the half pixel Tauri rounds:
+- at the start;
+- after the window's own Minimize button and a restore;
+- maximized (1576×1273 at 1865, 120);
+- after Restore.
+
+The tray can't bring the window back while a page is open (finding 16), so the tray's bounds weren't measured. |
 | 4d | 125% and 150% | 4c's bounds check and 4a's right edge at each scale | |
 | 5a | Freeze | Timings from `freeze-start` to `hidden`; the user judges the flash | Timings and keys pass; the user's look is still to do. Ten freezes from a synthetic Ctrl+Shift+K in the app's webview (CDP, with another app in front). `freeze-start` to `hidden`: 37 to 48 ms. The capture took 22 to 31 ms in Rust, for a 14.8 KB PNG of 456×679, the placeholder's size in physical pixels. The thaw took 5 to 11 ms. A PrintWindow picture of the frozen window shows the palette and its scrim over the page's picture. Then real keys, with Marshell in front (`keys.ps1`), 10 from each side:
 - From the page: Ctrl+Shift+K was forwarded and the palette opened 10 of 10. It took 16 to 21 ms from the key to `freeze-start` and 69 to 77 ms to `hidden`; the first press, cold, took 181 ms.
@@ -46,7 +52,11 @@ The key times include `keys.ps1`'s own start. The user's verdict on the flash is
 | 6c | Profile | The cookie survives a restart; no old `msedgewebview2.exe` holds the profile | Pass, with a condition: see finding 12. The cookie survived `tauri dev`'s restart, which kills the app, when the cookie was 45 s old. It also survived when the page's webview was closed cleanly first, with the cookie 1 s old. It was lost when the kill came 2 s after the cookie was set. In every run, the old run's six profile processes were gone within 0.7 s of the kill, at least 7 s before the new app started. The profile is `<MARSHELL_HOME>\browser-profile\EBWebView`. |
 | 6d | A real site | `https://example.com/` renders | Pass. The page loaded (title "Example Domain"), nothing was refused, and the capture shows it drawn, in its dark color scheme: see finding 13. |
 | 7a | Baseline isolation | Probe reports on the `windows` capability, site origin and Vite origin | As the research expected. Both probes had `__TAURI_INTERNALS__`. From the site (`http://127.0.0.1:47620`), `plugin:app\|version` was refused ("allowed on: [windows: "main", URL: local]"). The app's own command `spike_log` was refused too ("not allowed. Plugin not found"). The API's `/v1/health` couldn't be read ("Failed to fetch", CORS), though a `no-cors` request still went out (opaque). From Vite's origin (`http://localhost:1420`, the app's own in dev), the probe got the version (0.1.0), wrote a line to the spike log through `spike_log`, and read the API's answer: 401 without the token. |
-| 7b | Scoped isolation | No version from either probe; the API refuses; the app's window still works | Partial: see finding 14. With `"webviews": ["main"]`, both probes were refused the version ("allowed on: [webviews: "main", URL: local]"). The API answered 401 to the Vite-origin probe, and the site's probe still couldn't read it. But the Vite-origin probe could still call the app's own command `spike_log`. In the app's own webview, `plugin:app\|version`, `plugin:window\|set_title` and `plugin:window\|is_maximized` still worked. Still to do, with Marshell in front: the window's own minimize, maximize, close-to-tray and a link. |
+| 7b | Scoped isolation | No version from either probe; the API refuses; the app's window still works | Partial: see finding 14. With `"webviews": ["main"]`, both probes were refused the version ("allowed on: [webviews: "main", URL: local]"). The API answered 401 to the Vite-origin probe, and the site's probe still couldn't read it. But the Vite-origin probe could still call the app's own command `spike_log`. In the app's own webview, `plugin:app\|version`, `plugin:window\|set_title` and `plugin:window\|is_maximized` still worked. Then, with Marshell in front, real clicks on the window's own buttons:
+- Minimize, Maximize and Restore worked.
+- Close hid the window to the tray.
+- The opener's `open_url` still passed the ACL from the app's webview. Given a `file:` URL, it was refused by its URL scope ("Not allowed to open url"), not by the ACL. No browser was opened.
+- The tray's left click, posted to Marshell's own tray window, brought the window back only when no page was open. With a page open, it did nothing: finding 16. |
 | 7c | Allow-list | `file:`, `tauri.localhost`, `ipc.localhost`, `tauri://` refused; `about:blank` and localhost open | Pass. Through the address box's command (`spike_browser_nav` go): `file:///C:/Windows/win.ini`, `http://tauri.localhost/`, `http://ipc.localhost/` and `tauri://localhost/` were refused and logged. `about:blank` and `http://localhost:47620/` opened. |
 | 8a | Drop on the terminal | Marshell's drop still works | |
 | 8b | Drop on the page | Which events fire; no `file:` navigation | |
@@ -85,7 +95,11 @@ The key times include `keys.ps1`'s own start. The user's verdict on the flash is
     - With a page open, `set_badge` returned "no main window".
     - Once the page closed, the same call worked.
 
-    The worst of the four is the tray's show. Closing the window still hides it to the tray, because that path takes the window from the close event. But the tray then can't bring it back while a page is open. 7b runs that by hand.
+    The worst of the four is the tray's show. Closing the window still hides it to the tray, because that path takes the window from the close event. But the tray then can't bring it back while a page is open. 7b ran it:
+    - With a page open, the tray's left click left the window hidden.
+    - With the page closed, the same click brought it back.
+
+    A person who closes Marshell to the tray with a page open would have no way back short of quitting.
 
     6q-3 moves them to `get_window("main")` (`unstable`'s `Manager::get_window`) and keeps the main webview's own calls on `get_webview("main")`. The spike's hooks already take the window from the event or from `get_window`.
 17. **At the window's resize event the app's layout is still the old one.** Marshell sizes its main layout from a `ResizeObserver` (`LiveApp`'s `useElementSize` passes `width` and `height` to `MainWindow`). So when the window's `resize` event fires, `innerWidth` is already new, but the pane is still at its old place and width. React draws the new layout a frame later. A report taken at the resize event moved the page to where it already was, and in anchor mode it pulled the page back. The spike now reports from the placeholder's `ResizeObserver` alone. In this layout the pane's width follows the window's (the preview ratio is in `fr`), so every window resize also resizes the pane. A pure move still needs finding 3's position source. Measured on a 120 px resize with `SetWindowPos` (no input):
