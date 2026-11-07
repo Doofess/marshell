@@ -106,8 +106,6 @@ type Props = {
   busy?: boolean;
   /** The confirm view's one status line while busy: the worktree being made, then the program starting. Default "Creating the worktree…". */
   busyText?: string;
-  /** The boxes a tool preset asks to fill, shown where the prompt line is. */
-  fields?: ReactNode;
 };
 
 const PATH_VERB: Record<PathCheck["state"], string> = { found: "Use", missing: "No folder at", checking: "Checking", failed: "Couldn't check" };
@@ -137,7 +135,7 @@ const cycle = <T,>(all: T[], now: T) => all[(all.indexOf(now) + 1) % all.length]
  * first command (it can still run in a worktree). The prompt line is set like the one in every pane (a flat command line), in the vendor's colour for an
  * agent. Presentational: the parent owns the state.
  */
-export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse, onPrograms, onActive, onPrompt, onStart, onElevated, onBypassAck, onTaskName, onConfirm, onBack, onAllow, onSkipScripts, onClose, paceChip = true, os = "windows", pending = false, programs = LAUNCH_PROGRAMS, error, busy = false, busyText = "Creating the worktree…", fields }: Props) {
+export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse, onPrograms, onActive, onPrompt, onStart, onElevated, onBypassAck, onTaskName, onConfirm, onBack, onAllow, onSkipScripts, onClose, paceChip = true, os = "windows", pending = false, programs = LAUNCH_PROGRAMS, error, busy = false, busyText = "Creating the worktree…" }: Props) {
   const { choice, projects, query, activeIndex, remembered, nextNumber, taskName, confirm } = view;
   const project = projects.find((p) => p.id === choice.projectId);
   const agentRun = isAgentProgram(choice.program, programs);
@@ -459,7 +457,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
             {admin.on && program.adminSetupPending && <p className="launcher__reason">Checking Antigravity's settings…</p>}
 
             {programsOpen && (
-              <div className="launcher__programs" id={id("programs")} role="listbox" aria-label="Agents, shells and tools">
+              <div className="launcher__programs" id={id("programs")} role="listbox" aria-label="Agents and shells">
                 {LAUNCH_GROUPS.filter((g) => programsIn(g, programs).length > 0).map((g) => (
                   <div key={g} className="launcher__group" role="group" aria-labelledby={id(`group-${g}`)}>
                     <span className="launcher__group-name" id={id(`group-${g}`)}>
@@ -566,8 +564,6 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
                 />
               </div>
             )}
-
-            {fields}
 
             {showTask && (
               <div className="launcher__task">

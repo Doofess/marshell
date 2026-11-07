@@ -72,14 +72,18 @@ describe("Launcher: empty", () => {
   });
 });
 
-describe("Launcher: the first chip offers agents, shells and tools", () => {
+describe("Launcher: the first chip offers agents and shells", () => {
   const h = html(view({ programsOpen: true }));
-  it("opens a listbox grouped under Agents, Shells and Tools", () => {
+  it("opens a listbox grouped under Agents and Shells", () => {
     expect(h).toMatch(/id="[^"]*-programs"/);
     expect(h).toContain('aria-expanded="true"');
     for (const g of LAUNCH_GROUPS) expect(h, g).toContain(`>${g}<`);
     const order = LAUNCH_GROUPS.map((g) => h.indexOf(`>${g}<`));
     expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+  it("has no Tools heading, and the listbox is labelled Agents and shells", () => {
+    expect(h).not.toContain(">Tools<");
+    expect(h).toContain('aria-label="Agents and shells"');
   });
   it("lists every program as an option with its mark, and says which is the current one", () => {
     expect(count(h, /role="option"/g)).toBe(LAUNCH_PROGRAMS.length);
@@ -117,9 +121,6 @@ describe("Launcher: a manual CLI is a plain terminal", () => {
   });
   it("does not show remembered agent choices", () => {
     expect(html(view({ ...manual, remembered: REMEMBERED["my-app"] }))).not.toContain("Remembered for");
-  });
-  it("an ssh session asks where to connect", () => {
-    expect(html(view({ choice: { ...DEFAULT_CHOICE, program: "ssh" } }))).toContain("Where to connect, e.g. user@host");
   });
 });
 

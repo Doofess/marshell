@@ -7,7 +7,6 @@ import type { LayoutDoc } from "../../generated/LayoutDoc";
 import type { Profile } from "../../generated/Profile";
 import type { ProfilesDoc } from "../../generated/ProfilesDoc";
 import type { ProjectInfo } from "../../generated/ProjectInfo";
-import type { ToolCatalog } from "../../generated/ToolCatalog";
 import type { Task } from "../../generated/Task";
 import type { TaskCreateRequest } from "../../generated/TaskCreateRequest";
 import type { TaskPlanRequest } from "../../generated/TaskPlanRequest";
@@ -24,7 +23,6 @@ import { shellKind } from "./toRow";
 const ADAPTER_AGENTS = ["claude", "codex", "antigravity", "qwen", "copilot"];
 const PROFILE_PREFIX = "profile:";
 const PRESET_PREFIX = "preset:";
-const TOOL_PREFIX = "tool:";
 
 const askFirst = (name: string) => `What should ${name} do first? (optional)`;
 
@@ -41,7 +39,7 @@ function agentProgram(a: CatalogAgent): LaunchProgram {
  * person's own), the presets whose agent is found, then one shell per profile the core knows (marked by its family).
  * With no catalog (it could not be read) it lists the three adapters as before and claims nothing about any other agent.
  */
-export function livePrograms(catalog: AgentCatalog | null, profiles: Profile[], tools?: ToolCatalog | null): LaunchProgram[] {
+export function livePrograms(catalog: AgentCatalog | null, profiles: Profile[]): LaunchProgram[] {
   const found = catalog === null ? null : catalog.agents.filter((a) => a.found);
   const agents = found === null ? ADAPTER_AGENTS.filter((id) => id !== "qwen" && id !== "copilot").map((id) => LAUNCH_PROGRAMS.find((p) => p.id === id)!) : found.map(agentProgram);
   const presets = (catalog?.presets ?? []).flatMap((preset): LaunchProgram[] => {
@@ -65,29 +63,7 @@ export function livePrograms(catalog: AgentCatalog | null, profiles: Profile[], 
   const shells = profiles.map(
     (p): LaunchProgram => ({ id: `${PROFILE_PREFIX}${p.id}`, kind: shellKind(p), label: p.name, cli: p.name, group: "Shells", first: "", noFirst: true }),
   );
-  // The npx launcher profile has no presets, so it adds nothing here.
-  const toolPresets = (tools?.tools ?? []).flatMap((t) =>
-    t.presets.map(
-      (p): LaunchProgram => ({
-        id: `${TOOL_PREFIX}${t.id}:${p.id}`,
-        kind: "generic",
-        label: p.name,
-        cli: t.name,
-        group: "Tools",
-        first: "",
-        noFirst: true,
-        fields: p.fields,
-        toolLaunch: { tool: t.id, preset: p.id },
-        ...(p.found ? {} : { problem: "Not installed, or not on PATH." }),
-      }),
-    ),
-  );
-  return [...agents, ...presets, ...shells, ...toolPresets];
-}
-
-/** True when the program asks for no values, or each of its fields has some text besides spaces. */
-export function fieldsFilled(program: LaunchProgram | undefined, values: Record<string, string>): boolean {
-  return (program?.fields ?? []).every((f) => (values[f.id] ?? "").trim() !== "");
+  return [...agents, ...presets, ...shells];
 }
 
 /** The program the launcher shows for a choice: the chosen one if it is listed, else the first listed (an agent that is not installed is not). */
@@ -204,19 +180,12 @@ export function launchRequest(
   size: { cols: number; rows: number },
   /** The folder of a task made for this launch; it takes the place of the chosen folder. */
   taskPath?: string,
-  /** The values typed for a tool preset's fields, by field id. They go into this request and nowhere else. */
-  fields: Record<string, string> = {},
   /** The launcher's Administrator chip. It is not part of `choice`: it is never remembered. */
   elevated = false,
 ): CreateSessionRequest {
   const cwd = taskPath ?? projects.find((p) => p.id === choice.projectId)?.path;
   const base: CreateSessionRequest = { cols: size.cols, rows: size.rows, elevated, ...(cwd === undefined ? {} : { cwd }) };
   const program = programById(choice.program, programs);
-  // A tool preset runs inside the default shell; the core refuses a request that mixes it with an agent, prompt, mode or preset.
-  if (program?.toolLaunch !== undefined) {
-    const own = Object.fromEntries((program.fields ?? []).map((f) => [f.id, fields[f.id] ?? ""]));
-    return { ...base, profile_id: profiles.default_id, tool: { ...program.toolLaunch, fields: own } };
-  }
   const id = program?.id ?? choice.program;
   if (id.startsWith(PROFILE_PREFIX)) return { ...base, profile_id: id.slice(PROFILE_PREFIX.length) };
   // A preset starts its agent (Claude Code) with the preset named; the core reads whatever the preset needs, such as a key, itself.

@@ -39,7 +39,7 @@ describe("launcherSentence", () => {
   });
   it("is shorter for a manual CLI: no mode, no pace, and the worktree only when it is on", () => {
     expect(launcherSentence({ ...base, program: "powershell" }, PROJECTS)).toBe("Start PowerShell in my-app on main");
-    expect(launcherSentence({ ...base, program: "ssh", projectId: "scratch" }, PROJECTS)).toBe("Start SSH in scratch");
+    expect(launcherSentence({ ...base, program: "cmd", projectId: "scratch" }, PROJECTS)).toBe("Start Command Prompt in scratch");
     expect(launcherSentence({ ...base, program: "powershell", worktree: true }, PROJECTS)).toBe("Start PowerShell in my-app on main, in a new worktree");
   });
 });
@@ -53,18 +53,19 @@ describe("options", () => {
 });
 
 describe("programs the first chip offers", () => {
-  it("groups them as Agents, Shells and Tools, in that order", () => {
-    expect(LAUNCH_GROUPS).toEqual(["Agents", "Shells", "Tools"]);
+  it("groups them as Agents and Shells, in that order", () => {
+    expect(LAUNCH_GROUPS).toEqual(["Agents", "Shells"]);
     for (const g of LAUNCH_GROUPS) expect(programsIn(g).length, g).toBeGreaterThan(0);
     expect(LAUNCH_PROGRAMS.map((p) => p.group)).toEqual([...LAUNCH_PROGRAMS.map((p) => p.group)].sort((a, b) => LAUNCH_GROUPS.indexOf(a) - LAUNCH_GROUPS.indexOf(b)));
   });
-  it("offers AI agents under Agents and only manual CLIs under Shells and Tools", () => {
+  it("offers AI agents under Agents and only manual CLIs under Shells", () => {
     for (const p of programsIn("Agents")) expect(AGENT_IDS as readonly string[], p.id).toContain(p.id);
-    for (const g of ["Shells", "Tools"] as const) for (const p of programsIn(g)) expect(TOOL_IDS as readonly string[], p.id).toContain(p.id);
+    for (const p of programsIn("Shells")) expect(TOOL_IDS as readonly string[], p.id).toContain(p.id);
   });
-  it("covers the shells and a spread of dev, remote and cloud tools, with a catch-all", () => {
+  it("covers the agents and the shells", () => {
     const ids = LAUNCH_PROGRAMS.map((p) => p.id);
-    for (const id of ["claude", "codex", "antigravity", "copilot", "cursor", "opencode", "amp", "qwen", "grok", "powershell", "bash", "zsh", "cmd", "gitbash", "wsl", "python", "node", "docker", "kubectl", "terraform", "ssh", "aws", "program"]) expect(ids, id).toContain(id);
+    for (const id of ["claude", "codex", "antigravity", "copilot", "cursor", "opencode", "amp", "qwen", "grok", "powershell", "bash", "zsh", "cmd", "gitbash", "wsl"]) expect(ids, id).toContain(id);
+    for (const id of ["python", "node", "docker", "kubectl", "terraform", "ssh", "aws", "program"]) expect(ids, id).not.toContain(id);
   });
   it("lists Google's one agent, Antigravity: Gemini CLI is dropped", () => {
     expect(LAUNCH_PROGRAMS.filter((p) => p.group === "Agents").map((p) => p.label)).toEqual(["Claude", "Codex", "Antigravity", "GitHub Copilot", "Cursor", "opencode", "Amp", "Qwen", "Grok"]);
@@ -78,7 +79,6 @@ describe("programs the first chip offers", () => {
   it("knows which are agents: only those get mode, pace and worktree chips", () => {
     expect(isAgentProgram("claude")).toBe(true);
     expect(isAgentProgram("powershell")).toBe(false);
-    expect(isAgentProgram("program")).toBe(false);
     expect(programById("profile:nope")).toBeUndefined();
   });
 });

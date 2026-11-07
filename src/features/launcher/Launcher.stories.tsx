@@ -43,14 +43,11 @@ export const RememberedForThisProject: StoryObj = {
     </ThemePair>
   ),
 };
-export const AgentsShellsAndTools: StoryObj = {
-  render: () => <ThemePair label="The first chip opens a list of agents, shells and tools" stack>{frame({ ...base, programsOpen: true }, {}, 640)}</ThemePair>,
+export const AgentsAndShells: StoryObj = {
+  render: () => <ThemePair label="The first chip opens a list of agents and shells" stack>{frame({ ...base, programsOpen: true }, {}, 640)}</ThemePair>,
 };
 export const ShellPicked: StoryObj = {
   render: () => <ThemePair label="A shell is a plain terminal: no mode, pace or worktree, and the line asks for a first command" stack>{frame(manual("powershell"), {}, 400)}</ThemePair>,
-};
-export const SshPicked: StoryObj = {
-  render: () => <ThemePair label="A tool asks what it needs: where to connect" stack>{frame(manual("ssh"), {}, 400)}</ThemePair>,
 };
 export const AfterEnter: StoryObj = {
   render: () => (

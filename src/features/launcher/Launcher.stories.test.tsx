@@ -18,10 +18,10 @@ describe("the launcher stories", () => {
     expect(render("TypedPathFound")).toContain("Use");
     expect(render("TypedPathMissing")).toContain('aria-disabled="true"');
   });
-  it("show the program list with all three headings, and a shell and a tool without mode and pace chips, but with the worktree chip", () => {
-    const open = render("AgentsShellsAndTools");
-    for (const g of ["Agents", "Shells", "Tools"]) expect(open).toContain(`>${g}<`);
-    for (const n of ["ShellPicked", "SshPicked"] as const) {
+  it("show the program list with both headings, and a shell without mode and pace chips, but with the worktree chip", () => {
+    const open = render("AgentsAndShells");
+    for (const g of ["Agents", "Shells"]) expect(open).toContain(`>${g}<`);
+    for (const n of ["ShellPicked"] as const) {
       const h = render(n);
       expect(h, n).not.toContain("Balanced");
       expect(h, n).toContain('role="checkbox"');

@@ -8,6 +8,13 @@ import { SettingsReadError } from "../appearance/settingsSync";
 /** A change to the limits that would remove files, waiting for the person's yes. */
 export type PendingLimits = { limits: RetentionLimits; preview: RetentionPreview };
 
+/** Esc on a question cancels it and keeps the page from also closing. */
+export function escapeCancels(e: { key: string; preventDefault: () => void }, cancel: () => void): void {
+  if (e.key !== "Escape") return;
+  e.preventDefault();
+  cancel();
+}
+
 const DATE = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric" });
 
 /** The line that asks whether to remove what a change to the limits would remove. */

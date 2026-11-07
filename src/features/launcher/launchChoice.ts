@@ -1,6 +1,5 @@
 import { isTool, type SessionKind } from "../../components/AgentMark/kinds";
 import { TOOL_NAMES, type ToolId } from "../../components/AgentMark/tools";
-import type { PresetField } from "../../generated/PresetField";
 import { MODES, effectiveMode, offeredMode } from "../modes/sessionModes";
 import type { Mode } from "../sidebar/types";
 import { modeLabel } from "../window/SessionHeader";
@@ -16,8 +15,8 @@ export type Pace = "Quick" | "Balanced" | "Deep";
 export { MODES };
 export const PACES: Pace[] = ["Quick", "Balanced", "Deep"];
 
-/** The first chip lists AI agents, shells and tools under these headings. Dev tools and cloud tools share "Tools". */
-export const LAUNCH_GROUPS = ["Agents", "Shells", "Tools"] as const;
+/** The first chip lists AI agents and shells under these headings. */
+export const LAUNCH_GROUPS = ["Agents", "Shells"] as const;
 export type LaunchGroup = (typeof LAUNCH_GROUPS)[number];
 
 /**
@@ -56,15 +55,10 @@ export type LaunchProgram = {
   adminSetupPending?: boolean;
   /** Antigravity's settings could not be read, so an administrator start needs the Bypass confirmation. */
   adminSetupFailed?: boolean;
-  /** The values a tool preset asks for before it starts, one box each. */
-  fields?: PresetField[];
-  /** The tool preset this program starts. */
-  toolLaunch?: { tool: string; preset: string };
 };
 
 const agent = (id: SessionKind, label: string, cli: string): LaunchProgram => ({ id, kind: id, label, cli, group: "Agents", first: `What should ${label} do first? (optional)` });
 const shell = (id: ToolId): LaunchProgram => ({ id, kind: id, label: TOOL_NAMES[id], cli: TOOL_NAMES[id], group: "Shells", first: "Run a command first (optional)" });
-const tool = (id: ToolId, first: string, label = TOOL_NAMES[id], cli = label): LaunchProgram => ({ id, kind: id, label, cli, group: "Tools", first });
 
 /** The agents the launcher design lists. The live launcher builds its own list from the core's catalog (`livePrograms`). DeepSeek has no command line of its own; it is a preset that starts Claude Code. Google's agent is Antigravity (`agy`), Gemini CLI is dropped. */
 export const LAUNCH_PROGRAMS: LaunchProgram[] = [
@@ -83,14 +77,6 @@ export const LAUNCH_PROGRAMS: LaunchProgram[] = [
   shell("wsl"),
   shell("bash"),
   shell("zsh"),
-  tool("python", "Run a script or start the prompt (optional)"),
-  tool("node", "Run a script or start the prompt (optional)"),
-  tool("docker", "Command to run, e.g. compose up (optional)"),
-  tool("kubectl", "Command to run, e.g. get pods (optional)"),
-  tool("terraform", "Command to run, e.g. plan (optional)"),
-  tool("ssh", "Where to connect, e.g. user@host"),
-  tool("aws", "Command to run, e.g. sso login (optional)"),
-  tool("program", "Executable and arguments, e.g. htop", "Other program", "your program"),
 ];
 
 export const programsIn = (group: LaunchGroup, programs: LaunchProgram[] = LAUNCH_PROGRAMS) => programs.filter((p) => p.group === group);
