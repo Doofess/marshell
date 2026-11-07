@@ -128,6 +128,10 @@ pub struct AppState(Arc<Inner>);
 /// When `wsl.exe` last answered for an agent in a distro, and the version it printed (None when none could be read).
 type WslVersion = (std::time::Instant, Option<String>);
 
+/// Which of the words a WSL distro's own PATH has: the distro and the words asked for in, the words found out. None is a
+/// distro that doesn't answer.
+pub type DistroWhich = fn(&str, &[String]) -> Option<Vec<String>>;
+
 /// Where Marshell's hooks go in a WSL distro: its home as a Windows (UNC) path the core can read and write, and the
 /// bridge's path as the distro's Linux sees it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -291,6 +295,9 @@ struct Inner {
     /// The target of a distro that a test pins, in place of asking `wsl.exe`. `Some(None)` is a distro that can't be
     /// reached.
     distro_target: Option<Option<DistroTarget>>,
+    /// Which of the words a WSL distro's own PATH has, as a test pins it, in place of asking `wsl.exe`. Returns None for
+    /// a distro that doesn't answer.
+    distro_which: Option<DistroWhich>,
     /// The distros that are running now, which the Doctor asks only when a distro holds Marshell's hooks. Tests swap it,
     /// so none runs `wsl.exe`.
     running_distros: fn() -> Vec<String>,
@@ -411,6 +418,7 @@ impl AppState {
             wsl_version: None,
             wsl_versions: Mutex::new(HashMap::new()),
             distro_target: None,
+            distro_which: None,
             running_distros: running_distros_of_wsl,
             sampler: Mutex::new(crate::diagnostics::perf::Sampler::new()),
             previews: crate::diagnostics::export::Previews::default(),
@@ -628,6 +636,14 @@ impl AppState {
         Arc::get_mut(&mut self.0)
             .expect("with_distro_target runs before the state is shared")
             .distro_target = Some(target);
+        self
+    }
+    /// Pins which agents a WSL distro's PATH has, so a test never runs `wsl.exe`. The function gets the distro and the words
+    /// asked for and returns the ones found, or None for a distro that doesn't answer. Call it before the state is cloned.
+    pub fn with_distro_which(mut self, which: DistroWhich) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_distro_which runs before the state is shared")
+            .distro_which = Some(which);
         self
     }
     /// Pins the list of running distros, so a test never runs `wsl.exe`. Call it before the state is cloned.
@@ -1201,6 +1217,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/profiles", get(profiles::get).put(profiles::put))
         .route("/v1/profiles/detected", get(profiles::detected))
         .route("/v1/profiles/integration", post(profiles::integration))
+        .route("/v1/profiles/{id}/agents", get(profiles::agents))
         .route("/v1/settings", get(settings::get).put(settings::put))
         .route("/v1/notify/paused", get(get_notify_paused).put(put_notify_paused))
         .route("/v1/layout", get(layout::get))

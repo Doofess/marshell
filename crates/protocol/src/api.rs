@@ -844,6 +844,39 @@ pub struct IntegrationInfo {
     pub script: Option<String>,
 }
 
+/// Why a shell can't start an agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ShellAgentProblem {
+    /// The agent isn't installed in that shell (not on its PATH).
+    NotInstalled,
+    /// Marshell doesn't drive the agent in that shell.
+    NotDrivenHere,
+    /// Command Prompt can't start a program whose path has a space.
+    PathHasSpace,
+}
+
+/// One catalog agent as a shell sees it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ShellAgent {
+    pub id: String,
+    /// None when the shell can start the agent.
+    pub problem: Option<ShellAgentProblem>,
+}
+
+/// GET /v1/profiles/{id}/agents body: the agents a shell profile can start.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ShellAgents {
+    pub profile_id: String,
+    /// False when the shell couldn't be asked (a WSL distro that didn't answer); `agents` is empty then.
+    pub reached: bool,
+    /// One entry per catalog agent, in catalog order, presets excluded.
+    pub agents: Vec<ShellAgent>,
+}
+
 /// GET/PUT /v1/profiles body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]

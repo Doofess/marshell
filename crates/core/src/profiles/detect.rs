@@ -619,7 +619,7 @@ impl<'a> Program<'a> {
 }
 
 /// True when `word` can go into a command line as it is: `[A-Za-z0-9._:/\\=-]` and not empty.
-fn is_plain_word(word: &str) -> bool {
+pub(crate) fn is_plain_word(word: &str) -> bool {
     !word.is_empty()
         && word
             .chars()

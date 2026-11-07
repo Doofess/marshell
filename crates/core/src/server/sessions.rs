@@ -299,7 +299,7 @@ const COPILOT_NOT_FOUND: &str = "Copilot CLI isn't installed, or isn't on PATH."
 /// commands that resolves on PATH as that agent (off the async workers: a version check may run its
 /// `--version`); a WSL distro has its own PATH, so there it is the first command. An unknown id gets
 /// itself, and `launch_argv` refuses it.
-async fn program_command(
+pub(super) async fn program_command(
     st: &AppState,
     id: &str,
     wsl: bool,
