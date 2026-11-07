@@ -1,7 +1,7 @@
 //! Spike 6q-0: the raw WebView2 COM layer on the page's controller. Handlers only read their event and log, or post to
 //! the main thread: they run inside WebView2's callback and must not call back into the app (research §2.3).
 
-use super::rules::{KeyRoute, key_event, route_key};
+use super::rules::{KeyRoute, focus_out_direction, key_event, route_key};
 use super::{LABEL, emit_app, log};
 use serde_json::json;
 use std::collections::HashSet;
@@ -14,7 +14,7 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_MOVE_FOCUS_REASON, COREWEBVIEW2_MOVE_FOCUS_REASON_NEXT, COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS,
     COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC, COREWEBVIEW2_PHYSICAL_KEY_STATUS, ICoreWebView2Controller,
 };
-use webview2_com::{AcceleratorKeyPressedEventHandler, FocusChangedEventHandler};
+use webview2_com::{AcceleratorKeyPressedEventHandler, FocusChangedEventHandler, MoveFocusRequestedEventHandler};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_MENU, VK_SHIFT};
 
 static KEY_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -43,6 +43,9 @@ pub fn install(app: &AppHandle, page: &Webview) {
         if let Err(e) = key_handler(&app, &controller) {
             com_failed(&app, "key handler", e);
         }
+        if let Err(e) = focus_out_handler(&app, &controller) {
+            com_failed(&app, "focus-out handler", e);
+        }
         // F12 opens DevTools on the page only: the builder turned them off, as a release build has them (research §2.3).
         // SAFETY: COM calls on the live controller, on the webview's own thread (with_webview).
         let on = unsafe {
@@ -69,6 +72,9 @@ fn focus_handlers(app: &AppHandle, controller: &ICoreWebView2Controller) -> wind
         controller.add_GotFocus(
             &FocusChangedEventHandler::create(Box::new(move |_, _| {
                 log(&on_focus, "rust", "page-focus", json!({}));
+                // The pane keeps track of who holds the keyboard, to give it back to the page after Alt+Tab.
+                let app = on_focus.clone();
+                let _ = on_focus.run_on_main_thread(move || emit_app(&app, "spike://page-focus", json!({})));
                 Ok(())
             })),
             &mut token,
@@ -81,6 +87,35 @@ fn focus_handlers(app: &AppHandle, controller: &ICoreWebView2Controller) -> wind
             &mut token,
         )
     }
+}
+
+/// Tab past the page's last element, or Shift+Tab before its first, hands focus back to the app, which moves it to the
+/// element on that side of the page. Unhandled, WebView2 would cycle focus inside the page.
+fn focus_out_handler(app: &AppHandle, controller: &ICoreWebView2Controller) -> windows_core::Result<()> {
+    let app = app.clone();
+    let mut token = 0i64;
+    let handler = MoveFocusRequestedEventHandler::create(Box::new(move |_, args| {
+        let Some(args) = args else { return Ok(()) };
+        let mut reason = COREWEBVIEW2_MOVE_FOCUS_REASON::default();
+        // SAFETY: reading the event's own arguments inside its callback.
+        unsafe { args.Reason(&mut reason)? };
+        let Some(direction) = focus_out_direction(reason.0) else {
+            return Ok(());
+        };
+        // SAFETY: as above.
+        unsafe { args.SetHandled(true)? };
+        let app2 = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if let Some(main) = app2.get_webview("main") {
+                let _ = main.set_focus();
+            }
+            log(&app2, "rust", "focus-out", json!({ "direction": direction }));
+            emit_app(&app2, "spike://focus-out", json!({ "direction": direction }));
+        });
+        Ok(())
+    }));
+    // SAFETY: as in `install`.
+    unsafe { controller.add_MoveFocusRequested(&handler, &mut token) }
 }
 
 /// Marshell's keys and F12 are taken from the page (6q decision 4). The key-up of a taken key is taken too, by its

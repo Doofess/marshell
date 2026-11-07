@@ -2,7 +2,7 @@
 // placeholder; this side only measures the placeholder and drives the child through the spike commands.
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type FocusEvent } from "react";
 import "./BrowserSpike.css";
 import { spikeLog, type BrowserSpikeModel } from "./useBrowserSpike";
 
@@ -19,6 +19,30 @@ function measure(el: HTMLElement) {
   const r = el.getBoundingClientRect();
   return { x: r.x, y: r.y, width: r.width, height: r.height, winWidth: window.innerWidth, winHeight: window.innerHeight };
 }
+
+const TABBABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/** The app's tab order, as Tab walks it: shown, not inert, not taken out with tabindex -1. */
+function tabbables(): HTMLElement[] {
+  return Array.from(document.querySelectorAll<HTMLElement>(TABBABLE)).filter((e) => e.tabIndex >= 0 && e.getClientRects().length > 0 && !e.closest("[inert]"));
+}
+
+function describe(e: Element | null): string | null {
+  if (!e) return null;
+  const label = e.getAttribute("aria-label");
+  return `${e.tagName.toLowerCase()}${label ? ` "${label}"` : ""}`;
+}
+
+/** A press on the title bar's drag area moves the window; it is not the user picking something in the app. */
+function onDragArea(t: Element): boolean {
+  const own = t.getAttribute("data-tauri-drag-region");
+  if (own !== null && own !== "false") return true;
+  return t.closest('[data-tauri-drag-region="deep"]') !== null && t.closest('button, a, input, [role="button"]') === null;
+}
+
+// Whether the page holds the keyboard. Alt+Tab back hands focus to the app's webview (wry, S12 finding 4); the pane gives
+// it back to the page unless the user clicked in the app or pressed an app key since.
+let pageOwns = false;
 
 type Props = { model: BrowserSpikeModel; frozen: boolean };
 
@@ -62,6 +86,53 @@ export function BrowserSpike({ model, frozen }: Props) {
     };
   }, [created]);
 
+  // Tab or Shift+Tab ran off an end of the page: focus goes to the app element on that side, as it would past any element.
+  useEffect(() => {
+    const off = listen<{ direction: "next" | "previous" }>("spike://focus-out", ({ payload }) => {
+      const el = page.current;
+      if (!el) return;
+      const all = tabbables();
+      const i = all.indexOf(el);
+      const target = payload.direction === "next" ? (all[i + 1] ?? all[0]) : (all[i - 1] ?? all[all.length - 1]);
+      pageOwns = false;
+      target?.focus();
+      spikeLog("focus-out-landed", { direction: payload.direction, on: describe(document.activeElement) });
+    });
+    return () => void off.then((f) => f());
+  }, []);
+
+  useEffect(() => {
+    const offPage = listen("spike://page-focus", () => {
+      pageOwns = true;
+    });
+    const offKey = listen("spike://key", () => {
+      pageOwns = false;
+    });
+    let pointerAt = 0;
+    const onPointer = (e: PointerEvent) => {
+      if (e.target instanceof Element && onDragArea(e.target)) return;
+      pointerAt = performance.now();
+      pageOwns = false;
+    };
+    const onWindowFocus = () => {
+      if (!pageOwns || !created.current) return;
+      const at = performance.now();
+      setTimeout(() => {
+        if (!pageOwns || pointerAt > at || !document.hasFocus()) return;
+        spikeLog("page-enter", { reason: "programmatic", from: "window-focus" });
+        void call("spike_browser_focus", { reason: "programmatic" }).catch(() => {});
+      }, 100);
+    };
+    window.addEventListener("pointerdown", onPointer, true);
+    window.addEventListener("focus", onWindowFocus);
+    return () => {
+      void offPage.then((f) => f());
+      void offKey.then((f) => f());
+      window.removeEventListener("pointerdown", onPointer, true);
+      window.removeEventListener("focus", onWindowFocus);
+    };
+  }, [created]);
+
   useEffect(() => {
     const off = listen<{ url: string }>("spike://refused", (e) => {
       setStatus(`Refused ${e.payload.url}`);
@@ -69,6 +140,16 @@ export function BrowserSpike({ model, frozen }: Props) {
     });
     return () => void off.then((f) => f());
   }, []);
+
+  // Tab reaching the placeholder goes into the page: from the element before it to the page's first element, from the one
+  // after it to its last. Focus arriving with no element before it is the window coming back, handled above.
+  const onPageFocus = (e: FocusEvent<HTMLDivElement>) => {
+    const from = e.relatedTarget;
+    if (!created.current || !(from instanceof Element)) return;
+    const reason = e.currentTarget.compareDocumentPosition(from) & Node.DOCUMENT_POSITION_FOLLOWING ? "previous" : "next";
+    spikeLog("page-enter", { reason, from: describe(from) });
+    void call("spike_browser_focus", { reason }).catch(() => {});
+  };
 
   const go = () => {
     setStatus("");
@@ -92,7 +173,7 @@ export function BrowserSpike({ model, frozen }: Props) {
       <p className="spike-browser__status">
         {status}
       </p>
-      <div ref={page} className="spike-browser__page" tabIndex={0} aria-label="Web page" />
+      <div ref={page} className="spike-browser__page" tabIndex={0} aria-label="Web page" onFocus={onPageFocus} />
     </section>
   );
 }

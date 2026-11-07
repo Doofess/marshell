@@ -87,6 +87,16 @@ pub fn vk_to_code(vk: u32) -> Option<&'static str> {
     })
 }
 
+/// Which way focus leaves the page when Tab or Shift+Tab runs off its end, from WebView2's `MoveFocusRequested` reason
+/// (0 programmatic, 1 next, 2 previous). A programmatic request is not the user leaving the page.
+pub fn focus_out_direction(reason: i32) -> Option<&'static str> {
+    match reason {
+        1 => Some("next"),
+        2 => Some("previous"),
+        _ => None,
+    }
+}
+
 /// What the app is sent for a forwarded key.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct KeyEvent {
@@ -196,6 +206,14 @@ mod tests {
         assert!(key_event(VK_K, true, true, false, true).repeat);
         assert!(!key_event(VK_K, true, true, false, false).repeat);
         assert_eq!(key_event(VK_K, true, true, false, false).code, "KeyK");
+    }
+
+    #[test]
+    fn tabbing_off_either_end_of_the_page_names_the_direction() {
+        // COREWEBVIEW2_MOVE_FOCUS_REASON: 0 programmatic, 1 next, 2 previous.
+        assert_eq!(focus_out_direction(1), Some("next"));
+        assert_eq!(focus_out_direction(2), Some("previous"));
+        assert_eq!(focus_out_direction(0), None);
     }
 
     #[test]
