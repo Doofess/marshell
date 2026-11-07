@@ -1506,6 +1506,16 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
         - A highlight can carry a comment, which works in any script.
         - Free text warns when its text is non-Latin, since Chrome and Edge may show nothing for it.
         - Ink, stamps and signatures stay out.
+   - **Slice 6q-1 decisions (2026-11-07).** Split view's removal. Asked of the user on 2026-11-07, when the slice was planned. The plan is `docs/superpowers/plans/2026-11-07-phase-6q-1-split-removal.md`.
+     1. **Ctrl+click on a session row selects it like a click,** and Cmd+click does the same on macOS. **Ctrl+Space selects it like Enter.** Neither toggles a pane any more.
+     2. **Ctrl+Shift+Tab stays, as "Select the terminal".** It selects the one terminal and starts the navigation cursor, which is still the only way to start the cursor from inside a terminal, since terminal programs keep Ctrl+Shift+arrows for word selection. This replaces research §3, which removed the key. 6q-2 may extend it to the tabbed pane.
+     3. **`docs/BRIEF.md` stays as it is.** This list records the removal.
+     4. **Decided from the research (§2.1 and §3), not asked:**
+        - `layout.json` keeps its shape. The core folds a saved split on load to its focused session: the zoomed pane's tab, else the active pane's, else the first open one, else none.
+        - The core accepts one pane only, so the frontend doesn't fold on its own. The research proposed folding on both sides; one rule in one place can't disagree with itself.
+        - `arrangement`, `ratios` and `zoomed` stay in the file as dead fields until 6q-2.
+        - Ctrl+Shift+D and Ctrl+Shift+P stay unbound.
+        - The shell panel's "Open in a pane" becomes "Open as a session", and it selects the new session.
 7. **Doctor**: the fix actions, on top of the phase-3 config core: "Fix X issues" and one-click undo; folds in each CLI's own doctor; detects duplicate notifications and offers to turn off each CLI's own desktop notifications (brief §5.5, moved here by slice 4e decision 4); reports the tokens injected by project references; checks Codex hook trust; waste checks (unused MCP servers and skills, long descriptions, broad scopes, a token-cost estimate); offers to raise `cleanupPeriodDays`.
    - Added 2026-10-16 (research in `docs/research/2026-10-16-accounts-cloud-extensions.md`):
      - **One-click doctor per CLI.** It runs the CLI's own doctor (`claude doctor` text, `codex doctor --json`) and opens a summary window of suggested fixes. Every fix goes through preview, backup and undo; nothing is applied silently. Antigravity has no doctor command, so it gets none.
