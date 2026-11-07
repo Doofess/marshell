@@ -167,7 +167,8 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
   const mode = effectiveMode(pickedMode, program?.skipsAll !== undefined);
   const settingBypass = program?.skipsAll;
   const needsAck = admin.on && agentRun && (mode === "bypass" || program?.adminSetupFailed === true);
-  const canStart = !busy && !checking && !(admin.on && program?.adminSetupPending) && (!needsAck || view.bypassAcknowledged === true);
+  // While the shell is asked, only an agent waits: it may be one the shell lacks. Just the shell always starts.
+  const canStart = !busy && !(checking && agentRun) && !(admin.on && program?.adminSetupPending) && (!needsAck || view.bypassAcknowledged === true);
   const start = () => {
     if (canStart) onStart?.();
   };

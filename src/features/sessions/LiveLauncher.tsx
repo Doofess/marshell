@@ -425,7 +425,7 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
   const startText = (folder: string) => (shown.agent === null ? startingText(shells.find((x) => x.id === shown.shell)?.label ?? shown.shell, folder, []) : startingText(shown.agent, folder, programs));
 
   const start = async () => {
-    if (!endpoint || !loaded || inFlight.current || offer.state === "checking" || (elevated && agentProgram?.adminSetupPending) || (ackKey !== null && !bypassAcknowledged)) return;
+    if (!endpoint || !loaded || inFlight.current || (offer.state === "checking" && agent !== null) || (elevated && agentProgram?.adminSetupPending) || (ackKey !== null && !bypassAcknowledged)) return;
     // A program that can't start yet says why and sends nothing; no worktree is made for it either.
     const problem = startProblem(shown, programs);
     if (problem !== undefined) {

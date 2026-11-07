@@ -152,6 +152,12 @@ describe("Launcher: what the shell offers", () => {
     expect(on({}, { offer: ready })).not.toContain("Checking which agents");
     expect(on({}, { offer: ready })).not.toMatch(/class="launcher__start"[^>]*disabled=""/);
   });
+  it("checking_leaves_start_enabled_for_just_the_shell", () => {
+    // Nothing waits on the answer when no agent is chosen: the shell itself always starts.
+    const h = on({ choice: { ...DEFAULT_CHOICE, shell: "ubuntu", agent: null } }, { offer: { state: "checking" } });
+    expect(h).toContain("Checking which agents Ubuntu has…");
+    expect(h).not.toMatch(/class="launcher__start"[^>]*disabled=""/);
+  });
   it("an_unreached_shell_shows_its_note_and_start_stays_enabled", () => {
     const h = on({}, { offer: { state: "unreached" } });
     expect(h).toContain("Marshell couldn&#x27;t reach Ubuntu, so only the shell is offered.");
