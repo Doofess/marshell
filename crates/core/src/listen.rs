@@ -22,7 +22,18 @@ fn quiet_words(words: &[String]) -> bool {
     if cmd.program.is_none() {
         return false;
     }
-    let is = |at: usize, word: &str| cmd.args.get(at).is_some_and(|w| w.eq_ignore_ascii_case(word));
+    // A script runtime and its script stand for the program the script is: `node …\vercel\dist\index.js login` is how
+    // vercel.cmd shows in the process table.
+    let runtime = matches!(
+        cmd.program.as_deref(),
+        Some("node" | "bun" | "python" | "python3" | "py")
+    );
+    let args = match cmd.args.split_first() {
+        Some((script, rest)) if runtime && !script.starts_with('-') => rest,
+        _ if runtime => return false,
+        _ => cmd.args,
+    };
+    let is = |at: usize, word: &str| args.get(at).is_some_and(|w| w.eq_ignore_ascii_case(word));
     is(0, "login") || (is(0, "auth") && is(1, "login"))
 }
 
@@ -263,6 +274,26 @@ mod tests {
         "docker login -u x",
     ];
     const NOT_QUIET: &[&str] = &["vercel dev", "npx vite", "docker compose up", "login", "gh auth status"];
+
+    #[test]
+    fn a_login_run_by_a_script_runtime_is_quiet() {
+        let argv = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // A shim such as vercel.cmd shows in the process table as node and the package's script: Command Prompt has no
+        // shell integration, so this reading is all the session has.
+        let shimmed = argv(&[
+            "C:\\Program Files\\nodejs\\node.exe",
+            "C:\\Users\\x\\AppData\\Roaming\\npm\\node_modules\\vercel\\dist\\index.js",
+            "login",
+        ]);
+        assert!(quiet_argv(&shimmed));
+        assert!(quiet_argv(&argv(&["python", "C:\\tools\\gcloud.py", "auth", "login"])));
+        assert!(!quiet_argv(&argv(&["node", "server.js"])));
+        assert!(!quiet_argv(&argv(&["python", "-m", "http.server", "8765"])));
+        assert!(
+            !quiet_argv(&argv(&["node", "login"])),
+            "a bare word after the runtime is the script"
+        );
+    }
 
     #[test]
     fn quiet_commands_are_logins_after_the_program_word() {
