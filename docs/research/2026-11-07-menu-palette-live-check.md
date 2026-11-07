@@ -1,7 +1,7 @@
 # Menu and palette live check (slice 6p)
 
-- Date: 2026-11-07, 15:06 to 15:16 local time.
-- Build: `phase-6p` at b17c22f under `pnpm tauri dev` on Windows 11 Pro (10.0.26300).
+- Date: 2026-11-07, 15:06 to 15:16 local time, and a re-check of the final review's fixes from 15:38 to 15:44.
+- Build: `phase-6p` at b17c22f under `pnpm tauri dev` on Windows 11 Pro (10.0.26300). The re-check ran 960c444 in a second scratch home, `%TEMP%\lc-6p-2`.
 - Home: a scratch `MARSHELL_HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `MARSHELL_CLAUDE_SETTINGS` under `%TEMP%\lc-6p-1`, with CDP on port 9333. Onboarding was skipped for every agent ("Skip: use limited status"), so no hooks were installed.
 - Data: none seeded. One Claude Code session was started from the launcher in the scratch `proj` folder; it stopped at Claude's first-run theme prompt and was never answered.
 - How it was driven:
@@ -28,7 +28,7 @@
 | 11. Ctrl+Shift+Alt+F does nothing, and Ctrl+Shift+Y opens History with the search box focused. | Pass. Ctrl+Shift+Alt+F from the terminal opened no view or overlay. Ctrl+Shift+Y from the search box went back to the terminal, and pressed again it opened History with "Search conversations" focused. The Keyboard shortcuts sheet lists "Open menu" and no Alt+F binding, under Navigation, Session, Terminal, Window and App. |
 
 Other things seen:
-- **The Menu button as a toggle.** A second click on it closes the menu, and focus stays on the button.
+- **The Menu button as a toggle.** A second click on it closes the menu, and focus stays on the button. These CDP clicks pressed and released in one frame, so they missed finding 5.
 - **The menu key inside the menu.** Ctrl+Shift+M pressed in the open menu closes it, with focus back on the terminal.
 - **The palette's "Open menu".** It opens the menu once the palette has closed, and Esc returns focus to the terminal.
 - **Forced colours.** The menu and the submenu take a CanvasText border, and the focused item a Highlight fill.
@@ -41,6 +41,16 @@ Other things seen:
    - **Tests:** `a_press_on_the_menu_button_leaves_the_closing_to_its_click` and `the_menu_key_pressed_in_the_menu_closes_it`, both seen failing first. The check above confirmed both live.
 2. **Ctrl+Shift+M does nothing while focus is in a text box, such as History's search box.** History takes focus into that box when it opens.
    - **Why:** this is the window's existing rule. A text box keeps its keys, and only Ctrl+Shift+Y is exempt. Ctrl+Shift+K behaves the same there. Tab or Ctrl+Shift+Y leaves the box.
-   - **Not fixed.** Exempting the menu key would open the menu over the launcher's fields, and would blur the rename box, which commits the rename.
+   - **Not fixed.** Ctrl+Shift+K and every other app key but Ctrl+Shift+Y wait outside a text box too, and exempting the menu key in every text box would blur the rename box, which commits the rename. An exemption for History's search box alone is possible and is left for later. (The first reasoning also said the menu would open over the launcher's fields. That was wrong: the launcher's own key handler runs while it is open.)
 3. **The buttons' `aria-keyshortcuts` reads "Ctrl+Shift+M" (⌘E on macOS), the shortcut label, rather than ARIA's "Control+Shift+M".** The existing context menus already do the same, so this follows them. Not fixed.
 4. **Ctrl+Shift+I (focus mode) logs "permission: deny-internal-toggle-devtools" in the webview console.** Tauri refuses its devtools toggle for that chord. This predates the slice and is outside it. Not fixed.
+5. **The final review found four focus defects in the menu, fixed in 85afe6b and 960c444.**
+   - **A real click on the button of an open menu left the focus on the page.** While the button was held, the menu's focus guard pulled the focus back into the menu, and the click then closed it. The click now gives the button the focus. Test: `a_click_on_the_button_of_an_open_menu_closes_it_and_leaves_the_focus_on_the_button`.
+   - **Tab and Shift+Tab closed the menu without moving the focus**, so it fell to the page. A first fix put the focus back and let Tab move on from there. The re-check showed that this still reached the page body from the terminal, the last stop in the Tab order. Tab and Shift+Tab now act like Esc. Test: `tab_closes_the_menu_and_puts_the_focus_back_where_it_was_opened`.
+   - **Left in the menu closed it.** Holding Left to leave the submenu closed the whole menu, and the remaining repeats went to the agent's prompt. Left in the menu now does nothing. Test: `left_does_nothing_at_the_top_and_left_or_esc_go_up_from_the_submenu`.
+   - **A held menu key closed the menu its first press opened.** Test: `holding_the_menu_key_does_not_close_the_menu_it_just_opened`.
+   - **Re-check.** It used CDP mouse and keys, with one plain PowerShell session ("Just the shell") and no agent session.
+     - **A held click.** Press, 150 ms, release: during the hold the focus was back on "Settings", and after the release the menu was closed with "Menu" focused.
+     - **Tab and Shift+Tab.** From a menu opened with Ctrl+Shift+M in the terminal, both returned to "Terminal input". From a menu opened on the button, and from its submenu, both returned to "Menu". Before the second fix, Tab from the terminal case ended on the page body.
+     - **Left.** In the menu, Left left it open. Five repeats of Left in the submenu closed only the submenu.
+     - **A held chord.** Ctrl+Shift+M held for six repeats left the menu open, and a fresh press closed it.
