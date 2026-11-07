@@ -46,3 +46,11 @@ export function submenuPlace(menu: { left: number; right: number }, itemTop: num
   const x = right + size.w + 8 <= viewport.w ? right : menu.left - size.w - 2;
   return placeMenu({ x, y: itemTop }, size, viewport);
 }
+
+/** The open menu: where it sits (null when no button is on screen) and what had the focus before it opened. */
+export type MenuState = { anchor: { left: number; top: number } | null; back: { focus(): void; isConnected: boolean } | null } | null;
+
+/** The menu key: closes an open menu, else opens with `request`. */
+export function toggleMenu(open: MenuState, request: NonNullable<MenuState>): MenuState {
+  return open ? null : request;
+}

@@ -97,6 +97,8 @@ import { RestartBar } from "./RestartBar";
 import { adminCommandHidden, launcherFromPalette, launcherOpens, passesLauncher, type OnboardingShown } from "./launcherOpens";
 import { REOPEN_AS_ADMIN } from "../../lib/adminCopy";
 import { LiveLauncher } from "./LiveLauncher";
+import { AppMenu } from "../appMenu/AppMenuPopup";
+import { toggleMenu, type AppMenuRun, type MenuState } from "../appMenu/appMenu";
 import { LivePalette } from "./LivePalette";
 import { recordsRecent } from "../palette/paletteList";
 import { cannotRun } from "../palette/runnable";
@@ -217,6 +219,8 @@ export function LiveApp() {
   const [linkHeld, setLinkHeld] = useState(false);
   // What the main area shows: the sessions, or the History view over them (the sidebar stays). Going to any session closes it.
   const [mainView, setMainView] = useState<"sessions" | "history">("sessions");
+  // The Menu: where it sits and what had the focus, so Esc and the menu key put it back.
+  const [menu, setMenu] = useState<MenuState>(null);
   const mainViewRef = useRef(mainView);
   mainViewRef.current = mainView;
   const pick = useCallback(
@@ -1241,6 +1245,12 @@ export function LiveApp() {
         case "capture":
           void runCaptureRef.current();
           return true;
+        case "menu": {
+          const button = Array.from(document.querySelectorAll<HTMLElement>(".sidebar__menu, .rail__menu")).find((b) => b.getClientRects().length > 0);
+          const r = button?.getBoundingClientRect();
+          setMenu((m) => toggleMenu(m, { anchor: r ? { left: r.left, top: r.top } : null, back: document.activeElement instanceof HTMLElement ? document.activeElement : null }));
+          return true;
+        }
         case "history":
           if (mainViewRef.current === "history") {
             setMainView("sessions");
@@ -1420,7 +1430,7 @@ export function LiveApp() {
     }
     const shortcut = commandShortcut(id);
     // These move the focus (or open a pane that takes it), so they wait for the palette to hand it back first.
-    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history") return void setTimeout(() => paneCommand(shortcut), 0);
+    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "menu") return void setTimeout(() => paneCommand(shortcut), 0);
     if (paneCommand(shortcut)) return;
     if (shortcut?.kind === "launcher") setLauncherOpen(true);
     else if (shortcut?.kind === "prompt") jumpPrompt(shortcut.by);
@@ -1736,6 +1746,11 @@ export function LiveApp() {
           onDrawerClose={() => setDrawerId(undefined)}
           footer={footer}
           onOpenDoctor={() => setOverlay("doctor")}
+          onOpenMenu={(button) => {
+            const r = button.getBoundingClientRect();
+            setMenu((m) => toggleMenu(m, { anchor: { left: r.left, top: r.top }, back: button }));
+          }}
+          menuOpen={menu !== null}
           shell={{ terminal: shellTerminal, cwd: panelTab?.folder, hidden: view.shell_hidden, failed: shellFailed, onRetry: retryShell, openDisabled: !panelTab, forceOpen: shellForced, onToggle: toggleShell, onOpenInPane: () => void openInPane() }}
           composer={false}
           statusBar={false}
@@ -1835,6 +1850,29 @@ export function LiveApp() {
           }}
           announce={announce}
           onClose={() => setLauncherOpen(false)}
+        />
+      )}
+      {menu && os && (
+        <AppMenu
+          os={os}
+          anchor={menu.anchor}
+          doctorIssues={doctorIssues}
+          onRun={(item: AppMenuRun) => {
+            const { back } = menu;
+            setMenu(null);
+            if (item === "history") {
+              // Already open: the menu closes and focus goes back. Otherwise the view takes the focus when it mounts.
+              if (mainViewRef.current === "history") return void (back?.isConnected ? back.focus() : actions.focusTerminal());
+              return void setMainView("history");
+            }
+            if (item === "doctor" || item === "departures") return void setOverlay(item);
+            openSettings(item.slice("settings:".length) as SettingsSection);
+          }}
+          onClose={({ refocus }) => {
+            const { back } = menu;
+            setMenu(null);
+            if (refocus) back?.isConnected ? back.focus() : actions.focusTerminal();
+          }}
         />
       )}
       {overlay === "palette" && os && <LivePalette recent={view.recent_commands} moved={MOVED_COMMANDS} sessions={paletteSessions(rows)} os={os} labels={liveLabels} hidden={hiddenCommands} tab={focusedId ?? null} filesOnly={filesOnly} onOpenFile={(path) => { setOverlay(null); preview.open({ path }); }} onRun={runFromPalette} onClose={() => setOverlay(null)} />}

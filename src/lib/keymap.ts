@@ -97,6 +97,8 @@ export const COMMANDS: Command[] = [
   { id: "shell-panel", label: "Show or focus the shell panel", group: "Window", binding: { code: "KeyS" } },
   { id: "palette", label: "Command palette", group: "App", binding: { code: "KeyK" } },
   { id: "history", label: "History", group: "App", binding: { code: "KeyY" } },
+  // Cmd+M is Minimize on macOS, so the menu takes Cmd+E there.
+  { id: "menu", label: "Open menu", group: "App", binding: { code: "KeyM", mac: { code: "KeyE" } } },
   { id: "cheatsheet", label: "Keyboard shortcuts", group: "App", binding: { code: "KeyO" } },
   { id: "settings", label: "Settings…", group: "App" },
   { id: "profiles", label: "Settings: Shell profiles…", group: "App" },

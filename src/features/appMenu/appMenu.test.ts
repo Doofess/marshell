@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appMenuItems, doctorItemLabel, menuPlace, SETTINGS_ITEMS, submenuPlace } from "./appMenu";
+import { appMenuItems, doctorItemLabel, menuPlace, SETTINGS_ITEMS, submenuPlace, toggleMenu, type MenuState } from "./appMenu";
 
 describe("appMenu", () => {
   it("the_menu_lists_settings_history_doctor_departures", () => {
@@ -28,5 +28,14 @@ describe("appMenu", () => {
     const size = { w: 180, h: 200 };
     expect(submenuPlace({ left: 14, right: 214 }, 600, size, vp)).toEqual({ x: 216, y: 592 });
     expect(submenuPlace({ left: 1000, right: 1190 }, 100, size, vp)).toEqual({ x: 818, y: 100 });
+  });
+});
+
+describe("toggleMenu", () => {
+  it("the_menu_key_toggles_and_remembers_where_focus_was", () => {
+    const el = { focus() {}, isConnected: true };
+    const open = toggleMenu(null, { anchor: null, back: el });
+    expect(open).toEqual({ anchor: null, back: el });
+    expect(toggleMenu(open as MenuState, { anchor: null, back: el })).toBeNull();
   });
 });

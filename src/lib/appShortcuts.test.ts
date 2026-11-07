@@ -115,6 +115,13 @@ describe("history shortcuts", () => {
   });
 });
 
+describe("menu shortcut", () => {
+  it("takes Ctrl+Shift+M and the palette's command", () => {
+    expect(sessionShortcut(ev("KeyM", cs), "windows")).toEqual({ kind: "menu" });
+    expect(commandShortcut("menu")).toEqual({ kind: "menu" });
+  });
+});
+
 describe("bookmark shortcut", () => {
   it("runs on Ctrl+Shift+B and from the palette", () => {
     expect(sessionShortcut(ev("KeyB", cs), "windows")).toEqual({ kind: "bookmark" });

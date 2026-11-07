@@ -246,3 +246,15 @@ describe("the four groups", () => {
     for (const id of MOVED_COMMANDS) expect(commandById(id).id).toBe(id);
   });
 });
+
+describe("the menu command", () => {
+  it("reads Ctrl+Shift+M on Windows and Linux and ⌘E on macOS, with no clash", () => {
+    const c = commandById("menu");
+    expect(c.label).toBe("Open menu");
+    expect(c.group).toBe("App");
+    expect(shortcutLabel(c.binding!, "windows")).toBe("Ctrl+Shift+M");
+    expect(shortcutLabel(c.binding!, "linux")).toBe("Ctrl+Shift+M");
+    expect(shortcutLabel(c.binding!, "mac")).toBe("⌘E");
+    for (const os of ["windows", "mac", "linux"] as const) expect(problemsIn(COMMANDS, os), os).toEqual([]);
+  });
+});
