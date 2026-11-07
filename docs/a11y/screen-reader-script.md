@@ -21,11 +21,9 @@ Go to the **Main window** section, the first dark window.
 | A1 | Tab into the sidebar list | "Sessions, list" then a session by number: "Session 3, api-server …" (number first, then name, project, what it is doing, the agent and its state) | ☐ | ☐ |
 | A2 | Arrow Down through rows | Each row once, number first; the selected row says "selected" | ☐ | ☐ |
 | A3 | Reach the lane | "Needs you · 2" as a heading; the targeted card reads who is asking, what for and how long it has waited | ☐ | ☐ |
-| A4 | Move focus to another session (click a different row, or use the navigation chord + Tab) | Exactly once: "Session N, name" (and, if it is waiting, what it needs: "Session 1, billing is waiting for your approval") | ☐ | ☐ |
-| A5 | Look at a split view with **two panes waiting** (Split view stories) | Nothing is read just because they are on screen. When focus moves to one of them: one announcement, not two | ☐ | ☐ |
+| A4 | Move focus to another session (click a different row, or hold the navigation chord, arrow to a row and release) | Exactly once: "Session N, name" (and, if it is waiting, what it needs: "Session 1, billing is waiting for your approval") | ☐ | ☐ |
 | A6 | Press the "Read the focused session's status" shortcut (Ctrl+Shift+G, ⌘G on a Mac) | "Session 3, api-server: Working. Running npm test", every time you press it, even twice in a row | ☐ | ☐ |
 | A7 | Clear the selection (navigation chord + Backspace) | "No session selected" | ☐ | ☐ |
-| A8 | Tab to a pane's zoom button, press Space twice | The name stays "Zoom <session name>" both times; the state is spoken as pressed / not pressed | ☐ | ☐ |
 | A9 | Tab to the shell panel's hide button | "Shell panel, button, expanded" then "collapsed" after Space; the name does not change | ☐ | ☐ |
 | A10 | Tab through the status bar | The first thing is the session's number and name, then its facts; nothing is announced on its own | ☐ | ☐ |
 | A11 | Read the empty window ("No sessions" story) | "No sessions yet. Start one with Ctrl+Shift+T." once, as plain text | ☐ | ☐ |

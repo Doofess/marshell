@@ -8,7 +8,7 @@ Marshell is a desktop terminal for running AI coding agents side by side. Claude
 
 ## What works today
 
-- **Sessions.** Tabs and a sidebar of sessions, with shell detection, profiles and a launcher. Split view takes up to four panes, with focus mode, project grouping and task worktrees.
+- **Sessions.** Tabs and a sidebar of sessions, with shell detection, profiles and a launcher. Focus mode, project grouping and task worktrees.
 - **Shell integration.** Prompt and command marks, clickable paths that resolve against the shell's current folder.
 - **Themes.** App and terminal themes, high-contrast and large-text modes, and theme import from Windows Terminal, iTerm2 and VS Code.
 - **Restart and recording.** After a restart, sessions come back as "Ended" with a one-click Resume. Nothing relaunches or spends tokens on its own. Sessions can be recorded as asciicast v2.
