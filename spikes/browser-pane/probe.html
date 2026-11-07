@@ -6,6 +6,40 @@
   </head>
   <body>
     <h1>Spike probe</h1>
-    <p id="out">Filled in by Task 7.</p>
+    <p id="out">Probing…</p>
+    <script>
+      // Spike 6q-0, Task 7: what a page in the pane can reach of the app. It reports to the test site, wherever it was
+      // served from. `?api=<port>` is the local API's port, read from endpoint.json without its token.
+      (async () => {
+        const error = (e) => `error: ${e && e.message ? e.message : String(e)}`;
+        const api = new URLSearchParams(location.search).get("api");
+        const internals = window.__TAURI_INTERNALS__;
+        const r = { origin: location.origin, hasInternals: internals !== undefined };
+        try {
+          r.invokeVersion = await internals.invoke("plugin:app|version");
+        } catch (e) {
+          r.invokeVersion = error(e);
+        }
+        try {
+          r.invokeSpike = await internals.invoke("spike_log", { event: "probe-was-here", data: {} });
+        } catch (e) {
+          r.invokeSpike = error(e);
+        }
+        try {
+          const res = await fetch(`http://127.0.0.1:${api}/v1/health`);
+          r.apiStatus = res.status;
+        } catch (e) {
+          r.apiStatus = error(e);
+        }
+        try {
+          const res = await fetch(`http://127.0.0.1:${api}/v1/health`, { mode: "no-cors" });
+          r.apiNoCors = `${res.type} ${res.status}`;
+        } catch (e) {
+          r.apiNoCors = error(e);
+        }
+        document.getElementById("out").textContent = JSON.stringify(r);
+        await fetch("http://127.0.0.1:47620/report", { method: "POST", mode: "no-cors", body: JSON.stringify({ event: "probe", ...r }) });
+      })();
+    </script>
   </body>
 </html>
