@@ -245,9 +245,18 @@
     background: var(--accent);
   }
 }
+/* Forced colours replace the accent with Canvas, which would hide the divider while it is hovered or dragged: use system colours. */
 @media (forced-colors: active) {
   .preview__divider {
     background: CanvasText;
+  }
+  .preview__divider:active {
+    background: Highlight;
+  }
+}
+@media (forced-colors: active) and (hover: hover) and (pointer: fine) {
+  .preview__divider:hover {
+    background: Highlight;
   }
 }
 /* One kept terminal. The `hidden` attribute (no display set here) takes the ones behind the selected session off screen. */
