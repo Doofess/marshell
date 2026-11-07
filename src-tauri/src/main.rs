@@ -295,7 +295,13 @@ fn main() {
         // Opens a web link in the person's browser, only after the preview's confirm; the capability limits it to http(s).
         // No capability grants the dialog to the webview; only the `pick_folder` command opens it.
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
+        // Spike 6q-0: the opener's click script reaches every webview and swallows the page's target=_blank links
+        // (S12 finding 18). The app's own UI calls openUrl itself and has no such links.
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         // No capability grants notifications to the webview; only the shell shows banners.
         .plugin(tauri_plugin_notification::init())
         // The UI reports focus too, but a webview that died while focused cannot report losing it.
