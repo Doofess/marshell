@@ -55,7 +55,7 @@ describe("statusItems: what the strip says, from known data only", () => {
     expect(by("ports").value).toBe(":3000 :5173");
   });
   it("reads the ports from the row's chips when no list is given", () => {
-    const ports = [3000, 5173].map((port) => ({ port, url: `http://localhost:${port}/`, announced: false }));
+    const ports = [3000, 5173].map((port) => ({ port, url: `http://localhost:${port}/` }));
     const item = statusItems({ ...row("working"), ports }, undefined).find((i) => i.id === "ports")!;
     expect(item.value).toBe(":3000 :5173");
     expect(item.name).toBe("Listening on port 3000, port 5173");

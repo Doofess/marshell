@@ -3,7 +3,7 @@
 
 use crate::config::hash::hash_bytes;
 use crate::config::jsonc::{parse_problem, read_value};
-use crate::tools::secrets::{scrub, shown_words, takes_secret_words};
+use crate::secrets::{scrub, shown_words, takes_secret_words};
 use jsonc_parser::ast::Value as Node;
 use jsonc_parser::{CollectOptions, CommentCollectionStrategy, ParseOptions, parse_to_ast};
 use marshell_protocol::settings_view::{

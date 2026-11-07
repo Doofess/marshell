@@ -4,8 +4,8 @@
 
 use super::AppState;
 use crate::agents::manifest::Agents;
+use crate::listen::{chips_for, listeners};
 use crate::pty::ProcessList;
-use crate::tools::listen::{chips_for, listeners};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -142,8 +142,8 @@ fn agent_pids(agents: &Agents, tree: &[(u32, String)], outermost: Option<u32>, r
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::listen::chips_for;
     use crate::registry::{Registry, Relaunch};
-    use crate::tools::listen::chips_for;
 
     fn tree(items: &[(u32, &str)]) -> Vec<(u32, String)> {
         items.iter().map(|(pid, name)| (*pid, name.to_string())).collect()

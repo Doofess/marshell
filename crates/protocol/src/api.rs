@@ -91,11 +91,7 @@ pub struct CreateSessionRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub color_scheme: Option<ColorScheme>,
-    /// A tool preset to type into the shell. It takes no agent, prompt, mode or agent preset.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub tool: Option<crate::tools::ToolLaunch>,
-    /// A sign-in or update tab for a company CLI. It takes no shell, agent, prompt, mode, preset or tool.
+    /// A sign-in or update tab for a company CLI. It takes no shell, agent, prompt, mode or preset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub cli_task: Option<CliTask>,
@@ -217,10 +213,10 @@ pub struct SessionInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub preset: Option<String>,
-    /// The local ports the tab's tools announced, at most 8. A chip opens its loopback URL.
+    /// The local ports the tab's own processes listen on, at most 8. A chip opens its loopback URL.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[ts(optional, as = "Option<Vec<crate::tools::PortChip>>")]
-    pub ports: Vec<crate::tools::PortChip>,
+    #[ts(optional, as = "Option<Vec<PortChip>>")]
+    pub ports: Vec<PortChip>,
     /// Set on a tab that runs a repo's `setup` or `run` script. Cleared when the tab restarts or reopens as a plain shell.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
@@ -257,7 +253,8 @@ pub struct Attention {
     /// When the first signal of this attention arrived. A flood keeps the first time.
     #[ts(type = "number")]
     pub since_ms: u64,
-    /// True when the attention comes from a tool's prompt text matched on screen: a guess from text, not a hook.
+    /// True when the attention is an agent's own prompt that only the person can answer in the terminal: reported by
+    /// the agent's status line, not by a hook's permission request.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     #[ts(optional, as = "Option<bool>")]
     pub limited: bool,
@@ -347,6 +344,15 @@ pub enum Activity {
     Idle,
 }
 
+/// A local port a process in a tab listens on, as the tab shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PortChip {
+    pub port: u16,
+    /// `scheme://host:port/path` with a loopback host: `localhost`, `127.0.0.1` or `[::1]`.
+    pub url: String,
+}
+
 /// What a shell session is running right now.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -357,10 +363,6 @@ pub struct Foreground {
     pub command_line: Option<String>,
     /// "claude", "codex" or "antigravity" when the program is a known agent CLI.
     pub agent: Option<String>,
-    /// The id of the tool profile the running command matched ("vercel", "terraform"), if one did.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[ts(optional)]
-    pub tool: Option<String>,
 }
 
 /// A shell session's command state, folded from OSC 133 marks.

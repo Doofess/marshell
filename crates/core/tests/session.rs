@@ -18,7 +18,6 @@ fn fake(args: &[&str]) -> SpawnSpec {
         rows: 24,
         on_exit: None,
         on_mark: None,
-        on_tool: None,
         record: None,
         classify: None,
         initial_command: None,
@@ -279,7 +278,6 @@ fn on_exit_callback_gets_the_code() {
             let _ = tx.send(code);
         })),
         on_mark: None,
-        on_tool: None,
         record: None,
         classify: None,
         initial_command: None,
@@ -446,7 +444,6 @@ fn printer(nested: bool) -> SpawnSpec {
         rows: 24,
         on_exit: None,
         on_mark: None,
-        on_tool: None,
         record: None,
         classify: None,
         initial_command: None,
@@ -680,9 +677,8 @@ fn a_name_in_env_and_env_remove_keeps_the_env_value() {
     assert!(out.contains("MARSHELL_TEST_INHERITED_BOTH=on-purpose"), "{out}");
 }
 
-fn classify_with_shipped_tools() -> marshell_core::pty::Classifier {
-    let tools = marshell_core::tools::Tools::shipped();
-    Arc::new(move |line| marshell_core::tools::watch_for(&tools, line))
+fn classify_with_watch_for() -> marshell_core::pty::Classifier {
+    Arc::new(marshell_core::watch::watch_for)
 }
 
 #[test]
@@ -691,7 +687,7 @@ fn a_secret_command_hides_its_output_from_the_recording() {
     let path = dir.path().join("t-secret.cast");
     let mut spec = fake(&["secret-run", "gh auth token", "gho_SECRET"]);
     spec.record = Some((path.clone(), None));
-    spec.classify = Some(classify_with_shipped_tools());
+    spec.classify = Some(classify_with_watch_for());
     let s = Session::spawn("t-rec-secret".into(), spec).unwrap();
     let (out, code) = drain(&s, Duration::from_secs(10));
     assert_eq!(code, Some(0));
@@ -709,31 +705,12 @@ fn a_secret_command_hides_its_output_from_the_recording() {
 }
 
 #[test]
-fn a_profiled_tools_prompt_reaches_on_tool_through_a_pty() {
-    use marshell_core::tools::ToolEvent;
-    let (tx, rx) = std::sync::mpsc::channel();
-    let mut spec = fake(&["tool-prompt", "vercel login", "Waiting for authentication..."]);
-    spec.classify = Some(classify_with_shipped_tools());
-    spec.on_tool = Some(Box::new(move |event| {
-        let _ = tx.send(event);
-    }));
-    let s = Session::spawn("t-tool-prompt".into(), spec).unwrap();
-    let first = rx.recv_timeout(Duration::from_secs(10)).expect("a needs-you event");
-    assert_eq!(first, ToolEvent::NeedsYou("Waiting for sign-in in the browser".into()));
-    // Three rows of other text push the prompt out of the matcher's tail; that, and not the D mark, ends it.
-    let second = rx.recv_timeout(Duration::from_secs(10)).expect("a cleared event");
-    assert_eq!(second, ToolEvent::Cleared);
-    assert_eq!(drain(&s, Duration::from_secs(10)).1, Some(0));
-    assert!(rx.try_recv().is_err(), "an event came after the prompt cleared");
-}
-
-#[test]
 fn a_secret_flag_in_the_command_line_never_reaches_the_cast_file() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("t-flag.cast");
     let mut spec = fake(&["secret-run", "docker login -u me -p hunter2", "Login Succeeded"]);
     spec.record = Some((path.clone(), None));
-    spec.classify = Some(classify_with_shipped_tools());
+    spec.classify = Some(classify_with_watch_for());
     let s = Session::spawn("t-rec-flag".into(), spec).unwrap();
     assert_eq!(drain(&s, Duration::from_secs(10)).1, Some(0));
     let text = wait_for_recording(&path, "visible after");

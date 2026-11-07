@@ -123,7 +123,6 @@ async fn cli_task_with_anything_else_is_refused() {
         serde_json::json!({ "prompt": "hi" }),
         serde_json::json!({ "mode": "plan" }),
         serde_json::json!({ "preset": "deepseek" }),
-        serde_json::json!({ "tool": { "tool": "a", "preset": "b", "fields": {} } }),
     ];
     for other in others {
         let mut body = serde_json::json!({ "cli_task": task });

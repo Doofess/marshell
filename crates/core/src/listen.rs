@@ -3,6 +3,29 @@
 //! Only loopback or unspecified local addresses count: a server bound to a LAN address alone doesn't answer on
 //! `localhost`, so a chip for it would open nothing. Nothing here logs a port or a URL.
 
+use crate::secrets::{split_command, tokenize};
+
+/// Whether a command line is a login: the words after the program start with `login` or `auth login` (`vercel login`,
+/// `gh auth login`). A runner and its package come first (`npx vercel login`). Its listener is an auth callback that
+/// lives for seconds, so it makes no chip.
+pub fn quiet_line(line: &str) -> bool {
+    quiet_words(&tokenize(line))
+}
+
+/// `quiet_line` for a process's argument vector.
+pub fn quiet_argv(argv: &[String]) -> bool {
+    quiet_words(argv)
+}
+
+fn quiet_words(words: &[String]) -> bool {
+    let cmd = split_command(words);
+    if cmd.program.is_none() {
+        return false;
+    }
+    let is = |at: usize, word: &str| cmd.args.get(at).is_some_and(|w| w.eq_ignore_ascii_case(word));
+    is(0, "login") || (is(0, "auth") && is(1, "login"))
+}
+
 /// The ports in `listeners` (pid, local port) owned by a process of the tab's `tree` (pid, name) that is not in
 /// `agent_pids`, ascending and without repeats. Empty when `quiet`: the command's own port lines are transient (a login
 /// callback), so its listener makes no chip either.
@@ -230,6 +253,39 @@ fn linux_listeners() -> Option<Vec<(u32, u16)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const QUIET: &[&str] = &[
+        "vercel login",
+        "npx vercel login",
+        "pnpm dlx netlify-cli login",
+        "gh auth login",
+        "gcloud auth login --no-launch-browser",
+        "docker login -u x",
+    ];
+    const NOT_QUIET: &[&str] = &["vercel dev", "npx vite", "docker compose up", "login", "gh auth status"];
+
+    #[test]
+    fn quiet_commands_are_logins_after_the_program_word() {
+        for line in QUIET {
+            assert!(quiet_line(line), "{line}");
+        }
+        for line in NOT_QUIET {
+            assert!(!quiet_line(line), "{line}");
+        }
+    }
+
+    #[test]
+    fn quiet_argv_matches_the_same_commands_as_argv() {
+        let argv = |line: &str| line.split(' ').map(String::from).collect::<Vec<_>>();
+        for line in QUIET {
+            assert!(quiet_argv(&argv(line)), "{line}");
+        }
+        for line in NOT_QUIET {
+            assert!(!quiet_argv(&argv(line)), "{line}");
+        }
+        let exe = ["C:\\Program Files\\GitHub CLI\\gh.exe", "auth", "login"].map(String::from);
+        assert!(quiet_argv(&exe));
+    }
 
     #[cfg(any(windows, target_os = "linux"))]
     #[test]

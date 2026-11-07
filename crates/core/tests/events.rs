@@ -70,7 +70,6 @@ async fn create(core: &RunningCore) {
         mode: None,
         setup: None,
         color_scheme: None,
-        tool: None,
         preset: None,
         cli_task: None,
     };

@@ -229,7 +229,6 @@ mod tests {
                 rows: 24,
                 on_exit: None,
                 on_mark: None,
-                on_tool: None,
                 record: None,
                 classify: None,
                 initial_command: None,

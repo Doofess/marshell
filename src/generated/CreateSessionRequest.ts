@@ -3,7 +3,6 @@ import type { CliTask } from "./CliTask";
 import type { ColorScheme } from "./ColorScheme";
 import type { SessionMode } from "./SessionMode";
 import type { SetupResult } from "./SetupResult";
-import type { ToolLaunch } from "./ToolLaunch";
 
 export type CreateSessionRequest = { 
 /**
@@ -51,10 +50,6 @@ preset?: string,
  */
 color_scheme?: ColorScheme, 
 /**
- * A tool preset to type into the shell. It takes no agent, prompt, mode or agent preset.
- */
-tool?: ToolLaunch, 
-/**
- * A sign-in or update tab for a company CLI. It takes no shell, agent, prompt, mode, preset or tool.
+ * A sign-in or update tab for a company CLI. It takes no shell, agent, prompt, mode or preset.
  */
 cli_task?: CliTask, };

@@ -7,8 +7,106 @@
 //! The lists follow the research note "Secret-printing commands"; an `[unverified]` entry ships too, because
 //! hiding output is the safe failure.
 
-use super::profile::{split_command, tokenize};
 use std::borrow::Cow;
+
+/// A command line's words from the program on, with a leading `&` and a runner (`npx`, `pnpm dlx`, ...) and its
+/// flags skipped.
+pub(crate) struct Command<'a> {
+    /// The program word, or for a runner the package it runs (basename, lowercase, no `.exe .cmd .bat .ps1`, no
+    /// `@version`). None when no word is left.
+    pub program: Option<String>,
+    /// The words after the program.
+    pub args: &'a [String],
+}
+
+pub(crate) fn split_command(words: &[String]) -> Command<'_> {
+    let mut start = 0;
+    while words.get(start).is_some_and(|w| w == "&") {
+        start += 1;
+    }
+    let mut cmd = Command {
+        program: None,
+        args: &[],
+    };
+    let Some(first) = words.get(start) else {
+        return cmd;
+    };
+    let mut at = start;
+    if let Some(used) = runner_words(&normalize_word(first), words.get(start + 1).map(|w| normalize_word(w))) {
+        at = start + used;
+        while words.get(at).is_some_and(|w| w.starts_with('-')) {
+            at += 1;
+        }
+    }
+    if let Some(program) = words.get(at) {
+        cmd.program = Some(package_name(&normalize_word(program)).to_string());
+        cmd.args = &words[at + 1..];
+    }
+    cmd
+}
+
+/// How many words a runner form takes (`npx` is 1, `pnpm dlx` is 2), or None when the first word is no runner.
+fn runner_words(first: &str, second: Option<String>) -> Option<usize> {
+    match (first, second.as_deref()) {
+        ("npx" | "bunx", _) => Some(1),
+        ("pnpm", Some("dlx" | "exec")) | ("npm", Some("exec")) | ("yarn", Some("dlx")) => Some(2),
+        _ => None,
+    }
+}
+
+/// Splits a command line into words, honouring single and double quotes (a backslash is not an escape).
+pub(crate) fn tokenize(line: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    let mut in_word = false;
+    for c in line.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => cur.push(c),
+            None if c == '"' || c == '\'' => {
+                quote = Some(c);
+                in_word = true;
+            }
+            None if c.is_whitespace() => {
+                if in_word {
+                    words.push(std::mem::take(&mut cur));
+                    in_word = false;
+                }
+            }
+            None => {
+                cur.push(c);
+                in_word = true;
+            }
+        }
+    }
+    if in_word {
+        words.push(cur);
+    }
+    words
+}
+
+/// A program word as rules name it: no leading `&`, no quotes, the basename, lowercase, without one of
+/// `.exe .cmd .bat .ps1`.
+fn normalize_word(word: &str) -> String {
+    let w = word.trim().trim_start_matches('&').trim();
+    let w = w.trim_matches(|c| c == '"' || c == '\'');
+    let base = w.rsplit(['\\', '/']).next().unwrap_or(w).to_lowercase();
+    for ext in [".exe", ".cmd", ".bat", ".ps1"] {
+        if let Some(stem) = base.strip_suffix(ext) {
+            return stem.to_string();
+        }
+    }
+    base
+}
+
+/// `vercel@latest` is `vercel`. A leading `@` (a scope) stays.
+fn package_name(word: &str) -> &str {
+    match word.char_indices().skip(1).find(|(_, c)| *c == '@') {
+        Some((i, _)) => &word[..i],
+        None => word,
+    }
+}
 
 /// How many positional words (non-flags) after the program a rule's subcommand words are looked for in.
 const WORD_WINDOW: usize = 8;

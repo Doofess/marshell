@@ -856,11 +856,6 @@ fn is_cmd_safe(text: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '/' | '=' | '@' | ',' | '+' | '-'))
 }
 
-/// True when the profile runs `powershell.exe` (Windows PowerShell 5): it mangles double quotes in a native call.
-pub(crate) fn mangles_double_quotes(profile: &Profile) -> bool {
-    is_windows_powershell_5(profile)
-}
-
 /// The line that runs `program` with `args` in a shell of `family`. The program comes from the preset only. Each argument
 /// is exactly one argument of the program: quoted per shell, and refused where the shell can't quote it (cmd).
 pub fn preset_line(family: ShellFamily, program: &str, args: &[PresetArg]) -> Result<String, String> {

@@ -26,7 +26,6 @@ fn spec(record: Option<PathBuf>) -> SpawnSpec {
         rows: 24,
         on_exit: None,
         on_mark: None,
-        on_tool: None,
         record: record.map(|p| (p, None)),
         classify: None,
         initial_command: None,

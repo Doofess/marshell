@@ -80,7 +80,7 @@ stuck: Stuck | null,
  */
 preset?: string, 
 /**
- * The local ports the tab's tools announced, at most 8. A chip opens its loopback URL.
+ * The local ports the tab's own processes listen on, at most 8. A chip opens its loopback URL.
  */
 ports?: Array<PortChip>, 
 /**

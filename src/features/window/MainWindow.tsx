@@ -301,7 +301,7 @@ export function MainWindow({
   const [peeking, setPeeking] = useState(false);
   // A port chip's menu: the window holds it so it sits outside any pane's [data-agent] element.
   const [portMenu, setPortMenu] = useState<PortMenuRequest | null>(null);
-  const chipPorts = ports?.map((p) => ({ port: Number(p.split(":").pop()), url: `http://${p}/`, announced: false }));
+  const chipPorts = ports?.map((p) => ({ port: Number(p.split(":").pop()), url: `http://${p}/` }));
   // Leaving focus mode with the pointer on the bar must not leave the peek set for the next time focus mode starts.
   useEffect(() => {
     if (mode !== "focus") setPeeking(false);

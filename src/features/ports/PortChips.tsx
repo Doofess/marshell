@@ -42,7 +42,6 @@ export function PortChips({ ports, max = Infinity, onMenu }: Props) {
           key={c.port}
           type="button"
           className="port-chip"
-          data-announced={c.announced || undefined}
           aria-label={`Open ${c.url} in the browser`}
           aria-haspopup={onMenu ? "menu" : undefined}
           onClick={() => void openChip(c.url)}
