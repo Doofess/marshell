@@ -1415,6 +1415,26 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
         - frontend-design and good-css settle the exact look.
         - Every focusable thing in the launcher gets it: the prompt line, the Name, Task name and folder fields, the chips, Back and Start.
         - The visual system records it as the app's focus style. A later slice carries it to the other stylesheets once the user has judged it in this slice's live check, and the app's ring stays everywhere else until then.
+   - **Slice 6p decisions (2026-11-07).** A menu at the bottom left of the window, and a cleaner command palette. Asked of the user on 2026-11-07, while 6o ran. Today the palette has about 60 rows. "History" (Ctrl+Shift+Y) and "Search all sessions" (Ctrl+Shift+Alt+F) open the same view, seven rows open the same Settings page, and Tools holds 25 unrelated commands.
+     1. Its own slice, with its own plan, live check and pull request. It runs right after 6o, before 6n2, 6n3 and 7d. It is planned once 6o merges.
+     2. **A menu at the bottom left takes four destinations out of the palette's list:**
+        - Settings, as one item that lists its sections. It replaces Settings…, Appearance…, Agents…, Shell profiles…, Notifications…, History settings… and Diagnostics….
+        - History, with its search. "History" and "Search all sessions" become one command.
+        - Doctor.
+        - Departures.
+
+        Keyboard shortcuts and Pause or resume notifications stay in the palette.
+     3. **A moved item is found by typing, not listed.** With an empty box the palette doesn't list it, but typing finds it: "appear" finds Settings: Appearance. Every action is still in the palette, as the review checklist asks.
+     4. **The palette gets four fixes:**
+        1. The five Mode rows become one "Change mode…" command that opens a second list with the modes.
+        2. With an empty box, the palette starts with the last few commands run.
+        3. Sessions, View and Tools become the groups Session, Terminal, Window and App.
+        4. A command that can't run now is left out, for example one that needs a focused session, a split, a task or a run script, when that is missing.
+     5. To ask when the slice is planned:
+        - the menu button's form, and where it sits on the rail and in focus mode;
+        - whether the menu has a shortcut;
+        - whether Ctrl+Shift+Alt+F stays;
+        - what the sidebar footer's Doctor glyph becomes.
 7. **Doctor**: the fix actions, on top of the phase-3 config core: "Fix X issues" and one-click undo; folds in each CLI's own doctor; detects duplicate notifications and offers to turn off each CLI's own desktop notifications (brief §5.5, moved here by slice 4e decision 4); reports the tokens injected by project references; checks Codex hook trust; waste checks (unused MCP servers and skills, long descriptions, broad scopes, a token-cost estimate); offers to raise `cleanupPeriodDays`.
    - Added 2026-10-16 (research in `docs/research/2026-10-16-accounts-cloud-extensions.md`):
      - **One-click doctor per CLI.** It runs the CLI's own doctor (`claude doctor` text, `codex doctor --json`) and opens a summary window of suggested fixes. Every fix goes through preview, backup and undo; nothing is applied silently. Antigravity has no doctor command, so it gets none.
