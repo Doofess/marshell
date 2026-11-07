@@ -20,6 +20,11 @@ function measure(el: HTMLElement) {
   return { x: r.x, y: r.y, width: r.width, height: r.height, winWidth: window.innerWidth, winHeight: window.innerHeight };
 }
 
+/** Resolves after the next frame has been painted: a timeout queued from the frame's callback runs after that paint. */
+function nextPaint(): Promise<void> {
+  return new Promise((done) => requestAnimationFrame(() => setTimeout(done, 0)));
+}
+
 const TABBABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /** The app's tab order, as Tab walks it: shown, not inert, not taken out with tabindex -1. */
@@ -51,7 +56,53 @@ export function BrowserSpike({ model, frozen }: Props) {
   const [address, setAddress] = useState(model.request?.url ?? "");
   const [status, setStatus] = useState("");
   const { created, request } = model;
-  void frozen; // Task 5
+  // The page's picture while an app overlay is open; `src: null` is the plain fill a failed capture leaves.
+  const [still, setStill] = useState<{ src: string | null } | null>(null);
+  const freezeSeq = useRef(0);
+  const freezing = useRef(false);
+
+  // The overlay freeze. The page is a native window above the app's webview, so an overlay can't draw over it
+  // (tauri#15682): while one is open, the page's picture takes its place, and only once that is on screen is the page hidden.
+  useEffect(() => {
+    if (!model.freeze || !created.current) return;
+    const seq = ++freezeSeq.current;
+    const stale = () => freezeSeq.current !== seq;
+    const t0 = performance.now();
+    const since = () => Math.round(performance.now() - t0);
+    if (frozen) {
+      freezing.current = true;
+      spikeLog("freeze-start");
+      void (async () => {
+        let src: string | null = null;
+        try {
+          src = await call<string>("spike_browser_capture");
+          spikeLog("captured", { ms: since(), chars: src.length });
+          const img = new Image();
+          img.src = src;
+          await img.decode();
+        } catch (e) {
+          src = null;
+          spikeLog("capture-failed", { ms: since(), error: String(e) });
+        }
+        if (stale()) return;
+        setStill({ src });
+        await nextPaint();
+        if (stale()) return;
+        spikeLog("painted", { ms: since() });
+        await call("spike_browser_visible", { visible: false }).catch(() => {});
+        spikeLog("hidden", { ms: since() });
+      })();
+    } else if (freezing.current) {
+      freezing.current = false;
+      void (async () => {
+        await call("spike_browser_visible", { visible: true }).catch(() => {});
+        await nextPaint();
+        if (stale()) return;
+        setStill(null);
+        spikeLog("thawed", { ms: since() });
+      })();
+    }
+  }, [frozen, model.freeze, created]);
 
   // Opens the page the first time, goes to a new address after; a pane shown again shows the page it already has.
   useEffect(() => {
@@ -173,7 +224,9 @@ export function BrowserSpike({ model, frozen }: Props) {
       <p className="spike-browser__status">
         {status}
       </p>
-      <div ref={page} className="spike-browser__page" tabIndex={0} aria-label="Web page" onFocus={onPageFocus} />
+      <div ref={page} className="spike-browser__page" tabIndex={0} aria-label="Web page" onFocus={onPageFocus}>
+        {still && (still.src ? <img className="spike-browser__frozen" src={still.src} alt="" /> : <div className="spike-browser__frozen spike-browser__fill" />)}
+      </div>
     </section>
   );
 }

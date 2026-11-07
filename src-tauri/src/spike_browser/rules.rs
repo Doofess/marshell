@@ -118,6 +118,26 @@ pub fn key_event(vk: u32, ctrl: bool, shift: bool, alt: bool, was_key_down: bool
     }
 }
 
+/// Standard base64 with padding, for the frozen picture's `data:` URL. The spike adds no crate for it.
+pub fn base64(bytes: &[u8]) -> String {
+    const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = chunk
+            .iter()
+            .enumerate()
+            .fold(0u32, |n, (i, &b)| n | (b as u32) << (16 - 8 * i));
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(ABC[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -221,5 +241,23 @@ mod tests {
         // One rule for every way in: on_navigation sees redirects and drops as plain URLs.
         assert!(!allowed_navigation(&Url::parse("file://server/share/a.pdf").unwrap()));
         assert!(!allowed_navigation(&Url::parse("http://sub.tauri.localhost/").unwrap()));
+    }
+
+    #[test]
+    fn the_frozen_picture_is_sent_as_standard_base64() {
+        // RFC 4648 §10's vectors: every padding case.
+        let cases = [
+            ("", ""),
+            ("f", "Zg=="),
+            ("fo", "Zm8="),
+            ("foo", "Zm9v"),
+            ("foob", "Zm9vYg=="),
+            ("fooba", "Zm9vYmE="),
+            ("foobar", "Zm9vYmFy"),
+        ];
+        for (raw, encoded) in cases {
+            assert_eq!(base64(raw.as_bytes()), encoded, "{raw:?}");
+        }
+        assert_eq!(base64(&[0xfb, 0xff, 0xbf]), "+/+/");
     }
 }

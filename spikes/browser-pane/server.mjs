@@ -75,6 +75,12 @@ const server = createServer((req, res) => {
       const keep = /spike=/.test(had) ? {} : { "set-cookie": value };
       return send(200, "text/html", page("Cookie", `<p id="had">Cookie received: ${had}</p>`), keep);
     }
+    case "/slow": {
+      // A page that answers late, for a freeze while a navigation is still waiting (Task 5 c and d).
+      const ms = Math.min(Number(url.searchParams.get("ms") ?? "1500") || 0, 10000);
+      setTimeout(() => send(200, "text/html", page("Slow page", `<p>Answered after ${ms} ms.</p>`)), ms);
+      return;
+    }
     case "/redirect-file":
       return send(302, "text/plain", "", { location: "file:///C:/Windows/win.ini" });
     case "/probe":

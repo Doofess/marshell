@@ -7,14 +7,20 @@ use serde_json::json;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tauri::{AppHandle, Manager, Webview};
+use webview2_com::CapturePreviewCompletedHandler;
 use webview2_com::Microsoft::Web::WebView2::Win32::{
-    COREWEBVIEW2_KEY_EVENT_KIND, COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_KEY_UP,
-    COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_UP,
-    COREWEBVIEW2_MOVE_FOCUS_REASON, COREWEBVIEW2_MOVE_FOCUS_REASON_NEXT, COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS,
-    COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC, COREWEBVIEW2_PHYSICAL_KEY_STATUS, ICoreWebView2Controller,
+    COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG, COREWEBVIEW2_KEY_EVENT_KIND, COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN,
+    COREWEBVIEW2_KEY_EVENT_KIND_KEY_UP, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
+    COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_UP, COREWEBVIEW2_MOVE_FOCUS_REASON, COREWEBVIEW2_MOVE_FOCUS_REASON_NEXT,
+    COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS, COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC,
+    COREWEBVIEW2_PHYSICAL_KEY_STATUS, ICoreWebView2Controller,
 };
 use webview2_com::{AcceleratorKeyPressedEventHandler, FocusChangedEventHandler, MoveFocusRequestedEventHandler};
+use windows::Win32::Foundation::HGLOBAL;
+use windows::Win32::System::Com::StructuredStorage::CreateStreamOnHGlobal;
+use windows::Win32::System::Com::{IStream, STREAM_SEEK_SET};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_MENU, VK_SHIFT};
 
 static KEY_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -188,6 +194,66 @@ fn open_devtools(app: &AppHandle) {
             Err(e) => com_failed(&app2, "open devtools", e),
         }
     });
+}
+
+/// "0x80070005 Access is denied." A failed capture's HRESULT is what Task 5 (d) records.
+fn hr_text(e: &windows_core::Error) -> String {
+    format!("{:#010x} {}", e.code().0 as u32, e.message())
+}
+
+fn read_all(stream: &IStream) -> windows_core::Result<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut buf = [0u8; 64 * 1024];
+    // SAFETY: a stream this module created, read on the thread that owns it into a buffer of the length given.
+    unsafe {
+        stream.Seek(0, STREAM_SEEK_SET, None)?;
+        loop {
+            let mut read = 0u32;
+            stream
+                .Read(buf.as_mut_ptr().cast(), buf.len() as u32, Some(&mut read))
+                .ok()?;
+            if read == 0 {
+                break;
+            }
+            out.extend_from_slice(&buf[..read as usize]);
+        }
+    }
+    Ok(out)
+}
+
+/// The page as WebView2 last drew it, as PNG bytes: `CapturePreview` into a stream in memory. The call is made on the
+/// webview's thread and completes there; the command's thread only waits for the bytes.
+pub async fn capture(app: &AppHandle) -> Result<Vec<u8>, String> {
+    let page = app.get_webview(LABEL).ok_or("no page is open")?;
+    let (tx, rx) = std::sync::mpsc::channel::<Result<Vec<u8>, String>>();
+    page.with_webview(move |pv| {
+        let done = tx.clone();
+        // SAFETY: COM calls on the live controller, on the webview's own thread (with_webview).
+        let started = unsafe {
+            CreateStreamOnHGlobal(HGLOBAL::default(), true).and_then(|stream| {
+                let read = stream.clone();
+                let handler = CapturePreviewCompletedHandler::create(Box::new(move |result| {
+                    let _ = done.send(result.and_then(|()| read_all(&read)).map_err(|e| hr_text(&e)));
+                    Ok(())
+                }));
+                pv.controller().CoreWebView2()?.CapturePreview(
+                    COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG,
+                    &stream,
+                    &handler,
+                )
+            })
+        };
+        if let Err(e) = started {
+            let _ = tx.send(Err(hr_text(&e)));
+        }
+    })
+    .map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        rx.recv_timeout(Duration::from_secs(5))
+            .unwrap_or_else(|_| Err("the capture did not finish in 5 s".into()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Moves keyboard focus into the page: from the placeholder going forward or back, or from code.

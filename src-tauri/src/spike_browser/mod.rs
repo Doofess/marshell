@@ -197,6 +197,31 @@ pub async fn spike_browser_focus(app: AppHandle, reason: String) -> Result<(), S
     return page(&app)?.set_focus().map_err(|e| e.to_string());
 }
 
+/// The page's picture for the overlay freeze, as a `data:` URL (the CSP's `img-src` allows `data:`).
+#[tauri::command]
+pub async fn spike_browser_capture(app: AppHandle) -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        let started = std::time::Instant::now();
+        log(&app, "rust", "capture-start", json!({}));
+        let png = com::capture(&app)
+            .await
+            .inspect_err(|e| log(&app, "rust", "capture-failed", json!({ "error": e })))?;
+        log(
+            &app,
+            "rust",
+            "captured",
+            json!({ "bytes": png.len(), "ms": started.elapsed().as_millis() as u64 }),
+        );
+        Ok(format!("data:image/png;base64,{}", rules::base64(&png)))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = app;
+        Err("the spike captures the page on Windows only".into())
+    }
+}
+
 #[tauri::command]
 pub async fn spike_log(app: AppHandle, event: String, data: Value) -> Result<(), String> {
     log(&app, "front", &event, data);

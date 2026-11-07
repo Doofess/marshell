@@ -43,3 +43,6 @@
   block-size: 100%;
   object-fit: fill;
 }
+.spike-browser__fill {
+  background: var(--bg-raised);
+}

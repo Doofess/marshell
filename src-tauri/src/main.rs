@@ -394,6 +394,7 @@ fn main() {
             spike_browser::spike_browser_close,
             spike_browser::spike_log,
             spike_browser::spike_browser_focus,
+            spike_browser::spike_browser_capture,
             diagnostics::save_diagnostics,
             export::save_conversation,
             folder_picker::pick_folder,

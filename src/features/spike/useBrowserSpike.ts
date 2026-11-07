@@ -9,6 +9,8 @@ export type SpikeControls = {
   setInset(px: number): void;
   setMode(anchor: boolean): void;
   keyTest(on: boolean): void;
+  /** The overlay freeze (Task 5), on by default; off shows tauri#15682, the page drawn over the app's overlays. */
+  setFreeze(on: boolean): void;
 };
 
 declare global {
@@ -31,6 +33,7 @@ export type BrowserSpikeModel = {
   request: { url: string; seq: number } | null;
   inset: number;
   keyTest: boolean;
+  freeze: boolean;
   /** Whether the child exists, so a pane shown again shows it rather than creating a second one. */
   created: React.MutableRefObject<boolean>;
   toggle(): void;
@@ -42,6 +45,7 @@ export function useBrowserSpike(): BrowserSpikeModel {
   const [request, setRequest] = useState<{ url: string; seq: number } | null>(null);
   const [inset, setInset] = useState(0);
   const [keyTest, setKeyTest] = useState(false);
+  const [freeze, setFreeze] = useState(true);
   const created = useRef(false);
 
   useEffect(() => {
@@ -61,6 +65,7 @@ export function useBrowserSpike(): BrowserSpikeModel {
       setInset: (px) => setInset(px),
       setMode: (anchor) => void invoke("spike_browser_mode", { anchor }),
       keyTest: (on) => setKeyTest(on),
+      setFreeze: (on) => setFreeze(on),
     };
     return () => {
       delete window.__spike;
@@ -74,5 +79,5 @@ export function useBrowserSpike(): BrowserSpikeModel {
     });
   }, []);
 
-  return useMemo(() => ({ active, visible, request, inset, keyTest, created, toggle }), [active, visible, request, inset, keyTest, toggle]);
+  return useMemo(() => ({ active, visible, request, inset, keyTest, freeze, created, toggle }), [active, visible, request, inset, keyTest, freeze, toggle]);
 }
