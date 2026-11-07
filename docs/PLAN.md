@@ -1430,11 +1430,14 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
         2. With an empty box, the palette starts with the last few commands run.
         3. Sessions, View and Tools become the groups Session, Terminal, Window and App.
         4. A command that can't run now is left out, for example one that needs a focused session, a split, a task or a run script, when that is missing.
-     5. To ask when the slice is planned:
-        - the menu button's form, and where it sits on the rail and in focus mode;
-        - whether the menu has a shortcut;
-        - whether Ctrl+Shift+Alt+F stays;
-        - what the sidebar footer's Doctor glyph becomes.
+     Decisions 5 to 10 were asked when the slice was planned, on 2026-11-07, after 6o merged.
+
+     5. **The menu button** is a three-line icon button named "Menu", at the left end of the sidebar footer. The plan ring, the 5h % and the Doctor count sit to its right.
+     6. **On the rail** the menu icon sits at the bottom edge. **Focus mode** shows no button: the menu opens from its shortcut or the palette, like everything else there.
+     7. **The menu's shortcut is Ctrl+Shift+M** on Windows and Linux, and it can be rebound. ⌘M is Minimize on macOS, so the plan picks the Mac key.
+     8. **Ctrl+Shift+Alt+F goes.** Ctrl+Shift+Y opens History with its search box focused, and pressing it again goes back to the sessions.
+     9. **The footer's Doctor glyph stays as it is.** The menu's Doctor item shows the same count.
+     10. **Settings is a submenu.** Its item shows ›. Right arrow, Enter or a click opens the section list beside the menu, and Left arrow or Esc goes back to the menu.
    - **Slice 6q decisions (2026-11-07, first round).** Split view is removed, and a tabbed pane on the right takes its place. Asked of the user on 2026-11-07, while 6o ran. A planning workflow researches the options first; the user decides the follow-up questions, and then the slices are planned.
      1. **The order:** it comes after 6o and 6p, before 6n2. The research runs now.
      2. **Split view is removed completely.** Gone:
