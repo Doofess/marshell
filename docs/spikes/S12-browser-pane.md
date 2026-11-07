@@ -76,7 +76,13 @@ Driver:
     - the tray's show (`tray.rs:215`);
     - turning off the browser shortcuts (`main.rs:335`). This one runs at setup, before any page, so it still works.
 
-    So once a page has opened, the first four would quietly do nothing. That comes from Tauri's source and the anchor hook; the four weren't run with a page open (7b runs close to tray). 6q-3 moves them to `get_window("main")` (`unstable`'s `Manager::get_window`) and keeps the main webview's own calls on `get_webview("main")`. The spike's hooks already take the window from the event or from `get_window`.
+    So once a page has opened, the first four quietly do nothing. The badge was called over CDP:
+    - With a page open, `set_badge` returned "no main window".
+    - Once the page closed, the same call worked.
+
+    The worst of the four is the tray's show. Closing the window still hides it to the tray, because that path takes the window from the close event. But the tray then can't bring it back while a page is open. 7b runs that by hand.
+
+    6q-3 moves them to `get_window("main")` (`unstable`'s `Manager::get_window`) and keeps the main webview's own calls on `get_webview("main")`. The spike's hooks already take the window from the event or from `get_window`.
 17. **At the window's resize event the app's layout is still the old one.** Marshell sizes its main layout from a `ResizeObserver` (`LiveApp`'s `useElementSize` passes `width` and `height` to `MainWindow`). So when the window's `resize` event fires, `innerWidth` is already new, but the pane is still at its old place and width. React draws the new layout a frame later. A report taken at the resize event moved the page to where it already was, and in anchor mode it pulled the page back. The spike now reports from the placeholder's `ResizeObserver` alone. In this layout the pane's width follows the window's (the preview ratio is in `fr`), so every window resize also resizes the pane. A pure move still needs finding 3's position source. Measured on a 120 px resize with `SetWindowPos` (no input):
     - Follow mode moved the page once, 16 to 17 ms after the resize.
     - Anchor mode moved it at 2 ms, with the right edge already in place, and then at 13 ms. The second move fixed the width, because anchoring keeps the old width while the pane's width grows with the window. During those 11 ms the left edge was 60 px off.
