@@ -5,10 +5,9 @@ import { sameTarget, type Dir, type NavContext, type NavEffect, type NavEvent, t
  * The keyboard navigation model, with no DOM in it: state and events in, new state and effects out.
  *
  * - Tab (with the navigation modifier) selects the terminal on screen, which starts the cursor. It never reaches the sidebar.
- * - Holding the modifier and pressing an arrow starts a cursor that moves anywhere: other terminals, the sidebar list, the top bar.
+ * - Holding the modifier and pressing an arrow starts a cursor that moves anywhere: the terminal, the sidebar list, the top bar.
  *   Releasing the modifier selects what the cursor is on. Esc while it is out cancels it.
- * - A session chosen from the sidebar that is not on screen is brought into the focused slot (the first empty slot when nothing is
- *   focused, the first slot when all are taken), then selected.
+ * - A session chosen from the sidebar that is not on screen is brought onto the screen, then selected.
  * - Selecting nothing is a state: no terminal has the keyboard, and the header, accent and status bar show that.
  */
 export type Result = { state: NavState; effects: NavEffect[] };

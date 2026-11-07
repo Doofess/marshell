@@ -64,6 +64,11 @@ describe("ShellPanel", () => {
     expect(html()).toContain('aria-label="Open PowerShell as a session"');
     expect(html({ shellName: "bash" })).toContain('aria-label="Open bash as a session"');
   });
+  it("marks that button with a pop-out arrow leaving a box, not the old split-view glyph", () => {
+    const open = html().match(/<button[^>]*aria-label="Open PowerShell as a session"[^>]*>(.*?)<\/button>/)?.[1] ?? "";
+    expect(open).toContain('d="M5.5 2.5h-3v7h7v-3M7.5 2.5h2v2M9.5 2.5L6 6"');
+    expect(open).not.toContain("M6 2.5v7");
+  });
   it("hides and shows with one toggle that keeps one name; its state is aria-expanded, and its tooltip says what it will do", () => {
     const open = html();
     expect(open).toMatch(/aria-label="Shell panel"[^>]*aria-expanded="true"|aria-expanded="true"[^>]*aria-label="Shell panel"/);

@@ -18,10 +18,10 @@ describe("Composer.css: a command line, not a floating card", () => {
     expect(rule(".composer")).not.toMatch(/margin/);
     expect(rule(".composer")).not.toContain("background: var(--bg-overlay)");
   });
-  it("marks the focused prompt with a 2 px edge on top in the vendor colour, and keeps the others on a hairline of the same height", () => {
+  it("marks the prompt in focus with a 2 px edge on top in the vendor colour, and keeps it on a hairline of the same height otherwise", () => {
     const bar = rule(".composer");
     expect(bar).toMatch(/border-block-start:\s*2px solid var\(--hairline\)/);
-    expect(css).toMatch(/\.composer\[data-focused="true"\],\s*\.composer:focus-within\s*\{[^}]*border-block-start-color:\s*var\(--focus, var\(--accent\)\)/);
+    expect(css).toMatch(/\.composer:focus-within\s*\{[^}]*border-block-start-color:\s*var\(--focus, var\(--accent\)\)/);
   });
   it("sets the field in the terminal's mono font at 13 px, so typing feels like typing in the terminal", () => {
     const field = rule(".composer__field");

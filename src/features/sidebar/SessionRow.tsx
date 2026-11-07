@@ -53,12 +53,12 @@ export function SessionRow({
   row: RowModel;
   density: Density;
   selected?: boolean;
-  /** The row of the focused pane: with several rows selected, the one that also gets the bar. */
+  /** The row of the session on screen, which also gets the bar. */
   focused?: boolean;
   tabStop?: boolean;
   drag?: RowDrag;
   rename?: RowRename;
-  /** A click on the row (Ctrl+click and Cmd+click too), or Ctrl+Space. Left out, a click does nothing (stories). */
+  /** A click on the row (with Ctrl or Cmd too), or Ctrl+Space. Left out, a click does nothing (stories). */
   onSelect?: () => void;
   /** Opens the review of this row's task. Left out, a task row shows its tag but no button (stories). */
   onReview?: () => void;
@@ -245,7 +245,7 @@ export function SessionRow({
             onSetup?.();
           }}
           onKeyDown={(e) => {
-            // Enter and Space press the button; the row's own key handling (menu, pane toggle) never sees them.
+            // Enter and Space press the button; the row's own key handling (menu, selection) never sees them.
             if (e.key === "Enter" || e.key === " ") e.stopPropagation();
           }}
         >

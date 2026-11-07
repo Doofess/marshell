@@ -53,7 +53,7 @@ describe("Launcher.css", () => {
     expect(shipped).not.toMatch(/(?:^|[\s;{])border:\s*(?!0\b)[\d.]+px\s+solid/m);
     expect(shipped).not.toMatch(/(?:^|[\s;{])border-color:/m);
   });
-  it("sets the prompt line like the one in a pane: a flat bar on the terminal's surface, a hairline on top that focus leaves alone, mono type", () => {
+  it("sets the prompt line as a flat bar on the terminal's surface, a hairline on top that focus leaves alone, mono type", () => {
     const line = rule(".launcher__line");
     expect(line).toContain("border-block-start: 2px solid var(--hairline)");
     expect(line).not.toContain("border-radius");

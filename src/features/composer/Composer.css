@@ -1,6 +1,6 @@
 /*
  * The prompt line, set like a command line and not like a chat card: a flat bar docked to the edge of its terminal on the
- * terminal's own surface, a 2 px edge on top that is the vendor's colour while this prompt is the focused one, a prompt glyph
+ * terminal's own surface, a 2 px edge on top that is the vendor's colour while the prompt has focus, a prompt glyph
  * in that colour, the field in the terminal's mono font, and Send with the Enter key drawn on it. Fills and the edge tell
  * things apart, never a box or a shadow. A quiet row of tools sits under the line.
  */
@@ -14,7 +14,6 @@
   background: var(--bg-base);
   color: var(--text-1);
 }
-.composer[data-focused="true"],
 .composer:focus-within {
   border-block-start-color: var(--focus, var(--accent));
 }

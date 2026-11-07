@@ -7,13 +7,13 @@ import { useQuickFiles } from "../preview/quickFiles";
 import type { PaletteSession } from "../palette/fixtures";
 
 /**
- * Commands the window runs from the palette that have no key of their own: remove the focused pane, open the layout menu, resume an
+ * Commands the window runs from the palette that have no key of their own: resume an
  * Ended or Exited session, group the sidebar by project, restart an agent in another mode, and open the removal of a task whose folder is gone.
  */
 const PALETTE_ONLY = ["settings", "profiles", "appearance", "agents", "notifications", "history-settings", "pause-notifications", "diagnostics", "departures", "doctor", "nav-next-pane", "resume", "group-by-project", "clean-up-task", "copy-recording-path", "run-script", "stop-script", "edit-references", "pause", "continue", "change-mode", "mode-manual", "mode-plan", "mode-auto-edit", "mode-full-auto", "mode-bypass", "new-session-admin"];
 
 /**
- * The commands the live window runs: the ones with a session shortcut, the pane commands, and the shell profiles and Appearance pages. Listing any other would
+ * The commands the live window runs: the ones with a session shortcut, the window commands, and the shell profiles and Appearance pages. Listing any other would
  * be a row that does nothing. (The palette itself is left out: choosing it from itself only closes it.)
  */
 export const LIVE_COMMANDS = COMMANDS.filter((c) => PALETTE_ONLY.includes(c.id) || (c.id !== "palette" && commandShortcut(c.id) !== null));

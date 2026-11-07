@@ -72,11 +72,11 @@ export function Sidebar({
   onPeekClose?: () => void;
   height: number;
   width: number;
-  /** The focused pane's session. */
+  /** The session on screen. */
   selectedId?: string;
   /** The session on screen, which is marked selected (none while History is shown). Left out, `selectedId` is marked. */
   visibleIds?: readonly string[];
-  /** Decides which click toggles a pane. Defaults to Windows (Ctrl+click). */
+  /** The platform, for the modifier key a click or a drag checks. Defaults to Windows. */
   os?: Os;
   footer?: SidebarFooter;
   /** A click on the footer's Doctor count opens the Doctor. Left out, the count is only read. */
@@ -94,7 +94,6 @@ export function Sidebar({
   onReorder?: (ids: string[]) => void;
   /** A click on a row gives its session id. */
   onSelect?: (id: string) => void;
-  /** Ctrl+click (Cmd on macOS) or Ctrl+Space on a row gives its session id: add or remove its pane. */
   /** Opens the review of a task row's session (its Review changes button). */
   onReview?: (id: string) => void;
   /** Opens the hooks setup from a Claude Code row that says "Status limited". */
@@ -219,7 +218,7 @@ export function Sidebar({
       dropEdge: drag?.over?.id === id ? drag.over.edge : undefined,
       dragging: drag?.id === id,
       onPointerDown: (e) => {
-        // The primary button alone, and no modifier (Ctrl+click toggles a pane): a right-click, a menu or a rename press is not a drag.
+        // The primary button alone, and no modifier (a click with a modifier is not a drag start): a right-click, a menu or a rename press is not a drag.
         if (e.button !== 0 || !e.isPrimary || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || inRenameBox(e.target)) return;
         startPress(id, e.clientX, e.clientY);
       },
@@ -231,7 +230,7 @@ export function Sidebar({
       key={r.id}
       row={r}
       density="comfortable"
-      // With visible ids, a session in no pane on screen (the store's choice standing in for an empty pane) is not marked.
+      // With visible ids, a session that is not on screen (the store's choice standing in when none is) is not marked.
       selected={visibleIds ? visibleIds.includes(r.id) : r.id === selectedId}
       focused={visibleIds ? visibleIds.includes(r.id) && r.id === selectedId : false}
       tabStop={r.id === tabStop}
@@ -243,8 +242,8 @@ export function Sidebar({
       onMenu={
         menuItems &&
         ((anchor) => {
-          // The menu acts on the row under it by id and leaves the selection alone: selecting would put the session in the
-          // focused pane, which would make "Split into a pane" pointless.
+          // The menu acts on the row under it by id and leaves the selection alone: selecting would change the session on screen,
+          // and a menu only asks about the row.
           setMenu({ id: r.id, anchor, items: menuItems(r.id) });
         })
       }

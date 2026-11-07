@@ -277,7 +277,7 @@
   position: relative;
   flex: none;
 }
-/* The status bar at the foot of the centre column: the focused session's strip, the same 24 px in a single window and in split view. */
+/* The status bar at the foot of the centre column: the focused session's strip, the same 24 px whatever it shows. */
 .window__status {
   flex: none;
   min-inline-size: 0;
@@ -298,7 +298,7 @@
   overflow: clip;
   text-overflow: ellipsis;
 }
-/* Flat and docked, like the compact line in a pane: the whole slot, edge to edge, with nothing lifted off the bottom and no shadow,
+/* Flat and docked: the whole slot, edge to edge, with nothing lifted off the bottom and no shadow,
    so the status bar sits directly under it and it never covers a terminal row. A long prompt grows it upward from the slot's foot. */
 .window__composer > .composer {
   position: absolute;

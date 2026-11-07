@@ -8,7 +8,7 @@ describe("LivePalette", () => {
   it("lists only commands the window runs", () => {
     const ids = LIVE_COMMANDS.map((c) => c.id);
     for (const id of ["launcher", "close", "reopen", "rename", "move-up", "move-down", "profiles", "appearance", "settings", "resume", "nav-next-pane", "nav-none", "focus-mode", "sidebar", "group-by-project", "copy-recording-path", "pause", "continue"]) expect(ids, id).toContain(id);
-    // Every other row would do nothing when chosen. (Remove-pane, Change-layout and Resume have no key shortcut; the window runs them from the palette.)
+    // Every other row would do nothing when chosen. (Resume has no key shortcut; the window runs it from the palette.)
     for (const id of ids) expect(["settings", "profiles", "appearance", "agents", "diagnostics", "notifications", "history-settings", "pause-notifications", "departures", "doctor", "nav-next-pane", "resume", "group-by-project", "clean-up-task", "copy-recording-path", "run-script", "stop-script", "edit-references", "pause", "continue", "change-mode", "new-session-admin"].includes(id) || id.startsWith("mode-") || commandShortcut(id) !== null, id).toBe(true);
     for (const id of ["run-script", "stop-script", "edit-references", "pause-notifications", "mode-manual", "mode-plan", "mode-auto-edit", "mode-full-auto", "mode-bypass"]) expect(ids, id).toContain(id);
     expect(ids).toContain("doctor");

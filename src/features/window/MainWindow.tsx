@@ -70,7 +70,7 @@ export type MainWindowProps = {
   drawerCard?: ReactNode;
   onDrawerClose?: () => void;
   selectedId?: string;
-  /** Every session on screen (the panes' sessions). Left out, only `selectedId` is marked. */
+  /** The session on screen, as a list: one id, or none under History. Left out, only `selectedId` is marked. */
   visibleIds?: readonly string[];
   os?: Os;
   /** Wires the Windows minimize, maximize and close buttons. Left out they are drawn but do nothing (stories). */
@@ -83,7 +83,7 @@ export type MainWindowProps = {
   composer?: boolean;
   /** What has been typed in the prompt line. */
   composerValue?: string;
-  /** Replaces the scripted terminal of every pane with the real one. Leave out in stories. `shown` is false for a kept terminal behind the selected one (single window only). */
+  /** Replaces the scripted terminal with the real one. Leave out in stories. `shown` is false for a kept terminal behind the selected one (single window only). */
   renderTerminal?: (row: RowModel, shown?: boolean) => ReactNode;
   /** Ports as `host:port`, for stories: used in place of the rows' own chips, and only when given. */
   ports?: string[];
@@ -112,8 +112,7 @@ export type MainWindowProps = {
   /** Takes the place of the session header while it is set (the busy-close question). Shown even where the header is hidden. */
   headerBar?: ReactNode;
   /**
-   * A bar for one session (the restart question). With two or more panes on screen it replaces that pane's header; otherwise it
-   * takes the place of the session header, like `headerBar`.
+   * A bar for one session (the restart question). It takes the place of the session header, like `headerBar`.
    */
   paneBar?: { id: string; node: ReactNode };
   /** The session header's mode chip becomes a button that gives the session's id and where it is, to open the mode menu. */
@@ -152,7 +151,7 @@ export type MainWindowProps = {
   onPalette?: () => void;
   /** The click on the sidebar button next to it: fold the sidebar to the rail, or open it. Not called when a narrow window cannot open it. */
   onToggleSidebar?: () => void;
-  /** No terminal is selected (Ctrl+Shift+Backspace): no pane is marked focused, and the window says how to pick one. */
+  /** No terminal is selected (Ctrl+Shift+Backspace): no terminal is marked focused, and the window says how to pick one. */
   noneSelected?: boolean;
   /** The keyboard cursor while Ctrl+Shift is held, measured against the window. */
   navCursor?: { rect: Rect; label: string } | null;
@@ -161,7 +160,7 @@ export type MainWindowProps = {
    */
   preview?: ReactNode;
   /**
-   * A view that takes the main area (History), in place of the panes, the empty text and the preview. The sidebar and the bar stay.
+   * A view that takes the main area (History), in place of the terminal, the empty text and the preview. The sidebar and the bar stay.
    * Where the window draws live terminals they stay mounted behind it, so a session keeps its scrollback.
    */
   mainView?: ReactNode;
@@ -250,9 +249,9 @@ export function MainWindow({
   const selected: RowModel | null = rows.find((r) => r.id === selectedId) ?? rows[0] ?? null;
   const empty = selected === null;
   const waiting = pendingSessionCount(requests);
-  // Focus mode hides the session header until the pointer reaches the top edge; the pane headers stay. Keyboard users leave focus mode instead.
+  // Focus mode hides the session header until the pointer reaches the top edge. Keyboard users leave focus mode instead.
   const [peeking, setPeeking] = useState(false);
-  // A port chip's menu: the window holds it so it sits outside any pane's [data-agent] element.
+  // A port chip's menu: the window holds it so it sits outside the terminal's [data-agent] element.
   const [portMenu, setPortMenu] = useState<PortMenuRequest | null>(null);
   const chipPorts = ports?.map((p) => ({ port: Number(p.split(":").pop()), url: `http://${p}/` }));
   // Leaving focus mode with the pointer on the bar must not leave the peek set for the next time focus mode starts.

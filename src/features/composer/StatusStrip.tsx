@@ -57,7 +57,7 @@ function Item({ item, first }: { item: FitItem; first: boolean }) {
 
 /**
  * One slim line of session facts, shown in the window's status bar: model, context, the plan limits, cost, time, MCP health and the
- * rest, for the session of the focused pane. Unknown values are left out. Without `width` it renders every item and the
+ * rest, for the session on screen. Unknown values are left out. Without `width` it renders every item and the
  * stylesheet hides the least important ones as the bar narrows (so it fits in server rendering too); with `width` (in characters)
  * the items are fitted here, for places that cannot measure.
  */

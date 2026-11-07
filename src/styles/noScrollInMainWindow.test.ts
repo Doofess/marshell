@@ -10,7 +10,7 @@ const walk = (dir: string): string[] =>
 const FILES = [...walk(join(SRC, "features")), ...walk(join(SRC, "components")), ...walk(join(SRC, "styles"))].map((f) => relative(SRC, f).replace(/\\/g, "/"));
 
 /**
- * Selectors that may scroll: menus and settings (`.scroll-menu`, `.layout-menu`), the request-details drawer (a menu-like
+ * Selectors that may scroll: menus and settings (`.scroll-menu`), the request-details drawer (a menu-like
  * inspector for a 40-line command), the prompt field, which scrolls past eight lines with its scrollbar hidden, and the raw
  * settings editor's text area (a text box scrolls its own text, like the prompt field; it is not the live window), and the
  * export dialog (`.export-dialog__body` and its preview `.export-dialog__text`, the diagnostics dialog's twin: a conversation is
@@ -26,7 +26,7 @@ const FILES = [...walk(join(SRC, "features")), ...walk(join(SRC, "components")),
  * a repo's scripts can be longer than the window, and the card's Allow sits outside the list, so every line is read by
  * scrolling it, with the themed scrollbar visible, before Allow).
  */
-const ALLOWED = [/^\.live-shortcuts__sheet$/,/^\.drawer$/, /^\.composer__field$/, /^\.scroll-menu$/, /^\.layout-menu$/, /^\.sidebar__list$/, /^\.rail__list$/, /^\.palette__list$/, /^\.launcher__list$/, /^\.page__body$/, /^\.settings-shell__nav$/,/^\.raw-editor__text$/, /^\.fix-sheet__body$/, /^\.onboarding__body$/, /^\.diagnostics-dialog__text$/, /^\.export-dialog__body$/, /^\.export-dialog__text$/,/^\.review__files$/, /^\.preview__body$/, /^\.peek__screen$/, /^\.history__list$/, /^\.history__detail$/, /^\.scripts-trust__list$/];
+const ALLOWED = [/^\.live-shortcuts__sheet$/,/^\.drawer$/, /^\.composer__field$/, /^\.scroll-menu$/, /^\.sidebar__list$/, /^\.rail__list$/, /^\.palette__list$/, /^\.launcher__list$/, /^\.page__body$/, /^\.settings-shell__nav$/,/^\.raw-editor__text$/, /^\.fix-sheet__body$/, /^\.onboarding__body$/, /^\.diagnostics-dialog__text$/, /^\.export-dialog__body$/, /^\.export-dialog__text$/,/^\.review__files$/, /^\.preview__body$/, /^\.peek__screen$/, /^\.history__list$/, /^\.history__detail$/, /^\.scripts-trust__list$/];
 
 const read = (f: string) => readFileSync(join(SRC, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 const rules = (css: string) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selectors: m[1]!.split(",").map((s) => s.trim()), body: m[2]! }));

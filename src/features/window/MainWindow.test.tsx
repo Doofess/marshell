@@ -110,7 +110,7 @@ describe("MainWindow: logo and accent", () => {
     const h = html({ sidebarPref: "rail" });
     expect(h.slice(h.indexOf('class="rail"'))).not.toContain('aria-label="Command palette"');
   });
-  it("keeps the window's own controls (the layout menu, the panel, the cursor) in the app accent: only a session's own elements take its vendor's", () => {
+  it("keeps the window's own controls (the panel, the cursor) in the app accent: only a session's own elements take its vendor's", () => {
     expect(html()).not.toMatch(/class="window"[^>]*data-agent/);
     expect(html()).toMatch(/class="session-header"[^>]*data-agent="claude"/);
   });
