@@ -134,11 +134,15 @@ describe("Sidebar: rename and reorder", () => {
     expect(row(b!)).toContain("data-focused");
     expect(row(b!)).toContain('tabindex="0"');
     expect((h.match(/role="option"[^>]*tabindex="0"/g) ?? []).length).toBe(1);
-    expect(h).toContain('aria-multiselectable="true"');
     const plain = html({ selectedId: b });
     expect(plain).not.toContain("aria-multiselectable");
     expect(plain).not.toContain("data-focused");
     expect((plain.match(/aria-selected="true"/g) ?? []).length).toBe(1);
+  });
+  it("is never a multi-select list: one session is on screen at a time", () => {
+    const [a] = SCENARIO_ROWS.map((r) => r.id);
+    expect(html({ visibleIds: [a!], selectedId: a })).not.toContain("aria-multiselectable");
+    expect(html({ selectedId: a })).not.toContain("aria-multiselectable");
   });
   it("does not mark the store's selection when it is in no visible pane", () => {
     const [a, , c] = SCENARIO_ROWS.map((r) => r.id);

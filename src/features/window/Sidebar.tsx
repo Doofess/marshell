@@ -74,7 +74,7 @@ export function Sidebar({
   width: number;
   /** The focused pane's session. */
   selectedId?: string;
-  /** Every session on screen: each is marked selected and the list becomes multi-select. Left out, only `selectedId` is marked. */
+  /** The session on screen, which is marked selected (none while History is shown). Left out, `selectedId` is marked. */
   visibleIds?: readonly string[];
   /** Decides which click toggles a pane. Defaults to Windows (Ctrl+click). */
   os?: Os;
@@ -261,7 +261,6 @@ export function Sidebar({
         className="sidebar__list"
         role="listbox"
         aria-label="Sessions"
-        aria-multiselectable={visibleIds ? true : undefined}
         onKeyDown={(e) => {
           // Esc on a row while Peek is open (a hover opened it): close it and go back to the terminal.
           if (e.key === "Escape" && peek.state && !e.defaultPrevented) {
