@@ -1,0 +1,28 @@
+/*
+ * The app menu, on the context menu's look. It sits in the window-wide layer, over the terminal's layers. The count and the
+ * arrow read quietly until their item is focused.
+ */
+.app-menu {
+  z-index: 20;
+}
+.app-menu__count,
+.app-menu__more {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-inline-start: auto;
+  color: var(--text-2);
+}
+.app-menu [role="menuitem"]:focus :is(.app-menu__count, .app-menu__more) {
+  color: inherit;
+}
+
+@media (forced-colors: active) {
+  .app-menu__count,
+  .app-menu__more {
+    color: CanvasText;
+  }
+  .app-menu [role="menuitem"]:focus :is(.app-menu__count, .app-menu__more) {
+    color: HighlightText;
+  }
+}

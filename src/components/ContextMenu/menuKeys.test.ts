@@ -98,3 +98,17 @@ describe("a disabled item", () => {
     expect(menuKey("Enter", items, 0)).toEqual({ kind: "run", id: "a" });
   });
 });
+
+describe("menuKey submenus", () => {
+  const sub: MenuItem[] = [{ id: "s", label: "Settings", submenu: true }, { id: "h", label: "History" }];
+  it("a_submenu_item_opens_on_enter_space_and_right_arrow", () => {
+    for (const k of ["Enter", " ", "ArrowRight"]) expect(menuKey(k, sub, 0)).toEqual({ kind: "open", id: "s" });
+  });
+  it("left_arrow_goes_back", () => {
+    expect(menuKey("ArrowLeft", sub, 0)).toEqual({ kind: "back" });
+    expect(menuKey("ArrowLeft", sub, 1)).toEqual({ kind: "back" });
+  });
+  it("right_arrow_on_a_plain_item_does_nothing", () => {
+    expect(menuKey("ArrowRight", sub, 1)).toBeNull();
+  });
+});
