@@ -116,6 +116,8 @@ import { handedOff } from "./handOff";
 import { focusShellTerminal, shellAutoFolded, shellTerminalFocused } from "./shellPanelFocus";
 import { ENDED_PHRASE, lastSegment, nameAgents, planRing } from "./toRow";
 import { useSessions } from "./useSessions";
+import { BrowserSpike } from "../spike/BrowserSpike"; // spike 6q-0
+import { useBrowserSpike } from "../spike/useBrowserSpike"; // spike 6q-0
 
 /** The size a new session starts at until a terminal has been measured. */
 const DEFAULT_SIZE = { cols: 120, rows: 30 };
@@ -195,6 +197,7 @@ export function LiveApp() {
   const focusedId = view.panes[0] ?? selectedId;
   // The preview pane: its history lives here so it outlasts a session switch. Open, it is about the focused session's window only.
   const preview = usePreview();
+  const spike = useBrowserSpike(); // spike 6q-0
   const previewRef = useRef(preview);
   previewRef.current = preview;
   const previewEntry = preview.state.open ? currentOf(preview.state) : undefined;
@@ -1611,7 +1614,7 @@ export function LiveApp() {
           rows={sidebarRows}
           selectedId={focusedId}
           visibleIds={onScreenIds}
-          preview={previewPane}
+          preview={spike.active && spike.visible ? <BrowserSpike model={spike} frozen={overlay !== null || launcherOpen || closeAsk !== null || review !== null} /> : previewPane /* spike 6q-0 */}
           mainView={
             mainView === "history" && endpoint && os ? (
               <LiveHistory

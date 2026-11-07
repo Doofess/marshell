@@ -11,7 +11,8 @@ tauri-build = { version = "2", features = [] }
 marshell-core.workspace = true
 marshell-protocol.workspace = true
 serde.workspace = true
-tauri = { version = "2", features = ["tray-icon"] }
+serde_json.workspace = true  # spike 6q-0: the JSONL log
+tauri = { version = "2", features = ["tray-icon", "unstable"] }  # spike 6q-0: unstable for add_child (decision 1)
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2.7"
 tauri-plugin-opener = "2"

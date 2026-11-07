@@ -8,6 +8,7 @@ mod export;
 mod folder_picker;
 mod link;
 mod notify;
+mod spike_browser;
 mod toast;
 mod tray;
 
@@ -327,6 +328,7 @@ fn main() {
             app.manage(capture::CaptureState::default());
             let home = marshell_core::paths::home_dir()?;
             app.manage(HomeDir(home.clone()));
+            app.manage(spike_browser::SpikeState::new(home.clone())); // spike 6q-0
             marshell_core::crash::install_panic_hook(&home);
             if let Err(e) = marshell_core::diagnostics::log::init(&home) {
                 eprintln!("Marshell: no log file this run: {e:#}");
@@ -384,6 +386,13 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // spike 6q-0
+            spike_browser::spike_browser_open,
+            spike_browser::spike_browser_rect,
+            spike_browser::spike_browser_mode,
+            spike_browser::spike_browser_visible,
+            spike_browser::spike_browser_close,
+            spike_browser::spike_log,
             diagnostics::save_diagnostics,
             export::save_conversation,
             folder_picker::pick_folder,

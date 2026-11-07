@@ -1,0 +1,45 @@
+/* Spike 6q-0 (never merged): the browser pane. The page itself is a native child webview drawn over `.spike-browser__page`. */
+.spike-browser {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-inline-size: 0;
+  min-block-size: 0;
+  background: var(--bg-base);
+  color: var(--text-1);
+}
+.spike-browser__bar {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-2);
+}
+.spike-browser__bar input {
+  flex: 1;
+  min-inline-size: 0;
+}
+.spike-browser__bar :is(button, input):focus-visible,
+.spike-browser__page:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+.spike-browser__status {
+  padding-inline: var(--space-2);
+  font-size: 12px;
+  color: var(--text-2);
+  overflow: clip;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.spike-browser__page {
+  position: relative;
+  min-block-size: 0;
+  /* The right and bottom inset (set from CDP) leaves the window's own resize edge to the frame (tauri#12207). */
+  margin-inline-end: var(--spike-inset, 0px);
+  margin-block-end: var(--spike-inset, 0px);
+}
+.spike-browser__frozen {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: fill;
+}
