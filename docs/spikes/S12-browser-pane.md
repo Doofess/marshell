@@ -91,4 +91,27 @@ Driver:
 
 ## What 6q-2 and 6q-3 take from this
 
+Draft, written while 3b to 3d, 4a to 4d, 5a's keys, 6b's click, 7b's window controls and 8a to 8c wait for the foreground.
+
+- **Creating the page.** Use `Window::add_child`, with:
+  - `.focused(false)` for a background open (finding 1), which the spike didn't pass;
+  - the profile at `<MARSHELL_HOME>\browser-profile`;
+  - `on_new_window` navigating the pane and then answering `Deny` (6b).
+
+  F12 reached the page's DevTools through the key route, in a dev build (2e). Whether a release build keeps it is 6q-3's call.
+- **Browser arguments.** `--disable-features=msWebOOUI,msPdfOOUI` on the child. The live check's `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` is added to these, not used in their place (1c), so the page has no CDP of its own (finding 2).
+- **Bounds.** The front measures the placeholder and Rust sets the child's bounds. Report from the placeholder's `ResizeObserver`, never from the window's `resize` event (finding 17), and add a position source for pure moves (finding 3). Follow mode against anchor mode, and the edge inset, wait for 4a and 4b.
+- **Window lookups.** Every shell call that needs the main window uses `get_window("main")` once pages exist (finding 16): the badge, the flash, close to tray and the tray's show.
+- **Key route.** `route_key` as the spike has it:
+  - F12 opens DevTools;
+  - Esc, Ctrl+L and every Ctrl+Shift chord go to the app;
+  - everything else stays in the page, including Ctrl+Alt chords, which AltGr sends.
+
+  The app re-dispatches a forwarded key as a synthetic `KeyboardEvent`, so the keymap has no copy in Rust (finding 5). After a forward, the app puts focus back in the page itself (finding 6).
+- **Focus.** The app keeps "the page has the keyboard" from `GotFocus` and `LostFocus` (finding 8). Tab in is `MoveFocus` from the placeholder's `focus` event, and Tab out is `MoveFocusRequested` with `Handled(true)` (finding 9). Alt+Tab and clicks wait for 3b to 3d.
+- **Freeze.** `CapturePreview` to PNG, shown as a `data:` image, then the child hidden: 37 to 48 ms in all, thawed in 5 to 11 ms (5a, finding 11). No special case for a navigation or a first load (5c, 5d). The user's verdict on the flash is still to come.
+- **Quit.** Close every page's controller before the process ends, or the last half minute of cookies is lost (finding 12).
+- **Isolation.** Scope the capability to `"webviews": ["main"]`, and add an app manifest so Marshell's own commands come under it (finding 14). The navigation allow-list stays the other lock (7c).
+- **Drop.** Waits for 8a to 8c, and finding 16's note on where the window's drop events go.
+
 ## Go or no-go
