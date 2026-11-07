@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adminKey, adminKeyClaimed, focusFellOut, listNavKeys, nameKey, nameKeyClaimed, openFolder, openList, stepActive } from "./launcherKeys";
+import { adminKey, adminKeyClaimed, chipLetter, focusFellOut, listNavKeys, listToClose, nameKey, nameKeyClaimed, openFolder, openList, stepActive } from "./launcherKeys";
 
 describe("launcherKeys: which keys move the highlighted option", () => {
   it("in the folder field only Up and Down do: Left and Right move the caret, so a typo can be fixed", () => {
@@ -93,5 +93,27 @@ describe("the Name field's key", () => {
     expect(nameKeyClaimed(key(), "windows")).toBe(true);
     expect(nameKeyClaimed(key(), "linux")).toBe(true);
     expect(nameKeyClaimed(key(), "mac")).toBe(false);
+  });
+});
+
+describe("launcherKeys: a held modifier is a shortcut, not a letter pick", () => {
+  const press = (key: string, mods: Partial<{ altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }> = {}) => ({ key, altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, ...mods });
+  it("a_chip_letter_ignores_alt_ctrl_and_meta", () => {
+    // Alt+N moves to Name and Alt+A toggles Administrator: neither may also pick "NixOS" or "Antigravity" on the focused chip.
+    expect(chipLetter(press("n"))).toBe("n");
+    expect(chipLetter(press("N", { shiftKey: true }))).toBe("N");
+    expect(chipLetter(press("n", { altKey: true }))).toBeNull();
+    expect(chipLetter(press("a", { ctrlKey: true }))).toBeNull();
+    expect(chipLetter(press("a", { metaKey: true }))).toBeNull();
+  });
+});
+
+describe("launcherKeys: leaving a list closes it", () => {
+  it("alt_n_and_esc_close_the_one_open_list", () => {
+    // Alt+N from an open list goes to Name; left open, the list would take Name's Enter and arrows.
+    expect(listToClose({ folderOpen: true, shellsOpen: false, agentsOpen: false })).toBe("folder");
+    expect(listToClose({ folderOpen: false, shellsOpen: true, agentsOpen: false })).toBe("shells");
+    expect(listToClose({ folderOpen: false, shellsOpen: false, agentsOpen: true })).toBe("agents");
+    expect(listToClose({ folderOpen: false, shellsOpen: false, agentsOpen: false })).toBeNull();
   });
 });

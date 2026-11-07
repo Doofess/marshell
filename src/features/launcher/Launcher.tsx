@@ -32,7 +32,7 @@ import {
 } from "./launchChoice";
 import { effectiveAgent, missingLine, type ShellOffer } from "./shellAgents";
 import { effectiveMode, nextOffered, offeredMode } from "../modes/sessionModes";
-import { adminKeyClaimed, nameKeyClaimed, focusFellOut, listNavKeys, stepActive } from "./launcherKeys";
+import { adminKeyClaimed, chipLetter, nameKeyClaimed, focusFellOut, listNavKeys, listToClose, stepActive } from "./launcherKeys";
 import "./Launcher.css";
 import "../sessions/CloseBar.css";
 
@@ -261,8 +261,15 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
       }
       return;
     }
+    const open = listToClose({ folderOpen, shellsOpen, agentsOpen });
+    const closeOpen = () => {
+      if (open === "folder") onQuery?.(null);
+      else if (open === "shells") onShells?.(false);
+      else if (open === "agents") onAgents?.(false);
+    };
     if (nameKeyClaimed(e, os)) {
       e.preventDefault();
+      closeOpen();
       nameField.current?.focus();
       return;
     }
@@ -274,9 +281,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
     const listOpen = folderOpen || shellsOpen || agentsOpen;
     if (e.key === "Escape") {
       e.preventDefault();
-      if (folderOpen) onQuery?.(null);
-      else if (shellsOpen) onShells?.(false);
-      else if (agentsOpen) onAgents?.(false);
+      if (open !== null) closeOpen();
       else onClose?.();
       return;
     }
@@ -310,7 +315,10 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
     }
   };
 
-  const chipKeys = (labels: string[], current: number, set: (i: number) => void) => (e: KeyboardEvent<HTMLButtonElement>) => letter(labels, current, e.key, set);
+  const chipKeys = (labels: string[], current: number, set: (i: number) => void) => (e: KeyboardEvent<HTMLButtonElement>) => {
+    const key = chipLetter(e);
+    if (key !== null) letter(labels, current, key, set);
+  };
 
   return (
     <div className="launcher" data-open={folderOpen || shellsOpen || agentsOpen || undefined}>

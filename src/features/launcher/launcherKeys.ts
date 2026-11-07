@@ -45,6 +45,16 @@ export function focusFellOut({ wasOpen, isOpen, activeIsBody }: { wasOpen: boole
   return wasOpen && !isOpen && activeIsBody;
 }
 
+/** The open list, if any: the one Esc closes, and the one Alt+N closes before it moves to Name (its Enter and arrows would act on a list left behind). */
+export function listToClose({ folderOpen, shellsOpen, agentsOpen }: { folderOpen: boolean; shellsOpen: boolean; agentsOpen: boolean }): OpenList | null {
+  return folderOpen ? "folder" : shellsOpen ? "shells" : agentsOpen ? "agents" : null;
+}
+
+/** The letter a focused chip picks by. A held Alt, Ctrl or Meta makes the key a shortcut (Alt+N, Alt+A), never a pick; Shift is a capital. */
+export function chipLetter(e: { key: string; altKey: boolean; ctrlKey: boolean; metaKey: boolean }): string | null {
+  return e.altKey || e.ctrlKey || e.metaKey ? null : e.key;
+}
+
 /** Alt+A, by its physical key so it sits in the same place on every layout: toggles the Administrator chip from anywhere in the sheet. */
 export function adminKey(e: { code: string; altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }): boolean {
   return e.code === "KeyA" && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
