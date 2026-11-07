@@ -40,6 +40,17 @@ export function missingLine(shellLabel: string, missing: { label: string; proble
 }
 
 /**
+ * The agent a folder with nothing remembered starts with, so no CLI is the default by its name: the first agent the shell offers.
+ * While the shell is being asked, the first one `found` on this machine (in the catalog's order), so the chip keeps it when the
+ * answer agrees. Just the shell when the shell offers no agent. A preset is never the default by itself.
+ */
+export function firstAgent(offer: ShellOffer, found: readonly ProgramId[]): ProgramId | null {
+  if (offer.state === "checking") return found[0] ?? null;
+  if (offer.state === "unreached") return null;
+  return offer.offered.find((p) => p.preset === undefined)?.id ?? null;
+}
+
+/**
  * The agent a start uses: the chosen one only while the shell offers it. While the shell is being asked it is the chosen one (Start
  * waits); once the answer is in, an agent the shell lacks becomes Just the shell, and so does any agent when the shell is unreached.
  */

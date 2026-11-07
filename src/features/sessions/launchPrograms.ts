@@ -264,17 +264,36 @@ export function initialFocus(root: { querySelector(selector: string): HTMLElemen
   return root.querySelector(".launcher__prompt") ?? root.querySelector(".launcher__start");
 }
 
-/** What the focus depends on: the chosen shell and agent as one key, whether there is a prompt, and whether Start is enabled. */
-export type FocusState = { program: string; prompt: boolean; ready: boolean };
+/**
+ * What the focus depends on: how many shell and agent picks the person made here, whether there is a prompt, and whether Start is
+ * enabled. Picks, not the agent shown: a shell's answer can change the agent while the person types, and nobody picked that.
+ */
+export type FocusState = { picks: number; prompt: boolean; ready: boolean };
+
+/** The focus state for the agent shown in a shell: Command Prompt has no prompt line, nor has an agent that takes no first prompt. */
+export function focusStateOf(o: { picks: number; program: LaunchProgram | undefined; shellFamily: string | undefined; loaded: boolean }): FocusState {
+  return { picks: o.picks, prompt: o.program !== undefined && o.program.noFirst !== true && o.shellFamily !== "cmd", ready: o.loaded };
+}
 
 /**
  * Where focus goes after the choice changed, so Enter starts. After a pick the focus is on the program chip, where Enter reopens
  * the list. A program without a prompt takes focus to Start once it is enabled; one with a prompt, to the prompt.
  */
 export function refocus(prev: FocusState | null, next: FocusState): "prompt" | "start" | null {
-  if (prev === null || (prev.program === next.program && prev.ready === next.ready)) return null;
-  if (next.prompt) return prev.program === next.program ? null : "prompt";
+  if (prev === null || (prev.picks === next.picks && prev.ready === next.ready)) return null;
+  if (next.prompt) return prev.picks === next.picks ? null : "prompt";
   return next.ready ? "start" : null;
+}
+
+/** The agent chip, which says why the agent it showed went. */
+const AGENT_CHIP = '.launcher__chip[aria-label^="Agent:"]';
+
+/**
+ * Where focus goes when the control that had it went away with no pick: a shell's answer took the prompt being typed in. The prompt
+ * if there still is one, else the agent chip; never Start, where the next Enter would start a bare shell.
+ */
+export function lostFocus(root: { querySelector(selector: string): HTMLElement | null }): HTMLElement | null {
+  return root.querySelector(".launcher__prompt") ?? root.querySelector(AGENT_CHIP);
 }
 
 /** What the launcher says when starting failed. The core's own text (a 4xx explaining a refusal) is shown as it is. */

@@ -3,13 +3,13 @@ import type { Task } from "../../generated/Task";
 import type { Profile } from "../../generated/Profile";
 import type { ProfilesDoc } from "../../generated/ProfilesDoc";
 import type { Project } from "../launcher/filter";
-import { startingText, type LauncherChoice, type ProgramId } from "../launcher/launchChoice";
+import { LAUNCH_AGENTS, startingText, type LauncherChoice, type ProgramId } from "../launcher/launchChoice";
 import { ApiError } from "../../lib/api/client";
 import type { LayoutDoc } from "../../generated/LayoutDoc";
 import type { FolderInfo } from "../../generated/FolderInfo";
 import type { AgentCatalog } from "../../generated/AgentCatalog";
 import type { CatalogAgent } from "../../generated/CatalogAgent";
-import { browseFolder, checkState, chooseFolder, latestOnly, samePath, createRequest, createThenLaunch, initialFocus, launchRequest, nameSource, preselect, preselectMode, progressText, refocus, rememberTasks, liveAgents, liveShells, replansAfter, startFailure, startProblem, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
+import { browseFolder, checkState, chooseFolder, latestOnly, samePath, createRequest, createThenLaunch, focusStateOf, initialFocus, launchRequest, lostFocus, nameSource, preselect, preselectMode, progressText, refocus, rememberTasks, liveAgents, liveShells, replansAfter, startFailure, startProblem, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
 
 const profile = (id: string, family: Profile["family"], name = id): Profile => ({ id, name, command: [id], family, cwd: null, env: [], shell_integration: true, detected: true });
 const PROFILES: Profile[] = [profile("pwsh", "power_shell", "PowerShell 7"), profile("cmd", "cmd", "Command Prompt"), profile("git-bash", "posix", "Git Bash"), profile("wsl-ubuntu", "wsl", "Ubuntu")];
@@ -234,25 +234,50 @@ describe("initialFocus", () => {
 });
 
 describe("refocus", () => {
-  const at = (program: string, prompt: boolean, ready: boolean) => ({ program, prompt, ready });
-  it("does nothing on the first look or when neither the program nor readiness changed", () => {
-    expect(refocus(null, at("claude", true, false))).toBeNull();
-    expect(refocus(at("claude", true, true), at("claude", true, true))).toBeNull();
+  const at = (picks: number, prompt: boolean, ready: boolean) => ({ picks, prompt, ready });
+  it("does nothing on the first look or when neither a pick nor readiness changed", () => {
+    expect(refocus(null, at(0, true, false))).toBeNull();
+    expect(refocus(at(1, true, true), at(1, true, true))).toBeNull();
   });
-  it("moves to Start when a program without a prompt is picked, so Enter starts it (not the chip, where Enter reopens the list)", () => {
-    expect(refocus(at("claude", true, true), at("profile:cmd", false, true))).toBe("start");
-    expect(refocus(at("profile:cmd", false, true), at("profile:pwsh", false, true))).toBe("start");
+  it("moves to Start when a pick leaves no prompt, so Enter starts it (not the chip, where Enter reopens the list)", () => {
+    expect(refocus(at(0, true, true), at(1, false, true))).toBe("start");
+    expect(refocus(at(1, false, true), at(2, false, true))).toBe("start");
   });
   it("waits for Start to be enabled, then moves to it", () => {
-    expect(refocus(at("profile:cmd", false, false), at("profile:cmd", false, false))).toBeNull();
-    expect(refocus(at("profile:cmd", false, false), at("profile:cmd", false, true))).toBe("start");
+    expect(refocus(at(0, false, false), at(0, false, false))).toBeNull();
+    expect(refocus(at(0, false, false), at(0, false, true))).toBe("start");
   });
   it("moves to the prompt when an agent is picked", () => {
-    expect(refocus(at("profile:cmd", false, true), at("claude", true, true))).toBe("prompt");
-    expect(refocus(at("claude", true, true), at("codex", true, true))).toBe("prompt");
+    expect(refocus(at(0, false, true), at(1, true, true))).toBe("prompt");
+    expect(refocus(at(1, true, true), at(2, true, true))).toBe("prompt");
   });
   it("leaves the prompt alone when only readiness changed", () => {
-    expect(refocus(at("claude", true, false), at("claude", true, true))).toBeNull();
+    expect(refocus(at(0, true, false), at(0, true, true))).toBeNull();
+  });
+});
+
+describe("focusStateOf", () => {
+  const claude = LAUNCH_AGENTS.find((p) => p.id === "claude")!;
+  it("a shell's late answer that drops the agent moves no focus: the person may be typing in the prompt or the Name field", () => {
+    // Claude while Ubuntu is asked, then Ubuntu has none: the prompt goes, but nobody picked anything.
+    const asking = focusStateOf({ picks: 1, program: claude, shellFamily: "wsl", loaded: true });
+    const answered = focusStateOf({ picks: 1, program: undefined, shellFamily: "wsl", loaded: true });
+    expect(answered.prompt).toBe(false);
+    expect(refocus(asking, answered)).toBeNull();
+  });
+  it("has a prompt only for an agent that takes one, outside Command Prompt", () => {
+    expect(focusStateOf({ picks: 0, program: claude, shellFamily: "pwsh", loaded: false })).toEqual({ picks: 0, prompt: true, ready: false });
+    expect(focusStateOf({ picks: 0, program: claude, shellFamily: "cmd", loaded: true }).prompt).toBe(false);
+    expect(focusStateOf({ picks: 0, program: { ...claude, noFirst: true }, shellFamily: "pwsh", loaded: true }).prompt).toBe(false);
+  });
+});
+
+describe("lostFocus", () => {
+  const el = (name: string) => ({ name }) as unknown as HTMLElement;
+  const root = (present: string[]) => ({ querySelector: (s: string) => (present.includes(s) ? el(s) : null) });
+  it("is the prompt when there is one, else the agent chip, which says why the agent went (never Start, where Enter starts a bare shell)", () => {
+    expect(lostFocus(root([".launcher__prompt", '.launcher__chip[aria-label^="Agent:"]', ".launcher__start"]))).toEqual(el(".launcher__prompt"));
+    expect(lostFocus(root(['.launcher__chip[aria-label^="Agent:"]', ".launcher__start"]))).toEqual(el('.launcher__chip[aria-label^="Agent:"]'));
   });
 });
 

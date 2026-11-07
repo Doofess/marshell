@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ShellAgents } from "../../generated/ShellAgents";
 import { LAUNCH_AGENTS, type LaunchProgram } from "./launchChoice";
-import { effectiveAgent, missingLine, offerFor } from "./shellAgents";
+import { effectiveAgent, firstAgent, missingLine, offerFor } from "./shellAgents";
 
 const agent = (id: string) => LAUNCH_AGENTS.find((p) => p.id === id)!;
 const deepseek: LaunchProgram = { ...agent("claude"), id: "preset:deepseek", label: "DeepSeek", preset: "deepseek", agent: "claude" };
@@ -55,5 +55,22 @@ describe("effectiveAgent", () => {
   });
   it("keeps the chosen agent while the shell is being asked", () => {
     expect(effectiveAgent({ agent: "claude" }, { state: "checking" })).toBe("claude");
+  });
+});
+
+describe("firstAgent", () => {
+  it("a_folder_with_nothing_remembered_starts_with_the_first_agent_the_shell_offers", () => {
+    // No CLI is the default by its name: where Claude Code isn't installed, the first agent that is starts.
+    const codexOnly = offerFor(programs, answer("pwsh", { claude: "not_installed", codex: null, antigravity: null, copilot: "not_installed" }), "pwsh");
+    expect(firstAgent(codexOnly, [])).toBe("codex");
+    expect(firstAgent(offerFor(programs, answer("pwsh", { claude: null, codex: null }), "pwsh"), [])).toBe("claude");
+    // While the shell is being asked: the first agent found on this machine, so the chip keeps it when the answer agrees.
+    expect(firstAgent({ state: "checking" }, ["codex", "antigravity"])).toBe("codex");
+    expect(firstAgent({ state: "checking" }, [])).toBeNull();
+    // No agent to offer: Just the shell.
+    expect(firstAgent({ state: "unreached" }, ["codex"])).toBeNull();
+    expect(firstAgent({ state: "ready", offered: [], missing: [] }, ["codex"])).toBeNull();
+    // A preset is never the default by itself.
+    expect(firstAgent({ state: "ready", offered: [deepseek], missing: [] }, [])).toBeNull();
   });
 });

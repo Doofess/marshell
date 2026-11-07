@@ -30,17 +30,18 @@ import type { Project } from "../launcher/filter";
 import { Launcher, type TaskConfirm } from "../launcher/Launcher";
 import { typedPath, type PathCheck } from "../launcher/folderRows";
 import { openFolder, openList, type OpenLists } from "../launcher/launcherKeys";
-import { effectiveAgent, offerFor } from "../launcher/shellAgents";
+import { effectiveAgent, firstAgent, offerFor } from "../launcher/shellAgents";
 import { offeredMode } from "../modes/sessionModes";
 import { taskNameFor } from "../tasks/taskName";
 import { appScheme } from "../terminal/terminalTheme";
 import { adminChip, defaultSessionName, programById, sessionNameFor, startingText, WAITING_FOR_ADMIN, type LauncherChoice } from "../launcher/launchChoice";
 import type { Os } from "../../lib/keymap";
-import { browseFolder, checkState, chooseFolder, latestOnly, createRequest, createThenLaunch, initialFocus, launchRequest, progressText, refocus, rememberTasks, replansAfter, type FocusState, liveAgents, liveShells, nameSource, preselect, preselectMode, startFailure, startProblem, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
+import { browseFolder, checkState, chooseFolder, latestOnly, createRequest, createThenLaunch, focusStateOf, initialFocus, launchRequest, lostFocus, progressText, refocus, rememberTasks, replansAfter, type FocusState, liveAgents, liveShells, nameSource, preselect, preselectMode, startFailure, startProblem, taskRequest, toLauncherProject, wantsTask } from "./launchPrograms";
 
 // The worktree flag is part of this state and nothing else: it is never read from or written to the remembered choices, so the chip starts off every time.
-// The shell is empty until the profiles load: then the default one (or the remembered one) is shown. An agent the shell lacks becomes Just the shell.
-const INITIAL: LauncherChoice = { shell: "", agent: "claude", projectId: "", mode: "manual", pace: "Balanced", worktree: false };
+// The shell is empty until the profiles load: then the default one (or the remembered one) is shown. The agent is the remembered one, else the
+// shell's first (`firstAgent`); this one is read only after a pick. An agent the shell lacks becomes Just the shell.
+const INITIAL: LauncherChoice = { shell: "", agent: null, projectId: "", mode: "manual", pace: "Balanced", worktree: false };
 
 /** `layout` is read on every opening, so a folder used a moment ago is already remembered; null when it could not be read. */
 type Loaded = { projects: Project[]; doc: ProfilesDoc; layout: LayoutDoc | null; catalog: AgentCatalog | null };
@@ -84,6 +85,8 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
   const [shellPicked, setShellPicked] = useState(false);
   const [agentPicked, setAgentPicked] = useState(false);
   const [modePicked, setModePicked] = useState(false);
+  // How many shell and agent picks were made here: focus moves on after a pick, never after a shell's answer alone.
+  const [picks, setPicks] = useState(0);
   // One state for the three lists, so opening one closes the others.
   const [lists, setLists] = useState<OpenLists>({ query: null, shellsOpen: false, agentsOpen: false });
   const { query, shellsOpen, agentsOpen } = lists;
@@ -164,7 +167,8 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
   const programs = useMemo(() => launcherSetup(liveAgents(loaded?.catalog ?? null), shellFamily === "wsl", detections, detectionFailed), [loaded, shellFamily, detections, detectionFailed]);
   const offer = offerFor(programs, answers[shell], shell);
   // Only an agent the shell offers is shown or sent; one it lacks becomes Just the shell once the answer is in.
-  const wantedAgent: LauncherChoice["agent"] = agentPicked ? choice.agent : remembered !== undefined ? remembered.agent : choice.agent;
+  const found = useMemo(() => (loaded?.catalog?.agents ?? []).filter((a) => a.found).map((a) => a.id), [loaded]);
+  const wantedAgent: LauncherChoice["agent"] = agentPicked ? choice.agent : remembered !== undefined ? remembered.agent : firstAgent(offer, found);
   const agent = effectiveAgent({ agent: wantedAgent }, offer);
   const admin = adminChip(elevatedWanted, os, programById(agent ?? "", programs)?.adminUnavailable);
   const elevated = admin.on;
@@ -194,14 +198,19 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
   }, [endpoint, shell]);
 
   // A pick leaves focus on its chip, where Enter reopens the list; and Start is disabled until the lists load. Command Prompt has no prompt line.
-  const focusState: FocusState = { program: `${shown.shell}:${shown.agent ?? ""}`, prompt: agentProgram !== undefined && agentProgram.noFirst !== true && shellFamily !== "cmd", ready: loaded !== null };
+  const focusState: FocusState = focusStateOf({ picks, program: agentProgram, shellFamily, loaded: loaded !== null });
   const lastFocus = useRef<FocusState | null>(null);
   useEffect(() => {
     const target = refocus(lastFocus.current, focusState);
+    const looked = lastFocus.current !== null;
     lastFocus.current = focusState;
-    if (target) root.current?.querySelector<HTMLElement>(target === "prompt" ? ".launcher__prompt" : ".launcher__start")?.focus();
+    const at = root.current;
+    if (!at) return;
+    if (target) at.querySelector<HTMLElement>(target === "prompt" ? ".launcher__prompt" : ".launcher__start")?.focus();
+    // No pick, but the focused control went (a shell's answer took the prompt, or Start was still disabled at the opening).
+    else if (looked && (document.activeElement === null || document.activeElement === document.body)) lostFocus(at)?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- focusState is rebuilt every render; its three fields are the dependencies.
-  }, [focusState.program, focusState.prompt, focusState.ready]);
+  }, [focusState.picks, focusState.prompt, focusState.ready]);
 
   // Check the typed path 150 ms after the last keystroke. Closing the field (query null) or unmounting cancels the timer and drops any answer on its way.
   useEffect(() => {
@@ -229,6 +238,7 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
   const patch = (p: Partial<LauncherChoice>) => {
     if (p.shell !== undefined) setShellPicked(true);
     if (p.agent !== undefined) setAgentPicked(true);
+    if (p.shell !== undefined || p.agent !== undefined) setPicks((n) => n + 1);
     if (p.mode !== undefined) setModePicked(true);
     setChoice((c) => ({ ...c, ...p }));
     setError(undefined);

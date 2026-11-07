@@ -197,6 +197,12 @@ describe("Launcher: what the shell offers", () => {
     // With the list closed, the missing line is gone and nothing points at it.
     expect(describedBy(on({}, { offer: ready }), "Agent: Claude")).toEqual([]);
   });
+  it("the_agent_chip_is_the_one_lostFocus_looks_for", () => {
+    // launchPrograms.ts's lostFocus finds it as .launcher__chip[aria-label^="Agent:"], with an agent and without one.
+    for (const agent of ["claude", null] as const) {
+      expect(html(view({ choice: { ...DEFAULT_CHOICE, agent } }))).toMatch(/<button type="button" class="launcher__chip"[^>]*aria-label="Agent: /);
+    }
+  });
   it("with_no_agent_the_sentence_reads_with_no_agent", () => {
     const h = html(view({ choice: { ...DEFAULT_CHOICE, agent: null } }));
     expect(h).toContain("<span> with </span>");
