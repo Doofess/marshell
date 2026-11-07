@@ -29,10 +29,12 @@
   overflow: clip;
 }
 
-/* The launcher sheet sits over the whole window while there are no sessions. */
+/* The launcher sheet sits over the whole window. Above the same layers as the palette: at auto, xterm's link layer (a clear
+   canvas) lay over the sheet once a session was open and took every click meant for a chip. */
 .live-app__launcher {
   position: absolute;
   inset: 0;
+  z-index: 20;
 }
 
 /* First run: over the whole window, above the same layers as the palette. */

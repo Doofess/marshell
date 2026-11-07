@@ -15,6 +15,10 @@ describe("command palette layer", () => {
     const z = Number(block(css, ".live-app__palette").match(/z-index:\s*(\d+)/)?.[1] ?? 0);
     expect(z).toBeGreaterThan(11);
   });
+  it("the launcher's layer stacks above them too, so xterm's link layer doesn't take the clicks meant for a chip", () => {
+    const z = Number(block(css, ".live-app__launcher").match(/z-index:\s*(\d+)/)?.[1] ?? 0);
+    expect(z).toBeGreaterThan(11);
+  });
   it("lifts the sheet with a soft shadow, not a bright halo", () => {
     const shadow = block(palette, ".palette__sheet").match(/box-shadow:\s*([^;]+);/)?.[1] ?? "";
     const pct = Number(shadow.match(/(\d+)%,\s*transparent/)?.[1] ?? 100);
