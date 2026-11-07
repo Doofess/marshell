@@ -1514,6 +1514,23 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
         - `arrangement`, `ratios` and `zoomed` stay in the file as dead fields until 6q-2.
         - Ctrl+Shift+D and Ctrl+Shift+P stay unbound.
         - The shell panel's "Open in a pane" becomes "Open as a session", and it selects the new session.
+   - **Slice 6q-0 decisions (2026-11-07).** The browser spike. Asked of the user on 2026-11-07, when the slice was planned. The plan is `docs/superpowers/plans/2026-11-07-phase-6q-0-browser-spike.md`, and the findings go in `docs/spikes/S12-browser-pane.md`.
+     1. **The spike branch may turn on Tauri's `unstable` feature and scope the default capability by `webviews` instead of `windows`.** Both stay on `phase-6q-0`, which is never merged. 6q-3 asks again.
+     2. **Real input is mixed.**
+        - The agent sends the keys with SendInput. Before each one it checks that the dev window is in front, and it repeats each key 20 times to count misses.
+        - The user does Alt+Tab, the window-edge drag, the drop from Explorer and the display-scale changes (125% and 150%) by hand.
+     3. **The spike also runs the research's four extra checks:**
+        - the overlay freeze, with CapturePreview, timed;
+        - Back, Forward and Reload through WebView2's COM API, and a cookie that survives a restart;
+        - isolation: the page can't call Marshell's IPC, and the navigation allow-list holds;
+        - Tab into and out of the page, with the page's UI Automation tree reachable.
+
+        There is no screen-reader pass; that stays at release sign-off.
+     4. **The agent writes the spike's code in the main thread.** Sonnet workers take only mechanical pieces.
+     5. **Decided, not asked:**
+        - the spike's code stays on the pushed branch `phase-6q-0`;
+        - the plan, this list and the findings reach `main` through a docs-only pull request;
+        - the go or no-go is added here once the user gives it.
 7. **Doctor**: the fix actions, on top of the phase-3 config core: "Fix X issues" and one-click undo; folds in each CLI's own doctor; detects duplicate notifications and offers to turn off each CLI's own desktop notifications (brief §5.5, moved here by slice 4e decision 4); reports the tokens injected by project references; checks Codex hook trust; waste checks (unused MCP servers and skills, long descriptions, broad scopes, a token-cost estimate); offers to raise `cleanupPeriodDays`.
    - Added 2026-10-16 (research in `docs/research/2026-10-16-accounts-cloud-extensions.md`):
      - **One-click doctor per CLI.** It runs the CLI's own doctor (`claude doctor` text, `codex doctor --json`) and opens a summary window of suggested fixes. Every fix goes through preview, backup and undo; nothing is applied silently. Antigravity has no doctor command, so it gets none.
