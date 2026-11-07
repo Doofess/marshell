@@ -1,12 +1,12 @@
-/** Where the launcher's highlighted option is being moved: the folder field (a text input) or the program grid. */
-export type OpenList = "folder" | "programs" | null;
+/** Where the launcher's highlighted option is being moved: the folder field (a text input), or the shell or agent list. */
+export type OpenList = "shells" | "agents" | "folder";
 
 /**
  * The keys that move the highlighted option. In the folder field Left and Right belong to the caret, so a typo in the
- * query can be fixed; only the program grid, which has no caret, uses all four arrows.
+ * query can be fixed; only the shell and agent lists, which have no caret, use all four arrows.
  */
-export function listNavKeys(open: OpenList): readonly string[] {
-  if (open === "programs") return ["ArrowDown", "ArrowUp", "ArrowRight", "ArrowLeft"];
+export function listNavKeys(open: OpenList | null): readonly string[] {
+  if (open === "shells" || open === "agents") return ["ArrowDown", "ArrowUp", "ArrowRight", "ArrowLeft"];
   if (open === "folder") return ["ArrowDown", "ArrowUp"];
   return [];
 }
@@ -19,17 +19,21 @@ export function stepActive(index: number, key: string, size: number): number {
   return (from + step + size) % size;
 }
 
-/** Which of the launcher's two lists is open: the folder field when `query` is not null, the program grid when `programsOpen`. */
-export type OpenLists = { query: string | null; programsOpen: boolean };
+/** Which of the launcher's three lists is open: the folder field when `query` is not null, the shell list, the agent list. At most one is. */
+export type OpenLists = { query: string | null; shellsOpen: boolean; agentsOpen: boolean };
 
-/** Opens or closes the program grid. The launcher hides the grid while the folder field is open, so opening it closes the field. */
-export function openPrograms(lists: OpenLists, open: boolean): OpenLists {
-  return { query: open ? null : lists.query, programsOpen: open };
+/** Opens or closes the shell or agent list. The launcher shows one list at a time, so opening one closes the others. */
+export function openList(lists: OpenLists, which: "shells" | "agents", open: boolean): OpenLists {
+  return {
+    query: open ? null : lists.query,
+    shellsOpen: which === "shells" ? open : open ? false : lists.shellsOpen,
+    agentsOpen: which === "agents" ? open : open ? false : lists.agentsOpen,
+  };
 }
 
-/** Sets the folder field's text, null to close it. Opening it closes the program grid, which would otherwise come back after a pick. */
+/** Sets the folder field's text, null to close it. Opening it closes the other lists, which would otherwise come back after a pick. */
 export function openFolder(lists: OpenLists, query: string | null): OpenLists {
-  return { query, programsOpen: query === null ? lists.programsOpen : false };
+  return query === null ? { ...lists, query } : { query, shellsOpen: false, agentsOpen: false };
 }
 
 /**

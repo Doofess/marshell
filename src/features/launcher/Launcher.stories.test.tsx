@@ -18,13 +18,20 @@ describe("the launcher stories", () => {
     expect(render("TypedPathFound")).toContain("Use");
     expect(render("TypedPathMissing")).toContain('aria-disabled="true"');
   });
-  it("show the program list with both headings, and a shell without mode and pace chips, but with the worktree chip", () => {
-    const open = render("AgentsAndShells");
-    for (const g of ["Agents", "Shells"]) expect(open).toContain(`>${g}<`);
+  it("show the shell list, the agent list led by Just the shell, and Just the shell without mode and pace chips but with the worktree chip", () => {
+    expect(render("Shells")).toContain('aria-label="Shells"');
+    const agents = render("AgentsInTheShell");
+    expect(agents).toContain('aria-label="Agents in PowerShell"');
+    expect(agents).toContain(">Just the shell<");
     for (const n of ["ShellPicked"] as const) {
       const h = render(n);
       expect(h, n).not.toContain("Balanced");
       expect(h, n).toContain('role="checkbox"');
     }
+  });
+  it("show the missing line, the checking note and the unreached note", () => {
+    expect(render("AgentMissingInTheShell")).toContain("Not in WSL: Antigravity (not installed), GitHub Copilot (Marshell runs it in WSL later)");
+    expect(render("CheckingTheShell")).toContain("Checking which agents WSL has…");
+    expect(render("ShellUnreached")).toContain("so only the shell is offered.");
   });
 });

@@ -14,20 +14,20 @@ import type { FolderInfo } from "../../generated/FolderInfo";
 import { filterProjects, highlight, pickByLetter, projectLabel, type Project, type Range } from "./filter";
 import { browseKey, folderEnter, folderRows, rowEnabled, type FolderRow, type PathCheck } from "./folderRows";
 import {
-  LAUNCH_GROUPS,
-  LAUNCH_PROGRAMS,
+  LAUNCH_AGENTS,
+  LAUNCH_SHELLS,
   MODES,
   PACES,
   adminChip,
-  isAgentProgram,
   launcherSentence,
   programById,
-  programsIn,
   rememberedNote,
   type LaunchProgram,
+  type LaunchShell,
   type LauncherChoice,
   type Remembered,
 } from "./launchChoice";
+import { effectiveAgent, missingLine, type ShellOffer } from "./shellAgents";
 import { effectiveMode, nextOffered, offeredMode } from "../modes/sessionModes";
 import { adminKeyClaimed, focusFellOut, listNavKeys, stepActive } from "./launcherKeys";
 import "./Launcher.css";
@@ -50,8 +50,10 @@ export type LauncherView = {
   pathCheck?: PathCheck | null;
   /** The highlighted option of whichever list is open. */
   activeIndex: number;
-  /** True while the first chip's list of agents, shells and tools is open. */
-  programsOpen?: boolean;
+  /** True while the shell chip's list is open. */
+  shellsOpen?: boolean;
+  /** True while the agent chip's list is open. */
+  agentsOpen?: boolean;
   remembered?: Remembered;
   prompt?: string;
   /** The Administrator chip is on. Launcher state only: it is not part of `choice` and is never remembered. */
@@ -75,7 +77,8 @@ type Props = {
   onUsePath?: (folder: FolderInfo) => void;
   /** Open the native folder picker (the Browse… row, or Ctrl+O in the folder field). */
   onBrowse?: () => void;
-  onPrograms?: (open: boolean) => void;
+  onShells?: (open: boolean) => void;
+  onAgents?: (open: boolean) => void;
   onActive?: (index: number) => void;
   onPrompt?: (text: string) => void;
   onStart?: () => void;
@@ -98,8 +101,12 @@ type Props = {
   pending?: boolean;
   /** The platform; the Administrator chip is available on Windows only. Default "windows". */
   os?: Os;
-  /** What the first chip lists. Defaults to every program in `LAUNCH_PROGRAMS`. */
-  programs?: LaunchProgram[];
+  /** What the shell chip lists. Defaults to `LAUNCH_SHELLS`. */
+  shells?: LaunchShell[];
+  /** The agents the agent chip can list. Defaults to `LAUNCH_AGENTS`. */
+  agents?: LaunchProgram[];
+  /** What the chosen shell offers (`offerFor`). Absent means every agent in `agents`. */
+  offer?: ShellOffer;
   /** Why the core refused the launch, shown under Start. */
   error?: string;
   /** A launch is in flight: Start is disabled and keeps its label. In the confirm view it is the worktree being made. */
@@ -130,39 +137,51 @@ const cycle = <T,>(all: T[], now: T) => all[(all.indexOf(now) + 1) % all.length]
 
 /**
  * The launcher sheet (docs/PLAN.md "Launch a session"): one sentence of chips and a prompt line. Tab moves between the
- * chips, typing in the folder chip filters folders, letters pick values, Enter starts. The first chip lists AI agents,
- * shells and tools: a shell or tool is a plain terminal, so it has no mode or pace chip and its line asks for a
- * first command (it can still run in a worktree). The prompt line is set like the one in every pane (a flat command line), in the vendor's colour for an
+ * chips, typing in the folder chip filters folders, letters pick values, Enter starts. The first chip picks the shell and the
+ * second the agent that shell offers, or Just the shell, which is a plain terminal with no mode or pace chip and no prompt line
+ * (it can still run in a worktree). The prompt line is set like the one in every pane (a flat command line), in the vendor's colour for an
  * agent. Presentational: the parent owns the state.
  */
-export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse, onPrograms, onActive, onPrompt, onStart, onElevated, onBypassAck, onTaskName, onConfirm, onBack, onAllow, onSkipScripts, onClose, paceChip = true, os = "windows", pending = false, programs = LAUNCH_PROGRAMS, error, busy = false, busyText = "Creating the worktree…" }: Props) {
+export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse, onShells, onAgents, onActive, onPrompt, onStart, onElevated, onBypassAck, onTaskName, onConfirm, onBack, onAllow, onSkipScripts, onClose, paceChip = true, os = "windows", pending = false, shells = LAUNCH_SHELLS, agents = LAUNCH_AGENTS, offer: offerProp, error, busy = false, busyText = "Creating the worktree…" }: Props) {
   const { choice, projects, query, activeIndex, remembered, nextNumber, taskName, confirm } = view;
   const project = projects.find((p) => p.id === choice.projectId);
-  const agentRun = isAgentProgram(choice.program, programs);
+  const offer: ShellOffer = offerProp ?? { state: "ready", offered: agents, missing: [] };
+  const shell: LaunchShell = shells.find((x) => x.id === choice.shell) ?? shells[0] ?? { id: choice.shell, label: "…", kind: "program", family: "posix" };
+  // The agent list: every agent while the shell is being asked, none once it could not be reached, else what it offers. Just the shell is always row 0.
+  const listed = offer.state === "ready" ? offer.offered : offer.state === "checking" ? agents : [];
+  const agentId = effectiveAgent(choice, offer);
+  const program = agentId === null ? undefined : programById(agentId, agents);
+  const agentRun = program !== undefined;
+  const checking = offer.state === "checking";
+  const cmdShell = shell.family === "cmd";
   // A worktree needs git: without the pace chip the chip is offered only for a folder that has a branch. Any program can use one.
   const inGit = project?.branch !== undefined;
   const showWorktree = paceChip || inGit;
   const showTask = showWorktree && choice.worktree && inGit && taskName !== undefined;
-  const program = programById(choice.program, programs) ?? programs[0] ?? LAUNCH_PROGRAMS[0]!;
   // The modes this agent offers; none means no mode chip. The chosen mode shown is one of them.
-  const modes = program.modes ?? MODES;
-  const admin = adminChip(view.elevated, os, program.adminUnavailable);
+  const modes = program?.modes ?? MODES;
+  const admin = adminChip(view.elevated, os, program?.adminUnavailable);
   // Administrator starts request Manual and lock the chip; an agent's own setting may still make that Bypass.
   const modeLocked = admin.on && agentRun;
-  const pickedMode = modeLocked ? "manual" : (offeredMode(program.modes, choice.mode) ?? choice.mode);
-  const mode = effectiveMode(pickedMode, program.skipsAll !== undefined);
-  const settingBypass = program.skipsAll;
-  const needsAck = admin.on && agentRun && (mode === "bypass" || program.adminSetupFailed === true);
-  const canStart = !busy && !(admin.on && program.adminSetupPending) && (!needsAck || view.bypassAcknowledged === true);
+  const pickedMode = modeLocked ? "manual" : (offeredMode(program?.modes, choice.mode) ?? choice.mode);
+  const mode = effectiveMode(pickedMode, program?.skipsAll !== undefined);
+  const settingBypass = program?.skipsAll;
+  const needsAck = admin.on && agentRun && (mode === "bypass" || program?.adminSetupFailed === true);
+  const canStart = !busy && !checking && !(admin.on && program?.adminSetupPending) && (!needsAck || view.bypassAcknowledged === true);
   const start = () => {
     if (canStart) onStart?.();
   };
   const note = agentRun && !modeLocked ? rememberedNote(project?.name ?? "this folder", remembered) : null;
   const folderOpen = query !== null;
-  const programsOpen = !folderOpen && view.programsOpen === true;
+  const shellsOpen = !folderOpen && view.shellsOpen === true;
+  const agentsOpen = !folderOpen && !shellsOpen && view.agentsOpen === true;
   const options = folderOpen ? filterProjects(query, projects) : [];
   const rows = folderOpen ? folderRows(view.pathCheck ?? null, options) : [];
-  const listSize = programsOpen ? programs.length : rows.length;
+  const listSize = shellsOpen ? shells.length : agentsOpen ? listed.length + 1 : rows.length;
+  const agentLabels = ["Just the shell", ...listed.map((p) => p.label)];
+  const agentIndex = agentId === null ? 0 : listed.findIndex((p) => p.id === agentId) + 1;
+  const pickAgent = (i: number) => onChange?.({ agent: i <= 0 ? null : (listed[i - 1]?.id ?? null) });
+  const missing = offer.state === "ready" ? missingLine(shell.label, offer.missing) : null;
   // A row's click and Enter do the same; a row that can't be taken does nothing.
   const takeRow = (row: FolderRow | undefined) => {
     const act = folderEnter(row);
@@ -235,11 +254,12 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
       toggleAdmin();
       return;
     }
-    const listOpen = folderOpen || programsOpen;
+    const listOpen = folderOpen || shellsOpen || agentsOpen;
     if (e.key === "Escape") {
       e.preventDefault();
       if (folderOpen) onQuery?.(null);
-      else if (programsOpen) onPrograms?.(false);
+      else if (shellsOpen) onShells?.(false);
+      else if (agentsOpen) onAgents?.(false);
       else onClose?.();
       return;
     }
@@ -248,7 +268,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
       onBrowse?.();
       return;
     }
-    if (listOpen && listSize > 0 && listNavKeys(programsOpen ? "programs" : "folder").includes(e.key)) {
+    if (listOpen && listSize > 0 && listNavKeys(shellsOpen ? "shells" : agentsOpen ? "agents" : "folder").includes(e.key)) {
       e.preventDefault();
       onActive?.(stepActive(activeIndex, e.key, listSize));
       return;
@@ -257,10 +277,13 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
     const onButton = (e.target as HTMLElement).closest("button") !== null;
     if (listOpen) {
       e.preventDefault();
-      if (programsOpen) {
-        const p = programs[activeIndex];
-        if (p) onChange?.({ program: p.id });
-        onPrograms?.(false);
+      if (shellsOpen) {
+        const s = shells[activeIndex];
+        if (s) onChange?.({ shell: s.id });
+        onShells?.(false);
+      } else if (agentsOpen) {
+        pickAgent(activeIndex);
+        onAgents?.(false);
       } else {
         takeRow(rows[activeIndex]);
       }
@@ -273,7 +296,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
   const chipKeys = (labels: string[], current: number, set: (i: number) => void) => (e: KeyboardEvent<HTMLButtonElement>) => letter(labels, current, e.key, set);
 
   return (
-    <div className="launcher" data-open={folderOpen || programsOpen || undefined}>
+    <div className="launcher" data-open={folderOpen || shellsOpen || agentsOpen || undefined}>
       <div className="launcher__backdrop" />
       <div
         ref={sheet}
@@ -282,7 +305,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
         aria-modal="true"
         aria-label={confirm ? CONFIRM_TITLE : "Start a session"}
         aria-describedby={id("desc")}
-        data-agent={agentRun ? program.kind : undefined}
+        data-agent={program?.kind}
         data-manual={!agentRun || undefined}
         onKeyDown={onSheetKey}
       >
@@ -300,7 +323,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
             {asking && <ScriptsTrust scripts={asking.scripts} allowLabel={asking.allowLabel} cancelLabel={asking.cancelLabel} busy={busy} headingRef={trustHeading} onAllow={() => onAllow?.()} onCancel={() => onSkipScripts?.()} />}
             {confirm.state === "ready" && asking?.only !== true && (
               <>
-                <p className="launcher__lede">Marshell will run these commands, then start {program.label} in the new folder.</p>
+                <p className="launcher__lede">Marshell will run these commands, then start {program?.label ?? shell.label} in the new folder.</p>
                 <CommandList commands={scripts?.kind === "setup" ? [...confirm.commands, `setup: ${scripts.script}`] : confirm.commands} />
                 {scripts?.kind === "problem" && (
                   <p className="launcher__error" dir="auto">
@@ -342,22 +365,41 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
                 type="button"
                 className="launcher__chip"
                 role="combobox"
-                aria-label={`Program: ${program.label}`}
+                aria-label={`Shell: ${shell.label}`}
                 aria-haspopup="listbox"
-                aria-expanded={programsOpen}
-                aria-controls={programsOpen ? id("programs") : undefined}
-                aria-activedescendant={programsOpen ? id(`prog-${activeIndex}`) : undefined}
-                onClick={() => onPrograms?.(!programsOpen)}
+                aria-expanded={shellsOpen}
+                aria-controls={shellsOpen ? id("shells") : undefined}
+                aria-activedescendant={shellsOpen ? id(`shell-${activeIndex}`) : undefined}
+                onClick={() => onShells?.(!shellsOpen)}
                 onKeyDown={chipKeys(
-                  programs.map((p) => p.label),
-                  programs.indexOf(program),
-                  (i) => onChange?.({ program: programs[i]!.id }),
+                  shells.map((x) => x.label),
+                  shells.findIndex((x) => x.id === shell.id),
+                  (i) => onChange?.({ shell: shells[i]!.id }),
                 )}
               >
                 <span aria-hidden="true" className="launcher__mark">
-                  <AgentMark agent={program.kind} size={12} />
+                  <AgentMark agent={shell.kind} size={12} />
                 </span>
-                {program.label}
+                {shell.label}
+              </button>
+              <span>{agentRun ? " running " : " with "}</span>
+              <button
+                type="button"
+                className="launcher__chip"
+                role="combobox"
+                aria-label={`Agent: ${program?.label ?? "none"}`}
+                aria-haspopup="listbox"
+                aria-expanded={agentsOpen}
+                aria-controls={agentsOpen ? id("agents") : undefined}
+                aria-activedescendant={agentsOpen ? id(`agent-${activeIndex}`) : undefined}
+                aria-describedby={checking ? id("checking") : undefined}
+                onClick={() => onAgents?.(!agentsOpen)}
+                onKeyDown={chipKeys(agentLabels, agentIndex, pickAgent)}
+              >
+                <span aria-hidden="true" className="launcher__mark">
+                  <AgentMark agent={program?.kind ?? shell.kind} size={12} />
+                </span>
+                {program?.label ?? "no agent"}
               </button>
               <span> in </span>
               {folderOpen ? (
@@ -386,7 +428,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
                     aria-label={`Mode: ${modeLabel(mode)}`}
                     aria-disabled={modeLocked || undefined}
                     aria-describedby={modeLocked ? id("admin-mode") : undefined}
-                    onClick={() => !modeLocked && onChange?.({ mode: nextOffered(program.modes, pickedMode) })}
+                    onClick={() => !modeLocked && onChange?.({ mode: nextOffered(program?.modes, pickedMode) })}
                     onKeyDown={modeLocked ? undefined : chipKeys(modes, modes.indexOf(pickedMode), (i) => onChange?.({ mode: modes[i]! }))}
                   >
                     {headerDanger(mode) && (
@@ -449,49 +491,77 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
             )}
             {modeLocked && (
               <p className="launcher__reason" id={id("admin-mode")}>
-                {program.adminSetupFailed ? "Marshell couldn't read Antigravity's settings, so it may skip every prompt." : program.skipsAll ? `${program.label} runs as Bypass because its own ${program.skipsAll.setting} setting skips every prompt.` : ADMIN_MODE_REASON}
+                {program?.adminSetupFailed ? "Marshell couldn't read Antigravity's settings, so it may skip every prompt." : program?.skipsAll ? `${program.label} runs as Bypass because its own ${program.skipsAll.setting} setting skips every prompt.` : ADMIN_MODE_REASON}
               </p>
             )}
 
-            {settingBypass && !modeLocked && <p className="launcher__reason">{program.label} runs as Bypass because its own {settingBypass.setting} setting skips every prompt.</p>}
-            {admin.on && program.adminSetupPending && <p className="launcher__reason">Checking Antigravity's settings…</p>}
+            {settingBypass && !modeLocked && <p className="launcher__reason">{program?.label} runs as Bypass because its own {settingBypass.setting} setting skips every prompt.</p>}
+            {admin.on && program?.adminSetupPending && <p className="launcher__reason">Checking Antigravity's settings…</p>}
 
-            {programsOpen && (
-              <div className="launcher__programs" id={id("programs")} role="listbox" aria-label="Agents and shells">
-                {LAUNCH_GROUPS.filter((g) => programsIn(g, programs).length > 0).map((g) => (
-                  <div key={g} className="launcher__group" role="group" aria-labelledby={id(`group-${g}`)}>
-                    <span className="launcher__group-name" id={id(`group-${g}`)}>
-                      {g}
-                    </span>
-                    <div className="launcher__choices">
-                      {programsIn(g, programs).map((p) => {
-                        const i = programs.indexOf(p);
-                        return (
-                          <div
-                            key={p.id}
-                            id={id(`prog-${i}`)}
-                            role="option"
-                            aria-selected={i === activeIndex}
-                            className="launcher__program"
-                            data-active={i === activeIndex || undefined}
-                            data-current={p.id === choice.program || undefined}
-                            onClick={() => {
-                              onChange?.({ program: p.id });
-                              onPrograms?.(false);
-                            }}
-                          >
-                            <span aria-hidden="true" className="launcher__mark">
-                              <AgentMark agent={p.kind} size={16} />
-                            </span>
-                            {p.label}
-                          </div>
-                        );
-                      })}
+            {shellsOpen && (
+              <div className="launcher__programs" id={id("shells")} role="listbox" aria-label="Shells">
+                <div className="launcher__choices">
+                  {shells.map((x, i) => (
+                    <div
+                      key={x.id}
+                      id={id(`shell-${i}`)}
+                      role="option"
+                      aria-selected={i === activeIndex}
+                      className="launcher__program"
+                      data-active={i === activeIndex || undefined}
+                      data-current={x.id === shell.id || undefined}
+                      onClick={() => {
+                        onChange?.({ shell: x.id });
+                        onShells?.(false);
+                      }}
+                    >
+                      <span aria-hidden="true" className="launcher__mark">
+                        <AgentMark agent={x.kind} size={16} />
+                      </span>
+                      {x.label}
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             )}
+
+            {agentsOpen && (
+              <>
+                <div className="launcher__programs" id={id("agents")} role="listbox" aria-label={`Agents in ${shell.label}`}>
+                  <div className="launcher__choices">
+                    {[null, ...listed].map((p, i) => (
+                      <div
+                        key={p === null ? "none" : p.id}
+                        id={id(`agent-${i}`)}
+                        role="option"
+                        aria-selected={i === activeIndex}
+                        className="launcher__program"
+                        data-active={i === activeIndex || undefined}
+                        data-current={i === agentIndex || undefined}
+                        onClick={() => {
+                          pickAgent(i);
+                          onAgents?.(false);
+                        }}
+                      >
+                        <span aria-hidden="true" className="launcher__mark">
+                          <AgentMark agent={p === null ? shell.kind : p.kind} size={16} />
+                        </span>
+                        {p === null ? "Just the shell" : p.label}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                {/* Outside the listbox: only options may live inside one. */}
+                {missing !== null && <p className="launcher__reason">{missing}</p>}
+              </>
+            )}
+
+            {checking && (
+              <p className="launcher__reason" id={id("checking")}>
+                Checking which agents {shell.label} has…
+              </p>
+            )}
+            {offer.state === "unreached" && <p className="launcher__reason">Marshell couldn't reach {shell.label}, so only the shell is offered.</p>}
 
             {folderOpen && options.length === 0 && !view.pathCheck && (
               // Outside the listbox: only options may live inside one.
@@ -546,9 +616,10 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
               </ul>
             )}
 
-            {note && !folderOpen && !programsOpen && <p className="launcher__note">{note}</p>}
+            {note && !folderOpen && !shellsOpen && !agentsOpen && <p className="launcher__note">{note}</p>}
 
-            {!program.noFirst && (
+            {agentRun && cmdShell && <p className="launcher__reason">Command Prompt can't pass a first prompt. Type it once {program?.label} starts.</p>}
+            {agentRun && !cmdShell && !program?.noFirst && (
               <div className="launcher__line">
                 {/* A drawn chevron, as in the prompt line: a drawing needs 3:1, a text glyph would need 4.5:1 in the vendor colour. */}
                 <svg className="launcher__glyph" width="12" height="16" viewBox="0 0 12 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -556,8 +627,8 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
                 </svg>
                 <textarea
                   className="launcher__prompt"
-                  aria-label={agentRun ? "First prompt (optional)" : "First command (optional)"}
-                  placeholder={program.first}
+                  aria-label="First prompt (optional)"
+                  placeholder={program?.first}
                   rows={2}
                   defaultValue={view.prompt}
                   onChange={(e) => onPrompt?.(e.target.value)}
@@ -617,7 +688,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
           </p>
         )}
         <p className="launcher__sr" id={id("desc")}>
-          {launcherSentence({ ...choice, mode }, projects, programs, admin.on)}
+          {launcherSentence({ ...choice, agent: agentId, mode }, projects, agents, admin.on, shells)}
           {nextNumber !== undefined ? `. It becomes session ${nextNumber}` : ""}
         </p>
       </div>

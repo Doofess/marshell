@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LAUNCH_PROGRAMS } from "../launcher/launchChoice";
+import { LAUNCH_AGENTS as LAUNCH_PROGRAMS } from "../launcher/launchChoice";
 import type { Detection } from "../onboarding/types";
 import { launcherSetup, shownNumber } from "./launcherSetup";
 

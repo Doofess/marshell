@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adminKey, adminKeyClaimed, focusFellOut, listNavKeys, openFolder, openPrograms, stepActive } from "./launcherKeys";
+import { adminKey, adminKeyClaimed, focusFellOut, listNavKeys, openFolder, openList, stepActive } from "./launcherKeys";
 
 describe("launcherKeys: which keys move the highlighted option", () => {
   it("in the folder field only Up and Down do: Left and Right move the caret, so a typo can be fixed", () => {
@@ -7,8 +7,8 @@ describe("launcherKeys: which keys move the highlighted option", () => {
     expect(listNavKeys("folder")).not.toContain("ArrowLeft");
     expect(listNavKeys("folder")).not.toContain("ArrowRight");
   });
-  it("in the program grid all four arrows do", () => {
-    expect([...listNavKeys("programs")].sort()).toEqual(["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp"]);
+  it("in the shell and agent lists all four arrows do", () => {
+    for (const list of ["shells", "agents"] as const) expect([...listNavKeys(list)].sort()).toEqual(["ArrowDown", "ArrowLeft", "ArrowRight", "ArrowUp"]);
   });
   it("with no list open, none do", () => {
     expect(listNavKeys(null)).toEqual([]);
@@ -41,17 +41,20 @@ describe("launcherKeys: focus when the folder field closes", () => {
 });
 
 describe("launcherKeys: one list open at a time", () => {
-  it("opening the program list closes the folder field, so the program chip works while choosing a folder", () => {
-    expect(openPrograms({ query: "air", programsOpen: false }, true)).toEqual({ query: null, programsOpen: true });
-    expect(openPrograms({ query: "", programsOpen: false }, true)).toEqual({ query: null, programsOpen: true });
+  const closed = { query: null, shellsOpen: false, agentsOpen: false };
+  it("opening_one_list_closes_the_others", () => {
+    expect(openList({ ...closed, query: "air" }, "shells", true)).toEqual({ query: null, shellsOpen: true, agentsOpen: false });
+    expect(openList({ ...closed, query: "" }, "agents", true)).toEqual({ query: null, shellsOpen: false, agentsOpen: true });
+    expect(openList({ ...closed, shellsOpen: true }, "agents", true)).toEqual({ query: null, shellsOpen: false, agentsOpen: true });
+    expect(openList({ ...closed, agentsOpen: true }, "shells", true)).toEqual({ query: null, shellsOpen: true, agentsOpen: false });
+    expect(openFolder({ ...closed, shellsOpen: true }, "")).toEqual({ query: "", shellsOpen: false, agentsOpen: false });
+    expect(openFolder({ ...closed, agentsOpen: true }, "")).toEqual({ query: "", shellsOpen: false, agentsOpen: false });
+    expect(openFolder({ query: "", shellsOpen: false, agentsOpen: false }, "ai")).toEqual({ query: "ai", shellsOpen: false, agentsOpen: false });
   });
-  it("opening the folder field closes the program list, so it does not pop back once a folder is picked", () => {
-    expect(openFolder({ query: null, programsOpen: true }, "")).toEqual({ query: "", programsOpen: false });
-    expect(openFolder({ query: "", programsOpen: false }, "ai")).toEqual({ query: "ai", programsOpen: false });
-  });
-  it("closing either one leaves the other as it was", () => {
-    expect(openPrograms({ query: null, programsOpen: true }, false)).toEqual({ query: null, programsOpen: false });
-    expect(openFolder({ query: "ai", programsOpen: false }, null)).toEqual({ query: null, programsOpen: false });
+  it("closing one leaves the others as they were", () => {
+    expect(openList({ ...closed, shellsOpen: true }, "shells", false)).toEqual(closed);
+    expect(openList({ ...closed, query: "ai" }, "agents", false)).toEqual({ ...closed, query: "ai" });
+    expect(openFolder({ ...closed, query: "ai" }, null)).toEqual(closed);
   });
 });
 

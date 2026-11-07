@@ -3,8 +3,8 @@ import { AGENT_IDS } from "../../components/AgentMark/agents";
 import { TOOL_IDS } from "../../components/AgentMark/tools";
 import { PROJECTS } from "./fixtures";
 import {
-  LAUNCH_GROUPS,
-  LAUNCH_PROGRAMS,
+  LAUNCH_AGENTS,
+  LAUNCH_SHELLS,
   MODES,
   PACES,
   applyRemembered,
@@ -12,7 +12,6 @@ import {
   isAgentProgram,
   launcherSentence,
   programById,
-  programsIn,
   rememberedNote,
   WAITING_FOR_ADMIN,
   type Remembered,
@@ -21,26 +20,26 @@ import {
   type LauncherChoice,
 } from "./launchChoice";
 
-const base: LauncherChoice = { program: "claude", projectId: "my-app", mode: "plan", pace: "Quick", worktree: false };
+const base: LauncherChoice = { shell: "powershell", agent: "claude", projectId: "my-app", mode: "plan", pace: "Quick", worktree: false };
 
 describe("launcherSentence", () => {
-  it("reads as one sentence", () => {
-    expect(launcherSentence(base, PROJECTS)).toBe("Start Claude in my-app on main, Plan mode, Quick, no worktree");
+  it("reads as one sentence: the shell, the agent, the folder", () => {
+    expect(launcherSentence(base, PROJECTS)).toBe("Start PowerShell running Claude in my-app on main, Plan mode, Quick, no worktree");
   });
   it("says worktree when it is on, and drops the branch when there is none", () => {
-    expect(launcherSentence({ ...base, worktree: true, projectId: "scratch" }, PROJECTS)).toBe("Start Claude in scratch, Plan mode, Quick, in a new worktree");
+    expect(launcherSentence({ ...base, worktree: true, projectId: "scratch" }, PROJECTS)).toBe("Start PowerShell running Claude in scratch, Plan mode, Quick, in a new worktree");
   });
   it("copes with a project that is not in the list", () => {
     expect(launcherSentence({ ...base, projectId: "gone" }, PROJECTS)).toContain("in an unknown folder");
   });
   it("leaves the mode out for an agent that offers none", () => {
     const opencode: LaunchProgram = { id: "opencode", kind: "opencode", label: "opencode", cli: "opencode", group: "Agents", first: "What should opencode do first? (optional)", modes: [] };
-    expect(launcherSentence({ ...base, program: "opencode" }, PROJECTS, [opencode])).toBe("Start opencode in my-app on main, Quick, no worktree");
+    expect(launcherSentence({ ...base, agent: "opencode" }, PROJECTS, [opencode])).toBe("Start PowerShell running opencode in my-app on main, Quick, no worktree");
   });
-  it("is shorter for a manual CLI: no mode, no pace, and the worktree only when it is on", () => {
-    expect(launcherSentence({ ...base, program: "powershell" }, PROJECTS)).toBe("Start PowerShell in my-app on main");
-    expect(launcherSentence({ ...base, program: "cmd", projectId: "scratch" }, PROJECTS)).toBe("Start Command Prompt in scratch");
-    expect(launcherSentence({ ...base, program: "powershell", worktree: true }, PROJECTS)).toBe("Start PowerShell in my-app on main, in a new worktree");
+  it("with_no_agent_the_sentence_reads_with_no_agent: no mode, no pace, and the worktree only when it is on", () => {
+    expect(launcherSentence({ ...base, agent: null }, PROJECTS)).toBe("Start PowerShell with no agent in my-app on main");
+    expect(launcherSentence({ ...base, shell: "cmd", agent: null, projectId: "scratch" }, PROJECTS)).toBe("Start Command Prompt with no agent in scratch");
+    expect(launcherSentence({ ...base, agent: null, worktree: true }, PROJECTS)).toBe("Start PowerShell with no agent in my-app on main, in a new worktree");
   });
 });
 
@@ -52,33 +51,33 @@ describe("options", () => {
   });
 });
 
-describe("programs the first chip offers", () => {
-  it("groups them as Agents and Shells, in that order", () => {
-    expect(LAUNCH_GROUPS).toEqual(["Agents", "Shells"]);
-    for (const g of LAUNCH_GROUPS) expect(programsIn(g).length, g).toBeGreaterThan(0);
-    expect(LAUNCH_PROGRAMS.map((p) => p.group)).toEqual([...LAUNCH_PROGRAMS.map((p) => p.group)].sort((a, b) => LAUNCH_GROUPS.indexOf(a) - LAUNCH_GROUPS.indexOf(b)));
+describe("what the shell and agent chips offer", () => {
+  it("lists agents only: every one is an AI agent", () => {
+    for (const p of LAUNCH_AGENTS) expect(AGENT_IDS as readonly string[], p.id).toContain(p.id);
+    expect(LAUNCH_AGENTS.every((p) => p.group === "Agents")).toBe(true);
   });
-  it("offers AI agents under Agents and only manual CLIs under Shells", () => {
-    for (const p of programsIn("Agents")) expect(AGENT_IDS as readonly string[], p.id).toContain(p.id);
-    for (const p of programsIn("Shells")) expect(TOOL_IDS as readonly string[], p.id).toContain(p.id);
+  it("lists the shells by their tool marks, each with its family", () => {
+    for (const s of LAUNCH_SHELLS) expect(TOOL_IDS as readonly string[], s.id).toContain(s.kind);
+    expect(LAUNCH_SHELLS.map((s) => s.id)).toEqual(["powershell", "cmd", "gitbash", "wsl", "bash", "zsh"]);
+    expect(LAUNCH_SHELLS.find((s) => s.id === "cmd")?.family).toBe("cmd");
   });
-  it("covers the agents and the shells", () => {
-    const ids = LAUNCH_PROGRAMS.map((p) => p.id);
-    for (const id of ["claude", "codex", "antigravity", "copilot", "cursor", "opencode", "amp", "qwen", "grok", "powershell", "bash", "zsh", "cmd", "gitbash", "wsl"]) expect(ids, id).toContain(id);
-    for (const id of ["python", "node", "docker", "kubectl", "terraform", "ssh", "aws", "program"]) expect(ids, id).not.toContain(id);
+  it("covers the agents", () => {
+    const ids = LAUNCH_AGENTS.map((p) => p.id);
+    for (const id of ["claude", "codex", "antigravity", "copilot", "cursor", "opencode", "amp", "qwen", "grok"]) expect(ids, id).toContain(id);
+    for (const id of ["powershell", "bash", "zsh", "cmd", "gitbash", "wsl", "python", "node", "docker", "kubectl", "terraform", "ssh", "aws", "program"]) expect(ids, id).not.toContain(id);
   });
   it("lists Google's one agent, Antigravity: Gemini CLI is dropped", () => {
-    expect(LAUNCH_PROGRAMS.filter((p) => p.group === "Agents").map((p) => p.label)).toEqual(["Claude", "Codex", "Antigravity", "GitHub Copilot", "Cursor", "opencode", "Amp", "Qwen", "Grok"]);
-    expect(LAUNCH_PROGRAMS.map((p) => p.id)).not.toContain("gemini");
+    expect(LAUNCH_AGENTS.map((p) => p.label)).toEqual(["Claude", "Codex", "Antigravity", "GitHub Copilot", "Cursor", "opencode", "Amp", "Qwen", "Grok"]);
+    expect(LAUNCH_AGENTS.map((p) => p.id)).not.toContain("gemini");
   });
   it("has unique ids, labels and a first-line hint for each", () => {
-    expect(new Set(LAUNCH_PROGRAMS.map((p) => p.id)).size).toBe(LAUNCH_PROGRAMS.length);
-    expect(new Set(LAUNCH_PROGRAMS.map((p) => p.label)).size).toBe(LAUNCH_PROGRAMS.length);
-    for (const p of LAUNCH_PROGRAMS) expect(p.first.length, p.id).toBeGreaterThan(5);
+    expect(new Set(LAUNCH_AGENTS.map((p) => p.id)).size).toBe(LAUNCH_AGENTS.length);
+    expect(new Set(LAUNCH_AGENTS.map((p) => p.label)).size).toBe(LAUNCH_AGENTS.length);
+    for (const p of LAUNCH_AGENTS) expect(p.first.length, p.id).toBeGreaterThan(5);
   });
-  it("knows which are agents: only those get mode, pace and worktree chips", () => {
+  it("knows which choices have an agent: only those get mode, pace and prompt", () => {
     expect(isAgentProgram("claude")).toBe(true);
-    expect(isAgentProgram("powershell")).toBe(false);
+    expect(isAgentProgram(null)).toBe(false);
     expect(programById("profile:nope")).toBeUndefined();
   });
 });
@@ -88,7 +87,7 @@ describe("startingText", () => {
     expect(startingText("claude", "my-app")).toBe("Starting Claude Code in my-app…");
     expect(startingText("antigravity", "my-app")).toBe("Starting Antigravity CLI in my-app…");
     expect(startingText("codex", "my-app")).toBe("Starting Codex CLI in my-app…");
-    expect(startingText("powershell", "my-app")).toBe("Starting PowerShell in my-app…");
+    expect(startingText("PowerShell", "my-app", [])).toBe("Starting PowerShell in my-app…");
   });
 });
 
@@ -100,8 +99,8 @@ describe("remembered choices", () => {
   it("falls back to the first mode the program offers when the remembered one is not offered", () => {
     const cursor: LaunchProgram = { id: "cursor", kind: "cursor", label: "Cursor", cli: "Cursor CLI", group: "Agents", first: "What should Cursor do first? (optional)", modes: ["manual", "plan", "bypass"] };
     const opencode: LaunchProgram = { ...cursor, id: "opencode", kind: "opencode", label: "opencode", modes: [] };
-    const on = (program: LaunchProgram["id"]): LauncherChoice => ({ ...base, program });
-    expect(applyRemembered(on("cursor"), { mode: "auto-edit" }, [cursor, opencode])).toEqual({ ...base, program: "cursor", mode: "manual" });
+    const on = (agent: LaunchProgram["id"]): LauncherChoice => ({ ...base, agent });
+    expect(applyRemembered(on("cursor"), { mode: "auto-edit" }, [cursor, opencode])).toEqual({ ...base, agent: "cursor", mode: "manual" });
     expect(applyRemembered(on("cursor"), { mode: "plan" }, [cursor, opencode])).toMatchObject({ mode: "plan" });
     // No modes: the remembered one is kept as data, but nothing sends or shows it.
     expect(applyRemembered(on("opencode"), { mode: "auto-edit" }, [cursor, opencode])).toMatchObject({ mode: "auto-edit" });
@@ -140,7 +139,7 @@ describe("Administrator is launcher state only", () => {
   });
   it("the_new_tab_waits_for_approval: the text, and the sentence naming it", () => {
     expect(WAITING_FOR_ADMIN).toBe("Waiting for administrator approval…");
-    expect(launcherSentence(base, PROJECTS, LAUNCH_PROGRAMS, true)).toContain("as administrator");
+    expect(launcherSentence(base, PROJECTS, LAUNCH_AGENTS, true)).toContain("as administrator");
     expect(launcherSentence(base, PROJECTS)).not.toContain("administrator");
   });
 });
