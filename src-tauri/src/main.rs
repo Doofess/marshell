@@ -317,7 +317,7 @@ fn main() {
             if let tauri::WindowEvent::Resized(size) = event
                 && window.label() == "main"
             {
-                spike_browser::on_resized(window.app_handle(), *size); // spike 6q-0
+                spike_browser::on_resized(window, *size); // spike 6q-0
             }
         })
         .on_webview_event(|webview, event| {

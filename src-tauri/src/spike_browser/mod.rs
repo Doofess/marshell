@@ -5,7 +5,7 @@
 mod com;
 pub mod rules;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::io::Write;
 use std::path::PathBuf;
@@ -20,7 +20,7 @@ pub const LABEL: &str = "spike-page";
 const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI";
 
 /// The placeholder's box and the window's inner size when it was measured, in CSS pixels.
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PaneRect {
     pub x: f64,
@@ -111,8 +111,10 @@ pub fn set_bounds(app: &AppHandle, x: f64, y: f64, width: f64, height: f64, why:
 }
 
 /// Anchor mode (Task 4): when the app's window is resized, the page moves at once from the last measured rect, without
-/// waiting for the front. The front's next report still corrects it.
-pub fn on_resized(app: &AppHandle, size: tauri::PhysicalSize<u32>) {
+/// waiting for the front. The front's next report still corrects it. The window comes from the event: once the page
+/// exists, `get_webview_window("main")` returns None (S12 finding 16).
+pub fn on_resized(window: &tauri::Window, size: tauri::PhysicalSize<u32>) {
+    let app = window.app_handle();
     let Some(state) = app.try_state::<SpikeState>() else {
         return;
     };
@@ -122,10 +124,7 @@ pub fn on_resized(app: &AppHandle, size: tauri::PhysicalSize<u32>) {
     let Some(rect) = state.rect.lock().ok().and_then(|r| *r) else {
         return;
     };
-    let Some(main) = app.get_webview_window("main") else {
-        return;
-    };
-    let size = size.to_logical::<f64>(main.scale_factor().unwrap_or(1.0));
+    let size = size.to_logical::<f64>(window.scale_factor().unwrap_or(1.0));
     let a = rules::anchored(rect, size.width, size.height);
     let _ = set_bounds(app, a.x, a.y, a.width, a.height, "anchor");
 }
@@ -174,8 +173,7 @@ pub async fn spike_browser_open(app: AppHandle, url: String, rect: PaneRect) -> 
         return page.navigate(url).map_err(|e| e.to_string());
     }
     let state = app.state::<SpikeState>();
-    let main = app.get_webview_window("main").ok_or("no main window")?;
-    let window = main.as_ref().window();
+    let window = app.get_window("main").ok_or("no main window")?;
     let on_nav = app.clone();
     let on_popup = app.clone();
     let builder = WebviewBuilder::new(LABEL, WebviewUrl::External(url.clone()))
@@ -227,7 +225,18 @@ pub async fn spike_browser_open(app: AppHandle, url: String, rect: PaneRect) -> 
 
 #[tauri::command]
 pub async fn spike_browser_rect(app: AppHandle, rect: PaneRect) -> Result<(), String> {
-    *app.state::<SpikeState>().rect.lock().map_err(|e| e.to_string())? = Some(rect);
+    let state = app.state::<SpikeState>();
+    let window = app
+        .get_window("main")
+        .and_then(|w| Some((w.inner_size().ok()?, w.scale_factor().unwrap_or(1.0))))
+        .map(|(size, scale)| size.to_logical::<f64>(scale));
+    log(
+        &app,
+        "rust",
+        "rect-in",
+        json!({ "rect": rect, "window": window.map(|s| json!({ "width": s.width, "height": s.height })) }),
+    );
+    *state.rect.lock().map_err(|e| e.to_string())? = Some(rect);
     set_bounds(&app, rect.x, rect.y, rect.width, rect.height, "front")
 }
 

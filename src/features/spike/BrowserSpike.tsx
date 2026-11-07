@@ -129,12 +129,12 @@ export function BrowserSpike({ model, frozen }: Props) {
     const report = () => {
       if (created.current) void call("spike_browser_rect", { rect: measure(el) }).catch(() => {});
     };
+    // Only the placeholder's own ResizeObserver: the app lays itself out from a ResizeObserver too (LiveApp's
+    // useElementSize), so at the window's resize event the DOM still has the old layout and a report from it is stale.
     const ro = new ResizeObserver(report);
     ro.observe(el);
-    window.addEventListener("resize", report);
     return () => {
       ro.disconnect();
-      window.removeEventListener("resize", report);
       if (created.current) void call("spike_browser_visible", { visible: false }).catch(() => {});
     };
   }, [created]);
