@@ -483,6 +483,10 @@
 .launcher__line:focus-within {
   background: color-mix(in oklch, var(--accent) 14%, var(--bg-base));
 }
+/* The prompt's focus is its line's tint; its own ring would box the text inside the bar. */
+.launcher__prompt:focus-visible {
+  outline-color: transparent;
+}
 
 /* Why a chip is locked (Administrator off Windows, Mode while Administrator is on): a line under the sentence, read with the chip. */
 .launcher__reason {
@@ -540,6 +544,10 @@
   }
   .launcher__chip:focus-visible .launcher__box[data-checked] {
     background: Highlight;
+  }
+  /* Forced colors repaint a transparent ring; the line's Highlight outline already marks the prompt, so its own one is Canvas. */
+  .launcher__prompt:focus-visible {
+    outline-color: Canvas;
   }
   .launcher__opt[aria-disabled="true"] .launcher__opt-name,
   .launcher__opt[aria-disabled="true"] .launcher__opt-path {

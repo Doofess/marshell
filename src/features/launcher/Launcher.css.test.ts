@@ -14,8 +14,10 @@ const shipped = bare.slice(0, bare.indexOf(FORCED));
 const forced = bare.slice(bare.indexOf(FORCED));
 /** Decision 9's list: the prompt line, the Name, Task name and folder fields, the chips, Back and Start. */
 const FOCUSED = [".launcher__line:focus-within", ".launcher__name-input:focus-visible", ".launcher__task-input:focus-visible", ".launcher__input:focus-visible", ".launcher__chip:focus-visible", ".launcher__back:focus-visible", ".launcher__start:focus-visible"];
-/** The rules for a focused launcher element itself, not for a part inside one. */
-const focusRules = pairs(shipped).flatMap((r) => r.sels.filter((x) => /^\.launcher__[\w-]+(?:\[[^\]]*\])*:focus-(?:visible|within)$/.test(x)).map((sel) => ({ sel, body: r.body })));
+/** The rules for a focused launcher element itself, not for a part inside one. The prompt is left out: its line shows its focus. */
+const focusRules = pairs(shipped).flatMap((r) =>
+  r.sels.filter((x) => /^\.launcher__[\w-]+(?:\[[^\]]*\])*:focus-(?:visible|within)$/.test(x) && x !== ".launcher__prompt:focus-visible").map((sel) => ({ sel, body: r.body })),
+);
 const backgroundOf = (sel: string, text = shipped) => pairs(text).find((r) => r.sels.includes(sel) && /background:/.test(r.body))?.body.match(/background:\s*([^;]+)/)?.[1]?.trim();
 
 describe("Launcher.css", () => {
@@ -90,6 +92,17 @@ describe("Launcher.css", () => {
     expect(shipped).toMatch(/\.launcher__chip:focus-visible :is\([^)]*\.launcher__mark[^)]*\.agent-mark[^)]*\.launcher__risk[^)]*\.launcher__shield[^)]*\)\s*\{[^}]*color:\s*currentColor/);
     expect(shipped).toMatch(/\.launcher__chip:focus-visible \.launcher__box\[data-checked\]\s*\{[^}]*background:\s*var\(--accent-ink\)/);
     expect(forced).toMatch(/\.launcher__chip:focus-visible \.launcher__box\[data-checked\]\s*\{[^}]*background:\s*Highlight/);
+  });
+  it("gives every focusable control in Launcher.tsx a focus rule here, so the base ring never shows in the launcher", () => {
+    const tsx = readFileSync(new URL("./Launcher.tsx", import.meta.url), "utf8");
+    const classes = new Set([...tsx.matchAll(/<(?:button|input|textarea)\b[^>]*?className=(?:"|\{[^}]*?")(launcher__[\w-]+)/g)].map((m) => `.${m[1]}`));
+    expect(classes.size).toBeGreaterThanOrEqual(7);
+    const hidden = pairs(shipped).flatMap((r) => (/outline-color:\s*transparent/.test(r.body) ? r.sels : []));
+    for (const c of classes) expect(hidden, c).toContain(`${c}:focus-visible`);
+  });
+  it("shows the prompt's focus on its line alone: its own ring is hidden, and in forced colors drawn in Canvas inside the line's Highlight", () => {
+    expect(rule(".launcher__prompt:focus-visible")).toMatch(/outline-color:\s*transparent/);
+    expect(forced).toMatch(/\.launcher__prompt:focus-visible\s*\{[^}]*outline-color:\s*Canvas/);
   });
   it("forced_colors_draws_focus_with_highlight", () => {
     const rules = pairs(forced);
