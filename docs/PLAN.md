@@ -1435,6 +1435,33 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
         - whether the menu has a shortcut;
         - whether Ctrl+Shift+Alt+F stays;
         - what the sidebar footer's Doctor glyph becomes.
+   - **Slice 6q decisions (2026-11-07, first round).** Split view is removed, and a tabbed pane on the right takes its place. Asked of the user on 2026-11-07, while 6o ran. A planning workflow researches the options first; the user decides the follow-up questions, and then the slices are planned.
+     1. **The order:** it comes after 6o and 6p, before 6n2. The research runs now.
+     2. **Split view is removed completely.** Gone:
+        - the layout menu, split (Ctrl+Shift+D) and zoom pane (Ctrl+Shift+P);
+        - pane headers and the compact prompt lines;
+        - the row menu's "Split into a pane", and Ctrl+click or Ctrl+Space on a row.
+
+        A saved split opens as its focused session. This replaces the split parts of slice 2e and the row-menu decisions that name a split.
+     3. **The Preview (slice 2.5) grows into the tabbed pane** and keeps all its kinds. The three main kinds are a web browser, PDF and text files; Markdown and images stay as extra kinds. Ctrl+Shift+Q shows and hides the pane.
+     4. **Tabs belong to their session.** Switching sessions swaps the pane's tabs, and a restart restores them.
+     5. **The pane is resizable,** by a divider you can drag or move with the keyboard, and its width is remembered. It can be shown and hidden, and the terminal keeps at least 80 columns where the window allows.
+     6. **The browser is a real one:** it opens any website, with an address bar, Back, Forward and Reload, and a port chip opens its localhost page. It runs isolated, with no access to Marshell's own API. It also:
+        - stays signed in across restarts, in a profile kept apart from the person's own browser;
+        - opens DevTools with F12;
+        - offers region to prompt on a page;
+        - opens pages an agent asks for, through the marshell CLI or the local API. Every CLI gets this equally.
+     7. **Text tabs edit and save.** They have syntax colours for the file types Sublime Text knows, line numbers, find and replace, undo, and Ctrl+S to save. A file an agent changes reloads; with unsaved edits, the tab offers a merge.
+     8. **Syntax colours follow Marshell's theme:** one light and one dark scheme, built from its tokens and tuned for contrast.
+     9. **A PDF tab adds three things** to the slice 2.5b viewer:
+        - find (Ctrl+F);
+        - an outline and page thumbnails;
+        - highlights and notes, saved back into the file.
+     10. **A tab opens:**
+         - with Ctrl+click on a path or URL in terminal output;
+         - from a port chip;
+         - by dropping a file on the pane, from quick open, or with Open file… or Open URL…;
+         - from a + menu on the tab strip: New browser tab, Open file… and recent files.
 7. **Doctor**: the fix actions, on top of the phase-3 config core: "Fix X issues" and one-click undo; folds in each CLI's own doctor; detects duplicate notifications and offers to turn off each CLI's own desktop notifications (brief §5.5, moved here by slice 4e decision 4); reports the tokens injected by project references; checks Codex hook trust; waste checks (unused MCP servers and skills, long descriptions, broad scopes, a token-cost estimate); offers to raise `cleanupPeriodDays`.
    - Added 2026-10-16 (research in `docs/research/2026-10-16-accounts-cloud-extensions.md`):
      - **One-click doctor per CLI.** It runs the CLI's own doctor (`claude doctor` text, `codex doctor --json`) and opens a summary window of suggested fixes. Every fix goes through preview, backup and undo; nothing is applied silently. Antigravity has no doctor command, so it gets none.
