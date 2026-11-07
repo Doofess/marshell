@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { appMenuItems, doctorItemLabel, leavesAppMenu, menuKeyCloses, menuPlace, SETTINGS_ITEMS, submenuPlace, toggleMenu, type MenuState } from "./appMenu";
+import { menuKey } from "../../components/ContextMenu/menuKeys";
+import { appMenuItems, appMenuKey, doctorItemLabel, leavesAppMenu, menuKeyCloses, menuPlace, pressMenuButton, SETTINGS_ITEMS, submenuPlace, toggleMenu, type MenuState } from "./appMenu";
 
 describe("appMenu", () => {
   it("the_menu_lists_settings_history_doctor_departures", () => {
@@ -55,5 +56,38 @@ describe("toggleMenu", () => {
     expect(menuKeyCloses(key("KeyE", { metaKey: true }), "mac")).toBe(true);
     expect(menuKeyCloses(key("KeyM"), "windows")).toBe(false);
     expect(menuKeyCloses(key("KeyY", { ctrlKey: true, shiftKey: true }), "windows")).toBe(false);
+  });
+  it("holding_the_menu_key_does_not_close_the_menu_it_just_opened", () => {
+    const held = { code: "KeyM", ctrlKey: true, shiftKey: true, altKey: false, metaKey: false, repeat: true };
+    expect(menuKeyCloses(held, "windows")).toBe(false);
+  });
+  it("a_click_on_the_button_of_an_open_menu_closes_it_and_leaves_the_focus_on_the_button", () => {
+    // While the button is held, the menu's focus guard pulls the focus back into the menu; the click must hand it to the button.
+    const button = { focus() {}, isConnected: true };
+    const request = { anchor: { left: 14, top: 747 }, back: button };
+    expect(pressMenuButton(null, request)).toEqual({ menu: request, focus: null });
+    expect(pressMenuButton(request, request)).toEqual({ menu: null, focus: button });
+  });
+});
+
+describe("appMenuKey", () => {
+  const top = appMenuItems("windows");
+  const sub = SETTINGS_ITEMS.map((s) => ({ id: s.section, label: s.label }));
+  it("tab_closes_the_menu_with_the_focus_back_and_lets_tab_move_on_from_there", () => {
+    expect(appMenuKey(menuKey("Tab", top, 0), "top")).toEqual({ do: "close", keepDefault: true });
+    expect(appMenuKey(menuKey("Tab", sub, 2), "sub")).toEqual({ do: "close", keepDefault: true });
+    expect(appMenuKey(menuKey("Escape", top, 0), "top")).toEqual({ do: "close", keepDefault: false });
+  });
+  it("left_does_nothing_at_the_top_and_left_or_esc_go_up_from_the_submenu", () => {
+    expect(appMenuKey(menuKey("ArrowLeft", top, 1), "top")).toBeNull();
+    expect(appMenuKey(menuKey("ArrowLeft", sub, 0), "sub")).toEqual({ do: "up" });
+    expect(appMenuKey(menuKey("Escape", sub, 0), "sub")).toEqual({ do: "up" });
+  });
+  it("moves_opens_and_runs_as_the_menu_keys_say", () => {
+    expect(appMenuKey(menuKey("ArrowDown", top, 0), "top")).toEqual({ do: "move", index: 1 });
+    expect(appMenuKey(menuKey("Enter", top, 0), "top")).toEqual({ do: "open" });
+    expect(appMenuKey(menuKey("Enter", top, 1), "top")).toEqual({ do: "run", id: "history" });
+    expect(appMenuKey(menuKey("Enter", sub, 2), "sub")).toEqual({ do: "run", id: "profiles" });
+    expect(appMenuKey(menuKey("x", top, 0), "top")).toBeNull();
   });
 });

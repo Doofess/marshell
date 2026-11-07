@@ -5,7 +5,7 @@ import { usePopupFocus } from "../../lib/usePopupFocus";
 import type { Os } from "../../lib/keymap";
 import "../../components/ContextMenu/ContextMenu.css";
 import "./AppMenu.css";
-import { appMenuItems, doctorItemLabel, leavesAppMenu, menuKeyCloses, menuPlace, SETTINGS_ITEMS, submenuPlace, type AppMenuRun } from "./appMenu";
+import { appMenuItems, appMenuKey, doctorItemLabel, leavesAppMenu, menuKeyCloses, menuPlace, SETTINGS_ITEMS, submenuPlace, type AppMenuRun } from "./appMenu";
 
 type Props = {
   os: Os;
@@ -76,31 +76,22 @@ export function AppMenu({ os, anchor, doctorIssues, onRun, onClose, isTrigger = 
     onClose({ refocus: true });
     return true;
   };
-  const onTopKey = (e: React.KeyboardEvent) => {
+  const onKey = (level: "top" | "sub") => (e: React.KeyboardEvent) => {
     e.stopPropagation();
     if (menuKeyClose(e)) return;
     if (e.ctrlKey || e.metaKey) e.preventDefault();
-    const r = menuKey(e.key, items, active, e);
-    if (!r) return;
-    if (!(r.kind === "close" && !r.refocus)) e.preventDefault();
-    if (r.kind === "move") setActive(r.index);
-    else if (r.kind === "open") openSub();
-    else if (r.kind === "run") onRun(r.id as AppMenuRun);
-    else if (r.kind === "close") onClose({ refocus: r.refocus });
-    else if (r.kind === "back") onClose({ refocus: true });
+    const k = appMenuKey(level === "top" ? menuKey(e.key, items, active, e) : menuKey(e.key, SUB_ITEMS, subActive, e), level);
+    if (!k) return;
+    if (!(k.do === "close" && k.keepDefault)) e.preventDefault();
+    if (k.do === "move") (level === "top" ? setActive : setSubActive)(k.index);
+    else if (k.do === "open") openSub();
+    else if (k.do === "run") onRun((level === "top" ? k.id : `settings:${k.id}`) as AppMenuRun);
+    else if (k.do === "up") setSubOpen(false);
+    // Focus goes back before a kept Tab runs, so Tab moves on from where the menu was opened.
+    else onClose({ refocus: true });
   };
-  const onSubKey = (e: React.KeyboardEvent) => {
-    e.stopPropagation();
-    if (menuKeyClose(e)) return;
-    if (e.ctrlKey || e.metaKey) e.preventDefault();
-    const r = menuKey(e.key, SUB_ITEMS, subActive, e);
-    if (!r) return;
-    if (!(r.kind === "close" && !r.refocus)) e.preventDefault();
-    if (r.kind === "move") setSubActive(r.index);
-    else if (r.kind === "run") onRun(`settings:${r.id}` as AppMenuRun);
-    else if (r.kind === "back" || (r.kind === "close" && r.refocus)) setSubOpen(false);
-    else if (r.kind === "close") onClose({ refocus: false });
-  };
+  const onTopKey = onKey("top");
+  const onSubKey = onKey("sub");
   const onBlur = (e: React.FocusEvent) => {
     if (wrap.current && leavesAppMenu(e.relatedTarget, wrap.current, isTrigger)) onClose({ refocus: false });
   };

@@ -1,4 +1,4 @@
-import { leavesMenu, placeMenu, type MenuItem } from "../../components/ContextMenu/menuKeys";
+import { leavesMenu, placeMenu, type MenuItem, type MenuKeyResult } from "../../components/ContextMenu/menuKeys";
 import { sessionShortcut } from "../../lib/appShortcuts";
 import type { KeyEventLike } from "../../lib/bindings";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
@@ -62,7 +62,35 @@ export function leavesAppMenu(next: object | null, menu: { contains: (n: never) 
   return leavesMenu(next, menu) && !isTrigger(next!);
 }
 
-/** The menu key (Ctrl+Shift+M, ⌘E, or what it was rebound to) pressed inside the menu closes it, as it opened it. */
-export function menuKeyCloses(e: KeyEventLike, os: Os): boolean {
-  return sessionShortcut(e, os)?.kind === "menu";
+/** The menu key (Ctrl+Shift+M, ⌘E, or what it was rebound to) pressed inside the menu closes it, as it opened it. Its repeats don't: the window ignores them, so a held key leaves the menu open. */
+export function menuKeyCloses(e: KeyEventLike & { repeat?: boolean }, os: Os): boolean {
+  return !e.repeat && sessionShortcut(e, os)?.kind === "menu";
+}
+
+/** A click on the Menu button opens the menu from it, or closes the open menu and gives the button the focus: the menu's focus guard took it back into the menu while the button was held. */
+export function pressMenuButton(open: MenuState, request: NonNullable<MenuState>): { menu: MenuState; focus: NonNullable<MenuState>["back"] } {
+  return open ? { menu: null, focus: request.back } : { menu: request, focus: null };
+}
+
+export type AppMenuKey = { do: "move"; index: number } | { do: "open" } | { do: "run"; id: string } | { do: "up" } | { do: "close"; keepDefault: boolean } | null;
+
+/**
+ * What a key does in the menu (`top`) or its Settings submenu (`sub`). Left and Esc in the submenu go up to the menu; Left in
+ * the menu does nothing, as in a native menu. Esc closes the menu and puts the focus back where it was. Tab and Shift+Tab do
+ * the same and keep their default, so the focus moves on from there and never falls to the page.
+ */
+export function appMenuKey(r: MenuKeyResult, level: "top" | "sub"): AppMenuKey {
+  if (!r) return null;
+  switch (r.kind) {
+    case "move":
+      return { do: "move", index: r.index };
+    case "open":
+      return level === "top" ? { do: "open" } : null;
+    case "run":
+      return { do: "run", id: r.id };
+    case "back":
+      return level === "sub" ? { do: "up" } : null;
+    case "close":
+      return level === "sub" && r.refocus ? { do: "up" } : { do: "close", keepDefault: !r.refocus };
+  }
 }

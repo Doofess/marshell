@@ -98,7 +98,7 @@ import { adminCommandHidden, launcherFromPalette, launcherOpens, passesLauncher,
 import { REOPEN_AS_ADMIN } from "../../lib/adminCopy";
 import { LiveLauncher } from "./LiveLauncher";
 import { AppMenu } from "../appMenu/AppMenuPopup";
-import { toggleMenu, type AppMenuRun, type MenuState } from "../appMenu/appMenu";
+import { pressMenuButton, toggleMenu, type AppMenuRun, type MenuState } from "../appMenu/appMenu";
 import { LivePalette } from "./LivePalette";
 import { recordsRecent } from "../palette/paletteList";
 import { cannotRun } from "../palette/runnable";
@@ -1751,7 +1751,9 @@ export function LiveApp() {
           onOpenDoctor={() => setOverlay("doctor")}
           onOpenMenu={(button) => {
             const r = button.getBoundingClientRect();
-            setMenu((m) => toggleMenu(m, { anchor: { left: r.left, top: r.top }, back: button }));
+            const next = pressMenuButton(menu, { anchor: { left: r.left, top: r.top }, back: button });
+            setMenu(next.menu);
+            next.focus?.focus();
           }}
           menuOpen={menu !== null}
           shell={{ terminal: shellTerminal, cwd: panelTab?.folder, hidden: view.shell_hidden, failed: shellFailed, onRetry: retryShell, openDisabled: !panelTab, forceOpen: shellForced, onToggle: toggleShell, onOpenInPane: () => void openInPane() }}
