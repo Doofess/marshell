@@ -60,8 +60,8 @@ describe("filterCommands", () => {
   it("lists every command, in order, for an empty query", () => {
     expect(filterCommands("", COMMANDS).map((h) => h.item.id)).toEqual(COMMANDS.map((c) => c.id));
   });
-  it("finds Split view by typing split", () => {
-    expect(filterCommands("split", COMMANDS)[0]!.item.id).toBe("split");
+  it("finds Search in scrollback by typing search", () => {
+    expect(filterCommands("search", COMMANDS)[0]!.item.id).toBe("find");
   });
   it("finds a command by scattered letters", () => {
     expect(filterCommands("stse", COMMANDS).map((h) => h.item.id)).toContain("launcher");

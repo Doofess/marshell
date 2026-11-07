@@ -79,13 +79,13 @@ describe("Palette: recent, moved and second list", () => {
 
 describe("Palette: filtering", () => {
   it("ranks the best match first and highlights it", () => {
-    const h = html("split");
-    expect(h).toContain("Split</mark>");
+    const h = html("search");
+    expect(h).toContain("Search</mark>");
     expect(h).toContain("<mark");
     expect(options(h)).toBeLessThan(COMMANDS.length);
   });
   it("drops the group headings while filtering", () => {
-    expect(html("split")).not.toContain("palette__group");
+    expect(html("search")).not.toContain("palette__group");
   });
   it("says what happened when nothing matches", () => {
     const h = html("qqqq");
@@ -148,7 +148,7 @@ describe("Palette: say session 6 and it knows which terminal you mean", () => {
   });
   it("shows only sessions for a number, never a command that happens to contain it", () => {
     const h = withSessions("4");
-    expect(h).not.toContain("Split: add a pane");
+    expect(h).not.toContain("Search in scrollback");
   });
   it("highlights nothing in the number's own row: the number is the match", () => {
     expect(withSessions("6")).toContain('data-exact="true"');
@@ -165,8 +165,8 @@ describe("Palette: say session 6 and it knows which terminal you mean", () => {
     expect(h).toContain("Go to session 2, billing");
   });
   it("still finds commands, below the sessions", () => {
-    const h = withSessions("split");
-    expect(h).toContain("Split</mark>");
+    const h = withSessions("search");
+    expect(h).toContain("Search</mark>");
     expect(h).not.toContain("palette__group");
   });
   it("renders hostile text as text", () => {

@@ -22,7 +22,7 @@ export const SessionByHashAndWords: StoryObj = { render: () => <ThemePair label=
 export const SessionPastNine: StoryObj = { render: () => <ThemePair label={'"12": sessions past nine have no Ctrl+digit, so this is how you reach them'} stack>{frame("#12")}</ThemePair> };
 export const NoSuchSession: StoryObj = { render: () => <ThemePair label={'"#4": nobody holds 4, so it says which numbers exist'} stack>{frame("#4")}</ThemePair> };
 export const SessionByName: StoryObj = { render: () => <ThemePair label={'Filtering by a name or folder: "my-app" finds the sessions that run there'} stack>{frame("my-app")}</ThemePair> };
-export const Filtering: StoryObj = { render: () => <ThemePair label={'Filtering: "split"'} stack>{frame("split")}</ThemePair> };
+export const Filtering: StoryObj = { render: () => <ThemePair label={'Filtering: "search"'} stack>{frame("search")}</ThemePair> };
 export const ScatteredLetters: StoryObj = { render: () => <ThemePair label={'Scattered letters: "stse" finds Start a session'} stack>{frame("stse")}</ThemePair> };
 export const NoMatch: StoryObj = { render: () => <ThemePair label="Nothing matches" stack>{frame("qqqq")}</ThemePair> };
 export const MacShortcuts: StoryObj = { render: () => <ThemePair label="macOS shortcut labels: ⌘6 goes to session 6" stack>{frame("", 0, "mac")}</ThemePair> };

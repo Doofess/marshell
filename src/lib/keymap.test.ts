@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { problemsIn } from "./bindings";
+import { findCommand, problemsIn, type KeyEventLike } from "./bindings";
 import { COMMANDS, MOVED_COMMANDS, NAV_COMMAND_IDS, commandById, keyText, osOfPlatform, shortcutLabel } from "./keymap";
 
 describe("osOfPlatform", () => {
@@ -67,8 +67,6 @@ describe("COMMANDS", () => {
     expect(win("focus-prompt")).toBe("Ctrl+Shift+L");
     expect(mac("history")).toBe("⌘Y");
     expect(win("history")).toBe("Ctrl+Shift+Y");
-    expect(mac("zoom-pane")).toBe("⌘P");
-    expect(win("zoom-pane")).toBe("Ctrl+Shift+P");
     expect(mac("shell-panel")).toBe("⌘S");
     expect(win("shell-panel")).toBe("Ctrl+Shift+S");
   });
@@ -91,7 +89,7 @@ describe("COMMANDS", () => {
     expect(() => commandById("prev-pane")).toThrow();
     expect(win("nav-next-pane")).toBe("Ctrl+Shift+Tab");
     expect(mac("nav-next-pane")).toBe("⌃⇧Tab");
-    expect(commandById("nav-next-pane").label).toBe("Select the next terminal on screen");
+    expect(commandById("nav-next-pane").label).toBe("Select the terminal");
     // The navigation modifier already holds Shift, so Tab cannot also mean "backwards": the arrows go the other way.
     expect(() => commandById("nav-prev-pane")).toThrow();
     expect(win("nav-none")).toBe("Ctrl+Shift+Backspace");
@@ -105,10 +103,17 @@ describe("COMMANDS", () => {
     expect(commandById("move-up").group).toBe("Session");
   });
 
-  it("keeps the other split commands", () => {
-    expect(win("split")).toBe("Ctrl+Shift+D");
+  it("the split commands are gone", () => {
+    for (const id of ["split", "unsplit", "layout", "zoom-pane"]) expect(COMMANDS.some((c) => c.id === id), id).toBe(false);
+    expect(commandById("nav-next-pane").label).toBe("Select the terminal");
     expect(win("cheatsheet")).toBe("Ctrl+Shift+O");
-    for (const id of ["layout", "unsplit"]) expect(commandById(id).group).toBe("Window");
+  });
+  it("the freed keys run no command", () => {
+    const e = (code: string, m: object): KeyEventLike => ({ code, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, ...m });
+    expect(findCommand(e("KeyD", { ctrlKey: true, shiftKey: true }), "windows")).toBeUndefined();
+    expect(findCommand(e("KeyP", { ctrlKey: true, shiftKey: true }), "windows")).toBeUndefined();
+    expect(findCommand(e("KeyD", { metaKey: true }), "mac")).toBeUndefined();
+    expect(findCommand(e("KeyP", { metaKey: true }), "mac")).toBeUndefined();
   });
 
   it("binds the shell panel under Window", () => {

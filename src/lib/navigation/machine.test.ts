@@ -12,31 +12,17 @@ const arrow = (dir: "left" | "right" | "up" | "down"): NavEvent => ({ type: "arr
 const DOWN: NavEvent = { type: "modifier-down" };
 const UP: NavEvent = { type: "modifier-up" };
 
-describe("Tab with the navigation modifier cycles the terminals on screen, and only those", () => {
+describe("Tab with the navigation modifier selects the terminal on screen, and only that", () => {
   it("selects the first terminal when nothing is selected", () => {
     const r = run(INITIAL_NAV, [DOWN, TAB], GRID_CONTEXT);
     expect(without(r.effects)).toEqual([{ type: "select-pane", index: 0 }]);
     expect(r.state.selectedPane).toBe(0);
     expect(announced(r.effects)).toEqual(["Selected session 1, billing"]);
   });
-  it("moves on to the next one, and wraps from the last back to the first", () => {
-    expect(run(at(0), [DOWN, TAB], GRID_CONTEXT).state.selectedPane).toBe(1);
-    expect(run(at(2), [DOWN, TAB], GRID_CONTEXT).state.selectedPane).toBe(3);
-    expect(run(at(3), [DOWN, TAB], GRID_CONTEXT).state.selectedPane).toBe(0);
-  });
-  it("walks through all the panes in order with repeated taps while the modifier stays down", () => {
-    const seen = run(INITIAL_NAV, [DOWN, TAB, TAB, TAB, TAB, TAB], GRID_CONTEXT).effects.filter((e) => e.type === "select-pane").map((e) => (e as { index: number }).index);
-    expect(seen).toEqual([0, 1, 2, 3, 0]);
-  });
   it("never lands on a sidebar row, however many times it is pressed", () => {
     const r = run(INITIAL_NAV, [DOWN, ...Array(12).fill(TAB)], GRID_CONTEXT);
     for (const e of r.effects) expect(e.type).not.toBe("bring-into-view");
     expect(r.state.cursor).toBeNull();
-  });
-  it("skips an empty slot: there is no terminal in it to select", () => {
-    const ctx: NavContext = { ...GRID_CONTEXT, panes: [1, null, 3, 6] };
-    expect(run(at(0), [DOWN, TAB], ctx).state.selectedPane).toBe(2);
-    expect(run(at(3), [DOWN, TAB], ctx).state.selectedPane).toBe(0);
   });
   it("does nothing, and says so, when no terminal is on screen", () => {
     const ctx: NavContext = { ...GRID_CONTEXT, panes: [null, null] };
@@ -48,6 +34,22 @@ describe("Tab with the navigation modifier cycles the terminals on screen, and o
   it("stays on the one terminal when there is only one", () => {
     const ctx: NavContext = { ...GRID_CONTEXT, panes: [6] };
     expect(run(at(0), [DOWN, TAB], ctx).state.selectedPane).toBe(0);
+  });
+  it("nav Tab starts the cursor from a terminal with one slot", () => {
+    const ctx: NavContext = {
+      panes: [3],
+      names: NAMES,
+      layout: [
+        { target: { kind: "pane", index: 0 }, rect: { x: 288, y: 40, w: 600, h: 600 } },
+        { target: { kind: "row", number: 3 }, rect: { x: 0, y: 40, w: 288, h: 56 } },
+      ],
+    };
+    const first = run(INITIAL_NAV, [DOWN, TAB], ctx);
+    expect(first.state.selectedPane).toBe(0);
+    expect(without(first.effects)).toEqual([{ type: "select-pane", index: 0 }]);
+    const moved = run(first.state, [arrow("left")], ctx);
+    expect(moved.state.cursor).toEqual({ kind: "row", number: 3 });
+    expect(announced(run(INITIAL_NAV, [DOWN, TAB], { ...ctx, panes: [null] }).effects)).toEqual(["No terminal on screen"]);
   });
   it("does not need the modifier flag to be set first: the adapter may send Tab alone (outside a terminal)", () => {
     expect(reduce(INITIAL_NAV, TAB, GRID_CONTEXT).state.selectedPane).toBe(0);
@@ -108,11 +110,6 @@ describe("holding the modifier and pressing an arrow starts a cursor that can go
   it("stays where it is at an edge", () => {
     const r = run(at(3), [DOWN, arrow("right"), arrow("down")], GRID_CONTEXT);
     expect(r.state.cursor).toEqual({ kind: "pane", index: 3 });
-  });
-  it("lets Tab move the cursor on to the next terminal when one is out, and still releases onto it", () => {
-    const r = run(at(0), [DOWN, arrow("left"), TAB, UP], GRID_CONTEXT);
-    expect(r.state.selectedPane).toBe(1);
-    expect(without(r.effects)).toEqual([{ type: "select-pane", index: 1 }]);
   });
   it("selects an empty slot you moved to, so its chooser can take the keys", () => {
     const ctx: NavContext = { ...GRID_CONTEXT, panes: [1, null, 3, 6] };

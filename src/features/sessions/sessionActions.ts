@@ -240,9 +240,6 @@ export class SessionActions {
       case "launcher":
       case "palette":
       case "prompt":
-      case "split":
-      case "zoom":
-      case "nextPane":
       case "nonePane":
       case "focusMode":
       case "sidebar":

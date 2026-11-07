@@ -7,9 +7,9 @@ import { LIVE_COMMANDS, LivePalette, escapeCloses } from "./LivePalette";
 describe("LivePalette", () => {
   it("lists only commands the window runs", () => {
     const ids = LIVE_COMMANDS.map((c) => c.id);
-    for (const id of ["launcher", "close", "reopen", "rename", "move-up", "move-down", "profiles", "appearance", "settings", "split", "unsplit", "layout", "resume", "zoom-pane", "nav-next-pane", "nav-none", "focus-mode", "sidebar", "group-by-project", "copy-recording-path", "pause", "continue"]) expect(ids, id).toContain(id);
+    for (const id of ["launcher", "close", "reopen", "rename", "move-up", "move-down", "profiles", "appearance", "settings", "resume", "nav-next-pane", "nav-none", "focus-mode", "sidebar", "group-by-project", "copy-recording-path", "pause", "continue"]) expect(ids, id).toContain(id);
     // Every other row would do nothing when chosen. (Remove-pane, Change-layout and Resume have no key shortcut; the window runs them from the palette.)
-    for (const id of ids) expect(["settings", "profiles", "appearance", "agents", "diagnostics", "notifications", "history-settings", "pause-notifications", "departures", "doctor", "unsplit", "layout", "resume", "group-by-project", "clean-up-task", "copy-recording-path", "run-script", "stop-script", "edit-references", "pause", "continue", "change-mode", "new-session-admin"].includes(id) || id.startsWith("mode-") || commandShortcut(id) !== null, id).toBe(true);
+    for (const id of ids) expect(["settings", "profiles", "appearance", "agents", "diagnostics", "notifications", "history-settings", "pause-notifications", "departures", "doctor", "nav-next-pane", "resume", "group-by-project", "clean-up-task", "copy-recording-path", "run-script", "stop-script", "edit-references", "pause", "continue", "change-mode", "new-session-admin"].includes(id) || id.startsWith("mode-") || commandShortcut(id) !== null, id).toBe(true);
     for (const id of ["run-script", "stop-script", "edit-references", "pause-notifications", "mode-manual", "mode-plan", "mode-auto-edit", "mode-full-auto", "mode-bypass"]) expect(ids, id).toContain(id);
     expect(ids).toContain("doctor");
     expect(ids).not.toContain("go-to-session");
@@ -46,7 +46,7 @@ describe("LivePalette", () => {
     expect(h).toContain("Shell profiles");
     expect(h).toContain("Start a session");
     expect(h).toContain("Open Doctor");
-    expect(h).toContain("Split: add a pane");
+    expect(h).toContain("Select the terminal");
   });
   it("shows the label the window gives a command, and the keymap's own when it gives none", () => {
     const show = (labels?: Record<string, string>) => renderToStaticMarkup(<LivePalette sessions={PALETTE_SESSIONS} os="windows" labels={labels} onRun={() => {}} onClose={() => {}} />);

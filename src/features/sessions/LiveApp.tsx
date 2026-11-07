@@ -124,8 +124,6 @@ const DEFAULT_SIZE = { cols: 120, rows: 30 };
 const SIDEBAR_NEEDS_WIDTH = "Widen the window to open the sidebar.";
 /** What the announcer says when the shell panel is asked for where it is not drawn: the rail, focus mode, or a window under 960 px. */
 const SHELL_PANEL_ELSEWHERE = "The shell panel is in the expanded sidebar.";
-/** What the announcer says when a split is asked for and the window has no room to show another pane. */
-const NO_PANE_ROOM = "No room for another pane.";
 // The footer's and the rail's Menu buttons: a press on one is the toggle's own, so it doesn't count as leaving the menu.
 const MENU_BUTTONS = ".sidebar__menu, .rail__menu";
 const isMenuButton = (n: object) => n instanceof Element && n.closest(MENU_BUTTONS) !== null;
@@ -680,7 +678,6 @@ export function LiveApp() {
   const idle = cannotRun({
     focused: focusedInfo !== undefined,
     sessions: rows.length,
-    split: view.panes.length > 1,
     waiting: nextWaiting(requests) !== null,
     closed: (closed?.length ?? 0) > 0,
     shellPanel: sidebarExpanded,
@@ -1240,27 +1237,6 @@ export function LiveApp() {
             setTimeout(() => actions.focusTerminal(), 0);
           } else setMainView("history");
           return true;
-        case "split":
-          if (!roomForPane(v.panes.length, fitRef.current)) {
-            announce(NO_PANE_ROOM);
-            return true;
-          }
-          // A zoomed pane would hide the one being added.
-          if (v.zoomed !== null) dispatch({ type: "zoom" });
-          dispatch({ type: "split", fit: fitRef.current });
-          return true;
-        case "zoom":
-          if (v.zoomed !== null) dispatch({ type: "zoom" });
-          else if (v.panes.length > 1 && v.panes[focusIdxRef.current] !== null) {
-            // The zoom applies to the active pane, so the one in view is made active first.
-            dispatch({ type: "focusPane", index: focusIdxRef.current });
-            dispatch({ type: "zoom" });
-          }
-          return true;
-        // The same events the chords send (useNavigation), so the palette's rows and the keys behave the same.
-        case "nextPane":
-          sendNav([{ type: "tab" }]);
-          return true;
         case "focusMode":
           dispatch({ type: "toggleFocus" });
           return true;
@@ -1389,8 +1365,8 @@ export function LiveApp() {
     if (id.startsWith("session:")) return pick(id.slice("session:".length));
     // Palette-only commands. The menu opens after the palette has given the focus back, so it keeps the focus it takes.
     if (id === "pause-notifications") return void togglePause();
-    if (id === "unsplit") return dispatch({ type: "remove", index: focusIdxRef.current });
-    if (id === "layout") return void setTimeout(() => setLayoutMenu(true), 0);
+    // The same event the chord sends (useNavigation), so the palette's row and the keys behave the same.
+    if (id === "nav-next-pane") return void sendNav([{ type: "tab" }]);
     if (id === "group-by-project") return dispatch({ type: "toggleGrouped" });
     if (launcherFromPalette(id)?.elevated === true) return void (setLauncherElevated(true), setLauncherOpen(true));
     if (id === "resume") return void (focusedRow && startResume(focusedRow));

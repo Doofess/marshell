@@ -34,16 +34,15 @@ describe("sessionShortcut", () => {
     expect(sessionShortcut(ev("PageUp", cs), "windows")).toEqual({ kind: "prompt", by: -1 });
     expect(sessionShortcut(ev("PageDown", { metaKey: true }), "mac")).toEqual({ kind: "prompt", by: 1 });
   });
-  it("Ctrl+Shift+D is split and Ctrl+Shift+P is zoom on Windows", () => {
-    expect(sessionShortcut(ev("KeyD", cs), "windows")).toEqual({ kind: "split" });
-    expect(sessionShortcut(ev("KeyP", cs), "windows")).toEqual({ kind: "zoom" });
-    expect(sessionShortcut(ev("KeyD", { metaKey: true }), "mac")).toEqual({ kind: "split" });
+  it("Ctrl+Shift+D and Ctrl+Shift+P are no shortcut", () => {
+    expect(sessionShortcut(ev("KeyD", cs), "windows")).toBeNull();
+    expect(sessionShortcut(ev("KeyP", cs), "windows")).toBeNull();
+    expect(sessionShortcut(ev("KeyD", { metaKey: true }), "mac")).toBeNull();
   });
-  it("moves between panes with the navigation modifier", () => {
+  it("selects no terminal with the navigation modifier and Backspace; Tab is the navigation hook's own", () => {
     expect(DEFAULT_NAV_MODIFIER).toBe("ctrl+shift");
-    expect(sessionShortcut(ev("Tab", cs), "windows")).toEqual({ kind: "nextPane" });
     expect(sessionShortcut(ev("Backspace", cs), "windows")).toEqual({ kind: "nonePane" });
-    expect(sessionShortcut(ev("Tab", cs), "mac")).toEqual({ kind: "nextPane" });
+    expect(sessionShortcut(ev("Tab", cs), "windows")).toBeNull();
     expect(sessionShortcut(ev("Tab"), "windows")).toBeNull();
   });
   it("Ctrl+Shift+I is focus mode on Windows and Linux and Cmd+I on macOS", () => {
@@ -96,9 +95,8 @@ describe("commandShortcut", () => {
     expect(commandShortcut("move-down")).toEqual({ kind: "move", by: 1 });
     expect(commandShortcut("prompt-prev")).toEqual({ kind: "prompt", by: -1 });
     expect(commandShortcut("prompt-next")).toEqual({ kind: "prompt", by: 1 });
-    expect(commandShortcut("split")).toEqual({ kind: "split" });
-    expect(commandShortcut("zoom-pane")).toEqual({ kind: "zoom" });
-    expect(commandShortcut("nav-next-pane")).toEqual({ kind: "nextPane" });
+    expect(commandShortcut("split")).toBeNull();
+    expect(commandShortcut("zoom-pane")).toBeNull();
     expect(commandShortcut("nav-none")).toEqual({ kind: "nonePane" });
     expect(commandShortcut("focus-mode")).toEqual({ kind: "focusMode" });
     expect(commandShortcut("sidebar")).toEqual({ kind: "sidebar" });

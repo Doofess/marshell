@@ -8,6 +8,9 @@ describe("paletteList", () => {
   it("recent_drops_unknown_and_moved_ids", () => {
     expect(ids(emptyBox(COMMANDS, ["gone", "appearance", "find"], MOVED_COMMANDS).recent)).toEqual(["find"]);
   });
+  it("recent_drops_the_removed_split_ids", () => {
+    expect(ids(emptyBox(COMMANDS, ["split", "zoom-pane", "layout", "unsplit", "find"], MOVED_COMMANDS).recent)).toEqual(["find"]);
+  });
   it("recent_lists_only_commands_that_are_offered", () => {
     const offered = COMMANDS.filter((c) => c.id !== "find");
     expect(emptyBox(offered, ["find", "close"], MOVED_COMMANDS).recent.map((c) => c.id)).toEqual(["close"]);
