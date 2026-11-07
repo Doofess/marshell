@@ -15,9 +15,12 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_KEY_EVENT_KIND_KEY_UP, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
     COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_UP, COREWEBVIEW2_MOVE_FOCUS_REASON, COREWEBVIEW2_MOVE_FOCUS_REASON_NEXT,
     COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS, COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC,
-    COREWEBVIEW2_PHYSICAL_KEY_STATUS, ICoreWebView2Controller,
+    COREWEBVIEW2_PHYSICAL_KEY_STATUS, ICoreWebView2, ICoreWebView2Controller,
 };
-use webview2_com::{AcceleratorKeyPressedEventHandler, FocusChangedEventHandler, MoveFocusRequestedEventHandler};
+use webview2_com::{
+    AcceleratorKeyPressedEventHandler, DocumentTitleChangedEventHandler, FocusChangedEventHandler,
+    HistoryChangedEventHandler, MoveFocusRequestedEventHandler, SourceChangedEventHandler, take_pwstr,
+};
 use windows::Win32::Foundation::HGLOBAL;
 use windows::Win32::System::Com::StructuredStorage::CreateStreamOnHGlobal;
 use windows::Win32::System::Com::{IStream, STREAM_SEEK_SET};
@@ -51,6 +54,9 @@ pub fn install(app: &AppHandle, page: &Webview) {
         }
         if let Err(e) = focus_out_handler(&app, &controller) {
             com_failed(&app, "focus-out handler", e);
+        }
+        if let Err(e) = history_handlers(&app, &controller) {
+            com_failed(&app, "history handlers", e);
         }
         // F12 opens DevTools on the page only: the builder turned them off, as a release build has them (research §2.3).
         // SAFETY: COM calls on the live controller, on the webview's own thread (with_webview).
@@ -122,6 +128,78 @@ fn focus_out_handler(app: &AppHandle, controller: &ICoreWebView2Controller) -> w
     }));
     // SAFETY: as in `install`.
     unsafe { controller.add_MoveFocusRequested(&handler, &mut token) }
+}
+
+/// The page's address, title and history, read from the sender inside its own event.
+fn history_of(w: &ICoreWebView2) -> windows_core::Result<serde_json::Value> {
+    let (mut url, mut title) = (windows_core::PWSTR::null(), windows_core::PWSTR::null());
+    let (mut back, mut forward) = (windows_core::BOOL::default(), windows_core::BOOL::default());
+    // SAFETY: getters on the live webview, on its own thread; take_pwstr frees each string WebView2 allocated.
+    unsafe {
+        w.Source(&mut url)?;
+        w.DocumentTitle(&mut title)?;
+        w.CanGoBack(&mut back)?;
+        w.CanGoForward(&mut forward)?;
+    }
+    Ok(
+        json!({ "url": take_pwstr(url), "title": take_pwstr(title), "canBack": back.as_bool(), "canForward": forward.as_bool() }),
+    )
+}
+
+fn send_history(app: &AppHandle, sender: Option<ICoreWebView2>, why: &'static str) -> windows_core::Result<()> {
+    let Some(w) = sender else { return Ok(()) };
+    let state = history_of(&w)?;
+    let mut line = state.clone();
+    line["why"] = why.into();
+    log(app, "rust", "history", line);
+    let app2 = app.clone();
+    let _ = app.run_on_main_thread(move || emit_app(&app2, "spike://history", state));
+    Ok(())
+}
+
+/// The bar follows the page: its address, its title and whether Back and Forward can go anywhere. The first state is
+/// sent at once, since the first navigation may have started before these handlers were added.
+fn history_handlers(app: &AppHandle, controller: &ICoreWebView2Controller) -> windows_core::Result<()> {
+    let mut token = 0i64;
+    let (a, b, c) = (app.clone(), app.clone(), app.clone());
+    // SAFETY: as in `install`.
+    unsafe {
+        let w = controller.CoreWebView2()?;
+        w.add_HistoryChanged(
+            &HistoryChangedEventHandler::create(Box::new(move |s, _| send_history(&a, s, "history"))),
+            &mut token,
+        )?;
+        w.add_SourceChanged(
+            &SourceChangedEventHandler::create(Box::new(move |s, _| send_history(&b, s, "source"))),
+            &mut token,
+        )?;
+        w.add_DocumentTitleChanged(
+            &DocumentTitleChangedEventHandler::create(Box::new(move |s, _| send_history(&c, s, "title"))),
+            &mut token,
+        )?;
+        send_history(app, Some(w), "installed")
+    }
+}
+
+/// Back, Forward and Reload, on the page's own history.
+pub fn nav(app: &AppHandle, action: &str) -> Result<(), String> {
+    let page = app.get_webview(LABEL).ok_or("no page is open")?;
+    let app2 = app.clone();
+    let action = action.to_string();
+    page.with_webview(move |pv| {
+        // SAFETY: as in `install`.
+        let done = unsafe {
+            pv.controller().CoreWebView2().and_then(|w| match action.as_str() {
+                "back" => w.GoBack(),
+                "forward" => w.GoForward(),
+                _ => w.Reload(),
+            })
+        };
+        if let Err(e) = done {
+            com_failed(&app2, &format!("nav {action}"), e);
+        }
+    })
+    .map_err(|e| e.to_string())
 }
 
 /// Marshell's keys and F12 are taken from the page (6q decision 4). The key-up of a taken key is taken too, by its

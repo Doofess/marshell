@@ -125,6 +125,7 @@ pub async fn spike_browser_open(app: AppHandle, url: String, rect: PaneRect) -> 
     let main = app.get_webview_window("main").ok_or("no main window")?;
     let window = main.as_ref().window();
     let on_nav = app.clone();
+    let on_popup = app.clone();
     let builder = WebviewBuilder::new(LABEL, WebviewUrl::External(url.clone()))
         .data_directory(state.home.join("browser-profile"))
         .additional_browser_args(BROWSER_ARGS)
@@ -137,6 +138,19 @@ pub async fn spike_browser_open(app: AppHandle, url: String, rect: PaneRect) -> 
                 log(&on_nav, "rust", "navigation", json!({ "url": u.as_str() }));
             }
             ok
+        })
+        // A link or script asking for a new window opens in the pane instead; one page stands in for "a popup opens as a
+        // new tab" (6q decision 3). The navigation goes through on_navigation's check like any other.
+        .on_new_window(move |u, _features| {
+            log(&on_popup, "rust", "popup", json!({ "url": u.as_str() }));
+            let app2 = on_popup.clone();
+            let _ = on_popup.run_on_main_thread(move || {
+                emit_app(&app2, "spike://popup", json!({ "url": u.as_str() }));
+                if let Ok(page) = page(&app2) {
+                    let _ = page.navigate(u);
+                }
+            });
+            tauri::webview::NewWindowResponse::Deny
         });
     let page = window
         .add_child(
@@ -195,6 +209,35 @@ pub async fn spike_browser_focus(app: AppHandle, reason: String) -> Result<(), S
     return com::focus_page(&app, &reason);
     #[cfg(not(windows))]
     return page(&app)?.set_focus().map_err(|e| e.to_string());
+}
+
+/// Runs a script in the page, for the checks CDP can't reach: the page has no CDP of its own (S12 finding 2).
+#[tauri::command]
+pub async fn spike_browser_eval(app: AppHandle, script: String) -> Result<(), String> {
+    log(&app, "rust", "eval", json!({ "script": script }));
+    page(&app)?.eval(script).map_err(|e| e.to_string())
+}
+
+/// `action`: "go" (with `url`), "back", "forward" or "reload".
+#[tauri::command]
+pub async fn spike_browser_nav(app: AppHandle, action: String, url: Option<String>) -> Result<(), String> {
+    log(&app, "rust", "nav", json!({ "action": action, "url": url }));
+    match action.as_str() {
+        "go" => {
+            let url: Url = url
+                .ok_or("go needs a URL")?
+                .parse()
+                .map_err(|e| format!("not a URL: {e}"))?;
+            if !rules::allowed_navigation(&url) {
+                refuse(&app, url.as_str());
+                return Err(format!("refused: {url}"));
+            }
+            page(&app)?.navigate(url).map_err(|e| e.to_string())
+        }
+        #[cfg(windows)]
+        "back" | "forward" | "reload" => com::nav(&app, &action),
+        _ => Err(format!("no such action: {action}")),
+    }
 }
 
 /// The page's picture for the overlay freeze, as a `data:` URL (the CSP's `img-src` allows `data:`).

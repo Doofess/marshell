@@ -50,11 +50,13 @@ function onDragArea(t: Element): boolean {
 let pageOwns = false;
 
 type Props = { model: BrowserSpikeModel; frozen: boolean };
+type PageState = { url: string; title: string; canBack: boolean; canForward: boolean };
 
 export function BrowserSpike({ model, frozen }: Props) {
   const page = useRef<HTMLDivElement>(null);
   const [address, setAddress] = useState(model.request?.url ?? "");
   const [status, setStatus] = useState("");
+  const [history, setHistory] = useState<PageState | null>(null);
   const { created, request } = model;
   // The page's picture while an app overlay is open; `src: null` is the plain fill a failed capture leaves.
   const [still, setStill] = useState<{ src: string | null } | null>(null);
@@ -192,6 +194,27 @@ export function BrowserSpike({ model, frozen }: Props) {
     return () => void off.then((f) => f());
   }, []);
 
+  // The bar follows the page: its address, and whether Back and Forward can go anywhere.
+  useEffect(() => {
+    const offHistory = listen<PageState>("spike://history", ({ payload }) => {
+      setHistory(payload);
+      setAddress(payload.url);
+    });
+    const offPopup = listen<{ url: string }>("spike://popup", ({ payload }) => {
+      setStatus(`A new-window link opened here: ${payload.url}`);
+      spikeLog("popup-shown", { url: payload.url });
+    });
+    return () => {
+      void offHistory.then((f) => f());
+      void offPopup.then((f) => f());
+    };
+  }, []);
+
+  const nav = (action: "back" | "forward" | "reload") => {
+    setStatus("");
+    call("spike_browser_nav", { action }).catch((e) => setStatus(String(e)));
+  };
+
   // Tab reaching the placeholder goes into the page: from the element before it to the page's first element, from the one
   // after it to its last. Focus arriving with no element before it is the window coming back, handled above.
   const onPageFocus = (e: FocusEvent<HTMLDivElement>) => {
@@ -204,19 +227,20 @@ export function BrowserSpike({ model, frozen }: Props) {
 
   const go = () => {
     setStatus("");
-    call("spike_browser_open", { url: address, rect: page.current ? measure(page.current) : null }).catch((e) => setStatus(String(e)));
+    const done = created.current ? call("spike_browser_nav", { action: "go", url: address }) : call("spike_browser_open", { url: address, rect: page.current ? measure(page.current) : null });
+    done.catch((e) => setStatus(String(e)));
   };
 
   return (
     <section className="spike-browser" aria-label="Browser (spike)" style={{ "--spike-inset": `${model.inset}px` } as CSSProperties}>
       <div className="spike-browser__bar">
-        <button type="button" disabled>
+        <button type="button" disabled={!history?.canBack} onClick={() => nav("back")}>
           Back
         </button>
-        <button type="button" disabled>
+        <button type="button" disabled={!history?.canForward} onClick={() => nav("forward")}>
           Forward
         </button>
-        <button type="button" disabled>
+        <button type="button" disabled={!history} onClick={() => nav("reload")}>
           Reload
         </button>
         <input aria-label="Address" value={address} onChange={(e) => setAddress(e.target.value)} onKeyDown={(e) => e.key === "Enter" && go()} />
