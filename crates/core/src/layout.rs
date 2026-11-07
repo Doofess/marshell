@@ -15,14 +15,8 @@ impl Versioned for FileDoc {
     const VERSION: u32 = 1;
 }
 
-/// The names the frontend uses for pane arrangements (`ARRANGEMENTS` in `splitLayout.ts`).
-const ARRANGEMENTS: [&str; 6] = ["single", "columns", "rows", "grid", "main-left", "main-top"];
 const SIDEBAR_MODES: [&str; 3] = ["expanded", "rail", "focus"];
-const MAX_PANES: usize = 4;
 const SIDEBAR_WIDTH: std::ops::RangeInclusive<u32> = 200..=400;
-const RATIO: std::ops::RangeInclusive<f32> = 0.1..=0.9;
-/// Ratios are the column split and the row split, so there are never more than two.
-const MAX_RATIOS: usize = 2;
 
 /// A missing, broken or newer-version file means the defaults. The file itself is not touched.
 pub fn load(home: &Path) -> LayoutDoc {
@@ -79,10 +73,6 @@ pub fn remember(
 /// Pulls a hand-edited or stale document back into range, so the frontend never gets a layout it cannot draw.
 pub fn repair(mut doc: LayoutDoc) -> LayoutDoc {
     let view = &mut doc.view;
-    view.panes.truncate(MAX_PANES);
-    if view.panes.is_empty() {
-        view.panes.push(None);
-    }
     // A pane whose tab is gone is shown empty.
     for pane in &mut view.panes {
         if pane
@@ -92,22 +82,10 @@ pub fn repair(mut doc: LayoutDoc) -> LayoutDoc {
             *pane = None;
         }
     }
-    let count = view.panes.len() as u32;
-    if view.active >= count {
-        view.active = 0;
-    }
-    if view.zoomed.is_some_and(|z| z >= count) {
-        view.zoomed = None;
-    }
+    fold_to_one_pane(view);
     view.sidebar_width = view.sidebar_width.clamp(*SIDEBAR_WIDTH.start(), *SIDEBAR_WIDTH.end());
     if !SIDEBAR_MODES.contains(&view.sidebar.as_str()) {
         view.sidebar = "expanded".into();
-    }
-    if view.ratios.len() > MAX_RATIOS || view.ratios.iter().any(|r| !RATIO.contains(r)) {
-        view.ratios.clear();
-    }
-    if view.arrangement.as_deref().is_some_and(|a| !ARRANGEMENTS.contains(&a)) {
-        view.arrangement = None;
     }
     let mut kept: Vec<String> = Vec::new();
     for id in std::mem::take(&mut view.recent_commands) {
@@ -119,6 +97,20 @@ pub fn repair(mut doc: LayoutDoc) -> LayoutDoc {
     doc
 }
 
+/// Split view is gone: a saved split keeps the zoomed pane's tab if it has one, else the active
+/// pane's, else the first open one, and the view holds that one pane.
+fn fold_to_one_pane(view: &mut ViewLayout) {
+    let at = |i: Option<u32>| i.and_then(|i| view.panes.get(i as usize)).and_then(|p| p.clone());
+    let kept = at(view.zoomed)
+        .or_else(|| at(Some(view.active)))
+        .or_else(|| view.panes.iter().flatten().next().cloned());
+    view.panes = vec![kept];
+    view.active = 0;
+    view.zoomed = None;
+    view.arrangement = None;
+    view.ratios.clear();
+}
+
 const MAX_RECENT: usize = 5;
 
 fn is_command_id(id: &str) -> bool {
@@ -128,20 +120,20 @@ fn is_command_id(id: &str) -> bool {
 /// The same rules as `repair`, but a bad value is an error naming the field. Whether a pane's tab
 /// exists is not checked here; `repair` empties such a pane when the file is next loaded.
 pub fn validate_view(v: &ViewLayout) -> Result<(), String> {
-    if !(1..=MAX_PANES).contains(&v.panes.len()) {
-        return Err(format!(
-            "panes must hold 1 to {MAX_PANES} entries, not {}",
-            v.panes.len()
-        ));
+    if v.panes.len() != 1 {
+        return Err(format!("panes must hold exactly 1 entry, not {}", v.panes.len()));
     }
-    let count = v.panes.len() as u32;
-    if v.active >= count {
-        return Err(format!("active {} is outside the {count} panes", v.active));
+    if v.active != 0 {
+        return Err(format!("active {} is outside the 1 pane", v.active));
     }
-    if let Some(z) = v.zoomed
-        && z >= count
-    {
-        return Err(format!("zoomed {z} is outside the {count} panes"));
+    if v.zoomed.is_some() {
+        return Err("zoomed must be null".into());
+    }
+    if v.arrangement.is_some() {
+        return Err("arrangement must be null".into());
+    }
+    if !v.ratios.is_empty() {
+        return Err("ratios must be empty".into());
     }
     if !SIDEBAR_WIDTH.contains(&v.sidebar_width) {
         return Err(format!(
@@ -156,18 +148,6 @@ pub fn validate_view(v: &ViewLayout) -> Result<(), String> {
             "sidebar must be one of {SIDEBAR_MODES:?}, not \"{}\"",
             v.sidebar
         ));
-    }
-    if v.ratios.len() > MAX_RATIOS || v.ratios.iter().any(|r| !RATIO.contains(r)) {
-        return Err(format!(
-            "ratios must be at most {MAX_RATIOS} values between {} and {}",
-            RATIO.start(),
-            RATIO.end()
-        ));
-    }
-    if let Some(a) = &v.arrangement
-        && !ARRANGEMENTS.contains(&a.as_str())
-    {
-        return Err(format!("arrangement must be one of {ARRANGEMENTS:?}, not \"{a}\""));
     }
     if v.recent_commands.len() > MAX_RECENT || v.recent_commands.iter().any(|id| !is_command_id(id)) {
         return Err("recent_commands must hold at most 5 command ids of a-z, 0-9 and -".into());
@@ -253,6 +233,18 @@ mod tests {
         assert!(!home.path().join("layout.json").exists());
     }
 
+    fn doc_with_tabs(ids: &[&str], view: ViewLayout) -> LayoutDoc {
+        LayoutDoc {
+            tabs: ids.iter().map(|i| tab(i)).collect(),
+            view,
+            ..LayoutDoc::default()
+        }
+    }
+
+    fn some(id: &str) -> Option<String> {
+        Some(id.to_string())
+    }
+
     #[test]
     fn repair_clamps_sidebar_width_and_drops_unknown_panes() {
         let mut doc = doc_with("a");
@@ -279,13 +271,73 @@ mod tests {
         let v = repair(doc).view;
         assert_eq!((v.arrangement, v.ratios, v.active, v.zoomed), (None, vec![], 0, None));
         assert_eq!((v.sidebar.as_str(), v.sidebar_width), ("expanded", 200));
-        assert_eq!(v.panes, vec![Some("a".to_string()), None]);
+        assert_eq!(v.panes, vec![Some("a".to_string())]);
 
         let mut doc = doc_with("a");
         doc.view.panes = Vec::new();
         assert_eq!(repair(doc.clone()).view.panes, vec![None::<String>]);
         doc.view.panes = vec![Some("a".into()); 6];
-        assert_eq!(repair(doc).view.panes.len(), 4);
+        assert_eq!(repair(doc).view.panes, vec![Some("a".to_string())]);
+    }
+
+    #[test]
+    fn repair_folds_a_split_to_the_zoomed_session() {
+        let doc = doc_with_tabs(
+            &["a", "b", "c"],
+            ViewLayout {
+                panes: vec![some("a"), some("b"), some("c")],
+                active: 1,
+                zoomed: Some(2),
+                arrangement: Some("columns".into()),
+                ratios: vec![0.4, 0.5],
+                ..ViewLayout::default()
+            },
+        );
+        let v = repair(doc).view;
+        assert_eq!(v.panes, vec![some("c")]);
+        assert_eq!((v.active, v.zoomed, v.arrangement, v.ratios), (0, None, None, vec![]));
+    }
+
+    #[test]
+    fn repair_folds_a_split_to_the_active_session() {
+        let doc = doc_with_tabs(
+            &["a", "b", "c"],
+            ViewLayout {
+                panes: vec![some("a"), some("b"), some("c")],
+                active: 1,
+                zoomed: None,
+                ..ViewLayout::default()
+            },
+        );
+        assert_eq!(repair(doc).view.panes, vec![some("b")]);
+    }
+
+    #[test]
+    fn repair_folds_past_an_empty_or_closed_focused_pane() {
+        let doc = doc_with_tabs(
+            &["b", "c"],
+            ViewLayout {
+                panes: vec![some("a"), None, some("c")],
+                active: 0,
+                zoomed: Some(1),
+                ..ViewLayout::default()
+            },
+        );
+        assert_eq!(repair(doc).view.panes, vec![some("c")]);
+    }
+
+    #[test]
+    fn repair_folds_a_split_with_no_open_tab_to_one_empty_pane() {
+        let doc = doc_with_tabs(
+            &[],
+            ViewLayout {
+                panes: vec![some("x"), some("y")],
+                ..ViewLayout::default()
+            },
+        );
+        let v = repair(doc).view;
+        assert_eq!(v.panes, vec![None::<String>]);
+        assert_eq!(v.active, 0);
     }
 
     #[test]
@@ -333,13 +385,24 @@ mod tests {
             change(&mut v);
             validate_view(&v).unwrap_err()
         };
-        assert!(bad(|v| v.panes = vec![None; 5]).contains("panes"));
+        assert!(bad(|v| v.panes = Vec::new()).contains("panes"));
         assert!(bad(|v| v.active = 1).contains("active"));
-        assert!(bad(|v| v.zoomed = Some(1)).contains("zoomed"));
         assert!(bad(|v| v.sidebar_width = 100).contains("sidebar_width"));
         assert!(bad(|v| v.sidebar = "x".into()).contains("sidebar"));
-        assert!(bad(|v| v.ratios = vec![0.05]).contains("ratios"));
-        assert!(bad(|v| v.arrangement = Some("x".into())).contains("arrangement"));
+    }
+
+    #[test]
+    fn validate_view_refuses_a_split_and_its_settings() {
+        let bad = |change: fn(&mut ViewLayout)| {
+            let mut v = ViewLayout::default();
+            change(&mut v);
+            validate_view(&v).unwrap_err()
+        };
+        assert_eq!(validate_view(&ViewLayout::default()), Ok(()));
+        assert!(bad(|v| v.panes = vec![None, None]).contains("panes"));
+        assert!(bad(|v| v.zoomed = Some(0)).contains("zoomed"));
+        assert!(bad(|v| v.arrangement = Some("single".into())).contains("arrangement"));
+        assert!(bad(|v| v.ratios = vec![0.5]).contains("ratios"));
     }
 
     #[test]

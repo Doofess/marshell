@@ -162,3 +162,35 @@ async fn closed_tabs_are_not_saved() {
         }
     }
 }
+
+#[tokio::test]
+async fn a_saved_split_reopens_on_its_focused_session() {
+    let home = tempfile::tempdir().unwrap();
+    let tab = |id: &str, n: u32| {
+        serde_json::json!({
+            "tab_id": id, "number": n, "name": id, "agent": null,
+            "profile_id": "sleeper", "cwd": "C:/work"
+        })
+    };
+    let saved = serde_json::json!({
+        "version": 1,
+        "tabs": [tab("t1", 1), tab("t2", 2), tab("t3", 3)],
+        "view": {
+            "panes": ["t1", "t2", "t3"], "arrangement": "columns", "ratios": [0.5], "active": 2,
+            "zoomed": null, "sidebar": "expanded", "sidebar_width": 288,
+            "shell_hidden": false, "grouped": false
+        },
+        "launcher": {}
+    });
+    std::fs::write(home.path().join("layout.json"), saved.to_string()).unwrap();
+
+    let app = router(state_in(home.path()));
+    let res = app.oneshot(api("GET", "/v1/layout", None)).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let doc = json_of(res).await;
+    assert_eq!(doc["view"]["panes"], serde_json::json!(["t3"]));
+    assert_eq!(doc["view"]["active"], 0);
+    assert_eq!(doc["view"]["zoomed"], serde_json::Value::Null);
+    assert_eq!(doc["view"]["arrangement"], serde_json::Value::Null);
+    assert_eq!(doc["view"]["ratios"], serde_json::json!([]));
+}
