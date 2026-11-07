@@ -32,10 +32,10 @@ Driver:
 | 4b | Divider drag | Follow mode against anchor mode | |
 | 4c | Window moves | Maximize, snaps, minimize and the tray: bounds within 1 px | |
 | 4d | 125% and 150% | 4c's bounds check and 4a's right edge at each scale | |
-| 5a | Freeze | Timings from `freeze-start` to `hidden`; the user judges the flash | |
-| 5b | No freeze | The palette is hidden behind the page | |
-| 5c | Capture after a navigation | Old page or new | |
-| 5d | Capture before the first load | The HRESULT | |
+| 5a | Freeze | Timings from `freeze-start` to `hidden`; the user judges the flash | Timings pass; the keys and the user's look are still to do. Ten freezes from a synthetic Ctrl+Shift+K in the app's webview (CDP, with another app in front). `freeze-start` to `hidden`: 37 to 48 ms. The capture took 22 to 31 ms in Rust, for a 14.8 KB PNG of 456×679, the placeholder's size in physical pixels. The thaw took 5 to 11 ms. A PrintWindow picture of the frozen window shows the palette and its scrim over the page's picture. Still to do, with Marshell in front: Ctrl+Shift+K from the page and from the terminal, 10 each, and the user's verdict on the flash. |
+| 5b | No freeze | The palette is hidden behind the page | Pass: it is, as the research says (tauri#15682). With `__spike.setFreeze(false)` the palette opened, and the page stayed on top: the PrintWindow picture shows the palette cut off at the page's left edge. |
+| 5c | Capture after a navigation | Old page or new | The old page while the new one is still loading. The navigation was asked for through `__spike.open`, and the palette opened 20 ms later. On the loopback site, `/one` loaded about 40 ms before the capture finished, so all 5 pictures matched `/one`. With `/slow` (added for this; it answers after 1.5 s), the capture started 25 ms after the navigation, and all 5 pictures matched the old page pixel for pixel. |
+| 5d | Capture before the first load | The HRESULT | No HRESULT: the capture succeeded. The freeze was asked for 20 ms after `open` and queued behind the child's creation. The capture started 31 ms after the child opened and returned in 86 ms. With the fast page, the picture was the loaded page. With the 1.5 s page, it was a plain 456×679 fill in rgb(18, 18, 18), the webview's background before any page has drawn. `capture-failed` never fired. |
 | 6a | Back, Forward, Reload | The bar follows each step | |
 | 6b | Popup | `target=_blank` opens in the pane; no new window | |
 | 6c | Profile | The cookie survives a restart; no old `msedgewebview2.exe` holds the profile | |
@@ -59,6 +59,7 @@ Driver:
 8. **The app's document can't tell that the page has the keyboard.** While the child holds focus, the main webview's `document.hasFocus()` stays true. Only the child's `GotFocus` and `LostFocus` say where the keys go; the spike relays them as `page-focus` and `page-blur`. 6q-3 keeps that state in the app, and anything that asks "is the terminal focused?" has to ask it too.
 9. **Tab off either end of the page arrives as `MoveFocusRequested`**, with the reason Next or Previous. With `Handled(true)` set, WebView2 leaves the focus to the app, and the app puts it on its own element on that side. Tab into the page is the app's own `focus` event on the placeholder, which calls `MoveFocus` with the matching reason, so the page starts at its first or last element.
 10. **UI Automation builds the page's tree on first use.** The first `uia.ps1` query after the app started listed only the app's document. Later queries listed both. Whether a screen reader meets the same gap is for the release's NVDA pass.
+11. **The freeze is cheap and needs no special cases.** It takes about 45 ms from the overlay opening to the page hidden behind its picture, and the PNG is about 15 KB as a `data:` URL, which the CSP's `img-src` already allows. `CapturePreview` returns the last frame the page drew: the old page during a navigation, and the webview's background before the first one. So a freeze in the middle of a load shows something sensible without any handling. The picture comes in the child's physical size, so `object-fit: fill` doesn't stretch it at 100%; 4d checks 125% and 150%.
 
 ## What 6q-2 and 6q-3 take from this
 
