@@ -63,7 +63,10 @@ function Assert-Foreground {
 $VK = @{ Ctrl = 0x11; Shift = 0x10; Alt = 0x12; Tab = 0x09; Escape = 0x1B; Enter = 0x0D; F5 = 0x74; F12 = 0x7B }
 function Parse-Chord([string]$chord) {
     $parts = $chord -split '\+'
-    $mods = @($parts[0..($parts.Count - 2)] | Where-Object { $_ } | ForEach-Object { $VK[$_] })
+    # A lone key has no modifiers: $parts[0..-1] would be the key twice, and the key would go down three times.
+    # (An if expression would hand back $null for the empty case, and $null piped to ForEach-Object sends a key 0.)
+    $mods = @()
+    if ($parts.Count -gt 1) { $mods = @($parts[0..($parts.Count - 2)] | Where-Object { $_ } | ForEach-Object { $VK[$_] }) }
     $last = $parts[-1]
     $k = if ($VK.ContainsKey($last)) { $VK[$last] } elseif ($last.Length -eq 1) { [int][char]$last.ToUpper() } else { throw "unknown key $last" }
     $code = if ($last.Length -eq 1 -and $last -match '[A-Za-z]') { 'Key' + $last.ToUpper() } elseif ($last.Length -eq 1) { 'Digit' + $last } else { $last }
@@ -73,15 +76,19 @@ function Parse-Chord([string]$chord) {
 function Send-Chord($c, [int]$holdMs = 0) {
     Assert-Foreground
     $down = @($c.Mods | ForEach-Object { [SpikeKeys]::Vk([uint16]$_, $false) }) + [SpikeKeys]::Vk([uint16]$c.Key, $false)
-    [void][SpikeKeys]::Send([SpikeKeys+INPUT[]]$down)
-    # SendInput doesn't repeat a held key; the keyboard's repeat is more key-downs with the key already down.
-    for ($t = 500; $t -lt $holdMs; $t += 33) {
-        if ($t -eq 500) { Start-Sleep -Milliseconds 500 } else { Start-Sleep -Milliseconds 33 }
-        [void][SpikeKeys]::Send([SpikeKeys+INPUT[]]@([SpikeKeys]::Vk([uint16]$c.Key, $false)))
-    }
     $rev = @($c.Mods); [array]::Reverse($rev)
     $up = @([SpikeKeys]::Vk([uint16]$c.Key, $true)) + @($rev | ForEach-Object { [SpikeKeys]::Vk([uint16]$_, $true) })
-    [void][SpikeKeys]::Send([SpikeKeys+INPUT[]]$up)
+    [void][SpikeKeys]::Send([SpikeKeys+INPUT[]]$down)
+    # The key-ups go out even if the hold is interrupted, so no key or modifier is left down.
+    try {
+        # SendInput doesn't repeat a held key; the keyboard's repeat is more key-downs with the key already down.
+        for ($t = 500; $t -lt $holdMs; $t += 33) {
+            if ($t -eq 500) { Start-Sleep -Milliseconds 500 } else { Start-Sleep -Milliseconds 33 }
+            [void][SpikeKeys]::Send([SpikeKeys+INPUT[]]@([SpikeKeys]::Vk([uint16]$c.Key, $false)))
+        }
+    } finally {
+        [void][SpikeKeys]::Send([SpikeKeys+INPUT[]]$up)
+    }
 }
 
 function Send-Text([string]$text) {
