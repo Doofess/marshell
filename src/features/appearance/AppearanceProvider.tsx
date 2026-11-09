@@ -5,6 +5,7 @@ import { getEndpoint } from "../../lib/api/client";
 import { settings as settingsApi } from "../../lib/api/settings";
 import { applyRootState, DEFAULT_APPEARANCE, rootState } from "./rootState";
 import { SettingsReadError, SettingsSync } from "./settingsSync";
+import { watchWindowBackground } from "./windowBackground";
 
 type AppearanceContext = {
   appearance: Appearance;
@@ -66,6 +67,9 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     applyRootState(document.documentElement, rootState(appearance, { prefersContrastMore: contrastMore }));
   }, [appearance, contrastMore]);
+
+  // The native window's background follows the theme too. Declared after the effect above, so the first read sees the root's state.
+  useEffect(() => watchWindowBackground(), []);
 
   const save = useCallback(async (next: Appearance) => {
     setAppearance(next);

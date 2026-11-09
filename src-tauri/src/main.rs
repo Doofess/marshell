@@ -10,6 +10,7 @@ mod link;
 mod notify;
 mod toast;
 mod tray;
+mod window_bg;
 
 use marshell_core::server::CoreConfig;
 use marshell_core::supervisor::{CoreEvent, Supervisor};
@@ -402,7 +403,8 @@ fn main() {
             attention::set_badge,
             tray::set_tray,
             link::notification_link,
-            link::set_notification_link
+            link::set_notification_link,
+            window_bg::set_window_background
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the app");
