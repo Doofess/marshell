@@ -102,6 +102,11 @@ Each gets its own test in `syncRedraw.test.ts` and a rerun of Task 3's measureme
 - `fitAndRedraw` became `syncRedraw(term, fit, redraw, canvas): { fit(), deviceResized() }`. `TerminalView` sends every fit through `fit()` (the observer's, the first one, a font change, a tab shown again) and calls `deviceResized()` from its own device-pixel observer.
 - `privateRedraw` calls `_renderService._renderer.value.renderRows` while `term.modes.synchronizedOutputMode` is true, and `_renderRows` otherwise.
 
+**Added after the hand check (2026-11-10):** the user saw Codex's text jump while the top or bottom edge moved, and chose to fix it here (decision 10's last bullet).
+- Create: `src/features/terminal/topAnchor.ts`, test `topAnchor.test.ts` (it runs the installed xterm with no DOM, including a control test that fails once xterm keeps the top rows itself).
+- `keepFullScreenTop(term: unknown, next: { cols: number; rows: number } | undefined): boolean` — before a resize that loses rows, moves the alternate screen's private cursor (`_core._bufferService.buffers.alt.y`) onto the new last row; false only when it was needed and the field is gone.
+- `topAnchoredFit(term, fit, missing?): () => void` — anchors for `fit.proposeDimensions()`, then fits. `TerminalView` uses it for every fit, with or without the same-frame draw.
+
 ### Task 5: Review and ship
 
 - [ ] One `/code-review` pass on the branch, then a fix pass.

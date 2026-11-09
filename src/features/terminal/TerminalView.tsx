@@ -22,6 +22,7 @@ import { sendsFirstSize, shouldFit } from "./fitGate";
 import { registerTerminal } from "./terminals";
 import { loadRenderer, type RendererKind } from "./renderer";
 import { privateRedraw, reportMissingRedraw, syncRedraw } from "./syncRedraw";
+import { topAnchoredFit } from "./topAnchor";
 import { trackColorSchemeMode } from "./colorSchemeMode";
 import { BUNDLED_FONT, fontStack } from "./terminalFont";
 import { appScheme, resolveTerminalTheme, type TerminalThemeInput } from "./terminalTheme";
@@ -112,7 +113,8 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
   const blockedRef = useRef(onBlockedInput);
   blockedRef.current = onBlockedInput;
   const termRef = useRef<Terminal | null>(null);
-  // The fit addon, or the fit that also draws in the same frame (syncRedraw.ts): every fit goes through it, whoever asks.
+  // The fit addon's fit behind the top anchor (topAnchor.ts), or that fit when it also draws in the same frame
+  // (syncRedraw.ts): every fit goes through it, whoever asks.
   const fitRef = useRef<{ fit(): void } | null>(null);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
@@ -169,7 +171,9 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
     const term = new Terminal(terminalOptions({ fontFamily, fontSize, theme: first.theme, minimumContrastRatio: first.minimumContrastRatio }));
     const fit = new FitAddon();
     term.loadAddon(fit);
-    fitRef.current = fit;
+    // Every fit keeps a full-screen program's text in place when rows go (topAnchor.ts).
+    const fitAnchored = topAnchoredFit(term, fit);
+    fitRef.current = { fit: fitAnchored };
     term.open(el);
     termRef.current = term;
     loadRenderer(term, endpoint.platform, setRenderer);
@@ -272,7 +276,7 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
     if (!redraw) reportMissingRedraw();
     // The WebGL renderer's canvas; the DOM renderer has none.
     const canvas = () => el.querySelector<HTMLCanvasElement>(".xterm-screen canvas:not(.xterm-link-layer)");
-    const sync = redraw && syncRedraw(term, () => fit.fit(), redraw, canvas);
+    const sync = redraw && syncRedraw(term, fitAnchored, redraw, canvas);
     if (sync) fitRef.current = sync;
     let frame = 0;
     const observer = new ResizeObserver(() => {
