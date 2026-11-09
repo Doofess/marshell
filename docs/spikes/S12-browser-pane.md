@@ -180,3 +180,18 @@ The key times include `keys.ps1`'s own start. |
   - **Ctrl+Shift chords.** The route gives the app every Ctrl+Shift chord, so the page loses Ctrl+Shift+V (paste as plain text) and Ctrl+Shift+Z (redo in many web apps). The user decides which chords stay in the page.
 
 ## Go or no-go
+
+**Recommendation: go, with limits.** A WebView2 child on the main window can be the pane's page. Every check passed or has a known fix:
+- the page lands where the app lays it out, at 100%, 125% and 150%, through edge drags, the layout's jumps, maximize and snaps (4, findings 20 and 21);
+- keys reach the app 20 of 20, and focus goes to the page and back 10 of 10 by Tab and by Alt+Tab, and 5 of 5 by clicks (2, 3);
+- the freeze over app overlays takes under 50 ms, and the user found it acceptable (5);
+- history, popups, cookies and real sites work (6);
+- the allow-list holds (7c), and drops behave the same way every time (8).
+
+The limits 6q-2 and 6q-3 carry:
+1. **Isolation before any outside page.** Every page gets the IPC bridge (finding 15), and a page at a local origin can call Marshell's own commands (finding 14). 6q-3 adds the app manifest and the capability scoped to `main` before the pane opens a page from outside. It also stops the allow-list from letting `localhost:1420` through in dev.
+2. **The main window's lookups.** Once a page exists, `get_webview_window("main")` finds nothing, and the tray can't bring the window back (finding 16). Every lookup moves to `get_window("main")`.
+3. **Quit.** Each page is closed cleanly before Marshell exits. A crash still loses the last half minute of cookies (finding 12).
+4. **Drawing during a resize.** WebView2 redraws a resized page a frame or more late, so the page's scrollbar and its right and bottom edges jump while it resizes (finding 22). Placement can't fix that. 6q-2's motion at the layout's jumps hides the worst of it, and the app's own resize flicker gets its own slice (6q-0 decision 6).
+5. **Not verified:** a background open without taking focus (`.focused(false)`, finding 1), AltGr on a German layout (2f), the snap layouts' flyout (4c), and the tray's bounds while a page is open (4c, blocked by limit 2).
+6. **The code review's list** under "What 6q-2 and 6q-3 take from this", and the user's call on the Ctrl+Shift chords.
