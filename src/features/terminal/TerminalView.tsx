@@ -11,6 +11,7 @@ import { imageOnlyPaste } from "../regions/imagePaste";
 import { PtySocket } from "../../lib/api/ptySocket";
 import { trustedSink } from "../../lib/api/elevated";
 import { LatencyMeter } from "../perf/latency";
+import { xtermSync } from "../spike/useBrowserSpike";
 import { useOpenPreview } from "../preview/PreviewContext";
 import { PerfOverlay } from "../perf/PerfOverlay";
 import { ENDED_LINE, FAILED_LINE, SESSION_ENDED } from "./coreRestart";
@@ -265,9 +266,17 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
     ];
 
     let frame = 0;
+    // Spike 6q-0 Task 10: fit inside the observer and draw at once after a grid change, so the canvas xterm 6.0 clears on a resize is never shown empty (xterm PR #5529 does this in 6.1). `_renderRows` is private.
+    const fitNow = () => {
+      const { cols, rows } = term;
+      fitIfShown();
+      if (term.cols === cols && term.rows === rows) return;
+      (term as unknown as { _core?: { _renderService?: { _renderRows?: (start: number, end: number) => void } } })._core?._renderService?._renderRows?.(0, term.rows - 1);
+    };
     const observer = new ResizeObserver(() => {
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(fitIfShown);
+      if (xtermSync.on) fitNow();
+      else frame = requestAnimationFrame(fitIfShown);
     });
     observer.observe(el);
     // A terminal made behind another tab keeps xterm's default grid, and sends no size, until it is shown.
