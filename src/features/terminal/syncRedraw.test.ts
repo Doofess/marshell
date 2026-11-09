@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { privateRedraw, reportMissingRedraw, resetMissingRedrawReport, syncRedraw } from "./syncRedraw";
+import { privateRedraw, reportMissingMidUpdateDraw, reportMissingRedraw, resetMissingRedrawReport, syncRedraw } from "./syncRedraw";
 
 function fakeTerm() {
   const service = {
@@ -52,10 +52,19 @@ describe("privateRedraw", () => {
     expect(renderer.drawn).toEqual([[0, 23]]);
   });
 
-  it("falls back to the render service when the renderer can't be reached", () => {
+  it("falls back to the render service, and says so, when the renderer can't be reached", () => {
     const { term, service } = syncTerm(true, false);
-    privateRedraw(term)?.(0, 23);
+    const missing = vi.fn();
+    privateRedraw(term, missing)?.(0, 23);
     expect(service.drawn).toEqual([[0, 23]]);
+    expect(missing).toHaveBeenCalledTimes(1);
+  });
+
+  it("says nothing about the renderer outside synchronized output", () => {
+    const { term } = syncTerm(false, false);
+    const missing = vi.fn();
+    privateRedraw(term, missing)?.(0, 23);
+    expect(missing).not.toHaveBeenCalled();
   });
 
   it("is null when xterm no longer has the function", () => {
@@ -147,6 +156,15 @@ describe("reportMissingRedraw", () => {
     reportMissingRedraw(log);
     expect(log).toHaveBeenCalledTimes(1);
     expect(log.mock.calls[0]?.[0]).toContain("RenderService._renderRows");
+  });
+
+  it("reports the renderer's missing draw once too, apart from the first report", () => {
+    const log = vi.fn();
+    reportMissingRedraw(log);
+    reportMissingMidUpdateDraw(log);
+    reportMissingMidUpdateDraw(log);
+    expect(log).toHaveBeenCalledTimes(2);
+    expect(log.mock.calls[1]?.[0]).toContain("_renderer.value.renderRows");
   });
 });
 

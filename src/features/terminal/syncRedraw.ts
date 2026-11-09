@@ -34,15 +34,19 @@ type Private = {
  * the cleared canvas empty until the program ends its update. The picture that mode asks the terminal to keep showing is
  * gone with the old canvas, so the redraw asks the renderer itself, one level down, to draw the screen as it stands.
  */
-export function privateRedraw(term: unknown): Redraw | null {
+export function privateRedraw(term: unknown, missingMidUpdateDraw: () => void = reportMissingMidUpdateDraw): Redraw | null {
   const t = term as Private | null;
   const service = t?._core?._renderService;
   const draw = service?._renderRows;
   if (typeof draw !== "function") return null;
   return (start, end) => {
-    const renderer = service?._renderer?.value;
-    if (t?.modes?.synchronizedOutputMode && typeof renderer?.renderRows === "function") (renderer.renderRows as Redraw).call(renderer, start, end);
-    else (draw as Redraw).call(service, start, end);
+    if (t?.modes?.synchronizedOutputMode) {
+      const renderer = service?._renderer?.value;
+      if (typeof renderer?.renderRows === "function") return (renderer.renderRows as Redraw).call(renderer, start, end);
+      // The second private name is gone: the service's draw below only notes the rows, and the canvas stays empty for now.
+      missingMidUpdateDraw();
+    }
+    (draw as Redraw).call(service, start, end);
   };
 }
 
@@ -90,16 +94,24 @@ export function syncRedraw(
   };
 }
 
-let reported = false;
+const reported = new Set<string>();
+const reportOnce = (message: string, log: (message: string) => void) => {
+  if (reported.has(message)) return;
+  reported.add(message);
+  log(message);
+};
 
 /** Says, once per page load, that the private redraw is gone. */
 export function reportMissingRedraw(log: (message: string) => void = console.error): void {
-  if (reported) return;
-  reported = true;
-  log("Marshell: xterm no longer has RenderService._renderRows; the terminal falls back to the next-frame fit and may flicker while resizing.");
+  reportOnce("Marshell: xterm no longer has RenderService._renderRows; the terminal falls back to the next-frame fit and may flicker while resizing.", log);
 }
 
-/** For tests: forget that the missing redraw was reported. */
+/** Says, once per page load, that the renderer's own draw, used during synchronized output, is gone. */
+export function reportMissingMidUpdateDraw(log: (message: string) => void = console.error): void {
+  reportOnce("Marshell: xterm no longer has RenderService._renderer.value.renderRows; a terminal resized while a program holds synchronized output may show empty for a moment.", log);
+}
+
+/** For tests: forget what was reported. */
 export function resetMissingRedrawReport(): void {
-  reported = false;
+  reported.clear();
 }

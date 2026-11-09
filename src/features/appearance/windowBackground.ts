@@ -58,7 +58,12 @@ export function watchWindowBackground(doc: Document = document): () => void {
   if (!inTauri() || !view) return () => {};
   const sync = backgroundSync(
     () => readPageBackground(doc),
-    (rgb) => invoke("set_window_background", { rgb }),
+    (rgb) =>
+      invoke<void>("set_window_background", { rgb }).catch((error: unknown) => {
+        // Not silent: until the next theme change the window keeps its old colour, which shows as a strip while it resizes.
+        console.error("Marshell: the window's background couldn't be set.", error);
+        throw error;
+      }),
   );
   const queries = QUERIES.map((q) => view.matchMedia(q));
   for (const q of queries) q.addEventListener("change", sync);
