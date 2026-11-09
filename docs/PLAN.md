@@ -1514,6 +1514,35 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
         - `arrangement`, `ratios` and `zoomed` stay in the file as dead fields until 6q-2.
         - Ctrl+Shift+D and Ctrl+Shift+P stay unbound.
         - The shell panel's "Open in a pane" becomes "Open as a session", and it selects the new session.
+   - **Slice 6q-0 decisions (2026-11-07).** The browser spike. Asked of the user on 2026-11-07, when the slice was planned. The plan is `docs/superpowers/plans/2026-11-07-phase-6q-0-browser-spike.md`, and the findings go in `docs/spikes/S12-browser-pane.md`.
+     1. **The spike branch may turn on Tauri's `unstable` feature and scope the default capability by `webviews` instead of `windows`.** Both stay on `phase-6q-0`, which is never merged. 6q-3 asks again.
+     2. **Real input is mixed.**
+        - The agent sends the keys with SendInput. Before each one it checks that the dev window is in front, and it repeats each key 20 times to count misses.
+        - The user does Alt+Tab, the window-edge drag, the drop from Explorer and the display-scale changes (125% and 150%) by hand.
+     3. **The spike also runs the research's four extra checks:**
+        - the overlay freeze, with CapturePreview, timed;
+        - Back, Forward and Reload through WebView2's COM API, and a cookie that survives a restart;
+        - isolation: the page can't call Marshell's IPC, and the navigation allow-list holds;
+        - Tab into and out of the page, with the page's UI Automation tree reachable.
+
+        There is no screen-reader pass; that stays at release sign-off.
+     4. **The agent writes the spike's code in the main thread.** Sonnet workers take only mechanical pieces.
+     5. **Decided, not asked:**
+        - the spike's code stays on the pushed branch `phase-6q-0`;
+        - the plan, this list and the findings reach `main` through a docs-only pull request;
+        - the go or no-go is added here once the user gives it.
+     6. **Asked during the spike (2026-11-09),** after the live check's resize findings (S12 findings 20 to 22):
+        - **6q-2 places the page by rule.** The front sends its layout as straight pieces over the window's width, and Rust places the page from them inside the window's own resize, so the page is never behind the window's edge. During an edge drag the app's own UI (the URL bar, the window buttons) catches up about a frame later, the lag it has with no page open. Inside the window (the divider, the sidebar) the page waits for the app to paint, so it moves with the app's own picture (S12 finding 21).
+        - **The layout's jumps get motion in 6q-2.** The sidebar folding to the rail and the page switching between full and side by side animate instead of jumping. The page follows the animation frame by frame, with Rust running the same curve as the app.
+        - **The app's own resize drawing is a separate slice after 6q.** The terminal text flickering, the small shell resizing unevenly, the white strip at the bottom left and the window buttons moving late all happen with no page open, so the spike only records them.
+     7. **Asked during the spike (2026-11-09),** after a research round on WebView2's late redraw (S12 finding 23). The redraw itself can't be removed: on Windows, Chromium shows the old frame until the page draws at the new size, by design. The spike's Task 10 tests what can hide it or has its own fix:
+        - **The page tries oversize and clip.** While the pane shrinks, the page keeps its larger size and the pane crops it; while it grows, the page is set a little wider than the pane, so the stale strip and the scrollbar stay outside the crop. The page takes the pane's exact size once the resizing stops. Overlay scrollbars, hiding the scrollbars during a drag, and freezing the page during an edge drag are not tested.
+        - **The terminal's text flicker is tested now and ships right after the spike, before 6q-2,** as its own small front-end change. xterm 6.0 clears its canvas on every resize and redraws a frame later; xterm fixed it upstream (PR #5529). This part moves out of decision 6's resize slice.
+        - **The spike may set the window's and the app webview's background colour at runtime,** first with a bright test colour to find which layer paints the white strip. `tauri.conf.json` doesn't change.
+     8. **The go or no-go (2026-11-09): go, with limits.** Asked after Task 10's hand checks (S12 finding 23). The pane's page is a WebView2 child webview on the main window, and 6q-2 and 6q-3 carry the limits in S12's "Go or no-go".
+        - **The page stays the pane's exact size.** Oversize and clip made the divider drag worse both ways the spike built it. Pinned to the pane's top-left corner, the page's scrollbar disappeared while dragging. Pinned to the edge that stays still, which the final review found missing and the user asked to test before the docs merged, the page popped on release and still jumped (S12 finding 23, checks 10c and 10d). So 6q-2 doesn't use it. The page's scrollbar and content still jump while the divider or the sidebar changes the page's width, and that is accepted as a limit.
+        - **The window's background fix ships with the terminal's fix,** as one small change before 6q-2. The main window's background follows the app's theme, set from Rust at runtime, which made the white strip invisible in the spike; and the terminal fits and draws inside its resize observer. So decision 7's front-end change gains a Rust part, and the white strip leaves decision 6's resize slice.
+     9. **Keys in the page follow the terminal's rule (2026-11-09).** The user's words: "treat the web page as we treated multiple shells: a selected pane reads the keybinds". Of the chords, the app gets only the shortcuts its keymap claims, as with the terminal (the session shortcuts, and the navigation chords once navigation has started), and the page gets the rest. The app sends Rust the claimed list, and the page's key route forwards only those. This replaces the spike's route, which gave the app every Ctrl+Shift chord. Esc and Ctrl+L still go to the app, and F12 still opens DevTools (6q decisions, second round 4 and first round 6).
 7. **Doctor**: the fix actions, on top of the phase-3 config core: "Fix X issues" and one-click undo; folds in each CLI's own doctor; detects duplicate notifications and offers to turn off each CLI's own desktop notifications (brief §5.5, moved here by slice 4e decision 4); reports the tokens injected by project references; checks Codex hook trust; waste checks (unused MCP servers and skills, long descriptions, broad scopes, a token-cost estimate); offers to raise `cleanupPeriodDays`.
    - Added 2026-10-16 (research in `docs/research/2026-10-16-accounts-cloud-extensions.md`):
      - **One-click doctor per CLI.** It runs the CLI's own doctor (`claude doctor` text, `codex doctor --json`) and opens a summary window of suggested fixes. Every fix goes through preview, backup and undo; nothing is applied silently. Antigravity has no doctor command, so it gets none.
