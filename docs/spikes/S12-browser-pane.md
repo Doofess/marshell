@@ -1,6 +1,6 @@
 # S12: Browser pane, a WebView2 child webview (Windows)
 
-Slice 6q-0, run 2026-11-07 to 2026-11-09 (the spike's last code commit is `654fab3c` on `phase-6q-0`) on the dev box: Windows 11 Pro 26H2 (build 26300), one 3440×1440 monitor at 100%, WebView2 Runtime 157.0.4341.42, Tauri 2.12.2 with `unstable`, wry 0.57.0, webview2-com 0.39.1.
+Slice 6q-0, run 2026-11-07 to 2026-11-09 (the spike's code is the branch `phase-6q-0`) on the dev box: Windows 11 Pro 26H2 (build 26300), one 3440×1440 monitor at 100%, WebView2 Runtime 157.0.4341.42, Tauri 2.12.2 with `unstable`, wry 0.57.0, webview2-com 0.39.1.
 Build: the never-merged branch `phase-6q-0` under `pnpm tauri dev`, started by `live-check.ps1` with a scratch `MARSHELL_HOME` and CDP on 9333.
 Plan: `docs/superpowers/plans/2026-11-07-phase-6q-0-browser-spike.md`. Decisions: `docs/PLAN.md` §9, "Slice 6q decisions (second round)" 2 to 6 and "Slice 6q-0 decisions".
 
@@ -69,6 +69,7 @@ The key times include `keys.ps1`'s own start. |
 | 10a | The terminal's sync render | The shell's text stops flickering on a resize | **Pass.** With `__spike.setXterm(false)` the user saw the text flicker on the page's divider, the sidebar's divider and a window edge. With `setXterm(true)`: "Flicker gone" on all three. See finding 23. |
 | 10b | Which layer paints the white strip | A test colour shows in the strip | **The window's background.** With the window magenta the strip was magenta, and it ran the app's whole width along the bottom (the white one had been noticed only at the bottom left). With the app's webview cyan as well: "Still magenta". With both set to the app's own background (`#000000`, the dark theme's): "Strip is invisible". |
 | 10c | Oversize and clip | The page's scrollbar jump and edge flicker go, and the page settles at the right size | **Fail.** Baseline, with the background already black: "bottom and right edges work fine but moving the divider makes it jump and flicker still". With `setOversize(64)`: "worse, now sometimes the scrolling bar disappears when you move the divider and the right edge". The content held still on right- and bottom-edge drags and "flickers just a bit" on the divider. The scrollbar came back "right away" on release. 128 px was not run. See finding 23. |
+| 10d | Oversize and clip, pinned to the still edge | The divider drag stops jumping, with the scrollbar in view | **Fail.** `setOversize(64, true)`: while the pane narrows from its left, the page keeps its width and hangs off the pane's left edge, so the divider slides over it; a widening pane gets the exact size. A keyboard move of the divider logged the page held at 437 px, 18, 36 and 54 px off the left edge, then settled. The user, on divider and sidebar drags: "Worse" than the baseline, with a pop on release, jumps while dragging, and scrollbar trouble. |
 
 ## Findings
 
@@ -151,8 +152,8 @@ The key times include `keys.ps1`'s own start. |
       - While a program holds synchronized output (DEC mode 2026, which agent TUIs use), `_renderRows` buffers instead of drawing. 10a ran one PowerShell session, so the change's live check includes an agent CLI's full-screen TUI.
     - **The white strip is the main window's background (10b).** tao fills the window with it before the webview has drawn. `Window::set_background_color` with the app's background made the strip invisible. The webview's own background colour never showed. With the strip gone, the user found right- and bottom-edge drags fine with a page open as well (10c's baseline).
     - **Oversize and clip, with the page pinned to the pane's top-left corner, doesn't help the page (10c).** While the pane shrinks, the page keeps its larger size and wry's container crops it. The spike always put the page at the container's top-left (`clip.rs`), so the cropped part was the page's right side, with its scrollbar, until the page settled 200 ms after the last placement: in the log, a pane 535 px wide held a page 764 px wide. The user saw the scrollbar disappear during divider and right-edge drags, and the content still flickered a little on the divider: "worse".
-    - **Not tried: pinning the page to the edge that stays still.** The research's version puts the oversized page against the pane's still edge. On a divider or sidebar drag that is the right edge, so the scrollbar would stay in view and the crop would fall on the left. The spike never built it, so 10c says nothing about it.
-    - **What is left for the page:** its scrollbar and content jump while the divider or the sidebar changes its width. Besides the still-edge version above, overlay scrollbars, hiding the scrollbars during a drag and freezing the page during a drag were not tested (decision 7).
+    - **Pinned to the edge that stays still, it doesn't help either (10d).** The research's version puts the kept page against the pane's still edge. On a divider or sidebar drag that is the right edge, so the crop falls on the page's left (`clip::anchored`). It applies only while the pane narrows: a pane that outgrows the page gets the exact size, because room ahead on that side would cut off the start of the page's content. The user judged it worse than the baseline: the page pops when it settles after the drag, it still jumps while dragging, and the scrollbar still gives trouble.
+    - **What is left for the page:** its scrollbar and content jump while the divider or the sidebar changes its width. Neither oversize version is a remedy, so 6q-2 keeps the page at the pane's exact size. Overlay scrollbars, hiding the scrollbars during a drag and freezing the page during a drag were not tested (decision 7).
     - **Seen in the same session:** when the window gets narrow enough that the sidebar folds by itself, the page jumps "in a glitchy looking way". That is the layout's jump of findings 20 and 21, which decision 6 gives motion in 6q-2.
 
 ## What 6q-2 and 6q-3 take from this
@@ -172,7 +173,7 @@ The key times include `keys.ps1`'s own start. |
   - Report from the placeholder's `ResizeObserver`, never from the window's `resize` event (finding 17), and watch the layout's inputs too, because a pure move fires no `ResizeObserver` (finding 3).
   - The layout's jumps animate, with Rust running the same curve.
   - The edge inset is 0 (Task 4's ruling).
-  - The page is the pane's exact size. Oversize and clip pinned top-left made things worse (10c); the version pinned to the still edge is untested (finding 23).
+  - The page is always the pane's exact size. Oversize and clip made things worse both ways it was built: pinned top-left (10c) and pinned to the still edge (10d, finding 23).
 - **Drawing during a resize.** The main window's background is the app's background colour, read from the app's computed background so light themes and forced colors match, and set again when the theme changes (10b). It ships with the terminal's sync render as one change before 6q-2 (10a, 6q-0 decision 8). Both are finding 23.
 - **Window lookups.** Every shell call that needs the main window uses `get_window("main")` once pages exist (finding 16): the badge, the flash, close to tray and the tray's show.
 - **Key route.** `route_key` as the spike has it:
@@ -201,7 +202,7 @@ The key times include `keys.ps1`'s own start. |
 
 ## Go or no-go
 
-**Recommendation: go, with limits.** A WebView2 child on the main window can be the pane's page. Every check passed, has a fix still to build, or is a limit below: 10c failed and the page's jump stays (limit 4), and 2f, the tray's bounds and the app manifest are unverified (limits 1 and 5). What passed:
+**Recommendation: go, with limits.** A WebView2 child on the main window can be the pane's page. Every check passed, has a fix still to build, or is a limit below: 10c and 10d failed and the page's jump stays (limit 4), and 2f, the tray's bounds and the app manifest are unverified (limits 1 and 5). What passed:
 - the page lands where the app lays it out, at 100%, 125% and 150%, through edge drags, the layout's jumps, maximize and snaps (4, findings 20 and 21);
 - keys reach the app 20 of 20, and focus goes to the page and back 10 of 10 by Tab and by Alt+Tab, and 5 of 5 by clicks (2, 3);
 - the freeze over app overlays takes under 50 ms, and the user found it acceptable (5);
@@ -212,7 +213,7 @@ The limits 6q-2 and 6q-3 carry:
 1. **Isolation before any outside page.** Every page gets the IPC bridge (finding 15), and a page at a local origin can call Marshell's own commands (finding 14). 6q-3 adds the app manifest and the capability scoped to `main` before the pane opens a page from outside. It also stops the allow-list from letting `localhost:1420` through in dev, and checks a frame at the app's own origin inside a page, which the allow-list doesn't see.
 2. **The main window's lookups.** Once a page exists, `get_webview_window("main")` finds nothing, and the tray can't bring the window back (finding 16). Every lookup moves to `get_window("main")`.
 3. **Quit.** Each page is closed cleanly before Marshell exits. A crash still loses the last half minute of cookies (finding 12).
-4. **Drawing during a resize.** WebView2 redraws a resized page a frame or more late (finding 22), and Chromium does that by design, so no host setting removes it (finding 23). What the user still sees with the fixes below: the page's scrollbar and content jump while the divider or the sidebar changes the page's width. Oversize and clip with the page pinned top-left made that worse (10c); pinned to the still edge it is untested. What hides the rest:
+4. **Drawing during a resize.** WebView2 redraws a resized page a frame or more late (finding 22), and Chromium does that by design, so no host setting removes it (finding 23). What the user still sees with the fixes below: the page's scrollbar and content jump while the divider or the sidebar changes the page's width. Oversize and clip made that worse, pinned top-left (10c) and pinned to the still edge (10d). What hides the rest:
    - the main window's background set to the app's, which made the strip at a moving window edge invisible (10b);
    - the terminal's sync render, which ends the shell text's flicker and ships before 6q-2 (10a, 6q-0 decision 7);
    - 6q-2's motion at the layout's jumps (6q-0 decision 6).
