@@ -31,20 +31,24 @@ Driver:
 | 3e | UI Automation | Both documents listed; focus sits under the page's document after 3a | Pass. `uia.ps1` listed both documents: the page ("Spike home") and the app ("PowerShell 7 3 — Marshell"). After the first run of 3a, the focused element was the page's link "Page two in a new window", under "Spike home" (that run sent each Tab three times). After the rerun and the page's refocus, it was the page's document, "Spike home"; inside 3a's first round it was the link "Page one". The first query after the app started missed the page's document; see finding 10. |
 | 4a | Frame edges | The frame resizes where the page touches the edge; the smallest inset that works | Pass with no inset. The user's hands, follow mode, inset 0: the right edge, the bottom edge and the bottom-right corner all grabbed and resized where the page touches them. The frame's invisible resize border lies outside the client area (the window is 16 px wider than its client), so the page never covers it. The page did resize "with a delay" during edge drags: see 4b. |
 | 4b | Divider drag | Follow mode against anchor mode | Follow mode, by the user's eye. The divider: the page kept up. The window's edges in follow mode: it lagged a little, and caught up when the drag stopped. Across 1,144 reports, the window had grown a median 81 px past the size the front measured (90th percentile 378 px, the most 617). That is WebView2's own lag during a live resize, plus finding 17's frame. Anchor mode: worse. Rust's moves and the front's alternated 307 times, and 257 of those switches jumped more than 40 px. 6q-2 keeps follow mode. |
-| 4c | Window moves | Maximize, snaps, minimize and the tray: bounds within 1 px | Partial. Snapping with Win+Left (sent by the check) kept the page within 1 px, with the page open or closed and with focus in either. A title-bar drag moved the window either way. The mouse snaps (drag to the top edge, the snap layouts) are still to do: the user's tries didn't reach Marshell's window, and the user's keyboard didn't send the Win key. The page's WebView2 host window was compared with the placeholder on screen. Every case was within 1 px, the half pixel Tauri rounds:
+| 4c | Window moves | Maximize, snaps, minimize and the tray: bounds within 1 px | Pass, except the tray (below). Snapping with Win+Left (sent by the check) kept the page within 1 px, with the page open or closed and with focus in either. A title-bar drag moved the window either way. The user's first tries at the mouse snaps didn't reach Marshell's window. In the rule-mode rerun (2026-11-09) the user dragged the title bar to the screen's top edge: the window maximized "pretty smoothly", and a passive watcher read the page within 1 px of the placeholder five times, maximized and restored (once 3 px, read while the window still moved). The snap layouts' flyout wasn't tried. The page's WebView2 host window was compared with the placeholder on screen. Every case was within 1 px, the half pixel Tauri rounds:
 - at the start;
 - after the window's own Minimize button and a restore;
 - maximized (1576×1273 at 1865, 120);
 - after Restore.
 
 The tray can't bring the window back while a page is open (finding 16), so the tray's bounds weren't measured. |
-| 4d | 125% and 150% | 4c's bounds check and 4a's right edge at each scale | |
-| 5a | Freeze | Timings from `freeze-start` to `hidden`; the user judges the flash | Timings and keys pass; the user's look is still to do. Ten freezes from a synthetic Ctrl+Shift+K in the app's webview (CDP, with another app in front). `freeze-start` to `hidden`: 37 to 48 ms. The capture took 22 to 31 ms in Rust, for a 14.8 KB PNG of 456×679, the placeholder's size in physical pixels. The thaw took 5 to 11 ms. A PrintWindow picture of the frozen window shows the palette and its scrim over the page's picture. Then real keys, with Marshell in front (`keys.ps1`), 10 from each side:
+| 4d | 125% and 150% | 4c's bounds check and 4a's right edge at each scale | Pass, in rule mode with paint sync. The user set the display scale to 125%, then 150%, then back to 100%, and at each scale the page "stays put" and the right edge grabbed. Rust's own reading: every placement's bounds, read back from the page, were the logical box times the scale within half a pixel (769 placements at 125%, 401 at 150%). The rule matched all 293 reports at 125%; at 150% it missed 159 during a divider drag, every one the check's ordering artefact (finding 21). Two things to carry:
+- At 125% the front's `.window` measured 0.8 px taller than Rust's logical window, so the half-pixel same-size test failed and every report went through the rule (`rule-report`) rather than as measured; at 150% the gap was a third of a pixel and passed. The page still landed right, but paint sync (finding 21) needs the report used as measured, so 6q-2 compares the two sizes in physical pixels.
+- The first rule after the switch to 150% was measured mid-change, with the pane's bottom at −91.5 px; the next one, 0.4 s later, put it back to 0.
+
+The passive watcher, a PowerShell started at 100%, read gaps of 220 to 465 px at 125% and 150%. That was Windows scaling its readings back to 96 DPI: the window's rect read 1837×1028 before and after the change. In those scaled readings the page's size matched the placeholder's CSS size within about 1 px. Back at 100% it read 0 to 1 px. |
+| 5a | Freeze | Timings from `freeze-start` to `hidden`; the user judges the flash | Pass. The user opened and closed the palette over the page 3 or 4 times (2026-11-09): "good and acceptable". Ten freezes from a synthetic Ctrl+Shift+K in the app's webview (CDP, with another app in front). `freeze-start` to `hidden`: 37 to 48 ms. The capture took 22 to 31 ms in Rust, for a 14.8 KB PNG of 456×679, the placeholder's size in physical pixels. The thaw took 5 to 11 ms. A PrintWindow picture of the frozen window shows the palette and its scrim over the page's picture. Then real keys, with Marshell in front (`keys.ps1`), 10 from each side:
 - From the page: Ctrl+Shift+K was forwarded and the palette opened 10 of 10. It took 16 to 21 ms from the key to `freeze-start` and 69 to 77 ms to `hidden`; the first press, cold, took 181 ms.
 - From the terminal: 10 of 10, with 12 to 15 ms to `freeze-start` and 45 to 57 ms to `hidden`.
 - Esc closed the palette and thawed the page every time, in 10 to 18 ms.
 
-The key times include `keys.ps1`'s own start. The user's verdict on the flash is still to come. |
+The key times include `keys.ps1`'s own start. |
 | 5b | No freeze | The palette is hidden behind the page | Pass: it is, as the research says (tauri#15682). With `__spike.setFreeze(false)` the palette opened, and the page stayed on top: the PrintWindow picture shows the palette cut off at the page's left edge. |
 | 5c | Capture after a navigation | Old page or new | The old page while the new one is still loading. The navigation was asked for through `__spike.open`, and the palette opened 20 ms later. On the loopback site, `/one` loaded about 40 ms before the capture finished, so all 5 pictures matched `/one`. With `/slow` (added for this; it answers after 1.5 s), the capture started 25 ms after the navigation, and all 5 pictures matched the old page pixel for pixel. |
 | 5d | Capture before the first load | The HRESULT | No HRESULT: the capture succeeded. The freeze was asked for 20 ms after `open` and queued behind the child's creation. The capture started 31 ms after the child opened and returned in 86 ms. With the fast page, the picture was the loaded page. With the 1.5 s page, it was a plain 456×679 fill in rgb(18, 18, 18), the webview's background before any page has drawn. `capture-failed` never fired. |
@@ -139,8 +143,6 @@ The key times include `keys.ps1`'s own start. The user's verdict on the flash is
 
 ## What 6q-2 and 6q-3 take from this
 
-Draft, written while 3b to 3d, 4a to 4d, 5a's keys, 6b's click, 7b's window controls and 8a to 8c wait for the foreground.
-
 - **Creating the page.** Use `Window::add_child`, with:
   - `.focused(false)` for a background open (finding 1), which the spike didn't pass;
   - the profile at `<MARSHELL_HOME>\browser-profile`;
@@ -150,7 +152,7 @@ Draft, written while 3b to 3d, 4a to 4d, 5a's keys, 6b's click, 7b's window cont
 - **Browser arguments.** `--disable-features=msWebOOUI,msPdfOOUI` on the child. The live check's `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` is added to these, not used in their place (1c), so the page has no CDP of its own (finding 2).
 - **Bounds.** Rule mode (finding 21, 6q-0 decision 6):
   - The front sends its layout as straight pieces over the window's width whenever an input changes, and Rust places the page from them inside the window's resize.
-  - A report measured at the window's current size is used as it is, and the front sends it after the app paints that frame, so the page moves with the app's picture.
+  - A report measured at the window's current size is used as it is, and the front sends it after the app paints that frame, so the page moves with the app's picture. "Current size" is compared in physical pixels: at 125% the two sides' logical sizes differ by 0.8 px (4d).
   - The rule and the report travel in one message, computed together.
   - Keep at most one report waiting (finding 20).
   - Report from the placeholder's `ResizeObserver`, never from the window's `resize` event (finding 17), and watch the layout's inputs too, because a pure move fires no `ResizeObserver` (finding 3).
@@ -163,10 +165,18 @@ Draft, written while 3b to 3d, 4a to 4d, 5a's keys, 6b's click, 7b's window cont
   - everything else stays in the page, including Ctrl+Alt chords, which AltGr sends.
 
   The app re-dispatches a forwarded key as a synthetic `KeyboardEvent`, so the keymap has no copy in Rust (finding 5). After a forward, the app puts focus back in the page itself (finding 6).
-- **Focus.** The app keeps "the page has the keyboard" from `GotFocus` and `LostFocus` (finding 8). Tab in is `MoveFocus` from the placeholder's `focus` event, and Tab out is `MoveFocusRequested` with `Handled(true)` (finding 9). Alt+Tab and clicks wait for 3b to 3d.
-- **Freeze.** `CapturePreview` to PNG, shown as a `data:` image, then the child hidden: 37 to 48 ms in all, thawed in 5 to 11 ms (5a, finding 11). No special case for a navigation or a first load (5c, 5d). The user's verdict on the flash is still to come.
+- **Focus.** The app keeps "the page has the keyboard" from `GotFocus` and `LostFocus` (finding 8). Tab in is `MoveFocus` from the placeholder's `focus` event, and Tab out is `MoveFocusRequested` with `Handled(true)` (finding 9). Alt+Tab and clicks pass (3b to 3d).
+- **Freeze.** `CapturePreview` to PNG, shown as a `data:` image, then the child hidden: 37 to 48 ms in all, thawed in 5 to 11 ms (5a, finding 11). No special case for a navigation or a first load (5c, 5d). The user found the flash acceptable (5a).
 - **Quit.** Close every page's controller before the process ends, or the last half minute of cookies is lost (finding 12).
 - **Isolation.** Scope the capability to `"webviews": ["main"]`, and add an app manifest so Marshell's own commands come under it (finding 14). The navigation allow-list stays the other lock (7c).
-- **Drop.** Waits for 8a to 8c, and finding 16's note on where the window's drop events go.
+- **Drop.** Each webview hears only its own drops (finding 19). The terminal's drop works as on `main` (8a). A drop on the page reaches neither the app nor the page, and the page doesn't open the file (8b). A drop on the pane's bar opens the preview, which the page hides (8c). 6q-2 listens on every page's webview as well as the main one, and a drop on the pane opens a tab.
+- **Fix in 6q-2 and 6q-3, from the spike's code review:**
+  - **A stuck key-up.** A key the route takes moves focus to the app, so its key-up never comes back through the page's handler, and its virtual key stays in the `taken` set. The next time that key is pressed in the page, the page gets the key-down but not the key-up. Clear the set when the page gets focus.
+  - **Focus moved inside the key callback.** `run_on_main_thread` runs at once on the main thread, so `set_focus` runs inside WebView2's key callback, with the `taken` lock held. Let the lock go and post the focus change.
+  - **Showing the pane again reloads the page.** Hiding unmounts the pane, and its open effect runs again on the next mount. The page goes back to the first address, and its history and scroll position are lost. Opening and showing are separate commands.
+  - **A capture of a hidden page never finishes.** `CapturePreview` on a hidden page waits out the command's 5 s timeout. The freeze skips the capture when the page is already hidden.
+  - **Scale changes fire no `ResizeObserver`.** The CSS size stays the same. Rule mode's placement in the window's resize covered 4d. A placement that relies on reports also needs to listen for `devicePixelRatio` changes.
+  - **The allow-list sees top-level navigations only.** wry 0.57 hooks `NavigationStarting`, not `FrameNavigationStarting`, so a frame inside the page loads whatever it asks for, as in any browser. Finding 14's scoped capability is what keeps a frame away from Marshell's commands.
+  - **Ctrl+Shift chords.** The route gives the app every Ctrl+Shift chord, so the page loses Ctrl+Shift+V (paste as plain text) and Ctrl+Shift+Z (redo in many web apps). The user decides which chords stay in the page.
 
 ## Go or no-go
