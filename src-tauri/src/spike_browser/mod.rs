@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Url, WebviewBuilder, WebviewUrl};
 
@@ -42,6 +42,8 @@ pub struct SpikeState {
     rule: Mutex<rules::Rule>,
     /// Task 10's oversize and clip: the room ahead, in physical pixels, a growing page gets; 0 places the page as before.
     oversize: AtomicU32,
+    /// With oversize on: the page is held against the pane's still edge, not its top-left corner (`clip::anchored`).
+    clip_still: AtomicBool,
     log: Mutex<()>,
 }
 
@@ -63,6 +65,7 @@ impl SpikeState {
             layout: Mutex::new(rules::Layout::default()),
             rule: Mutex::new(rules::Rule::default()),
             oversize: AtomicU32::new(0),
+            clip_still: AtomicBool::new(false),
             log: Mutex::new(()),
         }
     }
@@ -111,9 +114,11 @@ pub fn set_bounds(app: &AppHandle, x: f64, y: f64, width: f64, height: f64, why:
     let page = page(app)?;
     #[cfg(windows)]
     {
-        let ahead = app.state::<SpikeState>().oversize.load(Ordering::SeqCst);
+        let state = app.state::<SpikeState>();
+        let ahead = state.oversize.load(Ordering::SeqCst);
         if ahead > 0 {
-            return clip::place(app, &page, [x, y, width, height], ahead, why);
+            let still = state.clip_still.load(Ordering::SeqCst);
+            return clip::place(app, &page, [x, y, width, height], ahead, still, why);
         }
     }
     let started = std::time::Instant::now();
@@ -421,9 +426,12 @@ pub async fn spike_browser_visible(app: AppHandle, visible: bool) -> Result<(), 
 /// Task 10: the room ahead a growing page gets, in physical pixels; 0 turns oversize and clip off and gives the page the
 /// pane's size at once.
 #[tauri::command]
-pub async fn spike_browser_oversize(app: AppHandle, px: u32) -> Result<(), String> {
-    app.state::<SpikeState>().oversize.store(px, Ordering::SeqCst);
-    log(&app, "rust", "oversize", json!({ "px": px }));
+pub async fn spike_browser_oversize(app: AppHandle, px: u32, still: Option<bool>) -> Result<(), String> {
+    let still = still.unwrap_or(false);
+    let state = app.state::<SpikeState>();
+    state.oversize.store(px, Ordering::SeqCst);
+    state.clip_still.store(still, Ordering::SeqCst);
+    log(&app, "rust", "oversize", json!({ "px": px, "still": still }));
     #[cfg(windows)]
     if px == 0 {
         let app2 = app.clone();
