@@ -1,3 +1,5 @@
 [toolchain]
 channel = "1.98.1"
-components = ["rustfmt", "clippy"]
+# rust-analyzer and the standard library's source it reads are for the language server (the repo's
+# Claude Code plugin in .claude/marketplace, or an editor); the build doesn't use them.
+components = ["rustfmt", "clippy", "rust-analyzer", "rust-src"]

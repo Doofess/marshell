@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "marshell",
+  "description": "Claude Code plugins for working on Marshell itself. Declared in this repo's .claude/settings.json, so they apply to this project only.",
+  "owner": {
+    "name": "Doofess"
+  },
+  "plugins": [
+    {
+      "name": "rust-analyzer",
+      "description": "rust-analyzer for Marshell: checks in target/rust-analyzer with 4 jobs, so it never blocks or races cargo's own builds",
+      "source": "./rust-analyzer",
+      "category": "development"
+    }
+  ]
+}

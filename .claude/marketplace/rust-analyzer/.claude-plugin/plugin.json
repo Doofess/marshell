@@ -1,0 +1,24 @@
+{
+  "name": "rust-analyzer",
+  "description": "rust-analyzer for Marshell: checks in target/rust-analyzer with 4 jobs, so it never blocks or races cargo's own builds",
+  "version": "1.0.0",
+  "author": {
+    "name": "Doofess"
+  },
+  "lspServers": {
+    "rust-analyzer": {
+      "command": "rust-analyzer",
+      "extensionToLanguage": {
+        ".rs": "rust"
+      },
+      "initializationOptions": {
+        "cargo": {
+          "targetDir": true,
+          "extraEnv": {
+            "CARGO_BUILD_JOBS": "4"
+          }
+        }
+      }
+    }
+  }
+}
