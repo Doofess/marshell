@@ -21,6 +21,8 @@ import { ReplayGate } from "./replayGate";
 import { sendsFirstSize, shouldFit } from "./fitGate";
 import { registerTerminal } from "./terminals";
 import { loadRenderer, type RendererKind } from "./renderer";
+import { privateRedraw, reportMissingRedraw, syncRedraw } from "./syncRedraw";
+import { topAnchoredFit } from "./topAnchor";
 import { trackColorSchemeMode } from "./colorSchemeMode";
 import { BUNDLED_FONT, fontStack } from "./terminalFont";
 import { appScheme, resolveTerminalTheme, type TerminalThemeInput } from "./terminalTheme";
@@ -111,7 +113,9 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
   const blockedRef = useRef(onBlockedInput);
   blockedRef.current = onBlockedInput;
   const termRef = useRef<Terminal | null>(null);
-  const fitRef = useRef<FitAddon | null>(null);
+  // The fit addon's fit behind the top anchor (topAnchor.ts), or that fit when it also draws in the same frame
+  // (syncRedraw.ts): every fit goes through it, whoever asks.
+  const fitRef = useRef<{ fit(): void } | null>(null);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
   // A hidden host measures near empty, and fitting to it would resize the program to 10x4 (#65); showing the tab refits.
@@ -167,7 +171,9 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
     const term = new Terminal(terminalOptions({ fontFamily, fontSize, theme: first.theme, minimumContrastRatio: first.minimumContrastRatio }));
     const fit = new FitAddon();
     term.loadAddon(fit);
-    fitRef.current = fit;
+    // Every fit keeps a full-screen program's text in place when rows go (topAnchor.ts).
+    const fitAnchored = topAnchoredFit(term, fit);
+    fitRef.current = { fit: fitAnchored };
     term.open(el);
     termRef.current = term;
     loadRenderer(term, endpoint.platform, setRenderer);
@@ -264,12 +270,30 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
       schemeMode,
     ];
 
+    // While the host resizes, the fit and the draw share the observer's frame, so the canvas xterm clears on a grid change is
+    // never shown empty (syncRedraw.ts). Without xterm's private redraw, the fit waits a frame as it did before.
+    const redraw = privateRedraw(term);
+    if (!redraw) reportMissingRedraw();
+    // The WebGL renderer's canvas; the DOM renderer has none.
+    const canvas = () => el.querySelector<HTMLCanvasElement>(".xterm-screen canvas:not(.xterm-link-layer)");
+    const sync = redraw && syncRedraw(term, fitAnchored, redraw, canvas);
+    if (sync) fitRef.current = sync;
     let frame = 0;
     const observer = new ResizeObserver(() => {
+      if (sync) return fitIfShown();
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(fitIfShown);
     });
     observer.observe(el);
+    // Made after the WebGL addon's own device-pixel observer (loadRenderer, above), so it hears the same size change just
+    // after that one has set the canvas's size, and cleared it, a second time.
+    const deviceObserver = new ResizeObserver(() => sync?.deviceResized());
+    const drawn = sync && canvas();
+    try {
+      if (drawn) deviceObserver.observe(drawn, { box: "device-pixel-content-box" });
+    } catch {
+      // No device-pixel box in this webview (WebKit): xterm's own observer isn't running there either.
+    }
     // A terminal made behind another tab keeps xterm's default grid, and sends no size, until it is shown.
     sizeSentRef.current = false;
     fitIfShown();
@@ -310,6 +334,7 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
       themeWatch.disconnect();
       scheme.removeEventListener("change", onScheme);
       observer.disconnect();
+      deviceObserver.disconnect();
       cancelAnimationFrame(frame);
       subs.forEach((s) => s.dispose());
       socket.close();
