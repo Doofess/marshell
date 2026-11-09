@@ -32,6 +32,18 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/format-rust.mjs\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "matcher": "startup|resume|compact|clear",
@@ -61,13 +73,23 @@
   ],
   "enabledPlugins": {
     "frontend-design@claude-plugins-official": true,
-    "good-css@good-css": true
+    "good-css@good-css": true,
+    "typescript-lsp@claude-plugins-official": true,
+    "rust-analyzer@marshell": true,
+    "context7@claude-plugins-official": true,
+    "security-guidance@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
     "good-css": {
       "source": {
         "source": "github",
         "repo": "vojtaholik/good-css"
+      }
+    },
+    "marshell": {
+      "source": {
+        "source": "directory",
+        "path": "./.claude/marketplace"
       }
     }
   }

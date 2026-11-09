@@ -22,6 +22,12 @@ A PR body has "What it does", "Live check", "Known limits" and "Checks" sections
 - `Explore` and `Plan` don't load `CLAUDE.md` or `AGENTS.md`. Put what they need in the prompt: read-only, the folders to search, and which docs are binding.
 - Check every worker report yourself: read the diff and run its tests before ticking the task.
 
+## Code intelligence
+
+- The TypeScript and Rust language servers run as project plugins. Use them for definitions, references and types before grepping. rust-analyzer comes from this repo's own plugin (`.claude/marketplace/rust-analyzer`), which has it check in `target/rust-analyzer` with 4 jobs; `rust-analyzer.toml` can't set either.
+- The TypeScript server runs TypeScript 6.0.3, because the project's TypeScript 7 ships no `tsserver.js`. Where the two disagree, `pnpm build` decides.
+- A hook runs rustfmt on every Rust file you edit (`.claude/hooks/format-rust.mjs`). When it says it reformatted a file, read the file again before the next edit.
+
 ## Live check (Windows)
 
 Run it with the `marshell-live-check` skill: `pnpm tauri dev` against scratch homes, the webview driven over CDP, and only what it started stopped. Agent sessions in a live check are ones you start for it. Pressing Enter in one is part of the check, never part of the feature.
