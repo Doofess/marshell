@@ -176,6 +176,8 @@ The key times include `keys.ps1`'s own start. |
   - Esc, Ctrl+L and every Ctrl+Shift chord go to the app;
   - everything else stays in the page, including Ctrl+Alt chords, which AltGr sends.
 
+  6q-3 changes the middle rule (6q-0 decision 9): the app gets only the shortcuts its keymap claims, from a list the app sends Rust, as the terminal's key handler does.
+
   The app re-dispatches a forwarded key as a synthetic `KeyboardEvent`, so the keymap has no copy in Rust (finding 5). After a forward, the app puts focus back in the page itself (finding 6).
 - **Focus.** The app keeps "the page has the keyboard" from `GotFocus` and `LostFocus` (finding 8). Tab in is `MoveFocus` from the placeholder's `focus` event, and Tab out is `MoveFocusRequested` with `Handled(true)` (finding 9). Alt+Tab and clicks pass (3b to 3d).
 - **Freeze.** `CapturePreview` to PNG, shown as a `data:` image, then the child hidden: 37 to 48 ms in all, thawed in 5 to 11 ms (5a, finding 11). No special case for a navigation or a first load (5c, 5d). The user found the flash acceptable (5a).
@@ -189,7 +191,7 @@ The key times include `keys.ps1`'s own start. |
   - **A capture of a hidden page never finishes.** `CapturePreview` on a hidden page waits out the command's 5 s timeout. The freeze skips the capture when the page is already hidden.
   - **Scale changes fire no `ResizeObserver`.** The CSS size stays the same. Rule mode's placement in the window's resize covered 4d. A placement that relies on reports also needs to listen for `devicePixelRatio` changes.
   - **The allow-list sees top-level navigations only.** wry 0.57 hooks `NavigationStarting`, not `FrameNavigationStarting`, so a frame inside the page loads whatever it asks for, as in any browser. Finding 14's scoped capability is what keeps a frame away from Marshell's commands.
-  - **Ctrl+Shift chords.** The route gives the app every Ctrl+Shift chord, so the page loses Ctrl+Shift+V (paste as plain text) and Ctrl+Shift+Z (redo in many web apps). The user decides which chords stay in the page.
+  - **Ctrl+Shift chords.** The route gives the app every Ctrl+Shift chord, so the page loses Ctrl+Shift+V (paste as plain text) and Ctrl+Shift+Z (redo in many web apps). 6q-0 decision 9 settles it: the page gets every key except the shortcuts the app's keymap claims, as the terminal does, and the app sends Rust the claimed list.
 
 ## Go or no-go
 
@@ -209,4 +211,6 @@ The limits 6q-2 and 6q-3 carry:
    - the terminal's sync render, which ends the shell text's flicker and ships before 6q-2 (10a, 6q-0 decision 7);
    - 6q-2's motion at the layout's jumps (6q-0 decision 6).
 5. **Not verified:** a background open without taking focus (`.focused(false)`, finding 1), AltGr on a German layout (2f), the snap layouts' flyout (4c), and the tray's bounds while a page is open (4c, blocked by limit 2).
-6. **The code review's list** under "What 6q-2 and 6q-3 take from this", and the user's call on the Ctrl+Shift chords.
+6. **The code review's list** under "What 6q-2 and 6q-3 take from this", and the key rule of 6q-0 decision 9.
+
+**The user's answer (2026-11-09): go, with limits** (6q-0 decision 8). The window's background fix ships with the terminal's fix, as one small change before 6q-2.
