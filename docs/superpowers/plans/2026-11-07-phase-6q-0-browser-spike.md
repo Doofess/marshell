@@ -451,3 +451,30 @@ git commit -m "spike(browser): the default capability names the app's webview, n
   - Cherry-pick the docs commits: Task 0, every S12 commit, and decision 6.
   - Run `pnpm test` and `pnpm build`; docs don't change them, but CI runs them.
   - Open the PR with "What it does", "Live check", "Known limits" and "Checks" sections, then merge it on green, following `marshell-ship`.
+
+### Task 10: Hide the late redraw, and the terminal's own flicker (6q-0 decision 7)
+
+Added 2026-11-09, after the research round (S12 finding 23). Task 9's go or no-go waits for this task's hand checks.
+
+**Files:**
+- Create: `src-tauri/src/spike_browser/clip.rs`
+- Modify: `src-tauri/src/spike_browser/mod.rs`, `src-tauri/src/main.rs` (two commands), `src/features/spike/useBrowserSpike.ts`, `src/features/terminal/TerminalView.tsx`, `docs/spikes/S12-browser-pane.md`
+
+- [ ] **Step 1: Oversize and clip (Rust).** `__spike.setOversize(px)` sends `spike_browser_oversize`; 0, the default, keeps today's `set_bounds`. With px > 0, `set_bounds` hands the pane's rect V to `clip::place`, inline on the main thread through `with_webview`:
+  - V in physical pixels goes to wry's container HWND (`controller.ParentWindow()`) with a synchronous `SetWindowPos`. The container already clips its child (`WS_CHILD | WS_CLIPCHILDREN`, wry `webview2/mod.rs:230`).
+  - The controller's size C changes only when V outgrows it, per axis: C = V + px. A shrinking pane keeps C, so the old frame and its scrollbar stay outside the crop.
+  - Every placement bumps a counter and starts a 200 ms timer thread; when it fires with the counter unchanged, C = V on the main thread ("clip-settle").
+  - Each placement logs `clip` with V, C and why.
+
+- [ ] **Step 2: Background colours (Rust).** `__spike.setBg({ window, webview })` sends `spike_bg` with `#rrggbb` or `"none"` for either layer: `Window::set_background_color` on the main window (tao's WM_ERASEBKGND fill) and `Webview::set_background_color` on the main webview (WebView2's DefaultBackgroundColor). Runtime only; `tauri.conf.json` doesn't change.
+
+- [ ] **Step 3: The terminal's sync render (front).** `__spike.setXterm(on)`: when on, TerminalView's ResizeObserver fits at once instead of one animation frame later, and when the fit changed the grid it calls xterm's private `_core._renderService._renderRows(0, rows - 1)`, so the canvas xterm 6.0 just cleared is drawn before the frame is shown (upstream PR #5529 does this in 6.1). Off is today's behaviour.
+
+- [ ] **Step 4: Checks.** `cargo test -p marshell-app -j 4 spike_browser`, clippy, `pnpm test`, `pnpm build` (`tsc --noEmit` only; never an emitting `tsc`).
+
+- [ ] **Step 5: Live check, judged by the user's eye, each A/B in one session:**
+  - **10a, the terminal:** `setXterm(false)` then `true`; drag the divider between the shell and the page, the divider by the sidebar, and a window edge. Does the shell's text still flicker?
+  - **10b, the white strip:** `setBg({ window: "#ff00ff" })`, then `setBg({ webview: "#00ffff" })`; a bottom-edge drag each time. Which colour fills the strip? Then both layers set to the app's background.
+  - **10c, the page:** `setOversize(0)` then `setOversize(64)` (then 128 if 64 trails); drag the page divider both ways and the right and bottom window edges. Do the scrollbar jump and the edge flicker go, and does the page settle to the right size?
+
+- [ ] **Step 6: Record.** S12 finding 23 (the research and what the hand checks showed), the 6q-2 section, and the go-or-no-go limits updated. Commit, push, then Task 9 Step 4.
