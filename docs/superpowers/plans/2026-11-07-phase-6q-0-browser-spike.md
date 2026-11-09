@@ -444,7 +444,7 @@ git commit -m "spike(browser): the default capability names the app's webview, n
 
 - [ ] **Step 3: Push the spike branch.** `git push -u origin phase-6q-0`. There is no PR for the code.
 
-- [ ] **Step 4: Ask the user for the go or no-go** with AskUserQuestion, giving S12's recommendation first. Record the answer as 6q-0 decision 6 in `docs/PLAN.md` §9.
+- [ ] **Step 4: Ask the user for the go or no-go** with AskUserQuestion, giving S12's recommendation first. Record the answer in `docs/PLAN.md` §9 (it became 6q-0 decision 8; 6 and 7 were asked mid-spike).
 
 - [ ] **Step 5: Open the docs PR.**
   - Cut `docs/6q-0-spike` from `origin/main`.
