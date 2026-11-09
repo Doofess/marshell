@@ -92,6 +92,14 @@ describe("topAnchoredFit", () => {
     expect(missing).not.toHaveBeenCalled();
   });
 
+  it("measures nothing for a shell: the fit addon's own measurement is the only one", async () => {
+    const term = await shell();
+    const fit = { proposeDimensions: vi.fn(() => ({ cols: 20, rows: 8 })), fit: vi.fn() };
+    topAnchoredFit(term, fit, vi.fn())();
+    expect(fit.proposeDimensions).not.toHaveBeenCalled();
+    expect(fit.fit).toHaveBeenCalledTimes(1);
+  });
+
   it("still fits, and says so, when xterm's private cursor is gone", () => {
     const term = { rows: 10, buffer: { active: { type: "alternate" } }, _core: {} };
     const fit = { proposeDimensions: () => ({ cols: 20, rows: 8 }), fit: vi.fn() };

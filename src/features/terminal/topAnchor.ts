@@ -35,10 +35,14 @@ export function keepFullScreenTop(term: unknown, next: Size | undefined): boolea
   return true;
 }
 
-/** A fit that anchors a full-screen program's text first, for the size the fit addon is about to set. */
+/**
+ * A fit that anchors a full-screen program's text first, for the size the fit addon is about to set. The addon measures again
+ * inside its own fit, so only a full-screen program pays for the second measurement; a shell is fitted as before.
+ */
 export function topAnchoredFit(term: unknown, fit: { proposeDimensions(): Size | undefined; fit(): void }, missing: () => void = reportMissingAnchor): () => void {
   return () => {
-    if (!keepFullScreenTop(term, fit.proposeDimensions())) missing();
+    const fullScreen = (term as Private | null)?.buffer?.active?.type === "alternate";
+    if (fullScreen && !keepFullScreenTop(term, fit.proposeDimensions())) missing();
     fit.fit();
   };
 }

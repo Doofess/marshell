@@ -71,7 +71,7 @@
   - `type Rgb = [number, number, number]`
   - `backgroundSync(read: () => Rgb | null, send: (rgb: Rgb) => Promise<void>): () => void` — each call reads; sends when the colour differs from the last one sent; a failed send is forgotten so the next call sends again; `null` sends nothing.
   - `readPageBackground(doc?: Document): Rgb | null` — the body's computed `background-color` painted on a 1x1 2D canvas and read back as bytes (the tokens are `oklch()`, which a computed style doesn't give as `rgb()`); `null` when there is no 2D context.
-  - `watchWindowBackground(): () => void` — syncs now and on: a change of `data-theme`, `data-contrast` or `data-accent` on the root, and a change of `(prefers-color-scheme: dark)`, `(prefers-contrast: more)` or `(forced-colors: active)`. Returns its cleanup. The send is `invoke("set_window_background", { rgb })`.
+  - `watchWindowBackground(): () => void` — syncs now and on: a change of `data-theme` on the root, and a change of `(prefers-color-scheme: dark)` or `(forced-colors: active)`. Returns its cleanup. The send is `invoke("set_window_background", { rgb })`. (As built: the contrast and accent settings don't move `--bg-base`, so they aren't watched.)
 
 - [ ] **Step 1: Write the failing tests** for `backgroundSync` in `windowBackground.test.ts`: the first call sends; the same colour twice sends once; a changed colour sends again; after a rejected send the same colour is sent again; `null` sends nothing.
 - [ ] **Step 2:** `pnpm test src/features/appearance/windowBackground.test.ts` — fails, the module doesn't exist.
