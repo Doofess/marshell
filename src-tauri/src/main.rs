@@ -414,6 +414,8 @@ fn main() {
             spike_browser::spike_browser_capture,
             spike_browser::spike_browser_nav,
             spike_browser::spike_browser_eval,
+            spike_browser::spike_browser_oversize,
+            spike_browser::spike_bg,
             diagnostics::save_diagnostics,
             export::save_conversation,
             folder_picker::pick_folder,

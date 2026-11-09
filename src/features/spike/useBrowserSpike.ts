@@ -15,10 +15,19 @@ export type SpikeControls = {
   /** Changes inside the window (the divider, the sidebar): the page moves this many painted frames after the app measured
    * it, 0 at once. */
   setSync(frames: number): void;
+  /** Task 10: the room ahead, in physical pixels, a growing page gets under oversize and clip; 0 is off. */
+  setOversize(px: number): void;
+  /** Task 10: the main window's and the app webview's background, each `#rrggbb` or `"none"`; a layer left out stays. */
+  setBg(colors: { window?: string; webview?: string }): void;
+  /** Task 10: the terminal fits in its ResizeObserver and draws at once after a grid change (xterm PR #5529). */
+  setXterm(on: boolean): void;
 };
 
 /** The in-window delay `setSync` sets; BrowserSpike reads it on every report. */
 export const paintSync = { frames: 0 };
+
+/** Task 10's terminal switch; TerminalView reads it on every resize. */
+export const xtermSync = { on: false };
 
 declare global {
   interface Window {
@@ -78,6 +87,12 @@ export function useBrowserSpike(): BrowserSpikeModel {
       setSync(frames) {
         paintSync.frames = Math.max(0, Math.round(frames));
         spikeLog("sync-set", { frames: paintSync.frames });
+      },
+      setOversize: (px) => void invoke("spike_browser_oversize", { px: Math.max(0, Math.round(px)) }).catch(() => {}),
+      setBg: (colors) => void invoke("spike_bg", { window: colors.window ?? null, webview: colors.webview ?? null }).catch(() => {}),
+      setXterm(on) {
+        xtermSync.on = on;
+        spikeLog("xterm-set", { on });
       },
     };
     return () => {

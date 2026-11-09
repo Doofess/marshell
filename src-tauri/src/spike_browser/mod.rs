@@ -2,6 +2,8 @@
 //! `docs/superpowers/plans/2026-11-07-phase-6q-0-browser-spike.md` and `docs/spikes/S12-browser-pane.md`.
 
 #[cfg(windows)]
+mod clip;
+#[cfg(windows)]
 mod com;
 pub mod rules;
 
@@ -10,7 +12,7 @@ use serde_json::{Value, json};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Url, WebviewBuilder, WebviewUrl};
 
@@ -38,6 +40,8 @@ pub struct SpikeState {
     mode: AtomicU8,
     layout: Mutex<rules::Layout>,
     rule: Mutex<rules::Rule>,
+    /// Task 10's oversize and clip: the room ahead, in physical pixels, a growing page gets; 0 places the page as before.
+    oversize: AtomicU32,
     log: Mutex<()>,
 }
 
@@ -58,6 +62,7 @@ impl SpikeState {
             mode: AtomicU8::new(FOLLOW),
             layout: Mutex::new(rules::Layout::default()),
             rule: Mutex::new(rules::Rule::default()),
+            oversize: AtomicU32::new(0),
             log: Mutex::new(()),
         }
     }
@@ -104,6 +109,13 @@ fn refuse(app: &AppHandle, url: &str) {
 
 pub fn set_bounds(app: &AppHandle, x: f64, y: f64, width: f64, height: f64, why: &str) -> Result<(), String> {
     let page = page(app)?;
+    #[cfg(windows)]
+    {
+        let ahead = app.state::<SpikeState>().oversize.load(Ordering::SeqCst);
+        if ahead > 0 {
+            return clip::place(app, &page, [x, y, width, height], ahead, why);
+        }
+    }
     let started = std::time::Instant::now();
     page.set_bounds(tauri::Rect {
         position: LogicalPosition::new(x, y).into(),
@@ -403,6 +415,61 @@ pub async fn spike_browser_visible(app: AppHandle, visible: bool) -> Result<(), 
     let page = page(&app)?;
     if visible { page.show() } else { page.hide() }.map_err(|e| e.to_string())?;
     log(&app, "rust", if visible { "shown" } else { "hidden" }, json!({}));
+    Ok(())
+}
+
+/// Task 10: the room ahead a growing page gets, in physical pixels; 0 turns oversize and clip off and gives the page the
+/// pane's size at once.
+#[tauri::command]
+pub async fn spike_browser_oversize(app: AppHandle, px: u32) -> Result<(), String> {
+    app.state::<SpikeState>().oversize.store(px, Ordering::SeqCst);
+    log(&app, "rust", "oversize", json!({ "px": px }));
+    #[cfg(windows)]
+    if px == 0 {
+        let app2 = app.clone();
+        app.run_on_main_thread(move || clip::settle(&app2, None))
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// `#rrggbb`, or `none` for no colour.
+fn parse_color(s: &str) -> Result<Option<tauri::window::Color>, String> {
+    if s == "none" {
+        return Ok(None);
+    }
+    let hex = s
+        .strip_prefix('#')
+        .filter(|h| h.len() == 6)
+        .ok_or_else(|| format!("{s}: a colour is #rrggbb or none"))?;
+    let v = u32::from_str_radix(hex, 16).map_err(|e| format!("{s}: {e}"))?;
+    Ok(Some(tauri::window::Color(
+        (v >> 16) as u8,
+        (v >> 8) as u8,
+        v as u8,
+        255,
+    )))
+}
+
+/// Task 10: the main window's background (tao fills the client area with it on WM_ERASEBKGND) and the app webview's
+/// (WebView2's DefaultBackgroundColor), each `#rrggbb` or `none`; a layer left out is unchanged. Runtime only.
+#[tauri::command]
+pub async fn spike_bg(app: AppHandle, window: Option<String>, webview: Option<String>) -> Result<(), String> {
+    if let Some(c) = &window {
+        let color = parse_color(c)?;
+        app.get_window("main")
+            .ok_or("no main window")?
+            .set_background_color(color)
+            .map_err(|e| e.to_string())?;
+    }
+    if let Some(c) = &webview {
+        let color = parse_color(c)?;
+        app.get_webview("main")
+            .ok_or("no main webview")?
+            .set_background_color(color)
+            .map_err(|e| e.to_string())?;
+    }
+    log(&app, "rust", "bg", json!({ "window": window, "webview": webview }));
     Ok(())
 }
 
