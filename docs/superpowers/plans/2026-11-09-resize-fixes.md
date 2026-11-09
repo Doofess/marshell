@@ -98,6 +98,10 @@ Run with the `marshell-live-check` skill, on scratch homes. Findings go in `docs
 
 Each gets its own test in `syncRedraw.test.ts` and a rerun of Task 3's measurement.
 
+**Outcome (2026-11-09):** Task 3 found both, so both were built (decision 10's last two bullets).
+- `fitAndRedraw` became `syncRedraw(term, fit, redraw, canvas): { fit(), deviceResized() }`. `TerminalView` sends every fit through `fit()` (the observer's, the first one, a font change, a tab shown again) and calls `deviceResized()` from its own device-pixel observer.
+- `privateRedraw` calls `_renderService._renderer.value.renderRows` while `term.modes.synchronizedOutputMode` is true, and `_renderRows` otherwise.
+
 ### Task 5: Review and ship
 
 - [ ] One `/code-review` pass on the branch, then a fix pass.
