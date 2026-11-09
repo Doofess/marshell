@@ -21,6 +21,7 @@ import { ReplayGate } from "./replayGate";
 import { sendsFirstSize, shouldFit } from "./fitGate";
 import { registerTerminal } from "./terminals";
 import { loadRenderer, type RendererKind } from "./renderer";
+import { fitAndRedraw, privateRedraw, reportMissingRedraw } from "./syncRedraw";
 import { trackColorSchemeMode } from "./colorSchemeMode";
 import { BUNDLED_FONT, fontStack } from "./terminalFont";
 import { appScheme, resolveTerminalTheme, type TerminalThemeInput } from "./terminalTheme";
@@ -264,8 +265,13 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
       schemeMode,
     ];
 
+    // While the host resizes, the fit and the draw share the observer's frame, so the canvas xterm clears on a grid change is
+    // never shown empty (syncRedraw.ts). Without xterm's private redraw, the fit waits a frame as it did before.
+    const redraw = privateRedraw(term);
+    if (!redraw) reportMissingRedraw();
     let frame = 0;
     const observer = new ResizeObserver(() => {
+      if (redraw) return fitAndRedraw(term, fitIfShown, redraw);
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(fitIfShown);
     });
