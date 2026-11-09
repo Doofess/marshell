@@ -320,7 +320,15 @@ export function MainWindow({
     setPreviewRatio((r) => clampPreviewRatio(r + (e.key === grow ? PREVIEW_RATIO.step : -PREVIEW_RATIO.step)));
   };
   return (
-    <div className="window" style={{ inlineSize: width, blockSize: height, "--side-w": `${sideW}px` } as CSSProperties} data-mode={mode} data-layout={layout} data-title={title}>
+    <div
+      className="window"
+      style={{ inlineSize: width, blockSize: height, "--side-w": `${sideW}px` } as CSSProperties}
+      data-mode={mode}
+      data-layout={layout}
+      data-title={title}
+      // spike 6q-0: the layout's inputs, for the browser spike's rule (src/features/spike/paneRule.ts)
+      data-spike-rule={JSON.stringify({ pref, sideReq: sidebarWidth, ratio: previewRatio, drawer: Boolean(drawer) })}
+    >
       <SessionAnnouncer row={selected} needsYou={waiting} notice={notice} />
       {portMenu && (
         <ContextMenu

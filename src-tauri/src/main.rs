@@ -406,6 +406,7 @@ fn main() {
             spike_browser::spike_browser_open,
             spike_browser::spike_browser_rect,
             spike_browser::spike_browser_mode,
+            spike_browser::spike_browser_rule,
             spike_browser::spike_browser_visible,
             spike_browser::spike_browser_close,
             spike_browser::spike_log,

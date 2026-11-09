@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Url, WebviewBuilder, WebviewUrl};
 
@@ -34,16 +34,30 @@ pub struct PaneRect {
 pub struct SpikeState {
     home: PathBuf,
     rect: Mutex<Option<PaneRect>>,
-    anchor: AtomicBool,
+    /// FOLLOW, ANCHOR, PREDICT or RULE: who moves the page when the window resizes.
+    mode: AtomicU8,
+    layout: Mutex<rules::Layout>,
+    rule: Mutex<rules::Rule>,
     log: Mutex<()>,
 }
+
+/// The front's reports move the page; nothing else does.
+const FOLLOW: u8 = 0;
+/// Task 4's anchor mode: a resize moves the page from the last report, keeping its width; the reports move it too.
+const ANCHOR: u8 = 1;
+/// Rust places the page from the layout it learned from the reports, on every resize and every report (finding 20).
+const PREDICT: u8 = 2;
+/// Rust places the page from the layout rule the front sends, on every resize and every report (finding 21).
+const RULE: u8 = 3;
 
 impl SpikeState {
     pub fn new(home: PathBuf) -> Self {
         Self {
             home,
             rect: Mutex::new(None),
-            anchor: AtomicBool::new(false),
+            mode: AtomicU8::new(FOLLOW),
+            layout: Mutex::new(rules::Layout::default()),
+            rule: Mutex::new(rules::Rule::default()),
             log: Mutex::new(()),
         }
     }
@@ -90,43 +104,146 @@ fn refuse(app: &AppHandle, url: &str) {
 
 pub fn set_bounds(app: &AppHandle, x: f64, y: f64, width: f64, height: f64, why: &str) -> Result<(), String> {
     let page = page(app)?;
+    let started = std::time::Instant::now();
     page.set_bounds(tauri::Rect {
         position: LogicalPosition::new(x, y).into(),
         size: LogicalSize::new(width.max(0.0), height.max(0.0)).into(),
     })
     .map_err(|e| e.to_string())?;
+    let set_ms = started.elapsed().as_secs_f64() * 1000.0;
     let scale = page.window().scale_factor().unwrap_or(1.0);
     let actual = page.bounds().ok().map(|b| {
         let p = b.position.to_physical::<f64>(scale);
         let s = b.size.to_physical::<f64>(scale);
         json!({ "x": p.x, "y": p.y, "width": s.width, "height": s.height })
     });
+    let total_ms = started.elapsed().as_secs_f64() * 1000.0;
     log(
         app,
         "rust",
         "bounds",
-        json!({ "why": why, "requested": { "x": x, "y": y, "width": width, "height": height }, "actualPhysical": actual, "scale": scale }),
+        json!({ "why": why, "requested": { "x": x, "y": y, "width": width, "height": height }, "actualPhysical": actual, "scale": scale, "setMs": set_ms, "totalMs": total_ms }),
     );
     Ok(())
 }
 
-/// Anchor mode (Task 4): when the app's window is resized, the page moves at once from the last measured rect, without
-/// waiting for the front. The front's next report still corrects it. The window comes from the event: once the page
-/// exists, `get_webview_window("main")` returns None (S12 finding 16).
+/// Anchor and predict modes: when the app's window is resized, the page moves at once, without waiting for the front.
+/// This runs on the main thread inside the window's own resize, even during an edge drag's sizing loop, so the page moves
+/// in the same instant as the window. The window comes from the event: once the page exists,
+/// `get_webview_window("main")` returns None (S12 finding 16).
 pub fn on_resized(window: &tauri::Window, size: tauri::PhysicalSize<u32>) {
     let app = window.app_handle();
     let Some(state) = app.try_state::<SpikeState>() else {
         return;
     };
-    if !state.anchor.load(Ordering::SeqCst) {
-        return;
+    // The lag check's timeline of the window's own size, in the CSS pixels the front measures in.
+    let size = size.to_logical::<f64>(window.scale_factor().unwrap_or(1.0));
+    log(
+        app,
+        "rust",
+        "win-resized",
+        json!({ "width": size.width, "height": size.height }),
+    );
+    let to = match state.mode.load(Ordering::SeqCst) {
+        ANCHOR => state
+            .rect
+            .lock()
+            .ok()
+            .and_then(|r| *r)
+            .map(|rect| (rules::anchored(rect, size.width, size.height), "anchor")),
+        PREDICT => state
+            .layout
+            .lock()
+            .ok()
+            .and_then(|l| l.place(size.width, size.height))
+            .map(|r| (r, "predict-resize")),
+        RULE => state
+            .rule
+            .lock()
+            .ok()
+            .and_then(|r| r.place(size.width, size.height))
+            .map(|r| (r, "rule-resize")),
+        _ => None,
+    };
+    if let Some((r, why)) = to {
+        let _ = set_bounds(app, r.x, r.y, r.width, r.height, why);
     }
-    let Some(rect) = state.rect.lock().ok().and_then(|r| *r) else {
+}
+
+/// A report from the front, applied on the main thread, where the window's size is read without a round trip and the
+/// move can't land between a resize and its own move. Predict and rule modes place the page for the window's size now,
+/// which a report measured a frame ago may already be behind. Rule mode takes the report itself when it was measured at
+/// the window's size now: a divider or sidebar drag changes the layout with the window still, and the report is newer
+/// than the rule sent ahead of it (the rule is read when the layout changes, the report when its turn comes). Without a
+/// rule yet, rule mode follows the report.
+fn place_reported(app: &AppHandle, rect: PaneRect) {
+    let state = app.state::<SpikeState>();
+    let mode = state.mode.load(Ordering::SeqCst);
+    let size = || {
+        let window = app.get_window("main")?;
+        let size = window.inner_size().ok()?;
+        Some(size.to_logical::<f64>(window.scale_factor().unwrap_or(1.0)))
+    };
+    let placed = match mode {
+        PREDICT => size()
+            .and_then(|s| state.layout.lock().ok()?.place(s.width, s.height))
+            .map(|r| (r, "predict-report")),
+        RULE => size().and_then(|s| {
+            if rules::same_size(s.width, s.height, rect) {
+                let r = rules::LogicalRect {
+                    x: rect.x,
+                    y: rect.y,
+                    width: rect.width,
+                    height: rect.height,
+                };
+                return Some((r, "rule-measured"));
+            }
+            state
+                .rule
+                .lock()
+                .ok()?
+                .place(s.width, s.height)
+                .map(|r| (r, "rule-report"))
+        }),
+        _ => None,
+    };
+    match placed {
+        Some((r, why)) => {
+            let _ = set_bounds(app, r.x, r.y, r.width, r.height, why);
+        }
+        None if mode == PREDICT => {}
+        None => {
+            let _ = set_bounds(app, rect.x, rect.y, rect.width, rect.height, "front");
+        }
+    }
+}
+
+/// Rule mode's check: where the rule puts the pane for the size a report was measured at, against where the front
+/// measured it. Logged only when they differ by more than half a pixel.
+fn check_rule(app: &AppHandle, rect: PaneRect) {
+    let state = app.state::<SpikeState>();
+    let Some(at) = state
+        .rule
+        .lock()
+        .ok()
+        .and_then(|r| r.place(rect.win_width, rect.win_height))
+    else {
         return;
     };
-    let size = size.to_logical::<f64>(window.scale_factor().unwrap_or(1.0));
-    let a = rules::anchored(rect, size.width, size.height);
-    let _ = set_bounds(app, a.x, a.y, a.width, a.height, "anchor");
+    let off = [
+        at.x - rect.x,
+        at.y - rect.y,
+        at.width - rect.width,
+        at.height - rect.height,
+    ];
+    if off.iter().any(|d| d.abs() > 0.5) {
+        log(
+            app,
+            "rust",
+            "rule-miss",
+            json!({ "winWidth": rect.win_width, "winHeight": rect.win_height, "off": off }),
+        );
+    }
 }
 
 /// Task 8: every file drag over any webview, with the webview's label. The paths stay out of the log; their count and
@@ -210,6 +327,7 @@ pub async fn spike_browser_open(app: AppHandle, url: String, rect: PaneRect) -> 
         )
         .map_err(|e| e.to_string())?;
     *state.rect.lock().map_err(|e| e.to_string())? = Some(rect);
+    state.layout.lock().map_err(|e| e.to_string())?.learn(rect);
     log(
         &app,
         "rust",
@@ -223,27 +341,60 @@ pub async fn spike_browser_open(app: AppHandle, url: String, rect: PaneRect) -> 
     Ok(())
 }
 
+/// `sent_at` (epoch ms, when the front measured) and `queued` (the front's commands not done yet) time the report's trip
+/// for the lag check. The move itself goes to the main thread and the command returns at once, so the front's next
+/// report doesn't wait for it.
 #[tauri::command]
-pub async fn spike_browser_rect(app: AppHandle, rect: PaneRect) -> Result<(), String> {
+pub async fn spike_browser_rect(
+    app: AppHandle,
+    rect: PaneRect,
+    sent_at: Option<f64>,
+    queued: Option<u32>,
+) -> Result<(), String> {
     let state = app.state::<SpikeState>();
-    let window = app
-        .get_window("main")
-        .and_then(|w| Some((w.inner_size().ok()?, w.scale_factor().unwrap_or(1.0))))
-        .map(|(size, scale)| size.to_logical::<f64>(scale));
     log(
         &app,
         "rust",
         "rect-in",
-        json!({ "rect": rect, "window": window.map(|s| json!({ "width": s.width, "height": s.height })) }),
+        json!({ "rect": rect, "sentAt": sent_at, "queued": queued }),
     );
     *state.rect.lock().map_err(|e| e.to_string())? = Some(rect);
-    set_bounds(&app, rect.x, rect.y, rect.width, rect.height, "front")
+    state.layout.lock().map_err(|e| e.to_string())?.learn(rect);
+    if state.mode.load(Ordering::SeqCst) == RULE {
+        check_rule(&app, rect);
+    }
+    let on_main = app.clone();
+    app.run_on_main_thread(move || place_reported(&on_main, rect))
+        .map_err(|e| e.to_string())
 }
 
+/// The front's layout as straight pieces over the window's width, sent before the report whenever the layout changes
+/// (the divider, the sidebar's width or mode, the drawer, the bars above the pane).
 #[tauri::command]
-pub async fn spike_browser_mode(app: AppHandle, anchor: bool) -> Result<(), String> {
-    app.state::<SpikeState>().anchor.store(anchor, Ordering::SeqCst);
-    log(&app, "rust", "mode", json!({ "anchor": anchor }));
+pub async fn spike_browser_rule(app: AppHandle, rule: rules::Rule) -> Result<(), String> {
+    let rule = rule.sorted();
+    log(
+        &app,
+        "rust",
+        "rule",
+        json!({ "pieces": rule.pieces.len(), "top": rule.top, "bottom": rule.bottom }),
+    );
+    *app.state::<SpikeState>().rule.lock().map_err(|e| e.to_string())? = rule;
+    Ok(())
+}
+
+/// `follow`, `anchor`, `predict` or `rule`.
+#[tauri::command]
+pub async fn spike_browser_mode(app: AppHandle, mode: String) -> Result<(), String> {
+    let value = match mode.as_str() {
+        "follow" => FOLLOW,
+        "anchor" => ANCHOR,
+        "predict" => PREDICT,
+        "rule" => RULE,
+        other => return Err(format!("no mode {other}")),
+    };
+    app.state::<SpikeState>().mode.store(value, Ordering::SeqCst);
+    log(&app, "rust", "mode", json!({ "mode": mode }));
     Ok(())
 }
 

@@ -4,20 +4,97 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef, useState, type CSSProperties, type FocusEvent } from "react";
 import "./BrowserSpike.css";
-import { spikeLog, type BrowserSpikeModel } from "./useBrowserSpike";
+import { paneRule, type RuleState } from "./paneRule";
+import { paintSync, spikeLog, type BrowserSpikeModel } from "./useBrowserSpike";
 
 // The commands run one after another, in the order they were asked for: StrictMode mounts twice in dev, and a hide must
 // never overtake the show that follows it.
 let queue: Promise<unknown> = Promise.resolve();
-export function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  const next = queue.then(() => invoke<T>(cmd, args));
+// Commands asked for and not finished yet; the lag check logs it with each report.
+let pending = 0;
+/** `args` as a function is read when the command's turn comes, not when it is asked for. */
+export function call<T>(cmd: string, args?: Record<string, unknown> | (() => Record<string, unknown>)): Promise<T> {
+  pending += 1;
+  const next = queue
+    .then(() => invoke<T>(cmd, typeof args === "function" ? args() : args))
+    .finally(() => {
+      pending -= 1;
+    });
   queue = next.catch(() => {});
   return next;
 }
 
+/** A bounds report, stamped for the lag check: when it was measured (epoch ms) and how many commands were not done yet. */
+const rectArgs = (el: HTMLElement) => ({ rect: measure(el), sentAt: performance.timeOrigin + performance.now(), queued: pending });
+
+// The page's bounds, latest only. While the user drags the window's edge, Windows' sizing loop makes each command's round
+// trip longer than a frame, and one report queued per frame fell further and further behind: up to 121 waiting, the page
+// 0.9 s late (S12 finding 20). So at most one report waits, and it measures the placeholder when its turn comes.
+let rectWaiting = false;
+// The window's size at the last report. A report at the same size is a change inside the window, where no window edge
+// moves: with `paintSync.frames` above 0 the page waits for the app to paint that frame, so it moves with the app's own
+// picture (the URL bar, the divider) instead of a frame ahead of it.
+let lastSize = "";
+let held: ReturnType<typeof rectArgs> | null = null;
+let holding = false;
+function afterFrames(n: number): Promise<void> {
+  return new Promise((done) => {
+    const step = (left: number) => requestAnimationFrame(() => (left > 1 ? step(left - 1) : setTimeout(done, 0)));
+    step(n);
+  });
+}
+function reportRect(el: HTMLElement): void {
+  const args = rectArgs(el);
+  const size = `${args.rect.winWidth}x${args.rect.winHeight}`;
+  const inWindow = paintSync.frames > 0 && size === lastSize;
+  lastSize = size;
+  if (inWindow) {
+    // The latest measurement this frame; one send per frame, after the paint.
+    held = args;
+    if (holding) return;
+    holding = true;
+    void afterFrames(paintSync.frames).then(() => {
+      holding = false;
+      const a = held;
+      held = null;
+      if (a) void call("spike_browser_rect", a).catch(() => {});
+    });
+    return;
+  }
+  // The window resized: a held report is for the old size, and this one goes now.
+  held = null;
+  if (rectWaiting) return;
+  rectWaiting = true;
+  void call("spike_browser_rect", () => {
+    rectWaiting = false;
+    return rectArgs(el);
+  }).catch(() => {});
+}
+
+// Rule mode (finding 21): the layout's inputs and the pane's top and bottom as last sent. The rule goes ahead of the report
+// in the same queue, and only when one of them changed.
+let ruleSent = "";
+function sendRule(el: HTMLElement): void {
+  const inputs = el.closest<HTMLElement>(".window")?.dataset.spikeRule;
+  if (!inputs) return;
+  const m = measure(el);
+  const top = m.y;
+  const bottom = m.winHeight - m.y - m.height;
+  const key = `${inputs}|${top}|${bottom}`;
+  if (key === ruleSent) return;
+  ruleSent = key;
+  const pieces = paneRule(JSON.parse(inputs) as RuleState);
+  spikeLog("rule-sent", { inputs: JSON.parse(inputs), top, bottom, pieces: pieces.length });
+  void call("spike_browser_rule", { rule: { pieces, top, bottom } }).catch(() => {});
+}
+
+/** The placeholder's box, and the size of the layout it sits in. That is the app's `.window`, which LiveApp sizes from a
+ * ResizeObserver, so during a resize `innerWidth` runs a frame ahead of the layout (finding 17); predict mode learns from
+ * pairs that match. */
 function measure(el: HTMLElement) {
   const r = el.getBoundingClientRect();
-  return { x: r.x, y: r.y, width: r.width, height: r.height, winWidth: window.innerWidth, winHeight: window.innerHeight };
+  const layout = el.closest<HTMLElement>(".window")?.getBoundingClientRect();
+  return { x: r.x, y: r.y, width: r.width, height: r.height, winWidth: layout?.width ?? window.innerWidth, winHeight: layout?.height ?? window.innerHeight };
 }
 
 /** Resolves after the next frame has been painted: a timeout queued from the frame's callback runs after that paint. */
@@ -124,17 +201,26 @@ export function BrowserSpike({ model, frozen }: Props) {
     if (!el) return;
     if (created.current) {
       void call("spike_browser_visible", { visible: true }).catch(() => {});
-      void call("spike_browser_rect", { rect: measure(el) }).catch(() => {});
+      sendRule(el);
+      reportRect(el);
     }
     const report = () => {
-      if (created.current) void call("spike_browser_rect", { rect: measure(el) }).catch(() => {});
+      if (!created.current) return;
+      sendRule(el);
+      reportRect(el);
     };
     // Only the placeholder's own ResizeObserver: the app lays itself out from a ResizeObserver too (LiveApp's
     // useElementSize), so at the window's resize event the DOM still has the old layout and a report from it is stale.
     const ro = new ResizeObserver(report);
     ro.observe(el);
+    // A layout input that moves the pane without resizing it (the sidebar's width with the page full) fires no
+    // ResizeObserver, so the inputs are watched too.
+    const host = el.closest(".window");
+    const mo = new MutationObserver(report);
+    if (host) mo.observe(host, { attributes: true, attributeFilter: ["data-spike-rule"] });
     return () => {
       ro.disconnect();
+      mo.disconnect();
       if (created.current) void call("spike_browser_visible", { visible: false }).catch(() => {});
     };
   }, [created]);

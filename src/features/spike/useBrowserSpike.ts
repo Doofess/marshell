@@ -7,17 +7,26 @@ export type SpikeControls = {
   open(url: string): void;
   close(): void;
   setInset(px: number): void;
-  setMode(anchor: boolean): void;
+  /** Who moves the page when the window resizes; `true` and `false` are the older scripts' anchor and follow. */
+  setMode(mode: SpikeMode | boolean): void;
   keyTest(on: boolean): void;
   /** The overlay freeze (Task 5), on by default; off shows tauri#15682, the page drawn over the app's overlays. */
   setFreeze(on: boolean): void;
+  /** Changes inside the window (the divider, the sidebar): the page moves this many painted frames after the app measured
+   * it, 0 at once. */
+  setSync(frames: number): void;
 };
+
+/** The in-window delay `setSync` sets; BrowserSpike reads it on every report. */
+export const paintSync = { frames: 0 };
 
 declare global {
   interface Window {
     __spike?: SpikeControls;
   }
 }
+
+export type SpikeMode = "follow" | "anchor" | "predict" | "rule";
 
 export type SpikeLog = (event: string, data?: Record<string, unknown>) => void;
 
@@ -63,9 +72,13 @@ export function useBrowserSpike(): BrowserSpikeModel {
         setRequest(null);
       },
       setInset: (px) => setInset(px),
-      setMode: (anchor) => void invoke("spike_browser_mode", { anchor }),
+      setMode: (mode) => void invoke("spike_browser_mode", { mode: mode === true ? "anchor" : mode === false ? "follow" : mode }),
       keyTest: (on) => setKeyTest(on),
       setFreeze: (on) => setFreeze(on),
+      setSync(frames) {
+        paintSync.frames = Math.max(0, Math.round(frames));
+        spikeLog("sync-set", { frames: paintSync.frames });
+      },
     };
     return () => {
       delete window.__spike;
