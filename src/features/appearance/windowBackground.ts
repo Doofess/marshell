@@ -28,13 +28,13 @@ const UNSET = "#010203";
 
 /**
  * The page's background as bytes, or null when it can't be read. The tokens are `oklch()`, which a computed style gives back
- * as written, so a 1x1 canvas turns it into sRGB. In forced colours the page is drawn on the system's `Canvas` colour, which
- * a computed style doesn't show.
+ * as written, so a 1x1 canvas turns it into sRGB. In forced colours the computed style already holds the system's colour.
+ * (The `Canvas` keyword is no shortcut: a 2D canvas resolves it for a light scheme whatever the page's is.)
  */
 export function readPageBackground(doc: Document = document): Rgb | null {
   const view = doc.defaultView;
   if (!view) return null;
-  const css = view.matchMedia(FORCED_COLORS).matches ? "Canvas" : view.getComputedStyle(doc.body).backgroundColor;
+  const css = view.getComputedStyle(doc.body).backgroundColor;
   const canvas = doc.createElement("canvas");
   canvas.width = 1;
   canvas.height = 1;
@@ -49,9 +49,8 @@ export function readPageBackground(doc: Document = document): Rgb | null {
   return a === 255 ? [r, g, b] : null;
 }
 
-const FORCED_COLORS = "(forced-colors: active)";
 /** What can change the page's background: the system's scheme and forced colours here, the Appearance theme on the root. */
-const QUERIES = ["(prefers-color-scheme: dark)", FORCED_COLORS];
+const QUERIES = ["(prefers-color-scheme: dark)", "(forced-colors: active)"];
 
 /** Keeps the window's background equal to the page's, now and whenever the theme changes. Returns the stop function. */
 export function watchWindowBackground(doc: Document = document): () => void {

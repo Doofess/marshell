@@ -21,7 +21,7 @@ import { ReplayGate } from "./replayGate";
 import { sendsFirstSize, shouldFit } from "./fitGate";
 import { registerTerminal } from "./terminals";
 import { loadRenderer, type RendererKind } from "./renderer";
-import { fitAndRedraw, privateRedraw, reportMissingRedraw } from "./syncRedraw";
+import { privateRedraw, reportMissingRedraw, syncRedraw } from "./syncRedraw";
 import { trackColorSchemeMode } from "./colorSchemeMode";
 import { BUNDLED_FONT, fontStack } from "./terminalFont";
 import { appScheme, resolveTerminalTheme, type TerminalThemeInput } from "./terminalTheme";
@@ -112,7 +112,8 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
   const blockedRef = useRef(onBlockedInput);
   blockedRef.current = onBlockedInput;
   const termRef = useRef<Terminal | null>(null);
-  const fitRef = useRef<FitAddon | null>(null);
+  // The fit addon, or the fit that also draws in the same frame (syncRedraw.ts): every fit goes through it, whoever asks.
+  const fitRef = useRef<{ fit(): void } | null>(null);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
   // A hidden host measures near empty, and fitting to it would resize the program to 10x4 (#65); showing the tab refits.
@@ -269,13 +270,26 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
     // never shown empty (syncRedraw.ts). Without xterm's private redraw, the fit waits a frame as it did before.
     const redraw = privateRedraw(term);
     if (!redraw) reportMissingRedraw();
+    // The WebGL renderer's canvas; the DOM renderer has none.
+    const canvas = () => el.querySelector<HTMLCanvasElement>(".xterm-screen canvas:not(.xterm-link-layer)");
+    const sync = redraw && syncRedraw(term, () => fit.fit(), redraw, canvas);
+    if (sync) fitRef.current = sync;
     let frame = 0;
     const observer = new ResizeObserver(() => {
-      if (redraw) return fitAndRedraw(term, fitIfShown, redraw);
+      if (sync) return fitIfShown();
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(fitIfShown);
     });
     observer.observe(el);
+    // Made after the WebGL addon's own device-pixel observer (loadRenderer, above), so it hears the same size change just
+    // after that one has set the canvas's size, and cleared it, a second time.
+    const deviceObserver = new ResizeObserver(() => sync?.deviceResized());
+    const drawn = sync && canvas();
+    try {
+      if (drawn) deviceObserver.observe(drawn, { box: "device-pixel-content-box" });
+    } catch {
+      // No device-pixel box in this webview (WebKit): xterm's own observer isn't running there either.
+    }
     // A terminal made behind another tab keeps xterm's default grid, and sends no size, until it is shown.
     sizeSentRef.current = false;
     fitIfShown();
@@ -316,6 +330,7 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
       themeWatch.disconnect();
       scheme.removeEventListener("change", onScheme);
       observer.disconnect();
+      deviceObserver.disconnect();
       cancelAnimationFrame(frame);
       subs.forEach((s) => s.dispose());
       socket.close();
