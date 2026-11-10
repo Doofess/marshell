@@ -4,7 +4,7 @@ import { appScheme } from "../terminal/terminalTheme";
 import { isBrowserTab, tabsOf, type PaneAction } from "../pane/paneState";
 import { browser, onBrowser, pageKey } from "./browserApi";
 import { nextLive } from "./pages";
-import { pageIcon, startPageStore, subscribePages } from "./pageStore";
+import { dispatchPage, pageIcon, startPageStore, subscribePages, type PageEvent } from "./pageStore";
 
 const ignore = () => {};
 
@@ -36,6 +36,20 @@ export function popupActions(pane: PaneView, session: string, url: string, onScr
   return actions;
 }
 
+/**
+ * Unloads the pages the loaded list dropped: the shell closes each, and the store forgets it once the shell has answered, so
+ * its tab opens it again when it is next shown. A close that fails forgets the page too: either way the tab has no page to show.
+ */
+export async function unload(keys: readonly string[], close: (key: string) => Promise<unknown>, forget: (e: PageEvent) => void): Promise<void> {
+  await Promise.all(
+    keys.map((key) =>
+      close(key)
+        .catch(ignore)
+        .then(() => forget({ type: "closed", key })),
+    ),
+  );
+}
+
 type Options = {
   dispatch(action: PaneAction): void;
   /** The session on screen, if any. */
@@ -44,7 +58,7 @@ type Options = {
 
 /**
  * Keeps the app's side of the pages. The loaded list (`nextLive`: at most 8, the one shown longest ago unloaded) closes the pages it
- * drops; the shell's `browser://` events reach the store, and a page's address and title reach its tab; a popup opens a tab; the
+ * drops and the store forgets them; the shell's `browser://` events reach the store, and a page's address and title reach its tab; a popup opens a tab; the
  * pages follow the app's theme. Nothing is closed on unmount: the shell closes the pages at quit.
  */
 export function useBrowserPages(pane: PaneView, shownKey: string | null, { dispatch, focusedSession }: Options): void {
@@ -53,7 +67,7 @@ export function useBrowserPages(pane: PaneView, shownKey: string | null, { dispa
   useEffect(() => {
     const next = nextLive(live.current, shownKey, open);
     live.current = next.live;
-    for (const key of next.close) browser.close(key).catch(ignore);
+    void unload(next.close, browser.close, dispatchPage);
   });
 
   const ownersRef = useRef(owners(pane));

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { PaneView } from "../../generated/PaneView";
 import { paneReducer } from "../pane/paneState";
-import { openKeys, owners, popupActions } from "./useBrowserPages";
+import { pageReducer, type PageEvent, type PageState } from "./pageStore";
+import { openKeys, owners, popupActions, unload } from "./useBrowserPages";
+import { slotStep } from "./usePageSlot";
 
 const empty: PaneView = { open: false, width: null, sessions: {}, recent: [] };
 const file = (s: PaneView, session: string, path: string) => paneReducer(s, { type: "open", session, project: "p", target: { path } });
@@ -47,5 +49,35 @@ describe("popupActions", () => {
       { type: "openPage", session: "a", url: "https://pop.example/" },
       { type: "select", session: "a", paneTab: "t2" },
     ]);
+  });
+});
+
+// The ninth page unloads the one shown longest ago. Its tab must open it again when shown (found in the 6q-3a live check: the
+// store kept the closed page, so the tab asked the shell to show a page that no longer existed, and stayed blank).
+describe("unload", () => {
+  const loaded = (key: string): ReadonlyMap<string, PageState> =>
+    pageReducer(new Map(), { type: "state", key, url: "http://localhost:3000/", title: "T", canBack: false, canForward: false, loading: false });
+
+  it("closes each page in the shell and forgets it, so its tab opens it again when shown", async () => {
+    let pages = loaded("a/t1");
+    const closed: string[] = [];
+    expect(slotStep(pages.get("a/t1"), true, false)).toBe("show");
+    await unload(
+      ["a/t1"],
+      async (key) => void closed.push(key),
+      (e: PageEvent) => (pages = pageReducer(pages, e)),
+    );
+    expect(closed).toEqual(["a/t1"]);
+    expect(slotStep(pages.get("a/t1"), true, false)).toBe("open");
+  });
+
+  it("forgets a page whose close failed: the shell has no such page either way", async () => {
+    let pages = loaded("a/t1");
+    await unload(
+      ["a/t1"],
+      () => Promise.reject(new Error("The page isn't open.")),
+      (e: PageEvent) => (pages = pageReducer(pages, e)),
+    );
+    expect(pages.has("a/t1")).toBe(false);
   });
 });
