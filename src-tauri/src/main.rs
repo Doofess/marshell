@@ -164,6 +164,7 @@ fn linux_webview_workarounds() {
 /// WebView2 runs its own shortcuts (Ctrl+Shift+I devtools, F5 and Ctrl+R reload, Ctrl+F find, Ctrl+P print)
 /// before the page sees the key, so they would shadow app shortcuts. Off in debug builds too: the shortcut
 /// must behave the same while developing. WebKit on mac and Linux has none of these, so they need nothing yet.
+/// Runs at setup, before any browser page exists, so the window still has its one webview to look up.
 fn disable_browser_shortcuts(window: &tauri::WebviewWindow) {
     #[cfg(windows)]
     {
@@ -189,6 +190,12 @@ fn disable_browser_shortcuts(window: &tauri::WebviewWindow) {
     }
     #[cfg(not(windows))]
     let _ = window;
+}
+
+/// The app's window. Once a browser page exists the window holds two webviews, and Tauri's
+/// `get_webview_window("main")` then finds none: everything that acts on the window asks for it here.
+pub fn main_window(app: &tauri::AppHandle) -> Option<tauri::Window> {
+    app.get_window("main")
 }
 
 /// What the close button does.
@@ -228,8 +235,8 @@ fn hide_to_tray(window: &tauri::Window) {
 fn close_once(app: tauri::AppHandle, keep_in_tray: bool) {
     match close_once_action(tray::tray_ready(&app), keep_in_tray) {
         CloseAction::Hide => {
-            if let Some(window) = app.get_webview_window("main") {
-                hide_to_tray(&window.as_ref().window());
+            if let Some(window) = main_window(&app) {
+                hide_to_tray(&window);
             }
         }
         CloseAction::Quit | CloseAction::Ask => app.exit(0),
@@ -296,7 +303,12 @@ fn main() {
         // Opens a web link in the person's browser, only after the preview's confirm; the capability limits it to http(s).
         // No capability grants the dialog to the webview; only the `pick_folder` and `pick_file` commands open it.
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
+        // Without its click script: a browser page's links are the page's own business, never the plugin's.
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         // No capability grants notifications to the webview; only the shell shows banners.
         .plugin(tauri_plugin_notification::init())
         // The UI reports focus too, but a webview that died while focused cannot report losing it.
@@ -428,6 +440,87 @@ mod tests {
     fn ctrl_shift_i_cannot_open_devtools() {
         let caps = include_str!("../capabilities/default.json");
         assert!(caps.contains("\"core:webview:deny-internal-toggle-devtools\""));
+    }
+
+    /// The quoted strings in `text` between `open` and the next `close`.
+    fn quoted_between(text: &str, open: &str, close: &str) -> Vec<String> {
+        let start = text.find(open).expect("the opening marker") + open.len();
+        let body = &text[start..];
+        let body = &body[..body.find(close).expect("the closing marker")];
+        body.split('"').skip(1).step_by(2).map(str::to_string).collect()
+    }
+
+    /// A browser page is a second webview in the main window. The capability names the app's own webview, so a
+    /// page gets no plugin permission; the app manifest in build.rs puts Marshell's own commands under the same
+    /// capability, so a page gets none of those either. A command missing from one of the three lists would be
+    /// refused at its first call, or open to every webview if the manifest lost its list.
+    #[test]
+    fn every_command_is_granted_to_the_main_webview_only() {
+        use std::collections::BTreeSet;
+        let main = include_str!("main.rs");
+        let open = "generate_handler![";
+        let start = main.find(open).expect("the handler list") + open.len();
+        let handlers: BTreeSet<String> = main[start..][..main[start..].find(']').expect("the list's end")]
+            .split(',')
+            .map(|path| path.trim().rsplit("::").next().unwrap_or_default().to_string())
+            .filter(|name| !name.is_empty())
+            .collect();
+        assert!(
+            handlers.contains("core_endpoint"),
+            "the handler list was not read: {handlers:?}"
+        );
+
+        let manifest: BTreeSet<String> =
+            quoted_between(include_str!("../build.rs"), "const COMMANDS: &[&str] = &[", "];")
+                .into_iter()
+                .collect();
+        assert_eq!(manifest, handlers, "build.rs COMMANDS and generate_handler! differ");
+
+        let caps: serde_json::Value = serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+        assert_eq!(caps["webviews"], serde_json::json!(["main"]));
+        assert!(
+            caps.get("windows").is_none(),
+            "a window's capability reaches every webview in it"
+        );
+        let granted: BTreeSet<String> = caps["permissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|p| p.as_str())
+            .filter(|p| !p.contains(':'))
+            .map(|p| {
+                p.strip_prefix("allow-")
+                    .expect("an app permission allows a command")
+                    .replace('-', "_")
+            })
+            .collect();
+        assert_eq!(granted, handlers, "the capability and generate_handler! differ");
+    }
+
+    #[test]
+    fn no_capability_names_a_page() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("capabilities");
+        let mut seen = 0;
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let caps: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            assert!(caps.get("remote").is_none(), "{path:?} grants a remote origin");
+            assert!(caps.get("windows").is_none(), "{path:?} names a window");
+            assert_eq!(caps["webviews"], serde_json::json!(["main"]), "{path:?}");
+            seen += 1;
+        }
+        assert!(seen > 0);
+    }
+
+    /// The opener plugin's script would send a page's `target="_blank"` links to the system browser by calling
+    /// the plugin from the page. A page's popup becomes a tab instead, and the page has no plugin to call.
+    #[test]
+    fn the_opener_leaves_page_links_alone() {
+        // The code above this module, without its whitespace: rustfmt decides the line breaks.
+        let code = include_str!("main.rs").split("#[cfg(test)]").next().unwrap();
+        let code: String = code.split_whitespace().collect();
+        assert!(code.contains(".plugin(tauri_plugin_opener::Builder::new().open_js_links_on_click(false).build(),)"));
+        assert!(!code.contains("tauri_plugin_opener::init()"));
     }
 
     /// A window saved while it still had the system frame must not get it back: the config decides the frame.

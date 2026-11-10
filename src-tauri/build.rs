@@ -1,8 +1,36 @@
 use std::path::Path;
 
+/// Every command in main.rs's `generate_handler!`. Listing them makes Tauri check each call against the
+/// capability, which names only the app's own webview: a browser page in the same window can call none.
+/// A test in main.rs holds this list, the handler list and the capability equal.
+const COMMANDS: &[&str] = &[
+    "save_diagnostics",
+    "save_conversation",
+    "pick_file",
+    "pick_folder",
+    "core_endpoint",
+    "elevated_input",
+    "elevated_resize",
+    "elevated_create",
+    "elevated_restart",
+    "elevated_resume",
+    "elevated_reopen",
+    "elevated_decide",
+    "close_once",
+    "capture_screen_region",
+    "cancel_capture",
+    "read_clipboard_image",
+    "set_badge",
+    "set_tray",
+    "notification_link",
+    "set_notification_link",
+    "set_window_background",
+];
+
 fn main() {
     drop_conpty_if_not_fetched();
-    tauri_build::build()
+    let attributes = tauri_build::Attributes::new().app_manifest(tauri_build::AppManifest::new().commands(COMMANDS));
+    tauri_build::try_build(attributes).expect("failed to run tauri-build");
 }
 
 /// On Windows, `tauri.windows.conf.json` bundles the fetched conpty.dll and OpenConsole.exe, and
