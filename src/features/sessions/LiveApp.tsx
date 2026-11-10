@@ -98,7 +98,7 @@ import { chooseClose as applyCloseChoice } from "../window/closeChoice";
 import { useViewReport } from "../notifications/useViewReport";
 import { focusTarget, linkFocusSelector } from "../notifications/notificationLink";
 import { terminalThemeOf, wtFont } from "../appearance/terminalSettings";
-import { changesFor, isTextBox, keyBlocked, markTasks, missingTask, paletteHidden, resolveTarget, reviewAgentName, reviewKeyDown, reviewTarget, taskRefresher, type ReviewTarget } from "../tasks/reviewOpen";
+import { changesFor, keepsOwnKeys, keyBlocked, markTasks, missingTask, paletteHidden, resolveTarget, reviewAgentName, reviewKeyDown, reviewTarget, taskRefresher, type ReviewTarget } from "../tasks/reviewOpen";
 import { ReviewSheet } from "../tasks/ReviewSheet";
 import { reviewApi } from "../tasks/reviewRun";
 import { jumpWords } from "../terminal/promptMarks";
@@ -1451,7 +1451,7 @@ export function LiveApp() {
     if (!os) return;
     const onKey = (e: KeyboardEvent) => {
       const s = stateRef.current;
-      const result = reviewKeyDown(e, os, { infos: s.infos, focusedId: s.focusedId, tasks: s.tasks, blocked: keyBlocked({ launcherOpen: s.launcherOpen, overlay: s.overlay, review: s.review !== null, inTextBox: isTextBox(e.target as HTMLElement | null) }) });
+      const result = reviewKeyDown(e, os, { infos: s.infos, focusedId: s.focusedId, tasks: s.tasks, blocked: keyBlocked({ launcherOpen: s.launcherOpen, overlay: s.overlay, review: s.review !== null, inTextBox: keepsOwnKeys(e.target as HTMLElement | null, e.getModifierState("AltGraph")) }) });
       if (result === null || result.kind === "ignored") return;
       void actOn(result);
     };
@@ -1480,9 +1480,10 @@ export function LiveApp() {
       const shortcut = sessionShortcut(e, os);
       // Review is read above.
       if (!shortcut || shortcut.kind === "review") return;
-      // A text box (the rename box, the launcher's fields) keeps its own keys; xterm's own hidden textarea is the terminal, not a box.
+      // A text box (the rename box, the launcher's fields) keeps its own keys; xterm's own hidden textarea is the terminal, not a box,
+      // and the browser tab's Address box gives them up as a page does, unless AltGr is typing a character there.
       // The History view's search box is a text box, and Ctrl+Shift+Y is the key that leaves it and comes back to it.
-      if (isTextBox(e.target as HTMLElement | null) && shortcut.kind !== "history") return;
+      if (keepsOwnKeys(e.target as HTMLElement | null, e.getModifierState("AltGraph")) && shortcut.kind !== "history") return;
       e.preventDefault();
       // Holding the key repeats it; only moving a session along the list, or from prompt to prompt, should.
       if (e.repeat && shortcut.kind !== "move" && shortcut.kind !== "prompt") return;

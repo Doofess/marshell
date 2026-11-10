@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Endpoint } from "../../generated/Endpoint";
@@ -9,7 +11,9 @@ import { paneBody, toggleOutcome } from "../pane/paneCommands";
 import { SidePane } from "../pane/SidePane";
 import { paneReducer, recentFor } from "../pane/paneState";
 import { FIXTURES } from "../sidebar/fixtures";
-import { NOT_A_TASK, changesFor, isTextBox, keyBlocked, markTasks, missingTask, paletteHidden, resolveTarget, reviewAgentName, reviewKeyDown, reviewTarget, taskListFailed, taskRefresher } from "../tasks/reviewOpen";
+import { ADDRESS_BOX } from "../browser/address";
+import { UrlBar } from "../browser/UrlBar";
+import { NOT_A_TASK, changesFor, isTextBox, keepsOwnKeys, keyBlocked, markTasks, missingTask, paletteHidden, resolveTarget, reviewAgentName, reviewKeyDown, reviewTarget, taskListFailed, taskRefresher } from "../tasks/reviewOpen";
 import { ApiError } from "../../lib/api/client";
 import type { RowModel } from "../sidebar/types";
 import { CloseBar } from "./CloseBar";
@@ -632,6 +636,35 @@ describe("LiveApp: what counts as a text box", () => {
     expect(isTextBox(el("BUTTON"))).toBe(false);
     expect(isTextBox(null)).toBe(false);
     expect(isTextBox({})).toBe(false);
+  });
+
+  const box = (tagName: string, ...classes: string[]) => ({ tagName, classList: { contains: (c: string) => classes.includes(c) } });
+  it("keeps its own keys, so a session shortcut does nothing in the rename box or a launcher field", () => {
+    expect(keepsOwnKeys(box("INPUT"))).toBe(true);
+    expect(keepsOwnKeys(box("TEXTAREA"))).toBe(true);
+    expect(keepsOwnKeys(box("INPUT", "session-row__rename"))).toBe(true);
+  });
+  it("gives the app's shortcuts up in the browser tab's Address box, as a page does", () => {
+    expect(keepsOwnKeys(box("INPUT", ADDRESS_BOX))).toBe(false);
+    // Only a box: the class on anything else changes nothing.
+    expect(keepsOwnKeys(box("DIV", ADDRESS_BOX))).toBe(false);
+    expect(keepsOwnKeys(box("TEXTAREA", "xterm-helper-textarea"))).toBe(false);
+    expect(keepsOwnKeys(null)).toBe(false);
+  });
+  it("leaves a character typed with AltGr in the Address box alone: Windows reports AltGr as Ctrl+Alt, and AltGr+Shift+T types a letter on some layouts", () => {
+    expect(keepsOwnKeys(box("INPUT", ADDRESS_BOX), true)).toBe(true);
+    expect(keepsOwnKeys(box("INPUT", ADDRESS_BOX), false)).toBe(false);
+    expect(keepsOwnKeys(box("INPUT"), true)).toBe(true);
+    expect(keepsOwnKeys(box("DIV", ADDRESS_BOX), true)).toBe(false);
+  });
+  it("is the rule both of the window's key handlers read a text box by", () => {
+    const source = readFileSync(join(__dirname, "LiveApp.tsx"), "utf8");
+    expect(source).not.toMatch(/\bisTextBox\(/);
+    expect(source.split('keepsOwnKeys(e.target as HTMLElement | null, e.getModifierState("AltGraph"))')).toHaveLength(3);
+  });
+  it("draws the Address box with the class the keys are read by", () => {
+    const html = renderToStaticMarkup(<UrlBar page={undefined} onGo={() => {}} onNav={() => {}} onOpenOutside={() => {}} onEscape={() => {}} />);
+    expect(html).toContain(`class="${ADDRESS_BOX}" aria-label="Address"`);
   });
 });
 
