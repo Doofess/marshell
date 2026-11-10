@@ -1,6 +1,6 @@
 import { useImperativeHandle, useRef, useState, type KeyboardEvent, type Ref } from "react";
 import { useAnnounceOnce } from "../../lib/useAnnounceOnce";
-import { addressFor, BLANK } from "./address";
+import { ADDRESS_BOX, addressFor, BLANK } from "./address";
 import type { NavAction } from "./browserApi";
 import type { PageState } from "./pageStore";
 
@@ -103,7 +103,7 @@ export function UrlBar({ page, fallbackUrl = "", onGo, onNav, onOpenOutside, onE
         <input
           ref={input}
           type="text"
-          className="url-bar__box"
+          className={ADDRESS_BOX}
           aria-label="Address"
           placeholder="Search Google or type an address"
           spellCheck={false}

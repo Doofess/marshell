@@ -9,7 +9,9 @@ import { paneBody, toggleOutcome } from "../pane/paneCommands";
 import { SidePane } from "../pane/SidePane";
 import { paneReducer, recentFor } from "../pane/paneState";
 import { FIXTURES } from "../sidebar/fixtures";
-import { NOT_A_TASK, changesFor, isTextBox, keyBlocked, markTasks, missingTask, paletteHidden, resolveTarget, reviewAgentName, reviewKeyDown, reviewTarget, taskListFailed, taskRefresher } from "../tasks/reviewOpen";
+import { ADDRESS_BOX } from "../browser/address";
+import { UrlBar } from "../browser/UrlBar";
+import { NOT_A_TASK, changesFor, isTextBox, keepsOwnKeys, keyBlocked, markTasks, missingTask, paletteHidden, resolveTarget, reviewAgentName, reviewKeyDown, reviewTarget, taskListFailed, taskRefresher } from "../tasks/reviewOpen";
 import { ApiError } from "../../lib/api/client";
 import type { RowModel } from "../sidebar/types";
 import { CloseBar } from "./CloseBar";
@@ -632,6 +634,24 @@ describe("LiveApp: what counts as a text box", () => {
     expect(isTextBox(el("BUTTON"))).toBe(false);
     expect(isTextBox(null)).toBe(false);
     expect(isTextBox({})).toBe(false);
+  });
+
+  const box = (tagName: string, ...classes: string[]) => ({ tagName, classList: { contains: (c: string) => classes.includes(c) } });
+  it("keeps its own keys, so a session shortcut does nothing in the rename box or a launcher field", () => {
+    expect(keepsOwnKeys(box("INPUT"))).toBe(true);
+    expect(keepsOwnKeys(box("TEXTAREA"))).toBe(true);
+    expect(keepsOwnKeys(box("INPUT", "session-row__rename"))).toBe(true);
+  });
+  it("gives the app's shortcuts up in the browser tab's Address box, as a page does", () => {
+    expect(keepsOwnKeys(box("INPUT", ADDRESS_BOX))).toBe(false);
+    // Only a box: the class on anything else changes nothing.
+    expect(keepsOwnKeys(box("DIV", ADDRESS_BOX))).toBe(false);
+    expect(keepsOwnKeys(box("TEXTAREA", "xterm-helper-textarea"))).toBe(false);
+    expect(keepsOwnKeys(null)).toBe(false);
+  });
+  it("draws the Address box with the class the keys are read by", () => {
+    const html = renderToStaticMarkup(<UrlBar page={undefined} onGo={() => {}} onNav={() => {}} onOpenOutside={() => {}} onEscape={() => {}} />);
+    expect(html).toContain(`class="${ADDRESS_BOX}" aria-label="Address"`);
   });
 });
 

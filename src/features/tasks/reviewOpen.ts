@@ -3,6 +3,7 @@ import type { Task } from "../../generated/Task";
 import type { TaskChanges } from "../../generated/TaskChanges";
 import { findCommand, type KeyEventLike } from "../../lib/bindings";
 import type { Os } from "../../lib/keymap";
+import { ADDRESS_BOX } from "../browser/address";
 import { agentLabel } from "../sessions/sessionActions";
 import type { RowModel } from "../sidebar/types";
 import { taskOf } from "./taskOf";
@@ -45,6 +46,15 @@ export async function resolveTarget(target: ReviewTarget, infos: () => SessionIn
 export function isTextBox(target: { tagName?: string; classList?: { contains(name: string): boolean } } | null): boolean {
   if (!target) return false;
   return (target.tagName === "INPUT" || target.tagName === "TEXTAREA") && !target.classList?.contains("xterm-helper-textarea");
+}
+
+/**
+ * A text box that keeps the app's shortcuts for itself: the rename box, the launcher's fields, a search box. The browser tab's
+ * Address box doesn't: it is where the keyboard is while a person browses, so the app's shortcuts work from it as they do from
+ * the page under it (the user's choice, 2026-11-10). None of them is a key that edits one line of text.
+ */
+export function keepsOwnKeys(target: Parameters<typeof isTextBox>[0]): boolean {
+  return isTextBox(target) && !target?.classList?.contains(ADDRESS_BOX);
 }
 
 /** The key press the window reads for Review: the code and modifiers (lib/bindings), whether it is a held key, and the way to cancel its default. */
