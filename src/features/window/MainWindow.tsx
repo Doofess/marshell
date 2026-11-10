@@ -34,7 +34,7 @@ import type { RunControl } from "../scripts/confirmScripts";
 import { windowTitle } from "./windowTitle";
 import { Sidebar, type SidebarFooter } from "./Sidebar";
 import { shellNameFor } from "./ShellPanel";
-import { PREVIEW_RATIO, clampPreviewRatio, previewLayout, previewTracks } from "./previewLayout";
+import { PANE, draggedWidth, paneGeometry } from "./paneLayout";
 import { sidebarToggleFor } from "./viewState";
 import "./MainWindow.css";
 
@@ -155,10 +155,14 @@ export type MainWindowProps = {
   noneSelected?: boolean;
   /** The keyboard cursor while Ctrl+Shift is held, measured against the window. */
   navCursor?: { rect: Rect; label: string } | null;
-  /**
-   * The preview pane. Present, it sits beside the session (or over it, in a narrow window) and the terminals stay mounted.
-   */
-  preview?: ReactNode;
+  /** The side pane's content. Shown (`paneShown`), it sits beside the session, or over it in a narrow window, and the terminals stay mounted. */
+  pane?: ReactNode;
+  paneShown?: boolean;
+  /** The saved width in pixels, or null for half the room. The window holds no width of its own. */
+  paneWidth?: number | null;
+  onPaneWidth?: (width: number | null) => void;
+  /** The width of 80 terminal columns: the pane stops there, down to its own minimum. */
+  terminalMinWidth?: number;
   /**
    * A view that takes the main area (History), in place of the terminal, the empty text and the preview. The sidebar and the bar stay.
    * Where the window draws live terminals they stay mounted behind it, so a session keeps its scrollback.
@@ -236,7 +240,11 @@ export function MainWindow({
   onSidebarReset,
   noneSelected = false,
   navCursor = null,
-  preview,
+  pane,
+  paneShown = false,
+  paneWidth = null,
+  onPaneWidth,
+  terminalMinWidth = 0,
   mainView,
 }: MainWindowProps) {
   const pref: SidebarPref = sidebarPref ?? (layout === "focus" ? "focus" : layout === "rail" ? "rail" : "expanded");
@@ -296,28 +304,33 @@ export function MainWindow({
     e.preventDefault();
     onSidebarWidth(clampSidebar(sideW + (e.key === grow ? SIDEBAR_STEP : -SIDEBAR_STEP)));
   };
-  // The preview's divider: the session's share of the main area. Not saved; every opening starts at half.
+  // The side pane's divider reports the pane's width in pixels and holds none of its own; the saved width comes in as `paneWidth`.
   const mainRef = useRef<HTMLElement>(null);
-  const [previewRatio, setPreviewRatio] = useState<number>(PREVIEW_RATIO.default);
   const viewing = mainView !== undefined && mainView !== null && mainView !== false;
-  const previewing = !viewing && !empty && preview !== undefined && preview !== null && preview !== false;
-  const previewFull = previewing && previewLayout(spaceW) === "full";
-  const dragPreview = (e: ReactPointerEvent<HTMLElement>) => {
+  const geometry = paneGeometry({ room: spaceW, shown: paneShown && !viewing && !empty, saved: paneWidth, terminalMin: terminalMinWidth });
+  const paneOn = geometry.mode !== "hidden";
+  const paneCovers = geometry.mode === "cover";
+  const dragPane = (e: ReactPointerEvent<HTMLElement>) => {
     const main = mainRef.current;
-    if (!main || !e.currentTarget.hasPointerCapture(e.pointerId)) return;
+    if (!onPaneWidth || !main || !e.currentTarget.hasPointerCapture(e.pointerId)) return;
     const rect = main.getBoundingClientRect();
     if (rect.width <= 0) return;
     const rtl = getComputedStyle(main).direction === "rtl";
-    setPreviewRatio(clampPreviewRatio((rtl ? rect.right - e.clientX : e.clientX - rect.left) / rect.width));
+    onPaneWidth(draggedWidth({ room: spaceW, terminalMin: terminalMinWidth, fromEnd: rtl ? e.clientX - rect.left : rect.right - e.clientX }));
   };
-  const nudgePreview = (e: KeyboardEvent<HTMLElement>) => {
-    if (e.ctrlKey || e.altKey || e.metaKey) return;
+  const nudgePane = (e: KeyboardEvent<HTMLElement>) => {
+    if (!onPaneWidth || e.ctrlKey || e.altKey || e.metaKey) return;
     const rtl = mainRef.current !== null && getComputedStyle(mainRef.current).direction === "rtl";
-    const grow = rtl ? "ArrowLeft" : "ArrowRight";
-    const shrink = rtl ? "ArrowRight" : "ArrowLeft";
-    if (e.key !== grow && e.key !== shrink) return;
+    // The pane is at the end edge: left-to-right, Left makes it wider and Right narrower; right-to-left mirrors that.
+    const grow = rtl ? "ArrowRight" : "ArrowLeft";
+    const shrink = rtl ? "ArrowLeft" : "ArrowRight";
+    const to = (fromEnd: number) => onPaneWidth(draggedWidth({ room: spaceW, terminalMin: terminalMinWidth, fromEnd }));
+    if (e.key === "Home") to(PANE.min);
+    else if (e.key === "End") to(geometry.max);
+    else if (e.key === grow) to(geometry.pane + PANE.step);
+    else if (e.key === shrink) to(geometry.pane - PANE.step);
+    else return;
     e.preventDefault();
-    setPreviewRatio((r) => clampPreviewRatio(r + (e.key === grow ? PREVIEW_RATIO.step : -PREVIEW_RATIO.step)));
   };
   return (
     <div className="window" style={{ inlineSize: width, blockSize: height, "--side-w": `${sideW}px` } as CSSProperties} data-mode={mode} data-layout={layout} data-title={title}>
@@ -411,10 +424,10 @@ export function MainWindow({
           ref={mainRef}
           className="window__main"
           tabIndex={-1}
-          data-placement={drawer && !previewing ? placement : undefined}
+          data-placement={drawer && !paneOn ? placement : undefined}
           data-nav-pane={!viewing && !empty ? 0 : undefined}
-          data-preview={previewing ? (previewFull ? "full" : "beside") : undefined}
-          style={previewing && !previewFull ? { gridTemplateColumns: previewTracks(previewRatio) } : undefined}
+          data-pane={paneOn ? geometry.mode : undefined}
+          style={geometry.mode === "beside" ? { gridTemplateColumns: `${geometry.terminal}px 1px ${geometry.pane}px` } : undefined}
         >
           {empty ? (
             viewing ? null : (
@@ -424,30 +437,30 @@ export function MainWindow({
             )
           ) : renderTerminal ? (
             // Under a main view every terminal stays mounted and none is on screen.
-            <KeptTerminals rows={rows} selectedId={selected.id} render={renderTerminal} suspended={previewFull || viewing} />
+            <KeptTerminals rows={rows} selectedId={selected.id} render={renderTerminal} suspended={paneCovers || viewing} />
           ) : viewing ? null : (
             <ScriptedTerminal setting={terminalSetting} label={`Terminal for ${selected.name}`} {...(isTool(selected.agent) ? { script: shellSession({ cwd: selected.project }), size: SHELL_SIZE } : {})} />
           )}
 
           {viewing && mainView}
 
-          {previewing && !previewFull && (
+          {geometry.mode === "beside" && (
             <div
-              className="preview__divider"
+              className="pane__divider"
               role="separator"
               aria-orientation="vertical"
-              aria-label="Resize the preview"
-              aria-valuemin={Math.round(PREVIEW_RATIO.min * 100)}
-              aria-valuemax={Math.round(PREVIEW_RATIO.max * 100)}
-              aria-valuenow={Math.round(clampPreviewRatio(previewRatio) * 100)}
+              aria-label="Resize the side pane"
+              aria-valuemin={PANE.min}
+              aria-valuemax={geometry.max}
+              aria-valuenow={geometry.pane}
               tabIndex={0}
               onPointerDown={(e) => e.button === 0 && e.currentTarget.setPointerCapture(e.pointerId)}
-              onPointerMove={dragPreview}
-              onKeyDown={nudgePreview}
-              onDoubleClick={() => setPreviewRatio(PREVIEW_RATIO.default)}
+              onPointerMove={dragPane}
+              onKeyDown={nudgePane}
+              onDoubleClick={() => onPaneWidth?.(null)}
             />
           )}
-          {previewing && preview}
+          {paneOn && pane}
 
           {mode === "focus" && waiting > 0 && (
             <button type="button" className="focus-pill" aria-label={`${waiting} need you ${pillKeys}`}>

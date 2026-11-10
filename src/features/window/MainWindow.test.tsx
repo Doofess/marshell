@@ -277,11 +277,11 @@ describe("MainWindow: hygiene", () => {
 
 describe("MainWindow (accessibility gate)", () => {
   it("gives the focusable preview separator the values a separator needs", () => {
-    const h = html({ preview: <aside className="preview-stand-in" /> });
+    const h = html({ pane: <aside className="preview-stand-in" />, paneShown: true });
     expect(h).toContain('role="separator"');
-    expect(h).toContain('aria-valuenow="50"');
-    expect(h).toContain('aria-valuemin="30"');
-    expect(h).toContain('aria-valuemax="70"');
+    expect(h).toMatch(/aria-valuenow="\d+"/);
+    expect(h).toContain('aria-valuemin="320"');
+    expect(h).toMatch(/aria-valuemax="\d+"/);
   });
   it("names the focus pill with the text it shows", () => {
     const h = html({ layout: "focus", sidebarPref: "focus" });
@@ -512,12 +512,26 @@ describe("MainWindow: one terminal", () => {
     expect([...ids].sort()).toEqual(["palette", "sidebar"]);
     for (const id of ids) expect(topAction(id), id).not.toBeNull();
   });
-  it("the preview divider keeps its role and value", () => {
-    const h = html({ preview: <aside className="preview-stand-in" /> });
-    expect(h).toContain('class="preview__divider"');
+  it("the divider reports the pane's width in pixels", () => {
+    const stand = <aside className="preview-stand-in" />;
+    const h = html({ pane: stand, paneShown: true, paneWidth: 400 });
+    expect(h).toContain('class="pane__divider"');
     expect(h).toContain('role="separator"');
-    expect(h).toContain('aria-label="Resize the preview"');
-    expect(h).toContain('aria-valuenow="50"');
+    expect(h).toContain('aria-label="Resize the side pane"');
+    expect(h).toContain('aria-valuenow="400"');
+    expect(h).toContain("px 1px 400px");
+    expect(html({ pane: stand, paneShown: true })).toMatch(/aria-valuenow="\d+"/);
+  });
+  it("a cover pane has no divider", () => {
+    const h = html({ pane: <aside className="preview-stand-in" />, paneShown: true, width: 700 });
+    expect(h).toContain('data-pane="cover"');
+    expect(h).toContain("preview-stand-in");
+    expect(h).not.toContain("pane__divider");
+  });
+  it("a pane that is not shown leaves the terminal alone", () => {
+    const h = html({ pane: <aside className="preview-stand-in" /> });
+    expect(h).not.toContain("preview-stand-in");
+    expect(h).not.toContain("data-pane");
   });
 });
 
@@ -525,7 +539,7 @@ describe("MainWindow: mainView", () => {
   const view = <section className="history-stand-in">History</section>;
   const main = (h: string) => /<main[^>]*class="window__main".*?<\/main>/s.exec(h)![0];
   it("holds the view in the main area in place of the terminal, the empty text and the preview", () => {
-    const h = html({ mainView: view, preview: <aside className="preview-stand-in" /> });
+    const h = html({ mainView: view, pane: <aside className="preview-stand-in" />, paneShown: true });
     expect(main(h)).toContain("history-stand-in");
     expect(main(h)).not.toContain("scripted-terminal");
     expect(main(h)).not.toContain("preview-stand-in");

@@ -205,19 +205,19 @@
   min-block-size: 0;
 }
 /*
- * With the preview open the main area is the session, a hairline divider and the preview (the columns come from the divider's
- * ratio, inline). One row that cannot grow past the area, so the preview's body is the only thing that scrolls. In a narrow
- * window the preview is alone in the area: the terminals stay mounted and hidden behind it.
+ * With the side pane open the main area is the session, a hairline divider and the pane (the columns are pixels, inline, from
+ * the pane's width). One row that cannot grow past the area, so the pane's body is the only thing that scrolls. In a narrow
+ * window the pane is alone in the area: the terminals stay mounted and hidden behind it.
  */
-.window__main[data-preview] {
+.window__main[data-pane] {
   grid-template-rows: minmax(0, 1fr);
 }
-.window__main[data-preview="full"] {
+.window__main[data-pane="cover"] {
   grid-template-columns: minmax(0, 1fr);
 }
 
-/* The preview's divider: a 1 px hairline whose 8 px hit area overhangs both sides, so it costs one pixel of the terminal. */
-.preview__divider {
+/* The side pane's divider: a 1 px hairline whose 8 px hit area overhangs both sides, so it costs one pixel of the terminal. */
+.pane__divider {
   --hit: 8px;
   position: relative;
   z-index: 1;
@@ -227,35 +227,35 @@
   touch-action: none;
   user-select: none;
 }
-.preview__divider::before {
+.pane__divider::before {
   content: "";
   position: absolute;
   inset-block: 0;
   inset-inline: calc((var(--hit) - 1px) / -2);
 }
-.preview__divider:focus-visible {
+.pane__divider:focus-visible {
   outline: 2px solid var(--focus, var(--accent));
   outline-offset: 0;
 }
-.preview__divider:active {
+.pane__divider:active {
   background: var(--accent);
 }
 @media (hover: hover) and (pointer: fine) {
-  .preview__divider:hover {
+  .pane__divider:hover {
     background: var(--accent);
   }
 }
 /* Forced colours replace the accent with Canvas, which would hide the divider while it is hovered or dragged: use system colours. */
 @media (forced-colors: active) {
-  .preview__divider {
+  .pane__divider {
     background: CanvasText;
   }
-  .preview__divider:active {
+  .pane__divider:active {
     background: Highlight;
   }
 }
 @media (forced-colors: active) and (hover: hover) and (pointer: fine) {
-  .preview__divider:hover {
+  .pane__divider:hover {
     background: Highlight;
   }
 }

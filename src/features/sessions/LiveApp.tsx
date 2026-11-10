@@ -1611,7 +1611,9 @@ export function LiveApp() {
           rows={sidebarRows}
           selectedId={focusedId}
           visibleIds={onScreenIds}
-          preview={previewPane}
+          pane={previewPane}
+          paneShown={previewPane !== undefined}
+          paneWidth={null}
           mainView={
             mainView === "history" && endpoint && os ? (
               <LiveHistory
