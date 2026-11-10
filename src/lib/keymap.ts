@@ -8,9 +8,10 @@ export const osOfPlatform = (platform: "windows" | "macos" | "linux"): Os => (pl
  * same shortcut sits on the same key of a French, German, Dvorak, Hebrew or Cyrillic keyboard. Punctuation never appears here.
  * By default the platform's app modifier is implied; `plain` is the key alone and `nav` is the navigation chord.
  * `shift` is Shift (plus Alt when `alt` is set) WITHOUT the app modifier: Alt+Shift+arrow moves a session in the list.
+ * `ctrl` is Ctrl with the key and nothing else, on every system (the Control key on macOS, not Cmd): Ctrl+Tab shows the next tab.
  * `mac` replaces the whole binding on macOS, for a key the system already owns there: Cmd+Q is Quit, so the side pane is Cmd+Alt+Q.
  */
-export type Binding = { code: string; alt?: boolean; plain?: boolean; nav?: boolean; shift?: boolean; mac?: Binding };
+export type Binding = { code: string; alt?: boolean; plain?: boolean; nav?: boolean; shift?: boolean; ctrl?: boolean; mac?: Binding };
 export type Command = { id: string; label: string; binding?: Binding; group: "Session" | "Terminal" | "Window" | "App" };
 
 const KEY_TEXT: Record<string, string> = { ArrowLeft: "←", ArrowRight: "→", ArrowUp: "↑", ArrowDown: "↓" };
@@ -25,6 +26,7 @@ export function shortcutLabel(b: Binding, os: Os, nav: NavModifier = DEFAULT_NAV
   if (os === "mac" && b.mac) return shortcutLabel(b.mac, os, nav);
   const key = keyText(b.code);
   if (b.plain) return key;
+  if (b.ctrl) return os === "mac" ? `⌃${key}` : `Ctrl+${key}`;
   if (b.shift) return os === "mac" ? `${b.alt ? "⌥" : ""}⇧${key}` : `${b.alt ? "Alt+" : ""}Shift+${key}`;
   if (b.nav) return os === "mac" ? `${navModifierLabel(os, nav)}${key}` : `${navModifierLabel(os, nav)}+${key}`;
   if (os === "mac") return `⌘${b.alt ? "⌥" : ""}${key}`;
@@ -89,7 +91,7 @@ export const COMMANDS: Command[] = [
   { id: "preview", label: "Side pane", group: "Window", binding: { code: "KeyQ", mac: { code: "KeyQ", alt: true } } },
   { id: "open-file", label: "Open file…", group: "Window" },
   { id: "browse-file", label: "Browse…", group: "Window" },
-  { id: "pane-next-tab", label: "Next tab", group: "Window" },
+  { id: "pane-next-tab", label: "Next tab", group: "Window", binding: { code: "Tab", ctrl: true } },
   { id: "pane-previous-tab", label: "Previous tab", group: "Window" },
   { id: "pane-close-tab", label: "Close tab", group: "Window" },
   { id: "sidebar", label: "Collapse sidebar to the rail", group: "Window" },

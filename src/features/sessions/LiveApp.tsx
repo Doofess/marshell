@@ -1216,10 +1216,26 @@ export function LiveApp() {
   const numberOf = (id: string | null | undefined) => (id ? (infos.find((i) => i.tab_id === id)?.number ?? null) : null);
   const navPanes = [numberOf(focusedId)];
   const navNames = useMemo(() => Object.fromEntries(rows.map((r) => [r.number, r.name])), [rows]);
+  // The side pane is a stop of the Tab chord while it is drawn (a session on screen, the sessions view, the pane open); whether focus is in it
+  // is tracked from focusin and focusout, so the chord knows which stop it is leaving.
+  const sidePaneDrawn = view.pane.open && focusedId !== null && focusedId !== undefined && mainView === "sessions";
+  const [sideFocused, setSideFocused] = useState(false);
+  useEffect(() => {
+    const inside = () => setSideFocused(document.activeElement?.closest("[data-nav-side]") != null);
+    document.addEventListener("focusin", inside);
+    document.addEventListener("focusout", inside);
+    return () => {
+      document.removeEventListener("focusin", inside);
+      document.removeEventListener("focusout", inside);
+    };
+  }, []);
   const applyNav = (effect: NavEffect) => {
     switch (effect.type) {
       case "select-pane":
         actions.focusTerminal();
+        return;
+      case "select-side":
+        focusPane();
         return;
       case "bring-into-view": {
         const id = tabIdOfNumber(infos, effect.number);
@@ -1256,6 +1272,8 @@ export function LiveApp() {
     panes: navPanes,
     selectedPane: 0,
     names: navNames,
+    side: sidePaneDrawn ? "the side pane" : null,
+    sideFocused,
     root: ref,
     apply: applyNav,
   });

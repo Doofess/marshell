@@ -15,6 +15,7 @@ const NAV_KEYS: Record<NavModifier, Pick<Chord, "ctrl" | "shift" | "alt">> = {
 export function chordOf(b: Binding, os: Os, nav: NavModifier = DEFAULT_NAV_MODIFIER): Chord {
   if (os === "mac" && b.mac) return chordOf(b.mac, os, nav);
   if (b.plain) return { code: b.code, ctrl: false, shift: false, alt: false, meta: false };
+  if (b.ctrl) return { code: b.code, ctrl: true, shift: false, alt: false, meta: false };
   if (b.shift) return { code: b.code, ctrl: false, shift: true, alt: !!b.alt, meta: false };
   if (b.nav) return { code: b.code, ...NAV_KEYS[nav], meta: false };
   if (os === "mac") return { code: b.code, ctrl: false, shift: false, alt: !!b.alt, meta: true };

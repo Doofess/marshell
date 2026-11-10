@@ -1,15 +1,16 @@
 import type { NavLayout, Rect, Target } from "../../lib/navigation/types";
 
 /** One element the cursor can reach, as the page drew it: its `data-nav-*` attribute, its box on screen, and the box of the list that scrolls it, if any. */
-export type Measured = { attrs: { pane?: string; row?: string; top?: string }; rect: Rect; clip?: Rect };
+export type Measured = { attrs: { pane?: string; row?: string; top?: string; side?: string }; rect: Rect; clip?: Rect };
 
-const SELECTOR = "[data-nav-pane],[data-nav-row],[data-nav-top]";
+const SELECTOR = "[data-nav-pane],[data-nav-row],[data-nav-top],[data-nav-side]";
 /** The lists that scroll their rows: a row outside its list's box is scrolled out of sight. */
 const SCROLLERS = ".sidebar__list,.rail__list";
 
 const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
-function targetOf({ pane, row, top }: Measured["attrs"]): Target | null {
+function targetOf({ pane, row, top, side }: Measured["attrs"]): Target | null {
+  if (side !== undefined) return { kind: "side" };
   if (pane !== undefined) return /^\d+$/.test(pane) ? { kind: "pane", index: Number(pane) } : null;
   if (row !== undefined) return /^\d+$/.test(row) ? { kind: "row", number: Number(row) } : null;
   return top ? { kind: "top", id: top } : null;
@@ -37,7 +38,7 @@ const box = (el: Element): Rect => {
 export function measureNavLayout(root: HTMLElement): NavLayout {
   const items = [...root.querySelectorAll<HTMLElement>(SELECTOR)].map((el) => {
     const list = el.closest(SCROLLERS);
-    return { attrs: { pane: el.dataset.navPane, row: el.dataset.navRow, top: el.dataset.navTop }, rect: box(el), clip: list ? box(list) : undefined };
+    return { attrs: { pane: el.dataset.navPane, row: el.dataset.navRow, top: el.dataset.navTop, side: el.dataset.navSide }, rect: box(el), clip: list ? box(list) : undefined };
   });
   return navLayoutOf(items, box(root));
 }

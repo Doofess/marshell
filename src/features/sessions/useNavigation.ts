@@ -53,6 +53,7 @@ function labelOf(t: Target, ctx: NavContext): string {
   const session = (n: number) => (ctx.names?.[n] ? `Session ${n}, ${ctx.names[n]}` : `Session ${n}`);
   if (t.kind === "row") return session(t.number);
   if (t.kind === "top") return TOP_NAMES[t.id] ?? t.id;
+  if (t.kind === "side") return "Side pane";
   const n = ctx.panes[t.index] ?? null;
   return n === null ? `Empty slot ${t.index + 1}` : session(n);
 }
@@ -68,6 +69,10 @@ type Options = {
   /** The view's focused pane. */
   selectedPane: number | null;
   names: Record<number, string>;
+  /** The side pane's spoken name while it is drawn ("the side pane"), else null: Tab then never stops there. */
+  side: string | null;
+  /** Focus is inside the side pane right now. */
+  sideFocused: boolean;
   /** The window, which the cursor's rects are measured against. */
   root: RefObject<HTMLElement | null>;
   apply: (effect: NavEffect) => void;
@@ -92,8 +97,8 @@ export function useNavigation(opts: Options): { cursor: NavCursorView | null; no
     const o = optsRef.current;
     // Measured on the key press, never on render: the window may have changed since the last one.
     if (o.root.current && events.some((e) => e.type !== "modifier-down")) layout.current = measureNavLayout(o.root.current);
-    const ctx: NavContext = { panes: o.panes, layout: layout.current, names: o.names };
-    const from: NavState = { ...current, selectedPane: noneRef.current ? null : o.selectedPane };
+    const ctx: NavContext = { panes: o.panes, layout: layout.current, names: o.names, side: o.side };
+    const from: NavState = { ...current, selectedPane: noneRef.current ? null : o.selectedPane, selectedSide: o.side !== null && o.sideFocused };
     const { state, effects } = step(from, events, ctx);
     current = state;
     const at = state.cursor;
