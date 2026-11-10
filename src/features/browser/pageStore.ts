@@ -84,6 +84,11 @@ export function usePage(key: string | null): PageState | undefined {
   );
 }
 
+/** A page's site icon (an image address), or null while it has none or isn't loaded. */
+export function pageIcon(key: string): string | null {
+  return pages.get(key)?.icon ?? null;
+}
+
 /** The key of the page that has the keyboard, if any. */
 export function focusedPage(): string | null {
   for (const [k, p] of pages) if (p.focused) return k;

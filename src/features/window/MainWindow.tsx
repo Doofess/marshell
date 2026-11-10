@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { ContextMenu, type MenuItem } from "../../components/ContextMenu/ContextMenu";
+import { type MenuItem } from "../../components/ContextMenu/ContextMenu";
 import type { PortMenuRequest } from "../ports/PortChips";
-import { chipLabel, chipMenuItems, runChipItem } from "../ports/ports";
+import { PortMenu } from "../ports/PortMenu";
 import { setTitle as setWindowTitle } from "../../lib/window/appWindow";
 import { Logo } from "../../components/Logo/Logo";
 import { Wordmark } from "../../components/Logo/Wordmark";
@@ -382,22 +382,7 @@ export function MainWindow({
   return (
     <div className="window" style={{ inlineSize: width, blockSize: height, "--side-w": `${sideAnim}px` } as CSSProperties} data-mode={mode} data-side-moving={sideMotion.moving || undefined} data-layout={layout} data-title={title}>
       <SessionAnnouncer row={selected} needsYou={waiting} notice={notice} />
-      {portMenu && (
-        <ContextMenu
-          label={portMenu.chips.length === 1 ? `Port ${chipLabel(portMenu.chips[0]!)}` : "More ports"}
-          items={chipMenuItems(portMenu.chips)}
-          anchor={portMenu.anchor}
-          onRun={(id) => {
-            runChipItem(portMenu.chips, id);
-            setPortMenu(null);
-            portMenu.opener?.focus();
-          }}
-          onClose={({ refocus }) => {
-            setPortMenu(null);
-            if (refocus) portMenu.opener?.focus();
-          }}
-        />
-      )}
+      {portMenu && <PortMenu request={portMenu} onDone={() => setPortMenu(null)} />}
       {/* data-tauri-drag-region: a bare attribute moves the window only when the press lands on that very element, so buttons and
           the text inside never start a drag; "deep" (the session header's area) also takes its text, while buttons still refuse. */}
       <header className="window__bar" data-tauri-drag-region>

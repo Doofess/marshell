@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { RowModel } from "../sidebar/types";
 import { deliveryTo, dropDelivery, dropTarget, toCss } from "./dropTarget";
+import { pageDrop } from "./dropTarget";
 
 const row = (status: string, agent = "claude"): RowModel => ({ name: "api", status, agent }) as unknown as RowModel;
 
@@ -43,5 +44,17 @@ describe("deliveryTo", () => {
   it("is the row's delivery for any other tab", () => {
     expect(deliveryTo("t1", rows, "p9")).toEqual({ name: "api", refused: "api is paused." });
     expect(deliveryTo("t2", rows, undefined)).toBeNull();
+  });
+});
+
+describe("pageDrop", () => {
+  it("is a drop on the pane with the page's files", () => {
+    expect(pageDrop({ key: "t1/t2", kind: "drop", paths: ["C:\\a.txt", "C:\\b.txt"] })).toEqual({ target: { kind: "pane" }, paths: ["C:\\a.txt", "C:\\b.txt"] });
+  });
+  it("is nothing for an enter, a leave, or a drop with no files", () => {
+    expect(pageDrop({ key: "t1/t2", kind: "enter" })).toBeNull();
+    expect(pageDrop({ key: "t1/t2", kind: "leave" })).toBeNull();
+    expect(pageDrop({ key: "t1/t2", kind: "drop", paths: [] })).toBeNull();
+    expect(pageDrop({ key: "t1/t2", kind: "drop" })).toBeNull();
   });
 });

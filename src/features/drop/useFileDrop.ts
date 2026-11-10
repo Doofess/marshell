@@ -3,7 +3,7 @@ import { inTauri } from "../../lib/window/appWindow";
 import { onBrowser } from "../browser/browserApi";
 import { coverPage } from "../browser/pageCover";
 import { createDragCover } from "./dragCover";
-import { dropTarget, toCss, type DropTarget } from "./dropTarget";
+import { dropTarget, pageDrop, toCss, type DropTarget } from "./dropTarget";
 import "./Drop.css";
 
 type Handlers = {
@@ -34,6 +34,9 @@ export function useFileDrop(handlers: Handlers): void {
       if (d.kind === "enter") cover.pageEnter();
       else if (d.kind === "leave") cover.pageLeave();
       else cover.pageDrop();
+      // A file dropped on a page is a drop on the pane: its files open as tabs, as a drop on any other part of the pane does.
+      const dropped = pageDrop(d);
+      if (dropped) ref.current.onPaths(dropped.target, dropped.paths);
     });
     void import("@tauri-apps/api/webview").then(({ getCurrentWebview }) =>
       getCurrentWebview()

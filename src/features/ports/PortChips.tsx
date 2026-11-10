@@ -1,7 +1,8 @@
 import type { KeyboardEvent, MouseEvent } from "react";
 import type { PortChip } from "../../generated/PortChip";
 import { keyboardAnchor, opensRowMenu } from "../sidebar/rowMenu";
-import { chipLabel, openChip } from "./ports";
+import { useOpenPageInPane } from "../pane/PaneContext";
+import { chipLabel, openChipIn } from "./ports";
 import "./PortChips.css";
 
 /** A menu the chips ask for: the chips it acts on, where it opens, and the button to give the focus back to. */
@@ -14,8 +15,9 @@ type Props = {
   onMenu?: (request: PortMenuRequest) => void;
 };
 
-/** Port chips: each is a button that opens its URL in the browser. Right-click, Shift+F10 and the Menu key open its menu. */
+/** Port chips: each is a button that opens its URL in the side pane, or in the browser where there are no browser tabs. Right-click, Shift+F10 and the Menu key open its menu. */
 export function PortChips({ ports, max = Infinity, onMenu }: Props) {
+  const openPage = useOpenPageInPane();
   if (ports.length === 0) return null;
   const shown = ports.slice(0, max);
   const rest = ports.slice(shown.length);
@@ -44,7 +46,7 @@ export function PortChips({ ports, max = Infinity, onMenu }: Props) {
           className="port-chip"
           aria-label={`Open ${c.url} in the browser`}
           aria-haspopup={onMenu ? "menu" : undefined}
-          onClick={() => void openChip(c.url)}
+          onClick={() => void openChipIn(c.url, openPage)}
           onContextMenu={pointer([c])}
           onKeyDown={keys([c])}
         >

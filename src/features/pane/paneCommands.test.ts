@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PaneView } from "../../generated/PaneView";
-import { closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, paneBody, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome, TAB_LIMIT } from "./paneCommands";
+import { closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneBody, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome, PAGE_REFUSED, TAB_LIMIT } from "./paneCommands";
 import { paneReducer, recentFor } from "./paneState";
 
 const EMPTY: PaneView = { open: false, width: null, sessions: {}, recent: [] };
@@ -105,5 +105,36 @@ describe("closeTabOutcome", () => {
     expect(closeTabOutcome(EMPTY, "s1")).toBeNull();
     const s = withTabs("s1", ["/a/x.md", "/a/y.md"]);
     expect(closeTabOutcome(s, "s1")).toEqual({ paneTab: "t2", path: "/a/y.md" });
+  });
+});
+
+describe("pageOpenCheck", () => {
+  const urls = (n: number) => Array.from({ length: n }, (_, i) => `https://site${i}.example/`);
+  const withPages = (session: string, list: string[]): PaneView => list.reduce((acc, url) => paneReducer(acc, { type: "openPage", session, url }), EMPTY);
+  it("refuses with no session on screen first", () => {
+    expect(pageOpenCheck(EMPTY, undefined, "https://example.com/")).toBe("no-session");
+    expect(pageOpenCheck(EMPTY, null, "https://example.com/")).toBe("no-session");
+  });
+  it("refuses an address that is not a web page: another scheme, a path, userinfo", () => {
+    for (const url of ["file:///C:/x", "javascript:alert(1)", "C:\\x\\a.md", "https://user:pw@example.com/", "mailto:a@b.c"]) expect(pageOpenCheck(EMPTY, "s1", url), url).toBe("refused");
+  });
+  it("refuses the 33rd tab, but not an address already open or a tab of another session", () => {
+    const full = withPages("s1", urls(32));
+    expect(pageOpenCheck(full, "s1", "https://new.example/")).toBe("limit");
+    expect(pageOpenCheck(full, "s1", "about:blank")).toBe("limit");
+    expect(pageOpenCheck(full, "s1", "https://site3.example/")).toBe("ok");
+    expect(pageOpenCheck(full, "s2", "https://new.example/")).toBe("ok");
+  });
+  it("accepts http, https and about:blank", () => {
+    for (const url of ["http://localhost:3000/", "https://example.com/a?b=1", "about:blank"]) expect(pageOpenCheck(EMPTY, "s1", url), url).toBe("ok");
+  });
+});
+
+describe("the page announcements", () => {
+  it("use the plan's words", () => {
+    expect(PAGE_REFUSED).toBe("That address can't be opened in the side pane.");
+    expect(pageOpenedText("https://example.com/a")).toBe("Opened example.com in the side pane.");
+    expect(pageOpenedText("http://localhost:3000/")).toBe("Opened localhost:3000 in the side pane.");
+    expect(pageOpenedText("about:blank")).toBe("Opened New tab in the side pane.");
   });
 });

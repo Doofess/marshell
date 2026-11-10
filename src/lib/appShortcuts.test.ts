@@ -137,3 +137,11 @@ describe("side pane commands", () => {
     expect(commandShortcut("open-file")).toEqual({ kind: "openFile" });
   });
 });
+
+describe("browser tab commands", () => {
+  it("map to their shortcut kinds", () => {
+    expect(commandShortcut("new-browser-tab")).toEqual({ kind: "newBrowserTab" });
+    expect(commandShortcut("open-url")).toEqual({ kind: "newBrowserTab" });
+    expect(commandShortcut("clear-browser-data")).toEqual({ kind: "clearBrowserData" });
+  });
+});

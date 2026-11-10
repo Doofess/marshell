@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { PALETTES } from "../terminal/palettes";
 import { PreviewPane, formatSize, type PreviewPaneProps } from "./Preview";
+import { followWebLink } from "./webLink";
 import type { FileState } from "./usePreviewFile";
 
 const noop = () => {};
@@ -148,5 +149,20 @@ describe("PreviewPane: select region", () => {
     // A PDF is offered it once its document has loaded, not while it is loading or when it failed (the first render has none).
     expect(pdf).not.toContain("Select region");
     expect(md).not.toContain("Select region");
+  });
+});
+
+describe("a web link in a document", () => {
+  it("opens a browser tab with no question where browser tabs are available", () => {
+    const calls: string[] = [];
+    const openPage = (url: string) => {
+      calls.push(url);
+      return true;
+    };
+    expect(followWebLink("https://example.com/docs", openPage)).toBe("opened");
+    expect(calls).toEqual(["https://example.com/docs"]);
+  });
+  it("still asks before the system browser where they aren't", () => {
+    expect(followWebLink("https://example.com/docs", null)).toBe("ask");
   });
 });
