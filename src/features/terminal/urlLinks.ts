@@ -52,27 +52,32 @@ function webUrl(text: string): URL | null {
 const SHOWN_LENGTH = 120;
 
 /**
- * The tooltip over a hyperlink a program drew (OSC 8), whose text can say anything: it names the address the click opens. A long
- * address, or one with a user name before the host (`https://bank.example@other.example/`), is named by its origin, so the host
- * the browser goes to is always in view. Null for a target that would not open.
+ * The tooltip over a hyperlink a program drew (OSC 8), whose text can say anything: it names the address the click opens, in the
+ * parsed form the browser will read (a punycode host, escapes for what the program wrote raw), never the program's own spelling.
+ * A long address, or one with a user name before the host (`https://bank.example@other.example/`), is named by its origin, so
+ * the host the browser goes to is always in view. Null for a target that would not open.
  */
 export function targetHint(platform: Endpoint["platform"], target: string): string | null {
   const url = webUrl(target);
   if (!url) return null;
-  const plain = target.length <= SHOWN_LENGTH && url.username === "" && url.password === "";
-  return `${platform === "macos" ? "⌘" : "Ctrl"}+click to open ${plain ? target : `${url.origin}/…`} in your browser`;
+  const plain = url.href.length <= SHOWN_LENGTH && url.username === "" && url.password === "";
+  return `${platform === "macos" ? "⌘" : "Ctrl"}+click to open ${plain ? url.href : `${url.origin}/…`} in your browser`;
 }
 
 type Open = (url: string) => Promise<void>;
 
-/** Hands an http or https address to the system; anything else, or a refusal by the system, does nothing. */
-function openWeb(url: string, open: Open): void {
-  if (!webUrl(url)) return;
+/** Hands an address to the system; a refusal by the system does nothing. */
+function hand(address: string, open: Open): void {
   try {
-    open(url).catch(() => {});
+    open(address).catch(() => {});
   } catch {
     // A synchronous failure is swallowed too.
   }
+}
+
+/** Hands an http or https address to the system as it was written; anything else does nothing. */
+function openWeb(url: string, open: Open): void {
+  if (webUrl(url)) hand(url, open);
 }
 
 const modifierHeld = (platform: Endpoint["platform"], event: MouseEvent): boolean => (platform === "macos" ? event.metaKey : event.ctrlKey);
@@ -114,7 +119,9 @@ export function urlLinkProvider(term: { buffer: { active: BufferLike }; element?
 export function webLinkHandler(platform: Endpoint["platform"], element: () => HTMLElement | undefined, open: Open = openUrl): ILinkHandler {
   return {
     activate(event, text) {
-      if (modifierHeld(platform, event)) openWeb(text, open);
+      // The parsed address, so what opens is the string the hint showed.
+      const url = webUrl(text);
+      if (url && modifierHeld(platform, event)) hand(url.href, open);
     },
     hover(_event, text) {
       const hint = targetHint(platform, text);

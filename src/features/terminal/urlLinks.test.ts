@@ -200,6 +200,23 @@ describe("webLinkHandler (OSC 8 hyperlinks)", () => {
     expect(targetHint("windows", `https://a.example/${"x".repeat(100)}`)).toBe(`Ctrl+click to open https://a.example/${"x".repeat(100)} in your browser`);
   });
 
+  it("the hint shows the address as the browser will read it, not as the program wrote it", () => {
+    // A Cyrillic "а" in the host shows as punycode, a direction override in the path as its escape.
+    expect(targetHint("windows", "https://аpple.example/x")).toBe("Ctrl+click to open https://xn--pple-43d.example/x in your browser");
+    expect(targetHint("windows", "https://a.example/‮gpj.exe")).toBe("Ctrl+click to open https://a.example/%E2%80%AEgpj.exe in your browser");
+    expect(targetHint("windows", "HTTPS://A.Example")).toBe("Ctrl+click to open https://a.example/ in your browser");
+    expect(targetHint("windows", "https://good.example\\@evil.example/")).toBe("Ctrl+click to open https://good.example/@evil.example/ in your browser");
+  });
+
+  it("a hyperlink opens the address its hint showed", () => {
+    const open = vi.fn(async () => {});
+    const h = webLinkHandler("windows", () => undefined, open);
+    const range = { start: { x: 1, y: 1 }, end: { x: 2, y: 1 } };
+    h.activate({ ctrlKey: true } as MouseEvent, "HTTPS://A.Example", range);
+    h.activate({ ctrlKey: true } as MouseEvent, "https://аpple.example/x", range);
+    expect(open.mock.calls).toEqual([["https://a.example/"], ["https://xn--pple-43d.example/x"]]);
+  });
+
   it("a target that would not open gets no hint", () => {
     const element = { setAttribute: vi.fn(), removeAttribute: vi.fn() };
     const h = webLinkHandler("windows", () => element as unknown as HTMLElement, vi.fn(async () => {}));
