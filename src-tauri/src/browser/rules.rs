@@ -8,10 +8,17 @@ use tauri::Url;
 /// An origin a page may never open: the dev server's, the local API's. A host and a port.
 pub type Own = (String, u16);
 
+/// The names Tauri serves from inside every webview on Windows, a page's too: the app (`tauri`), its IPC (`ipc`),
+/// and the two a Cargo feature would add (`asset`, `isolation`). wry 0.57 answers every `http://<name>.…` address
+/// itself, at any port and under any ending (`custom_protocol_workaround.rs`), and Tauri 2.12 counts
+/// `<name>.localhost` as the app's own origin on `http` and `https` (`is_local_url`). A test holds that no plugin,
+/// call or setting adds a name unseen.
+const SHELL_NAMES: [&str; 4] = ["tauri", "ipc", "asset", "isolation"];
+
 /// Where a page may go: `http` and `https` pages and `about:blank`. Every way in passes through here: typed text, a
-/// link, a redirect, a popup. Refused: an address with a user name or password; a host ending `.localhost` on the
-/// scheme's default port, which is where Tauri serves the app and its IPC (`tauri.localhost`, `ipc.localhost`); and
-/// every origin in `own`, where every name for this computer counts as one host.
+/// link, a redirect, a popup. Refused: an address with a user name or password; the shell's own names
+/// (`SHELL_NAMES`); and every origin in `own`, where every name for this computer counts as one host. Any other
+/// name under `.localhost` opens, with a port or without: that is the person's own web app.
 pub fn allowed_navigation(url: &Url, own: &[Own]) -> bool {
     match url.scheme() {
         "http" | "https" => {
@@ -21,7 +28,7 @@ pub fn allowed_navigation(url: &Url, own: &[Own]) -> bool {
             let Some(host) = url.host_str().map(HostName::parse) else {
                 return false;
             };
-            if host.ends_in_localhost && url.port().is_none() {
+            if host.is_the_shells(url.scheme()) {
                 return false;
             }
             let port = url.port_or_known_default();
@@ -40,8 +47,6 @@ pub fn allowed_navigation(url: &Url, own: &[Own]) -> bool {
 /// A host as the allow-list compares it: lower case, without a trailing dot.
 struct HostName {
     name: String,
-    /// `x.localhost`, though not `localhost` itself: the shape of Tauri's own hosts.
-    ends_in_localhost: bool,
     /// Any name for this computer: `localhost`, a name under it (WebView2 resolves those to loopback too), a
     /// loopback address or the unspecified one.
     this_computer: bool,
@@ -54,22 +59,32 @@ impl HostName {
         use std::net::{Ipv4Addr, Ipv6Addr};
         let name = host.trim_end_matches('.').to_ascii_lowercase();
         let v6 = name.strip_prefix('[').and_then(|h| h.strip_suffix(']'));
-        let (ends_in_localhost, this_computer) = if let Ok(ip) = name.parse::<Ipv4Addr>() {
-            (false, ip.is_loopback() || ip.is_unspecified())
+        let this_computer = if let Ok(ip) = name.parse::<Ipv4Addr>() {
+            ip.is_loopback() || ip.is_unspecified()
         } else if let Some(Ok(ip)) = v6.map(str::parse::<Ipv6Addr>) {
             let mapped = ip
                 .to_ipv4_mapped()
                 .is_some_and(|v4| v4.is_loopback() || v4.is_unspecified());
-            (false, ip.is_loopback() || ip.is_unspecified() || mapped)
+            ip.is_loopback() || ip.is_unspecified() || mapped
         } else {
-            let under = name.ends_with(".localhost");
-            (under, under || name == "localhost")
+            name == "localhost" || name.ends_with(".localhost")
         };
-        Self {
-            name,
-            ends_in_localhost,
-            this_computer,
+        Self { name, this_computer }
+    }
+
+    /// An address the shell would answer itself, or that Tauri would take for the app's own origin.
+    fn is_the_shells(&self, scheme: &str) -> bool {
+        // wry's filter is `http://<name>.*`: the first label decides, whatever follows it.
+        let first = self.name.split('.').next().unwrap_or_default();
+        if scheme == "http" && SHELL_NAMES.contains(&first) {
+            return true;
         }
+        // `<name>.localhost` and every name under it, on either scheme and at any port.
+        SHELL_NAMES.iter().any(|shell| {
+            self.name
+                .strip_suffix(".localhost")
+                .is_some_and(|rest| rest == *shell || rest.ends_with(&format!(".{shell}")))
+        })
     }
 }
 
@@ -472,6 +487,114 @@ mod tests {
             "about:blank",
         ] {
             assert!(allowed_navigation(&Url::parse(u).unwrap(), &own()), "{u}");
+        }
+    }
+
+    /// A local web app under a name of its own, with no port: the person's dev server or proxy on port 80 or 443
+    /// (the user's direction, 2026-11-10). Only the shell's own names are kept back.
+    #[test]
+    fn a_name_under_localhost_opens_without_a_port() {
+        for u in [
+            "http://app.localhost/",
+            "https://app.localhost/",
+            "http://app.localhost./",
+            "http://my-app.test.localhost/dashboard",
+            "http://tauriapp.localhost/",
+            "http://notipc.localhost/",
+            "http://localhost/",
+            // Tauri's own site, and any `https` page whose name starts like the shell's: wry answers `http` only.
+            "https://tauri.app/",
+            "https://ipc.example.com/",
+            "http://example.com/tauri.localhost",
+            "http://example.com/?next=http://tauri.localhost/",
+        ] {
+            assert!(allowed_navigation(&Url::parse(u).unwrap(), &own()), "{u}");
+        }
+    }
+
+    /// wry answers every `http://tauri.…` and `http://ipc.…` address itself, at any port and under any ending, and
+    /// Tauri counts `<name>.localhost` as the app's own origin on both schemes.
+    #[test]
+    fn the_shells_own_names_are_refused_at_every_port_and_under_every_ending() {
+        for u in [
+            "http://tauri.localhost:3000/",
+            "http://ipc.localhost:8080/",
+            "http://asset.localhost:3000/x",
+            "http://isolation.localhost/",
+            "https://tauri.localhost:8443/",
+            "https://ipc.localhost/",
+            "http://sub.ipc.localhost:3000/",
+            "https://a.b.tauri.localhost/",
+            "http://tauri.example.com/",
+            "http://ipc.example.com:8080/x",
+            "http://tauri.app/",
+            "http://tauri./",
+            "http://tauri/",
+            "http://IPC.Example.com/",
+            "http://t%61uri.localhost:3000/",
+            "http://tauri\u{3002}localhost:3000/",
+            "http://\u{ff54}auri.localhost:3000/",
+        ] {
+            assert!(!allowed_navigation(&Url::parse(u).unwrap(), &own()), "{u}");
+        }
+    }
+
+    /// The list of the shell's names is only as good as its review. A new plugin, a protocol the app registers or
+    /// the `https` scheme for the app would each change what wry answers inside a page.
+    #[test]
+    fn nothing_adds_a_name_the_shell_serves_without_a_review() {
+        let manifest = include_str!("../../Cargo.toml");
+        let mut plugins: Vec<&str> = manifest
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("tauri-plugin-"))
+            .filter_map(|l| l.split([' ', '=']).next())
+            .collect();
+        plugins.sort_unstable();
+        assert_eq!(
+            plugins,
+            ["dialog", "notification", "opener", "single-instance", "window-state"],
+            "a new plugin: read its source for a registered URI scheme, add the scheme to SHELL_NAMES, then list it here"
+        );
+        let tauri = manifest
+            .lines()
+            .find(|l| l.starts_with("tauri = "))
+            .expect("the tauri dependency");
+        assert!(
+            tauri.contains(r#"features = ["tray-icon", "unstable"]"#),
+            "a new Tauri feature: check whether it registers a URI scheme (as `protocol-asset` and `isolation` do)"
+        );
+
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut files = vec![root.join("build.rs")];
+        let mut dirs = vec![root.join("src")];
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    dirs.push(path);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    files.push(path);
+                }
+            }
+        }
+        assert!(files.len() > 3, "the shell's sources were not found");
+        for file in files {
+            let text = std::fs::read_to_string(&file).unwrap();
+            let code = text.split("#[cfg(test)]").next().unwrap();
+            for call in ["uri_scheme_protocol(", "use_https_scheme("] {
+                assert!(
+                    !code.contains(call),
+                    "{}: `{call}` changes what the shell serves inside a page",
+                    file.display()
+                );
+            }
+        }
+        for conf in ["tauri.conf.json", "tauri.windows.conf.json"] {
+            let text = std::fs::read_to_string(root.join(conf)).unwrap();
+            assert!(
+                !text.contains("useHttpsScheme"),
+                "{conf}: with `useHttpsScheme` wry answers `https://tauri.…` too"
+            );
         }
     }
 
