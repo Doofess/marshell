@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { BrowserTabView } from "./BrowserTab";
+import { BrowserTabView, goTo } from "./BrowserTab";
 import type { PageState } from "./pageStore";
 
 const noop = () => {};
@@ -52,5 +52,39 @@ describe("BrowserTabView", () => {
     expect(none).not.toContain("<img");
     expect(none).toContain("browser-tab__fill");
     expect(html()).not.toContain("<img");
+  });
+});
+
+// Enter in the address box: the page goes there and the keyboard follows it, as in any browser (found in the 6q-3a live check).
+describe("goTo", () => {
+  const api = (calls: string[], refuse = false) => ({
+    nav: async (key: string, action: string, url?: string) => {
+      calls.push(`nav ${key} ${action} ${url}`);
+      if (refuse) throw new Error("refused");
+    },
+    open: async (key: string, url: string) => void calls.push(`open ${key} ${url}`),
+    focus: async (key: string, reason: string) => void calls.push(`focus ${key} ${reason}`),
+  });
+  const slot = (calls: string[]) => () => void calls.push("slot");
+
+  it("sends the page to the address, then moves the keyboard into it", async () => {
+    const calls: string[] = [];
+    await goTo(api(calls), "s/t", true, "https://a.test/", () => true, slot(calls));
+    expect(calls).toEqual(["nav s/t go https://a.test/", "slot", "focus s/t programmatic"]);
+  });
+  it("opens a page that is gone at the address, then moves the keyboard into it", async () => {
+    const calls: string[] = [];
+    await goTo(api(calls), "s/t", false, "https://a.test/", () => true, slot(calls));
+    expect(calls).toEqual(["open s/t https://a.test/", "slot", "focus s/t programmatic"]);
+  });
+  it("leaves the keyboard in the address box when the shell refuses the address", async () => {
+    const calls: string[] = [];
+    await goTo(api(calls, true), "s/t", true, "http://tauri.localhost/", () => true, slot(calls));
+    expect(calls).toEqual(["nav s/t go http://tauri.localhost/"]);
+  });
+  it("leaves the keyboard where the person moved it while the page was asked", async () => {
+    const calls: string[] = [];
+    await goTo(api(calls), "s/t", true, "https://a.test/", () => false, slot(calls));
+    expect(calls).toEqual(["nav s/t go https://a.test/"]);
   });
 });
