@@ -37,6 +37,27 @@ describe("SidePane.css", () => {
     expect(hover).toContain(":hover");
     expect(outside).not.toContain(":hover");
   });
+  it("keeps the selected tab's title readable in forced colours: no backplate under HighlightText", () => {
+    // Without this the system paints a Canvas backplate behind the title, and HighlightText on Canvas can be white on white.
+    const fc = media("(forced-colors: active)");
+    const i = fc.indexOf('.side-pane__tab[aria-selected="true"] {');
+    const selected = fc.slice(i, fc.indexOf("}", i));
+    expect(selected).toContain("background: Highlight");
+    expect(selected).toContain("color: HighlightText");
+    expect(selected).toContain("forced-color-adjust: none");
+  });
+  it("rings a focused selected tab, and its close button, in HighlightText: CanvasText on Highlight may not show", () => {
+    const fc = media("(forced-colors: active)");
+    const i = fc.indexOf('.side-pane__tab[aria-selected="true"]:focus-visible,');
+    expect(i).toBeGreaterThan(-1);
+    const ring = fc.slice(i, fc.indexOf("}", i));
+    expect(ring).toContain('.side-pane__tab-wrap[data-selected="true"] .side-pane__close:focus-visible {');
+    expect(ring).toContain("outline-color: HighlightText");
+    // The tab's ring is set in from the edge, so the fill shows on both sides of it: at the edge it would run into a Canvas of its own colour.
+    const j = fc.indexOf('.side-pane__tab[aria-selected="true"]:focus-visible {');
+    expect(j).toBeGreaterThan(-1);
+    expect(fc.slice(j, fc.indexOf("}", j))).toContain("outline-offset: -4px");
+  });
   it("hides the strip's scrollbar and lets it scroll sideways", () => {
     expect(rule(".side-pane__tabs")).toContain("scrollbar-width: none");
     expect(rule(".side-pane__tabs")).toContain("overflow: auto clip");

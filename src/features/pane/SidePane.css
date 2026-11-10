@@ -229,9 +229,11 @@
   box-shadow: inset 0 0 0 100vmax var(--selected);
 }
 @media (forced-colors: active) {
+  /* `none` keeps the system from painting a Canvas backplate behind the title, which made HighlightText unreadable. */
   .side-pane__tab[aria-selected="true"] {
     background: Highlight;
     color: HighlightText;
+    forced-color-adjust: none;
   }
   .side-pane__tab-wrap[data-selected="true"] .side-pane__close {
     color: HighlightText;
@@ -242,6 +244,15 @@
   .empty-pane__button:focus-visible,
   .empty-pane__file:focus-visible {
     outline-color: CanvasText;
+  }
+  /* The ring is drawn inside the selected tab's Highlight fill, where CanvasText may not show; HighlightText always does. */
+  .side-pane__tab[aria-selected="true"]:focus-visible,
+  .side-pane__tab-wrap[data-selected="true"] .side-pane__close:focus-visible {
+    outline-color: HighlightText;
+  }
+  /* Set in from the tab's edge, so the fill shows on both sides of the ring: at the edge it would run into the Canvas beside it. */
+  .side-pane__tab[aria-selected="true"]:focus-visible {
+    outline-offset: -4px;
   }
   .empty-pane__button {
     border: 1px solid ButtonText;
