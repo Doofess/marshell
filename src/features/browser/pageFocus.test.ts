@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { dispatchPage } from "./pageStore";
-import { afterCover, afterKey, enterReason, handBack, isQuiet, keyForCode, onDragArea, quietly, tabNeighbour, windowFocused } from "./pageFocus";
+import { afterCover, afterKey, enterReason, handBack, isQuiet, keyForCode, onDragArea, pageOnScreen, quietly, tabNeighbour, windowFocused } from "./pageFocus";
 
 describe("the page's turn at the keyboard", () => {
   it("a key that left focus on the slot gives the keys back to the page", () => {
@@ -45,12 +45,26 @@ describe("enterReason", () => {
 });
 
 describe("handBack", () => {
-  it("is true only when the page had the keys, nothing was pressed, nothing covers it and the document has focus", () => {
-    for (let n = 0; n < 16; n++) {
-      const s = { pageHadKeys: !!(n & 1), pointerSince: !!(n & 2), covered: !!(n & 4), docHasFocus: !!(n & 8) };
-      expect(handBack(s)).toBe(s.pageHadKeys && !s.pointerSince && !s.covered && s.docHasFocus);
+  it("is true only when the page had the keys, is on screen, nothing was pressed, nothing covers it and the document has focus", () => {
+    for (let n = 0; n < 32; n++) {
+      const s = { pageHadKeys: !!(n & 1), pointerSince: !!(n & 2), covered: !!(n & 4), docHasFocus: !!(n & 8), onScreen: !!(n & 16) };
+      expect(handBack(s)).toBe(s.pageHadKeys && !s.pointerSince && !s.covered && s.docHasFocus && s.onScreen);
     }
-    expect(handBack({ pageHadKeys: true, pointerSince: false, covered: false, docHasFocus: true })).toBe(true);
+    expect(handBack({ pageHadKeys: true, pointerSince: false, covered: false, docHasFocus: true, onScreen: true })).toBe(true);
+  });
+  it("never hands the keys to a page that is not on screen (another tab or session took its place)", () => {
+    expect(handBack({ pageHadKeys: true, pointerSince: false, covered: false, docHasFocus: true, onScreen: false })).toBe(false);
+  });
+});
+
+describe("pageOnScreen", () => {
+  const slot = (boxes: number) => ({ getClientRects: () => ({ length: boxes }) });
+  it("is true for a slot that is drawn", () => {
+    expect(pageOnScreen(slot(1))).toBe(true);
+  });
+  it("is false for a slot that is not drawn (its tab is not the one shown) and for a page with no slot", () => {
+    expect(pageOnScreen(slot(0))).toBe(false);
+    expect(pageOnScreen(null)).toBe(false);
   });
 });
 

@@ -4,7 +4,7 @@ import { subscribeNav } from "../sessions/useNavigation";
 import { appClaims, claimedChords } from "./claimedChords";
 import { browser, onBrowser } from "./browserApi";
 import { pageCovered, subscribeCover } from "./pageCover";
-import { afterCover, afterKey, handBack, keyForCode, onDragArea, quietly, tabNeighbour } from "./pageFocus";
+import { afterCover, afterKey, handBack, keyForCode, onDragArea, pageOnScreen, quietly, tabNeighbour } from "./pageFocus";
 import { dispatchPage } from "./pageStore";
 
 const TABBABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -119,7 +119,12 @@ export function useBrowserKeys({ os, focusTerminal }: Options): void {
       if (key === null) return;
       requestAnimationFrame(() => {
         const slot = slotOf(key);
-        if (!slot || pageCovered()) return;
+        // The cover took the person to another tab or session: the page's turn is over.
+        if (!slot || !pageOnScreen(slot)) {
+          if (owner === key) owner = null;
+          return;
+        }
+        if (pageCovered()) return;
         const on = document.activeElement;
         if (afterCover({ onSlot: on === slot, onNothing: on === document.body || on === null }) === "end") {
           if (owner === key) owner = null;
@@ -143,7 +148,10 @@ export function useBrowserKeys({ os, focusTerminal }: Options): void {
       if (key === null) return;
       setTimeout(() => {
         if (key !== owner) return;
-        if (handBack({ pageHadKeys: owner !== null, pointerSince: pointerAt > at, covered: pageCovered(), docHasFocus: document.hasFocus() })) browser.focus(key, "programmatic").catch(ignore);
+        const onScreen = pageOnScreen(slotOf(key));
+        // A page that left the screen since it had the keys has had its turn.
+        if (!onScreen) owner = null;
+        if (handBack({ pageHadKeys: true, pointerSince: pointerAt > at, covered: pageCovered(), docHasFocus: document.hasFocus(), onScreen })) browser.focus(key, "programmatic").catch(ignore);
       }, 100);
     };
     window.addEventListener("pointerdown", onPointer, true);

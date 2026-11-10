@@ -16,10 +16,16 @@ export function enterReason(slotIsBefore: boolean): Extract<FocusReason, "next" 
 
 /**
  * After the window comes back to the front: the page gets the keyboard again when it had it, nothing in the app was pressed since,
- * nothing covers the page, and the app's document has focus (wry moved the keys to it, S12 finding 4).
+ * nothing covers the page, and the app's document has focus (wry moved the keys to it, S12 finding 4). A page that is not on
+ * screen never gets it: what the person types next must not go to a page they can't see.
  */
-export function handBack(s: { pageHadKeys: boolean; pointerSince: boolean; covered: boolean; docHasFocus: boolean }): boolean {
-  return s.pageHadKeys && !s.pointerSince && !s.covered && s.docHasFocus;
+export function handBack(s: { pageHadKeys: boolean; pointerSince: boolean; covered: boolean; docHasFocus: boolean; onScreen: boolean }): boolean {
+  return s.pageHadKeys && !s.pointerSince && !s.covered && s.docHasFocus && s.onScreen;
+}
+
+/** Whether a page's slot is drawn: its tab is the one shown, in the session on screen. A tab that isn't shown keeps its slot, with no box. */
+export function pageOnScreen(slot: { getClientRects(): { length: number } } | null): boolean {
+  return slot !== null && slot.getClientRects().length > 0;
 }
 
 /**
