@@ -10,24 +10,34 @@ const CANDIDATE = /https?:\/\/[^\s\u0000-\u001f\u007f<>"`]+/gi;
 const TRAILING = new Set([".", ",", ";", ":", "!", "?", "'", '"']);
 const OPENER = { ")": "(", "]": "[", "}": "{" } as const;
 
-const count = (text: string, ch: string): number => text.split(ch).length - 1;
+/**
+ * The candidate without the punctuation that ends the sentence around it. The brackets are counted once and the count kept up as
+ * the end moves back, so the work grows with the candidate's length and not with its square: a program can print any line it likes.
+ */
+function trimmed(candidate: string): string {
+  const counts: Record<string, number> = { "(": 0, ")": 0, "[": 0, "]": 0, "{": 0, "}": 0 };
+  for (const ch of candidate) if (ch in counts) counts[ch] = (counts[ch] ?? 0) + 1;
+  let end = candidate.length;
+  while (end > 0) {
+    const last = candidate.charAt(end - 1);
+    if (TRAILING.has(last)) {
+      end -= 1;
+    } else if (last in OPENER && (counts[last] ?? 0) > (counts[OPENER[last as keyof typeof OPENER]] ?? 0)) {
+      // A closing bracket with no opener inside the address belongs to the sentence around it.
+      counts[last] = (counts[last] ?? 0) - 1;
+      end -= 1;
+    } else {
+      break;
+    }
+  }
+  return candidate.slice(0, end);
+}
 
 /** The http and https addresses in a line of output: `start` inclusive, `end` exclusive, in UTF-16 units. */
 export function findUrls(text: string): Array<{ start: number; end: number; url: string }> {
   const out: Array<{ start: number; end: number; url: string }> = [];
   for (const m of text.matchAll(CANDIDATE)) {
-    let url = m[0];
-    for (;;) {
-      const last = url.charAt(url.length - 1);
-      if (TRAILING.has(last)) {
-        url = url.slice(0, -1);
-      } else if (last in OPENER && count(url, last) > count(url, OPENER[last as keyof typeof OPENER])) {
-        // A closing bracket with no opener inside the address belongs to the sentence around it.
-        url = url.slice(0, -1);
-      } else {
-        break;
-      }
-    }
+    const url = trimmed(m[0]);
     const host = url.slice(url.indexOf("//") + 2);
     if (host.length === 0 || url.length > MAX_LENGTH) continue;
     out.push({ start: m.index, end: m.index + url.length, url });

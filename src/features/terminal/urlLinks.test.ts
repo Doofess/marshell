@@ -33,6 +33,16 @@ describe("findUrls", () => {
     expect(urls("file:///c:/x javascript:alert(1) ftp://h/x www.example.com localhost:3000 vscode://x/y")).toEqual([]);
   });
 
+  it("trims a very long run of closing brackets without working through the address again for each one", () => {
+    const line = `see https://example.com/a(b)${")".repeat(60_000)} and https://example.com/x${"]})".repeat(20_000)}`;
+    const began = performance.now();
+    const found = urls(line);
+    const took = performance.now() - began;
+    expect(found).toEqual(["https://example.com/a(b)", "https://example.com/x"]);
+    // Counting the brackets again for each one trimmed takes seconds here; counting them once takes a few milliseconds.
+    expect(took).toBeLessThan(500);
+  });
+
   it("leaves out a full stop, comma or bracket that ends the sentence", () => {
     expect(urls("see https://example.com/a.")).toEqual(["https://example.com/a"]);
     expect(urls("see https://example.com/a, then")).toEqual(["https://example.com/a"]);
