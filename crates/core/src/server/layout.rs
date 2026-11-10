@@ -35,8 +35,7 @@ pub async fn put_view(
 const SAVE_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// Keeps `layout.json` in step with the open tabs. After a change it waits a moment, then saves the
-/// tabs and empties the entry whose tab is gone (`panes` is always one entry since slice 6q-1; `active` is 0, and `zoomed`,
-/// `arrangement` and `ratios` stay null or empty until slice 6q-2).
+/// tabs and empties the entry whose tab is gone (`panes` is always one entry since slice 6q-1; `active` is 0).
 /// A failed save is logged and tried again on the next change. Without a running tokio runtime
 /// (some tests) there is nothing to spawn on and nothing is saved.
 pub(super) fn spawn_layout_saver(state: &AppState) {

@@ -4,15 +4,13 @@ import { DEFAULT_VIEW, type ViewAction, type ViewState, fillsEmptyPane, railTogg
 
 const base: ViewLayout = {
   panes: ["a"],
-  arrangement: null,
-  ratios: [],
   active: 0,
-  zoomed: null,
   sidebar: "expanded",
   sidebar_width: 288,
   shell_hidden: false,
   grouped: false,
   recent_commands: [],
+  pane: { open: false, width: null, sessions: {}, recent: [] },
 };
 const state = (patch: Partial<ViewState> = {}): ViewState => ({ ...base, ...patch });
 const run = (s: ViewState, ...actions: ViewAction[]) => actions.reduce(viewReducer, s);
@@ -25,7 +23,7 @@ describe("viewReducer", () => {
   });
 
   it("select leaves one pane, even from a view that holds several", () => {
-    const s = run(state({ panes: ["a", "b", "c"], active: 2, zoomed: 1 }), { type: "select", tabId: "b" });
+    const s = run(state({ panes: ["a", "b", "c"], active: 2 }), { type: "select", tabId: "b" });
     expect(s.panes).toEqual(["b"]);
     expect(s.active).toBe(0);
   });

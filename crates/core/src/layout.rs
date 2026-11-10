@@ -2,8 +2,9 @@
 //! broken or newer-version file means the defaults, and `load` never writes.
 
 use crate::store::{self, Versioned};
-use marshell_protocol::api::{LauncherChoice, LayoutDoc, SessionMode, ViewLayout};
+use marshell_protocol::api::{LauncherChoice, LayoutDoc, PaneTab, PaneView, SavedTab, SessionMode, ViewLayout};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::path::Path;
 
 /// The file holds the `LayoutDoc` fields directly, next to `"version"`.
@@ -17,6 +18,12 @@ impl Versioned for FileDoc {
 
 const SIDEBAR_MODES: [&str; 3] = ["expanded", "rail", "focus"];
 const SIDEBAR_WIDTH: std::ops::RangeInclusive<u32> = 200..=400;
+const PANE_WIDTH: std::ops::RangeInclusive<u32> = 320..=4096;
+const MAX_PANE_TABS: usize = 32;
+const MAX_PANE_HISTORY: usize = 50;
+const MAX_RECENT_FILES: usize = 200;
+const MAX_PATH_CHARS: usize = 4096;
+const PANE_VIEWS: [&str; 2] = ["rendered", "source"];
 
 /// A missing, broken or newer-version file means the defaults. The file itself is not touched.
 pub fn load(home: &Path) -> LayoutDoc {
@@ -94,21 +101,66 @@ pub fn repair(mut doc: LayoutDoc) -> LayoutDoc {
         }
     }
     view.recent_commands = kept;
+    repair_pane(&mut view.pane, &doc.tabs);
     doc
 }
 
-/// Split view is gone: a saved split keeps the zoomed pane's tab if it has one, else the active
-/// pane's, else the first open one, and the view holds that one pane.
+fn is_pane_id(id: &str) -> bool {
+    is_command_id(id)
+}
+
+fn path_ok(path: &str) -> bool {
+    !path.is_empty() && path.chars().count() <= MAX_PATH_CHARS
+}
+
+/// Pulls the pane back into range: drops what cannot be drawn and clamps the rest, so one bad part loses nothing else.
+fn repair_pane(pane: &mut PaneView, tabs: &[SavedTab]) {
+    if pane.width.is_some_and(|w| !PANE_WIDTH.contains(&w)) {
+        pane.width = None;
+    }
+    pane.sessions.retain(|id, _| tabs.iter().any(|t| &t.tab_id == id));
+    for st in pane.sessions.values_mut() {
+        let mut seen = BTreeSet::new();
+        let mut kept: Vec<PaneTab> = Vec::new();
+        for mut tab in std::mem::take(&mut st.tabs) {
+            if tab.kind != "file" || !is_pane_id(&tab.id) || seen.contains(&tab.id) {
+                continue;
+            }
+            tab.history.retain(|e| path_ok(&e.path));
+            if tab.history.is_empty() {
+                continue;
+            }
+            for e in &mut tab.history {
+                if !PANE_VIEWS.contains(&e.view.as_str()) {
+                    e.view = "rendered".into();
+                }
+            }
+            let dropped = tab.history.len().saturating_sub(MAX_PANE_HISTORY);
+            tab.history.drain(..dropped);
+            tab.index = (tab.index.saturating_sub(dropped as u32)).min(tab.history.len() as u32 - 1);
+            seen.insert(tab.id.clone());
+            kept.push(tab);
+            if kept.len() == MAX_PANE_TABS {
+                break;
+            }
+        }
+        st.tabs = kept;
+        if !st.active.as_ref().is_some_and(|a| st.tabs.iter().any(|t| &t.id == a)) {
+            st.active = st.tabs.first().map(|t| t.id.clone());
+        }
+    }
+    pane.sessions.retain(|_, st| !st.tabs.is_empty());
+    pane.recent.retain(|r| path_ok(&r.path));
+    pane.recent.truncate(MAX_RECENT_FILES);
+}
+
+/// Split view is gone: a saved split keeps the active pane's tab if it has one, else the first open one,
+/// and the view holds that one pane.
 fn fold_to_one_pane(view: &mut ViewLayout) {
-    let at = |i: Option<u32>| i.and_then(|i| view.panes.get(i as usize)).and_then(|p| p.clone());
-    let kept = at(view.zoomed)
-        .or_else(|| at(Some(view.active)))
-        .or_else(|| view.panes.iter().flatten().next().cloned());
+    let at = |i: u32| view.panes.get(i as usize).and_then(|p| p.clone());
+    let kept = at(view.active).or_else(|| view.panes.iter().flatten().next().cloned());
     view.panes = vec![kept];
     view.active = 0;
-    view.zoomed = None;
-    view.arrangement = None;
-    view.ratios.clear();
 }
 
 const MAX_RECENT: usize = 5;
@@ -125,15 +177,6 @@ pub fn validate_view(v: &ViewLayout) -> Result<(), String> {
     }
     if v.active != 0 {
         return Err(format!("active {} is outside the 1 pane", v.active));
-    }
-    if v.zoomed.is_some() {
-        return Err("zoomed must be null".into());
-    }
-    if v.arrangement.is_some() {
-        return Err("arrangement must be null".into());
-    }
-    if !v.ratios.is_empty() {
-        return Err("ratios must be empty".into());
     }
     if !SIDEBAR_WIDTH.contains(&v.sidebar_width) {
         return Err(format!(
@@ -152,13 +195,81 @@ pub fn validate_view(v: &ViewLayout) -> Result<(), String> {
     if v.recent_commands.len() > MAX_RECENT || v.recent_commands.iter().any(|id| !is_command_id(id)) {
         return Err("recent_commands must hold at most 5 command ids of a-z, 0-9 and -".into());
     }
+    validate_pane(&v.pane)
+}
+
+/// The same rules as `repair_pane`, but a bad value is an error naming the field. Whether a session exists is not checked here.
+pub fn validate_pane(p: &PaneView) -> Result<(), String> {
+    if let Some(w) = p.width.filter(|w| !PANE_WIDTH.contains(w)) {
+        return Err(format!(
+            "pane.width must be {} to {}, not {w}",
+            PANE_WIDTH.start(),
+            PANE_WIDTH.end()
+        ));
+    }
+    for (session, st) in &p.sessions {
+        if st.tabs.len() > MAX_PANE_TABS {
+            return Err(format!(
+                "pane.sessions.{session}.tabs holds at most {MAX_PANE_TABS}, not {}",
+                st.tabs.len()
+            ));
+        }
+        let mut seen = BTreeSet::new();
+        for tab in &st.tabs {
+            let at = format!("pane.sessions.{session}.tabs.{}", tab.id);
+            if !is_pane_id(&tab.id) || !seen.insert(&tab.id) {
+                return Err(format!(
+                    "{at}: id must be unique, 1 to 64 of a-z, 0-9 and -, not \"{}\"",
+                    tab.id
+                ));
+            }
+            if tab.kind != "file" {
+                return Err(format!("{at}: kind must be \"file\", not \"{}\"", tab.kind));
+            }
+            if tab.history.is_empty() || tab.history.len() > MAX_PANE_HISTORY {
+                return Err(format!(
+                    "{at}: history must hold 1 to {MAX_PANE_HISTORY} entries, not {}",
+                    tab.history.len()
+                ));
+            }
+            if tab.index as usize >= tab.history.len() {
+                return Err(format!(
+                    "{at}: index {} is outside the {} history entries",
+                    tab.index,
+                    tab.history.len()
+                ));
+            }
+            for e in &tab.history {
+                if !path_ok(&e.path) {
+                    return Err(format!("{at}: path must be 1 to {MAX_PATH_CHARS} characters"));
+                }
+                if !PANE_VIEWS.contains(&e.view.as_str()) {
+                    return Err(format!("{at}: view must be one of {PANE_VIEWS:?}, not \"{}\"", e.view));
+                }
+            }
+        }
+        let active_ok = match &st.active {
+            Some(a) => st.tabs.iter().any(|t| &t.id == a),
+            None => st.tabs.is_empty(),
+        };
+        if !active_ok {
+            return Err(format!(
+                "pane.sessions.{session}.active must name one of its tabs (or be null with no tabs)"
+            ));
+        }
+    }
+    if p.recent.len() > MAX_RECENT_FILES || p.recent.iter().any(|r| !path_ok(&r.path)) {
+        return Err(format!(
+            "pane.recent must hold at most {MAX_RECENT_FILES} files with a path of 1 to {MAX_PATH_CHARS} characters"
+        ));
+    }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use marshell_protocol::api::SavedTab;
+    use marshell_protocol::api::{PaneEntry, PaneTab, PaneView, RecentFile, SavedTab, SessionTabs};
 
     fn tab(id: &str) -> SavedTab {
         SavedTab {
@@ -260,16 +371,13 @@ mod tests {
         let mut doc = doc_with("a");
         doc.view = ViewLayout {
             panes: vec![Some("a".into()), None],
-            arrangement: Some("diagonal".into()),
-            ratios: vec![0.5, 0.95],
             active: 5,
-            zoomed: Some(2),
             sidebar: "huge".into(),
             sidebar_width: 10,
             ..ViewLayout::default()
         };
         let v = repair(doc).view;
-        assert_eq!((v.arrangement, v.ratios, v.active, v.zoomed), (None, vec![], 0, None));
+        assert_eq!(v.active, 0);
         assert_eq!((v.sidebar.as_str(), v.sidebar_width), ("expanded", 200));
         assert_eq!(v.panes, vec![Some("a".to_string())]);
 
@@ -281,31 +389,12 @@ mod tests {
     }
 
     #[test]
-    fn repair_folds_a_split_to_the_zoomed_session() {
-        let doc = doc_with_tabs(
-            &["a", "b", "c"],
-            ViewLayout {
-                panes: vec![some("a"), some("b"), some("c")],
-                active: 1,
-                zoomed: Some(2),
-                arrangement: Some("columns".into()),
-                ratios: vec![0.4, 0.5],
-                ..ViewLayout::default()
-            },
-        );
-        let v = repair(doc).view;
-        assert_eq!(v.panes, vec![some("c")]);
-        assert_eq!((v.active, v.zoomed, v.arrangement, v.ratios), (0, None, None, vec![]));
-    }
-
-    #[test]
     fn repair_folds_a_split_to_the_active_session() {
         let doc = doc_with_tabs(
             &["a", "b", "c"],
             ViewLayout {
                 panes: vec![some("a"), some("b"), some("c")],
                 active: 1,
-                zoomed: None,
                 ..ViewLayout::default()
             },
         );
@@ -319,7 +408,6 @@ mod tests {
             ViewLayout {
                 panes: vec![some("a"), None, some("c")],
                 active: 0,
-                zoomed: Some(1),
                 ..ViewLayout::default()
             },
         );
@@ -392,7 +480,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_view_refuses_a_split_and_its_settings() {
+    fn validate_view_refuses_a_split() {
         let bad = |change: fn(&mut ViewLayout)| {
             let mut v = ViewLayout::default();
             change(&mut v);
@@ -400,9 +488,208 @@ mod tests {
         };
         assert_eq!(validate_view(&ViewLayout::default()), Ok(()));
         assert!(bad(|v| v.panes = vec![None, None]).contains("panes"));
-        assert!(bad(|v| v.zoomed = Some(0)).contains("zoomed"));
-        assert!(bad(|v| v.arrangement = Some("single".into())).contains("arrangement"));
-        assert!(bad(|v| v.ratios = vec![0.5]).contains("ratios"));
+    }
+
+    fn file_tab(id: &str, paths: &[&str]) -> PaneTab {
+        PaneTab {
+            id: id.into(),
+            kind: "file".into(),
+            history: paths
+                .iter()
+                .map(|p| PaneEntry {
+                    path: (*p).into(),
+                    line: None,
+                    col: None,
+                    view: "rendered".into(),
+                })
+                .collect(),
+            index: 0,
+        }
+    }
+
+    fn session(tabs: Vec<PaneTab>) -> SessionTabs {
+        let active = tabs.first().map(|t| t.id.clone());
+        SessionTabs { tabs, active }
+    }
+
+    fn pane_with(id: &str, st: SessionTabs) -> PaneView {
+        let mut pane = PaneView::default();
+        pane.sessions.insert(id.into(), st);
+        pane
+    }
+
+    fn repaired(id: &str, st: SessionTabs) -> PaneView {
+        let mut doc = doc_with(id);
+        doc.view.pane = pane_with(id, st);
+        repair(doc).view.pane
+    }
+
+    #[test]
+    fn repair_drops_a_session_that_has_no_saved_tab() {
+        let mut doc = doc_with("a");
+        doc.view.pane = pane_with("a", session(vec![file_tab("t1", &["C:/a.md"])]));
+        doc.view
+            .pane
+            .sessions
+            .insert("gone".into(), session(vec![file_tab("t1", &["C:/a.md"])]));
+        let pane = repair(doc).view.pane;
+        assert_eq!(pane.sessions.keys().collect::<Vec<_>>(), ["a"]);
+    }
+
+    #[test]
+    fn repair_drops_a_tab_of_an_unknown_kind() {
+        let mut t2 = file_tab("t2", &["C:/b.md"]);
+        t2.kind = "browser".into();
+        let pane = repaired("a", session(vec![file_tab("t1", &["C:/a.md"]), t2]));
+        let ids: Vec<_> = pane.sessions["a"].tabs.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["t1"]);
+    }
+
+    #[test]
+    fn repair_drops_duplicate_ids_and_empty_histories() {
+        let first = file_tab("t1", &["C:/first.md"]);
+        let tabs = vec![first.clone(), file_tab("t1", &["C:/second.md"]), file_tab("t2", &[])];
+        let pane = repaired("a", session(tabs));
+        assert_eq!(pane.sessions["a"].tabs, vec![first]);
+    }
+
+    #[test]
+    fn repair_clamps_the_index_and_the_history() {
+        let paths: Vec<String> = (0..60).map(|i| format!("C:/f{i}.md")).collect();
+        let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+        let mut long = file_tab("t1", &refs);
+        long.index = 59;
+        let mut short = file_tab("t2", &["C:/a", "C:/b", "C:/c"]);
+        short.index = 99;
+        let pane = repaired("a", session(vec![long, short]));
+        let tabs = &pane.sessions["a"].tabs;
+        assert_eq!(tabs[0].history.len(), 50);
+        assert_eq!(tabs[0].history[0].path, "C:/f10.md");
+        assert_eq!(tabs[0].index, 49);
+        assert_eq!(tabs[1].index, 2);
+    }
+
+    #[test]
+    fn repair_keeps_at_most_32_tabs() {
+        let tabs: Vec<PaneTab> = (0..40).map(|i| file_tab(&format!("t{i}"), &["C:/a"])).collect();
+        let pane = repaired("a", session(tabs));
+        let kept = &pane.sessions["a"].tabs;
+        assert_eq!(kept.len(), 32);
+        assert_eq!(kept[31].id, "t31");
+    }
+
+    #[test]
+    fn repair_points_active_at_a_tab_that_exists() {
+        let mut st = session(vec![file_tab("t1", &["C:/a"]), file_tab("t2", &["C:/b"])]);
+        st.active = Some("nope".into());
+        let pane = repaired("a", st);
+        assert_eq!(pane.sessions["a"].active.as_deref(), Some("t1"));
+
+        let mut empty = session(vec![]);
+        empty.active = Some("x".into());
+        let pane = repaired("a", empty);
+        assert!(pane.sessions.is_empty());
+    }
+
+    #[test]
+    fn repair_resets_a_width_out_of_range() {
+        for (given, kept) in [
+            (Some(100), None),
+            (Some(9000), None),
+            (Some(480), Some(480)),
+            (None, None),
+        ] {
+            let mut doc = doc_with("a");
+            doc.view.pane.width = given;
+            assert_eq!(repair(doc).view.pane.width, kept);
+        }
+    }
+
+    #[test]
+    fn repair_fixes_an_unknown_view() {
+        let mut t = file_tab("t1", &["C:/a"]);
+        t.history[0].view = "tree".into();
+        let pane = repaired("a", session(vec![t]));
+        assert_eq!(pane.sessions["a"].tabs[0].history[0].view, "rendered");
+    }
+
+    #[test]
+    fn repair_trims_recent_files() {
+        let mut doc = doc_with("a");
+        doc.view.pane.recent = (0..250)
+            .map(|i| RecentFile {
+                project: "C:/p".into(),
+                path: if i == 3 { String::new() } else { format!("C:/p/{i}.md") },
+            })
+            .collect();
+        let recent = repair(doc).view.pane.recent;
+        assert!(recent.len() <= 200);
+        assert!(recent.iter().all(|r| !r.path.is_empty()));
+    }
+
+    #[test]
+    fn validate_view_names_the_pane_field() {
+        let with = |change: fn(&mut PaneView)| {
+            let mut v = ViewLayout::default();
+            change(&mut v.pane);
+            validate_view(&v).unwrap_err()
+        };
+        let one = |change: fn(&mut PaneTab)| {
+            let mut v = ViewLayout::default();
+            let mut t = file_tab("t1", &["C:/a", "C:/b"]);
+            change(&mut t);
+            v.pane = pane_with("a", session(vec![t]));
+            validate_view(&v).unwrap_err()
+        };
+        assert!(with(|p| p.width = Some(100)).contains("width"));
+        assert!(
+            with(|p| {
+                let tabs = (0..33).map(|i| file_tab(&format!("t{i}"), &["C:/a"])).collect();
+                p.sessions.insert("a".into(), session(tabs));
+            })
+            .contains("tabs")
+        );
+        assert!(one(|t| t.id = "A b".into()).contains("id"));
+        assert!(one(|t| t.kind = "browser".into()).contains("kind"));
+        assert!(one(|t| t.history.clear()).contains("history"));
+        assert!(one(|t| t.index = 3).contains("index"));
+        assert!(one(|t| t.history[0].view = "tree".into()).contains("view"));
+        assert!(one(|t| t.history[0].path = String::new()).contains("path"));
+        assert!(one(|t| t.history[0].path = "x".repeat(4097)).contains("path"));
+        assert!(
+            with(|p| {
+                let mut st = session(vec![file_tab("t1", &["C:/a"])]);
+                st.active = Some("nope".into());
+                p.sessions.insert("a".into(), st);
+            })
+            .contains("active")
+        );
+        assert!(
+            with(|p| {
+                let mut st = session(vec![file_tab("t1", &["C:/a"])]);
+                st.active = None;
+                p.sessions.insert("a".into(), st);
+            })
+            .contains("active")
+        );
+        assert!(
+            with(|p| {
+                p.recent = (0..201)
+                    .map(|i| RecentFile {
+                        project: "C:/p".into(),
+                        path: format!("C:/p/{i}"),
+                    })
+                    .collect();
+            })
+            .contains("recent")
+        );
+
+        assert_eq!(validate_view(&ViewLayout::default()), Ok(()));
+        let v = ViewLayout {
+            pane: pane_with("a", session(vec![file_tab("t1", &["C:/a"])])),
+            ..ViewLayout::default()
+        };
+        assert_eq!(validate_view(&v), Ok(()));
     }
 
     #[test]

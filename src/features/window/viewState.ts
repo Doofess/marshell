@@ -21,15 +21,13 @@ export type ViewAction =
 /** What a window with nothing saved starts from. Matches the core's `ViewLayout::default()`. */
 export const DEFAULT_VIEW: ViewLayout = {
   panes: [null],
-  arrangement: null,
-  ratios: [],
   active: 0,
-  zoomed: null,
   sidebar: "expanded",
   sidebar_width: SIDEBAR.default,
   shell_hidden: false,
   grouped: false,
   recent_commands: [],
+  pane: { open: false, width: null, sessions: {}, recent: [] },
 };
 
 /** How many recent commands the palette remembers. */
