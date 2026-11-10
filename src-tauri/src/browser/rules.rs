@@ -8,12 +8,13 @@ use tauri::Url;
 /// An origin a page may never open: the dev server's, the local API's. A host and a port.
 pub type Own = (String, u16);
 
-/// The names Tauri serves from inside every webview on Windows, a page's too: the app (`tauri`), its IPC (`ipc`),
-/// and the two a Cargo feature would add (`asset`, `isolation`). wry 0.57 answers every `http://<name>.…` address
-/// itself, at any port and under any ending (`custom_protocol_workaround.rs`), and Tauri 2.12 counts
-/// `<name>.localhost` as the app's own origin on `http` and `https` (`is_local_url`). A test holds that no plugin,
-/// call or setting adds a name unseen.
-const SHELL_NAMES: [&str; 4] = ["tauri", "ipc", "asset", "isolation"];
+/// The names Tauri serves from inside every webview on Windows, a page's too: the app (`tauri`) and its IPC
+/// (`ipc`). wry 0.57 answers every `http://<name>.…` address itself, at any port and under any ending
+/// (`custom_protocol_workaround.rs`), and Tauri 2.12 counts `tauri.localhost` as the app's own origin on `http`
+/// and `https` (`is_local_url`). A Tauri feature would add a name (`protocol-asset`: `asset`), and so would a
+/// plugin or a scheme the shell registers; a test fails on each of those, and on a new wry or Tauri version,
+/// until the list has been brought along.
+const SHELL_NAMES: [&str; 2] = ["tauri", "ipc"];
 
 /// Where a page may go: `http` and `https` pages and `about:blank`. Every way in passes through here: typed text, a
 /// link, a redirect, a popup. Refused: an address with a user name or password; the shell's own names
@@ -507,20 +508,23 @@ mod tests {
             "https://ipc.example.com/",
             "http://example.com/tauri.localhost",
             "http://example.com/?next=http://tauri.localhost/",
+            // Names a Tauri feature would serve, which this build doesn't turn on (a test below holds that).
+            "http://asset.localhost/x",
+            "http://asset.example.com/",
+            "http://isolation.localhost/",
         ] {
             assert!(allowed_navigation(&Url::parse(u).unwrap(), &own()), "{u}");
         }
     }
 
     /// wry answers every `http://tauri.…` and `http://ipc.…` address itself, at any port and under any ending, and
-    /// Tauri counts `<name>.localhost` as the app's own origin on both schemes.
+    /// Tauri counts `tauri.localhost` as the app's own origin on both schemes.
     #[test]
     fn the_shells_own_names_are_refused_at_every_port_and_under_every_ending() {
         for u in [
             "http://tauri.localhost:3000/",
             "http://ipc.localhost:8080/",
-            "http://asset.localhost:3000/x",
-            "http://isolation.localhost/",
+            "http://tauri..localhost/",
             "https://tauri.localhost:8443/",
             "https://ipc.localhost/",
             "http://sub.ipc.localhost:3000/",
@@ -539,30 +543,104 @@ mod tests {
         }
     }
 
-    /// The list of the shell's names is only as good as its review. A new plugin, a protocol the app registers or
-    /// the `https` scheme for the app would each change what wry answers inside a page.
+    /// The packages of a `Cargo.lock` as (name, version, names of what it depends on).
+    fn locked(lock: &str) -> Vec<(String, String, Vec<String>)> {
+        let quoted = |line: &str| line.split('"').nth(1).unwrap_or_default().to_string();
+        lock.split("[[package]]")
+            .skip(1)
+            .map(|block| {
+                let field = |name: &str| block.lines().find(|l| l.starts_with(name)).map(quoted);
+                // A dependency reads ` "tauri",`, or ` "tauri 2.12.2",` when the lock holds two versions of it.
+                let deps = block
+                    .lines()
+                    .filter(|l| l.starts_with(" \""))
+                    .map(|l| quoted(l).split(' ').next().unwrap_or_default().to_string())
+                    .collect();
+                (
+                    field("name = ").unwrap_or_default(),
+                    field("version = ").unwrap_or_default(),
+                    deps,
+                )
+            })
+            .collect()
+    }
+
+    /// Every package that builds on Tauri, and so could register a scheme of its own: a plugin under any name.
+    fn built_on_tauri(lock: &str) -> Vec<String> {
+        let mut names: Vec<String> = locked(lock)
+            .into_iter()
+            .filter(|(_, _, deps)| deps.iter().any(|d| d == "tauri"))
+            .map(|(name, _, _)| name)
+            .collect();
+        names.sort_unstable();
+        names
+    }
+
+    fn locked_version(lock: &str, package: &str) -> Option<String> {
+        locked(lock)
+            .into_iter()
+            .find(|(name, _, _)| name == package)
+            .map(|(_, version, _)| version)
+    }
+
+    #[test]
+    fn a_lock_file_names_what_builds_on_tauri_and_each_version() {
+        let lock = "version = 4\n\n[[package]]\nname = \"wry\"\nversion = \"0.57.0\"\ndependencies = [\n \"base64\",\n]\n\n\
+                    [[package]]\nname = \"some-widget\"\nversion = \"1.0.0\"\ndependencies = [\n \"serde\",\n \"tauri 2.12.2\",\n]\n\n\
+                    [[package]]\nname = \"tauri-plugin-x\"\nversion = \"2.0.0\"\ndependencies = [\n \"tauri\",\n \"tauri-utils\",\n]\n\n\
+                    [[package]]\nname = \"tauri-utils\"\nversion = \"2.9.0\"\n";
+        assert_eq!(built_on_tauri(lock), ["some-widget", "tauri-plugin-x"]);
+        assert_eq!(locked_version(lock, "wry").as_deref(), Some("0.57.0"));
+        assert_eq!(locked_version(lock, "tauri-utils").as_deref(), Some("2.9.0"));
+        assert_eq!(locked_version(lock, "tauri"), None);
+    }
+
+    /// `SHELL_NAMES` is only as good as its review. What wry answers inside a page changes with the wry and Tauri
+    /// versions, a Tauri feature, a package that builds on Tauri, a scheme the shell registers, and the `https`
+    /// scheme for the app. Each of those fails here until someone has read it and brought the list along.
     #[test]
     fn nothing_adds_a_name_the_shell_serves_without_a_review() {
-        let manifest = include_str!("../../Cargo.toml");
-        let mut plugins: Vec<&str> = manifest
-            .lines()
-            .filter_map(|l| l.trim().strip_prefix("tauri-plugin-"))
-            .filter_map(|l| l.split([' ', '=']).next())
-            .collect();
-        plugins.sort_unstable();
+        let lock = include_str!("../../../Cargo.lock");
+        // Read for the list: `custom_protocol_workaround.rs` and `attach_custom_protocol_handler` in wry,
+        // `is_local_url` and `prepare_pending_webview` in tauri, `on_navigation` in tauri-runtime-wry.
+        for (package, read) in [("wry", "0.57.0"), ("tauri", "2.12.2"), ("tauri-runtime-wry", "2.12.1")] {
+            assert_eq!(
+                locked_version(lock, package).as_deref(),
+                Some(read),
+                "{package} changed: read how it serves a custom protocol again, then name the version here"
+            );
+        }
         assert_eq!(
-            plugins,
-            ["dialog", "notification", "opener", "single-instance", "window-state"],
-            "a new plugin: read its source for a registered URI scheme, add the scheme to SHELL_NAMES, then list it here"
+            built_on_tauri(lock),
+            [
+                "marshell-app",
+                "tauri-plugin-dialog",
+                "tauri-plugin-fs",
+                "tauri-plugin-notification",
+                "tauri-plugin-opener",
+                "tauri-plugin-single-instance",
+                "tauri-plugin-window-state",
+            ],
+            "a package that builds on Tauri: read its source for a registered URI scheme, add the scheme to SHELL_NAMES, then list it here"
         );
+
+        let manifest = include_str!("../../Cargo.toml");
         let tauri = manifest
             .lines()
             .find(|l| l.starts_with("tauri = "))
             .expect("the tauri dependency");
         assert!(
             tauri.contains(r#"features = ["tray-icon", "unstable"]"#),
-            "a new Tauri feature: check whether it registers a URI scheme (as `protocol-asset` and `isolation` do)"
+            "a new Tauri feature: check whether it registers a URI scheme"
         );
+        // `protocol-asset` serves `asset`, and `isolation` a scheme named `isolation-<uuid>`: wherever the manifest
+        // turns one on, the list must learn the name first.
+        for feature in ["protocol-asset", "isolation"] {
+            assert!(
+                !manifest.contains(feature),
+                "`{feature}` adds a scheme the shell serves inside a page"
+            );
+        }
 
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let mut files = vec![root.join("build.rs")];
@@ -578,12 +656,16 @@ mod tests {
             }
         }
         assert!(files.len() > 3, "the shell's sources were not found");
+        // Put together here, so this file's own text doesn't hold them and every file is read whole, tests too.
+        let calls = [
+            ["uri_scheme", "_protocol("].concat(),
+            ["use_https", "_scheme("].concat(),
+        ];
         for file in files {
             let text = std::fs::read_to_string(&file).unwrap();
-            let code = text.split("#[cfg(test)]").next().unwrap();
-            for call in ["uri_scheme_protocol(", "use_https_scheme("] {
+            for call in &calls {
                 assert!(
-                    !code.contains(call),
+                    !text.contains(call.as_str()),
                     "{}: `{call}` changes what the shell serves inside a page",
                     file.display()
                 );
@@ -592,8 +674,8 @@ mod tests {
         for conf in ["tauri.conf.json", "tauri.windows.conf.json"] {
             let text = std::fs::read_to_string(root.join(conf)).unwrap();
             assert!(
-                !text.contains("useHttpsScheme"),
-                "{conf}: with `useHttpsScheme` wry answers `https://tauri.…` too"
+                !text.contains(&["useHttps", "Scheme"].concat()),
+                "{conf}: with the `https` scheme wry answers `https://tauri.…` too"
             );
         }
     }
@@ -607,7 +689,6 @@ mod tests {
             "http://tauri.localhost/",
             "https://tauri.localhost/",
             "http://ipc.localhost/",
-            "http://asset.localhost/x",
             "http://TAURI.LOCALHOST/",
             "http://tauri.localhost./",
             "http://sub.tauri.localhost/",
