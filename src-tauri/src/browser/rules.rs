@@ -180,6 +180,39 @@ pub fn focus_out_direction(reason: i32) -> Option<&'static str> {
     }
 }
 
+/// A key the page gave up, as the app's webview hears it: the fields of a DOM `KeyboardEvent` the keymap reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct KeyEvent {
+    pub code: &'static str,
+    pub ctrl: bool,
+    pub shift: bool,
+    pub alt: bool,
+    pub repeat: bool,
+}
+
+/// The event for a key pressed in a page; `was_down` is WebView2's "the key was already down", a held key. None for
+/// a key with no code: the app's keymap couldn't name it either.
+pub fn key_event(vk: u32, ctrl: bool, shift: bool, alt: bool, was_down: bool) -> Option<KeyEvent> {
+    Some(KeyEvent {
+        code: vk_to_code(vk)?,
+        ctrl,
+        shift,
+        alt,
+        repeat: was_down,
+    })
+}
+
+/// The largest site icon passed to the app's webview.
+pub const MAX_ICON_BYTES: usize = 64 * 1024;
+
+/// A site's icon (PNG bytes) as a `data:` URL for the tab strip; None when there is none or it is over 64 KB.
+pub fn icon_src(png: &[u8]) -> Option<String> {
+    if png.is_empty() || png.len() > MAX_ICON_BYTES {
+        return None;
+    }
+    Some(format!("data:image/png;base64,{}", base64(png)))
+}
+
 /// A box in CSS (logical) pixels, in the window's coordinates.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Rect {
@@ -357,13 +390,6 @@ impl Registry {
 
     pub fn label(&self, key: &str) -> Option<&str> {
         self.pages.get(key).map(String::as_str)
-    }
-
-    pub fn key_of(&self, label: &str) -> Option<&str> {
-        self.pages
-            .iter()
-            .find(|(_, l)| l.as_str() == label)
-            .map(|(key, _)| key.as_str())
     }
 
     /// Forgets the key; its label, if it had one.
@@ -800,8 +826,6 @@ mod tests {
         assert_eq!(r.open("s1/t1"), None);
         assert_eq!(r.labels(), ["page-1"]);
         assert_eq!(r.label("s1/t1"), Some("page-1"));
-        assert_eq!(r.key_of("page-1"), Some("s1/t1"));
-        assert_eq!(r.key_of("page-9"), None);
     }
 
     #[test]
@@ -863,6 +887,54 @@ mod tests {
         r.open("a");
         r.close("a");
         assert_eq!(r.open("a").as_deref(), Some("page-2"));
+    }
+
+    #[test]
+    fn a_held_key_is_a_repeat() {
+        let pressed = key_event(VK_L, true, false, false, false).unwrap();
+        assert_eq!(
+            pressed,
+            KeyEvent {
+                code: "KeyL",
+                ctrl: true,
+                shift: false,
+                alt: false,
+                repeat: false
+            }
+        );
+        assert!(key_event(VK_L, true, false, false, true).unwrap().repeat);
+        let with_shift_alt = key_event(0x09, false, true, true, false).unwrap();
+        assert_eq!(
+            (with_shift_alt.code, with_shift_alt.shift, with_shift_alt.alt),
+            ("Tab", true, true)
+        );
+    }
+
+    #[test]
+    fn a_key_with_no_code_is_not_forwarded() {
+        // VK_VOLUME_MUTE: no entry in codes.json, so the app's keymap can't name it.
+        assert_eq!(key_event(0xAD, false, false, false, false), None);
+    }
+
+    #[test]
+    fn a_key_event_is_camel_case_json() {
+        let json = serde_json::to_value(key_event(VK_ESCAPE, false, false, false, false).unwrap()).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({ "code": "Escape", "ctrl": false, "shift": false, "alt": false, "repeat": false })
+        );
+    }
+
+    #[test]
+    fn an_icon_over_64_kb_is_dropped() {
+        assert_eq!(icon_src(&vec![0u8; 64 * 1024 + 1]), None);
+        assert!(icon_src(&vec![0u8; 64 * 1024]).is_some());
+    }
+
+    #[test]
+    fn an_empty_icon_is_none() {
+        assert_eq!(icon_src(&[]), None);
+        assert_eq!(icon_src(b"foo").as_deref(), Some("data:image/png;base64,Zm9v"));
     }
 
     #[test]

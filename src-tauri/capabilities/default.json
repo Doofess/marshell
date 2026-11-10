@@ -40,6 +40,11 @@
     "allow-browser-show",
     "allow-browser-place",
     "allow-browser-nav",
-    "allow-browser-close"
+    "allow-browser-close",
+    "allow-browser-keys",
+    "allow-browser-focus",
+    "allow-browser-capture",
+    "allow-browser-theme",
+    "allow-browser-clear-data"
   ]
 }

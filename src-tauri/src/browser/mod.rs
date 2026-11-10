@@ -7,14 +7,11 @@
 
 #[cfg(windows)]
 mod com;
-#[expect(
-    dead_code,
-    reason = "the keys, the focus and the picture use the rest of the rules in the next task"
-)]
 pub mod rules;
 
-use rules::{Own, Placer, Rect, Registry, Report, Size};
+use rules::{Chord, Own, Placer, Rect, Registry, Report, Size};
 use serde::Serialize;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, mpsc};
@@ -44,6 +41,10 @@ pub struct BrowserState {
     placer: Mutex<Placer>,
     /// The key the app last asked to show, which may not have its page yet.
     wanted: Mutex<Option<String>>,
+    /// The chords the app's keymap claims: pressed in a page, they are the app's.
+    claimed: Mutex<HashSet<Chord>>,
+    /// The colour scheme the app asked pages to see; None until it has asked.
+    dark: Mutex<Option<bool>>,
     /// The pages' browser process, 0 when there is none known.
     browser_pid: AtomicU32,
     started: Instant,
@@ -71,6 +72,8 @@ impl BrowserState {
             registry: Mutex::default(),
             placer: Mutex::default(),
             wanted: Mutex::default(),
+            claimed: Mutex::default(),
+            dark: Mutex::default(),
             browser_pid: AtomicU32::new(0),
             started: Instant::now(),
             poster,
@@ -130,6 +133,75 @@ struct PageKey {
 
 #[derive(Clone, Serialize)]
 struct Gone {}
+
+#[derive(Clone, Serialize)]
+struct PageFocus {
+    key: String,
+    focused: bool,
+}
+
+#[derive(Clone, Serialize)]
+struct FocusOut {
+    key: String,
+    direction: &'static str,
+}
+
+/// A key the page gave up, with the page it was pressed in.
+#[derive(Clone, Serialize)]
+struct PageKeyEvent {
+    key: String,
+    #[serde(flatten)]
+    event: rules::KeyEvent,
+}
+
+#[derive(Clone, Serialize)]
+struct PageIcon {
+    key: String,
+    src: Option<String>,
+}
+
+/// A file drag over a page. `paths` only on a drop.
+#[derive(Clone, Serialize)]
+struct PageDrag {
+    key: String,
+    kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    paths: Option<Vec<String>>,
+}
+
+/// Gives the keyboard to the app's own webview. On the main thread, never inside a page's callback.
+fn focus_app(app: &AppHandle) {
+    if let Some(main) = app.get_webview("main")
+        && let Err(e) = main.set_focus()
+    {
+        eprintln!("Marshell: the window did not take the keyboard back from a page: {e}");
+    }
+}
+
+/// Tells the app's webview about a file dragged over a page: the page's webview hears its own drops, and the app's
+/// doesn't (S12 finding 19).
+fn on_drag(app: &AppHandle, key: &str, event: &tauri::WebviewEvent) {
+    let tauri::WebviewEvent::DragDrop(drag) = event else {
+        return;
+    };
+    let (kind, paths) = match drag {
+        tauri::DragDropEvent::Enter { .. } => ("enter", None),
+        tauri::DragDropEvent::Drop { paths, .. } => {
+            let paths = paths.iter().map(|path| path.to_string_lossy().into_owned()).collect();
+            ("drop", Some(paths))
+        }
+        tauri::DragDropEvent::Leave => ("leave", None),
+        // Over comes on every mouse move; enter, drop and leave say what happened.
+        _ => return,
+    };
+    let on_main = app.clone();
+    let payload = PageDrag {
+        key: key.to_string(),
+        kind,
+        paths,
+    };
+    post(app, move || emit(&on_main, "browser://drag", payload));
+}
 
 /// Sends to the app's own webview only. A page has no listener and nothing to listen with.
 fn emit<S: Serialize + Clone>(app: &AppHandle, event: &str, payload: S) {
@@ -371,8 +443,12 @@ fn create(app: &AppHandle, key: &str, label: &str, url: Url) -> Result<(), Strin
         .add_child(builder, LogicalPosition::new(0.0, 0.0), LogicalSize::new(0.0, 0.0))
         .map_err(|e| e.to_string())?;
     let _ = page.hide();
+    page.on_webview_event({
+        let (app, key) = (app.clone(), key.to_string());
+        move |event| on_drag(&app, &key, event)
+    });
     #[cfg(windows)]
-    com::install(app, &page, key, loading);
+    com::install(app, &page, key, loading, *lock(&state.dark));
     if lock(&state.registry).label(key) != Some(label) {
         // Closed while it was being created.
         let _ = page.close();
@@ -468,6 +544,116 @@ pub async fn browser_close(app: AppHandle, key: String) -> Result<(), String> {
         Some(page) => page.close().map_err(|e| e.to_string()),
         None => Ok(()),
     }
+}
+
+/// Every page there is, in the order the pages were opened.
+fn pages(app: &AppHandle) -> Vec<Webview> {
+    let labels = lock(&app.state::<BrowserState>().registry).labels();
+    labels.iter().filter_map(|label| app.get_webview(label)).collect()
+}
+
+/// The chords the app's keymap claims, replacing the last list. Esc, Ctrl+L and F12 need no claim.
+#[tauri::command]
+pub async fn browser_keys(app: AppHandle, chords: Vec<Chord>) -> Result<(), String> {
+    supported()?;
+    *lock(&app.state::<BrowserState>().claimed) = chords.into_iter().collect();
+    Ok(())
+}
+
+/// Moves the keyboard into the key's page. `reason`: "next" (to its first element), "previous" (to its last) or
+/// "programmatic" (to where it was).
+#[tauri::command]
+pub async fn browser_focus(app: AppHandle, key: String, reason: String) -> Result<(), String> {
+    supported()?;
+    let page = page(&app, &key).ok_or(NO_PAGE)?;
+    #[cfg(windows)]
+    {
+        com::focus(&page, &reason)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (page, reason);
+        Err(UNAVAILABLE.to_string())
+    }
+}
+
+/// The key's page as it was last drawn, as a `data:image/png;base64,` URL. `Err("hidden")` at once for a page that
+/// is not the shown one: WebView2 draws nothing for a hidden page, and the capture would wait for its limit.
+#[tauri::command]
+pub async fn browser_capture(app: AppHandle, key: String) -> Result<String, String> {
+    supported()?;
+    let shown = lock(&app.state::<BrowserState>().registry).shown() == Some(key.as_str());
+    if !shown {
+        return Err("hidden".to_string());
+    }
+    let page = page(&app, &key).ok_or(NO_PAGE)?;
+    #[cfg(windows)]
+    {
+        let png = com::capture(&page).await?;
+        Ok(format!("data:image/png;base64,{}", rules::base64(&png)))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = page;
+        Err(UNAVAILABLE.to_string())
+    }
+}
+
+/// The colour scheme pages see: the app's theme. Kept for the pages opened later.
+#[tauri::command]
+pub async fn browser_theme(app: AppHandle, dark: bool) -> Result<(), String> {
+    supported()?;
+    *lock(&app.state::<BrowserState>().dark) = Some(dark);
+    #[cfg(windows)]
+    for page in pages(&app) {
+        com::theme(&page, dark);
+    }
+    Ok(())
+}
+
+/// Clears everything the pages' profile holds (sign-ins, storage, cache, history), then loads every page again.
+#[tauri::command]
+pub async fn browser_clear_data(app: AppHandle) -> Result<(), String> {
+    supported()?;
+    #[cfg(windows)]
+    {
+        let open = pages(&app);
+        if let Some(first) = open.first() {
+            com::clear_data(first).await?;
+            for page in &open {
+                com::nav(page, "reload")?;
+            }
+            return Ok(());
+        }
+        // The profile is reached through a page, so with none open one is made for the moment, blank and hidden.
+        let page = blank_page(&app)?;
+        let cleared = com::clear_data(&page).await;
+        let _ = page.close();
+        cleared
+    }
+    #[cfg(not(windows))]
+    {
+        Err(UNAVAILABLE.to_string())
+    }
+}
+
+/// A hidden page that stays on `about:blank`, on the pages' profile; the app never hears of it.
+#[cfg(windows)]
+fn blank_page(app: &AppHandle) -> Result<Webview, String> {
+    let state = app.state::<BrowserState>();
+    let window = crate::main_window(app).ok_or("Marshell's window is gone.")?;
+    let blank = Url::parse("about:blank").map_err(|e| e.to_string())?;
+    let builder = WebviewBuilder::new("page-blank", WebviewUrl::External(blank))
+        .focused(false)
+        .data_directory(state.profile.clone())
+        .additional_browser_args(BROWSER_ARGS)
+        .on_navigation(|url| url.as_str() == "about:blank")
+        .on_new_window(|_url, _features| NewWindowResponse::Deny);
+    let page = window
+        .add_child(builder, LogicalPosition::new(0.0, 0.0), LogicalSize::new(0.0, 0.0))
+        .map_err(|e| e.to_string())?;
+    let _ = page.hide();
+    Ok(page)
 }
 
 #[cfg(test)]

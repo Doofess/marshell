@@ -30,6 +30,11 @@ const COMMANDS: &[&str] = &[
     "browser_place",
     "browser_nav",
     "browser_close",
+    "browser_keys",
+    "browser_focus",
+    "browser_capture",
+    "browser_theme",
+    "browser_clear_data",
 ];
 
 fn main() {

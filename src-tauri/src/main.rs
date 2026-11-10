@@ -439,7 +439,12 @@ fn main() {
             browser::browser_show,
             browser::browser_place,
             browser::browser_nav,
-            browser::browser_close
+            browser::browser_close,
+            browser::browser_keys,
+            browser::browser_focus,
+            browser::browser_capture,
+            browser::browser_theme,
+            browser::browser_clear_data
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the app");
