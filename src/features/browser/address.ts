@@ -1,6 +1,6 @@
 export const SEARCH_URL = "https://www.google.com/search?q=";
 export const BLANK = "about:blank";
-/** The Address box's class. The window reads it to tell this box from the others: the app's shortcuts work from it (`keepsOwnKeys`). */
+/** The Address box's class (UrlBar writes it out, as the style tests need; a test holds the two together). The window reads it to tell this box from the others: the app's shortcuts work from it (`keepsOwnKeys`). */
 export const ADDRESS_BOX = "url-bar__box";
 
 /** A page reports `about:blank` while its first address loads: that is not where the page is. A blank page that has loaded is. */
