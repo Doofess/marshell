@@ -120,10 +120,17 @@ function Body({ entry, file, onImageSize, onPages, onLink, onKey, region }: Body
 export function PreviewPane({ entry, file, updated, theme, os, canBack, canForward, onBack, onForward, onOpen, onView, active, onEscape, regionTarget, onRegion }: PreviewPaneProps) {
   const { name, folder } = splitPath(entry.path);
   const body = useRef<HTMLDivElement>(null);
-  // Focus goes into the scroll body when a file is opened, so the arrow keys and Page Up and Down read it at once.
+  // Focus goes into the scroll body when the tab goes somewhere (a link, Back, Forward, another line), so the arrow keys and
+  // Page Up and Down read it at once. Mounting takes no focus, and neither does being selected: a session switch and the tab
+  // strip's own keys mount and select tabs, and focus must stay where the person has it. Whoever opens a file moves focus.
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const shownEntry = useRef(entry);
   useEffect(() => {
-    if (active) body.current?.focus({ preventScroll: true });
-  }, [entry, active]);
+    if (shownEntry.current === entry) return;
+    shownEntry.current = entry;
+    if (activeRef.current) body.current?.focus({ preventScroll: true });
+  }, [entry]);
   // "Updated" is spoken only to someone reading in the pane; a person typing in the terminal is not interrupted by it.
   const [inside, setInside] = useState(false);
   const [size, setSize] = useState<{ url: string; w: number; h: number } | null>(null);

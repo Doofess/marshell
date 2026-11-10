@@ -56,7 +56,8 @@ export function SidePane({ tabs, activeId, os, children, onSelect, onClose, onMo
 
   const tabbable = activeId !== null && tabs.some((t) => t.id === activeId) ? activeId : tabs[0]?.id;
   const close = (id: string) => {
-    focusAfter.current = "active";
+    // Focus follows only when it was in the strip: a middle click from the terminal closes the tab and leaves focus there.
+    if (root.current?.querySelector(".side-pane__strip")?.contains(document.activeElement)) focusAfter.current = "active";
     onClose(id);
   };
 
@@ -87,6 +88,12 @@ export function SidePane({ tabs, activeId, os, children, onSelect, onClose, onMo
   const onDragMove = (e: ReactPointerEvent<HTMLElement>) => {
     const d = drag.current;
     if (!d || d.pointerId !== e.pointerId) return;
+    // A reorder moves the tab's node, which drops the pointer capture, so the release can land outside the strip unseen:
+    // a move with the button up ends the drag.
+    if ((e.buttons & 1) === 0) {
+      drag.current = null;
+      return;
+    }
     if (!d.started) {
       if (Math.abs(e.clientX - d.startX) < DRAG_START_PX) return;
       d.started = true;
