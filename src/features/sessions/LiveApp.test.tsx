@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Endpoint } from "../../generated/Endpoint";
@@ -648,6 +650,17 @@ describe("LiveApp: what counts as a text box", () => {
     expect(keepsOwnKeys(box("DIV", ADDRESS_BOX))).toBe(false);
     expect(keepsOwnKeys(box("TEXTAREA", "xterm-helper-textarea"))).toBe(false);
     expect(keepsOwnKeys(null)).toBe(false);
+  });
+  it("leaves a character typed with AltGr in the Address box alone: Windows reports AltGr as Ctrl+Alt, and AltGr+Shift+T types a letter on some layouts", () => {
+    expect(keepsOwnKeys(box("INPUT", ADDRESS_BOX), true)).toBe(true);
+    expect(keepsOwnKeys(box("INPUT", ADDRESS_BOX), false)).toBe(false);
+    expect(keepsOwnKeys(box("INPUT"), true)).toBe(true);
+    expect(keepsOwnKeys(box("DIV", ADDRESS_BOX), true)).toBe(false);
+  });
+  it("is the rule both of the window's key handlers read a text box by", () => {
+    const source = readFileSync(join(__dirname, "LiveApp.tsx"), "utf8");
+    expect(source).not.toMatch(/\bisTextBox\(/);
+    expect(source.split('keepsOwnKeys(e.target as HTMLElement | null, e.getModifierState("AltGraph"))')).toHaveLength(3);
   });
   it("draws the Address box with the class the keys are read by", () => {
     const html = renderToStaticMarkup(<UrlBar page={undefined} onGo={() => {}} onNav={() => {}} onOpenOutside={() => {}} onEscape={() => {}} />);

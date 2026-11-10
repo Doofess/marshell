@@ -51,10 +51,11 @@ export function isTextBox(target: { tagName?: string; classList?: { contains(nam
 /**
  * A text box that keeps the app's shortcuts for itself: the rename box, the launcher's fields, a search box. The browser tab's
  * Address box doesn't: it is where the keyboard is while a person browses, so the app's shortcuts work from it as they do from
- * the page under it (the user's choice, 2026-11-10). None of them is a key that edits one line of text.
+ * the page under it (the user's choice, 2026-11-10). None of them is a key that edits one line of text, except with AltGr:
+ * Windows reports AltGr as Ctrl+Alt, and AltGr+Shift+T types a letter on some layouts, so a key with AltGr stays the box's.
  */
-export function keepsOwnKeys(target: Parameters<typeof isTextBox>[0]): boolean {
-  return isTextBox(target) && !target?.classList?.contains(ADDRESS_BOX);
+export function keepsOwnKeys(target: Parameters<typeof isTextBox>[0], altGraph = false): boolean {
+  return isTextBox(target) && (altGraph || !target?.classList?.contains(ADDRESS_BOX));
 }
 
 /** The key press the window reads for Review: the code and modifiers (lib/bindings), whether it is a held key, and the way to cancel its default. */
