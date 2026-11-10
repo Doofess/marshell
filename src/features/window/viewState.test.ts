@@ -66,6 +66,20 @@ describe("viewReducer", () => {
   });
 });
 
+describe("the pane in the view", () => {
+  it("a pane action reaches the pane", () => {
+    const s = run(state(), { type: "pane", action: { type: "open", session: "a", project: "p", target: { path: "/x.md" } } });
+    expect(s.pane.open).toBe(true);
+    expect(s.pane.sessions.a?.tabs).toHaveLength(1);
+    const same = viewReducer(s, { type: "pane", action: { type: "show" } });
+    expect(same).toBe(s);
+  });
+  it("toSaved keeps the pane", () => {
+    const s = run(state(), { type: "pane", action: { type: "show" } });
+    expect(toSaved(s).pane.open).toBe(true);
+  });
+});
+
 describe("fillsEmptyPane", () => {
   it("an empty pane takes the store's selection", () => {
     expect(fillsEmptyPane([null], "a")).toBe(true);

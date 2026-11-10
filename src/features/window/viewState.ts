@@ -1,4 +1,5 @@
 import type { ViewLayout } from "../../generated/ViewLayout";
+import { type PaneAction, paneReducer } from "../pane/paneState";
 import { SIDEBAR, type SidebarMode, type SidebarPref } from "./layout";
 
 /** What the window remembers: the saved layout, plus the sidebar pref to return to when focus mode ends (not saved). */
@@ -16,7 +17,9 @@ export type ViewAction =
   | { type: "toggleShell" }
   | { type: "toggleGrouped" }
   /** The palette ran this command; it goes to the front of the recent list. */
-  | { type: "ranCommand"; id: string };
+  | { type: "ranCommand"; id: string }
+  /** An action of the side pane's own reducer. */
+  | { type: "pane"; action: PaneAction };
 
 /** What a window with nothing saved starts from. Matches the core's `ViewLayout::default()`. */
 export const DEFAULT_VIEW: ViewLayout = {
@@ -95,6 +98,10 @@ export function viewReducer(s: ViewState, a: ViewAction): ViewState {
       return { ...s, grouped: !s.grouped };
     case "ranCommand":
       return { ...s, recent_commands: recentAfter(s.recent_commands, a.id) };
+    case "pane": {
+      const pane = paneReducer(s.pane, a.action);
+      return pane === s.pane ? s : { ...s, pane };
+    }
   }
 }
 
