@@ -34,7 +34,7 @@ import type { RunControl } from "../scripts/confirmScripts";
 import { windowTitle } from "./windowTitle";
 import { Sidebar, type SidebarFooter } from "./Sidebar";
 import { shellNameFor } from "./ShellPanel";
-import { PANE, draggedWidth, paneGeometry } from "./paneLayout";
+import { PANE, draggedWidth, paneGeometry, paneMotionKey } from "./paneLayout";
 import { useLayoutMotion } from "./motion";
 import { FitHoldContext } from "../terminal/fitHold";
 import { sidebarToggleFor } from "./viewState";
@@ -327,9 +327,9 @@ export function MainWindow({
   const geometry = paneGeometry({ room: spaceW, shown: paneShown && !viewing && !empty, saved: paneWidth, terminalMin: terminalMinWidth });
   const paneOn = geometry.mode !== "hidden";
   const paneCovers = geometry.mode === "cover";
-  // The pane moves for 200 ms when its mode changes. A drag or a window resize that leaves the mode alone changes only the
-  // target, which the motion follows at once.
-  const paneMotion = useLayoutMotion(geometry.mode, geometry.pane);
+  // The pane moves for 200 ms when its mode changes, and with the sidebar when that switches beside it (paneMotionKey). A drag
+  // or a window resize that leaves both alone changes only the target, which the motion follows at once.
+  const paneMotion = useLayoutMotion(paneMotionKey(geometry.mode, mode), geometry.pane);
   const layoutMoving = sideMotion.moving || paneMotion.moving;
   const roomNow = Math.max(0, width - sideAnim - pushed);
   const paneP = Math.max(0, Math.min(Math.round(paneMotion.value), roomNow));

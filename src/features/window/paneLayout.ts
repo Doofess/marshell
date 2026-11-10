@@ -40,6 +40,16 @@ export function paneGeometry(i: { room: number; shown: boolean; saved: number | 
   return { mode: "beside", terminal: room - 1 - pane, pane, max };
 }
 
+/**
+ * The key of the pane's layout motion (`useLayoutMotion`): a change of key moves for 200 ms, anything else is followed at once.
+ * Showing, hiding and covering change it. So does a sidebar switch beside an open pane: the room changes with the sidebar, and
+ * a pane at half the room (or at the 80-column stop) changes width with it, which must ease with the sidebar instead of jumping.
+ * A hidden pane has nothing to move, and a covering pane is the room itself, so the sidebar leaves their keys alone.
+ */
+export function paneMotionKey(mode: PaneMode, sidebar: string): string {
+  return mode === "beside" ? `beside/${sidebar}` : mode;
+}
+
 /** The width to save when the divider is dragged to `fromEnd` px from the main area's end edge, or nudged. */
 export function draggedWidth(i: { room: number; terminalMin: number; fromEnd: number }): number {
   const max = widest(whole(i.room), i.terminalMin);

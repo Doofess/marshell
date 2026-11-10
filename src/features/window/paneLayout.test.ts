@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { draggedWidth, paneGeometry } from "./paneLayout";
+import { draggedWidth, paneGeometry, paneMotionKey } from "./paneLayout";
 
 describe("paneGeometry", () => {
   it("a hidden pane leaves the room to the terminal", () => {
@@ -32,5 +32,21 @@ describe("draggedWidth", () => {
     const i = { room: 1201, terminalMin: 700 };
     expect(draggedWidth({ ...i, fromEnd: 100 })).toBe(320);
     expect(draggedWidth({ ...i, fromEnd: 5000 })).toBe(500);
+  });
+});
+
+describe("paneMotionKey", () => {
+  it("a sidebar switch beside an open pane moves the pane too", () => {
+    // The room changes with the sidebar, so a pane at half the room changes width: it must ease with the sidebar, not jump.
+    expect(paneMotionKey("beside", "expanded")).not.toBe(paneMotionKey("beside", "rail"));
+    expect(paneMotionKey("beside", "rail")).not.toBe(paneMotionKey("beside", "focus"));
+  });
+  it("a hidden or covering pane starts no motion of its own when the sidebar switches", () => {
+    expect(paneMotionKey("hidden", "expanded")).toBe(paneMotionKey("hidden", "rail"));
+    expect(paneMotionKey("cover", "expanded")).toBe(paneMotionKey("cover", "focus"));
+  });
+  it("showing, hiding and covering each change the key", () => {
+    const keys = new Set([paneMotionKey("hidden", "rail"), paneMotionKey("beside", "rail"), paneMotionKey("cover", "rail")]);
+    expect(keys.size).toBe(3);
   });
 });
