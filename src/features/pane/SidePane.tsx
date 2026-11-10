@@ -1,6 +1,7 @@
 import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { selectedProps } from "../../components/a11y/SelectedMark";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
+import { clickGuard } from "./clickGuard";
 import { dragIndex, stripKey } from "./stripKeys";
 import "./SidePane.css";
 
@@ -36,7 +37,7 @@ export function SidePane({ tabs, activeId, os, children, onSelect, onClose, onMo
   // Where focus goes after the strip changes: a tab's id, or "active" for whichever tab became the selected one.
   const focusAfter = useRef<string | null>(null);
   const drag = useRef<Drag | null>(null);
-  const swallowClick = useRef(false);
+  const swallowClick = useRef(clickGuard());
 
   const tabEl = (id: string) => root.current?.querySelector<HTMLElement>(`[role="tab"][id="pane-tab-${id}"]`) ?? null;
   const focusTab = (id: string) => tabEl(id)?.focus();
@@ -112,7 +113,7 @@ export function SidePane({ tabs, activeId, os, children, onSelect, onClose, onMo
     if (!d || d.pointerId !== e.pointerId) return;
     drag.current = null;
     if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
-    if (d.started) swallowClick.current = true;
+    if (d.started) swallowClick.current.arm();
   };
 
   return (
@@ -133,10 +134,8 @@ export function SidePane({ tabs, activeId, os, children, onSelect, onClose, onMo
                     title={t.path}
                     {...selectedProps(selected, "selected", "side-pane__tab")}
                     onClick={() => {
-                      if (swallowClick.current) {
-                        swallowClick.current = false;
-                        return;
-                      }
+                      // The click that ends a drag selects nothing.
+                      if (swallowClick.current.take()) return;
                       onSelect(t.id);
                     }}
                     onKeyDown={(e) => onKey(e, t.id)}

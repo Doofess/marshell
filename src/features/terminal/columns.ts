@@ -1,11 +1,20 @@
-type Font = { family: string; size: number };
+import { fontStack } from "./terminalFont";
+
+type Font = { family: string; size: number; wtFamily?: string };
+
+/**
+ * The canvas font a glyph is measured in: the stack the terminal draws with (terminalFont.ts), not the family alone. A family
+ * that isn't installed is then measured in the font that takes its place in the terminal; alone it fell to the canvas's own
+ * default, a wider sans-serif, and the side pane's 80-column stop came far too early.
+ */
+export const canvasFont = (font: Font): string => `${font.size}px ${fontStack(font.family, font.wtFamily)}`;
 
 /** One glyph's width in this font, read from a canvas. Without a canvas (no document) it is 0.6 of the size. */
 function measureCell(font: Font): number {
   if (typeof document === "undefined") return font.size * 0.6;
   const ctx = document.createElement("canvas").getContext("2d");
   if (!ctx) return font.size * 0.6;
-  ctx.font = `${font.size}px ${font.family}`;
+  ctx.font = canvasFont(font);
   const w = ctx.measureText("M").width;
   return w > 0 ? w : font.size * 0.6;
 }

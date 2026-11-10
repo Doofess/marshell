@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { columnsWidth, terminalFloorWidth } from "./columns";
+import { canvasFont, columnsWidth, terminalFloorWidth } from "./columns";
 
 const font = { family: "monospace", size: 13 };
 
@@ -21,6 +21,19 @@ describe("columnsWidth", () => {
   it("a scale that isn't a positive number counts as 100%", () => {
     expect(columnsWidth(80, font, () => 7.8, 0)).toBeCloseTo(560);
     expect(columnsWidth(80, font, () => 7.8, Number.NaN)).toBeCloseTo(560);
+  });
+});
+
+describe("canvasFont", () => {
+  it("is the stack the terminal draws with, so a family that isn't installed is measured in the font that takes its place", () => {
+    expect(canvasFont({ family: "Cascadia Mono", size: 13 })).toBe('13px "Cascadia Mono", "JetBrains Mono", monospace');
+    expect(canvasFont({ family: "JetBrains Mono", size: 14 })).toBe('14px "JetBrains Mono", monospace');
+  });
+  it("keeps Windows Terminal's font last, as the terminal does", () => {
+    expect(canvasFont({ family: "Cascadia Mono", size: 13, wtFamily: "Hack NF" })).toBe('13px "Cascadia Mono", "JetBrains Mono", monospace, "Hack NF"');
+  });
+  it("quotes a family that starts with a digit, which is no font shorthand bare", () => {
+    expect(canvasFont({ family: "3270 Nerd Font", size: 12 })).toBe('12px "3270 Nerd Font", "JetBrains Mono", monospace');
   });
 });
 
