@@ -170,7 +170,7 @@ function open(s: PaneView, session: string, project: string, target: OpenTarget)
     }
   } else {
     if (cur.tabs.length >= PANE_LIMITS.tabs) return s;
-    const tab: PaneTab = { id: nextId(cur.tabs), kind: "file", history: [entryOf(target)], index: 0 };
+    const tab: PaneTab = { id: nextId(cur.tabs), kind: "file", history: [entryOf(target)], index: 0, title: null };
     next = { ...setTabs(s, session, { tabs: [...cur.tabs, tab], active: tab.id }), open: true };
   }
   return withRecent(next, project, target.path);

@@ -28,7 +28,7 @@ describe("paneReducer", () => {
     const s = run(EMPTY, open("/a.md"));
     const t = tabsOf(s, "s");
     expect(t.tabs).toEqual([
-      { id: "t1", kind: "file", history: [{ path: "/a.md", line: null, col: null, view: "rendered" }], index: 0 },
+      { id: "t1", kind: "file", history: [{ path: "/a.md", line: null, col: null, view: "rendered" }], index: 0, title: null },
     ]);
     expect(t.active).toBe("t1");
     expect(s.open).toBe(true);
