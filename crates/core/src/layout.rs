@@ -2,15 +2,85 @@
 //! broken or newer-version file means the defaults, and `load` never writes.
 
 use crate::store::{self, Versioned};
-use marshell_protocol::api::{LauncherChoice, LayoutDoc, PaneTab, PaneView, SavedTab, SessionMode, ViewLayout};
+use marshell_protocol::api::{
+    LauncherChoice, LayoutDoc, PaneTab, PaneView, RecentFile, SavedTab, SessionMode, ViewLayout,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::path::Path;
 
 /// The file holds the `LayoutDoc` fields directly, next to `"version"`.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 #[serde(transparent)]
 struct FileDoc(LayoutDoc);
+
+impl<'de> Deserialize<'de> for FileDoc {
+    /// Reads the file's JSON, drops what the side pane can't read (see `lenient_pane`), then parses the rest strictly.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut json = serde_json::Value::deserialize(deserializer)?;
+        lenient_pane(&mut json);
+        serde_json::from_value::<LayoutDoc>(json)
+            .map(FileDoc)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+/// Drops the parts of `view.pane` that this build can't read, so that a pane written by a later build or edited by
+/// hand never costs the rest of the file. Everything outside the pane is left for the strict parse.
+fn lenient_pane(doc: &mut serde_json::Value) {
+    use serde_json::{Map, Value};
+
+    let Some(view) = doc.get_mut("view").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let Some(pane) = view.get_mut("pane") else {
+        return;
+    };
+    let Some(fields) = pane.as_object_mut() else {
+        view.remove("pane");
+        return;
+    };
+    if !fields.get("open").is_some_and(Value::is_boolean) {
+        fields.insert("open".into(), Value::Bool(false));
+    }
+    let width_fits = fields
+        .get("width")
+        .is_some_and(|w| w.as_u64().is_some_and(|n| u32::try_from(n).is_ok()));
+    if !width_fits {
+        fields.insert("width".into(), Value::Null);
+    }
+
+    if !fields.get("sessions").is_some_and(Value::is_object) {
+        fields.insert("sessions".into(), Value::Object(Map::new()));
+    }
+    if let Some(sessions) = fields.get_mut("sessions").and_then(Value::as_object_mut) {
+        sessions.retain(|_, session| lenient_session(session));
+    }
+
+    if !fields.get("recent").is_some_and(Value::is_array) {
+        fields.insert("recent".into(), Value::Array(Vec::new()));
+    }
+    if let Some(recent) = fields.get_mut("recent").and_then(Value::as_array_mut) {
+        recent.retain(|file| serde_json::from_value::<RecentFile>(file.clone()).is_ok());
+    }
+}
+
+/// Keeps the tabs of one session that parse. False when the session itself is unreadable.
+fn lenient_session(session: &mut serde_json::Value) -> bool {
+    use serde_json::Value;
+
+    let Some(fields) = session.as_object_mut() else {
+        return false;
+    };
+    let Some(tabs) = fields.get_mut("tabs").and_then(Value::as_array_mut) else {
+        return false;
+    };
+    tabs.retain(|tab| serde_json::from_value::<PaneTab>(tab.clone()).is_ok());
+    if !fields.get("active").is_some_and(Value::is_string) {
+        fields.insert("active".into(), Value::Null);
+    }
+    true
+}
 
 impl Versioned for FileDoc {
     const VERSION: u32 = 1;
@@ -26,6 +96,7 @@ const MAX_PATH_CHARS: usize = 4096;
 const PANE_VIEWS: [&str; 2] = ["rendered", "source"];
 
 /// A missing, broken or newer-version file means the defaults. The file itself is not touched.
+/// The side pane's parts that can't be read are dropped and the rest of the file is kept.
 pub fn load(home: &Path) -> LayoutDoc {
     match store::read::<FileDoc>(&crate::paths::layout_file(home)) {
         Ok(Some(FileDoc(doc))) => repair(doc),
@@ -779,5 +850,95 @@ mod tests {
         let doc = load(home.path());
         assert_eq!(doc.launcher["C:/a"].seq, 0);
         assert_eq!(doc.launcher["C:/a"].profile_id, "cmd");
+    }
+
+    /// Writes a layout file with one saved tab `ta`, the rail sidebar at 304 and the given pane
+    /// and sidebar width, loads it from a temp home and returns the document.
+    fn load_with_pane(pane: serde_json::Value, sidebar_width: serde_json::Value) -> LayoutDoc {
+        let home = tempfile::tempdir().unwrap();
+        let file = serde_json::json!({
+            "version": 1,
+            "tabs": [{"tab_id": "ta", "number": 1, "name": "A", "agent": null, "profile_id": "cmd", "cwd": "C:/w"}],
+            "view": {
+                "panes": ["ta"], "active": 0, "sidebar": "rail", "sidebar_width": sidebar_width,
+                "shell_hidden": false, "grouped": false, "pane": pane
+            },
+            "launcher": {}
+        });
+        std::fs::write(home.path().join("layout.json"), file.to_string()).unwrap();
+        load(home.path())
+    }
+
+    fn good_file_tab(id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": id, "kind": "file", "index": 0,
+            "history": [{"path": "C:\\a.md", "line": null, "col": null, "view": "rendered"}]
+        })
+    }
+
+    fn assert_tabs_and_sidebar_kept(doc: &LayoutDoc) {
+        assert_eq!(doc.tabs.len(), 1);
+        assert_eq!(doc.tabs[0].tab_id, "ta");
+        assert_eq!(doc.view.sidebar, "rail");
+        assert_eq!(doc.view.sidebar_width, 304);
+    }
+
+    #[test]
+    fn a_tab_of_another_builds_shape_is_dropped_and_the_file_still_loads() {
+        let pane = serde_json::json!({
+            "open": true, "width": 480, "recent": [],
+            "sessions": {"ta": {
+                "tabs": [good_file_tab("t1"), {"id": "t2", "kind": "browser", "url": "https://example.com/"}],
+                "active": "t2"
+            }}
+        });
+        let doc = load_with_pane(pane, 304.into());
+        assert_tabs_and_sidebar_kept(&doc);
+        let session = &doc.view.pane.sessions["ta"];
+        assert_eq!(session.tabs.len(), 1);
+        assert_eq!(session.tabs[0].id, "t1");
+        assert_eq!(session.active, some("t1"));
+    }
+
+    #[test]
+    fn a_pane_with_values_of_the_wrong_type_loses_only_those_values() {
+        let pane = serde_json::json!({
+            "open": "yes", "width": 480.5,
+            "recent": [{"project": "p", "path": "C:\\a.md"}, 7, {"path": 3}],
+            "sessions": {"ta": {
+                "tabs": [good_file_tab("t1"), {"id": "t2", "kind": "file", "index": -1, "history": []}],
+                "active": 5
+            }}
+        });
+        let doc = load_with_pane(pane, 304.into());
+        assert_tabs_and_sidebar_kept(&doc);
+        let pane = &doc.view.pane;
+        assert!(!pane.open);
+        assert_eq!(pane.width, None);
+        assert_eq!(pane.recent.len(), 1);
+        assert_eq!(pane.recent[0].project, "p");
+        let session = &pane.sessions["ta"];
+        assert_eq!(session.tabs.len(), 1);
+        assert_eq!(session.tabs[0].id, "t1");
+        assert_eq!(session.active, some("t1"));
+    }
+
+    #[test]
+    fn a_pane_that_is_not_an_object_reads_as_an_empty_pane() {
+        let doc = load_with_pane(serde_json::json!([]), 304.into());
+        assert_tabs_and_sidebar_kept(&doc);
+        assert_eq!(doc.view.pane, PaneView::default());
+
+        let pane = serde_json::json!({"open": true, "sessions": {"ta": {"tabs": "x", "active": null}}});
+        let doc = load_with_pane(pane, 304.into());
+        assert_tabs_and_sidebar_kept(&doc);
+        assert!(doc.view.pane.open);
+        assert!(doc.view.pane.sessions.is_empty());
+    }
+
+    #[test]
+    fn a_broken_part_outside_the_pane_still_means_the_defaults() {
+        let doc = load_with_pane(serde_json::json!({"open": true}), "wide".into());
+        assert_eq!(doc, LayoutDoc::default());
     }
 }
