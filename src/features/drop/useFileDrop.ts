@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { inTauri } from "../../lib/window/appWindow";
 import { onBrowser } from "../browser/browserApi";
 import { coverPage } from "../browser/pageCover";
+import { createDragCover } from "./dragCover";
 import { dropTarget, toCss, type DropTarget } from "./dropTarget";
 import "./Drop.css";
 
@@ -24,29 +25,27 @@ export function useFileDrop(handlers: Handlers): void {
     let off: (() => void) | undefined;
     let gone = false;
     // A drag covers the page from its enter to its leave or drop, so the page freezes as a picture and the drag reaches this webview.
-    let uncover: (() => void) | null = null;
-    const cover = () => {
-      uncover ??= coverPage();
-    };
-    const release = () => {
-      uncover?.();
-      uncover = null;
-    };
+    const cover = createDragCover(coverPage, (fn, ms) => {
+      const timer = setTimeout(fn, ms);
+      return () => clearTimeout(timer);
+    });
     // A drag that enters over a page is heard by the page's webview first; once the page is hidden this one hears the rest.
     const offPage = onBrowser("drag", (d) => {
-      if (d.kind === "enter") cover();
+      if (d.kind === "enter") cover.pageEnter();
+      else if (d.kind === "leave") cover.pageLeave();
+      else cover.pageDrop();
     });
     void import("@tauri-apps/api/webview").then(({ getCurrentWebview }) =>
       getCurrentWebview()
         .onDragDropEvent((event) => {
           const p = event.payload;
-          if (p.type === "enter") cover();
+          if (p.type === "enter") cover.appEnter();
           if (p.type === "enter" || p.type === "over") ref.current.onHover(targetAt(p.position));
           else if (p.type === "leave") {
-            release();
+            cover.appEnd();
             ref.current.onHover(null);
           } else if (p.type === "drop") {
-            release();
+            cover.appEnd();
             ref.current.onHover(null);
             if (p.paths.length > 0) ref.current.onPaths(targetAt(p.position), p.paths);
           }
@@ -60,7 +59,7 @@ export function useFileDrop(handlers: Handlers): void {
       gone = true;
       off?.();
       offPage();
-      release();
+      cover.dispose();
     };
   }, []);
 }
