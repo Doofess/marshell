@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { PaneView } from "../../generated/PaneView";
 import { paneReducer } from "../pane/paneState";
 import { pageReducer, type PageEvent, type PageState } from "./pageStore";
-import { openKeys, owners, popupActions, unload } from "./useBrowserPages";
+import { openKeys, owners, pageAction, popupActions, unload } from "./useBrowserPages";
 import { slotStep } from "./usePageSlot";
 
 const empty: PaneView = { open: false, width: null, sessions: {}, recent: [] };
@@ -52,11 +52,30 @@ describe("popupActions", () => {
   });
 });
 
+describe("pageAction", () => {
+  const owner = { session: "a", paneTab: "t1" };
+  it("gives the tab its page's address and title, and no title for an empty one", () => {
+    expect(pageAction(owner, { url: "https://a.test/", title: "A", loading: true })).toEqual({ type: "page", session: "a", paneTab: "t1", url: "https://a.test/", title: "A" });
+    expect(pageAction(owner, { url: "https://a.test/", title: "", loading: false })).toMatchObject({ title: null });
+  });
+  // Found in review: a page reports about:blank before its first address has loaded, and that replaced a restored tab's saved
+  // address and title, for good when the app closed before the page got there.
+  it("says nothing for a blank page that is still loading, so the tab keeps its saved address", () => {
+    expect(pageAction(owner, { url: "about:blank", title: "", loading: true })).toBeNull();
+  });
+  it("a blank page that has loaded is the tab's address", () => {
+    expect(pageAction(owner, { url: "about:blank", title: "", loading: false })).toMatchObject({ type: "page", url: "about:blank", title: null });
+  });
+  it("says nothing for a page no tab holds", () => {
+    expect(pageAction(undefined, { url: "https://a.test/", title: "A", loading: false })).toBeNull();
+  });
+});
+
 // The ninth page unloads the one shown longest ago. Its tab must open it again when shown (found in the 6q-3a live check: the
 // store kept the closed page, so the tab asked the shell to show a page that no longer existed, and stayed blank).
 describe("unload", () => {
   const loaded = (key: string): ReadonlyMap<string, PageState> =>
-    pageReducer(new Map(), { type: "state", key, url: "http://localhost:3000/", title: "T", canBack: false, canForward: false, loading: false });
+    pageReducer(pageReducer(new Map(), { type: "opening", key }), { type: "state", key, url: "http://localhost:3000/", title: "T", canBack: false, canForward: false, loading: false });
 
   it("closes each page in the shell and forgets it, so its tab opens it again when shown", async () => {
     let pages = loaded("a/t1");

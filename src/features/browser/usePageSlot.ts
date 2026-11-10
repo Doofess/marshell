@@ -6,7 +6,7 @@ import { browser, type Piece, type Report } from "./browserApi";
 import { createFreezer, LIVE, type Freeze } from "./freeze";
 import { createPlacer } from "./placing";
 import { pageRule } from "./pageRule";
-import { usePage, type PageState } from "./pageStore";
+import { openPage, usePage, type PageState } from "./pageStore";
 
 /** The parts of a `DOMRect` the report reads, so a test needs no DOM. */
 export type DOMRectLike = { x: number; y: number; width: number; height: number; right: number; bottom: number };
@@ -14,13 +14,31 @@ export type DOMRectLike = { x: number; y: number; width: number; height: number;
 export type SlotStep = "open" | "show" | "hide" | "none";
 
 /**
- * What the slot asks of its page. A tab that is on screen and has no page (never opened, evicted, or after `browser://gone`)
- * opens it at its saved address; a page that exists is shown while its tab is on screen and nothing covers it, and hidden
+ * What the slot asks of its page. A tab that is on screen and has no page (never opened, refused, evicted, or after
+ * `browser://gone`) opens it at its saved address; a page that exists is shown while its tab is on screen and nothing covers it, and hidden
  * otherwise; a tab that was never on screen has nothing to do.
  */
 export function slotStep(page: PageState | undefined, active: boolean, covered: boolean): SlotStep {
-  if (page === undefined) return active ? "open" : "none";
+  if (!page?.live) return active ? "open" : "none";
   return active && !covered ? "show" : "hide";
+}
+
+type OpenApi = {
+  open(key: string, url: string): Promise<unknown>;
+  focus(key: string, reason: "programmatic"): Promise<unknown>;
+};
+
+/**
+ * Opens a tab's page at `url`. Focus can reach the slot before the shell has made the page (a link that opens a tab, the pane's
+ * shortcut, Tab), when there is no page to take the keyboard. So a page that opens under the focused slot takes it.
+ */
+export async function openUnder(api: OpenApi, key: string, url: string, slotFocused: () => boolean): Promise<void> {
+  try {
+    await api.open(key, url);
+  } catch {
+    return;
+  }
+  if (slotFocused()) await api.focus(key, "programmatic").catch(ignore);
 }
 
 const finite = (n: number) => (Number.isFinite(n) ? n : 0);
@@ -97,8 +115,11 @@ export function usePageSlot(ref: RefObject<HTMLElement | null>, pageKey: string,
 
   const needOpen = step === "open";
   useEffect(() => {
-    if (needOpen) browser.open(pageKey, savedUrl()).catch(ignore);
-  }, [needOpen, pageKey]);
+    if (!needOpen) return;
+    // The app's document has focus and it is on this slot: a window in the background hands nothing over.
+    const slotFocused = () => ref.current !== null && document.hasFocus() && document.activeElement === ref.current;
+    void openUnder({ open: openPage, focus: browser.focus }, pageKey, savedUrl(), slotFocused);
+  }, [needOpen, pageKey, ref]);
 
   // A cover freezes the page as a picture: capture, put the picture on screen, wait for its paint, then hide the page; an
   // uncover shows the page first and drops the picture after the next paint (S12). Only a tab that is on screen with a page
@@ -123,7 +144,7 @@ export function usePageSlot(ref: RefObject<HTMLElement | null>, pageKey: string,
       }),
     [pageKey],
   );
-  const freezable = active && page !== undefined;
+  const freezable = active && page?.live === true;
   // Leaving the freezable state (the tab goes off screen, the page goes, the key changes) puts it back to live; the page's own
   // hiding is the tab's, below.
   useEffect(() => () => freezer.reset(), [freezer, freezable]);

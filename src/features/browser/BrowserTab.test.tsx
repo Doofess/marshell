@@ -13,6 +13,7 @@ const page = (more: Partial<PageState> = {}): PageState => ({
   icon: null,
   focused: false,
   status: null,
+  live: true,
   ...more,
 });
 type Props = Partial<Parameters<typeof BrowserTabView>[0]>;

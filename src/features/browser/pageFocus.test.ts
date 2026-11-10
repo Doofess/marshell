@@ -116,6 +116,7 @@ describe("windowFocused", () => {
   it("is true while a page has the keys, though the document says it hasn't focus", () => {
     const doc = { hasFocus: () => false };
     expect(windowFocused(doc)).toBe(false);
+    dispatchPage({ type: "opening", key: "s/p" });
     dispatchPage({ type: "focus", key: "s/p", focused: true });
     expect(windowFocused(doc)).toBe(true);
     expect(windowFocused({ hasFocus: () => true })).toBe(true);

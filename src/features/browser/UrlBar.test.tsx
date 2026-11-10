@@ -13,6 +13,7 @@ const page = (more: Partial<PageState> = {}): PageState => ({
   icon: null,
   focused: false,
   status: null,
+  live: true,
   ...more,
 });
 const html = (p: PageState | null = page()) => renderToStaticMarkup(<UrlBar page={p ?? undefined} onGo={noop} onNav={noop} onOpenOutside={noop} onEscape={noop} />);

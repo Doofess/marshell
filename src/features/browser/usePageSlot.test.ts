@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { paneColumn, type ColumnInputs } from "../window/paneColumn";
 import type { PageState } from "./pageStore";
-import { slotReport, slotStep } from "./usePageSlot";
+import { openUnder, slotReport, slotStep } from "./usePageSlot";
 
-const page: PageState = { url: "https://example.com/", title: "", canBack: false, canForward: false, loading: false, icon: null, focused: false, status: null };
+const page: PageState = { url: "https://example.com/", title: "", canBack: false, canForward: false, loading: false, icon: null, focused: false, status: null, live: true };
 const rect = (x: number, y: number, width: number, height: number) => ({ x, y, width, height, right: x + width, bottom: y + height });
 const inputs: ColumnInputs = { pref: "expanded", drawer: false, shown: true, saved: 480, terminalMin: 640, rtl: false };
 
@@ -20,9 +20,42 @@ describe("slotStep", () => {
     expect(slotStep(page, false, false)).toBe("hide");
     expect(slotStep(page, false, true)).toBe("hide");
   });
+  // Found in review: the shell refused the tab's address before it made a page, and the tab never asked again.
+  it("a page that was asked for and never loaded is still to open", () => {
+    const refused: PageState = { ...page, url: "", status: "refused", live: false };
+    expect(slotStep(refused, true, false)).toBe("open");
+    expect(slotStep(refused, false, false)).toBe("none");
+  });
   it("a tab that was never active opens nothing", () => {
     expect(slotStep(undefined, false, false)).toBe("none");
     expect(slotStep(undefined, false, true)).toBe("none");
+  });
+});
+
+// Found in review: a link opens a tab and puts focus on its slot before the shell has made the page, so the page was asked to
+// take the keyboard while it didn't exist, and the keys stayed with the app.
+describe("openUnder", () => {
+  const api = (calls: string[], refuse = false) => ({
+    open: async (key: string, url: string) => {
+      calls.push(`open ${key} ${url}`);
+      if (refuse) throw new Error("refused");
+    },
+    focus: async (key: string, reason: string) => void calls.push(`focus ${key} ${reason}`),
+  });
+  it("a page that opens under the focused slot takes the keyboard", async () => {
+    const calls: string[] = [];
+    await openUnder(api(calls), "s/t", "https://a.test/", () => true);
+    expect(calls).toEqual(["open s/t https://a.test/", "focus s/t programmatic"]);
+  });
+  it("a page that opens while focus is elsewhere leaves the keyboard there", async () => {
+    const calls: string[] = [];
+    await openUnder(api(calls), "s/t", "https://a.test/", () => false);
+    expect(calls).toEqual(["open s/t https://a.test/"]);
+  });
+  it("a page the shell refused to open is not asked to take the keyboard", async () => {
+    const calls: string[] = [];
+    await openUnder(api(calls, true), "s/t", "http://tauri.localhost/", () => true);
+    expect(calls).toEqual(["open s/t http://tauri.localhost/"]);
   });
 });
 

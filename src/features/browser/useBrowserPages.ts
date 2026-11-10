@@ -2,6 +2,7 @@ import { useEffect, useEffectEvent, useMemo, useRef, useSyncExternalStore } from
 import type { PaneView } from "../../generated/PaneView";
 import { appScheme } from "../terminal/terminalTheme";
 import { isBrowserTab, tabsOf, type PaneAction } from "../pane/paneState";
+import { passingBlank } from "./address";
 import { browser, onBrowser, pageKey } from "./browserApi";
 import { nextLive } from "./pages";
 import { dispatchPage, pageIcon, startPageStore, subscribePages, type PageEvent } from "./pageStore";
@@ -34,6 +35,16 @@ export function popupActions(pane: PaneView, session: string, url: string, onScr
   if (before !== null) actions.push({ type: "select", session, paneTab: before });
   if (!pane.open) actions.push({ type: "hide" });
   return actions;
+}
+
+/**
+ * What a page's report does to its tab: the tab takes the page's address and title. Nothing for a page no tab holds, and nothing
+ * while a blank page is loading: a page reports `about:blank` before its first address has loaded, and the tab keeps the address
+ * it was saved with until the page is somewhere.
+ */
+export function pageAction(owner: Owner | undefined, p: { url: string; title: string; loading: boolean }): PaneAction | null {
+  if (!owner || passingBlank(p.url, p.loading)) return null;
+  return { type: "page", session: owner.session, paneTab: owner.paneTab, url: p.url, title: p.title === "" ? null : p.title };
 }
 
 /**
@@ -80,8 +91,8 @@ export function useBrowserPages(pane: PaneView, shownKey: string | null, { dispa
     const stops = [
       startPageStore(),
       onBrowser("state", (p) => {
-        const owner = ownersRef.current.get(p.key);
-        if (owner) send({ type: "page", session: owner.session, paneTab: owner.paneTab, url: p.url, title: p.title === "" ? null : p.title });
+        const action = pageAction(ownersRef.current.get(p.key), p);
+        if (action) send(action);
       }),
       onBrowser("popup", (p) => {
         const owner = ownersRef.current.get(p.key);

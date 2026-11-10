@@ -103,6 +103,7 @@ it("reports the window as focused while a page has the keyboard, though the docu
   focused = false;
   const h = mountHook(() => useViewReport(ep(1), ["a"], send));
   vi.advanceTimersByTime(250);
+  dispatchPage({ type: "opening", key: "s/p" });
   send.mockClear();
   dispatchPage({ type: "focus", key: "s/p", focused: true });
   vi.advanceTimersByTime(250);

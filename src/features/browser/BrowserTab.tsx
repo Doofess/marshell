@@ -3,7 +3,7 @@ import { BLANK } from "./address";
 import { browser, type NavAction } from "./browserApi";
 import { usePageCovered } from "./pageCover";
 import { enterReason, isQuiet, quietly } from "./pageFocus";
-import { usePage, type PageState } from "./pageStore";
+import { openPage, usePage, type PageState } from "./pageStore";
 import { UrlBar, type UrlBarHandle } from "./UrlBar";
 import { usePageSlot } from "./usePageSlot";
 import "./BrowserTab.css";
@@ -115,7 +115,9 @@ export function BrowserTab({ pageKey, url, active, available = true, onPage, onO
     const tab = slot.current?.parentElement;
     const stillInBar = () => document.activeElement instanceof HTMLInputElement && tab?.contains(document.activeElement) === true;
     // The slot takes focus quietly: the page is told to take the keyboard right after, and must not be entered twice.
-    void goTo(browser, pageKey, page !== undefined, to, stillInBar, () => quietly(() => slot.current?.focus({ preventScroll: true })));
+    // A page the shell doesn't have (never made, refused, unloaded) opens at the address; a page it has goes there.
+    const api = { nav: browser.nav, open: openPage, focus: browser.focus };
+    void goTo(api, pageKey, page?.live === true, to, stillInBar, () => quietly(() => slot.current?.focus({ preventScroll: true })));
   };
   // Tab reached the slot from an app element: the page starts at its first element, or its last when Shift+Tab came from after it
   // (S12 finding 9). Focus arriving with no element before it is the window coming back, which useBrowserKeys's handback deals with;

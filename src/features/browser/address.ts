@@ -1,6 +1,9 @@
 export const SEARCH_URL = "https://www.google.com/search?q=";
 export const BLANK = "about:blank";
 
+/** A page reports `about:blank` while its first address loads: that is not where the page is. A blank page that has loaded is. */
+export const passingBlank = (url: string, loading: boolean): boolean => loading && url === BLANK;
+
 /** The longest address a browser tab may hold: the layout file refuses a longer one, and with it every save of the layout. */
 const URL_MAX = 4096;
 

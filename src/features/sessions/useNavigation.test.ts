@@ -36,6 +36,7 @@ describe("focusKindOf", () => {
   });
 
   it("is a control, in the side pane and not in a terminal, while a page has the keyboard, wherever document.activeElement says", () => {
+    dispatchPage({ type: "opening", key: "s/p" });
     dispatchPage({ type: "focus", key: "s/p", focused: true });
     try {
       expect(focusKindOf(el([".xterm"], "TEXTAREA"))).toBe("control");
