@@ -545,7 +545,7 @@ Session state is exactly as in brief §4, plus `unseen_done`, `waiting_since_ms`
   - It opens with a `Snapshot {sessions, lane, plan_usage, doctor_summary}`.
   - After that, the core sends a `Patch[]` batch every 100 ms: `SessionPatch`, `PermissionCard`, `DoctorStatus`. `PermissionCard` and needs-you patches **skip the batch** and go out immediately, to meet the 150 ms hook-to-card budget.
   - The client reports `UiView {window_focused, visible_tabs}` through `PUT /v1/ui/view` (slice 4a), which the notification rules and the native-recap focus trick both need.
-- **Tauri events** are OS-level only: notification activated → `{tab_id}`, single-instance argv, tray menu actions.
+- **Tauri events** are OS-level only: notification activated → `{tab_id}`, single-instance argv, tray menu actions, and a browser page's state, keys, focus, icon, drag and popup events (the `browser://` prefix: `state`, `failed`, `focus`, `key`, `focus-out`, `icon`, `drag`, `refused`, `gone`, `popup`). The shell sends the page's events to the app's own webview only (`emit_to("main")`).
 - **Notifications are decided in the core** (`crates/core/src/notify/`, slice 4a). Each `NotifyRequest` (banner, sound, flash) goes to the app shell through the supervisor's `CoreEvent::Notify`, not to the webview, and the shell shows it. The webview keeps only the taskbar badge count. In v2's daemon the same requests travel over the daemon's channel to the shell.
 
 ## 4. Data model: where state lives

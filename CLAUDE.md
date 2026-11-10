@@ -37,6 +37,8 @@ Run it with the `marshell-live-check` skill: `pnpm tauri dev` against scratch ho
 - xterm.js 6 on Windows: Ctrl+V reaches the CLI as ^V and fires no paste event, and Ctrl+Shift+V is the terminal's paste.
 - Enabling Tauri's native file drop disables in-page HTML5 drag and drop on Windows.
 - The webview's CSP allows only the app and loopback. A request to anywhere else is blocked in dev and in the build, and shows only as a CSP error in the webview console.
+- A browser page is a child webview drawn above the app's webview. Anything drawn over the side pane (a menu, dialog, sheet or drag overlay) must call `useCoverPage` (`src/features/browser/pageCover.ts`), and a test lists the overlays that don't.
+- Once a browser page exists, `get_webview_window("main")` returns None. The shell uses `main_window`.
 
 ## Compact instructions
 
