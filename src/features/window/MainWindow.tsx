@@ -17,7 +17,7 @@ import type { RowModel } from "../sidebar/types";
 import { ScriptedTerminal } from "../terminal/ScriptedTerminal";
 import { SHELL_SIZE, shellSession } from "../terminal/scriptedShell";
 import type { TerminalThemeSetting } from "../terminal/terminalTheme";
-import { COMPOSER, DRAWER, STATUS_BAR_HEIGHT, SIDEBAR, drawerPlacement, sidebarMode, sidebarWidth as widthFor, type SidebarMode, type SidebarPref } from "./layout";
+import { COMPOSER, DRAWER, STATUS_BAR_HEIGHT, SIDEBAR, drawerPlacement, sidebarWidth as widthFor, type SidebarMode, type SidebarPref } from "./layout";
 import { SearchIcon } from "./SearchIcon";
 import { SidebarIcon } from "./SidebarIcon";
 import { isTool } from "../../components/AgentMark/kinds";
@@ -34,6 +34,7 @@ import type { RunControl } from "../scripts/confirmScripts";
 import { windowTitle } from "./windowTitle";
 import { Sidebar, type SidebarFooter } from "./Sidebar";
 import { shellNameFor } from "./ShellPanel";
+import { mainRoom } from "./paneColumn";
 import { PANE, draggedWidth, paneGeometry, paneMotionKey } from "./paneLayout";
 import { useLayoutMotion } from "./motion";
 import { FitHoldContext } from "../terminal/fitHold";
@@ -253,11 +254,10 @@ export function MainWindow({
   mainView,
 }: MainWindowProps) {
   const pref: SidebarPref = sidebarPref ?? (layout === "focus" ? "focus" : layout === "rail" ? "rail" : "expanded");
-  const mode = sidebarMode(width, pref);
+  const { mode, side: sideW, pushed, room: spaceW } = mainRoom(width, { pref, sidebarWidth, drawer });
   // An expanded preference in a window under 960 px is shown as the rail, and the sidebar cannot open there.
   const blocked = sidebarToggleFor(pref, mode) === null;
   const shellOptions: ShellOptions = typeof shell === "object" ? shell : {};
-  const sideW = widthFor(mode, sidebarWidth);
   const expandedW = widthFor("expanded", sidebarWidth);
   // The column's width is an animated number. While it moves it shows its widest end (the sidebar for the rail, the rail for
   // focus mode) at that end's own width, clipped, and swaps to the settled one when the motion ends.
@@ -291,8 +291,6 @@ export function MainWindow({
   // A manual CLI is a plain terminal: no prompt line under it.
   const showFull = showComposer && selected !== null && hasPromptLine(selected);
   const showStatus = statusBar && mode !== "focus";
-  const pushed = drawer && placement === "push" ? DRAWER.default : 0;
-  const spaceW = width - sideW - pushed;
   // The OS title bar and the taskbar name the shown session, like any window named for its document.
   const title = windowTitle(selected, needsYou);
   useEffect(() => {
