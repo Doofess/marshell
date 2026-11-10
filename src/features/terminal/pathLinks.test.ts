@@ -95,7 +95,7 @@ describe("pathLinkProvider", () => {
     expect(resolve).toHaveBeenCalledTimes(2);
   });
 
-  it("opens the preview on Ctrl+click (Cmd on macOS), not on a plain click", async () => {
+  it("opens the side pane on Ctrl+click (Cmd on macOS), not on a plain click", async () => {
     const open = vi.fn();
     const resolve = async (_tab: string, c: string[]) => c.map(() => "/p/a.rs");
     const lin = pathLinkProvider(term(["a.rs:3:2"]), "t1", "linux", open, resolve);
@@ -126,7 +126,7 @@ describe("pathLinkProvider", () => {
   });
 
   it("words the hint for the platform", () => {
-    expect(previewHint("windows")).toBe("Ctrl+click to preview");
-    expect(previewHint("macos")).toBe("⌘+click to preview");
+    expect(previewHint("windows")).toBe("Ctrl+click to open in the side pane");
+    expect(previewHint("macos")).toBe("⌘+click to open in the side pane");
   });
 });

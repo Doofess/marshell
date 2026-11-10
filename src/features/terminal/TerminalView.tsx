@@ -11,7 +11,7 @@ import { imageOnlyPaste } from "../regions/imagePaste";
 import { PtySocket } from "../../lib/api/ptySocket";
 import { trustedSink } from "../../lib/api/elevated";
 import { LatencyMeter } from "../perf/latency";
-import { useOpenPreview } from "../preview/PreviewContext";
+import { useOpenInPane } from "../pane/PaneContext";
 import { PerfOverlay } from "../perf/PerfOverlay";
 import { ENDED_LINE, FAILED_LINE, SESSION_ENDED } from "./coreRestart";
 import { jumpFrom, promptTarget, trackPrompts, type Prompt } from "./promptMarks";
@@ -164,10 +164,10 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
   jumpRef.current = onPromptJump;
   const lastJump = useRef<number | null>(null);
   const landedRef = useRef<number | null>(null);
-  // Ctrl+click on a path in the output opens it in the preview; the terminal keeps the latest opener without restarting.
-  const openPreview = useOpenPreview();
-  const previewRef = useRef(openPreview);
-  previewRef.current = openPreview;
+  // Ctrl+click on a path in the output opens it in the side pane; the terminal keeps the latest opener without restarting.
+  const openInPane = useOpenInPane();
+  const paneRef = useRef(openInPane);
+  paneRef.current = openInPane;
   const themeRef = useRef(theme);
   themeRef.current = theme;
   // Re-applies the theme to the live terminal; set while a terminal exists.
@@ -205,7 +205,7 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
     termRef.current = term;
     loadRenderer(term, endpoint.platform, setRenderer);
     // The provider is disposed with the terminal.
-    term.registerLinkProvider(pathLinkProvider(term, tabId, endpoint.platform, (entry) => previewRef.current(entry)));
+    term.registerLinkProvider(pathLinkProvider(term, tabId, endpoint.platform, (entry) => paneRef.current(entry)));
     const unregister = registerTerminal(tabId, () => term.buffer.active);
     term.attachCustomKeyEventHandler((e) => {
       if (isPerfToggle(e)) {

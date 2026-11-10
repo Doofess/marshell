@@ -89,7 +89,7 @@ describe("COMMANDS", () => {
     expect(() => commandById("prev-pane")).toThrow();
     expect(win("nav-next-pane")).toBe("Ctrl+Shift+Tab");
     expect(mac("nav-next-pane")).toBe("⌃⇧Tab");
-    expect(commandById("nav-next-pane").label).toBe("Select the terminal");
+    expect(commandById("nav-next-pane").label).toBe("Switch between the terminal and the side pane");
     // The navigation modifier already holds Shift, so Tab cannot also mean "backwards": the arrows go the other way.
     expect(() => commandById("nav-prev-pane")).toThrow();
     expect(win("nav-none")).toBe("Ctrl+Shift+Backspace");
@@ -105,7 +105,7 @@ describe("COMMANDS", () => {
 
   it("the split commands are gone", () => {
     for (const id of ["split", "unsplit", "layout", "zoom-pane"]) expect(COMMANDS.some((c) => c.id === id), id).toBe(false);
-    expect(commandById("nav-next-pane").label).toBe("Select the terminal");
+    expect(commandById("nav-next-pane").label).toBe("Switch between the terminal and the side pane");
     expect(win("cheatsheet")).toBe("Ctrl+Shift+O");
   });
   it("the freed keys run no command", () => {

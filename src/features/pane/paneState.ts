@@ -4,6 +4,8 @@ import type { PaneView } from "../../generated/PaneView";
 import type { RecentFile } from "../../generated/RecentFile";
 import type { SessionTabs } from "../../generated/SessionTabs";
 
+export type { PaneEntry };
+
 /** The pane's limits: tabs per session, history entries per tab, recent files saved and shown, and tabs kept loaded. */
 export const PANE_LIMITS = { tabs: 32, history: 50, recent: 200, shownRecent: 10, kept: 4 } as const;
 

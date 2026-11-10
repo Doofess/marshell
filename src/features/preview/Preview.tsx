@@ -17,8 +17,8 @@ import { kindOf, languageOf, splitPath } from "./kinds";
 import type { LinkTarget } from "./links";
 import { MarkdownView } from "./MarkdownView";
 import { PdfView } from "./pdf/PdfView";
-import type { OpenPreview } from "./PreviewContext";
-import type { PreviewEntry } from "./previewState";
+import type { OpenInPane } from "../pane/PaneContext";
+import type { PaneEntry, View } from "../pane/paneState";
 import { usePreviewFile, type FileState } from "./usePreviewFile";
 import { WebLinkBar } from "./WebLinkBar";
 import "./Preview.css";
@@ -38,7 +38,7 @@ const arrow = (d: string) => (
 );
 
 export type PreviewPaneProps = {
-  entry: PreviewEntry;
+  entry: PaneEntry;
   file: FileState;
   /** A refetch just happened: the header says "Updated" for a moment. */
   updated: boolean;
@@ -50,9 +50,9 @@ export type PreviewPaneProps = {
   onBack: () => void;
   onForward: () => void;
   /** A local link in a document: opens that file here, pushing history. */
-  onOpen: OpenPreview;
+  onOpen: OpenInPane;
   /** The Rendered / Source toggle of a Markdown or HTML file. */
-  onView: (view: PreviewEntry["view"]) => void;
+  onView: (view: View) => void;
   /** The tab is the selected one; a kept tab that isn't takes no focus and checks its file no more. */
   active: boolean;
   /** Escape: focus goes back to the session's terminal and the pane stays open. */
@@ -80,7 +80,7 @@ type Key = { key: string; ctrlKey: boolean; altKey: boolean; metaKey: boolean; s
 type Outbound = Exclude<LinkTarget, { kind: "anchor" } | { kind: "none" }>;
 
 type BodyProps = {
-  entry: PreviewEntry;
+  entry: PaneEntry;
   file: FileState;
   onImageSize: (url: string, w: number, h: number) => void;
   onPages: (count: number) => void;

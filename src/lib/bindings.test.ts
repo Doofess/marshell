@@ -137,6 +137,17 @@ describe("preview", () => {
     expect(findCommand(ev("KeyQ", { metaKey: true, altKey: true }), "mac")?.id).toBe("preview");
     expect(findCommand(ev("KeyQ", { metaKey: true }), "mac")).toBeUndefined();
   });
+  it("reads Side pane, and has the pane's commands in the Window group with no binding", () => {
+    expect(commandById("preview").label).toBe("Side pane");
+    expect(commandById("nav-next-pane").label).toBe("Switch between the terminal and the side pane");
+    const labels = { "pane-next-tab": "Next tab", "pane-previous-tab": "Previous tab", "pane-close-tab": "Close tab", "browse-file": "Browse…" };
+    for (const [id, label] of Object.entries(labels)) {
+      expect(commandById(id).label, id).toBe(label);
+      expect(commandById(id).group, id).toBe("Window");
+      expect(commandById(id).binding, id).toBeUndefined();
+    }
+    for (const os of OSES) expect(problemsIn(COMMANDS, os), os).toEqual([]);
+  });
   it("has the open-file command with no default binding", () => {
     expect(commandById("open-file").label).toBe("Open file…");
     expect(commandById("open-file").binding).toBeUndefined();

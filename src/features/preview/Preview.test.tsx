@@ -6,7 +6,7 @@ import type { FileState } from "./usePreviewFile";
 
 const noop = () => {};
 const base: PreviewPaneProps = {
-  entry: { path: "C:\\dev\\app\\src\\a.rs", view: "rendered" },
+  entry: { path: "C:\\dev\\app\\src\\a.rs", line: null, col: null, view: "rendered" },
   file: { phase: "loading" },
   updated: false,
   theme: PALETTES.dark,
@@ -65,7 +65,7 @@ describe("PreviewPane", () => {
     expect(html({ phase: "binary" })).toContain("This file isn&#x27;t text.");
   });
   it("shows a PDF in the PDF view, not the old placeholder", () => {
-    const out = html({ phase: "pdf", bytes: new ArrayBuffer(8), version: 0 }, { entry: { path: "C:\\docs\\a.pdf", view: "rendered" } });
+    const out = html({ phase: "pdf", bytes: new ArrayBuffer(8), version: 0 }, { entry: { path: "C:\\docs\\a.pdf", line: null, col: null, view: "rendered" } });
     expect(out).not.toContain("later update");
     expect(out).toContain('data-kind="pdf"');
   });
@@ -101,8 +101,8 @@ describe("PreviewPane", () => {
 });
 
 describe("Rendered and Source", () => {
-  const md = { entry: { path: "C:\\p\\docs\\a.md", view: "source" as const } };
-  const page = (view: "rendered" | "source") => ({ entry: { path: "C:\\p\\site\\index.html", view } });
+  const md = { entry: { path: "C:\\p\\docs\\a.md", line: null, col: null, view: "source" as const } };
+  const page = (view: "rendered" | "source") => ({ entry: { path: "C:\\p\\site\\index.html", line: null, col: null, view } });
   const text: FileState = { phase: "text", text: "<h1>Hi</h1>\n" };
 
   it("offers the toggle for Markdown and HTML, with the current view pressed", () => {
@@ -140,9 +140,9 @@ describe("formatSize", () => {
 
 describe("PreviewPane: select region", () => {
   it("offers the button on an image and on a PDF, not on Markdown", () => {
-    const image = html({ phase: "image", url: "blob:x" }, { entry: { path: "C:\\a\\p.png", view: "rendered" } });
-    const pdf = html({ phase: "pdf", bytes: new ArrayBuffer(0), version: 1 }, { entry: { path: "C:\\a\\p.pdf", view: "rendered" } });
-    const md = html({ phase: "text", text: "# hi" }, { entry: { path: "C:\\a\\p.md", view: "source" } });
+    const image = html({ phase: "image", url: "blob:x" }, { entry: { path: "C:\\a\\p.png", line: null, col: null, view: "rendered" } });
+    const pdf = html({ phase: "pdf", bytes: new ArrayBuffer(0), version: 1 }, { entry: { path: "C:\\a\\p.pdf", line: null, col: null, view: "rendered" } });
+    const md = html({ phase: "text", text: "# hi" }, { entry: { path: "C:\\a\\p.md", line: null, col: null, view: "source" } });
     expect(image).toContain("Select region");
     expect(image).toContain('title="Select region (R)"');
     // A PDF is offered it once its document has loaded, not while it is loading or when it failed (the first render has none).

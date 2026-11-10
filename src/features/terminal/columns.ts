@@ -14,3 +14,13 @@ function measureCell(font: Font): number {
 export function columnsWidth(cols: number, font: Font, measure: (font: Font) => number = measureCell): number {
   return cols * measure(font);
 }
+
+/** Both sides of the gutter on xterm's element: `.terminal-host .xterm { padding: var(--space-2) }` in src/styles/app.css, 8 px each. */
+export const TERMINAL_HOST_PADDING = 16;
+/** The scrollbar FitAddon leaves out of the width while `scrollback` is above 0 and no `overviewRuler` width is set: xterm's default of 14 px. */
+export const TERMINAL_SCROLLBAR = 14;
+
+/** The least width of a terminal host that still fits `cols` columns: the columns, the host's padding and the scrollbar's gutter. */
+export function terminalFloorWidth(cols: number, font: Font, measure?: (font: Font) => number): number {
+  return Math.ceil(columnsWidth(cols, font, measure)) + TERMINAL_HOST_PADDING + TERMINAL_SCROLLBAR;
+}

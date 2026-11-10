@@ -1,13 +1,13 @@
-/* The terminal (or the preview) under a dragged file. The label is generated content, so it is not in the accessibility tree; the drop is announced.
+/* The terminal (or the side pane) under a dragged file. The label is generated content, so it is not in the accessibility tree; the drop is announced.
  * The frame is drawn on an ::after layer, never on the element itself: xterm's viewport is positioned and opaque, and paints over its host's
  * own outline. */
-.preview[data-drop-over],
+.side-pane[data-drop-over],
 .terminal-host[data-drop-over] {
   position: relative;
 }
 
 .terminal-host[data-drop-over]::after,
-.preview[data-drop-over]::after {
+.side-pane[data-drop-over]::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -34,7 +34,7 @@
 
 @media (forced-colors: active) {
   .terminal-host[data-drop-over]::after,
-  .preview[data-drop-over]::after {
+  .side-pane[data-drop-over]::after {
     outline-color: Highlight;
   }
 

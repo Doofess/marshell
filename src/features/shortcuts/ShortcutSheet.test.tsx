@@ -35,7 +35,7 @@ describe("ShortcutSheet", () => {
     const groups = sheetGroups("windows").map((g) => g.title);
     expect(groups).toEqual(["Navigation", "Session", "Terminal", "Window", "App"]);
     const w = html("windows");
-    expect(w).toContain("Select the terminal");
+    expect(w).toContain("Switch between the terminal and the side pane");
     expect(w).toContain("Ctrl+Shift+Tab");
     expect(w).toContain("Ctrl+Shift+Backspace");
     expect(w).toContain("Ctrl+Shift+←↑↓→");

@@ -62,7 +62,7 @@ describe("SidePane", () => {
 
   it("a tab whose file can't be read still shows in the strip and closes", () => {
     const pane: PreviewPaneProps = {
-      entry: { path: "C:\\w\\a.md", view: "rendered" },
+      entry: { path: "C:\\w\\a.md", line: null, col: null, view: "rendered" },
       file: { phase: "error" },
       updated: false,
       theme: PALETTES.dark,

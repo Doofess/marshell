@@ -89,7 +89,7 @@ export type LiveHistoryProps = {
   onGoTo: (tabId: string) => void;
   /** The conversation was resumed in this new tab. */
   onResumed: (tabId: string) => void;
-  /** A file link in assistant text: the window opens it in the preview, as the preview's own links do. */
+  /** A file link in assistant text: the window opens it in the side pane, as a pane tab's own links do. */
   onOpenFile: (link: { path: string; line?: number }) => void;
   onClose: () => void;
   /** Opens the History settings dialog, which the window owns. */
