@@ -162,10 +162,10 @@ function SessionResumeBar({ endpoint, info, profileName, ...props }: Omit<Compon
   return answer?.endpoint === endpoint && <ResumeBar {...props} command={sessionResumeCommand(info, profileName, answer.command)} folder={info.cwd} />;
 }
 
-/** The size of the element, kept up to date with a ResizeObserver. Starts at the window's size. */
 /** What the announcer calls a pane tab: a browser tab's title, a file tab's name. */
 const paneTabName = (tab: PaneTab, titles: ReadonlyMap<string, string>): string => (isBrowserTab(tab) ? (titles.get(tab.id) ?? "page") : lastSegment(currentEntry(tab).path));
 
+/** The size of the element, kept up to date with a ResizeObserver. Starts at the window's size. */
 function useElementSize() {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: window.innerWidth, height: window.innerHeight });
