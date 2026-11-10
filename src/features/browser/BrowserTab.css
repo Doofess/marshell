@@ -1,0 +1,153 @@
+/*
+ * A browser tab: the URL bar and its status line over a slot. The slot is empty on purpose: the shell's page is a native webview
+ * placed over it, so the slot's box is the page's box. While the page is frozen the slot holds its picture (or a plain fill).
+ * The bar's tooltips are the buttons' own `title`s: an HTML tooltip would be drawn behind the page.
+ */
+.browser-tab {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+  min-block-size: 0;
+  background: var(--bg-base);
+  color: var(--text-1);
+  font-size: var(--text-13);
+}
+
+.url-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  min-inline-size: 0;
+  padding: var(--space-1) var(--space-2);
+  background: var(--bg-raised);
+}
+.url-bar__button {
+  display: grid;
+  flex: none;
+  place-items: center;
+  inline-size: 28px;
+  block-size: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-2);
+}
+.url-bar__button:disabled {
+  opacity: 0.4;
+}
+.url-bar__box {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  block-size: 28px;
+  padding-inline: var(--space-3);
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-1);
+  font-size: var(--text-13);
+  text-overflow: ellipsis;
+}
+.url-bar__box::placeholder {
+  color: var(--text-3);
+}
+.url-bar__status {
+  flex: none;
+  margin: 0;
+  padding: var(--space-1) var(--space-3);
+  background: var(--bg-raised);
+  color: var(--text-2);
+  font-size: var(--text-12);
+  overflow-wrap: break-word;
+}
+
+.browser-tab__slot {
+  display: grid;
+  flex: 1 1 0;
+  min-inline-size: 0;
+  min-block-size: 0;
+  overflow: clip;
+  background: var(--bg-base);
+}
+/* The picture and the fill share the slot's one cell and fill it exactly, so the picture lands where the page was. */
+.browser-tab__picture,
+.browser-tab__fill {
+  grid-area: 1 / 1;
+  inline-size: 100%;
+  block-size: 100%;
+}
+.browser-tab__picture {
+  object-fit: fill;
+}
+.browser-tab__fill {
+  background: var(--bg-base);
+}
+
+/* Where the shell has no browser tabs. */
+.browser-tab--unavailable {
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+.browser-tab__note {
+  margin: 0;
+  color: var(--text-2);
+}
+.browser-tab__button {
+  padding: var(--space-1) var(--space-3);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--hover);
+  color: var(--text-1);
+  font: inherit;
+  text-align: start;
+}
+.browser-tab__button:disabled {
+  opacity: 0.4;
+}
+
+.url-bar__button:focus-visible,
+.url-bar__box:focus-visible,
+.browser-tab__slot:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+.browser-tab__button:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+.url-bar__button:active:not(:disabled),
+.browser-tab__button:active:not(:disabled) {
+  box-shadow: inset 0 0 0 100vmax var(--selected);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .url-bar__button:hover:not(:disabled) {
+    background: var(--hover);
+    color: var(--text-1);
+  }
+  .browser-tab__button:hover:not(:disabled) {
+    background: var(--selected);
+  }
+}
+
+@media (forced-colors: active) {
+  /* A fill is not drawn in forced colours, so the box and the button keep their edge with a system-colour line. */
+  .url-bar__box {
+    border: 1px solid CanvasText;
+  }
+  .browser-tab__button {
+    border: 1px solid ButtonText;
+  }
+  .url-bar__button:disabled,
+  .browser-tab__button:disabled {
+    color: GrayText;
+    opacity: 1;
+  }
+  .url-bar__button:focus-visible,
+  .url-bar__box:focus-visible,
+  .browser-tab__slot:focus-visible,
+  .browser-tab__button:focus-visible {
+    outline-color: CanvasText;
+  }
+}

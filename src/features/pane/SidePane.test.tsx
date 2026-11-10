@@ -53,6 +53,22 @@ describe("SidePane", () => {
     expect(out).toMatch(/aria-label="Hide the side pane" title="Hide the side pane \(Ctrl\+Shift\+Q\)"/);
     expect(out.indexOf('aria-label="Close b.rs"')).toBeLessThan(out.indexOf('aria-label="New tab"'));
   });
+  it("a browser tab shows its site's icon, or a globe", () => {
+    const site = html({ tabs: [{ id: "b1", title: "Example", path: "https://example.com/", icon: "data:image/png;base64,AAAA" }], activeId: "b1" });
+    expect(site).toMatch(/<img[^>]*alt=""[^>]*src="data:image\/png;base64,AAAA"|<img[^>]*src="data:image\/png;base64,AAAA"[^>]*alt=""/);
+    expect(site).toContain("side-pane__icon");
+    const globe = html({ tabs: [{ id: "b1", title: "Example", path: "https://example.com/", icon: "globe" }], activeId: "b1" });
+    expect(globe).not.toContain("<img");
+    expect(globe).toMatch(/<svg[^>]*class="side-pane__icon"[^>]*aria-hidden="true"|<svg[^>]*aria-hidden="true"[^>]*class="side-pane__icon"/);
+    // The icon sits inside the tab button, before the title.
+    expect(globe.indexOf("side-pane__icon")).toBeLessThan(globe.indexOf("side-pane__title"));
+    expect(globe.indexOf('role="tab"')).toBeLessThan(globe.indexOf("side-pane__icon"));
+  });
+  it("a file tab shows no icon", () => {
+    const out = html();
+    expect(out).not.toContain("side-pane__icon");
+    expect(out).not.toContain("<img");
+  });
   it("with no tabs shows no tablist, and still the two buttons", () => {
     const out = html({ tabs: [], activeId: null });
     expect(out).not.toContain('role="tablist"');

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { ContextMenu, type MenuItem } from "../../components/ContextMenu/ContextMenu";
 import type { PortMenuRequest } from "../ports/PortChips";
 import { chipLabel, chipMenuItems, runChipItem } from "../ports/ports";
@@ -34,7 +34,7 @@ import type { RunControl } from "../scripts/confirmScripts";
 import { windowTitle } from "./windowTitle";
 import { Sidebar, type SidebarFooter } from "./Sidebar";
 import { shellNameFor } from "./ShellPanel";
-import { mainRoom } from "./paneColumn";
+import { LayoutContext, mainRoom, type Layout } from "./paneColumn";
 import { PANE, draggedWidth, paneGeometry, paneMotionKey } from "./paneLayout";
 import { useLayoutMotion } from "./motion";
 import { FitHoldContext } from "../terminal/fitHold";
@@ -329,6 +329,17 @@ export function MainWindow({
   // or a window resize that leaves both alone changes only the target, which the motion follows at once.
   const paneMotion = useLayoutMotion(paneMotionKey(geometry.mode, mode), geometry.pane);
   const layoutMoving = sideMotion.moving || paneMotion.moving;
+  // A page in the pane follows the layout from these: the column's inputs, and whether anything is moving. The direction is read
+  // once the window is drawn, since it is the document's and a render can't know it.
+  const [rtl, setRtl] = useState(false);
+  useEffect(() => {
+    if (mainRef.current) setRtl(getComputedStyle(mainRef.current).direction === "rtl");
+  });
+  const paneListed = paneShown && !viewing && !empty;
+  const layoutValue = useMemo<Layout>(
+    () => ({ inputs: { pref, sidebarWidth, drawer, shown: paneListed, saved: paneWidth, terminalMin: terminalMinWidth, rtl }, moving: layoutMoving }),
+    [pref, sidebarWidth, drawer, paneListed, paneWidth, terminalMinWidth, rtl, layoutMoving],
+  );
   const roomNow = Math.max(0, width - sideAnim - pushed);
   const paneP = Math.max(0, Math.min(Math.round(paneMotion.value), roomNow));
   // A hide keeps drawing the last pane until its motion ends, so the node is kept (in the same slot, so its state stays).
@@ -459,6 +470,7 @@ export function MainWindow({
         <div className="window__center">
         {/* The terminal is slot 0 to the keyboard cursor. */}
         <FitHoldContext.Provider value={layoutMoving}>
+        <LayoutContext.Provider value={layoutValue}>
         <main
           ref={mainRef}
           className="window__main"
@@ -544,6 +556,7 @@ export function MainWindow({
             </aside>
           )}
         </main>
+        </LayoutContext.Provider>
         </FitHoldContext.Provider>
         {toast}
         {showFull && selected && (

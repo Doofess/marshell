@@ -43,7 +43,10 @@
   min-inline-size: 96px;
 }
 .side-pane__tab {
+  display: flex;
   flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-2);
   min-inline-size: 0;
   padding-block: 0;
   padding-inline: var(--space-3) calc(var(--space-2) + 20px);
@@ -58,8 +61,17 @@
   background: var(--bg-base);
   color: var(--text-1);
 }
+/* A browser tab's site icon or globe, 14 px, before the title. */
+.side-pane__icon {
+  flex: none;
+  inline-size: 14px;
+  block-size: 14px;
+  object-fit: contain;
+}
 .side-pane__title {
   display: block;
+  flex: 0 1 auto;
+  min-inline-size: 0;
   overflow: clip;
   text-overflow: ellipsis;
   white-space: nowrap;

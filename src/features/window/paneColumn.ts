@@ -1,3 +1,4 @@
+import { createContext } from "react";
 import { DRAWER, drawerPlacement, sidebarMode, sidebarWidth as widthFor, type SidebarMode, type SidebarPref } from "./layout";
 import { PANE, paneGeometry } from "./paneLayout";
 
@@ -39,3 +40,7 @@ export function paneColumn(width: number, i: ColumnInputs): { x: number; width: 
   // The main area runs from `side` to `side + room` in a left-to-right window; the drawer is at the other end in a right-to-left one.
   return { x: i.rtl ? pushed : width - pushed - pane, width: pane };
 }
+
+/** What the window publishes for a page's slot: the inputs of the pane's column, and whether the layout is moving. Null outside the window. */
+export type Layout = { inputs: ColumnInputs; moving: boolean };
+export const LayoutContext = createContext<Layout | null>(null);
