@@ -3,8 +3,8 @@
 use std::path::{Path, PathBuf};
 use tauri_plugin_dialog::DialogExt;
 
-/// The folder the dialog opens in: `start`, only when it is an existing folder.
-fn start_folder(start: Option<&str>) -> Option<PathBuf> {
+/// The folder a dialog opens in: `start`, only when it is an existing folder. The file picker starts the same way.
+pub(crate) fn start_folder(start: Option<&str>) -> Option<PathBuf> {
     let path = Path::new(start?);
     path.is_dir().then(|| path.to_path_buf())
 }

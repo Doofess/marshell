@@ -53,6 +53,7 @@ import { COMPANY_NAMES, type CompanyAgent, type SettingsSection } from "../setti
 import { cliTaskRequest, exitedTasks, runningCount, updateResult, type CliTaskKind, type PendingTask } from "../settings/cliTasks";
 import { accountLine, UNREACHABLE } from "../accounts/accountsText";
 import { getAccount, getInstall } from "../../lib/api/accounts";
+import { pickFile } from "../../lib/filePicker";
 import { Preview } from "../preview/Preview";
 import { PaneContext } from "../pane/PaneContext";
 import { dropCover } from "../pane/dropCover";
@@ -149,12 +150,6 @@ function SessionResumeBar({ endpoint, info, profileName, ...props }: Omit<Compon
   }, [endpoint, info.tab_id, info.agent]);
   return answer?.endpoint === endpoint && <ResumeBar {...props} command={sessionResumeCommand(info, profileName, answer.command)} folder={info.cwd} />;
 }
-
-/**
- * "Browse…": the system's file dialog, to pick any file for the side pane. The shortcut kind, the + menu's row and the empty pane's
- * button all call this one function. It does nothing yet: Task 9 of the 6q-2 plan fills it in.
- */
-function browseFile(): void {}
 
 /** The size of the element, kept up to date with a ResizeObserver. Starts at the window's size. */
 function useElementSize() {
@@ -776,6 +771,19 @@ export function LiveApp() {
   const openInPaneRef = useRef(openInPane);
   openInPaneRef.current = openInPane;
   const paneOpener = useCallback((target: OpenTarget) => void openInPaneRef.current(target), []);
+  // "Browse…": the system's file dialog, to pick any file for the side pane. The command, the + menu's row and the empty pane's
+  // button all call it. The dialog starts in the session's folder and is modal to the window, so the session it was asked from is
+  // the one the file opens in. A file the core refuses to read shows the viewer's own message in its tab.
+  const browseFile = (): void => {
+    const s = stateRef.current;
+    if (s.focusedId === undefined) return announce(NO_SESSION_TO_OPEN);
+    pickFile(s.infos.find((i) => i.tab_id === s.focusedId)?.cwd ?? null).then(
+      (path) => {
+        if (path !== null) openInPaneRef.current({ path });
+      },
+      () => announce("Couldn't open the file dialog."),
+    );
+  };
   // The pane's four commands. Ctrl+Tab and the palette's next and previous tab never move focus.
   const paneRun = (shortcut: Extract<SessionShortcut, { kind: "preview" | "paneTab" | "closePaneTab" | "browse" }>) => {
     const pane = viewRef.current.pane;

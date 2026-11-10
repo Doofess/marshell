@@ -5,6 +5,7 @@ mod attention;
 mod capture;
 mod diagnostics;
 mod export;
+mod file_picker;
 mod folder_picker;
 mod link;
 mod notify;
@@ -293,7 +294,7 @@ fn main() {
                 .build(),
         )
         // Opens a web link in the person's browser, only after the preview's confirm; the capability limits it to http(s).
-        // No capability grants the dialog to the webview; only the `pick_folder` command opens it.
+        // No capability grants the dialog to the webview; only the `pick_folder` and `pick_file` commands open it.
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         // No capability grants notifications to the webview; only the shell shows banners.
@@ -387,6 +388,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             diagnostics::save_diagnostics,
             export::save_conversation,
+            file_picker::pick_file,
             folder_picker::pick_folder,
             core_endpoint,
             elevated_input,
