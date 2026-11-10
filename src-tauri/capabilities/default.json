@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "windows": ["main"],
+  "webviews": ["main"],
   "permissions": [
     "core:default",
     "core:webview:deny-internal-toggle-devtools",
@@ -14,6 +14,37 @@
     {
       "identifier": "opener:allow-open-url",
       "allow": [{ "url": "http://*" }, { "url": "https://*" }]
-    }
+    },
+    "allow-save-diagnostics",
+    "allow-save-conversation",
+    "allow-pick-file",
+    "allow-pick-folder",
+    "allow-core-endpoint",
+    "allow-elevated-input",
+    "allow-elevated-resize",
+    "allow-elevated-create",
+    "allow-elevated-restart",
+    "allow-elevated-resume",
+    "allow-elevated-reopen",
+    "allow-elevated-decide",
+    "allow-close-once",
+    "allow-capture-screen-region",
+    "allow-cancel-capture",
+    "allow-read-clipboard-image",
+    "allow-set-badge",
+    "allow-set-tray",
+    "allow-notification-link",
+    "allow-set-notification-link",
+    "allow-set-window-background",
+    "allow-browser-open",
+    "allow-browser-show",
+    "allow-browser-place",
+    "allow-browser-nav",
+    "allow-browser-close",
+    "allow-browser-keys",
+    "allow-browser-focus",
+    "allow-browser-capture",
+    "allow-browser-theme",
+    "allow-browser-clear-data"
   ]
 }

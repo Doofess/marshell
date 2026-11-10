@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import type { RepoScripts } from "../../generated/RepoScripts";
 import { useDialogFocus } from "../../lib/useDialogFocus";
+import { useCoverPage } from "../browser/pageCover";
 import "../window/CloseDialog.css";
 import { ScriptsTrust } from "./ScriptsTrust";
 
@@ -11,6 +12,7 @@ import { ScriptsTrust } from "./ScriptsTrust";
 export function ScriptsTrustDialog({ scripts, busy, error, allowLabel, cancelLabel, onAllow, onCancel }: { scripts: RepoScripts; busy: boolean; error: string | null; allowLabel: string; cancelLabel: string; onAllow: () => void; onCancel: () => void }) {
   const dialog = useRef<HTMLDivElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
+  useCoverPage();
   useDialogFocus(dialog, heading, onCancel);
   return (
     <div className="close-dialog">

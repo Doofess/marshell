@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { PaneTab } from "../../generated/PaneTab";
 import { KeptTabs } from "./KeptTabs";
 
-const tab = (id: string): PaneTab => ({ id, kind: "file", history: [{ path: `/p/${id}.md`, line: null, col: null, view: "rendered" }], index: 0 });
+const tab = (id: string): PaneTab => ({ id, kind: "file", history: [{ path: `/p/${id}.md`, line: null, col: null, view: "rendered" }], index: 0, title: null });
 const tabs = ["t1", "t2", "t3", "t4", "t5", "t6"].map(tab);
 const render = (t: PaneTab) => <i data-body={t.id} />;
 

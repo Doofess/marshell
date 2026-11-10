@@ -6,6 +6,7 @@ import type { SessionInfo } from "../../generated/SessionInfo";
 import { applyFix, doctorReport, lastFix, measureMcpServers, planFix, runCliDoctors, runDoctor, undoDifferences, undoFix } from "../../lib/api/doctor";
 import { ApiError } from "../../lib/api/client";
 import { useDialogFocus } from "../../lib/useDialogFocus";
+import { useCoverPage } from "../browser/pageCover";
 import { needsBypassAck, type SessionActions } from "../sessions/sessionActions";
 import { DoctorPage } from "./DoctorPage";
 import { doctorReducer, INITIAL_DOCTOR } from "./doctorModel";
@@ -45,6 +46,7 @@ export function LiveDoctor({ endpoint, summary, infos, isWorking, actions, annou
   const [nowMs, setNowMs] = useState(() => Date.now());
   const startedAt = useRef(Date.now());
   const root = useRef<HTMLDivElement>(null);
+  useCoverPage();
   const sheetOpen = useRef(false);
   sheetOpen.current = m.plan !== null || diff !== null;
   useDialogFocus(root, root, () => {

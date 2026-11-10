@@ -1,4 +1,5 @@
 import type { PaneView } from "../../generated/PaneView";
+import { isPageUrl, pageTitle } from "../browser/address";
 import { PANE_LIMITS, activeTab, openRefused, tabsOf } from "./paneState";
 
 /** What the announcer says for the side pane. */
@@ -10,6 +11,17 @@ export const openedText = (name: string) => `Opened ${name} in the side pane.`;
 export const closedText = (name: string) => `Closed ${name}.`;
 export const movedText = (name: string, to: number, count: number) => `Moved ${name} to position ${to + 1} of ${count}.`;
 export const coverText = (cover: string) => `Close ${cover} to open a file.`;
+
+export const PAGE_REFUSED = "That address can't be opened in the side pane.";
+/** What the announcer says for a page that opened: its host, or "New tab" for a blank one. */
+export const pageOpenedText = (url: string) => openedText(pageTitle(null, url));
+
+/** Whether an open of this web address can go ahead: a session on screen, an address a page may hold, and room in the session (or the address already open). */
+export function pageOpenCheck(pane: PaneView, session: string | null | undefined, url: string): "no-session" | "refused" | "limit" | "ok" {
+  if (session == null) return "no-session";
+  if (!isPageUrl(url)) return "refused";
+  return openRefused(pane, session, url) ? "limit" : "ok";
+}
 
 /** Whether an open of this path can go ahead: it needs a session on screen, and a session with room (or already showing the path). */
 export function openCheck(pane: PaneView, session: string | null | undefined, path: string): "no-session" | "refused" | "ok" {

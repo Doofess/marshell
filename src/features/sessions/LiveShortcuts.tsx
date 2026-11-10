@@ -4,6 +4,7 @@ import type { KeyEventLike } from "../../lib/bindings";
 import { NAV_COMMAND_IDS, type Os } from "../../lib/keymap";
 import type { NavModifier } from "../../lib/navigation/modifier";
 import { useDialogFocus } from "../../lib/useDialogFocus";
+import { useCoverPage } from "../browser/pageCover";
 import { ShortcutSheet } from "../shortcuts/ShortcutSheet";
 import "./LiveShortcuts.css";
 
@@ -24,6 +25,7 @@ export const closesShortcuts = (e: KeyEventLike, os: Os): boolean => sessionShor
 export function LiveShortcuts({ os, nav, onClose }: { os: Os; nav?: NavModifier; onClose: () => void }) {
   const dialog = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  useCoverPage();
   useDialogFocus(dialog, dialog, onClose);
   const onKeyDown = (e: KeyboardEvent) => {
     if (!closesShortcuts(e, os)) return;

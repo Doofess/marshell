@@ -5,6 +5,7 @@ import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { GLYPHS } from "../../components/StatusGlyph/glyphs";
 import { COMMANDS, commandById, shortcutLabel, type Command, type Os } from "../../lib/keymap";
 import { usePopupFocus } from "../../lib/usePopupFocus";
+import { useCoverPage } from "../browser/pageCover";
 import { filterCommands, filterSessions, highlight, parseSessionNumber, sessionDetail, type Hit, type Range, type SessionHit } from "../launcher/filter";
 import { emptyBox } from "./paletteList";
 import { rankFiles, splitPath, type FileHit } from "../preview/quickOpen";
@@ -180,6 +181,7 @@ export function Palette({
   const { query } = view;
   // Ids are per palette (the review page shows many at once), so two never share an id.
   const uid = useId();
+  useCoverPage();
   const optId = (i: number) => `${uid}-opt-${i}`;
   const listId = `${uid}-list`;
   const list = useRef<HTMLUListElement>(null);

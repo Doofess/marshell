@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PortChip } from "../../generated/PortChip";
 import { chipLabel, chipMenuItems, isLoopbackUrl } from "./ports";
+import { openChipIn } from "./ports";
 
 const chip = (port: number, url = `http://localhost:${port}/`): PortChip => ({ port, url });
 
@@ -34,5 +35,39 @@ describe("chipMenuItems", () => {
   });
   it("lists an Open item per chip for the +N menu", () => {
     expect(chipMenuItems([chip(1), chip(2)]).map((i) => ("label" in i ? i.label : ""))).toEqual(["Open localhost:1", "Open localhost:2"]);
+  });
+});
+
+describe("a chip's menu where browser tabs are available", () => {
+  it("keeps its rows and gains Open in the system browser", () => {
+    expect(chipMenuItems([chip(5173)], true)).toEqual([
+      { id: "open:0", label: "Open in browser" },
+      { id: "copy:0", label: "Copy URL" },
+      { id: "system:0", label: "Open in the system browser" },
+    ]);
+  });
+  it("gives the +N menu a system-browser row per chip after its Open rows", () => {
+    expect(chipMenuItems([chip(1), chip(2)], true).map((i) => ("label" in i ? i.label : ""))).toEqual(["Open localhost:1", "Open localhost:2", "Open localhost:1 in the system browser", "Open localhost:2 in the system browser"]);
+  });
+  it("is unchanged where they aren't", () => {
+    expect(chipMenuItems([chip(5173)], false)).toEqual(chipMenuItems([chip(5173)]));
+  });
+});
+
+describe("openChipIn", () => {
+  it("opens a loopback chip in the side pane when it can, and never a non-loopback one", async () => {
+    const pane: string[] = [];
+    const system: string[] = [];
+    const openPage = (u: string) => (pane.push(u), true);
+    const openSystem = async (u: string) => void system.push(u);
+    await openChipIn("http://localhost:5173/", openPage, openSystem);
+    await openChipIn("http://evil.example/", openPage, openSystem);
+    expect(pane).toEqual(["http://localhost:5173/"]);
+    expect(system).toEqual([]);
+  });
+  it("opens the system browser where there is no side pane to open in", async () => {
+    const system: string[] = [];
+    await openChipIn("http://localhost:5173/", null, async (u) => void system.push(u));
+    expect(system).toEqual(["http://localhost:5173/"]);
   });
 });

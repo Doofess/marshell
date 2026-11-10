@@ -1,7 +1,7 @@
 //! The needs-you count on the taskbar, the flash and the sounds.
 
 use marshell_core::notify::SoundKind;
-use tauri::{Manager, UserAttentionType};
+use tauri::UserAttentionType;
 
 const SIZE: u32 = 16;
 /// The disc's colour (RGBA) and the digits' colour.
@@ -70,7 +70,7 @@ fn put(px: &mut [u8], x: u32, y: u32, rgba: [u8; 4]) {
 pub fn set_badge(app: tauri::AppHandle, count: u32) -> Result<(), String> {
     #[cfg(windows)]
     {
-        let window = app.get_webview_window("main").ok_or("no main window")?;
+        let window = crate::main_window(&app).ok_or("no main window")?;
         let icon = if count == 0 {
             None
         } else {
@@ -88,7 +88,7 @@ pub fn set_badge(app: tauri::AppHandle, count: u32) -> Result<(), String> {
 
 /// Flashes the taskbar button. The core decides when (a needs-you wait while the window is in the background).
 pub fn flash(app: &tauri::AppHandle) {
-    if let Some(window) = app.get_webview_window("main")
+    if let Some(window) = crate::main_window(app)
         && let Err(e) = window.request_user_attention(Some(UserAttentionType::Informational))
     {
         eprintln!("Marshell: could not flash the taskbar button: {e}");

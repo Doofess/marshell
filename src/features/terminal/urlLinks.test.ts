@@ -154,6 +154,28 @@ describe("urlLinkProvider", () => {
     expect(element.removeAttribute).toHaveBeenCalledWith("title");
   });
 
+  it('the hint reads "Ctrl+click to open in the side pane" where browser tabs are available', () => {
+    expect(urlHint("windows", true)).toBe("Ctrl+click to open in the side pane");
+    expect(urlHint("macos", true)).toBe("⌘+click to open in the side pane");
+  });
+
+  it("and \"…in your browser\" elsewhere", () => {
+    expect(urlHint("windows", false)).toBe("Ctrl+click to open in your browser");
+    expect(urlHint("linux", false)).toBe("Ctrl+click to open in your browser");
+  });
+
+  it("the hover hint over a plain address names the side pane where browser tabs are available", async () => {
+    const element = { setAttribute: vi.fn(), removeAttribute: vi.fn() };
+    const t = { buffer: { active: stub(["https://a.example"]) }, element: element as unknown as HTMLElement };
+    const [l] = (await run(urlLinkProvider(t, "windows", vi.fn(async () => {}), true), 1)) ?? [];
+    l!.hover!({} as MouseEvent, l!.text);
+    expect(element.setAttribute).toHaveBeenCalledWith("title", "Ctrl+click to open in the side pane");
+  });
+
+  it("the hint over a hyperlink names the side pane where browser tabs are available", () => {
+    expect(targetHint("windows", "https://a.example/x", true)).toBe("Ctrl+click to open https://a.example/x in the side pane");
+  });
+
   it("the hint names the browser", () => {
     expect(urlHint("windows")).toBe("Ctrl+click to open in your browser");
     expect(urlHint("linux")).toBe("Ctrl+click to open in your browser");

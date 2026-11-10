@@ -263,3 +263,12 @@ describe("the menu command", () => {
     for (const os of ["windows", "mac", "linux"] as const) expect(problemsIn(COMMANDS, os), os).toEqual([]);
   });
 });
+
+describe("browser tab commands", () => {
+  it("the three commands exist and have no default key", () => {
+    expect(commandById("new-browser-tab")).toMatchObject({ label: "New browser tab", group: "Window" });
+    expect(commandById("open-url")).toMatchObject({ label: "Open URL…", group: "Window" });
+    expect(commandById("clear-browser-data")).toMatchObject({ label: "Clear the browser's data…", group: "Window" });
+    for (const id of ["new-browser-tab", "open-url", "clear-browser-data"]) expect(commandById(id).binding).toBeUndefined();
+  });
+});

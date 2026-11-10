@@ -31,6 +31,10 @@ export type SessionShortcut =
   | { kind: "paneTab"; by: 1 | -1 }
   /** Close the side pane's selected tab. Has no key of its own. */
   | { kind: "closePaneTab" }
+  /** "New browser tab" and "Open URL…": a blank browser tab with the keyboard in its address box. Neither has a key of its own. */
+  | { kind: "newBrowserTab" }
+  /** "Clear the browser's data…": asks first. Has no key of its own. */
+  | { kind: "clearBrowserData" }
   /** "Browse…": the system's file dialog, to pick a file for the side pane. Has no key of its own. */
   | { kind: "browse" }
   /** Capture a screen region with the system's snipping tool and add the image to the focused session (Ctrl+Shift+X). Windows only for now. */
@@ -92,6 +96,11 @@ export function commandShortcut(id: string): SessionShortcut | null {
       return { kind: "openFile" };
     case "browse-file":
       return { kind: "browse" };
+    case "new-browser-tab":
+    case "open-url":
+      return { kind: "newBrowserTab" };
+    case "clear-browser-data":
+      return { kind: "clearBrowserData" };
     case "pane-next-tab":
       return { kind: "paneTab", by: 1 };
     case "pane-previous-tab":

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Keyboar
 import { FOCUSABLE } from "../../lib/dialogFocus";
 import { trapKey } from "../../lib/focusTrap";
 import type { ApprovalRequest } from "../approval/types";
+import { useCoverPage } from "../browser/pageCover";
 import type { RowModel } from "../sidebar/types";
 import { boardRows, holdGroups, splitGroups } from "./board";
 import { DeparturesBoard } from "./DeparturesBoard";
@@ -24,6 +25,7 @@ type Hold = { order: string[]; gate: string[] };
 
 export function LiveDepartures({ rows, requests, reduced, layout, renderCard, onJump, onAllSessions, onClose }: Props) {
   const element = useRef<HTMLDivElement>(null);
+  useCoverPage();
   const opener = useRef<HTMLElement | null | undefined>(undefined);
   const leaving = useRef(false);
   const rowFocused = useRef(false);

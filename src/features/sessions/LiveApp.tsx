@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, use
 import type { ComponentProps } from "react";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { CreateSessionRequest } from "../../generated/CreateSessionRequest";
 import type { CreateSessionResponse } from "../../generated/CreateSessionResponse";
 import type { RepoScripts } from "../../generated/RepoScripts";
@@ -55,13 +56,23 @@ import { accountLine, UNREACHABLE } from "../accounts/accountsText";
 import { getAccount, getInstall } from "../../lib/api/accounts";
 import { pickFile } from "../../lib/filePicker";
 import { Preview } from "../preview/Preview";
-import { PaneContext } from "../pane/PaneContext";
+import type { PaneTab } from "../../generated/PaneTab";
+import { PaneContext, PagePaneContext, type OpenPageInPane } from "../pane/PaneContext";
 import { dropCover, modalOnScreen } from "../pane/dropCover";
 import { EmptyPane } from "../pane/EmptyPane";
 import { KeptTabs } from "../pane/KeptTabs";
+import { useBrowserKeys } from "../browser/useBrowserKeys";
+import { useFocusedPage } from "../browser/pageStore";
+import { BrowserTab } from "../browser/BrowserTab";
+import { ClearDataDialog } from "../browser/ClearDataDialog";
+import { BLANK, isPageUrl } from "../browser/address";
+import { browserTabs } from "../browser/available";
+import { browser, pageKey } from "../browser/browserApi";
+import type { UrlBarHandle } from "../browser/UrlBar";
+import { usePageIcons, useBrowserPages } from "../browser/useBrowserPages";
 import { focusPane } from "../pane/focusPane";
-import { FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, TAB_LIMIT, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome } from "../pane/paneCommands";
-import { currentEntry, openRefused, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
+import { FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, PAGE_REFUSED, TAB_LIMIT, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome } from "../pane/paneCommands";
+import { activeTab, currentEntry, isBrowserTab, openRefused, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
 import { plusChoice, plusMenuItems } from "../pane/plusMenu";
 import { SidePane } from "../pane/SidePane";
 import { useTerminalFloor } from "../terminal/useTerminalFloor";
@@ -150,6 +161,9 @@ function SessionResumeBar({ endpoint, info, profileName, ...props }: Omit<Compon
   }, [endpoint, info.tab_id, info.agent]);
   return answer?.endpoint === endpoint && <ResumeBar {...props} command={sessionResumeCommand(info, profileName, answer.command)} folder={info.cwd} />;
 }
+
+/** What the announcer calls a pane tab: a browser tab's title, a file tab's name. */
+const paneTabName = (tab: PaneTab, titles: ReadonlyMap<string, string>): string => (isBrowserTab(tab) ? (titles.get(tab.id) ?? "page") : lastSegment(currentEntry(tab).path));
 
 /** The size of the element, kept up to date with a ResizeObserver. Starts at the window's size. */
 function useElementSize() {
@@ -672,7 +686,7 @@ export function LiveApp() {
     shellPanel: sidebarExpanded,
     sidebarToggle: sidebarToggleFor(sidebarPref, sidebarMode(width, sidebarPref)) !== null,
   });
-  const hiddenCommands = useMemo(() => [...baseHidden, ...idle, ...(adminCommandHidden(os) ? ["new-session-admin"] : []), ...(scriptControl?.kind === "run" ? [] : ["run-script"]), ...(scriptControl?.kind === "stop" ? [] : ["stop-script"])], [baseHidden, idle, scriptControl?.kind, os]);
+  const hiddenCommands = useMemo(() => [...baseHidden, ...idle, ...(adminCommandHidden(os) ? ["new-session-admin"] : []), ...(browserTabs(os) ? [] : ["new-browser-tab", "open-url", "clear-browser-data"]), ...(scriptControl?.kind === "run" ? [] : ["run-script"]), ...(scriptControl?.kind === "stop" ? [] : ["stop-script"])], [baseHidden, idle, scriptControl?.kind, os]);
   // An Ended administrator row's Resume reads "Reopen as administrator" in the palette too.
   const liveLabels = useMemo(() => (focusedRow?.elevated ? { ...paletteLabels, resume: REOPEN_AS_ADMIN } : paletteLabels), [paletteLabels, focusedRow?.elevated]);
 
@@ -772,6 +786,51 @@ export function LiveApp() {
   const openInPaneRef = useRef(openInPane);
   openInPaneRef.current = openInPane;
   const paneOpener = useCallback((target: OpenTarget) => void openInPaneRef.current(target), []);
+  // A web address as a browser tab in the side pane, or the tab already showing it; a blank page always gets a new tab. Refused (and
+  // said so) for an address a page may not hold, with no session on screen, and for the 33rd tab. The keyboard goes into the page,
+  // or to the address box of a new blank tab.
+  const addressBars = useRef(new Map<string, UrlBarHandle>());
+  const focusAddressSoon = (key: string) => {
+    let frames = 0;
+    const attempt = () => {
+      const bar = addressBars.current.get(key);
+      if (bar) return void bar.focusAddress();
+      // The new tab takes a frame to be drawn.
+      if (++frames < 4) requestAnimationFrame(attempt);
+    };
+    requestAnimationFrame(attempt);
+  };
+  const openPageInPane: OpenPageInPane = (url, opts) => {
+    const session = stateRef.current.focusedId;
+    const pane = viewRef.current.pane;
+    const check = pageOpenCheck(pane, session, url);
+    if (check !== "ok" || session == null) {
+      announce(check === "no-session" ? NO_SESSION_TO_OPEN : check === "limit" ? TAB_LIMIT : PAGE_REFUSED);
+      return false;
+    }
+    const action: PaneAction = { type: "openPage", session, url };
+    const opened = activeTab(paneReducer(pane, action), session);
+    paneDispatch(action);
+    announce(pageOpenedText(url));
+    if (opts?.focus === "address" && opened) focusAddressSoon(pageKey(session, opened.id));
+    else focusPane();
+    return true;
+  };
+  const openPageRef = useRef(openPageInPane);
+  openPageRef.current = openPageInPane;
+  const pageOpener = useCallback<OpenPageInPane>((url, opts) => openPageRef.current(url, opts), []);
+  // "Clear the browser's data…" asks first; "Clear data" clears the profile and says how it went.
+  const [clearData, setClearData] = useState<"ask" | "busy" | null>(null);
+  const clearBrowserData = async (): Promise<void> => {
+    setClearData("busy");
+    try {
+      await browser.clearData();
+      announce("Cleared the browser's data.");
+    } catch {
+      announce("Couldn't clear the browser's data.");
+    }
+    setClearData(null);
+  };
   // "Browse…": the system's file dialog, to pick any file for the side pane. The command, the + menu's row and the empty pane's
   // button all call it. The dialog starts in the session's folder and is modal to the window, so the session it was asked from is
   // the one the file opens in. A file the core refuses to read shows the viewer's own message in its tab.
@@ -816,7 +875,8 @@ export function LiveApp() {
         if (!closing || session === undefined) return announce(NO_TABS_OPEN);
         const inside = document.activeElement?.closest("[data-nav-side]") != null;
         paneDispatch({ type: "close", session, paneTab: closing.paneTab });
-        announce(closedText(lastSegment(closing.path)));
+        const closed = tabsOf(pane, session).tabs.find((t) => t.id === closing.paneTab);
+        announce(closedText(closed ? paneTabName(closed, tabTitles(tabsOf(pane, session).tabs)) : lastSegment(closing.path)));
         // A closed tab's body takes focus with it; the pane keeps the keyboard if it had it.
         if (inside) focusPane();
         return;
@@ -1227,7 +1287,10 @@ export function LiveApp() {
   // The side pane is a stop of the Tab chord while it is drawn (a session on screen, the sessions view, the pane open); whether focus is in it
   // is tracked from focusin and focusout, so the chord knows which stop it is leaving.
   const sidePaneDrawn = view.pane.open && focusedId !== null && focusedId !== undefined && mainView === "sessions";
-  const [sideFocused, setSideFocused] = useState(false);
+  const [sideFocusedInDom, setSideFocused] = useState(false);
+  // A page that has the keyboard is in the side pane, whatever `document.activeElement` still names (S12 finding 8).
+  const pageHasKeys = useFocusedPage() !== null;
+  const sideFocused = sideFocusedInDom || pageHasKeys;
   useEffect(() => {
     const inside = () => setSideFocused(document.activeElement?.closest("[data-nav-side]") != null);
     document.addEventListener("focusin", inside);
@@ -1286,6 +1349,14 @@ export function LiveApp() {
     apply: applyNav,
   });
   const sendNav = nav.send;
+  // The app's shortcuts from a page, and the keyboard between the two (S12; 6q-0 decision 9).
+  useBrowserKeys({ os, focusTerminal: () => actions.focusTerminal() });
+  // The pages themselves: which are loaded (the page on screen is the newest), their events, popups and theme.
+  const shownPane = tabsOf(view.pane, focusedId);
+  const shownTab = shownPane.tabs.find((t) => t.id === (shownPane.active ?? shownPane.tabs[0]?.id));
+  const shownPage = browserTabs(os) && view.pane.open && mainView === "sessions" && focusedId && shownTab && isBrowserTab(shownTab) ? pageKey(focusedId, shownTab.id) : null;
+  useBrowserPages(view.pane, shownPage, { sessions: loaded ? rows.map((r) => r.id) : null, dispatch: paneDispatch, focusedSession: () => stateRef.current.focusedId });
+  const pageIcons = usePageIcons(shownPane.tabs.filter(isBrowserTab).map((t) => pageKey(focusedId ?? "", t.id)));
 
   // The window's shortcuts and commands (side pane, shell panel, history, menu, next waiting). True when it was one of them.
   const windowCommand = useCallback(
@@ -1302,6 +1373,13 @@ export function LiveApp() {
         case "openFile":
           setFilesOnly(true);
           setOverlay("palette");
+          return true;
+        // The browser tab's commands: a blank tab with the keyboard in its address box, and the profile's data cleared after a question.
+        case "newBrowserTab":
+          openPageRef.current(BLANK, { focus: "address" });
+          return true;
+        case "clearBrowserData":
+          setClearData("ask");
           return true;
         case "capture":
           void runCaptureRef.current();
@@ -1470,7 +1548,7 @@ export function LiveApp() {
     }
     const shortcut = commandShortcut(id);
     // These move the focus (or open a panel that takes it), so they wait for the palette to hand it back first.
-    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "menu" || shortcut?.kind === "paneTab" || shortcut?.kind === "closePaneTab" || shortcut?.kind === "browse") return void setTimeout(() => windowCommand(shortcut), 0);
+    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "menu" || shortcut?.kind === "paneTab" || shortcut?.kind === "closePaneTab" || shortcut?.kind === "browse" || shortcut?.kind === "newBrowserTab" || shortcut?.kind === "clearBrowserData") return void setTimeout(() => windowCommand(shortcut), 0);
     if (windowCommand(shortcut)) return;
     if (shortcut?.kind === "launcher") setLauncherOpen(true);
     else if (shortcut?.kind === "prompt") jumpPrompt(shortcut.by);
@@ -1704,7 +1782,7 @@ export function LiveApp() {
   const paneNode =
     os ? (
       <SidePane
-        tabs={paneTabs.tabs.map((t) => ({ id: t.id, title: paneTitles.get(t.id) ?? "", path: currentEntry(t).path }))}
+        tabs={paneTabs.tabs.map((t) => ({ id: t.id, title: paneTitles.get(t.id) ?? "", path: currentEntry(t).path, ...(isBrowserTab(t) && { icon: pageIcons.get(pageKey(paneSession ?? "", t.id)) ?? "globe" }) }))}
         activeId={paneActive}
         os={os}
         onSelect={(id) => paneSession !== undefined && paneDispatch({ type: "select", session: paneSession, paneTab: id })}
@@ -1712,13 +1790,13 @@ export function LiveApp() {
           const tab = paneTabs.tabs.find((t) => t.id === id);
           if (paneSession === undefined || !tab) return;
           paneDispatch({ type: "close", session: paneSession, paneTab: id });
-          announce(closedText(lastSegment(currentEntry(tab).path)));
+          announce(closedText(paneTabName(tab, paneTitles)));
         }}
         onMove={(id, to) => {
           const tab = paneTabs.tabs.find((t) => t.id === id);
           if (paneSession === undefined || !tab) return;
           paneDispatch({ type: "move", session: paneSession, paneTab: id, to });
-          announce(movedText(lastSegment(currentEntry(tab).path), to, paneTabs.tabs.length));
+          announce(movedText(paneTabName(tab, paneTitles), to, paneTabs.tabs.length));
         }}
         onHide={() => {
           paneDispatch({ type: "hide" });
@@ -1731,23 +1809,44 @@ export function LiveApp() {
             key={paneSession}
             tabs={paneTabs.tabs}
             activeId={paneActive}
-            render={(tab, active) => (
-              <Preview
-                entry={currentEntry(tab)}
-                theme={paneTheme}
-                os={os}
-                canBack={tab.index > 0}
-                canForward={tab.index < tab.history.length - 1}
-                onBack={() => paneSession !== undefined && paneDispatch({ type: "back", session: paneSession, paneTab: tab.id })}
-                onForward={() => paneSession !== undefined && paneDispatch({ type: "forward", session: paneSession, paneTab: tab.id })}
-                onOpen={(target) => paneSession !== undefined && paneDispatch({ type: "navigate", session: paneSession, paneTab: tab.id, project: paneProjectNow, target })}
-                onView={(v) => paneSession !== undefined && paneDispatch({ type: "setView", session: paneSession, paneTab: tab.id, view: v })}
-                active={active}
-                onEscape={() => actions.focusTerminal()}
-                regionTarget={deliveryFor(focusedRow ?? null)}
-                onRegion={addRegion}
-              />
-            )}
+            render={(tab, active) =>
+              isBrowserTab(tab) ? (
+                <BrowserTab
+                  pageKey={pageKey(paneSession ?? "", tab.id)}
+                  url={currentEntry(tab).path}
+                  active={active}
+                  available={browserTabs(os)}
+                  onPage={(url, title) => paneSession !== undefined && paneDispatch({ type: "page", session: paneSession, paneTab: tab.id, url, title: title === "" ? null : title })}
+                  onOpenOutside={(url) => {
+                    if (isPageUrl(url) && url !== BLANK) void openUrl(url).catch(() => {});
+                  }}
+                  onEscape={() => actions.focusTerminal()}
+                  announce={announce}
+                  ref={(bar) => {
+                    // The address box of a new blank tab takes the keyboard through this (openPageInPane).
+                    const key = pageKey(paneSession ?? "", tab.id);
+                    if (bar) addressBars.current.set(key, bar);
+                    return () => void addressBars.current.delete(key);
+                  }}
+                />
+              ) : (
+                <Preview
+                  entry={currentEntry(tab)}
+                  theme={paneTheme}
+                  os={os}
+                  canBack={tab.index > 0}
+                  canForward={tab.index < tab.history.length - 1}
+                  onBack={() => paneSession !== undefined && paneDispatch({ type: "back", session: paneSession, paneTab: tab.id })}
+                  onForward={() => paneSession !== undefined && paneDispatch({ type: "forward", session: paneSession, paneTab: tab.id })}
+                  onOpen={(target) => paneSession !== undefined && paneDispatch({ type: "navigate", session: paneSession, paneTab: tab.id, project: paneProjectNow, target })}
+                  onView={(v) => paneSession !== undefined && paneDispatch({ type: "setView", session: paneSession, paneTab: tab.id, view: v })}
+                  active={active}
+                  onEscape={() => actions.focusTerminal()}
+                  regionTarget={deliveryFor(focusedRow ?? null)}
+                  onRegion={addRegion}
+                />
+              )
+            }
           />
         ) : (
           <EmptyPane recent={paneRecent} onOpenFile={openFromPane} onBrowse={browseFile} onRecent={(path) => void openInPane({ path })} />
@@ -1760,6 +1859,7 @@ export function LiveApp() {
   useViewReport(endpoint, onScreenIds);
   return (
     <PaneContext.Provider value={paneOpener}>
+    <PagePaneContext.Provider value={browserTabs(os) ? pageOpener : null}>
     <div ref={ref} className="live-app">
       {endpoint && settled && loaded && (
         <MainWindow
@@ -1896,7 +1996,7 @@ export function LiveApp() {
       {plusMenu && (
         <ContextMenu
           label="New tab"
-          items={plusMenuItems(paneRecent)}
+          items={plusMenuItems(paneRecent, browserTabs(os))}
           anchor={plusMenu.anchor}
           onRun={(itemId) => {
             const { opener } = plusMenu;
@@ -1906,7 +2006,8 @@ export function LiveApp() {
             if (choice.kind === "recent") return void openInPane({ path: choice.path });
             // Focus goes back to the + button first, so a palette or a dialog that closes without a pick returns it there.
             opener.focus();
-            if (choice.kind === "openFile") openFromPane();
+            if (choice.kind === "browserTab") openPageInPane(BLANK, { focus: "address" });
+            else if (choice.kind === "openFile") openFromPane();
             else browseFile();
           }}
           onClose={({ refocus }) => {
@@ -2065,7 +2166,9 @@ export function LiveApp() {
       {overlay === "shortcuts" && os && <LiveShortcuts os={os} onClose={() => setOverlay(null)} />}
       {runAsk && <ScriptsTrustDialog scripts={runAsk.scripts} busy={runAsk.busy} error={runAsk.error} allowLabel="Allow and run" cancelLabel="Cancel" onAllow={() => void allowRun()} onCancel={() => setRunAsk(null)} />}
       {closeAsk && <CloseDialog busy={closeAsk.busy} error={closeAsk.error} onChoose={(keep) => void chooseClose(keep)} onCancel={cancelCloseAsk} />}
+      {clearData !== null && <ClearDataDialog busy={clearData === "busy"} onClear={() => void clearBrowserData()} onCancel={() => setClearData(null)} />}
     </div>
+    </PagePaneContext.Provider>
     </PaneContext.Provider>
   );
 }

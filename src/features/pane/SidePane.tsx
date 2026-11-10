@@ -5,7 +5,8 @@ import { clickGuard } from "./clickGuard";
 import { dragIndex, stripKey } from "./stripKeys";
 import "./SidePane.css";
 
-export type StripTab = { id: string; title: string; path: string };
+/** `icon` is a browser tab's site icon (an image address), or "globe" for the drawn one; a file tab has none. */
+export type StripTab = { id: string; title: string; path: string; icon?: string | "globe" };
 export type SidePaneProps = {
   tabs: StripTab[];
   activeId: string | null;
@@ -25,6 +26,14 @@ const DRAG_START_PX = 4;
 const icon = (d: string) => (
   <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round">
     <path d={d} />
+  </svg>
+);
+
+/** The tab's icon when a page has none: a globe, 14 px. */
+const globe = (
+  <svg className="side-pane__icon" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="7" cy="7" r="5.5" />
+    <path d="M1.5 7h11M7 1.5c1.7 1.5 2.5 3.4 2.5 5.5S8.7 11 7 12.5C5.3 11 4.5 9.1 4.5 7S5.3 3 7 1.5Z" />
   </svg>
 );
 
@@ -149,6 +158,7 @@ export function SidePane({ tabs, activeId, os, children, onSelect, onClose, onMo
                       close(t.id);
                     }}
                   >
+                    {t.icon !== undefined && (t.icon === "globe" ? globe : <img className="side-pane__icon" src={t.icon} alt="" width="14" height="14" />)}
                     <span className="side-pane__title">{t.title}</span>
                   </button>
                   <button type="button" className="side-pane__close" tabIndex={-1} aria-label={`Close ${t.title}`} onClick={() => close(t.id)}>

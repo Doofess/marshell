@@ -5,6 +5,7 @@ import { Page } from "../../components/Page/Page";
 import type { Task } from "../../generated/Task";
 import type { TaskChanges } from "../../generated/TaskChanges";
 import { useDialogFocus } from "../../lib/useDialogFocus";
+import { useCoverPage } from "../browser/pageCover";
 import type { MergePlan } from "../../generated/MergePlan";
 import type { RemovePlan } from "../../generated/RemovePlan";
 import { CommandList } from "./CommandList";
@@ -385,6 +386,7 @@ export function ReviewSheet({ task, changes, agentName, api, onClose, onDone, on
   const dialog = useRef<HTMLDivElement>(null);
   // Esc and Close do nothing while the core works.
   const close = canClose(step) ? onClose : undefined;
+  useCoverPage();
   useDialogFocus(dialog, dialog, close);
 
   const [message, setMessage] = useState(() => readableMessage(task.name));

@@ -3,6 +3,7 @@ import type { PaneTab } from "../../generated/PaneTab";
 import type { PaneView } from "../../generated/PaneView";
 import type { RecentFile } from "../../generated/RecentFile";
 import type { SessionTabs } from "../../generated/SessionTabs";
+import { BLANK, isPageUrl, pageTitle, sameUrl } from "../browser/address";
 
 export type { PaneEntry };
 
@@ -28,6 +29,10 @@ export type PaneAction =
   | { type: "close"; session: string; paneTab: string }
   /** `to` is the index the tab ends at. */
   | { type: "move"; session: string; paneTab: string; to: number }
+  /** A web address: a new browser tab, or the tab already showing it (about:blank always makes a new one); shows the pane. */
+  | { type: "openPage"; session: string; url: string }
+  /** A browser tab's page moved or got a title: the tab's entry follows it. */
+  | { type: "page"; session: string; paneTab: string; url: string; title: string | null }
   | { type: "show" }
   | { type: "hide" }
   | { type: "toggle" }
@@ -61,22 +66,34 @@ export function samePath(a: string, b: string): boolean {
   return norm(a) === norm(b);
 }
 
-const tabHas = (t: PaneTab, path: string) => samePath(currentEntry(t).path, path);
+/** A browser tab: its one history entry holds the page's address. */
+export const isBrowserTab = (t: PaneTab): boolean => t.kind === "browser";
 
-/** True when `open` would be refused: the session has 32 tabs and none shows this path. */
+/** A file tab showing this path; a browser tab never matches a path. */
+const tabHas = (t: PaneTab, path: string) => !isBrowserTab(t) && samePath(currentEntry(t).path, path);
+
+/** A browser tab showing this address; about:blank is never "already open". */
+const tabShows = (t: PaneTab, url: string) => isBrowserTab(t) && url !== BLANK && sameUrl(currentEntry(t).path, url);
+
+/** True when `open` or `openPage` would be refused: the session has 32 tabs and none shows this path or address. */
 export function openRefused(s: PaneView, session: string, path: string): boolean {
   const { tabs } = tabsOf(s, session);
-  return tabs.length >= PANE_LIMITS.tabs && !tabs.some((t) => tabHas(t, path));
+  if (tabs.length < PANE_LIMITS.tabs) return false;
+  return isPageUrl(path) ? !tabs.some((t) => tabShows(t, path)) : !tabs.some((t) => tabHas(t, path));
 }
 
 const lastSegment = (p: string) => p.split(/[/\\]/).filter((x) => x !== "").pop() ?? p;
 const folderOf = (p: string) => p.split(/[/\\]/).filter((x) => x !== "").slice(-2, -1)[0] ?? "";
 
-/** Each tab's title: the file's name, plus " — folder" for tabs that share a name. */
+/** Each tab's title: a browser tab's page title, else the file's name, plus " — folder" for file tabs that share a name. */
 export function tabTitles(tabs: readonly PaneTab[]): Map<string, string> {
-  const names = tabs.map((t) => lastSegment(currentEntry(t).path));
+  const names = tabs.map((t) => (isBrowserTab(t) ? null : lastSegment(currentEntry(t).path)));
   const out = new Map<string, string>();
   tabs.forEach((t, i) => {
+    if (isBrowserTab(t)) {
+      out.set(t.id, pageTitle(t.title, currentEntry(t).path));
+      return;
+    }
     const shared = names.filter((n) => n === names[i]).length > 1;
     const folder = folderOf(currentEntry(t).path);
     out.set(t.id, shared && folder ? `${names[i]} — ${folder}` : names[i]!);
@@ -84,11 +101,11 @@ export function tabTitles(tabs: readonly PaneTab[]): Map<string, string> {
   return out;
 }
 
-/** The project's recent paths, newest first, without those open in the session: at most 10. */
+/** The project's recent paths, newest first, without those open in the session and without any web address: at most 10. */
 export function recentFor(s: PaneView, project: string, session: string): string[] {
-  const openPaths = tabsOf(s, session).tabs.map((t) => currentEntry(t).path);
+  const openPaths = tabsOf(s, session).tabs.filter((t) => !isBrowserTab(t)).map((t) => currentEntry(t).path);
   return s.recent
-    .filter((r) => r.project === project && !openPaths.some((p) => samePath(p, r.path)))
+    .filter((r) => r.project === project && !isPageUrl(r.path) && !openPaths.some((p) => samePath(p, r.path)))
     .slice(0, PANE_LIMITS.shownRecent)
     .map((r) => r.path);
 }
@@ -148,6 +165,39 @@ function editTab(s: PaneView, session: string, paneTab: string, edit: (t: PaneTa
   return setTabs(s, session, { ...cur, tabs: cur.tabs.map((t) => (t === old ? next : t)) });
 }
 
+/** Like `editTab`, for a file tab: a browser tab has no history to move through and no view to switch. */
+function editFileTab(s: PaneView, session: string, paneTab: string, edit: (t: PaneTab) => PaneTab): PaneView {
+  return editTab(s, session, paneTab, (t) => (isBrowserTab(t) ? t : edit(t)));
+}
+
+/** A title as the layout keeps it: at most 200 characters. */
+const TITLE_MAX = 200;
+const cutTitle = (title: string | null): string | null =>
+  title === null || title.length <= TITLE_MAX ? title : Array.from(title).slice(0, TITLE_MAX).join("");
+
+function openPage(s: PaneView, session: string, url: string): PaneView {
+  if (!isPageUrl(url)) return s;
+  const cur = tabsOf(s, session);
+  const existing = cur.tabs.find((t) => tabShows(t, url));
+  if (existing) {
+    if (cur.active === existing.id && s.open) return s;
+    return { ...setTabs(s, session, { ...cur, active: existing.id }), open: true };
+  }
+  if (cur.tabs.length >= PANE_LIMITS.tabs) return s;
+  const tab: PaneTab = { id: nextId(cur.tabs), kind: "browser", history: [entryOf({ path: url })], index: 0, title: null };
+  return { ...setTabs(s, session, { tabs: [...cur.tabs, tab], active: tab.id }), open: true };
+}
+
+function pageMoved(s: PaneView, session: string, paneTab: string, url: string, title: string | null): PaneView {
+  if (!isPageUrl(url)) return s;
+  const cut = cutTitle(title);
+  return editTab(s, session, paneTab, (t) => {
+    if (!isBrowserTab(t)) return t;
+    if (currentEntry(t).path === url && t.index === 0 && t.history.length === 1 && t.title === cut) return t;
+    return { ...t, history: [entryOf({ path: url })], index: 0, title: cut };
+  });
+}
+
 function open(s: PaneView, session: string, project: string, target: OpenTarget): PaneView {
   const cur = tabsOf(s, session);
   const existing = cur.tabs.find((t) => tabHas(t, target.path));
@@ -170,14 +220,14 @@ function open(s: PaneView, session: string, project: string, target: OpenTarget)
     }
   } else {
     if (cur.tabs.length >= PANE_LIMITS.tabs) return s;
-    const tab: PaneTab = { id: nextId(cur.tabs), kind: "file", history: [entryOf(target)], index: 0 };
+    const tab: PaneTab = { id: nextId(cur.tabs), kind: "file", history: [entryOf(target)], index: 0, title: null };
     next = { ...setTabs(s, session, { tabs: [...cur.tabs, tab], active: tab.id }), open: true };
   }
   return withRecent(next, project, target.path);
 }
 
 function navigate(s: PaneView, session: string, paneTab: string, project: string, target: OpenTarget): PaneView {
-  const moved = editTab(s, session, paneTab, (t) => {
+  const moved = editFileTab(s, session, paneTab, (t) => {
     const history = [...t.history.slice(0, t.index + 1), entryOf(target)].slice(-PANE_LIMITS.history);
     return { ...t, history, index: history.length - 1 };
   });
@@ -203,12 +253,16 @@ export function paneReducer(s: PaneView, a: PaneAction): PaneView {
       return open(s, a.session, a.project, a.target);
     case "navigate":
       return navigate(s, a.session, a.paneTab, a.project, a.target);
+    case "openPage":
+      return openPage(s, a.session, a.url);
+    case "page":
+      return pageMoved(s, a.session, a.paneTab, a.url, a.title);
     case "back":
-      return editTab(s, a.session, a.paneTab, (t) => (t.index > 0 ? { ...t, index: t.index - 1 } : t));
+      return editFileTab(s, a.session, a.paneTab, (t) => (t.index > 0 ? { ...t, index: t.index - 1 } : t));
     case "forward":
-      return editTab(s, a.session, a.paneTab, (t) => (t.index < t.history.length - 1 ? { ...t, index: t.index + 1 } : t));
+      return editFileTab(s, a.session, a.paneTab, (t) => (t.index < t.history.length - 1 ? { ...t, index: t.index + 1 } : t));
     case "setView":
-      return editTab(s, a.session, a.paneTab, (t) =>
+      return editFileTab(s, a.session, a.paneTab, (t) =>
         currentEntry(t).view === a.view ? t : { ...t, history: t.history.map((e, i) => (i === t.index ? { ...e, view: a.view } : e)) },
       );
     case "select": {

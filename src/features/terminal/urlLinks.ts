@@ -46,7 +46,7 @@ export function findUrls(text: string): Array<{ start: number; end: number; url:
 }
 
 /** The tooltip over a clickable web address. */
-export const urlHint = (platform: Endpoint["platform"]): string => (platform === "macos" ? "⌘+click to open in your browser" : "Ctrl+click to open in your browser");
+export const urlHint = (platform: Endpoint["platform"], inPane = false): string => `${platform === "macos" ? "⌘" : "Ctrl"}+click to open in ${inPane ? "the side pane" : "your browser"}`;
 
 /** The address parsed, when it is one the system browser is given: http or https. */
 function webUrl(text: string): URL | null {
@@ -65,13 +65,13 @@ const SHOWN_LENGTH = 120;
  * The tooltip over a hyperlink a program drew (OSC 8), whose text can say anything: it names the address the click opens, in the
  * parsed form the browser will read (a punycode host, escapes for what the program wrote raw), never the program's own spelling.
  * A long address, or one with a user name before the host (`https://bank.example@other.example/`), is named by its origin, so
- * the host the browser goes to is always in view. Null for a target that would not open.
+ * the host the browser goes to is always in view. Null for a target that would not open. `inPane` says it opens in the side pane.
  */
-export function targetHint(platform: Endpoint["platform"], target: string): string | null {
+export function targetHint(platform: Endpoint["platform"], target: string, inPane = false): string | null {
   const url = webUrl(target);
   if (!url) return null;
   const plain = url.href.length <= SHOWN_LENGTH && url.username === "" && url.password === "";
-  return `${platform === "macos" ? "⌘" : "Ctrl"}+click to open ${plain ? url.href : `${url.origin}/…`} in your browser`;
+  return `${platform === "macos" ? "⌘" : "Ctrl"}+click to open ${plain ? url.href : `${url.origin}/…`} in ${inPane ? "the side pane" : "your browser"}`;
 }
 
 type Open = (url: string) => Promise<void>;
@@ -93,10 +93,11 @@ function openWeb(url: string, open: Open): void {
 const modifierHeld = (platform: Endpoint["platform"], event: MouseEvent): boolean => (platform === "macos" ? event.metaKey : event.ctrlKey);
 
 /**
- * Makes the http and https addresses in a terminal's output clickable. Only Ctrl+click (Cmd+click on macOS) opens one, in the
- * system browser: a plain click is left to selection and to a program that reads the mouse.
+ * Makes the http and https addresses in a terminal's output clickable. Only Ctrl+click (Cmd+click on macOS) opens one, with `open`
+ * (the system browser by default; the side pane where the window has browser tabs, which `inPane` says for the hint): a plain
+ * click is left to selection and to a program that reads the mouse.
  */
-export function urlLinkProvider(term: { buffer: { active: BufferLike }; element?: HTMLElement | undefined }, platform: Endpoint["platform"], open: Open = openUrl): ILinkProvider {
+export function urlLinkProvider(term: { buffer: { active: BufferLike }; element?: HTMLElement | undefined }, platform: Endpoint["platform"], open: Open = openUrl, inPane = false): ILinkProvider {
   return {
     provideLinks(bufferLineNumber, callback) {
       const ll = logicalLine(term.buffer.active, bufferLineNumber - 1);
@@ -113,7 +114,7 @@ export function urlLinkProvider(term: { buffer: { active: BufferLike }; element?
             activate(event) {
               if (modifierHeld(platform, event)) openWeb(u.url, open);
             },
-            hover: () => term.element?.setAttribute("title", urlHint(platform)),
+            hover: () => term.element?.setAttribute("title", urlHint(platform, inPane)),
             leave: () => term.element?.removeAttribute("title"),
           };
         }),
@@ -126,7 +127,7 @@ export function urlLinkProvider(term: { buffer: { active: BufferLike }; element?
  * xterm's handler for OSC 8 hyperlinks, under the same rule as a plain address: the modifier, and only http and https. It takes
  * the place of xterm's own, which asks before it opens and shows the address; here the hint shows it (`targetHint`).
  */
-export function webLinkHandler(platform: Endpoint["platform"], element: () => HTMLElement | undefined, open: Open = openUrl): ILinkHandler {
+export function webLinkHandler(platform: Endpoint["platform"], element: () => HTMLElement | undefined, open: Open = openUrl, inPane = false): ILinkHandler {
   return {
     activate(event, text) {
       // The parsed address, so what opens is the string the hint showed.
@@ -134,7 +135,7 @@ export function webLinkHandler(platform: Endpoint["platform"], element: () => HT
       if (url && modifierHeld(platform, event)) hand(url.href, open);
     },
     hover(_event, text) {
-      const hint = targetHint(platform, text);
+      const hint = targetHint(platform, text, inPane);
       if (hint === null) element()?.removeAttribute("title");
       else element()?.setAttribute("title", hint);
     },

@@ -1,13 +1,14 @@
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { ContextMenu, type MenuItem } from "../../components/ContextMenu/ContextMenu";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { type MenuItem } from "../../components/ContextMenu/ContextMenu";
 import type { PortMenuRequest } from "../ports/PortChips";
-import { chipLabel, chipMenuItems, runChipItem } from "../ports/ports";
+import { PortMenu } from "../ports/PortMenu";
 import { setTitle as setWindowTitle } from "../../lib/window/appWindow";
 import { Logo } from "../../components/Logo/Logo";
 import { Wordmark } from "../../components/Logo/Wordmark";
 import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
 import { ApproveCard } from "../approval/ApproveCard";
+import { useCoverPage } from "../browser/pageCover";
 import { Composer } from "../composer/Composer";
 import { StatusBar } from "../composer/StatusBar";
 import { APPROVALS } from "../approval/fixtures";
@@ -17,7 +18,7 @@ import type { RowModel } from "../sidebar/types";
 import { ScriptedTerminal } from "../terminal/ScriptedTerminal";
 import { SHELL_SIZE, shellSession } from "../terminal/scriptedShell";
 import type { TerminalThemeSetting } from "../terminal/terminalTheme";
-import { COMPOSER, DRAWER, STATUS_BAR_HEIGHT, SIDEBAR, drawerPlacement, sidebarMode, sidebarWidth as widthFor, type SidebarMode, type SidebarPref } from "./layout";
+import { COMPOSER, DRAWER, STATUS_BAR_HEIGHT, SIDEBAR, drawerPlacement, sidebarWidth as widthFor, type SidebarMode, type SidebarPref } from "./layout";
 import { SearchIcon } from "./SearchIcon";
 import { SidebarIcon } from "./SidebarIcon";
 import { isTool } from "../../components/AgentMark/kinds";
@@ -34,6 +35,7 @@ import type { RunControl } from "../scripts/confirmScripts";
 import { windowTitle } from "./windowTitle";
 import { Sidebar, type SidebarFooter } from "./Sidebar";
 import { shellNameFor } from "./ShellPanel";
+import { LayoutContext, mainRoom, type Layout } from "./paneColumn";
 import { PANE, draggedWidth, paneGeometry, paneMotionKey } from "./paneLayout";
 import { useLayoutMotion } from "./motion";
 import { FitHoldContext } from "../terminal/fitHold";
@@ -253,11 +255,10 @@ export function MainWindow({
   mainView,
 }: MainWindowProps) {
   const pref: SidebarPref = sidebarPref ?? (layout === "focus" ? "focus" : layout === "rail" ? "rail" : "expanded");
-  const mode = sidebarMode(width, pref);
+  const { mode, side: sideW, pushed, room: spaceW } = mainRoom(width, { pref, sidebarWidth, drawer });
   // An expanded preference in a window under 960 px is shown as the rail, and the sidebar cannot open there.
   const blocked = sidebarToggleFor(pref, mode) === null;
   const shellOptions: ShellOptions = typeof shell === "object" ? shell : {};
-  const sideW = widthFor(mode, sidebarWidth);
   const expandedW = widthFor("expanded", sidebarWidth);
   // The column's width is an animated number. While it moves it shows its widest end (the sidebar for the rail, the rail for
   // focus mode) at that end's own width, clipped, and swaps to the settled one when the motion ends.
@@ -291,8 +292,6 @@ export function MainWindow({
   // A manual CLI is a plain terminal: no prompt line under it.
   const showFull = showComposer && selected !== null && hasPromptLine(selected);
   const showStatus = statusBar && mode !== "focus";
-  const pushed = drawer && placement === "push" ? DRAWER.default : 0;
-  const spaceW = width - sideW - pushed;
   // The OS title bar and the taskbar name the shown session, like any window named for its document.
   const title = windowTitle(selected, needsYou);
   useEffect(() => {
@@ -331,11 +330,24 @@ export function MainWindow({
   // or a window resize that leaves both alone changes only the target, which the motion follows at once.
   const paneMotion = useLayoutMotion(paneMotionKey(geometry.mode, mode), geometry.pane);
   const layoutMoving = sideMotion.moving || paneMotion.moving;
+  // A page in the pane follows the layout from these: the column's inputs, and whether anything is moving. The direction is read
+  // once the window is drawn, since it is the document's and a render can't know it.
+  const [rtl, setRtl] = useState(false);
+  useEffect(() => {
+    if (mainRef.current) setRtl(getComputedStyle(mainRef.current).direction === "rtl");
+  });
+  const paneListed = paneShown && !viewing && !empty;
+  const layoutValue = useMemo<Layout>(
+    () => ({ inputs: { pref, sidebarWidth, drawer, shown: paneListed, saved: paneWidth, terminalMin: terminalMinWidth, rtl }, moving: layoutMoving }),
+    [pref, sidebarWidth, drawer, paneListed, paneWidth, terminalMinWidth, rtl, layoutMoving],
+  );
   const roomNow = Math.max(0, width - sideAnim - pushed);
   const paneP = Math.max(0, Math.min(Math.round(paneMotion.value), roomNow));
   // A hide keeps drawing the last pane until its motion ends, so the node is kept (in the same slot, so its state stays).
   const keptPane = useRef<{ node: ReactNode; width: number } | null>(null);
   const paneDrawn = paneOn || paneMotion.moving;
+  // The request-details drawer lies over the pane in a narrow window, where a browser tab's page would be drawn above it.
+  useCoverPage(drawer && Boolean(drawerCard || requests[0]) && paneDrawn);
   const drawnPane = paneOn ? { node: pane, width: geometry.pane } : keptPane.current;
   useEffect(() => {
     if (paneOn) keptPane.current = { node: pane, width: geometry.pane };
@@ -373,22 +385,7 @@ export function MainWindow({
   return (
     <div className="window" style={{ inlineSize: width, blockSize: height, "--side-w": `${sideAnim}px` } as CSSProperties} data-mode={mode} data-side-moving={sideMotion.moving || undefined} data-layout={layout} data-title={title}>
       <SessionAnnouncer row={selected} needsYou={waiting} notice={notice} />
-      {portMenu && (
-        <ContextMenu
-          label={portMenu.chips.length === 1 ? `Port ${chipLabel(portMenu.chips[0]!)}` : "More ports"}
-          items={chipMenuItems(portMenu.chips)}
-          anchor={portMenu.anchor}
-          onRun={(id) => {
-            runChipItem(portMenu.chips, id);
-            setPortMenu(null);
-            portMenu.opener?.focus();
-          }}
-          onClose={({ refocus }) => {
-            setPortMenu(null);
-            if (refocus) portMenu.opener?.focus();
-          }}
-        />
-      )}
+      {portMenu && <PortMenu request={portMenu} onDone={() => setPortMenu(null)} />}
       {/* data-tauri-drag-region: a bare attribute moves the window only when the press lands on that very element, so buttons and
           the text inside never start a drag; "deep" (the session header's area) also takes its text, while buttons still refuse. */}
       <header className="window__bar" data-tauri-drag-region>
@@ -461,6 +458,7 @@ export function MainWindow({
         <div className="window__center">
         {/* The terminal is slot 0 to the keyboard cursor. */}
         <FitHoldContext.Provider value={layoutMoving}>
+        <LayoutContext.Provider value={layoutValue}>
         <main
           ref={mainRef}
           className="window__main"
@@ -546,6 +544,7 @@ export function MainWindow({
             </aside>
           )}
         </main>
+        </LayoutContext.Provider>
         </FitHoldContext.Provider>
         {toast}
         {showFull && selected && (

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useCoverPage } from "../browser/pageCover";
 import type { Endpoint } from "../../generated/Endpoint";
 import { FOCUSABLE } from "../../lib/dialogFocus";
 import { usePopupFocus } from "../../lib/usePopupFocus";
@@ -79,6 +80,7 @@ type Props = {
  */
 export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, initialCwd, announce, onProfilesSaved, onAgentsChanged, onNotifications, found = NONE, accountsRefresh = 0, companyRefresh = ZERO, running = ZERO, onSignIn = noop, onUpdate = noop, onClose }: Props) {
   const root = useRef<HTMLDivElement>(null);
+  useCoverPage();
   const opener = useRef<HTMLElement | null | undefined>(undefined);
   const profilesCanClose = useRef(true);
   const [profilesClosable, setProfilesClosable] = useState(true);

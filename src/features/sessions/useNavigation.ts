@@ -6,6 +6,7 @@ import { interpretBlur, interpretKeyDown, interpretKeyUp, type FocusKind } from 
 import { run, type Result } from "../../lib/navigation/machine";
 import { DEFAULT_NAV_MODIFIER, isNavModifierHeld } from "../../lib/navigation/modifier";
 import { INITIAL_NAV, sameTarget, type NavContext, type NavEffect, type NavEvent, type NavLayout, type NavState, type Rect, type Target } from "../../lib/navigation/types";
+import { focusedPage } from "../browser/pageStore";
 import { isTextBox } from "../tasks/reviewOpen";
 import { measureNavLayout } from "./navLayout";
 
@@ -14,10 +15,18 @@ import { measureNavLayout } from "./navLayout";
  * `claimsKey` synchronously, between the window's capture listener and xterm, and must see the state that listener just made.
  */
 let current: NavState = INITIAL_NAV;
+const watchers = new Set<() => void>();
 
-/** Replaces the window's navigation state (the hook does; tests reset it). */
+/** Replaces the window's navigation state (the hook does; tests reset it) and tells whoever watches it. */
 export function setNavState(state: NavState): void {
   current = state;
+  watchers.forEach((w) => w());
+}
+
+/** Calls `watcher` after every change of the navigation state: a page's list of claimed keys depends on it. Returns the unsubscribe function. */
+export function subscribeNav(watcher: () => void): () => void {
+  watchers.add(watcher);
+  return () => void watchers.delete(watcher);
 }
 
 /** True when the navigation layer takes this key from the terminal or the page: a chord it acts on, never a plain program key. */
@@ -27,6 +36,8 @@ export function claimsKey(e: KeyEventLike, os: Os, focus: FocusKind): boolean {
 
 /** Where the keyboard is: in a terminal, in a text box, on a control, or on nothing (the page, or the main area made focusable). */
 export function focusKindOf(el: Element | null): FocusKind {
+  // A page that has the keyboard is in the side pane, never in a terminal, whatever `document.activeElement` still names (S12 finding 8).
+  if (focusedPage() !== null) return "control";
   if (!el) return "none";
   if (el.closest(".xterm")) return "terminal";
   if (isTextBox(el as HTMLElement)) return "editable";
@@ -100,7 +111,7 @@ export function useNavigation(opts: Options): { cursor: NavCursorView | null; no
     const ctx: NavContext = { panes: o.panes, layout: layout.current, names: o.names, side: o.side };
     const from: NavState = { ...current, selectedPane: noneRef.current ? null : o.selectedPane, selectedSide: o.side !== null && o.sideFocused };
     const { state, effects } = step(from, events, ctx);
-    current = state;
+    setNavState(state);
     const at = state.cursor;
     const rect = at ? layout.current.find((l) => sameTarget(l.target, at))?.rect : undefined;
     setCursor(at && rect ? { rect, label: labelOf(at, ctx) } : null);
@@ -147,7 +158,7 @@ export function useNavigation(opts: Options): { cursor: NavCursorView | null; no
       window.removeEventListener("blur", blur);
       window.removeEventListener("focusin", focusIn);
       // A sheet opening mid-hold takes the keys, and the key-up goes to it: the hold ends here, cancelled.
-      current = { ...current, held: false, engaged: false, cursor: null };
+      setNavState({ ...current, held: false, engaged: false, cursor: null });
       setCursor(null);
     };
   }, [opts.enabled, send]);

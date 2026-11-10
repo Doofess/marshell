@@ -5,6 +5,7 @@ import { ADMIN_LABEL, ADMIN_MODE_REASON, BYPASS_ACK_TEXT, WAITING_FOR_ADMIN } fr
 import type { Os } from "../../lib/keymap";
 import { tabbableIn } from "../../lib/focusGuard";
 import { usePopupFocus } from "../../lib/usePopupFocus";
+import { useCoverPage } from "../browser/pageCover";
 import type { ConfirmScripts } from "../scripts/confirmScripts";
 import { ScriptsTrust } from "../scripts/ScriptsTrust";
 import { CommandList } from "../tasks/CommandList";
@@ -252,6 +253,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
 
   // The prompt line is missing in the confirm view and for a program with no first command; then the first control is the way back.
   const sheet = useRef<HTMLDivElement>(null);
+  useCoverPage();
   usePopupFocus(sheet, () => sheet.current?.querySelector<HTMLElement>(".launcher__prompt") ?? (sheet.current ? tabbableIn(sheet.current)[0] : null));
 
   const onSheetKey = (e: KeyboardEvent<HTMLDivElement>) => {

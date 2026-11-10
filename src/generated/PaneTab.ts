@@ -10,6 +10,10 @@ export type PaneTab = {
  */
 id: string, 
 /**
- * "file" is the only kind this build knows.
+ * "file" or "browser".
  */
-kind: string, history: Array<PaneEntry>, index: number, };
+kind: string, history: Array<PaneEntry>, index: number, 
+/**
+ * A browser tab's last title, for the strip before its page loads.
+ */
+title: string | null, };

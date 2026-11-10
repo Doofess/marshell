@@ -434,10 +434,13 @@ pub struct PaneEntry {
 pub struct PaneTab {
     /// Unique in its session: a-z, 0-9 and "-", 1 to 64 long.
     pub id: String,
-    /// "file" is the only kind this build knows.
+    /// "file" or "browser".
     pub kind: String,
     pub history: Vec<PaneEntry>,
     pub index: u32,
+    /// A browser tab's last title, for the strip before its page loads.
+    #[serde(default)]
+    pub title: Option<String>,
 }
 
 /// One session's tabs in the side pane.

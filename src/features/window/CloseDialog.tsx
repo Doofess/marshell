@@ -1,5 +1,6 @@
 import { useId, useRef } from "react";
 import { useDialogFocus } from "../../lib/useDialogFocus";
+import { useCoverPage } from "../browser/pageCover";
 import "./CloseDialog.css";
 
 /**
@@ -12,6 +13,7 @@ export function CloseDialog({ busy, error, onChoose, onCancel }: { busy: boolean
   const title = useId();
   const description = useId();
   // The default button takes the focus instead of the title: it is the choice Enter should make.
+  useCoverPage();
   useDialogFocus(dialog, keep, onCancel);
   return (
     <div className="close-dialog">

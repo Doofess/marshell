@@ -212,7 +212,7 @@ fn icon(waiting: bool, light_taskbar: bool) -> Image<'static> {
 
 /// Brings the window back: out of the minimised state and the tray, in front, and in view for the core's timers.
 pub fn show_main(app: &tauri::AppHandle) {
-    if let Some(w) = app.get_webview_window("main") {
+    if let Some(w) = crate::main_window(app) {
         let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
@@ -266,7 +266,7 @@ pub fn build(app: &tauri::AppHandle) -> tauri::Result<()> {
 fn on_menu_choice(app: &tauri::AppHandle, id: &str) {
     match id {
         "open" => show_main(app),
-        "quit" => app.exit(0),
+        "quit" => crate::quit(app),
         other => {
             if other != "pause" {
                 show_main(app);

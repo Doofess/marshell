@@ -11,7 +11,8 @@ tauri-build = { version = "2", features = [] }
 marshell-core.workspace = true
 marshell-protocol.workspace = true
 serde.workspace = true
-tauri = { version = "2", features = ["tray-icon"] }
+# `unstable`: a browser page is a child webview of the main window (slice 6q-3 decision 2).
+tauri = { version = "2", features = ["tray-icon", "unstable"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2.7"
 tauri-plugin-opener = "2"
@@ -26,7 +27,9 @@ serde_json.workspace = true
 webview2-com = "0.39.1"
 windows-core = "0.62"
 # toast.rs: the toasts are built here so every part of one carries the session's link.
-windows = { version = "0.62", features = ["Data_Xml_Dom", "Foundation", "UI_Notifications"] }
+# browser/com.rs: the WebView2 events of a page, and the stream its picture is captured into.
+windows = { version = "0.62", features = ["Data_Xml_Dom", "Foundation", "UI_Notifications", "Win32_Foundation", "Win32_System_Com", "Win32_System_Com_StructuredStorage"] }
 # capture.rs: the clipboard's change counter, its formats and the image's memory (a polling timer; see the ruling there).
+# browser/com.rs: waiting for the pages' browser process to end at quit (Win32_System_Threading).
 tokio = { version = "1", features = ["time"] }
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Media_Audio", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Media_Audio", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

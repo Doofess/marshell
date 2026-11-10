@@ -91,6 +91,10 @@ export const COMMANDS: Command[] = [
   { id: "preview", label: "Side pane", group: "Window", binding: { code: "KeyQ", mac: { code: "KeyQ", alt: true } } },
   { id: "open-file", label: "Open file…", group: "Window" },
   { id: "browse-file", label: "Browse…", group: "Window" },
+  // The browser tab (Windows only for now: the window hides them elsewhere). None has a default key.
+  { id: "new-browser-tab", label: "New browser tab", group: "Window" },
+  { id: "open-url", label: "Open URL…", group: "Window" },
+  { id: "clear-browser-data", label: "Clear the browser's data…", group: "Window" },
   { id: "pane-next-tab", label: "Next tab", group: "Window", binding: { code: "Tab", ctrl: true } },
   { id: "pane-previous-tab", label: "Previous tab", group: "Window" },
   { id: "pane-close-tab", label: "Close tab", group: "Window" },

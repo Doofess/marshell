@@ -4,7 +4,8 @@ import { interpretBlur } from "../../lib/navigation/keys";
 import { reduce } from "../../lib/navigation/machine";
 import { GRID_CONTEXT, GRID_LAYOUT, NAMES } from "../../lib/navigation/fixtures";
 import { INITIAL_NAV } from "../../lib/navigation/types";
-import { claimsKey, focusKindOf, setNavState, step } from "./useNavigation";
+import { dispatchPage } from "../browser/pageStore";
+import { claimsKey, focusKindOf, setNavState, step, subscribeNav } from "./useNavigation";
 
 const key = (code: string, mods: { ctrl?: boolean; shift?: boolean } = { ctrl: true, shift: true }) => ({ code, key: code, ctrlKey: mods.ctrl ?? false, shiftKey: mods.shift ?? false, altKey: false, metaKey: false });
 
@@ -32,6 +33,30 @@ describe("focusKindOf", () => {
   it("is a control on a select or a details summary, so Tab moves on from them instead of selecting a terminal", () => {
     expect(focusKindOf(el(["select"], "SELECT"))).toBe("control");
     expect(focusKindOf(el(["summary"], "SUMMARY"))).toBe("control");
+  });
+
+  it("is a control, in the side pane and not in a terminal, while a page has the keyboard, wherever document.activeElement says", () => {
+    dispatchPage({ type: "opening", key: "s/p" });
+    dispatchPage({ type: "focus", key: "s/p", focused: true });
+    try {
+      expect(focusKindOf(el([".xterm"], "TEXTAREA"))).toBe("control");
+      expect(focusKindOf(null)).toBe("control");
+    } finally {
+      dispatchPage({ type: "gone" });
+    }
+    expect(focusKindOf(el([".xterm"], "TEXTAREA"))).toBe("terminal");
+  });
+});
+
+describe("navigation state changes", () => {
+  it("tells a subscriber when the state is replaced, and stops after it unsubscribes", () => {
+    let calls = 0;
+    const stop = subscribeNav(() => calls++);
+    setNavState({ ...INITIAL_NAV, engaged: true });
+    expect(calls).toBe(1);
+    stop();
+    setNavState(INITIAL_NAV);
+    expect(calls).toBe(1);
   });
 });
 

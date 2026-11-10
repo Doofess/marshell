@@ -17,9 +17,10 @@ import { kindOf, languageOf, splitPath } from "./kinds";
 import type { LinkTarget } from "./links";
 import { MarkdownView } from "./MarkdownView";
 import { PdfView } from "./pdf/PdfView";
-import type { OpenInPane } from "../pane/PaneContext";
+import { useOpenPageInPane, type OpenInPane } from "../pane/PaneContext";
 import type { PaneEntry, View } from "../pane/paneState";
 import { usePreviewFile, type FileState } from "./usePreviewFile";
+import { followWebLink } from "./webLink";
 import { WebLinkBar } from "./WebLinkBar";
 import "./Preview.css";
 
@@ -153,9 +154,12 @@ export function PreviewPane({ entry, file, updated, theme, os, canBack, canForwa
     setWeb(null);
     body.current?.focus({ preventScroll: true });
   };
+  // Where the side pane has browser tabs a web link opens one at once, with no question; elsewhere the question stays.
+  const openPage = useOpenPageInPane();
   const follow = (link: Outbound) => {
-    if (link.kind === "web") setWeb(link.url);
-    else onOpen(link.line === undefined ? { path: link.path } : { path: link.path, line: link.line });
+    if (link.kind === "web") {
+      if (followWebLink(link.url, openPage) === "ask") setWeb(link.url);
+    } else onOpen(link.line === undefined ? { path: link.path } : { path: link.path, line: link.line });
   };
 
   // Marking a region: only an image or a PDF has pages to mark.

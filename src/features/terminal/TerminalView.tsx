@@ -11,8 +11,10 @@ import { imageOnlyPaste } from "../regions/imagePaste";
 import { PtySocket } from "../../lib/api/ptySocket";
 import { trustedSink } from "../../lib/api/elevated";
 import { LatencyMeter } from "../perf/latency";
-import { useOpenInPane } from "../pane/PaneContext";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { useOpenInPane, useOpenPageInPane } from "../pane/PaneContext";
 import { PerfOverlay } from "../perf/PerfOverlay";
+import { isPerfToggle } from "../perf/perfToggle";
 import { ENDED_LINE, FAILED_LINE, SESSION_ENDED } from "./coreRestart";
 import { jumpFrom, promptTarget, trackPrompts, type Prompt } from "./promptMarks";
 import "./PromptMarks.css";
@@ -32,10 +34,6 @@ import { appScheme, resolveTerminalTheme, type TerminalThemeInput } from "./term
 /** The terminal theme settings, without the app's scheme, which the terminal reads itself. */
 export type TerminalThemeProp = Omit<TerminalThemeInput, "app">;
 const FOLLOW_APP: TerminalThemeProp = { setting: "follow-app", imported: [], protection: true };
-
-function isPerfToggle(e: KeyboardEvent): boolean {
-  return e.type === "keydown" && e.shiftKey && e.altKey && (e.ctrlKey || e.metaKey) && e.code === "KeyP";
-}
 
 /** Whether a key press is turned into the "Paused. Continue to type." bar instead of being sent: a live session that is frozen. */
 export const blockedInput = (core: "live" | "ended" | "failed", paused: boolean): boolean => core === "live" && paused;
@@ -169,6 +167,10 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
   const openInPane = useOpenInPane();
   const paneRef = useRef(openInPane);
   paneRef.current = openInPane;
+  // Where the window has browser tabs a web address opens one in the side pane; elsewhere (null) it opens the system browser.
+  const openPage = useOpenPageInPane();
+  const pageRef = useRef(openPage);
+  pageRef.current = openPage;
   const themeRef = useRef(theme);
   themeRef.current = theme;
   // Re-applies the theme to the live terminal; set while a terminal exists.
@@ -197,7 +199,14 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
     paintGutter(first.theme.background);
     let current = first.scheme;
     // OSC 8 hyperlinks follow the same rule as a plain web address: the modifier, and only http and https, in the system browser.
-    const linkHandler = webLinkHandler(endpoint.platform, () => termRef.current?.element);
+    const inPane = pageRef.current !== null;
+    const openWeb = (url: string): Promise<void> => {
+      const page = pageRef.current;
+      if (!page) return openUrl(url);
+      page(url);
+      return Promise.resolve();
+    };
+    const linkHandler = webLinkHandler(endpoint.platform, () => termRef.current?.element, openWeb, inPane);
     const term = new Terminal(terminalOptions({ fontFamily, fontSize, theme: first.theme, minimumContrastRatio: first.minimumContrastRatio, linkHandler }));
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -208,7 +217,7 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
     termRef.current = term;
     loadRenderer(term, endpoint.platform, setRenderer);
     // The providers are disposed with the terminal. The web address goes first, so xterm gives it a stretch both would claim.
-    term.registerLinkProvider(urlLinkProvider(term, endpoint.platform));
+    term.registerLinkProvider(urlLinkProvider(term, endpoint.platform, openWeb, inPane));
     term.registerLinkProvider(pathLinkProvider(term, tabId, endpoint.platform, (entry) => paneRef.current(entry)));
     const unregister = registerTerminal(tabId, () => term.buffer.active);
     term.attachCustomKeyEventHandler((e) => {

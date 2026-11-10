@@ -2,6 +2,7 @@ import { useId, useRef } from "react";
 import { DiffView } from "../../components/DiffView/DiffView";
 import { deletedFiles } from "../../lib/api/agents";
 import { useDialogFocus } from "../../lib/useDialogFocus";
+import { useCoverPage } from "../browser/pageCover";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import { fixesCodexHooks, fixHeadline, restartNote } from "./report";
 import type { DoctorFixPlan } from "./types";
@@ -43,6 +44,7 @@ export function FixSheet({ plan, busy, conflict, onConfirm, onCancel, onReload }
   const id = useId();
   const dialog = useRef<HTMLElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
+  useCoverPage();
   useDialogFocus(dialog, title, onCancel);
   const headline = fixHeadline(plan.item_ids.length);
   return (
@@ -88,6 +90,7 @@ export function DifferencesSheet({ preview, onClose }: { preview: ConfigPreview;
   const id = useId();
   const dialog = useRef<HTMLElement>(null);
   const title = useRef<HTMLHeadingElement>(null);
+  useCoverPage();
   useDialogFocus(dialog, title, onClose);
   return (
     <section ref={dialog} className="fix-sheet" role="dialog" aria-modal="true" aria-labelledby={id}>

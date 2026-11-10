@@ -1,3 +1,4 @@
+import type { BrowserEvents } from "../browser/browserApi";
 import type { RowModel } from "../sidebar/types";
 
 export type DropTarget = { kind: "terminal"; tabId: string } | { kind: "pane" };
@@ -9,6 +10,15 @@ export function dropTarget(el: Hit | null): DropTarget {
   const host = el?.closest("[data-drop-tab]") ?? null;
   const tabId = host?.getAttribute("data-drop-tab") ?? null;
   return tabId !== null && tabId !== "" ? { kind: "terminal", tabId } : { kind: "pane" };
+}
+
+/**
+ * A drop on a page, as the shell reports it: a drop on the side pane with the files that were dropped. Nothing for an enter, a
+ * leave, or a drop with no files.
+ */
+export function pageDrop(d: BrowserEvents["drag"]):{ target: DropTarget; paths: string[] } | null {
+  if (d.kind !== "drop" || d.paths === undefined || d.paths.length === 0) return null;
+  return { target: { kind: "pane" }, paths: d.paths };
 }
 
 /** Tauri reports a drop position in physical pixels; the page's coordinates are CSS pixels. */

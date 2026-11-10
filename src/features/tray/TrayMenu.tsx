@@ -1,5 +1,6 @@
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { SessionNumber } from "../../components/SessionNumber/SessionNumber";
+import { useCoverPage } from "../browser/pageCover";
 import type { TrayState } from "./trayItems";
 import { trayItems } from "./trayItems";
 import "./Tray.css";
@@ -9,6 +10,7 @@ import "./Tray.css";
  * number and mark. On Linux the tray has no click events, so the menu is all there is; macOS and Linux are design only.
  */
 export function TrayMenu({ state, caption = false }: { state: TrayState; caption?: boolean }) {
+  useCoverPage();
   const items = trayItems(state);
   const mark = (n: number | undefined) => state.sessions.find((s) => s.number === n);
   return (

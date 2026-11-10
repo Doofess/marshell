@@ -10,3 +10,14 @@ const nothing: OpenInPane = () => {};
 export const PaneContext = createContext<OpenInPane>(nothing);
 
 export const useOpenInPane = (): OpenInPane => useContext(PaneContext);
+
+/**
+ * What opens a web address as a browser tab in the side pane. `focus` is where the keyboard goes: into the page (the default), or
+ * to the address box for a blank tab. False when it was refused (the opener says why).
+ */
+export type OpenPageInPane = (url: string, opts?: { focus: "page" | "address" }) => boolean;
+
+/** Provided beside `PaneContext`: null where browser tabs aren't available, so a caller falls back to the system browser. */
+export const PagePaneContext = createContext<OpenPageInPane | null>(null);
+
+export const useOpenPageInPane = (): OpenPageInPane | null => useContext(PagePaneContext);

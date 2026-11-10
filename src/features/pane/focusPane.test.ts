@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 import { paneFocusTarget } from "./focusPane";
 
 // A stand-in for the document: it answers a selector by what it names.
-const root = (has: { body?: boolean; empty?: boolean; plus?: boolean }) =>
+const root = (has: { body?: boolean; slot?: boolean; empty?: boolean; plus?: boolean }) =>
   ({
     querySelector: (sel: string) => {
       if (sel.includes("preview__body")) return has.body ? "body" : null;
+      if (sel.includes("browser-tab__slot")) return has.slot ? "slot" : null;
       if (sel.includes("empty-pane__button")) return has.empty ? "empty" : null;
       if (sel.includes("New tab")) return has.plus ? "plus" : null;
       return null;
@@ -15,6 +16,10 @@ const root = (has: { body?: boolean; empty?: boolean; plus?: boolean }) =>
 describe("paneFocusTarget", () => {
   it("is the selected tab's body first", () => {
     expect(paneFocusTarget(root({ body: true, empty: true, plus: true }))).toBe("body");
+  });
+  it("is a browser tab's slot, which enters the page, when the selected tab has no body", () => {
+    expect(paneFocusTarget(root({ slot: true, empty: true, plus: true }))).toBe("slot");
+    expect(paneFocusTarget(root({ body: true, slot: true }))).toBe("body");
   });
   it("is the empty pane's first button with no body", () => {
     expect(paneFocusTarget(root({ empty: true, plus: true }))).toBe("empty");

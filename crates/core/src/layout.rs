@@ -199,6 +199,13 @@ fn path_ok(path: &str) -> bool {
     !path.is_empty() && path.chars().count() <= MAX_PATH_CHARS
 }
 
+const MAX_TITLE_CHARS: usize = 200;
+
+/// A page a browser tab may hold: a blank page or an http(s) address of at most `MAX_PATH_CHARS`.
+fn is_page_address(s: &str) -> bool {
+    s.chars().count() <= MAX_PATH_CHARS && (s == "about:blank" || s.starts_with("http://") || s.starts_with("https://"))
+}
+
 /// Pulls the pane back into range: drops what cannot be drawn and clamps the rest, so one bad part loses nothing else.
 fn repair_pane(pane: &mut PaneView, tabs: &[SavedTab]) {
     if pane.width.is_some_and(|w| !PANE_WIDTH.contains(&w)) {
@@ -209,9 +216,32 @@ fn repair_pane(pane: &mut PaneView, tabs: &[SavedTab]) {
         let mut seen = BTreeSet::new();
         let mut kept: Vec<PaneTab> = Vec::new();
         for mut tab in std::mem::take(&mut st.tabs) {
-            if tab.kind != "file" || !is_pane_id(&tab.id) || seen.contains(&tab.id) {
+            if !matches!(tab.kind.as_str(), "file" | "browser") || !is_pane_id(&tab.id) || seen.contains(&tab.id) {
                 continue;
             }
+            if tab.kind == "browser" {
+                // A browser tab holds one address: the entry it was showing.
+                let at = (tab.index as usize).min(tab.history.len().saturating_sub(1));
+                let Some(mut e) = (at < tab.history.len()).then(|| tab.history.swap_remove(at)) else {
+                    continue;
+                };
+                if !is_page_address(&e.path) {
+                    continue;
+                }
+                e.line = None;
+                e.col = None;
+                e.view = "rendered".into();
+                tab.history = vec![e];
+                tab.index = 0;
+                tab.title = tab.title.take().map(|t| t.chars().take(MAX_TITLE_CHARS).collect());
+                seen.insert(tab.id.clone());
+                kept.push(tab);
+                if kept.len() == MAX_PANE_TABS {
+                    break;
+                }
+                continue;
+            }
+            tab.title = None;
             tab.history.retain(|e| path_ok(&e.path));
             if tab.history.is_empty() {
                 continue;
@@ -309,8 +339,24 @@ pub fn validate_pane(p: &PaneView) -> Result<(), String> {
                     tab.id
                 ));
             }
-            if tab.kind != "file" {
-                return Err(format!("{at}: kind must be \"file\", not \"{}\"", tab.kind));
+            if !matches!(tab.kind.as_str(), "file" | "browser") {
+                return Err(format!(
+                    "{at}: kind must be \"file\" or \"browser\", not \"{}\"",
+                    tab.kind
+                ));
+            }
+            let browser = tab.kind == "browser";
+            if !browser && tab.title.is_some() {
+                return Err(format!("{at}: only a browser tab has a title"));
+            }
+            if tab.title.as_ref().is_some_and(|t| t.chars().count() > MAX_TITLE_CHARS) {
+                return Err(format!("{at}: title must be at most {MAX_TITLE_CHARS} characters"));
+            }
+            if browser && tab.history.len() != 1 {
+                return Err(format!(
+                    "{at}: a browser tab's history must hold exactly 1 entry, not {}",
+                    tab.history.len()
+                ));
             }
             if tab.history.is_empty() || tab.history.len() > MAX_PANE_HISTORY {
                 return Err(format!(
@@ -331,6 +377,17 @@ pub fn validate_pane(p: &PaneView) -> Result<(), String> {
                 }
                 if !PANE_VIEWS.contains(&e.view.as_str()) {
                     return Err(format!("{at}: view must be one of {PANE_VIEWS:?}, not \"{}\"", e.view));
+                }
+                if browser {
+                    if !is_page_address(&e.path) {
+                        return Err(format!("{at}: a browser tab's path must be a web address"));
+                    }
+                    if e.view != "rendered" {
+                        return Err(format!("{at}: a browser tab's view must be \"rendered\""));
+                    }
+                    if e.line.is_some() || e.col.is_some() {
+                        return Err(format!("{at}: a browser tab has no line or col"));
+                    }
                 }
             }
         }
@@ -626,6 +683,7 @@ mod tests {
                 })
                 .collect(),
             index: 0,
+            title: None,
         }
     }
 
@@ -661,10 +719,65 @@ mod tests {
     #[test]
     fn repair_drops_a_tab_of_an_unknown_kind() {
         let mut t2 = file_tab("t2", &["C:/b.md"]);
-        t2.kind = "browser".into();
+        t2.kind = "editor".into();
         let pane = repaired("a", session(vec![file_tab("t1", &["C:/a.md"]), t2]));
         let ids: Vec<_> = pane.sessions["a"].tabs.iter().map(|t| t.id.as_str()).collect();
         assert_eq!(ids, ["t1"]);
+    }
+
+    fn browser_tab(id: &str, url: &str) -> PaneTab {
+        let mut t = file_tab(id, &[url]);
+        t.kind = "browser".into();
+        t
+    }
+
+    fn kept_ids(tabs: Vec<PaneTab>) -> Vec<String> {
+        repaired("a", session(tabs))
+            .sessions
+            .get("a")
+            .map_or_else(Vec::new, |s| s.tabs.iter().map(|t| t.id.clone()).collect())
+    }
+
+    #[test]
+    fn repair_keeps_a_browser_tab() {
+        let tabs = vec![file_tab("t1", &["C:/a.md"]), browser_tab("t2", "https://example.com/")];
+        assert_eq!(kept_ids(tabs), ["t1", "t2"]);
+    }
+
+    #[test]
+    fn repair_drops_a_browser_tab_with_a_bad_address() {
+        for bad in ["file:///C:/x", "javascript:alert(1)", "", "ftp://x/"] {
+            let tabs = vec![file_tab("t1", &["C:/a.md"]), browser_tab("t2", bad)];
+            assert_eq!(kept_ids(tabs), ["t1"], "{bad:?}");
+        }
+        for good in ["about:blank", "http://localhost:3000/"] {
+            let tabs = vec![file_tab("t1", &["C:/a.md"]), browser_tab("t2", good)];
+            assert_eq!(kept_ids(tabs), ["t1", "t2"], "{good:?}");
+        }
+    }
+
+    #[test]
+    fn repair_folds_a_browser_tab_to_one_entry() {
+        let mut t = file_tab("t1", &["https://a.test/", "https://b.test/", "https://c.test/"]);
+        t.kind = "browser".into();
+        t.index = 2;
+        let pane = repaired("a", session(vec![t]));
+        let kept = &pane.sessions["a"].tabs[0];
+        assert_eq!(kept.history.len(), 1);
+        assert_eq!(kept.history[0].path, "https://c.test/");
+        assert_eq!(kept.index, 0);
+    }
+
+    #[test]
+    fn repair_trims_a_long_title() {
+        let mut b = browser_tab("t1", "https://example.com/");
+        b.title = Some("é".repeat(300));
+        let mut f = file_tab("t2", &["C:/a.md"]);
+        f.title = Some("stray".into());
+        let pane = repaired("a", session(vec![b, f]));
+        let tabs = &pane.sessions["a"].tabs;
+        assert_eq!(tabs[0].title.as_deref(), Some("é".repeat(200).as_str()));
+        assert_eq!(tabs[1].title, None);
     }
 
     #[test]
@@ -772,7 +885,7 @@ mod tests {
             .contains("tabs")
         );
         assert!(one(|t| t.id = "A b".into()).contains("id"));
-        assert!(one(|t| t.kind = "browser".into()).contains("kind"));
+        assert!(one(|t| t.kind = "editor".into()).contains("kind"));
         assert!(one(|t| t.history.clear()).contains("history"));
         assert!(one(|t| t.index = 3).contains("index"));
         assert!(one(|t| t.history[0].view = "tree".into()).contains("view"));
@@ -812,6 +925,33 @@ mod tests {
             ..ViewLayout::default()
         };
         assert_eq!(validate_view(&v), Ok(()));
+    }
+
+    #[test]
+    fn validate_view_names_the_browser_field() {
+        let one = |change: fn(&mut PaneTab)| {
+            let mut v = ViewLayout::default();
+            let mut t = browser_tab("t1", "https://example.com/");
+            change(&mut t);
+            v.pane = pane_with("a", session(vec![t]));
+            validate_view(&v).unwrap_err()
+        };
+        let ok = ViewLayout {
+            pane: pane_with("a", session(vec![browser_tab("t1", "https://example.com/")])),
+            ..ViewLayout::default()
+        };
+        assert_eq!(validate_view(&ok), Ok(()));
+        assert!(one(|t| t.history.push(t.history[0].clone())).contains("history"));
+        assert!(one(|t| t.index = 1).contains("index"));
+        assert!(one(|t| t.history[0].path = "file:///x".into()).contains("path"));
+        assert!(one(|t| t.history[0].view = "source".into()).contains("view"));
+        assert!(one(|t| t.history[0].line = Some(3)).contains("line"));
+        assert!(one(|t| t.title = Some("x".repeat(201))).contains("title"));
+        let mut v = ViewLayout::default();
+        let mut f = file_tab("t1", &["C:/a"]);
+        f.title = Some("x".into());
+        v.pane = pane_with("a", session(vec![f]));
+        assert!(validate_view(&v).unwrap_err().contains("title"));
     }
 
     #[test]
