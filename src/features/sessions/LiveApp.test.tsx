@@ -2,7 +2,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { SessionInfo } from "../../generated/SessionInfo";
+import type { PaneView } from "../../generated/PaneView";
 import type { Task } from "../../generated/Task";
+import { EmptyPane } from "../pane/EmptyPane";
+import { paneBody, toggleOutcome } from "../pane/paneCommands";
+import { SidePane } from "../pane/SidePane";
+import { paneReducer, recentFor } from "../pane/paneState";
 import { FIXTURES } from "../sidebar/fixtures";
 import { NOT_A_TASK, changesFor, isTextBox, keyBlocked, markTasks, missingTask, paletteHidden, resolveTarget, reviewAgentName, reviewKeyDown, reviewTarget, taskListFailed, taskRefresher } from "../tasks/reviewOpen";
 import { ApiError } from "../../lib/api/client";
@@ -675,5 +680,36 @@ describe("LiveApp: a task list that has not loaded", () => {
     const open = { kind: "open" as const, tabId: "t2", task: TASK };
     expect(await resolveTarget(open, () => [], reload)).toBe(open);
     expect(reload).not.toHaveBeenCalled();
+  });
+});
+
+// The harness above has no DOM and does not mount LiveApp, so these two run the decisions LiveApp makes (the pure helpers it calls)
+// and render the node it builds from them.
+describe("LiveApp: the side pane", () => {
+  const closedPane: PaneView = { open: false, width: null, sessions: {}, recent: [] };
+  const paneNode = (pane: PaneView, session: string) =>
+    renderToStaticMarkup(
+      <SidePane tabs={[]} activeId={null} os="windows" onSelect={() => {}} onClose={() => {}} onMove={() => {}} onHide={() => {}} onPlus={() => {}}>
+        {paneBody(pane, session) === "empty" ? <EmptyPane recent={recentFor(pane, "C:\\dev\\my-app", session)} onOpenFile={() => {}} onBrowse={() => {}} onRecent={() => {}} /> : null}
+      </SidePane>,
+    );
+  it("Ctrl+Shift+Q with no tabs shows the empty pane", () => {
+    const next = paneReducer(closedPane, { type: "toggle" });
+    expect(toggleOutcome(closedPane, "t1")).toEqual({ shown: true, body: "empty" });
+    expect(next.open).toBe(true);
+    const h = paneNode(next, "t1");
+    expect(h).toContain("No tabs open in this session.");
+    expect(h).toContain("Open file…");
+  });
+  it("a session with no tabs shows the empty state while the pane is open", () => {
+    const pane = paneReducer(closedPane, { type: "open", session: "t2", project: "C:\\dev\\my-app", target: { path: "C:\\dev\\my-app\\a.md" } });
+    expect(pane.open).toBe(true);
+    expect(paneBody(pane, "t2")).toBe("tabs");
+    expect(paneBody(pane, "t1")).toBe("empty");
+    const h = paneNode(pane, "t1");
+    expect(h).toContain("No tabs open in this session.");
+    expect(h).toContain("Recent in this project");
+    expect(h).toContain("a.md");
+    expect(h).toContain("Drop a file here to open it.");
   });
 });

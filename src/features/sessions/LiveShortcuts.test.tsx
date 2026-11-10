@@ -32,7 +32,7 @@ describe("LiveShortcuts", () => {
     expect(h).toContain("Bookmark this point");
   });
   it("teaches the navigation chords: Ctrl+Shift+Tab selects the terminal, and the arrows move the cursor", () => {
-    expect(h).toContain("Select the terminal");
+    expect(h).toContain("Switch between the terminal and the side pane");
     expect(h).toContain("Ctrl+Shift+Tab");
     expect(h).toContain("Move the cursor to the terminal, a session or a control");
     expect(h).toContain("Select no terminal");

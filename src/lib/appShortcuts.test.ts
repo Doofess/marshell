@@ -126,3 +126,14 @@ describe("bookmark shortcut", () => {
     expect(commandShortcut("bookmark")).toEqual({ kind: "bookmark" });
   });
 });
+
+describe("side pane commands", () => {
+  it("maps the new ids to their shortcut kinds", () => {
+    expect(commandShortcut("pane-next-tab")).toEqual({ kind: "paneTab", by: 1 });
+    expect(commandShortcut("pane-previous-tab")).toEqual({ kind: "paneTab", by: -1 });
+    expect(commandShortcut("pane-close-tab")).toEqual({ kind: "closePaneTab" });
+    expect(commandShortcut("browse-file")).toEqual({ kind: "browse" });
+    expect(commandShortcut("preview")).toEqual({ kind: "preview" });
+    expect(commandShortcut("open-file")).toEqual({ kind: "openFile" });
+  });
+});

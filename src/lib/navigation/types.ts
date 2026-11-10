@@ -8,7 +8,9 @@ export type Target =
   /** A session in the sidebar or the rail, by its session number. */
   | { kind: "row"; number: number }
   /** A control in the top bar, or the launcher and palette buttons: it is activated, not selected. */
-  | { kind: "top"; id: string };
+  | { kind: "top"; id: string }
+  /** The side pane, which is selected like a terminal: focus goes into it. */
+  | { kind: "side" };
 
 export type Dir = "left" | "right" | "up" | "down";
 
@@ -20,11 +22,15 @@ export type NavContext = {
   panes: Array<number | null>;
   layout: NavLayout;
   names?: Record<number, string>;
+  /** The side pane's spoken name ("the side pane") while it is on screen; null or absent: it is not, and Tab never stops there. */
+  side?: string | null;
 };
 
 export type NavState = {
   /** The slot holding the terminal that has the keyboard, or null: nothing is selected. */
   selectedPane: number | null;
+  /** The side pane has the keyboard. It wins over `selectedPane` when the pane is on screen. */
+  selectedSide: boolean;
   /** Where the navigation cursor is while the modifier is held and the user is moving about; it selects on release. */
   cursor: Target | null;
   /** The navigation modifier is down. */
@@ -50,14 +56,17 @@ export type NavEffect =
   | { type: "select-pane"; index: number }
   /** A session that is not on screen was chosen: show it in this slot, then select that slot. */
   | { type: "bring-into-view"; number: number; pane: number }
+  /** The side pane was selected: focus goes into it. */
+  | { type: "select-side" }
   | { type: "activate"; id: string }
   | { type: "deselect" }
   | { type: "announce"; text: string };
 
-export const INITIAL_NAV: NavState = { selectedPane: null, cursor: null, held: false, engaged: false };
+export const INITIAL_NAV: NavState = { selectedPane: null, selectedSide: false, cursor: null, held: false, engaged: false };
 
 export const sameTarget = (a: Target | null, b: Target | null): boolean => {
   if (!a || !b || a.kind !== b.kind) return false;
+  if (a.kind === "side") return true;
   if (a.kind === "pane") return a.index === (b as typeof a).index;
   if (a.kind === "row") return a.number === (b as typeof a).number;
   return a.id === (b as typeof a).id;

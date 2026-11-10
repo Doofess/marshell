@@ -44,7 +44,7 @@ const STRAY_OUTLINE = /(?:^|[\s;])outline:\s*(?=\S)(?!none\b|0\b)(?![^;]*\btrans
 const ALLOWED: Record<string, Record<string, string>> = {
   "features/window/MainWindow.css": { ".window": "The OS window's own edge, which a real window has; not a control." },
   "features/drop/Drop.css": {
-    ".terminal-host[data-drop-over]::after, .preview[data-drop-over]::after": "The dashed outline marks where a dragged file will land (plan 2.5c, Global Constraints); it is a drop cue shown only during a drag, not a control.",
+    ".terminal-host[data-drop-over]::after, .side-pane[data-drop-over]::after": "The dashed outline marks where a dragged file will land (plan 2.5c, Global Constraints); it is a drop cue shown only during a drag, not a control.",
   },
 };
 

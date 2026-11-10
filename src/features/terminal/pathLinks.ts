@@ -1,7 +1,7 @@
 import type { ILink, ILinkProvider } from "@xterm/xterm";
 import type { Endpoint } from "../../generated/Endpoint";
 import { findPathCandidates, type PathCandidate } from "../preview/pathCandidates";
-import type { OpenPreview } from "../preview/PreviewContext";
+import type { OpenInPane } from "../pane/PaneContext";
 import { resolvePaths } from "../preview/previewApi";
 
 /** The part of xterm's `IBuffer` that `logicalLine` reads. The real buffer fits it. */
@@ -39,7 +39,7 @@ export function logicalLine(buffer: BufferLike, y: number): { text: string; cell
 }
 
 /** The tooltip over a clickable path. */
-export const previewHint = (platform: Endpoint["platform"]): string => (platform === "macos" ? "⌘+click to preview" : "Ctrl+click to preview");
+export const previewHint = (platform: Endpoint["platform"]): string => (platform === "macos" ? "⌘+click to open in the side pane" : "Ctrl+click to open in the side pane");
 
 /** The core refuses more candidates than this per resolve. */
 const MAX_BATCH = 64;
@@ -57,7 +57,7 @@ export function pathLinkProvider(
   term: { buffer: { active: BufferLike }; element?: HTMLElement | undefined },
   tab: string,
   platform: Endpoint["platform"],
-  openPreview: OpenPreview,
+  openInPane: OpenInPane,
   resolve: Resolver = resolvePaths,
   now: () => number = Date.now,
 ): ILinkProvider {
@@ -101,7 +101,7 @@ export function pathLinkProvider(
           decorations: { underline: true, pointerCursor: true },
           activate(event) {
             if (!(mac ? event.metaKey : event.ctrlKey)) return;
-            openPreview({ path, ...(c.line !== undefined && { line: c.line }), ...(c.col !== undefined && { col: c.col }) });
+            openInPane({ path, ...(c.line !== undefined && { line: c.line }), ...(c.col !== undefined && { col: c.col }) });
           },
           hover: () => term.element?.setAttribute("title", previewHint(platform)),
           leave: () => term.element?.removeAttribute("title"),

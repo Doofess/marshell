@@ -415,20 +415,67 @@ pub struct SavedTab {
     pub preset: Option<String>,
 }
 
-/// How the window was laid out: the selected tab and the sidebar.
+/// One place a file tab has shown: the path, where in it, and how.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PaneEntry {
+    pub path: String,
+    #[serde(default)]
+    pub line: Option<u32>,
+    #[serde(default)]
+    pub col: Option<u32>,
+    /// "rendered" or "source".
+    pub view: String,
+}
+
+/// One tab of the side pane.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PaneTab {
+    /// Unique in its session: a-z, 0-9 and "-", 1 to 64 long.
+    pub id: String,
+    /// "file" is the only kind this build knows.
+    pub kind: String,
+    pub history: Vec<PaneEntry>,
+    pub index: u32,
+}
+
+/// One session's tabs in the side pane.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SessionTabs {
+    pub tabs: Vec<PaneTab>,
+    pub active: Option<String>,
+}
+
+/// A file opened lately in a project.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RecentFile {
+    pub project: String,
+    pub path: String,
+}
+
+/// The side pane: whether it shows, how wide, each session's tabs and the recent files.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PaneView {
+    pub open: bool,
+    pub width: Option<u32>,
+    /// Keyed by the session's tab_id.
+    pub sessions: BTreeMap<String, SessionTabs>,
+    /// Newest first.
+    pub recent: Vec<RecentFile>,
+}
+
+/// How the window was laid out: the selected tab, the sidebar and the side pane.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ViewLayout {
     /// Always one entry: the selected tab, or None. A file from before slice 6q-1 can hold up to four; the core keeps only the focused one.
     pub panes: Vec<Option<String>>,
-    /// Unused since slice 6q-1 removed split view: always None (or empty). Kept so an older build can still read the file.
-    pub arrangement: Option<String>,
-    /// Unused since slice 6q-1 removed split view: always None (or empty). Kept so an older build can still read the file.
-    pub ratios: Vec<f32>,
     /// Index into `panes` of the terminal on screen: always 0 while `panes` holds one entry.
     pub active: u32,
-    /// Unused since slice 6q-1 removed split view: always None (or empty). Kept so an older build can still read the file.
-    pub zoomed: Option<u32>,
     /// "expanded", "rail" or "focus".
     pub sidebar: String,
     pub sidebar_width: u32,
@@ -437,21 +484,22 @@ pub struct ViewLayout {
     /// The palette's recent commands, newest first: at most 5 command ids.
     #[serde(default)]
     pub recent_commands: Vec<String>,
+    /// The side pane. A layout.json from before slice 6q-2 reads as an empty, closed pane.
+    #[serde(default)]
+    pub pane: PaneView,
 }
 
 impl Default for ViewLayout {
     fn default() -> Self {
         Self {
             panes: vec![None],
-            arrangement: None,
-            ratios: Vec::new(),
             active: 0,
-            zoomed: None,
             sidebar: "expanded".into(),
             sidebar_width: 288,
             shell_hidden: false,
             grouped: false,
             recent_commands: Vec::new(),
+            pane: PaneView::default(),
         }
     }
 }

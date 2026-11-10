@@ -46,7 +46,7 @@ describe("LivePalette", () => {
     expect(h).toContain("Shell profiles");
     expect(h).toContain("Start a session");
     expect(h).toContain("Open Doctor");
-    expect(h).toContain("Select the terminal");
+    expect(h).toContain("Switch between the terminal and the side pane");
   });
   it("shows the label the window gives a command, and the keymap's own when it gives none", () => {
     const show = (labels?: Record<string, string>) => renderToStaticMarkup(<LivePalette sessions={PALETTE_SESSIONS} os="windows" labels={labels} onRun={() => {}} onClose={() => {}} />);

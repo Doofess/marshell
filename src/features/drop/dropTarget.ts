@@ -1,14 +1,14 @@
 import type { RowModel } from "../sidebar/types";
 
-export type DropTarget = { kind: "terminal"; tabId: string } | { kind: "preview" };
+export type DropTarget = { kind: "terminal"; tabId: string } | { kind: "pane" };
 
 type Hit = { closest(sel: string): { getAttribute(n: string): string | null } | null };
 
-/** Where a drop at this element lands: the terminal host it is inside, otherwise the preview (the splitter, a header, the sidebar, an empty pane). */
+/** Where a drop at this element lands: the terminal host it is inside, otherwise the side pane (the divider, a header, the sidebar, an empty pane). */
 export function dropTarget(el: Hit | null): DropTarget {
   const host = el?.closest("[data-drop-tab]") ?? null;
   const tabId = host?.getAttribute("data-drop-tab") ?? null;
-  return tabId !== null && tabId !== "" ? { kind: "terminal", tabId } : { kind: "preview" };
+  return tabId !== null && tabId !== "" ? { kind: "terminal", tabId } : { kind: "pane" };
 }
 
 /** Tauri reports a drop position in physical pixels; the page's coordinates are CSS pixels. */

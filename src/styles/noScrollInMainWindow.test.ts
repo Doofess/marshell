@@ -19,14 +19,14 @@ const FILES = [...walk(join(SRC, "features")), ...walk(join(SRC, "components")),
  * Review sheet's file list (`.review__files`: a capped listbox in a modal sheet, so the diff beside it stays in view, like
  * the launcher's and the palette's lists), and the keyboard shortcuts sheet (`.live-shortcuts__sheet`: a modal sheet whose
  * thirty-odd rows are longer than a 720 by 480 window; it has no actions, Esc or Ctrl+Shift+O closes it, and clipping it would
- * hide keys), and the preview pane's body (`.preview__body`: a file is read by scrolling it, both ways, with the themed scrollbar visible;
+ * hide keys), and the side pane's tab strip (`.side-pane__tabs`: one row that scrolls sideways with no scrollbar, as a browser's tab strip does), and the preview pane's body (`.preview__body`: a file is read by scrolling it, both ways, with the themed scrollbar visible;
  * it is a pane beside the terminal, opened and closed by the person), and the History view's two panes (`.history__list` and
  * `.history__detail`: a list of conversations and one conversation, each read by scrolling with the themed scrollbar visible;
  * the view replaces the terminal area while the person has it open), and the scripts trust card's list (`.scripts-trust__list`:
  * a repo's scripts can be longer than the window, and the card's Allow sits outside the list, so every line is read by
  * scrolling it, with the themed scrollbar visible, before Allow).
  */
-const ALLOWED = [/^\.live-shortcuts__sheet$/,/^\.drawer$/, /^\.composer__field$/, /^\.scroll-menu$/, /^\.sidebar__list$/, /^\.rail__list$/, /^\.palette__list$/, /^\.launcher__list$/, /^\.page__body$/, /^\.settings-shell__nav$/,/^\.raw-editor__text$/, /^\.fix-sheet__body$/, /^\.onboarding__body$/, /^\.diagnostics-dialog__text$/, /^\.export-dialog__body$/, /^\.export-dialog__text$/,/^\.review__files$/, /^\.preview__body$/, /^\.peek__screen$/, /^\.history__list$/, /^\.history__detail$/, /^\.scripts-trust__list$/];
+const ALLOWED = [/^\.live-shortcuts__sheet$/,/^\.drawer$/, /^\.composer__field$/, /^\.scroll-menu$/, /^\.sidebar__list$/, /^\.rail__list$/, /^\.palette__list$/, /^\.launcher__list$/, /^\.page__body$/, /^\.settings-shell__nav$/,/^\.raw-editor__text$/, /^\.fix-sheet__body$/, /^\.onboarding__body$/, /^\.diagnostics-dialog__text$/, /^\.export-dialog__body$/, /^\.export-dialog__text$/,/^\.review__files$/, /^\.preview__body$/, /^\.side-pane__tabs$/, /^\.peek__screen$/, /^\.history__list$/, /^\.history__detail$/, /^\.scripts-trust__list$/];
 
 const read = (f: string) => readFileSync(join(SRC, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 const rules = (css: string) => [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({ selectors: m[1]!.split(",").map((s) => s.trim()), body: m[2]! }));

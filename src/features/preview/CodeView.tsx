@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { HIGHLIGHT_CAP, highlightLines, type Token } from "./highlight";
-import type { PreviewEntry } from "./previewState";
+import type { PaneEntry } from "../pane/paneState";
 
 /** The text's lines. A final newline ends the last line instead of starting an empty one. */
 export function splitLines(text: string): string[] {
@@ -19,7 +19,7 @@ type Props = {
   /** The Shiki language; left out for plain text. */
   language?: string;
   /** The entry that asked for a line: scrolls its line to about a third from the top, once per entry. A refetch does not scroll. */
-  target?: PreviewEntry;
+  target?: PaneEntry;
 };
 
 /**
@@ -45,7 +45,7 @@ export function CodeView({ text, language, target }: Props) {
   const rows = tokens && tokens.length >= plain.length ? tokens : null;
 
   const root = useRef<HTMLDivElement>(null);
-  const line = target?.line;
+  const line = target?.line ?? undefined;
   useEffect(() => {
     const row = line === undefined ? null : root.current?.querySelector<HTMLElement>('[data-target="true"]');
     const body = root.current?.closest<HTMLElement>(".preview__body");

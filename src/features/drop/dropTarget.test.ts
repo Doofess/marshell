@@ -9,9 +9,9 @@ describe("dropTarget", () => {
     const el = { closest: (sel: string) => (sel === "[data-drop-tab]" ? { getAttribute: () => "t3" } : null) };
     expect(dropTarget(el)).toEqual({ kind: "terminal", tabId: "t3" });
   });
-  it("is the preview anywhere else, and with no element", () => {
-    expect(dropTarget({ closest: () => null })).toEqual({ kind: "preview" });
-    expect(dropTarget(null)).toEqual({ kind: "preview" });
+  it("is the pane anywhere else, and with no element", () => {
+    expect(dropTarget({ closest: () => null })).toEqual({ kind: "pane" });
+    expect(dropTarget(null)).toEqual({ kind: "pane" });
   });
 });
 

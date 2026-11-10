@@ -23,10 +23,16 @@ export type SessionShortcut =
   | { kind: "review" }
   /** Open the keyboard shortcuts sheet (Ctrl+Shift+O); pressed again while it is open, it closes it. */
   | { kind: "cheatsheet" }
-  /** Show or hide the preview pane (Ctrl+Shift+Q; Cmd+Alt+Q on macOS). With no file opened yet it opens the palette to pick one. */
+  /** Show or hide the side pane (Ctrl+Shift+Q; Cmd+Alt+Q on macOS). With no tab open it shows the empty pane. */
   | { kind: "preview" }
-  /** "Open file…": the palette, to pick a file for the preview. Has no key of its own. */
+  /** "Open file…": the palette, to pick a file for the side pane. Has no key of its own. */
   | { kind: "openFile" }
+  /** The next or previous tab of the focused session's side pane, wrapping. */
+  | { kind: "paneTab"; by: 1 | -1 }
+  /** Close the side pane's selected tab. Has no key of its own. */
+  | { kind: "closePaneTab" }
+  /** "Browse…": the system's file dialog, to pick a file for the side pane. Has no key of its own. */
+  | { kind: "browse" }
   /** Capture a screen region with the system's snipping tool and add the image to the focused session (Ctrl+Shift+X). Windows only for now. */
   | { kind: "capture" }
   /** Show or hide the History view in the main area (Ctrl+Shift+Y). */
@@ -84,6 +90,14 @@ export function commandShortcut(id: string): SessionShortcut | null {
       return { kind: "preview" };
     case "open-file":
       return { kind: "openFile" };
+    case "browse-file":
+      return { kind: "browse" };
+    case "pane-next-tab":
+      return { kind: "paneTab", by: 1 };
+    case "pane-previous-tab":
+      return { kind: "paneTab", by: -1 };
+    case "pane-close-tab":
+      return { kind: "closePaneTab" };
     case "capture":
       return { kind: "capture" };
     case "next-waiting":

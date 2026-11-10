@@ -18,6 +18,7 @@ export function NavDemo({ state, ctx, os = "windows" }: { state: NavState; ctx: 
     if (!t) return "";
     if (t.kind === "row") return `Session ${t.number}, ${NAMES[t.number] ?? ""}`;
     if (t.kind === "top") return t.id;
+    if (t.kind === "side") return "Side pane";
     const n = ctx.panes[t.index];
     return n === null || n === undefined ? `Empty slot ${t.index + 1}` : `Session ${n}, ${NAMES[n] ?? ""}`;
   })();
@@ -38,6 +39,7 @@ export function NavDemo({ state, ctx, os = "windows" }: { state: NavState; ctx: 
             </div>
           );
         }
+        if (l.target.kind === "side") return <div key="side" className="nav-demo__pane" data-selected={state.selectedSide} style={style}>Side pane</div>;
         const i = l.target.index;
         const n = ctx.panes[i];
         return (

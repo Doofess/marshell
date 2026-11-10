@@ -4,15 +4,13 @@ import { DEFAULT_VIEW, type ViewAction, type ViewState, fillsEmptyPane, railTogg
 
 const base: ViewLayout = {
   panes: ["a"],
-  arrangement: null,
-  ratios: [],
   active: 0,
-  zoomed: null,
   sidebar: "expanded",
   sidebar_width: 288,
   shell_hidden: false,
   grouped: false,
   recent_commands: [],
+  pane: { open: false, width: null, sessions: {}, recent: [] },
 };
 const state = (patch: Partial<ViewState> = {}): ViewState => ({ ...base, ...patch });
 const run = (s: ViewState, ...actions: ViewAction[]) => actions.reduce(viewReducer, s);
@@ -25,7 +23,7 @@ describe("viewReducer", () => {
   });
 
   it("select leaves one pane, even from a view that holds several", () => {
-    const s = run(state({ panes: ["a", "b", "c"], active: 2, zoomed: 1 }), { type: "select", tabId: "b" });
+    const s = run(state({ panes: ["a", "b", "c"], active: 2 }), { type: "select", tabId: "b" });
     expect(s.panes).toEqual(["b"]);
     expect(s.active).toBe(0);
   });
@@ -65,6 +63,20 @@ describe("viewReducer", () => {
     const saved = toSaved(run(state({ sidebar: "rail" }), { type: "toggleFocus" }));
     expect("lastPref" in saved).toBe(false);
     expect(saved).toEqual({ ...base, sidebar: "focus" });
+  });
+});
+
+describe("the pane in the view", () => {
+  it("a pane action reaches the pane", () => {
+    const s = run(state(), { type: "pane", action: { type: "open", session: "a", project: "p", target: { path: "/x.md" } } });
+    expect(s.pane.open).toBe(true);
+    expect(s.pane.sessions.a?.tabs).toHaveLength(1);
+    const same = viewReducer(s, { type: "pane", action: { type: "show" } });
+    expect(same).toBe(s);
+  });
+  it("toSaved keeps the pane", () => {
+    const s = run(state(), { type: "pane", action: { type: "show" } });
+    expect(toSaved(s).pane.open).toBe(true);
   });
 });
 

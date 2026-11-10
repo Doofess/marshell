@@ -176,8 +176,8 @@ async fn a_saved_split_reopens_on_its_focused_session() {
         "version": 1,
         "tabs": [tab("t1", 1), tab("t2", 2), tab("t3", 3)],
         "view": {
-            "panes": ["t1", "t2", "t3"], "arrangement": "columns", "ratios": [0.5], "active": 2,
-            "zoomed": null, "sidebar": "expanded", "sidebar_width": 288,
+            "panes": ["t1", "t2", "t3"], "active": 2,
+            "sidebar": "expanded", "sidebar_width": 288,
             "shell_hidden": false, "grouped": false
         },
         "launcher": {}
@@ -190,7 +190,29 @@ async fn a_saved_split_reopens_on_its_focused_session() {
     let doc = json_of(res).await;
     assert_eq!(doc["view"]["panes"], serde_json::json!(["t3"]));
     assert_eq!(doc["view"]["active"], 0);
-    assert_eq!(doc["view"]["zoomed"], serde_json::Value::Null);
-    assert_eq!(doc["view"]["arrangement"], serde_json::Value::Null);
-    assert_eq!(doc["view"]["ratios"], serde_json::json!([]));
+}
+
+#[tokio::test]
+async fn a_file_from_before_6q_2_loads_with_an_empty_pane() {
+    let home = tempfile::tempdir().unwrap();
+    let saved = serde_json::json!({
+        "version": 1,
+        "tabs": [{ "tab_id": "t1", "number": 1, "name": "t1", "agent": null, "profile_id": "sleeper", "cwd": "C:/work" }],
+        "view": {
+            "panes": ["t1"], "arrangement": null, "ratios": [], "active": 0, "zoomed": null,
+            "sidebar": "rail", "sidebar_width": 300, "shell_hidden": false, "grouped": false
+        },
+        "launcher": {}
+    });
+    std::fs::write(home.path().join("layout.json"), saved.to_string()).unwrap();
+
+    let app = router(state_in(home.path()));
+    let res = app.oneshot(api("GET", "/v1/layout", None)).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let doc = json_of(res).await;
+    let pane: marshell_protocol::api::PaneView = serde_json::from_value(doc["view"]["pane"].clone()).unwrap();
+    assert_eq!(pane, marshell_protocol::api::PaneView::default());
+    assert_eq!(doc["view"]["panes"], serde_json::json!(["t1"]));
+    assert_eq!(doc["view"]["sidebar"], "rail");
+    assert_eq!(doc["view"]["sidebar_width"], 300);
 }

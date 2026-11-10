@@ -29,6 +29,36 @@ export const POLL_MS = 1000;
 /** How long the "Updated" note stays. */
 export const UPDATED_MS = 2000;
 
+/**
+ * The schedule of a file's checks: one at once unless paused, then one a second while visible and not paused. `resume` checks once
+ * (the first look, if a paused file has had none). A paused file makes no request at all.
+ */
+export function createPoller(o: { tick: (first: boolean) => void; isPaused: () => boolean; visible: () => boolean }) {
+  let looked = false;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  const look = () => {
+    const first = !looked;
+    looked = true;
+    o.tick(first);
+  };
+  const poll = () => {
+    if (!o.isPaused() && o.visible()) look();
+  };
+  return {
+    start() {
+      if (!o.isPaused()) look();
+      timer = setInterval(poll, POLL_MS);
+    },
+    poll,
+    resume() {
+      if (!o.isPaused()) look();
+    },
+    stop() {
+      clearInterval(timer);
+    },
+  };
+}
+
 const IMAGE_TYPES: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp", ico: "image/x-icon", avif: "image/avif" };
 export const imageType = (path: string) => IMAGE_TYPES[path.slice(path.lastIndexOf(".") + 1).toLowerCase()] ?? "application/octet-stream";
 
@@ -37,10 +67,20 @@ export const imageType = (path: string) => IMAGE_TYPES[path.slice(path.lastIndex
  * the modification time moved (`next()` in reload.ts decides). A refetch replaces the content in place, so the scroll position
  * stays; `updated` is true for two seconds after one. The hook lives as long as the pane is open, so it stops with it.
  */
-export function usePreviewFile(path: string): { file: FileState; updated: boolean } {
+export function usePreviewFile(path: string, opts: { paused?: boolean } = {}): { file: FileState; updated: boolean } {
+  const paused = opts.paused === true;
   const [file, setFile] = useState<FileState>({ phase: "loading" });
   const [updated, setUpdated] = useState(false);
   const loaded = useRef(false);
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
+  const poller = useRef<ReturnType<typeof createPoller> | null>(null);
+  const wasPaused = useRef(paused);
+  // Resuming checks once at once; the interval carries on from there.
+  useEffect(() => {
+    if (wasPaused.current && !paused) poller.current?.resume();
+    wasPaused.current = paused;
+  }, [paused]);
 
   useEffect(() => {
     let cancelled = false;
@@ -110,18 +150,17 @@ export function usePreviewFile(path: string): { file: FileState; updated: boolea
       }
     };
 
-    void tick(true);
-    const poll = () => {
-      if (document.visibilityState === "visible") void tick(false);
-    };
-    const timer = setInterval(poll, POLL_MS);
+    const schedule = createPoller({ tick: (first) => void tick(first), isPaused: () => pausedRef.current, visible: () => document.visibilityState === "visible" });
+    poller.current = schedule;
+    schedule.start();
     // Coming back to the window catches up at once instead of waiting for the next second.
-    document.addEventListener("visibilitychange", poll);
+    document.addEventListener("visibilitychange", schedule.poll);
     return () => {
       cancelled = true;
-      clearInterval(timer);
+      schedule.stop();
+      if (poller.current === schedule) poller.current = null;
       clearTimeout(note);
-      document.removeEventListener("visibilitychange", poll);
+      document.removeEventListener("visibilitychange", schedule.poll);
     };
   }, [path]);
 

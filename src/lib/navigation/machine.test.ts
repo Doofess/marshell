@@ -78,14 +78,14 @@ describe("holding the modifier and pressing an arrow starts a cursor that can go
   it("selects a session that is on screen by selecting its pane, on release", () => {
     const r = run(at(0), [DOWN, arrow("left"), arrow("down"), arrow("down"), UP], GRID_CONTEXT);
     expect(without(r.effects)).toEqual([{ type: "select-pane", index: 2 }]);
-    expect(r.state).toEqual({ selectedPane: 2, cursor: null, held: false, engaged: false });
+    expect(r.state).toEqual({ selectedPane: 2, selectedSide: false, cursor: null, held: false, engaged: false });
     expect(announced(r.effects).at(-1)).toBe("Selected session 3, api-server");
   });
   it("brings a session that is not on screen into the focused pane, then selects it", () => {
     // Session 5 is only in the sidebar. From slot 0: left to row 1, then down through 2 and 3 to 5.
     const r = run(at(0), [DOWN, arrow("left"), arrow("down"), arrow("down"), arrow("down"), UP], GRID_CONTEXT);
     expect(without(r.effects)).toEqual([{ type: "bring-into-view", number: 5, pane: 0 }]);
-    expect(r.state).toEqual({ selectedPane: 0, cursor: null, held: false, engaged: false });
+    expect(r.state).toEqual({ selectedPane: 0, selectedSide: false, cursor: null, held: false, engaged: false });
     expect(announced(r.effects).at(-1)).toBe("Selected session 5, docs-site");
   });
   it("uses the first empty slot when nothing is selected", () => {
@@ -120,7 +120,7 @@ describe("holding the modifier and pressing an arrow starts a cursor that can go
   it("releasing the modifier with no cursor out changes nothing", () => {
     const r = run(at(2), [DOWN, UP], GRID_CONTEXT);
     expect(r.effects).toEqual([]);
-    expect(r.state).toEqual({ selectedPane: 2, cursor: null, held: false, engaged: false });
+    expect(r.state).toEqual({ selectedPane: 2, selectedSide: false, cursor: null, held: false, engaged: false });
   });
 });
 
@@ -128,7 +128,7 @@ describe("Esc and the select-none chord", () => {
   it("Esc while the cursor is out cancels it and keeps the selection", () => {
     const r = run(at(0), [DOWN, arrow("left"), arrow("down"), { type: "escape" }, UP], GRID_CONTEXT);
     expect(without(r.effects)).toEqual([]);
-    expect(r.state).toEqual({ selectedPane: 0, cursor: null, held: false, engaged: false });
+    expect(r.state).toEqual({ selectedPane: 0, selectedSide: false, cursor: null, held: false, engaged: false });
     expect(announced(r.effects).at(-1)).toBe("Cancelled");
   });
   it("Esc with no cursor out selects nothing", () => {
@@ -143,7 +143,7 @@ describe("Esc and the select-none chord", () => {
   it("the select-none chord deselects, also from the middle of a move", () => {
     const r = run(at(0), [DOWN, arrow("left"), { type: "select-none" }, UP], GRID_CONTEXT);
     expect(without(r.effects)).toEqual([{ type: "deselect" }]);
-    expect(r.state).toEqual({ selectedPane: null, cursor: null, held: false, engaged: false });
+    expect(r.state).toEqual({ selectedPane: null, selectedSide: false, cursor: null, held: false, engaged: false });
   });
   it("Tab after selecting none selects the first terminal again", () => {
     expect(run(at(2), [{ type: "select-none" }, DOWN, TAB], GRID_CONTEXT).state.selectedPane).toBe(0);
@@ -163,6 +163,57 @@ describe("the mouse", () => {
   it("activates a top bar control when it is clicked", () => {
     const r = run(at(0), [{ type: "choose", target: { kind: "top", id: "palette" } }], GRID_CONTEXT);
     expect(without(r.effects)).toEqual([{ type: "activate", id: "palette" }]);
+    expect(r.state.selectedPane).toBe(0);
+  });
+});
+
+describe("the side pane is a stop after the terminals", () => {
+  const SIDE = { kind: "side" } as const;
+  const withSide: NavContext = {
+    panes: [1],
+    names: NAMES,
+    side: "the side pane",
+    layout: [
+      { target: { kind: "pane", index: 0 }, rect: { x: 288, y: 40, w: 300, h: 300 } },
+      { target: SIDE, rect: { x: 600, y: 40, w: 300, h: 300 } },
+    ],
+  };
+  it("Tab goes from the terminal to the side pane and back", () => {
+    const first = run(at(0), [DOWN, TAB], withSide);
+    expect(without(first.effects)).toEqual([{ type: "select-side" }]);
+    expect(announced(first.effects)).toEqual(["Selected the side pane"]);
+    expect(first.state.selectedSide).toBe(true);
+    const back = run(first.state, [TAB], withSide);
+    expect(without(back.effects)).toEqual([{ type: "select-pane", index: 0 }]);
+    expect(announced(back.effects)).toEqual(["Selected session 1, billing"]);
+  });
+  it("with the pane hidden Tab selects the terminal as before", () => {
+    const hidden: NavContext = { ...withSide, side: null };
+    const r = run(at(0), [DOWN, TAB], hidden);
+    expect(without(r.effects)).toEqual([{ type: "select-pane", index: 0 }]);
+    expect(r.state.selectedSide).toBe(false);
+  });
+  it("with a cursor out, Tab carries it to the side pane and the release selects it", () => {
+    const out = run(at(0, { cursor: { kind: "pane", index: 0 } }), [DOWN, TAB], withSide);
+    expect(out.state.cursor).toEqual(SIDE);
+    expect(announced(out.effects)).toEqual(["Cursor on the side pane"]);
+    const released = run(out.state, [UP], withSide);
+    expect(without(released.effects)).toEqual([{ type: "select-side" }]);
+    expect(released.state.selectedSide).toBe(true);
+    expect(released.state.cursor).toBeNull();
+  });
+  it("an arrow can carry the cursor onto the side pane", () => {
+    const r = run(at(0), [DOWN, arrow("right")], withSide);
+    expect(r.state.cursor).toEqual(SIDE);
+    expect(announced(r.effects)).toEqual(["Cursor on the side pane"]);
+  });
+  it("an arrow starts from the side pane while it is selected", () => {
+    const r = run(at(null, { selectedSide: true }), [DOWN, arrow("left")], withSide);
+    expect(r.state.cursor).toEqual({ kind: "pane", index: 0 });
+  });
+  it("selecting a terminal clears selectedSide", () => {
+    const r = run(at(null, { selectedSide: true }), [{ type: "choose", target: { kind: "pane", index: 0 } }], withSide);
+    expect(r.state.selectedSide).toBe(false);
     expect(r.state.selectedPane).toBe(0);
   });
 });

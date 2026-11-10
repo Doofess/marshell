@@ -53,9 +53,18 @@ import { COMPANY_NAMES, type CompanyAgent, type SettingsSection } from "../setti
 import { cliTaskRequest, exitedTasks, runningCount, updateResult, type CliTaskKind, type PendingTask } from "../settings/cliTasks";
 import { accountLine, UNREACHABLE } from "../accounts/accountsText";
 import { getAccount, getInstall } from "../../lib/api/accounts";
+import { pickFile } from "../../lib/filePicker";
 import { Preview } from "../preview/Preview";
-import { PreviewContext } from "../preview/PreviewContext";
-import { currentOf, usePreview } from "../preview/previewState";
+import { PaneContext } from "../pane/PaneContext";
+import { dropCover, modalOnScreen } from "../pane/dropCover";
+import { EmptyPane } from "../pane/EmptyPane";
+import { KeptTabs } from "../pane/KeptTabs";
+import { focusPane } from "../pane/focusPane";
+import { FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, TAB_LIMIT, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome } from "../pane/paneCommands";
+import { currentEntry, openRefused, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
+import { plusChoice, plusMenuItems } from "../pane/plusMenu";
+import { SidePane } from "../pane/SidePane";
+import { useTerminalFloor } from "../terminal/useTerminalFloor";
 import { modeMenuItems, sessionMenuItems } from "../sidebar/sessionMenu";
 import { nextSessionNumber } from "../sidebar/sessionNumber";
 import type { Mode, RowModel } from "../sidebar/types";
@@ -193,11 +202,6 @@ export function LiveApp() {
   viewRef.current = view;
   // The session the window is about is the one on screen; the store's choice only stands in when none is.
   const focusedId = view.panes[0] ?? selectedId;
-  // The preview pane: its history lives here so it outlasts a session switch. Open, it is about the focused session's window only.
-  const preview = usePreview();
-  const previewRef = useRef(preview);
-  previewRef.current = preview;
-  const previewEntry = preview.state.open ? currentOf(preview.state) : undefined;
   // Going to a session is two things: the store's selection and the view's, which puts it on screen.
   const selectRef = useRef(select);
   selectRef.current = select;
@@ -243,6 +247,9 @@ export function LiveApp() {
   const font = resolveTerminalFont(appearance.terminal_font, wt);
   const wtFamily = wt?.family?.trim() || undefined;
   const terminalFont = useMemo(() => ({ family: font.family, size: font.size, wtFamily }), [font.family, font.size, wtFamily]);
+  // The side pane stops where the terminal would drop under 80 columns: the columns plus the host's padding and the scrollbar's gutter.
+  // It is worked out again when the screen's scale changes or a font finishes loading (useTerminalFloor.ts).
+  const terminalMinWidth = useTerminalFloor(80, terminalFont);
   const [launcherOpen, setLauncherOpen] = useState(false);
   // The palette's "New session as administrator" opens the launcher with the Administrator chip on; every other opening starts with it off.
   const [launcherElevated, setLauncherElevated] = useState(false);
@@ -691,8 +698,8 @@ export function LiveApp() {
     [announce],
   );
   // Review the session in `tabId`, or say it isn't a task. What the state was when the key or button was pressed is read from refs.
-  const stateRef = useRef({ infos, tasks, focusedId, launcherOpen, overlay, review, rows });
-  stateRef.current = { infos, tasks, focusedId, launcherOpen, overlay, review, rows };
+  const stateRef = useRef({ infos, tasks, focusedId, launcherOpen, overlay, review, rows, closeAsk });
+  stateRef.current = { infos, tasks, focusedId, launcherOpen, overlay, review, rows, closeAsk };
   // Does what a review request came to: opens the sheet, or says why not (it isn't a task, or the task list can't be loaded).
   const actOn = useCallback(
     async (target: ReviewTarget) => {
@@ -744,18 +751,115 @@ export function LiveApp() {
     announce(noticeFor(target.via, target.name));
     setTimeout(() => actions.focusTerminal(), 0);
   };
-  // Files dropped from the system: on a terminal each path is pasted into that session (never Enter); anywhere else the first file opens in
-  // the preview. A paused or an ended session is refused before anything is pasted.
+  // The side pane. Its state is `view.pane`, changed with `paneDispatch`; the tabs shown and changed are the focused session's, and an
+  // ended session keeps its own. A session switch only swaps which tabs are drawn, so nothing here moves focus except the one that opens.
+  const paneDispatch = useCallback((action: PaneAction) => dispatch({ type: "pane", action }), [dispatch]);
+  const paneProject = () => projectKeyOf(stateRef.current.rows, stateRef.current.focusedId);
+  // A new tab, or the file's own tab; shows the pane and moves focus into it. False when it was refused (and said so).
+  const openInPane = (target: OpenTarget): boolean => {
+    const session = stateRef.current.focusedId;
+    const check = openCheck(viewRef.current.pane, session, target.path);
+    if (check !== "ok" || session === undefined) {
+      announce(check === "refused" ? TAB_LIMIT : NO_SESSION_TO_OPEN);
+      return false;
+    }
+    paneDispatch({ type: "open", session, project: paneProject(), target });
+    announce(openedText(lastSegment(target.path)));
+    focusPane();
+    return true;
+  };
+  // What the terminal's Ctrl+click and the viewers get: one stable function that calls the latest `openInPane`.
+  const openInPaneRef = useRef(openInPane);
+  openInPaneRef.current = openInPane;
+  const paneOpener = useCallback((target: OpenTarget) => void openInPaneRef.current(target), []);
+  // "Browse…": the system's file dialog, to pick any file for the side pane. The command, the + menu's row and the empty pane's
+  // button all call it. The dialog starts in the session's folder and is modal to the window, so the session it was asked from is
+  // the one the file opens in. A file the core refuses to read shows the viewer's own message in its tab.
+  const browseFile = (): void => {
+    const s = stateRef.current;
+    if (s.focusedId === undefined) return announce(NO_SESSION_TO_OPEN);
+    pickFile(s.infos.find((i) => i.tab_id === s.focusedId)?.cwd ?? null).then(
+      (path) => {
+        if (path !== null) openInPaneRef.current({ path });
+      },
+      () => announce("Couldn't open the file dialog."),
+    );
+  };
+  // The pane's four commands. Ctrl+Tab and the palette's next and previous tab leave focus where it is, except where that would
+  // be on something no longer drawn (paneTabFocus).
+  const paneRun = (shortcut: Extract<SessionShortcut, { kind: "preview" | "paneTab" | "closePaneTab" | "browse" }>) => {
+    const pane = viewRef.current.pane;
+    const session = stateRef.current.focusedId;
+    switch (shortcut.kind) {
+      case "preview": {
+        const { shown } = toggleOutcome(pane, session);
+        paneDispatch({ type: "toggle" });
+        if (shown) focusPane();
+        else setTimeout(() => actions.focusTerminal(), 0);
+        return;
+      }
+      case "paneTab": {
+        const outcome = paneTabOutcome(pane, session);
+        if (outcome === "none" || session === undefined) return announce(NO_TABS_OPEN);
+        const from = document.activeElement?.closest('[data-nav-side] [role="tabpanel"]') != null ? "panel" : "elsewhere";
+        if (outcome === "show") paneDispatch({ type: "show" });
+        else paneDispatch({ type: "step", session, by: shortcut.by });
+        // Asked once the change is drawn: whether the pane covers the terminal is the window's to say (`data-pane`).
+        setTimeout(() => {
+          const covers = document.querySelector('[data-pane="cover"]') !== null;
+          if (paneTabFocus({ outcome, from, covers })) focusPane();
+        }, 0);
+        return;
+      }
+      case "closePaneTab": {
+        const closing = closeTabOutcome(pane, session);
+        if (!closing || session === undefined) return announce(NO_TABS_OPEN);
+        const inside = document.activeElement?.closest("[data-nav-side]") != null;
+        paneDispatch({ type: "close", session, paneTab: closing.paneTab });
+        announce(closedText(lastSegment(closing.path)));
+        // A closed tab's body takes focus with it; the pane keeps the keyboard if it had it.
+        if (inside) focusPane();
+        return;
+      }
+      case "browse":
+        return browseFile();
+    }
+  };
+  const paneRunRef = useRef(paneRun);
+  paneRunRef.current = paneRun;
+  // The + menu: where it opened and the button that opened it.
+  const [plusMenu, setPlusMenu] = useState<{ anchor: { x: number; y: number }; opener: HTMLElement } | null>(null);
+  // Files dropped from the system: on a terminal each path is pasted into that session (never Enter); on the side pane every file opens
+  // as a tab, in order. A paused or an ended session is refused before anything is pasted. A window covered by the launcher or a dialog
+  // takes no drop at all.
   const dropPaths = async (target: DropTarget, paths: string[]): Promise<void> => {
-    if (target.kind === "preview") {
+    const s = stateRef.current;
+    const cover = dropCover({ launcherOpen: s.launcherOpen, overlay: s.overlay, review: s.review !== null, closeAsk: s.closeAsk !== null, modal: modalOnScreen(document) });
+    if (cover !== null) return announce(coverText(cover));
+    if (target.kind === "pane") {
+      const session = s.focusedId;
+      if (session === undefined) return announce(NO_SESSION_TO_OPEN);
+      const project = paneProject();
+      // The reducer is followed here too, so a drop of many files meets the 32-tab limit at the right file.
+      let pane = viewRef.current.pane;
+      let last: string | null = null;
+      let refused = false;
       for (const path of paths) {
         const stat = await statFile(path).catch(() => null);
         if (stat?.kind !== "ok") continue;
-        preview.open({ path });
-        announce(`Opened ${lastSegment(path)} in the preview.`);
-        return;
+        if (openRefused(pane, session, path)) {
+          refused = true;
+          break;
+        }
+        const action: PaneAction = { type: "open", session, project, target: { path } };
+        pane = paneReducer(pane, action);
+        paneDispatch(action);
+        last = path;
       }
-      announce("A folder can't be shown in the preview.");
+      if (refused) announce(TAB_LIMIT);
+      else if (last !== null) announce(openedText(lastSegment(last)));
+      else announce(FOLDER_REFUSED);
+      if (last !== null) focusPane();
       return;
     }
     const ep = endpointRef.current;
@@ -840,8 +944,8 @@ export function LiveApp() {
       next = host ?? null;
       label = `Drop to paste the path into ${name ?? "the session"}`;
     } else if (target) {
-      next = document.querySelector("[data-drop-preview]");
-      label = "Drop to open in the preview";
+      next = document.querySelector("[data-drop-pane]");
+      label = "Drop to open in the side pane";
     }
     if (dropOver.current && dropOver.current !== next) {
       dropOver.current.removeAttribute("data-drop-over");
@@ -1120,10 +1224,26 @@ export function LiveApp() {
   const numberOf = (id: string | null | undefined) => (id ? (infos.find((i) => i.tab_id === id)?.number ?? null) : null);
   const navPanes = [numberOf(focusedId)];
   const navNames = useMemo(() => Object.fromEntries(rows.map((r) => [r.number, r.name])), [rows]);
+  // The side pane is a stop of the Tab chord while it is drawn (a session on screen, the sessions view, the pane open); whether focus is in it
+  // is tracked from focusin and focusout, so the chord knows which stop it is leaving.
+  const sidePaneDrawn = view.pane.open && focusedId !== null && focusedId !== undefined && mainView === "sessions";
+  const [sideFocused, setSideFocused] = useState(false);
+  useEffect(() => {
+    const inside = () => setSideFocused(document.activeElement?.closest("[data-nav-side]") != null);
+    document.addEventListener("focusin", inside);
+    document.addEventListener("focusout", inside);
+    return () => {
+      document.removeEventListener("focusin", inside);
+      document.removeEventListener("focusout", inside);
+    };
+  }, []);
   const applyNav = (effect: NavEffect) => {
     switch (effect.type) {
       case "select-pane":
         actions.focusTerminal();
+        return;
+      case "select-side":
+        focusPane();
         return;
       case "bring-into-view": {
         const id = tabIdOfNumber(infos, effect.number);
@@ -1160,26 +1280,24 @@ export function LiveApp() {
     panes: navPanes,
     selectedPane: 0,
     names: navNames,
+    side: sidePaneDrawn ? "the side pane" : null,
+    sideFocused,
     root: ref,
     apply: applyNav,
   });
   const sendNav = nav.send;
 
-  // The window's shortcuts and commands (preview, shell panel, history, menu, next waiting). True when it was one of them.
+  // The window's shortcuts and commands (side pane, shell panel, history, menu, next waiting). True when it was one of them.
   const windowCommand = useCallback(
     (shortcut: SessionShortcut | null): boolean => {
       const v = viewRef.current;
       switch (shortcut?.kind) {
-        // With nothing opened yet there is nothing to bring back: the palette is where a file is picked.
+        // The side pane's switch and its tab commands; with no tab open the switch shows the empty pane.
         case "preview":
-          if (previewRef.current.state.entries.length === 0) {
-            setFilesOnly(true);
-            setOverlay("palette");
-          } else {
-            const wasOpen = previewRef.current.state.open;
-            previewRef.current.toggle();
-            if (wasOpen) setTimeout(() => actions.focusTerminal(), 0);
-          }
+        case "paneTab":
+        case "closePaneTab":
+        case "browse":
+          paneRunRef.current(shortcut);
           return true;
         case "openFile":
           setFilesOnly(true);
@@ -1352,7 +1470,7 @@ export function LiveApp() {
     }
     const shortcut = commandShortcut(id);
     // These move the focus (or open a panel that takes it), so they wait for the palette to hand it back first.
-    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "menu") return void setTimeout(() => windowCommand(shortcut), 0);
+    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "menu" || shortcut?.kind === "paneTab" || shortcut?.kind === "closePaneTab" || shortcut?.kind === "browse") return void setTimeout(() => windowCommand(shortcut), 0);
     if (windowCommand(shortcut)) return;
     if (shortcut?.kind === "launcher") setLauncherOpen(true);
     else if (shortcut?.kind === "prompt") jumpPrompt(shortcut.by);
@@ -1570,34 +1688,78 @@ export function LiveApp() {
       </p>
     );
   }
-  // The preview pane for the current entry, drawn in the focused session's window. It follows the theme of the terminal beside it.
-  const previewPane =
-    previewEntry && os ? (
-      <Preview
-        entry={previewEntry}
-        theme={resolveTerminalTheme({ ...themeFor(overrideOf(focusedId ?? "")), app: appScheme() }).theme}
+  // The side pane, drawn in the focused session's window: its tab strip, then the kept tabs or the empty state. Each tab's viewer follows
+  // the theme of the terminal beside it. A link inside a tab moves that tab; everything else that opens a file goes through `openInPane`.
+  const paneSession = focusedId;
+  const paneTabs = tabsOf(view.pane, paneSession);
+  const paneActive = paneTabs.active ?? paneTabs.tabs[0]?.id ?? null;
+  const paneTitles = tabTitles(paneTabs.tabs);
+  const paneProjectNow = focusedRow?.projectKey ?? "";
+  const paneTheme = paneTabs.tabs.length > 0 ? resolveTerminalTheme({ ...themeFor(overrideOf(focusedId ?? "")), app: appScheme() }).theme : undefined;
+  const paneRecent = recentFor(view.pane, paneProjectNow, paneSession ?? "");
+  const openFromPane = () => {
+    setFilesOnly(true);
+    setOverlay("palette");
+  };
+  const paneNode =
+    os ? (
+      <SidePane
+        tabs={paneTabs.tabs.map((t) => ({ id: t.id, title: paneTitles.get(t.id) ?? "", path: currentEntry(t).path }))}
+        activeId={paneActive}
         os={os}
-        canBack={preview.state.index > 0}
-        canForward={preview.state.index < preview.state.entries.length - 1}
-        onBack={preview.back}
-        onForward={preview.forward}
-        onOpen={preview.open}
-        onView={preview.setView}
-        onClose={() => {
-          preview.close();
+        onSelect={(id) => paneSession !== undefined && paneDispatch({ type: "select", session: paneSession, paneTab: id })}
+        onClose={(id) => {
+          const tab = paneTabs.tabs.find((t) => t.id === id);
+          if (paneSession === undefined || !tab) return;
+          paneDispatch({ type: "close", session: paneSession, paneTab: id });
+          announce(closedText(lastSegment(currentEntry(tab).path)));
+        }}
+        onMove={(id, to) => {
+          const tab = paneTabs.tabs.find((t) => t.id === id);
+          if (paneSession === undefined || !tab) return;
+          paneDispatch({ type: "move", session: paneSession, paneTab: id, to });
+          announce(movedText(lastSegment(currentEntry(tab).path), to, paneTabs.tabs.length));
+        }}
+        onHide={() => {
+          paneDispatch({ type: "hide" });
           setTimeout(() => actions.focusTerminal(), 0);
         }}
-        onEscape={() => actions.focusTerminal()}
-        regionTarget={deliveryFor(focusedRow ?? null)}
-        onRegion={addRegion}
-      />
+        onPlus={(anchor, opener) => setPlusMenu({ anchor, opener })}
+      >
+        {paneActive !== null && paneTheme ? (
+          <KeptTabs
+            key={paneSession}
+            tabs={paneTabs.tabs}
+            activeId={paneActive}
+            render={(tab, active) => (
+              <Preview
+                entry={currentEntry(tab)}
+                theme={paneTheme}
+                os={os}
+                canBack={tab.index > 0}
+                canForward={tab.index < tab.history.length - 1}
+                onBack={() => paneSession !== undefined && paneDispatch({ type: "back", session: paneSession, paneTab: tab.id })}
+                onForward={() => paneSession !== undefined && paneDispatch({ type: "forward", session: paneSession, paneTab: tab.id })}
+                onOpen={(target) => paneSession !== undefined && paneDispatch({ type: "navigate", session: paneSession, paneTab: tab.id, project: paneProjectNow, target })}
+                onView={(v) => paneSession !== undefined && paneDispatch({ type: "setView", session: paneSession, paneTab: tab.id, view: v })}
+                active={active}
+                onEscape={() => actions.focusTerminal()}
+                regionTarget={deliveryFor(focusedRow ?? null)}
+                onRegion={addRegion}
+              />
+            )}
+          />
+        ) : (
+          <EmptyPane recent={paneRecent} onOpenFile={openFromPane} onBrowse={browseFile} onRecent={(path) => void openInPane({ path })} />
+        )}
+      </SidePane>
     ) : undefined;
   // The core decides whether a banner is worth showing from this: whether the window has focus and which sessions are on screen.
   // Under the History view the terminals stay mounted but none is on screen, so none is reported (or marked in the sidebar) as seen.
   const onScreenIds = mainView === "history" || !focusedId ? [] : [focusedId];
   useViewReport(endpoint, onScreenIds);
   return (
-    <PreviewContext.Provider value={preview.open}>
+    <PaneContext.Provider value={paneOpener}>
     <div ref={ref} className="live-app">
       {endpoint && settled && loaded && (
         <MainWindow
@@ -1611,7 +1773,11 @@ export function LiveApp() {
           rows={sidebarRows}
           selectedId={focusedId}
           visibleIds={onScreenIds}
-          preview={previewPane}
+          pane={paneNode}
+          paneShown={view.pane.open}
+          paneWidth={view.pane.width}
+          onPaneWidth={(w) => paneDispatch({ type: "width", width: w })}
+          terminalMinWidth={terminalMinWidth}
           mainView={
             mainView === "history" && endpoint && os ? (
               <LiveHistory
@@ -1631,8 +1797,7 @@ export function LiveApp() {
                 onSettings={() => openSettings("history")}
                 onOpenFile={(link) => {
                   setMainView("sessions");
-                  preview.open(link);
-                  announce(`Opened ${lastSegment(link.path)} in the preview.`);
+                  openInPane(link);
                 }}
                 onClose={() => {
                   setMainView("sessions");
@@ -1728,6 +1893,29 @@ export function LiveApp() {
           }}
         />
       )}
+      {plusMenu && (
+        <ContextMenu
+          label="New tab"
+          items={plusMenuItems(paneRecent)}
+          anchor={plusMenu.anchor}
+          onRun={(itemId) => {
+            const { opener } = plusMenu;
+            const choice = plusChoice(itemId, paneRecent);
+            setPlusMenu(null);
+            if (choice === null) return void opener.focus();
+            if (choice.kind === "recent") return void openInPane({ path: choice.path });
+            // Focus goes back to the + button first, so a palette or a dialog that closes without a pick returns it there.
+            opener.focus();
+            if (choice.kind === "openFile") openFromPane();
+            else browseFile();
+          }}
+          onClose={({ refocus }) => {
+            const { opener } = plusMenu;
+            setPlusMenu(null);
+            if (refocus) opener.focus();
+          }}
+        />
+      )}
       {/* Window-wide layers share z 20, so this order is their stacking: onboarding, then the launcher over it, then every dialog over
           both (overlayStacking.test.ts). */}
       {onboarding && endpoint && (
@@ -1784,7 +1972,7 @@ export function LiveApp() {
           }}
         />
       )}
-      {overlay === "palette" && os && <LivePalette recent={view.recent_commands} moved={MOVED_COMMANDS} sessions={paletteSessions(rows)} os={os} labels={liveLabels} hidden={hiddenCommands} tab={focusedId ?? null} filesOnly={filesOnly} onOpenFile={(path) => { setOverlay(null); preview.open({ path }); }} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
+      {overlay === "palette" && os && <LivePalette recent={view.recent_commands} moved={MOVED_COMMANDS} sessions={paletteSessions(rows)} os={os} labels={liveLabels} hidden={hiddenCommands} tab={focusedId ?? null} filesOnly={filesOnly} onOpenFile={(path) => { setOverlay(null); openInPane({ path }); }} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
       {overlay === "departures" && (
         <LiveDepartures
           rows={taskRows}
@@ -1878,6 +2066,6 @@ export function LiveApp() {
       {runAsk && <ScriptsTrustDialog scripts={runAsk.scripts} busy={runAsk.busy} error={runAsk.error} allowLabel="Allow and run" cancelLabel="Cancel" onAllow={() => void allowRun()} onCancel={() => setRunAsk(null)} />}
       {closeAsk && <CloseDialog busy={closeAsk.busy} error={closeAsk.error} onChoose={(keep) => void chooseClose(keep)} onCancel={cancelCloseAsk} />}
     </div>
-    </PreviewContext.Provider>
+    </PaneContext.Provider>
   );
 }

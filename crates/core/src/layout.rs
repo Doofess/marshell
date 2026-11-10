@@ -2,14 +2,100 @@
 //! broken or newer-version file means the defaults, and `load` never writes.
 
 use crate::store::{self, Versioned};
-use marshell_protocol::api::{LauncherChoice, LayoutDoc, SessionMode, ViewLayout};
+use marshell_protocol::api::{
+    LauncherChoice, LayoutDoc, PaneTab, PaneView, RecentFile, SavedTab, SessionMode, ViewLayout,
+};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::path::Path;
 
 /// The file holds the `LayoutDoc` fields directly, next to `"version"`.
-#[derive(Serialize, Deserialize)]
-#[serde(transparent)]
 struct FileDoc(LayoutDoc);
+
+impl Serialize for FileDoc {
+    /// Writes the document and, in `view`, the three split view fields a build from before slice 6q-2 can't read the
+    /// file without: `arrangement` and `zoomed` as null, `ratios` empty. Only the file has them. This build ignores
+    /// them when it reads, and an older build ignores `view.pane`.
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde_json::Value;
+
+        let mut json = serde_json::to_value(&self.0).map_err(serde::ser::Error::custom)?;
+        if let Some(view) = json.get_mut("view").and_then(Value::as_object_mut) {
+            view.insert("arrangement".into(), Value::Null);
+            view.insert("ratios".into(), Value::Array(Vec::new()));
+            view.insert("zoomed".into(), Value::Null);
+        }
+        json.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for FileDoc {
+    /// Reads the file's JSON, drops what the side pane can't read (see `lenient_pane`), then parses the rest strictly.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut json = serde_json::Value::deserialize(deserializer)?;
+        lenient_pane(&mut json);
+        serde_json::from_value::<LayoutDoc>(json)
+            .map(FileDoc)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+/// Drops the parts of `view.pane` that this build can't read, so that a pane written by a later build or edited by
+/// hand never costs the rest of the file. Everything outside the pane is left for the strict parse.
+fn lenient_pane(doc: &mut serde_json::Value) {
+    use serde_json::{Map, Value};
+
+    let Some(view) = doc.get_mut("view").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let Some(pane) = view.get_mut("pane") else {
+        return;
+    };
+    let Some(fields) = pane.as_object_mut() else {
+        view.remove("pane");
+        return;
+    };
+    if !fields.get("open").is_some_and(Value::is_boolean) {
+        fields.insert("open".into(), Value::Bool(false));
+    }
+    let width_fits = fields
+        .get("width")
+        .is_some_and(|w| w.as_u64().is_some_and(|n| u32::try_from(n).is_ok()));
+    if !width_fits {
+        fields.insert("width".into(), Value::Null);
+    }
+
+    if !fields.get("sessions").is_some_and(Value::is_object) {
+        fields.insert("sessions".into(), Value::Object(Map::new()));
+    }
+    if let Some(sessions) = fields.get_mut("sessions").and_then(Value::as_object_mut) {
+        sessions.retain(|_, session| lenient_session(session));
+    }
+
+    if !fields.get("recent").is_some_and(Value::is_array) {
+        fields.insert("recent".into(), Value::Array(Vec::new()));
+    }
+    if let Some(recent) = fields.get_mut("recent").and_then(Value::as_array_mut) {
+        recent.retain(|file| serde_json::from_value::<RecentFile>(file.clone()).is_ok());
+    }
+}
+
+/// Keeps the tabs of one session that parse. False when the session itself is unreadable.
+fn lenient_session(session: &mut serde_json::Value) -> bool {
+    use serde_json::Value;
+
+    let Some(fields) = session.as_object_mut() else {
+        return false;
+    };
+    let Some(tabs) = fields.get_mut("tabs").and_then(Value::as_array_mut) else {
+        return false;
+    };
+    tabs.retain(|tab| serde_json::from_value::<PaneTab>(tab.clone()).is_ok());
+    if !fields.get("active").is_some_and(Value::is_string) {
+        fields.insert("active".into(), Value::Null);
+    }
+    true
+}
 
 impl Versioned for FileDoc {
     const VERSION: u32 = 1;
@@ -17,8 +103,15 @@ impl Versioned for FileDoc {
 
 const SIDEBAR_MODES: [&str; 3] = ["expanded", "rail", "focus"];
 const SIDEBAR_WIDTH: std::ops::RangeInclusive<u32> = 200..=400;
+const PANE_WIDTH: std::ops::RangeInclusive<u32> = 320..=4096;
+const MAX_PANE_TABS: usize = 32;
+const MAX_PANE_HISTORY: usize = 50;
+const MAX_RECENT_FILES: usize = 200;
+const MAX_PATH_CHARS: usize = 4096;
+const PANE_VIEWS: [&str; 2] = ["rendered", "source"];
 
 /// A missing, broken or newer-version file means the defaults. The file itself is not touched.
+/// The side pane's parts that can't be read are dropped and the rest of the file is kept.
 pub fn load(home: &Path) -> LayoutDoc {
     match store::read::<FileDoc>(&crate::paths::layout_file(home)) {
         Ok(Some(FileDoc(doc))) => repair(doc),
@@ -94,21 +187,66 @@ pub fn repair(mut doc: LayoutDoc) -> LayoutDoc {
         }
     }
     view.recent_commands = kept;
+    repair_pane(&mut view.pane, &doc.tabs);
     doc
 }
 
-/// Split view is gone: a saved split keeps the zoomed pane's tab if it has one, else the active
-/// pane's, else the first open one, and the view holds that one pane.
+fn is_pane_id(id: &str) -> bool {
+    is_command_id(id)
+}
+
+fn path_ok(path: &str) -> bool {
+    !path.is_empty() && path.chars().count() <= MAX_PATH_CHARS
+}
+
+/// Pulls the pane back into range: drops what cannot be drawn and clamps the rest, so one bad part loses nothing else.
+fn repair_pane(pane: &mut PaneView, tabs: &[SavedTab]) {
+    if pane.width.is_some_and(|w| !PANE_WIDTH.contains(&w)) {
+        pane.width = None;
+    }
+    pane.sessions.retain(|id, _| tabs.iter().any(|t| &t.tab_id == id));
+    for st in pane.sessions.values_mut() {
+        let mut seen = BTreeSet::new();
+        let mut kept: Vec<PaneTab> = Vec::new();
+        for mut tab in std::mem::take(&mut st.tabs) {
+            if tab.kind != "file" || !is_pane_id(&tab.id) || seen.contains(&tab.id) {
+                continue;
+            }
+            tab.history.retain(|e| path_ok(&e.path));
+            if tab.history.is_empty() {
+                continue;
+            }
+            for e in &mut tab.history {
+                if !PANE_VIEWS.contains(&e.view.as_str()) {
+                    e.view = "rendered".into();
+                }
+            }
+            let dropped = tab.history.len().saturating_sub(MAX_PANE_HISTORY);
+            tab.history.drain(..dropped);
+            tab.index = (tab.index.saturating_sub(dropped as u32)).min(tab.history.len() as u32 - 1);
+            seen.insert(tab.id.clone());
+            kept.push(tab);
+            if kept.len() == MAX_PANE_TABS {
+                break;
+            }
+        }
+        st.tabs = kept;
+        if !st.active.as_ref().is_some_and(|a| st.tabs.iter().any(|t| &t.id == a)) {
+            st.active = st.tabs.first().map(|t| t.id.clone());
+        }
+    }
+    pane.sessions.retain(|_, st| !st.tabs.is_empty());
+    pane.recent.retain(|r| path_ok(&r.path));
+    pane.recent.truncate(MAX_RECENT_FILES);
+}
+
+/// Split view is gone: a saved split keeps the active pane's tab if it has one, else the first open one,
+/// and the view holds that one pane.
 fn fold_to_one_pane(view: &mut ViewLayout) {
-    let at = |i: Option<u32>| i.and_then(|i| view.panes.get(i as usize)).and_then(|p| p.clone());
-    let kept = at(view.zoomed)
-        .or_else(|| at(Some(view.active)))
-        .or_else(|| view.panes.iter().flatten().next().cloned());
+    let at = |i: u32| view.panes.get(i as usize).and_then(|p| p.clone());
+    let kept = at(view.active).or_else(|| view.panes.iter().flatten().next().cloned());
     view.panes = vec![kept];
     view.active = 0;
-    view.zoomed = None;
-    view.arrangement = None;
-    view.ratios.clear();
 }
 
 const MAX_RECENT: usize = 5;
@@ -125,15 +263,6 @@ pub fn validate_view(v: &ViewLayout) -> Result<(), String> {
     }
     if v.active != 0 {
         return Err(format!("active {} is outside the 1 pane", v.active));
-    }
-    if v.zoomed.is_some() {
-        return Err("zoomed must be null".into());
-    }
-    if v.arrangement.is_some() {
-        return Err("arrangement must be null".into());
-    }
-    if !v.ratios.is_empty() {
-        return Err("ratios must be empty".into());
     }
     if !SIDEBAR_WIDTH.contains(&v.sidebar_width) {
         return Err(format!(
@@ -152,13 +281,81 @@ pub fn validate_view(v: &ViewLayout) -> Result<(), String> {
     if v.recent_commands.len() > MAX_RECENT || v.recent_commands.iter().any(|id| !is_command_id(id)) {
         return Err("recent_commands must hold at most 5 command ids of a-z, 0-9 and -".into());
     }
+    validate_pane(&v.pane)
+}
+
+/// The same rules as `repair_pane`, but a bad value is an error naming the field. Whether a session exists is not checked here.
+pub fn validate_pane(p: &PaneView) -> Result<(), String> {
+    if let Some(w) = p.width.filter(|w| !PANE_WIDTH.contains(w)) {
+        return Err(format!(
+            "pane.width must be {} to {}, not {w}",
+            PANE_WIDTH.start(),
+            PANE_WIDTH.end()
+        ));
+    }
+    for (session, st) in &p.sessions {
+        if st.tabs.len() > MAX_PANE_TABS {
+            return Err(format!(
+                "pane.sessions.{session}.tabs holds at most {MAX_PANE_TABS}, not {}",
+                st.tabs.len()
+            ));
+        }
+        let mut seen = BTreeSet::new();
+        for tab in &st.tabs {
+            let at = format!("pane.sessions.{session}.tabs.{}", tab.id);
+            if !is_pane_id(&tab.id) || !seen.insert(&tab.id) {
+                return Err(format!(
+                    "{at}: id must be unique, 1 to 64 of a-z, 0-9 and -, not \"{}\"",
+                    tab.id
+                ));
+            }
+            if tab.kind != "file" {
+                return Err(format!("{at}: kind must be \"file\", not \"{}\"", tab.kind));
+            }
+            if tab.history.is_empty() || tab.history.len() > MAX_PANE_HISTORY {
+                return Err(format!(
+                    "{at}: history must hold 1 to {MAX_PANE_HISTORY} entries, not {}",
+                    tab.history.len()
+                ));
+            }
+            if tab.index as usize >= tab.history.len() {
+                return Err(format!(
+                    "{at}: index {} is outside the {} history entries",
+                    tab.index,
+                    tab.history.len()
+                ));
+            }
+            for e in &tab.history {
+                if !path_ok(&e.path) {
+                    return Err(format!("{at}: path must be 1 to {MAX_PATH_CHARS} characters"));
+                }
+                if !PANE_VIEWS.contains(&e.view.as_str()) {
+                    return Err(format!("{at}: view must be one of {PANE_VIEWS:?}, not \"{}\"", e.view));
+                }
+            }
+        }
+        let active_ok = match &st.active {
+            Some(a) => st.tabs.iter().any(|t| &t.id == a),
+            None => st.tabs.is_empty(),
+        };
+        if !active_ok {
+            return Err(format!(
+                "pane.sessions.{session}.active must name one of its tabs (or be null with no tabs)"
+            ));
+        }
+    }
+    if p.recent.len() > MAX_RECENT_FILES || p.recent.iter().any(|r| !path_ok(&r.path)) {
+        return Err(format!(
+            "pane.recent must hold at most {MAX_RECENT_FILES} files with a path of 1 to {MAX_PATH_CHARS} characters"
+        ));
+    }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use marshell_protocol::api::SavedTab;
+    use marshell_protocol::api::{PaneEntry, PaneTab, PaneView, RecentFile, SavedTab, SessionTabs};
 
     fn tab(id: &str) -> SavedTab {
         SavedTab {
@@ -196,6 +393,42 @@ mod tests {
             serde_json::from_slice(&std::fs::read(home.path().join("layout.json")).unwrap()).unwrap();
         assert_eq!(on_disk["version"], 1);
         assert_eq!(on_disk["tabs"][0]["tab_id"], "a");
+    }
+
+    /// The view as a build from slice 6q-1 reads it: every field here is one it can't do without.
+    #[derive(Debug, serde::Deserialize)]
+    #[allow(dead_code)]
+    struct ViewBeforeThePane {
+        panes: Vec<Option<String>>,
+        arrangement: Option<String>,
+        ratios: Vec<f32>,
+        active: u32,
+        zoomed: Option<u32>,
+        sidebar: String,
+        sidebar_width: u32,
+        shell_hidden: bool,
+        grouped: bool,
+    }
+
+    #[test]
+    fn the_file_keeps_the_split_fields_an_older_build_reads() {
+        let home = tempfile::tempdir().unwrap();
+        let mut doc = doc_with("a");
+        doc.view.pane.open = true;
+        save(home.path(), &doc).unwrap();
+        let on_disk: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(home.path().join("layout.json")).unwrap()).unwrap();
+        let view = on_disk["view"].as_object().unwrap();
+        assert_eq!(view.get("arrangement"), Some(&serde_json::Value::Null));
+        assert_eq!(view.get("ratios"), Some(&serde_json::json!([])));
+        assert_eq!(view.get("zoomed"), Some(&serde_json::Value::Null));
+        let old: ViewBeforeThePane = serde_json::from_value(on_disk["view"].clone()).unwrap();
+        assert_eq!(old.panes, vec![Some("a".to_string())]);
+        assert!(old.ratios.is_empty());
+        // Only the file carries them: the document the API sends has no such fields, and reading the file back gives the same document.
+        let sent = serde_json::to_value(&doc).unwrap();
+        assert!(sent["view"].get("ratios").is_none() && sent["view"].get("arrangement").is_none());
+        assert_eq!(load(home.path()), doc);
     }
 
     #[test]
@@ -260,16 +493,13 @@ mod tests {
         let mut doc = doc_with("a");
         doc.view = ViewLayout {
             panes: vec![Some("a".into()), None],
-            arrangement: Some("diagonal".into()),
-            ratios: vec![0.5, 0.95],
             active: 5,
-            zoomed: Some(2),
             sidebar: "huge".into(),
             sidebar_width: 10,
             ..ViewLayout::default()
         };
         let v = repair(doc).view;
-        assert_eq!((v.arrangement, v.ratios, v.active, v.zoomed), (None, vec![], 0, None));
+        assert_eq!(v.active, 0);
         assert_eq!((v.sidebar.as_str(), v.sidebar_width), ("expanded", 200));
         assert_eq!(v.panes, vec![Some("a".to_string())]);
 
@@ -281,31 +511,12 @@ mod tests {
     }
 
     #[test]
-    fn repair_folds_a_split_to_the_zoomed_session() {
-        let doc = doc_with_tabs(
-            &["a", "b", "c"],
-            ViewLayout {
-                panes: vec![some("a"), some("b"), some("c")],
-                active: 1,
-                zoomed: Some(2),
-                arrangement: Some("columns".into()),
-                ratios: vec![0.4, 0.5],
-                ..ViewLayout::default()
-            },
-        );
-        let v = repair(doc).view;
-        assert_eq!(v.panes, vec![some("c")]);
-        assert_eq!((v.active, v.zoomed, v.arrangement, v.ratios), (0, None, None, vec![]));
-    }
-
-    #[test]
     fn repair_folds_a_split_to_the_active_session() {
         let doc = doc_with_tabs(
             &["a", "b", "c"],
             ViewLayout {
                 panes: vec![some("a"), some("b"), some("c")],
                 active: 1,
-                zoomed: None,
                 ..ViewLayout::default()
             },
         );
@@ -319,7 +530,6 @@ mod tests {
             ViewLayout {
                 panes: vec![some("a"), None, some("c")],
                 active: 0,
-                zoomed: Some(1),
                 ..ViewLayout::default()
             },
         );
@@ -392,7 +602,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_view_refuses_a_split_and_its_settings() {
+    fn validate_view_refuses_a_split() {
         let bad = |change: fn(&mut ViewLayout)| {
             let mut v = ViewLayout::default();
             change(&mut v);
@@ -400,9 +610,208 @@ mod tests {
         };
         assert_eq!(validate_view(&ViewLayout::default()), Ok(()));
         assert!(bad(|v| v.panes = vec![None, None]).contains("panes"));
-        assert!(bad(|v| v.zoomed = Some(0)).contains("zoomed"));
-        assert!(bad(|v| v.arrangement = Some("single".into())).contains("arrangement"));
-        assert!(bad(|v| v.ratios = vec![0.5]).contains("ratios"));
+    }
+
+    fn file_tab(id: &str, paths: &[&str]) -> PaneTab {
+        PaneTab {
+            id: id.into(),
+            kind: "file".into(),
+            history: paths
+                .iter()
+                .map(|p| PaneEntry {
+                    path: (*p).into(),
+                    line: None,
+                    col: None,
+                    view: "rendered".into(),
+                })
+                .collect(),
+            index: 0,
+        }
+    }
+
+    fn session(tabs: Vec<PaneTab>) -> SessionTabs {
+        let active = tabs.first().map(|t| t.id.clone());
+        SessionTabs { tabs, active }
+    }
+
+    fn pane_with(id: &str, st: SessionTabs) -> PaneView {
+        let mut pane = PaneView::default();
+        pane.sessions.insert(id.into(), st);
+        pane
+    }
+
+    fn repaired(id: &str, st: SessionTabs) -> PaneView {
+        let mut doc = doc_with(id);
+        doc.view.pane = pane_with(id, st);
+        repair(doc).view.pane
+    }
+
+    #[test]
+    fn repair_drops_a_session_that_has_no_saved_tab() {
+        let mut doc = doc_with("a");
+        doc.view.pane = pane_with("a", session(vec![file_tab("t1", &["C:/a.md"])]));
+        doc.view
+            .pane
+            .sessions
+            .insert("gone".into(), session(vec![file_tab("t1", &["C:/a.md"])]));
+        let pane = repair(doc).view.pane;
+        assert_eq!(pane.sessions.keys().collect::<Vec<_>>(), ["a"]);
+    }
+
+    #[test]
+    fn repair_drops_a_tab_of_an_unknown_kind() {
+        let mut t2 = file_tab("t2", &["C:/b.md"]);
+        t2.kind = "browser".into();
+        let pane = repaired("a", session(vec![file_tab("t1", &["C:/a.md"]), t2]));
+        let ids: Vec<_> = pane.sessions["a"].tabs.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["t1"]);
+    }
+
+    #[test]
+    fn repair_drops_duplicate_ids_and_empty_histories() {
+        let first = file_tab("t1", &["C:/first.md"]);
+        let tabs = vec![first.clone(), file_tab("t1", &["C:/second.md"]), file_tab("t2", &[])];
+        let pane = repaired("a", session(tabs));
+        assert_eq!(pane.sessions["a"].tabs, vec![first]);
+    }
+
+    #[test]
+    fn repair_clamps_the_index_and_the_history() {
+        let paths: Vec<String> = (0..60).map(|i| format!("C:/f{i}.md")).collect();
+        let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
+        let mut long = file_tab("t1", &refs);
+        long.index = 59;
+        let mut short = file_tab("t2", &["C:/a", "C:/b", "C:/c"]);
+        short.index = 99;
+        let pane = repaired("a", session(vec![long, short]));
+        let tabs = &pane.sessions["a"].tabs;
+        assert_eq!(tabs[0].history.len(), 50);
+        assert_eq!(tabs[0].history[0].path, "C:/f10.md");
+        assert_eq!(tabs[0].index, 49);
+        assert_eq!(tabs[1].index, 2);
+    }
+
+    #[test]
+    fn repair_keeps_at_most_32_tabs() {
+        let tabs: Vec<PaneTab> = (0..40).map(|i| file_tab(&format!("t{i}"), &["C:/a"])).collect();
+        let pane = repaired("a", session(tabs));
+        let kept = &pane.sessions["a"].tabs;
+        assert_eq!(kept.len(), 32);
+        assert_eq!(kept[31].id, "t31");
+    }
+
+    #[test]
+    fn repair_points_active_at_a_tab_that_exists() {
+        let mut st = session(vec![file_tab("t1", &["C:/a"]), file_tab("t2", &["C:/b"])]);
+        st.active = Some("nope".into());
+        let pane = repaired("a", st);
+        assert_eq!(pane.sessions["a"].active.as_deref(), Some("t1"));
+
+        let mut empty = session(vec![]);
+        empty.active = Some("x".into());
+        let pane = repaired("a", empty);
+        assert!(pane.sessions.is_empty());
+    }
+
+    #[test]
+    fn repair_resets_a_width_out_of_range() {
+        for (given, kept) in [
+            (Some(100), None),
+            (Some(9000), None),
+            (Some(480), Some(480)),
+            (None, None),
+        ] {
+            let mut doc = doc_with("a");
+            doc.view.pane.width = given;
+            assert_eq!(repair(doc).view.pane.width, kept);
+        }
+    }
+
+    #[test]
+    fn repair_fixes_an_unknown_view() {
+        let mut t = file_tab("t1", &["C:/a"]);
+        t.history[0].view = "tree".into();
+        let pane = repaired("a", session(vec![t]));
+        assert_eq!(pane.sessions["a"].tabs[0].history[0].view, "rendered");
+    }
+
+    #[test]
+    fn repair_trims_recent_files() {
+        let mut doc = doc_with("a");
+        doc.view.pane.recent = (0..250)
+            .map(|i| RecentFile {
+                project: "C:/p".into(),
+                path: if i == 3 { String::new() } else { format!("C:/p/{i}.md") },
+            })
+            .collect();
+        let recent = repair(doc).view.pane.recent;
+        assert!(recent.len() <= 200);
+        assert!(recent.iter().all(|r| !r.path.is_empty()));
+    }
+
+    #[test]
+    fn validate_view_names_the_pane_field() {
+        let with = |change: fn(&mut PaneView)| {
+            let mut v = ViewLayout::default();
+            change(&mut v.pane);
+            validate_view(&v).unwrap_err()
+        };
+        let one = |change: fn(&mut PaneTab)| {
+            let mut v = ViewLayout::default();
+            let mut t = file_tab("t1", &["C:/a", "C:/b"]);
+            change(&mut t);
+            v.pane = pane_with("a", session(vec![t]));
+            validate_view(&v).unwrap_err()
+        };
+        assert!(with(|p| p.width = Some(100)).contains("width"));
+        assert!(
+            with(|p| {
+                let tabs = (0..33).map(|i| file_tab(&format!("t{i}"), &["C:/a"])).collect();
+                p.sessions.insert("a".into(), session(tabs));
+            })
+            .contains("tabs")
+        );
+        assert!(one(|t| t.id = "A b".into()).contains("id"));
+        assert!(one(|t| t.kind = "browser".into()).contains("kind"));
+        assert!(one(|t| t.history.clear()).contains("history"));
+        assert!(one(|t| t.index = 3).contains("index"));
+        assert!(one(|t| t.history[0].view = "tree".into()).contains("view"));
+        assert!(one(|t| t.history[0].path = String::new()).contains("path"));
+        assert!(one(|t| t.history[0].path = "x".repeat(4097)).contains("path"));
+        assert!(
+            with(|p| {
+                let mut st = session(vec![file_tab("t1", &["C:/a"])]);
+                st.active = Some("nope".into());
+                p.sessions.insert("a".into(), st);
+            })
+            .contains("active")
+        );
+        assert!(
+            with(|p| {
+                let mut st = session(vec![file_tab("t1", &["C:/a"])]);
+                st.active = None;
+                p.sessions.insert("a".into(), st);
+            })
+            .contains("active")
+        );
+        assert!(
+            with(|p| {
+                p.recent = (0..201)
+                    .map(|i| RecentFile {
+                        project: "C:/p".into(),
+                        path: format!("C:/p/{i}"),
+                    })
+                    .collect();
+            })
+            .contains("recent")
+        );
+
+        assert_eq!(validate_view(&ViewLayout::default()), Ok(()));
+        let v = ViewLayout {
+            pane: pane_with("a", session(vec![file_tab("t1", &["C:/a"])])),
+            ..ViewLayout::default()
+        };
+        assert_eq!(validate_view(&v), Ok(()));
     }
 
     #[test]
@@ -492,5 +901,95 @@ mod tests {
         let doc = load(home.path());
         assert_eq!(doc.launcher["C:/a"].seq, 0);
         assert_eq!(doc.launcher["C:/a"].profile_id, "cmd");
+    }
+
+    /// Writes a layout file with one saved tab `ta`, the rail sidebar at 304 and the given pane
+    /// and sidebar width, loads it from a temp home and returns the document.
+    fn load_with_pane(pane: serde_json::Value, sidebar_width: serde_json::Value) -> LayoutDoc {
+        let home = tempfile::tempdir().unwrap();
+        let file = serde_json::json!({
+            "version": 1,
+            "tabs": [{"tab_id": "ta", "number": 1, "name": "A", "agent": null, "profile_id": "cmd", "cwd": "C:/w"}],
+            "view": {
+                "panes": ["ta"], "active": 0, "sidebar": "rail", "sidebar_width": sidebar_width,
+                "shell_hidden": false, "grouped": false, "pane": pane
+            },
+            "launcher": {}
+        });
+        std::fs::write(home.path().join("layout.json"), file.to_string()).unwrap();
+        load(home.path())
+    }
+
+    fn good_file_tab(id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": id, "kind": "file", "index": 0,
+            "history": [{"path": "C:\\a.md", "line": null, "col": null, "view": "rendered"}]
+        })
+    }
+
+    fn assert_tabs_and_sidebar_kept(doc: &LayoutDoc) {
+        assert_eq!(doc.tabs.len(), 1);
+        assert_eq!(doc.tabs[0].tab_id, "ta");
+        assert_eq!(doc.view.sidebar, "rail");
+        assert_eq!(doc.view.sidebar_width, 304);
+    }
+
+    #[test]
+    fn a_tab_of_another_builds_shape_is_dropped_and_the_file_still_loads() {
+        let pane = serde_json::json!({
+            "open": true, "width": 480, "recent": [],
+            "sessions": {"ta": {
+                "tabs": [good_file_tab("t1"), {"id": "t2", "kind": "browser", "url": "https://example.com/"}],
+                "active": "t2"
+            }}
+        });
+        let doc = load_with_pane(pane, 304.into());
+        assert_tabs_and_sidebar_kept(&doc);
+        let session = &doc.view.pane.sessions["ta"];
+        assert_eq!(session.tabs.len(), 1);
+        assert_eq!(session.tabs[0].id, "t1");
+        assert_eq!(session.active, some("t1"));
+    }
+
+    #[test]
+    fn a_pane_with_values_of_the_wrong_type_loses_only_those_values() {
+        let pane = serde_json::json!({
+            "open": "yes", "width": 480.5,
+            "recent": [{"project": "p", "path": "C:\\a.md"}, 7, {"path": 3}],
+            "sessions": {"ta": {
+                "tabs": [good_file_tab("t1"), {"id": "t2", "kind": "file", "index": -1, "history": []}],
+                "active": 5
+            }}
+        });
+        let doc = load_with_pane(pane, 304.into());
+        assert_tabs_and_sidebar_kept(&doc);
+        let pane = &doc.view.pane;
+        assert!(!pane.open);
+        assert_eq!(pane.width, None);
+        assert_eq!(pane.recent.len(), 1);
+        assert_eq!(pane.recent[0].project, "p");
+        let session = &pane.sessions["ta"];
+        assert_eq!(session.tabs.len(), 1);
+        assert_eq!(session.tabs[0].id, "t1");
+        assert_eq!(session.active, some("t1"));
+    }
+
+    #[test]
+    fn a_pane_that_is_not_an_object_reads_as_an_empty_pane() {
+        let doc = load_with_pane(serde_json::json!([]), 304.into());
+        assert_tabs_and_sidebar_kept(&doc);
+        assert_eq!(doc.view.pane, PaneView::default());
+
+        let pane = serde_json::json!({"open": true, "sessions": {"ta": {"tabs": "x", "active": null}}});
+        let doc = load_with_pane(pane, 304.into());
+        assert_tabs_and_sidebar_kept(&doc);
+        assert!(doc.view.pane.open);
+        assert!(doc.view.pane.sessions.is_empty());
+    }
+
+    #[test]
+    fn a_broken_part_outside_the_pane_still_means_the_defaults() {
+        let doc = load_with_pane(serde_json::json!({"open": true}), "wide".into());
+        assert_eq!(doc, LayoutDoc::default());
     }
 }

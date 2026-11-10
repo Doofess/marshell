@@ -40,8 +40,9 @@ async fn body_bytes(res: axum::response::Response) -> Vec<u8> {
 
 fn view(panes: serde_json::Value) -> serde_json::Value {
     serde_json::json!({
-        "panes": panes, "arrangement": null, "ratios": [], "active": 0, "zoomed": null,
-        "sidebar": "rail", "sidebar_width": 320, "shell_hidden": true, "grouped": true, "recent_commands": []
+        "panes": panes, "active": 0,
+        "sidebar": "rail", "sidebar_width": 320, "shell_hidden": true, "grouped": true, "recent_commands": [],
+        "pane": { "open": false, "width": null, "sessions": {}, "recent": [] }
     })
 }
 
@@ -90,6 +91,42 @@ async fn put_view_then_get_returns_it() {
         serde_json::from_slice(&std::fs::read(home.path().join("layout.json")).unwrap()).unwrap();
     assert_eq!(saved["version"], 1);
     assert_eq!(saved["view"]["sidebar"], "rail");
+}
+
+#[tokio::test]
+async fn put_view_round_trips_the_pane() {
+    let home = tempfile::tempdir().unwrap();
+    // The pane's session must be one the file knows, or a load drops it.
+    let saved = serde_json::json!({
+        "version": 1,
+        "tabs": [{ "tab_id": "a", "number": 1, "name": "a", "agent": null, "profile_id": "sleeper", "cwd": "C:/work" }],
+        "view": view(serde_json::json!(["a"])),
+        "launcher": {}
+    });
+    std::fs::write(home.path().join("layout.json"), saved.to_string()).unwrap();
+    let app = app_in(home.path());
+    let tab = |id: &str, path: &str| {
+        serde_json::json!({
+            "id": id, "kind": "file", "index": 0,
+            "history": [{ "path": path, "line": 12, "col": null, "view": "source" }]
+        })
+    };
+    let mut body = view(serde_json::json!(["a"]));
+    body["pane"] = serde_json::json!({
+        "open": true, "width": 480,
+        "sessions": { "a": { "tabs": [tab("t1", "C:/a.md"), tab("t2", "C:/b.rs")], "active": "t2" } },
+        "recent": [{ "project": "C:/work", "path": "C:/work/a.md" }]
+    });
+    let res = app
+        .clone()
+        .oneshot(request("PUT", "/v1/layout/view", Some(body.clone())))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    let res = app.oneshot(request("GET", "/v1/layout", None)).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let doc: serde_json::Value = serde_json::from_slice(&body_bytes(res).await).unwrap();
+    assert_eq!(doc["view"]["pane"], body["pane"]);
 }
 
 fn sleeper_profile() -> marshell_protocol::api::Profile {

@@ -137,6 +137,17 @@ describe("preview", () => {
     expect(findCommand(ev("KeyQ", { metaKey: true, altKey: true }), "mac")?.id).toBe("preview");
     expect(findCommand(ev("KeyQ", { metaKey: true }), "mac")).toBeUndefined();
   });
+  it("reads Side pane, and has the pane's commands in the Window group with Ctrl+Tab on Next tab only", () => {
+    expect(commandById("preview").label).toBe("Side pane");
+    expect(commandById("nav-next-pane").label).toBe("Switch between the terminal and the side pane");
+    const labels = { "pane-next-tab": "Next tab", "pane-previous-tab": "Previous tab", "pane-close-tab": "Close tab", "browse-file": "Browse…" };
+    for (const [id, label] of Object.entries(labels)) {
+      expect(commandById(id).label, id).toBe(label);
+      expect(commandById(id).group, id).toBe("Window");
+      expect(commandById(id).binding, id).toEqual(id === "pane-next-tab" ? { code: "Tab", ctrl: true } : undefined);
+    }
+    for (const os of OSES) expect(problemsIn(COMMANDS, os), os).toEqual([]);
+  });
   it("has the open-file command with no default binding", () => {
     expect(commandById("open-file").label).toBe("Open file…");
     expect(commandById("open-file").binding).toBeUndefined();
@@ -147,6 +158,21 @@ describe("every default binding", () => {
   it("is free of a reserved chord on every system", () => {
     for (const os of OSES)
       for (const c of COMMANDS) if (c.binding) expect(reservedReason(c.binding, os), `${c.id} on ${os}`).toBeNull();
+  });
+});
+
+describe("pane-next-tab", () => {
+  it("Ctrl+Tab is Next tab on every system", () => {
+    for (const os of OSES) {
+      expect(findCommand(ev("Tab", { ctrlKey: true }), os)?.id, os).toBe("pane-next-tab");
+      expect(findCommand(ev("Tab", { ctrlKey: true, shiftKey: true }), os)?.id, os).toBe("nav-next-pane");
+      expect(problemsIn(COMMANDS, os), os).toEqual([]);
+      expect(chordOf({ code: "Tab", ctrl: true }, os)).toEqual({ code: "Tab", ctrl: true, shift: false, alt: false, meta: false });
+    }
+    const b = commandById("pane-next-tab").binding!;
+    expect(shortcutLabel(b, "windows")).toBe("Ctrl+Tab");
+    expect(shortcutLabel(b, "linux")).toBe("Ctrl+Tab");
+    expect(shortcutLabel(b, "mac")).toBe("⌃Tab");
   });
 });
 
