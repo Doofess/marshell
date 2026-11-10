@@ -311,6 +311,12 @@ fn show(app: &AppHandle, key: Option<&str>) {
             let _ = page.hide();
         }
     }
+    // A page hidden while it had the keyboard would keep it, and nothing the person typed next would show anywhere:
+    // the keyboard goes to the app, whose own focus says where it belongs.
+    #[cfg(windows)]
+    if com::keyboard_on_hidden_window() {
+        focus_app(app);
+    }
     let Some(page) = show.and_then(|label| app.get_webview(&label)) else {
         return;
     };

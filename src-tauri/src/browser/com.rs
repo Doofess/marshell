@@ -34,8 +34,8 @@ use windows::Win32::System::Com::{IStream, STREAM_SEEK_SET};
 use windows_core::Interface;
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
 use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject};
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_MENU, VK_SHIFT};
-use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetFocus, GetKeyState, VK_CONTROL, VK_MENU, VK_SHIFT};
+use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, IsWindowVisible};
 
 fn failed(what: &str, e: &windows_core::Error) {
     eprintln!("Marshell: a browser page's {what} failed: {e}");
@@ -605,6 +605,16 @@ pub fn nav(page: &Webview, action: &str) -> Result<(), String> {
 pub fn in_front(hwnd: windows::Win32::Foundation::HWND) -> bool {
     // SAFETY: takes no argument and returns a handle that is only compared, never used.
     unsafe { GetForegroundWindow() == hwnd.0 }
+}
+
+/// Whether this thread's keyboard focus is on a window that is not shown: a page that was hidden while it had the
+/// keyboard keeps it (seen in the 6q-3a live check). On the main thread, which owns every webview's window.
+pub fn keyboard_on_hidden_window() -> bool {
+    // SAFETY: neither call takes a pointer; the handle goes straight back to Windows, which checks it.
+    unsafe {
+        let focus = GetFocus();
+        !focus.is_null() && IsWindowVisible(focus) == 0
+    }
 }
 
 /// The pages' browser process, held open so its end can be waited for.
