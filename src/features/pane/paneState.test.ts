@@ -3,6 +3,7 @@ import type { PaneView } from "../../generated/PaneView";
 import {
   type PaneAction,
   activeTab,
+  isBrowserTab,
   keptTabs,
   openRefused,
   paneReducer,
@@ -256,5 +257,114 @@ describe("paneReducer", () => {
       { type: "navigate", session: "s", paneTab: "zz", project: "p", target: { path: "/b" } },
     ];
     for (const a of actions) expect(paneReducer(s, a)).toBe(s);
+  });
+});
+
+describe("browser tabs", () => {
+  const page = (url: string, session = "s"): PaneAction => ({ type: "openPage", session, url });
+  const ev = (paneTab: string, url: string, title: string | null, session = "s"): PaneAction => ({ type: "page", session, paneTab, url, title });
+
+  it("openPage makes a browser tab and shows the pane", () => {
+    const s = run(EMPTY, page("https://a.dev/"));
+    expect(tabsOf(s, "s")).toEqual({
+      tabs: [{ id: "t1", kind: "browser", history: [{ path: "https://a.dev/", line: null, col: null, view: "rendered" }], index: 0, title: null }],
+      active: "t1",
+    });
+    expect(s.open).toBe(true);
+    expect(isBrowserTab(activeTab(s, "s")!)).toBe(true);
+  });
+
+  it("openPage of an address already open selects its tab", () => {
+    const s = run(EMPTY, page("https://a.dev/"), open("/f"), page("https://b.dev/"), page("https://A.dev"));
+    expect(ids(s)).toEqual(["t1", "t2", "t3"]);
+    expect(tabsOf(s, "s").active).toBe("t1");
+    const hidden = run(s, { type: "hide" }, page("https://b.dev/"));
+    expect(hidden.open).toBe(true);
+    expect(tabsOf(hidden, "s").active).toBe("t3");
+  });
+
+  it("openPage of about:blank always makes a new tab", () => {
+    const s = run(EMPTY, page("about:blank"), page("about:blank"));
+    expect(ids(s)).toEqual(["t1", "t2"]);
+    expect(tabsOf(s, "s").active).toBe("t2");
+  });
+
+  it("openPage is refused at 32 tabs", () => {
+    let s = EMPTY;
+    for (let i = 0; i < 32; i++) s = run(s, page(`https://a.dev/${i}`));
+    expect(ids(s)).toHaveLength(32);
+    expect(openRefused(s, "s", "https://a.dev/extra")).toBe(true);
+    expect(openRefused(s, "s", "https://A.dev/3")).toBe(false);
+    expect(paneReducer(s, page("https://a.dev/extra"))).toBe(s);
+    expect(paneReducer(s, page("about:blank"))).toBe(s);
+    expect(tabsOf(paneReducer(s, page("https://a.dev/3")), "s").active).toBe("t4");
+  });
+
+  it("openPage refuses an address that is not a page", () => {
+    for (const url of ["file:///C:/x", "javascript:alert(1)", "http://u:p@a.dev/", "c:\\x", ""]) {
+      expect(paneReducer(EMPTY, page(url))).toBe(EMPTY);
+    }
+  });
+
+  it("openPage leaves the recent files alone", () => {
+    const s = run(EMPTY, open("/a"), page("https://a.dev/"));
+    expect(s.recent).toEqual([{ project: "p", path: "/a" }]);
+    expect(run(EMPTY, page("https://a.dev/")).recent).toEqual([]);
+    expect(recentFor(s, "p", "other")).toEqual(["/a"]);
+    const withUrl = { ...EMPTY, recent: [{ project: "p", path: "https://a.dev/" }, { project: "p", path: "/a" }] };
+    expect(recentFor(withUrl, "p", "s")).toEqual(["/a"]);
+  });
+
+  it("a page event moves the tab's address and title", () => {
+    const s = run(EMPTY, page("https://a.dev/"), ev("t1", "https://a.dev/next", "Next"));
+    const t = activeTab(s, "s")!;
+    expect(t.history).toEqual([{ path: "https://a.dev/next", line: null, col: null, view: "rendered" }]);
+    expect(t.index).toBe(0);
+    expect(t.title).toBe("Next");
+    const long = run(s, ev("t1", "https://a.dev/next", "x".repeat(300)));
+    expect(activeTab(long, "s")!.title).toHaveLength(200);
+    expect(activeTab(run(s, ev("t1", "https://a.dev/next", null)), "s")!.title).toBeNull();
+  });
+
+  it("a page event with the same address and title returns the same state", () => {
+    const s = run(EMPTY, page("https://a.dev/"), ev("t1", "https://a.dev/", "A"));
+    expect(paneReducer(s, ev("t1", "https://a.dev/", "A"))).toBe(s);
+    expect(paneReducer(s, ev("t1", "https://a.dev/", "x".repeat(300)))).not.toBe(s);
+  });
+
+  it("a page event for a file tab is ignored", () => {
+    const s = run(EMPTY, open("/a"));
+    expect(paneReducer(s, ev("t1", "https://a.dev/", "A"))).toBe(s);
+  });
+
+  it("a page event with an address that is not a page, or for a tab that isn't there, is ignored", () => {
+    const s = run(EMPTY, page("https://a.dev/"));
+    for (const a of [ev("t1", "file:///x", "A"), ev("t1", "http://u@a.dev/", "A"), ev("t1", "", null), ev("zz", "https://b.dev/", "B"), ev("t1", "https://b.dev/", "B", "nope")]) {
+      expect(paneReducer(s, a)).toBe(s);
+    }
+  });
+
+  it("a browser tab's title is its page's, with no folder", () => {
+    const s = run(EMPTY, page("https://a.dev/x/y"), page("https://b.dev/x/y"), open("docs/a.md"), open("api/a.md"), ev("t1", "https://a.dev/x/y", "Docs"));
+    const titles = tabTitles(tabsOf(s, "s").tabs);
+    expect(titles.get("t1")).toBe("Docs");
+    expect(titles.get("t2")).toBe("b.dev");
+    expect(titles.get("t3")).toBe("a.md — docs");
+    expect(titles.get("t4")).toBe("a.md — api");
+    expect(tabTitles(tabsOf(run(EMPTY, page("about:blank")), "s").tabs).get("t1")).toBe("New tab");
+  });
+
+  it("back and forward leave a browser tab alone", () => {
+    const s = run(EMPTY, page("https://a.dev/"));
+    expect(paneReducer(s, { type: "back", session: "s", paneTab: "t1" })).toBe(s);
+    expect(paneReducer(s, { type: "forward", session: "s", paneTab: "t1" })).toBe(s);
+    expect(paneReducer(s, { type: "setView", session: "s", paneTab: "t1", view: "source" })).toBe(s);
+    const nav: PaneAction = { type: "navigate", session: "s", paneTab: "t1", project: "p", target: { path: "/b" } };
+    expect(paneReducer(s, nav)).toBe(s);
+  });
+
+  it("an open of a file path never selects a browser tab", () => {
+    const s = run(EMPTY, page("https://a.dev/"), open("https://a.dev/"));
+    expect(ids(s)).toEqual(["t1", "t2"]);
   });
 });
