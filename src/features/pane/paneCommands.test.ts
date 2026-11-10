@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PaneView } from "../../generated/PaneView";
-import { closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, paneBody, paneTabOutcome, toggleOutcome, TAB_LIMIT } from "./paneCommands";
-import { paneReducer } from "./paneState";
+import { closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, paneBody, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome, TAB_LIMIT } from "./paneCommands";
+import { paneReducer, recentFor } from "./paneState";
 
 const EMPTY: PaneView = { open: false, width: null, sessions: {}, recent: [] };
 const withTabs = (session: string, paths: string[], open = true): PaneView => {
@@ -62,6 +62,41 @@ describe("paneTabOutcome", () => {
     expect(paneTabOutcome(EMPTY, "s1")).toBe("none");
     expect(paneTabOutcome(withTabs("s1", ["/a", "/b"], false), "s1")).toBe("show");
     expect(paneTabOutcome(withTabs("s1", ["/a", "/b"]), "s1")).toBe("step");
+  });
+});
+
+describe("paneTabFocus", () => {
+  it("a step taken from inside a tab's body moves focus to the tab it shows", () => {
+    expect(paneTabFocus({ outcome: "step", from: "panel", covers: false })).toBe(true);
+  });
+  it("a step from the terminal, the strip or anywhere else leaves focus where it is", () => {
+    expect(paneTabFocus({ outcome: "step", from: "elsewhere", covers: false })).toBe(false);
+    expect(paneTabFocus({ outcome: "step", from: "elsewhere", covers: true })).toBe(false);
+  });
+  it("showing the hidden pane takes focus only when the pane covers the terminal", () => {
+    expect(paneTabFocus({ outcome: "show", from: "elsewhere", covers: true })).toBe(true);
+    expect(paneTabFocus({ outcome: "show", from: "elsewhere", covers: false })).toBe(false);
+  });
+  it("nothing moves with no tabs", () => {
+    expect(paneTabFocus({ outcome: "none", from: "panel", covers: true })).toBe(false);
+  });
+});
+
+describe("projectKeyOf", () => {
+  const rows = [
+    { id: "s1", project: "api", projectKey: "C:\\work\\api" },
+    { id: "s2", project: "api", projectKey: "D:\\client\\api" },
+  ];
+  it("is the session's repository, so two projects whose folders share a name keep their own recent files", () => {
+    expect(projectKeyOf(rows, "s1")).toBe("C:\\work\\api");
+    expect(projectKeyOf(rows, "s2")).toBe("D:\\client\\api");
+    const s = paneReducer(EMPTY, { type: "open", session: "s1", project: projectKeyOf(rows, "s1"), target: { path: "C:\\work\\api\\a.md" } });
+    expect(recentFor(s, projectKeyOf(rows, "s2"), "s2")).toEqual([]);
+    expect(recentFor(s, projectKeyOf(rows, "s1"), "other")).toEqual(["C:\\work\\api\\a.md"]);
+  });
+  it("is empty with no session on screen", () => {
+    expect(projectKeyOf(rows, undefined)).toBe("");
+    expect(projectKeyOf(rows, "gone")).toBe("");
   });
 });
 

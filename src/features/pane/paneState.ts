@@ -126,8 +126,16 @@ function setTabs(s: PaneView, session: string, next: SessionTabs): PaneView {
   return { ...s, sessions: { ...s.sessions, [session]: next } };
 }
 
+/**
+ * A line or column as the layout can hold it (a u32 in the core), or null. Output such as `app.log:1731234567890` reads as a path
+ * and a line; a number the core can't hold would make it refuse every save of the layout while the tab is open.
+ */
+function place(n: number | null | undefined): number | null {
+  return typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= 0xffff_ffff ? n : null;
+}
+
 function entryOf(target: OpenTarget): PaneEntry {
-  return { path: target.path, line: target.line ?? null, col: target.col ?? null, view: target.view ?? "rendered" };
+  return { path: target.path, line: place(target.line), col: place(target.col), view: target.view ?? "rendered" };
 }
 
 /** Replaces one tab; the same state when `edit` returns the tab it was given. */
@@ -146,11 +154,12 @@ function open(s: PaneView, session: string, project: string, target: OpenTarget)
   let next: PaneView;
   if (existing) {
     let tab = existing;
-    if (target.line !== undefined) {
+    const line = place(target.line);
+    if (line !== null) {
       const e = currentEntry(existing);
-      const col = target.col ?? null;
-      if (e.line !== target.line || e.col !== col) {
-        tab = { ...existing, history: existing.history.map((x, i) => (i === existing.index ? { ...x, line: target.line!, col } : x)) };
+      const col = place(target.col);
+      if (e.line !== line || e.col !== col) {
+        tab = { ...existing, history: existing.history.map((x, i) => (i === existing.index ? { ...x, line, col } : x)) };
       }
     }
     if (tab === existing && cur.active === existing.id && s.open) {

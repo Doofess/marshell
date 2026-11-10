@@ -63,6 +63,28 @@ describe("paneReducer", () => {
     expect(tab.history[0]).toMatchObject({ line: 42, col: 7 });
   });
 
+  it("a line or column too large to be one is left out, so the layout can still be saved", () => {
+    // `app.log:1731234567890` reads as a path and a line; the core's layout holds a line as a u32 and refuses the whole save.
+    const s = run(EMPTY, open("/app.log", { line: 1731234567890, col: 4294967296 }));
+    expect(activeTab(s, "s")!.history[0]).toMatchObject({ path: "/app.log", line: null, col: null });
+    const top = run(EMPTY, open("/b.log", { line: 4294967295, col: 1 }));
+    expect(activeTab(top, "s")!.history[0]).toMatchObject({ line: 4294967295, col: 1 });
+    const odd = run(EMPTY, open("/c.log", { line: -3, col: 1.5 }));
+    expect(activeTab(odd, "s")!.history[0]).toMatchObject({ line: null, col: null });
+  });
+
+  it("a second open with a line too large keeps the tab's place", () => {
+    const s = run(EMPTY, open("/a.ts", { line: 7 }), open("/a.ts", { line: 1731234567890 }));
+    expect(activeTab(s, "s")!.history).toEqual([{ path: "/a.ts", line: 7, col: null, view: "rendered" }]);
+    const col = run(EMPTY, open("/a.ts", { line: 7 }), open("/a.ts", { line: 9, col: 1731234567890 }));
+    expect(activeTab(col, "s")!.history[0]).toMatchObject({ line: 9, col: null });
+  });
+
+  it("a link inside a tab to a line too large moves the tab without the line", () => {
+    const s = run(EMPTY, open("/a.md"), { type: "navigate", session: "s", paneTab: "t1", project: "p", target: { path: "/b.log", line: 1731234567890 } });
+    expect(activeTab(s, "s")!.history[1]).toMatchObject({ path: "/b.log", line: null });
+  });
+
   it("the 33rd open is refused", () => {
     let s = EMPTY;
     for (let i = 0; i < 32; i++) s = run(s, open(`/f${i}`));

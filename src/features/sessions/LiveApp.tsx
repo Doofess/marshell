@@ -56,11 +56,11 @@ import { getAccount, getInstall } from "../../lib/api/accounts";
 import { pickFile } from "../../lib/filePicker";
 import { Preview } from "../preview/Preview";
 import { PaneContext } from "../pane/PaneContext";
-import { dropCover } from "../pane/dropCover";
+import { dropCover, modalOnScreen } from "../pane/dropCover";
 import { EmptyPane } from "../pane/EmptyPane";
 import { KeptTabs } from "../pane/KeptTabs";
 import { focusPane } from "../pane/focusPane";
-import { FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, TAB_LIMIT, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, paneTabOutcome, toggleOutcome } from "../pane/paneCommands";
+import { FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, TAB_LIMIT, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome } from "../pane/paneCommands";
 import { currentEntry, openRefused, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
 import { plusChoice, plusMenuItems } from "../pane/plusMenu";
 import { SidePane } from "../pane/SidePane";
@@ -754,7 +754,7 @@ export function LiveApp() {
   // The side pane. Its state is `view.pane`, changed with `paneDispatch`; the tabs shown and changed are the focused session's, and an
   // ended session keeps its own. A session switch only swaps which tabs are drawn, so nothing here moves focus except the one that opens.
   const paneDispatch = useCallback((action: PaneAction) => dispatch({ type: "pane", action }), [dispatch]);
-  const paneProject = () => stateRef.current.rows.find((r) => r.id === stateRef.current.focusedId)?.project ?? "";
+  const paneProject = () => projectKeyOf(stateRef.current.rows, stateRef.current.focusedId);
   // A new tab, or the file's own tab; shows the pane and moves focus into it. False when it was refused (and said so).
   const openInPane = (target: OpenTarget): boolean => {
     const session = stateRef.current.focusedId;
@@ -785,7 +785,8 @@ export function LiveApp() {
       () => announce("Couldn't open the file dialog."),
     );
   };
-  // The pane's four commands. Ctrl+Tab and the palette's next and previous tab never move focus.
+  // The pane's four commands. Ctrl+Tab and the palette's next and previous tab leave focus where it is, except where that would
+  // be on something no longer drawn (paneTabFocus).
   const paneRun = (shortcut: Extract<SessionShortcut, { kind: "preview" | "paneTab" | "closePaneTab" | "browse" }>) => {
     const pane = viewRef.current.pane;
     const session = stateRef.current.focusedId;
@@ -799,9 +800,15 @@ export function LiveApp() {
       }
       case "paneTab": {
         const outcome = paneTabOutcome(pane, session);
-        if (outcome === "none" || session === undefined) announce(NO_TABS_OPEN);
-        else if (outcome === "show") paneDispatch({ type: "show" });
+        if (outcome === "none" || session === undefined) return announce(NO_TABS_OPEN);
+        const from = document.activeElement?.closest('[data-nav-side] [role="tabpanel"]') != null ? "panel" : "elsewhere";
+        if (outcome === "show") paneDispatch({ type: "show" });
         else paneDispatch({ type: "step", session, by: shortcut.by });
+        // Asked once the change is drawn: whether the pane covers the terminal is the window's to say (`data-pane`).
+        setTimeout(() => {
+          const covers = document.querySelector('[data-pane="cover"]') !== null;
+          if (paneTabFocus({ outcome, from, covers })) focusPane();
+        }, 0);
         return;
       }
       case "closePaneTab": {
@@ -827,7 +834,7 @@ export function LiveApp() {
   // takes no drop at all.
   const dropPaths = async (target: DropTarget, paths: string[]): Promise<void> => {
     const s = stateRef.current;
-    const cover = dropCover({ launcherOpen: s.launcherOpen, overlay: s.overlay, review: s.review !== null, closeAsk: s.closeAsk !== null });
+    const cover = dropCover({ launcherOpen: s.launcherOpen, overlay: s.overlay, review: s.review !== null, closeAsk: s.closeAsk !== null, modal: modalOnScreen(document) });
     if (cover !== null) return announce(coverText(cover));
     if (target.kind === "pane") {
       const session = s.focusedId;
@@ -1687,7 +1694,7 @@ export function LiveApp() {
   const paneTabs = tabsOf(view.pane, paneSession);
   const paneActive = paneTabs.active ?? paneTabs.tabs[0]?.id ?? null;
   const paneTitles = tabTitles(paneTabs.tabs);
-  const paneProjectNow = focusedRow?.project ?? "";
+  const paneProjectNow = focusedRow?.projectKey ?? "";
   const paneTheme = paneTabs.tabs.length > 0 ? resolveTerminalTheme({ ...themeFor(overrideOf(focusedId ?? "")), app: appScheme() }).theme : undefined;
   const paneRecent = recentFor(view.pane, paneProjectNow, paneSession ?? "");
   const openFromPane = () => {

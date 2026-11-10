@@ -33,6 +33,25 @@ export function paneTabOutcome(pane: PaneView, session: string | null | undefine
   return pane.open ? "step" : "show";
 }
 
+/**
+ * Whether the next-tab and previous-tab commands move focus into the pane. They leave it alone (Ctrl+Tab steps the tabs while
+ * the person types in the terminal) except in two cases, where focus would be left on something that is no longer drawn:
+ * - a step taken from inside a tab's body hides that body, so focus goes to the body of the tab now showing;
+ * - showing the hidden pane in a window so narrow that it covers the terminal, so the keys stop going to a program out of sight.
+ */
+export function paneTabFocus(s: { outcome: "none" | "show" | "step"; from: "panel" | "elsewhere"; covers: boolean }): boolean {
+  if (s.outcome === "step") return s.from === "panel";
+  return s.outcome === "show" && s.covers;
+}
+
+/**
+ * What the recent files of the session on screen are kept under: its repository's root (the row's `projectKey`), not the row's
+ * label, so two projects whose folders share a name keep their own lists. Empty with no session on screen.
+ */
+export function projectKeyOf(rows: ReadonlyArray<{ id: string; projectKey: string }>, session: string | null | undefined): string {
+  return rows.find((r) => r.id === session)?.projectKey ?? "";
+}
+
 /** The tab "Close tab" closes: the selected one of the session. */
 export function closeTabOutcome(pane: PaneView, session: string | null | undefined): { paneTab: string; path: string } | null {
   const tab = activeTab(pane, session);

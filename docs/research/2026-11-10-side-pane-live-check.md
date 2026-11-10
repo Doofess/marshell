@@ -26,8 +26,21 @@
 2. **In forced colours the selected tab's title couldn't be read, and its focus ring didn't show.** The system painted its text backplate behind the title (white on white), and the ring was `CanvasText` inside the `Highlight` fill. Fixed in `d21f4bdc`: the selected tab opts out of the backplate, and its ring is `HighlightText`, set in from the edge (`SidePane.css.test.ts`, two tests failing first).
 3. **After a restart the 80-column stop came one step early.** The floor was measured before JetBrains Mono had loaded, so it counted the fallback font's wider glyph: the divider's widest was 320 px, not 321, at a 1200 px window. Fixed in `41089413`: `useTerminalFloor` measures again when the page's fonts are ready and each time one loads (`useTerminalFloor.test.ts`, four tests failing first). After the next restart the divider read 320 to 321.
 4. **When the window narrows until the pane covers the terminal while the divider has focus, focus falls to the page.** The divider goes away with the split. Not fixed.
-5. **Typing can reach a covered terminal.** With the pane covering, a terminal that kept focus still takes keys. Ctrl+Shift+Tab moves focus into the pane. Not fixed.
-6. **Recent files are kept by the row's project name.** Two folders with the same name share one list. Not fixed.
+5. **Typing can reach a covered terminal.** With the pane covering, a terminal that kept focus still takes keys. Ctrl+Shift+Tab moves focus into the pane. Fixed after the review for the one path this slice added: Ctrl+Tab that shows the hidden pane over the terminal now moves focus into the pane (`paneCommands.test.ts`, "paneTabFocus", failing first). Not fixed: in a covering pane Ctrl+Shift+Tab and Esc still hand the keyboard to the terminal underneath, as they did with the Preview.
+6. **Recent files were kept by the row's project name.** Two folders with the same name shared one list. Fixed after the review: the list is kept by the repository's root (`paneCommands.test.ts`, "projectKeyOf", failing first).
 7. **The empty pane's recent rows cut a long folder path at its end**, where the folders that tell two rows apart are. Not fixed.
 8. **Small hitches in the dev build.** The first show of the pane had one 52 ms gap between frames, and expanding the sidebar and leaving focus mode one gap of about 22 ms each. Not measured in a release build.
 9. The console showed only the dev server's favicon 404 and Tauri's `deny-internal-toggle-devtools` on Ctrl+Shift+I.
+
+## After the review
+
+A second run, 03:26 to 03:32, with a new scratch home and two PowerShell 7 sessions in two folders both named `proj`, checked the fixes that need the real page:
+
+| Check | Result |
+| --- | --- |
+| Ctrl+Tab from inside a tab's body | Pass. With focus in `README.md`'s body, `main.rs` showed and focus was in its body, not in the hidden one. |
+| Ctrl+Tab from the terminal | Pass. The tab changed and focus stayed in the terminal; showing the hidden pane beside the terminal (a 1200 px window) left focus in the terminal too. |
+| Ctrl+Tab that shows the pane over the terminal | Pass. In a 1000 px window with the pane hidden and focus in the terminal, the pane showed covering and focus was in the shown tab's body. |
+| Recent files of two folders with one name | Pass. After two files were opened in `other\proj`, the session in `proj` showed an empty pane with no recent files, and `layout.json` held the full folder as each recent file's project. |
+
+Not run again: the drop behind a dialog (a drop needs a hand) and the oversized line number, which their unit tests cover.
