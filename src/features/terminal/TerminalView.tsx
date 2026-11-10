@@ -13,6 +13,7 @@ import { trustedSink } from "../../lib/api/elevated";
 import { LatencyMeter } from "../perf/latency";
 import { useOpenInPane } from "../pane/PaneContext";
 import { PerfOverlay } from "../perf/PerfOverlay";
+import { isPerfToggle } from "../perf/perfToggle";
 import { ENDED_LINE, FAILED_LINE, SESSION_ENDED } from "./coreRestart";
 import { jumpFrom, promptTarget, trackPrompts, type Prompt } from "./promptMarks";
 import "./PromptMarks.css";
@@ -32,10 +33,6 @@ import { appScheme, resolveTerminalTheme, type TerminalThemeInput } from "./term
 /** The terminal theme settings, without the app's scheme, which the terminal reads itself. */
 export type TerminalThemeProp = Omit<TerminalThemeInput, "app">;
 const FOLLOW_APP: TerminalThemeProp = { setting: "follow-app", imported: [], protection: true };
-
-function isPerfToggle(e: KeyboardEvent): boolean {
-  return e.type === "keydown" && e.shiftKey && e.altKey && (e.ctrlKey || e.metaKey) && e.code === "KeyP";
-}
 
 /** Whether a key press is turned into the "Paused. Continue to type." bar instead of being sent: a live session that is frozen. */
 export const blockedInput = (core: "live" | "ended" | "failed", paused: boolean): boolean => core === "live" && paused;

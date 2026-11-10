@@ -73,6 +73,9 @@ function subscribe(l: () => void): () => void {
   return () => listeners.delete(l);
 }
 
+/** Calls `listener` after every change to any page's state. Returns the unsubscribe function. */
+export const subscribePages = subscribe;
+
 export function usePage(key: string | null): PageState | undefined {
   return useSyncExternalStore(
     subscribe,
@@ -85,6 +88,11 @@ export function usePage(key: string | null): PageState | undefined {
 export function focusedPage(): string | null {
   for (const [k, p] of pages) if (p.focused) return k;
   return null;
+}
+
+/** `focusedPage()` for a component: it draws again when the keyboard goes into a page or leaves it. */
+export function useFocusedPage(): string | null {
+  return useSyncExternalStore(subscribe, focusedPage, () => null);
 }
 
 /** Subscribes to the shell's `browser://` events once. Returns the stop function. */

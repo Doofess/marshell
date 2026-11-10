@@ -59,6 +59,8 @@ import { PaneContext } from "../pane/PaneContext";
 import { dropCover, modalOnScreen } from "../pane/dropCover";
 import { EmptyPane } from "../pane/EmptyPane";
 import { KeptTabs } from "../pane/KeptTabs";
+import { useBrowserKeys } from "../browser/useBrowserKeys";
+import { useFocusedPage } from "../browser/pageStore";
 import { focusPane } from "../pane/focusPane";
 import { FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, TAB_LIMIT, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome } from "../pane/paneCommands";
 import { currentEntry, openRefused, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
@@ -1227,7 +1229,10 @@ export function LiveApp() {
   // The side pane is a stop of the Tab chord while it is drawn (a session on screen, the sessions view, the pane open); whether focus is in it
   // is tracked from focusin and focusout, so the chord knows which stop it is leaving.
   const sidePaneDrawn = view.pane.open && focusedId !== null && focusedId !== undefined && mainView === "sessions";
-  const [sideFocused, setSideFocused] = useState(false);
+  const [sideFocusedInDom, setSideFocused] = useState(false);
+  // A page that has the keyboard is in the side pane, whatever `document.activeElement` still names (S12 finding 8).
+  const pageHasKeys = useFocusedPage() !== null;
+  const sideFocused = sideFocusedInDom || pageHasKeys;
   useEffect(() => {
     const inside = () => setSideFocused(document.activeElement?.closest("[data-nav-side]") != null);
     document.addEventListener("focusin", inside);
@@ -1286,6 +1291,8 @@ export function LiveApp() {
     apply: applyNav,
   });
   const sendNav = nav.send;
+  // The app's shortcuts from a page, and the keyboard between the two (S12; 6q-0 decision 9).
+  useBrowserKeys({ os, focusTerminal: () => actions.focusTerminal() });
 
   // The window's shortcuts and commands (side pane, shell panel, history, menu, next waiting). True when it was one of them.
   const windowCommand = useCallback(

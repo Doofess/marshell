@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 import type { Endpoint } from "../../generated/Endpoint";
 import { ui, type ViewReport } from "../../lib/api/ui";
+import { windowFocused } from "../browser/pageFocus";
+import { subscribePages } from "../browser/pageStore";
 
 /** The core refuses a report naming more tabs than this. */
 const MAX_TABS = 16;
@@ -67,19 +69,22 @@ export function useViewReport(endpoint: Endpoint | null | undefined, visibleTabs
     if (!endpoint) return;
     const r = new ViewReporter(endpoint, send);
     reporter.current = r;
-    const report = () => r.update({ window_focused: document.hasFocus(), visible_tabs: tabs.current });
+    // A page with the keyboard takes it from the app's document (`document.hasFocus()` goes false), and still counts as the window's.
+    const report = () => r.update({ window_focused: windowFocused(), visible_tabs: tabs.current });
     report();
     window.addEventListener("focus", report);
     window.addEventListener("blur", report);
+    const stopPages = subscribePages(report);
     return () => {
       window.removeEventListener("focus", report);
       window.removeEventListener("blur", report);
+      stopPages();
       r.stop();
       reporter.current = null;
     };
   }, [endpoint, send]);
 
   useEffect(() => {
-    reporter.current?.update({ window_focused: document.hasFocus(), visible_tabs: tabs.current });
+    reporter.current?.update({ window_focused: windowFocused(), visible_tabs: tabs.current });
   }, [key]);
 }

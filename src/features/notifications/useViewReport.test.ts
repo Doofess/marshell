@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { Endpoint } from "../../generated/Endpoint";
 import { mountHook } from "../../test/hooks";
+import { dispatchPage } from "../browser/pageStore";
 import { useViewReport } from "./useViewReport";
 
 vi.mock("react", async () => ({ ...await vi.importActual("react"), ...(await import("../../test/hooks")).hooks }));
@@ -95,5 +96,19 @@ it("sends at most 16 tabs", () => {
   const many = Array.from({ length: 20 }, (_, i) => `t${i}`);
   const h = mountHook(() => useViewReport(ep(1), many, send));
   expect(send.mock.calls[0]![1].visible_tabs).toHaveLength(16);
+  h.unmount();
+});
+
+it("reports the window as focused while a page has the keyboard, though the document says it has no focus", () => {
+  focused = false;
+  const h = mountHook(() => useViewReport(ep(1), ["a"], send));
+  vi.advanceTimersByTime(250);
+  send.mockClear();
+  dispatchPage({ type: "focus", key: "s/p", focused: true });
+  vi.advanceTimersByTime(250);
+  expect(send).toHaveBeenCalledExactlyOnceWith(ep(1), { window_focused: true, visible_tabs: ["a"] });
+  dispatchPage({ type: "focus", key: "s/p", focused: false });
+  vi.advanceTimersByTime(250);
+  expect(send).toHaveBeenLastCalledWith(ep(1), { window_focused: false, visible_tabs: ["a"] });
   h.unmount();
 });

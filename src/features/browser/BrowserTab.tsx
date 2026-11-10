@@ -1,7 +1,8 @@
-import { useEffect, useEffectEvent, useRef, type Ref } from "react";
+import { useEffect, useEffectEvent, useRef, type FocusEvent, type Ref } from "react";
 import { BLANK } from "./address";
 import { browser, type NavAction } from "./browserApi";
 import { usePageCovered } from "./pageCover";
+import { enterReason, isQuiet } from "./pageFocus";
 import { usePage, type PageState } from "./pageStore";
 import { UrlBar, type UrlBarHandle } from "./UrlBar";
 import { usePageSlot } from "./usePageSlot";
@@ -24,10 +25,14 @@ export type BrowserTabViewProps = {
   onOpenOutside(url: string): void;
   onEscape(): void;
   announce?: (text: string) => void;
+  /** The page's key, put on the slot so the app finds the slot a page's keys and focus belong to. */
+  pageKey?: string;
+  /** Focus reached the slot. */
+  onSlotFocus?: (e: FocusEvent<HTMLDivElement>) => void;
 };
 
 /** The tab's markup: the bar, its status line, and the slot the shell's page sits over. Without browser tabs, a plain explanation. */
-export function BrowserTabView({ page, url, available, frozen, slotRef, barRef, onGo, onNav, onOpenOutside, onEscape, announce }: BrowserTabViewProps) {
+export function BrowserTabView({ page, url, available, frozen, slotRef, barRef, onGo, onNav, onOpenOutside, onEscape, announce, pageKey, onSlotFocus }: BrowserTabViewProps) {
   if (!available) {
     const address = page?.url || url;
     return (
@@ -42,7 +47,7 @@ export function BrowserTabView({ page, url, available, frozen, slotRef, barRef, 
   return (
     <div className="browser-tab">
       <UrlBar ref={barRef} page={page} fallbackUrl={url} onGo={onGo} onNav={onNav} onOpenOutside={onOpenOutside} onEscape={onEscape} announce={announce} />
-      <div ref={slotRef} className="browser-tab__slot" tabIndex={0} aria-label="Web page">
+      <div ref={slotRef} className="browser-tab__slot" tabIndex={0} aria-label="Web page" data-page-key={pageKey} onFocus={onSlotFocus}>
         {frozen !== null && (frozen.picture !== null ? <img alt="" className="browser-tab__picture" src={frozen.picture} /> : <div className="browser-tab__fill" />)}
       </div>
     </div>
@@ -89,8 +94,19 @@ export function BrowserTab({ pageKey, url, active, available = true, onPage, onO
     // A page that is gone opens at the new address; one that exists goes there.
     (page ? browser.nav(pageKey, "go", to) : browser.open(pageKey, to)).catch(ignore);
   };
+  // Tab reached the slot from an app element: the page starts at its first element, or its last when Shift+Tab came from after it
+  // (S12 finding 9). Focus arriving with no element before it is the window coming back, which useBrowserKeys's handback deals with;
+  // a key the app took from the page puts focus here quietly.
+  const enter = (e: FocusEvent<HTMLDivElement>) => {
+    const from = e.relatedTarget;
+    if (!available || isQuiet() || !(from instanceof Element)) return;
+    const slotIsBefore = (e.currentTarget.compareDocumentPosition(from) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    browser.focus(pageKey, enterReason(slotIsBefore)).catch(ignore);
+  };
   return (
     <BrowserTabView
+      pageKey={pageKey}
+      onSlotFocus={enter}
       page={page}
       url={url}
       available={available}

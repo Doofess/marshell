@@ -26,6 +26,11 @@ describe("BrowserTabView", () => {
     expect(slot).toContain('tabindex="0"');
     expect(slot).toContain('aria-label="Web page"');
   });
+  it("names its page on the slot, so the app finds the slot a page's keys and focus belong to", () => {
+    const slot = html({ pageKey: "s1/p2" }).match(/<div[^>]*class="browser-tab__slot"[^>]*>/)![0];
+    expect(slot).toContain('data-page-key="s1/p2"');
+    expect(html()).not.toContain("data-page-key");
+  });
   it("a refused address shows the status line", () => {
     expect(html({ page: page({ status: "refused" }) })).toContain("That address can&#x27;t be opened in the side pane.");
   });
