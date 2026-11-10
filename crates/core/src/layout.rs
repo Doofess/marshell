@@ -10,9 +10,24 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 /// The file holds the `LayoutDoc` fields directly, next to `"version"`.
-#[derive(Serialize)]
-#[serde(transparent)]
 struct FileDoc(LayoutDoc);
+
+impl Serialize for FileDoc {
+    /// Writes the document and, in `view`, the three split view fields a build from before slice 6q-2 can't read the
+    /// file without: `arrangement` and `zoomed` as null, `ratios` empty. Only the file has them. This build ignores
+    /// them when it reads, and an older build ignores `view.pane`.
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde_json::Value;
+
+        let mut json = serde_json::to_value(&self.0).map_err(serde::ser::Error::custom)?;
+        if let Some(view) = json.get_mut("view").and_then(Value::as_object_mut) {
+            view.insert("arrangement".into(), Value::Null);
+            view.insert("ratios".into(), Value::Array(Vec::new()));
+            view.insert("zoomed".into(), Value::Null);
+        }
+        json.serialize(serializer)
+    }
+}
 
 impl<'de> Deserialize<'de> for FileDoc {
     /// Reads the file's JSON, drops what the side pane can't read (see `lenient_pane`), then parses the rest strictly.
@@ -378,6 +393,42 @@ mod tests {
             serde_json::from_slice(&std::fs::read(home.path().join("layout.json")).unwrap()).unwrap();
         assert_eq!(on_disk["version"], 1);
         assert_eq!(on_disk["tabs"][0]["tab_id"], "a");
+    }
+
+    /// The view as a build from slice 6q-1 reads it: every field here is one it can't do without.
+    #[derive(Debug, serde::Deserialize)]
+    #[allow(dead_code)]
+    struct ViewBeforeThePane {
+        panes: Vec<Option<String>>,
+        arrangement: Option<String>,
+        ratios: Vec<f32>,
+        active: u32,
+        zoomed: Option<u32>,
+        sidebar: String,
+        sidebar_width: u32,
+        shell_hidden: bool,
+        grouped: bool,
+    }
+
+    #[test]
+    fn the_file_keeps_the_split_fields_an_older_build_reads() {
+        let home = tempfile::tempdir().unwrap();
+        let mut doc = doc_with("a");
+        doc.view.pane.open = true;
+        save(home.path(), &doc).unwrap();
+        let on_disk: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(home.path().join("layout.json")).unwrap()).unwrap();
+        let view = on_disk["view"].as_object().unwrap();
+        assert_eq!(view.get("arrangement"), Some(&serde_json::Value::Null));
+        assert_eq!(view.get("ratios"), Some(&serde_json::json!([])));
+        assert_eq!(view.get("zoomed"), Some(&serde_json::Value::Null));
+        let old: ViewBeforeThePane = serde_json::from_value(on_disk["view"].clone()).unwrap();
+        assert_eq!(old.panes, vec![Some("a".to_string())]);
+        assert!(old.ratios.is_empty());
+        // Only the file carries them: the document the API sends has no such fields, and reading the file back gives the same document.
+        let sent = serde_json::to_value(&doc).unwrap();
+        assert!(sent["view"].get("ratios").is_none() && sent["view"].get("arrangement").is_none());
+        assert_eq!(load(home.path()), doc);
     }
 
     #[test]
