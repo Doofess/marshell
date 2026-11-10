@@ -397,8 +397,10 @@ fn create(app: &AppHandle, key: &str, label: &str, url: Url) -> Result<(), Strin
     let state = app.state::<BrowserState>();
     let window = crate::main_window(app).ok_or("Marshell's window is gone.")?;
     // Whether a navigation is running. The builder's own handlers keep it, since they hear the first navigation
-    // too, which starts before the COM handlers are in.
-    let loading = Arc::new(AtomicBool::new(false));
+    // too, which starts before the COM handlers are in. A page is made on its way to its first address, so it
+    // starts as loading: its first state, sent while it still says `about:blank`, must not read as a page that
+    // has arrived there (the app would save that as the tab's address).
+    let loading = Arc::new(AtomicBool::new(true));
     let builder = WebviewBuilder::new(label, WebviewUrl::External(url))
         .focused(false)
         .data_directory(state.profile.clone())
