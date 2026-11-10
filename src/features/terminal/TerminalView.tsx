@@ -17,6 +17,7 @@ import { ENDED_LINE, FAILED_LINE, SESSION_ENDED } from "./coreRestart";
 import { jumpFrom, promptTarget, trackPrompts, type Prompt } from "./promptMarks";
 import "./PromptMarks.css";
 import { pathLinkProvider } from "./pathLinks";
+import { urlLinkProvider, webLinkHandler } from "./urlLinks";
 import { ReplayGate } from "./replayGate";
 import { sendsFirstSize, shouldFit } from "./fitGate";
 import { FitHoldContext, fitHold } from "./fitHold";
@@ -78,7 +79,7 @@ type Props = {
 const BUNDLED = { family: BUNDLED_FONT, size: 13 };
 
 /** The options every session's terminal starts with. The exit-code marks (promptMarks.ts) draw with registerDecoration, a proposed API. */
-export function terminalOptions(o: Pick<ITerminalOptions, "fontFamily" | "fontSize" | "theme" | "minimumContrastRatio">): ITerminalOptions {
+export function terminalOptions(o: Pick<ITerminalOptions, "fontFamily" | "fontSize" | "theme" | "minimumContrastRatio" | "linkHandler">): ITerminalOptions {
   return { ...o, cursorBlink: true, scrollback: 10_000, allowProposedApi: true };
 }
 
@@ -195,7 +196,9 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
     const paintGutter = (background: string | undefined) => el.style.setProperty("--terminal-bg", background ?? null);
     paintGutter(first.theme.background);
     let current = first.scheme;
-    const term = new Terminal(terminalOptions({ fontFamily, fontSize, theme: first.theme, minimumContrastRatio: first.minimumContrastRatio }));
+    // OSC 8 hyperlinks follow the same rule as a plain web address: the modifier, and only http and https, in the system browser.
+    const linkHandler = webLinkHandler(endpoint.platform, () => termRef.current?.element);
+    const term = new Terminal(terminalOptions({ fontFamily, fontSize, theme: first.theme, minimumContrastRatio: first.minimumContrastRatio, linkHandler }));
     const fit = new FitAddon();
     term.loadAddon(fit);
     // Every fit keeps a full-screen program's text in place when rows go (topAnchor.ts).
@@ -204,7 +207,8 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
     term.open(el);
     termRef.current = term;
     loadRenderer(term, endpoint.platform, setRenderer);
-    // The provider is disposed with the terminal.
+    // The providers are disposed with the terminal. The web address goes first, so xterm gives it a stretch both would claim.
+    term.registerLinkProvider(urlLinkProvider(term, endpoint.platform));
     term.registerLinkProvider(pathLinkProvider(term, tabId, endpoint.platform, (entry) => paneRef.current(entry)));
     const unregister = registerTerminal(tabId, () => term.buffer.active);
     term.attachCustomKeyEventHandler((e) => {
