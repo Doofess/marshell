@@ -1583,10 +1583,7 @@ export function LiveApp() {
         onForward={preview.forward}
         onOpen={preview.open}
         onView={preview.setView}
-        onClose={() => {
-          preview.close();
-          setTimeout(() => actions.focusTerminal(), 0);
-        }}
+        active
         onEscape={() => actions.focusTerminal()}
         regionTarget={deliveryFor(focusedRow ?? null)}
         onRegion={addRegion}

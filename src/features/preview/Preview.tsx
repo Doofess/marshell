@@ -8,7 +8,7 @@ import { placePopover } from "../regions/placement";
 import { RegionComment, type RegionTarget } from "../regions/RegionComment";
 import { RegionLayer } from "../regions/RegionLayer";
 import { canMarkRegion, fromDrag, initialRegion, regionLabel, regionStillValid, type Region } from "../regions/region";
-import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
+import type { Os } from "../../lib/keymap";
 import { CodeView } from "./CodeView";
 import { themeVariables } from "./highlight";
 import { HtmlView } from "./HtmlView";
@@ -53,7 +53,8 @@ export type PreviewPaneProps = {
   onOpen: OpenPreview;
   /** The Rendered / Source toggle of a Markdown or HTML file. */
   onView: (view: PreviewEntry["view"]) => void;
-  onClose: () => void;
+  /** The tab is the selected one; a kept tab that isn't takes no focus and checks its file no more. */
+  active: boolean;
   /** Escape: focus goes back to the session's terminal and the pane stays open. */
   onEscape: () => void;
   /** Where a marked region goes: the focused session's name and how it gets there, or null with no session. */
@@ -116,13 +117,13 @@ function Body({ entry, file, onImageSize, onPages, onLink, onKey, region }: Body
 }
 
 /** The pane for one file: header, then the scrolling body. Everything it shows comes in as props, so it renders the same on any state. */
-export function PreviewPane({ entry, file, updated, theme, os, canBack, canForward, onBack, onForward, onOpen, onView, onClose, onEscape, regionTarget, onRegion }: PreviewPaneProps) {
+export function PreviewPane({ entry, file, updated, theme, os, canBack, canForward, onBack, onForward, onOpen, onView, active, onEscape, regionTarget, onRegion }: PreviewPaneProps) {
   const { name, folder } = splitPath(entry.path);
   const body = useRef<HTMLDivElement>(null);
   // Focus goes into the scroll body when a file is opened, so the arrow keys and Page Up and Down read it at once.
   useEffect(() => {
-    body.current?.focus({ preventScroll: true });
-  }, [entry]);
+    if (active) body.current?.focus({ preventScroll: true });
+  }, [entry, active]);
   // "Updated" is spoken only to someone reading in the pane; a person typing in the terminal is not interrupted by it.
   const [inside, setInside] = useState(false);
   const [size, setSize] = useState<{ url: string; w: number; h: number } | null>(null);
@@ -283,8 +284,6 @@ export function PreviewPane({ entry, file, updated, theme, os, canBack, canForwa
   return (
     <section
       className="preview"
-      data-drop-preview=""
-      aria-label={`Preview, ${name}`}
       data-kind={kindOf(entry.path)}
       style={themeVariables(theme) as CSSProperties}
       onKeyDown={keys}
@@ -327,9 +326,6 @@ export function PreviewPane({ entry, file, updated, theme, os, canBack, canForwa
             </svg>
           </button>
         )}
-        <button type="button" className="preview__button" aria-label="Close preview" title={`Close preview (${shortcutLabel(commandById("preview").binding!, os)})`} onClick={onClose}>
-          {arrow("M3 3l6 6M9 3 3 9")}
-        </button>
       </header>
       {web && <WebLinkBar url={web} onOpen={() => answer(true)} onCancel={() => answer(false)} />}
       <div ref={body} className="preview__body" tabIndex={0} role="group" aria-label={`${name}, contents`} data-view={rendered ? kind : undefined} data-selecting={select ? "true" : undefined}>
@@ -399,6 +395,6 @@ export type PreviewProps = Omit<PreviewPaneProps, "file" | "updated">;
 
 /** The preview pane for the current entry. It loads the file, keeps it current while it is open, and stops when it closes. */
 export function Preview(props: PreviewProps) {
-  const { file, updated } = usePreviewFile(props.entry.path);
+  const { file, updated } = usePreviewFile(props.entry.path, { paused: !props.active });
   return <PreviewPane {...props} file={file} updated={updated} />;
 }

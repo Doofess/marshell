@@ -17,7 +17,7 @@ const base: PreviewPaneProps = {
   onForward: noop,
   onOpen: noop,
   onView: noop,
-  onClose: noop,
+  active: true,
   onEscape: noop,
   regionTarget: null,
   onRegion: () => Promise.resolve(),
@@ -25,21 +25,21 @@ const base: PreviewPaneProps = {
 const html = (file: FileState, more: Partial<PreviewPaneProps> = {}) => renderToStaticMarkup(<PreviewPane {...base} file={file} {...more} />);
 
 describe("PreviewPane", () => {
-  it("is a region labelled with the file name", () => {
+  it("has no region label of its own: the tab panel names it", () => {
     const out = html({ phase: "text", text: "fn main() {}\n" });
-    expect(out).toContain('aria-label="Preview, a.rs"');
+    expect(out).not.toContain('aria-label="Preview, ');
+    expect(out).not.toContain("data-drop-preview");
   });
   it("shows the file name and its folder in the header", () => {
     const out = html({ phase: "loading" });
     expect(out).toContain(">a.rs<");
     expect(out).toContain("C:\\dev\\app\\src");
   });
-  it("has named buttons: back, forward and close, with the shortcut on close", () => {
+  it("has named back and forward buttons, and no Close preview button", () => {
     const out = html({ phase: "loading" });
     expect(out).toContain('aria-label="Back"');
     expect(out).toContain('aria-label="Forward"');
-    expect(out).toContain('aria-label="Close preview"');
-    expect(out).toContain("Ctrl+Shift+Q");
+    expect(out).not.toContain("Close preview");
   });
   it("disables back and forward when there is nowhere to go", () => {
     expect(html({ phase: "loading" })).toMatch(/aria-label="Back"[^>]*disabled|disabled[^>]*aria-label="Back"/);
