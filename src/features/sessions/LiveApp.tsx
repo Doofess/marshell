@@ -64,8 +64,7 @@ import { FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, TAB_LIMIT, closeTabOu
 import { currentEntry, openRefused, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
 import { plusChoice, plusMenuItems } from "../pane/plusMenu";
 import { SidePane } from "../pane/SidePane";
-import { terminalFloorWidth } from "../terminal/columns";
-import { useScreenScale } from "../terminal/useScreenScale";
+import { useTerminalFloor } from "../terminal/useTerminalFloor";
 import { modeMenuItems, sessionMenuItems } from "../sidebar/sessionMenu";
 import { nextSessionNumber } from "../sidebar/sessionNumber";
 import type { Mode, RowModel } from "../sidebar/types";
@@ -249,9 +248,8 @@ export function LiveApp() {
   const wtFamily = wt?.family?.trim() || undefined;
   const terminalFont = useMemo(() => ({ family: font.family, size: font.size, wtFamily }), [font.family, font.size, wtFamily]);
   // The side pane stops where the terminal would drop under 80 columns: the columns plus the host's padding and the scrollbar's gutter.
-  // A cell's width follows the screen's scale (columns.ts), so the floor is worked out again when the scale changes.
-  const scale = useScreenScale();
-  const terminalMinWidth = useMemo(() => terminalFloorWidth(80, terminalFont, undefined, scale), [terminalFont, scale]);
+  // It is worked out again when the screen's scale changes or a font finishes loading (useTerminalFloor.ts).
+  const terminalMinWidth = useTerminalFloor(80, terminalFont);
   const [launcherOpen, setLauncherOpen] = useState(false);
   // The palette's "New session as administrator" opens the launcher with the Administrator chip on; every other opening starts with it off.
   const [launcherElevated, setLauncherElevated] = useState(false);
