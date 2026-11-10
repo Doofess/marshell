@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCoverPage } from "../../features/browser/pageCover";
 import { usePopupFocus } from "../../lib/usePopupFocus";
 import "./ContextMenu.css";
 import { leavesMenu, menuKey, placeMenu, type MenuItem } from "./menuKeys";
@@ -25,6 +26,7 @@ export function ContextMenu({ items, label, anchor, onRun, onClose }: Props) {
   const ref = useRef<HTMLUListElement>(null);
   const [active, setActive] = useState(() => firstAction(items));
   const [pos, setPos] = useState(anchor);
+  useCoverPage();
 
   // Measure once laid out, then pull the menu back inside the window.
   useLayoutEffect(() => {

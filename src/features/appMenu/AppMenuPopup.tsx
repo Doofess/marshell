@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { menuKey, type MenuItem } from "../../components/ContextMenu/menuKeys";
 import { AuxGlyph, StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { usePopupFocus } from "../../lib/usePopupFocus";
+import { useCoverPage } from "../browser/pageCover";
 import type { Os } from "../../lib/keymap";
 import "../../components/ContextMenu/ContextMenu.css";
 import "./AppMenu.css";
@@ -35,6 +36,7 @@ export function AppMenu({ os, anchor, doctorIssues, onRun, onClose, isTrigger = 
   const [subActive, setSubActive] = useState(0);
   const [pos, setPos] = useState({ x: 8, y: 8 });
   const [subPos, setSubPos] = useState({ x: 0, y: 0 });
+  useCoverPage();
 
   const topItems = () => top.current?.querySelectorAll<HTMLElement>('[role="menuitem"]');
   const subItems = () => sub.current?.querySelectorAll<HTMLElement>('[role="menuitem"]');

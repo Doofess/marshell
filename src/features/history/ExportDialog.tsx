@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { exportFileName, exportTitle, type ExportFormat } from "../../lib/exportName";
 import { useDialogFocus } from "../../lib/useDialogFocus";
+import { useCoverPage } from "../browser/pageCover";
 import "./ExportDialog.css";
 
 const formatName = (format: ExportFormat) => (format === "markdown" ? "markdown" : format === "json" ? "JSON" : "asciicast");
@@ -95,6 +96,7 @@ export function ExportDialog({ title, load, onSave, onCopy, onClose, announce, i
   const [busy, setBusy] = useState(false);
   const loadRef = useRef(load);
   loadRef.current = load;
+  useCoverPage();
   useDialogFocus(dialog, heading, onClose);
 
   useEffect(() => {

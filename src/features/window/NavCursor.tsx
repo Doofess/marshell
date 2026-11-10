@@ -1,4 +1,5 @@
 import type { Os } from "../../lib/keymap";
+import { useCoverPage } from "../browser/pageCover";
 import { navModifierLabel, DEFAULT_NAV_MODIFIER, type NavModifier } from "../../lib/navigation/modifier";
 import type { Rect } from "../../lib/navigation/types";
 import "./NavCursor.css";
@@ -17,6 +18,7 @@ export const NO_SELECTION_TEXT = "No session selected · Tab to select a termina
  * container (the window) with `rect` measured against that container.
  */
 export function NavCursor({ rect, label, os, nav }: { rect: Rect | null; label: string; os: Os; nav?: NavModifier }) {
+  useCoverPage(rect !== null);
   if (!rect) return null;
   return (
     <>

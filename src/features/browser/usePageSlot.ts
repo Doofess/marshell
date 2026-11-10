@@ -1,6 +1,9 @@
-import { useContext, useEffect, useEffectEvent, useRef, type RefObject } from "react";
+import { useContext, useEffect, useEffectEvent, useMemo, useRef, useState, type RefObject } from "react";
+import { flushSync } from "react-dom";
 import { LayoutContext, paneColumn, type ColumnInputs, type Layout } from "../window/paneColumn";
+import type { Frozen } from "./BrowserTab";
 import { browser, type Piece, type Report } from "./browserApi";
+import { createFreezer, LIVE, type Freeze } from "./freeze";
 import { createPlacer } from "./placing";
 import { pageRule } from "./pageRule";
 import { usePage, type PageState } from "./pageStore";
@@ -83,25 +86,68 @@ const ignore = () => {};
  * `url` is the address a missing page opens at. The window's `resize` event is never a trigger: it fires a frame ahead of the
  * layout, which `.window` follows from its own observer (S12 finding 17).
  */
-export function usePageSlot(ref: RefObject<HTMLElement | null>, pageKey: string, active: boolean, covered: boolean, url: string): void {
+export function usePageSlot(ref: RefObject<HTMLElement | null>, pageKey: string, active: boolean, covered: boolean, url: string): Frozen | null {
   const page = usePage(pageKey);
   const layout = useContext(LayoutContext);
   const step = slotStep(page, active, covered);
   const placer = useRef<ReturnType<typeof createPlacer>>(null);
   placer.current ??= createPlacer((r) => browser.place(r), nextPaint);
   const savedUrl = useEffectEvent(() => url);
+  const coveredNow = useEffectEvent(() => covered);
 
   const needOpen = step === "open";
   useEffect(() => {
     if (needOpen) browser.open(pageKey, savedUrl()).catch(ignore);
   }, [needOpen, pageKey]);
 
-  // The show is asked as soon as the open is: the shell keeps it until the page exists.
-  const wantShown = active && !covered;
+  // A cover freezes the page as a picture: capture, put the picture on screen, wait for its paint, then hide the page; an
+  // uncover shows the page first and drops the picture after the next paint (S12). Only a tab that is on screen with a page
+  // loaded has anything to capture; any other is simply hidden, as it always was.
+  const [freeze, setFreeze] = useState<Freeze>(LIVE);
+  const freezer = useMemo(
+    () =>
+      createFreezer({
+        capture: () => browser.capture(pageKey),
+        show: () => {
+          shownKey = pageKey;
+          return browser.show(pageKey);
+        },
+        hide: () => {
+          // Another tab may have taken the screen since the freeze began: its page is not this one's to hide.
+          if (shownKey !== pageKey) return;
+          shownKey = null;
+          browser.show(null).catch(ignore);
+        },
+        paint: nextPaint,
+        render: (f, now) => (now ? flushSync(() => setFreeze(f)) : setFreeze(f)),
+      }),
+    [pageKey],
+  );
+  const freezable = active && page !== undefined;
+  // Leaving the freezable state (the tab goes off screen, the page goes, the key changes) puts it back to live; the page's own
+  // hiding is the tab's, below.
+  useEffect(() => () => freezer.reset(), [freezer, freezable]);
   useEffect(() => {
-    if (!wantShown) return;
-    shownKey = pageKey;
-    browser.show(pageKey).catch(ignore);
+    if (freezable) freezer.send({ type: covered ? "cover" : "uncover" });
+    // A page that doesn't exist yet is asked to show as soon as nothing covers it (the shell keeps that until it does), and the
+    // ask is taken back when something does, so the page never opens over a menu.
+    else if (active && !covered) {
+      shownKey = pageKey;
+      browser.show(pageKey).catch(ignore);
+    } else if (active && shownKey === pageKey) {
+      shownKey = null;
+      browser.show(null).catch(ignore);
+    }
+  }, [freezer, freezable, active, covered, pageKey]);
+
+  // The show is asked as soon as the open is: the shell keeps it until the page exists. A cover that is already up leaves it
+  // hidden; the freeze above takes over from there.
+  useEffect(() => {
+    if (!active) return;
+    if (!coveredNow()) {
+      shownKey = pageKey;
+      browser.show(pageKey).catch(ignore);
+    }
     return () => {
       if (shownKey !== pageKey) return;
       shownKey = null;
@@ -109,7 +155,7 @@ export function usePageSlot(ref: RefObject<HTMLElement | null>, pageKey: string,
         if (shownKey === null) browser.show(null).catch(ignore);
       });
     };
-  }, [wantShown, pageKey]);
+  }, [active, pageKey]);
 
   const moving = layout?.moving ?? false;
   useEffect(() => {
@@ -144,4 +190,6 @@ export function usePageSlot(ref: RefObject<HTMLElement | null>, pageKey: string,
       cancelAnimationFrame(frame);
     };
   }, [ref, active, layout, moving]);
+
+  return freeze.phase === "live" ? null : { picture: freeze.picture };
 }

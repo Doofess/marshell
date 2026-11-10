@@ -75,9 +75,8 @@ const ignore = () => {};
 export function BrowserTab({ pageKey, url, active, available = true, onPage, onOpenOutside, onEscape, announce, ref }: BrowserTabProps) {
   const page = usePage(pageKey);
   const slot = useRef<HTMLDivElement>(null);
-  // Nothing freezes the page yet: Task 9 turns a cover into a picture here.
   const covered = usePageCovered();
-  usePageSlot(slot, pageKey, active && available, covered, url);
+  const frozen = usePageSlot(slot, pageKey, active && available, covered, url);
 
   const say = useEffectEvent((u: string, t: string) => onPage(u, t));
   const pageUrl = page?.url ?? "";
@@ -95,7 +94,7 @@ export function BrowserTab({ pageKey, url, active, available = true, onPage, onO
       page={page}
       url={url}
       available={available}
-      frozen={null}
+      frozen={frozen}
       slotRef={slot}
       barRef={ref}
       onGo={go}
