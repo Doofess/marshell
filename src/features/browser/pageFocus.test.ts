@@ -1,6 +1,26 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { dispatchPage } from "./pageStore";
-import { enterReason, handBack, isQuiet, keyForCode, onDragArea, quietly, tabNeighbour, windowFocused } from "./pageFocus";
+import { afterCover, afterKey, enterReason, handBack, isQuiet, keyForCode, onDragArea, quietly, tabNeighbour, windowFocused } from "./pageFocus";
+
+describe("the page's turn at the keyboard", () => {
+  it("a key that left focus on the slot gives the keys back to the page", () => {
+    expect(afterKey({ onSlot: true, covered: false })).toBe("giveBack");
+  });
+  it("a key that opened a cover waits for the cover to go", () => {
+    expect(afterKey({ onSlot: true, covered: true })).toBe("wait");
+    expect(afterKey({ onSlot: false, covered: true })).toBe("wait");
+  });
+  it("a key that moved focus somewhere in the app ends the page's turn", () => {
+    expect(afterKey({ onSlot: false, covered: false })).toBe("end");
+  });
+  it("a cover that left focus on the slot or on nothing gives the keys back", () => {
+    expect(afterCover({ onSlot: true, onNothing: false })).toBe("giveBack");
+    expect(afterCover({ onSlot: false, onNothing: true })).toBe("giveBack");
+  });
+  it("a cover that put focus somewhere in the app ends the page's turn", () => {
+    expect(afterCover({ onSlot: false, onNothing: false })).toBe("end");
+  });
+});
 
 describe("tabNeighbour", () => {
   const all = ["a", "b", "c"];

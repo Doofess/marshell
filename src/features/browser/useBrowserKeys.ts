@@ -4,7 +4,7 @@ import { subscribeNav } from "../sessions/useNavigation";
 import { appClaims, claimedChords } from "./claimedChords";
 import { browser, onBrowser } from "./browserApi";
 import { pageCovered, subscribeCover } from "./pageCover";
-import { handBack, keyForCode, onDragArea, quietly, tabNeighbour } from "./pageFocus";
+import { afterCover, afterKey, handBack, keyForCode, onDragArea, quietly, tabNeighbour } from "./pageFocus";
 import { dispatchPage } from "./pageStore";
 
 const TABBABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -100,7 +100,9 @@ export function useBrowserKeys({ os, focusTerminal }: Options): void {
         // The key was the app's, and the page's turn comes back with the next frame unless the key moved focus or covered the page.
         cancelAnimationFrame(frame);
         frame = requestAnimationFrame(() => {
-          if (document.activeElement === slot && !pageCovered()) browser.focus(key, "programmatic").catch(ignore);
+          const then = afterKey({ onSlot: document.activeElement === slot, covered: pageCovered() });
+          if (then === "giveBack") browser.focus(key, "programmatic").catch(ignore);
+          else if (then === "end" && owner === key) owner = null;
         });
       }),
     ];
@@ -119,7 +121,10 @@ export function useBrowserKeys({ os, focusTerminal }: Options): void {
         const slot = slotOf(key);
         if (!slot || pageCovered()) return;
         const on = document.activeElement;
-        if (on !== slot && on !== document.body && on !== null) return;
+        if (afterCover({ onSlot: on === slot, onNothing: on === document.body || on === null }) === "end") {
+          if (owner === key) owner = null;
+          return;
+        }
         if (on !== slot) quietly(() => slot.focus({ preventScroll: true }));
         browser.focus(key, "programmatic").catch(ignore);
       });

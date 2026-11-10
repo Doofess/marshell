@@ -23,6 +23,21 @@ export function handBack(s: { pageHadKeys: boolean; pointerSince: boolean; cover
 }
 
 /**
+ * After a key the app took from a page has run. Focus still on the slot: the page gets the keys back. A cover the key opened
+ * decides when it goes. Focus anywhere else: the key moved it (to a terminal, another session), and the page's turn is over, so a
+ * later return of the window doesn't hand the keys to a page the person left.
+ */
+export function afterKey(s: { onSlot: boolean; covered: boolean }): "giveBack" | "wait" | "end" {
+  if (s.covered) return "wait";
+  return s.onSlot ? "giveBack" : "end";
+}
+
+/** After a cover goes, for a page that had the keys when it came: back to the page unless the cover put focus somewhere in the app. */
+export function afterCover(s: { onSlot: boolean; onNothing: boolean }): "giveBack" | "end" {
+  return s.onSlot || s.onNothing ? "giveBack" : "end";
+}
+
+/**
  * Whether the window has the keyboard. `document.hasFocus()` is false while a page has it (S12 finding 8), so a page that has it
  * counts as the window being focused.
  */
