@@ -31,8 +31,14 @@ function put(pages: ReadonlyMap<string, PageState>, key: string, change: Partial
 
 export function pageReducer(pages: ReadonlyMap<string, PageState>, e: PageEvent): ReadonlyMap<string, PageState> {
   switch (e.type) {
-    case "state":
-      return put(pages, e.key, { url: e.url, title: e.title, canBack: e.canBack, canForward: e.canForward, loading: e.loading, status: null });
+    case "state": {
+      // A refused link or redirect is a cancelled navigation, and the page reports its end like any other: the same address, and
+      // still loading or not as it was. "Refused" stays through those, until a navigation starts or the address changes.
+      const before = pages.get(e.key);
+      const started = e.loading && !before?.loading;
+      const status = before?.status === "refused" && !started && e.url === before.url ? "refused" : null;
+      return put(pages, e.key, { url: e.url, title: e.title, canBack: e.canBack, canForward: e.canForward, loading: e.loading, status });
+    }
     case "icon":
       return put(pages, e.key, { icon: e.src });
     case "refused":
