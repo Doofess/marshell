@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { pathLinkProvider, type BufferLike } from "./pathLinks";
-import { findUrls, urlHint, urlLinkProvider, webLinkHandler } from "./urlLinks";
+import { findUrls, targetHint, urlHint, urlLinkProvider, webLinkHandler } from "./urlLinks";
 
 /** The same stub as pathLinks.test.ts: a row starting with `!` is a wrapped continuation; `世` is wide and followed by `~`. */
 function stub(rows: string[]): BufferLike {
@@ -184,7 +184,35 @@ describe("webLinkHandler (OSC 8 hyperlinks)", () => {
     expect(open).not.toHaveBeenCalled();
   });
 
-  it("uses the Cmd key on macOS and the same hover hint", () => {
+  it("the hint over a hyperlink names the address it opens, whatever its text says", () => {
+    const element = { setAttribute: vi.fn(), removeAttribute: vi.fn() };
+    const h = webLinkHandler("windows", () => element as unknown as HTMLElement, vi.fn(async () => {}));
+    const range = { start: { x: 1, y: 1 }, end: { x: 2, y: 1 } };
+    h.hover!({} as MouseEvent, "https://a.example/x?y=1", range);
+    expect(element.setAttribute).toHaveBeenCalledWith("title", "Ctrl+click to open https://a.example/x?y=1 in your browser");
+    expect(targetHint("linux", "http://127.0.0.1:8080/")).toBe("Ctrl+click to open http://127.0.0.1:8080/ in your browser");
+  });
+
+  it("a long address, or one with a user name before the host, is named by where it really goes", () => {
+    expect(targetHint("windows", "https://good.example@evil.example/login")).toBe("Ctrl+click to open https://evil.example/… in your browser");
+    expect(targetHint("windows", "https://good.example:pw@evil.example:8443/")).toBe("Ctrl+click to open https://evil.example:8443/… in your browser");
+    expect(targetHint("windows", `https://a.example/${"x".repeat(200)}`)).toBe("Ctrl+click to open https://a.example/… in your browser");
+    expect(targetHint("windows", `https://a.example/${"x".repeat(100)}`)).toBe(`Ctrl+click to open https://a.example/${"x".repeat(100)} in your browser`);
+  });
+
+  it("a target that would not open gets no hint", () => {
+    const element = { setAttribute: vi.fn(), removeAttribute: vi.fn() };
+    const h = webLinkHandler("windows", () => element as unknown as HTMLElement, vi.fn(async () => {}));
+    const range = { start: { x: 1, y: 1 }, end: { x: 2, y: 1 } };
+    for (const target of ["file:///c:/x", "javascript:alert(1)", "not a url", ""]) {
+      expect(targetHint("windows", target)).toBeNull();
+      h.hover!({} as MouseEvent, target, range);
+    }
+    expect(element.setAttribute).not.toHaveBeenCalled();
+    expect(element.removeAttribute).toHaveBeenCalledWith("title");
+  });
+
+  it("uses the Cmd key on macOS", () => {
     const open = vi.fn(async () => {});
     const element = { setAttribute: vi.fn(), removeAttribute: vi.fn() };
     const h = webLinkHandler("macos", () => element as unknown as HTMLElement, open);
@@ -194,7 +222,7 @@ describe("webLinkHandler (OSC 8 hyperlinks)", () => {
     h.activate({ ctrlKey: false, metaKey: true } as MouseEvent, "https://a.example/", range);
     expect(open).toHaveBeenCalledWith("https://a.example/");
     h.hover!({} as MouseEvent, "https://a.example/", range);
-    expect(element.setAttribute).toHaveBeenCalledWith("title", "⌘+click to open in your browser");
+    expect(element.setAttribute).toHaveBeenCalledWith("title", "⌘+click to open https://a.example/ in your browser");
     h.leave!({} as MouseEvent, "https://a.example/", range);
     expect(element.removeAttribute).toHaveBeenCalledWith("title");
   });

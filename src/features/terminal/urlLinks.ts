@@ -38,17 +38,36 @@ export function findUrls(text: string): Array<{ start: number; end: number; url:
 /** The tooltip over a clickable web address. */
 export const urlHint = (platform: Endpoint["platform"]): string => (platform === "macos" ? "⌘+click to open in your browser" : "Ctrl+click to open in your browser");
 
+/** The address parsed, when it is one the system browser is given: http or https. */
+function webUrl(text: string): URL | null {
+  try {
+    const url = new URL(text);
+    return url.protocol === "http:" || url.protocol === "https:" ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+/** An address longer than this is named by its origin in a hint. */
+const SHOWN_LENGTH = 120;
+
+/**
+ * The tooltip over a hyperlink a program drew (OSC 8), whose text can say anything: it names the address the click opens. A long
+ * address, or one with a user name before the host (`https://bank.example@other.example/`), is named by its origin, so the host
+ * the browser goes to is always in view. Null for a target that would not open.
+ */
+export function targetHint(platform: Endpoint["platform"], target: string): string | null {
+  const url = webUrl(target);
+  if (!url) return null;
+  const plain = target.length <= SHOWN_LENGTH && url.username === "" && url.password === "";
+  return `${platform === "macos" ? "⌘" : "Ctrl"}+click to open ${plain ? target : `${url.origin}/…`} in your browser`;
+}
+
 type Open = (url: string) => Promise<void>;
 
 /** Hands an http or https address to the system; anything else, or a refusal by the system, does nothing. */
 function openWeb(url: string, open: Open): void {
-  let protocol: string;
-  try {
-    protocol = new URL(url).protocol;
-  } catch {
-    return;
-  }
-  if (protocol !== "http:" && protocol !== "https:") return;
+  if (!webUrl(url)) return;
   try {
     open(url).catch(() => {});
   } catch {
@@ -88,13 +107,20 @@ export function urlLinkProvider(term: { buffer: { active: BufferLike }; element?
   };
 }
 
-/** xterm's handler for OSC 8 hyperlinks, under the same rule as a plain address: the modifier, and only http and https. */
+/**
+ * xterm's handler for OSC 8 hyperlinks, under the same rule as a plain address: the modifier, and only http and https. It takes
+ * the place of xterm's own, which asks before it opens and shows the address; here the hint shows it (`targetHint`).
+ */
 export function webLinkHandler(platform: Endpoint["platform"], element: () => HTMLElement | undefined, open: Open = openUrl): ILinkHandler {
   return {
     activate(event, text) {
       if (modifierHeld(platform, event)) openWeb(text, open);
     },
-    hover: () => element()?.setAttribute("title", urlHint(platform)),
+    hover(_event, text) {
+      const hint = targetHint(platform, text);
+      if (hint === null) element()?.removeAttribute("title");
+      else element()?.setAttribute("title", hint);
+    },
     leave: () => element()?.removeAttribute("title"),
   };
 }
