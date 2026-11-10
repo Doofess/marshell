@@ -25,6 +25,11 @@ const COMMANDS: &[&str] = &[
     "notification_link",
     "set_notification_link",
     "set_window_background",
+    "browser_open",
+    "browser_show",
+    "browser_place",
+    "browser_nav",
+    "browser_close",
 ];
 
 fn main() {

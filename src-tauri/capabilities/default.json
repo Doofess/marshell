@@ -35,6 +35,11 @@
     "allow-set-tray",
     "allow-notification-link",
     "allow-set-notification-link",
-    "allow-set-window-background"
+    "allow-set-window-background",
+    "allow-browser-open",
+    "allow-browser-show",
+    "allow-browser-place",
+    "allow-browser-nav",
+    "allow-browser-close"
   ]
 }

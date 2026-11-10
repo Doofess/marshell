@@ -266,7 +266,7 @@ pub fn build(app: &tauri::AppHandle) -> tauri::Result<()> {
 fn on_menu_choice(app: &tauri::AppHandle, id: &str) {
     match id {
         "open" => show_main(app),
-        "quit" => app.exit(0),
+        "quit" => crate::quit(app),
         other => {
             if other != "pause" {
                 show_main(app);

@@ -240,8 +240,15 @@ fn close_once(app: tauri::AppHandle, keep_in_tray: bool) {
                 hide_to_tray(&window);
             }
         }
-        CloseAction::Quit | CloseAction::Ask => app.exit(0),
+        CloseAction::Quit | CloseAction::Ask => quit(&app),
     }
+}
+
+/// Ends Marshell. The browser pages are closed first, while the event loop still runs: a page that is killed
+/// with the process loses the sign-ins of its last half minute.
+pub fn quit(app: &tauri::AppHandle) {
+    browser::close_all(app);
+    app.exit(0);
 }
 
 /// What the window keeps between runs: everything but the frame, which the config sets (none on Windows, where the
@@ -265,7 +272,7 @@ fn on_close_requested(window: &tauri::Window, api: &tauri::CloseRequestApi) {
         .try_state::<HomeDir>()
         .and_then(|home| marshell_core::settings::load(&home.0).close_to_tray);
     match close_action(tray::tray_ready(app), saved) {
-        CloseAction::Quit => app.exit(0),
+        CloseAction::Quit => quit(app),
         CloseAction::Hide => hide_to_tray(window),
         CloseAction::Ask => {
             // The window stays open and in front; the webview shows its one-time dialog.
@@ -314,10 +321,17 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         // The UI reports focus too, but a webview that died while focused cannot report losing it.
         .on_window_event(|window, event| {
+            // A browser page taking the keyboard inside the window is not the window losing focus.
             if matches!(event, tauri::WindowEvent::Focused(false))
+                && !browser::still_in_front(window)
                 && let Some(core) = window.try_state::<CoreHandle>()
             {
                 core.0.window_blurred();
+            }
+            if let tauri::WindowEvent::Resized(size) = event
+                && window.label() == "main"
+            {
+                browser::on_resized(window, *size);
             }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event
                 && window.label() == "main"
@@ -342,6 +356,7 @@ fn main() {
             app.manage(capture::CaptureState::default());
             let home = marshell_core::paths::home_dir()?;
             app.manage(HomeDir(home.clone()));
+            app.manage(browser::BrowserState::new(app.handle(), &home));
             marshell_core::crash::install_panic_hook(&home);
             if let Err(e) = marshell_core::diagnostics::log::init(&home) {
                 eprintln!("Marshell: no log file this run: {e:#}");
@@ -419,13 +434,20 @@ fn main() {
             tray::set_tray,
             link::notification_link,
             link::set_notification_link,
-            window_bg::set_window_background
+            window_bg::set_window_background,
+            browser::browser_open,
+            browser::browser_show,
+            browser::browser_place,
+            browser::browser_nav,
+            browser::browser_close
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the app");
 
     app.run(|handle, event| {
         if let tauri::RunEvent::Exit = event {
+            // For an exit that didn't come through `quit`; nothing to do after one that did.
+            browser::close_all(handle);
             handle.state::<CoreHandle>().0.shutdown();
             // The sessions have ended; anything else started from a shell (VS Code, a browser) keeps running.
             marshell_core::job::release_children();

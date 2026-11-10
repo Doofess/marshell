@@ -374,6 +374,14 @@ impl Registry {
         self.pages.remove(key)
     }
 
+    /// Forgets every page; their labels, in the order the pages were opened. The label counter goes on.
+    pub fn clear(&mut self) -> Vec<String> {
+        let labels = self.labels();
+        self.pages.clear();
+        self.shown = None;
+        labels
+    }
+
     /// Sets the shown page: the labels to hide, and the one to show. A key with no page shows nothing.
     pub fn show(&mut self, key: Option<&str>) -> (Vec<String>, Option<String>) {
         self.shown = key.filter(|k| self.pages.contains_key(*k)).map(str::to_string);
@@ -833,6 +841,20 @@ mod tests {
         r.show(Some("a"));
         r.close("a");
         assert_eq!(r.shown(), None);
+    }
+
+    #[test]
+    fn registry_clear_forgets_every_page() {
+        let mut r = Registry::default();
+        r.open("a");
+        r.open("b");
+        r.show(Some("b"));
+        assert_eq!(r.clear(), ["page-1", "page-2"]);
+        assert!(r.labels().is_empty());
+        assert_eq!(r.shown(), None);
+        assert!(r.clear().is_empty());
+        // Labels go on from where they were.
+        assert_eq!(r.open("a").as_deref(), Some("page-3"));
     }
 
     #[test]
