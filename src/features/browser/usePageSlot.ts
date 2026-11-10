@@ -6,7 +6,7 @@ import { browser, type Piece, type Report } from "./browserApi";
 import { createFreezer, LIVE, type Freeze } from "./freeze";
 import { createPlacer } from "./placing";
 import { pageRule } from "./pageRule";
-import { openPage, usePage, type PageState } from "./pageStore";
+import { openPage, useCanLoad, usePage, type PageState } from "./pageStore";
 
 /** The parts of a `DOMRect` the report reads, so a test needs no DOM. */
 export type DOMRectLike = { x: number; y: number; width: number; height: number; right: number; bottom: number };
@@ -16,11 +16,13 @@ export type SlotStep = "open" | "show" | "hide" | "none";
 /**
  * What the slot asks of its page. A tab that is on screen and has no page (never opened, refused, evicted, or after
  * `browser://gone`) opens it at its saved address; a page that exists is shown while its tab is on screen and nothing covers it, and hidden
- * otherwise; a tab that was never on screen has nothing to do.
+ * otherwise; a tab that was never on screen has nothing to do. A tab that may not load a page (`mayLoad` false: its session is
+ * closed, and the pane is still drawing it while it hides) opens none and shows none.
  */
-export function slotStep(page: PageState | undefined, active: boolean, covered: boolean): SlotStep {
-  if (!page?.live) return active ? "open" : "none";
-  return active && !covered ? "show" : "hide";
+export function slotStep(page: PageState | undefined, active: boolean, covered: boolean, mayLoad = true): SlotStep {
+  const on = active && mayLoad;
+  if (!page?.live) return on ? "open" : "none";
+  return on && !covered ? "show" : "hide";
 }
 
 type OpenApi = {
@@ -107,7 +109,7 @@ const ignore = () => {};
 export function usePageSlot(ref: RefObject<HTMLElement | null>, pageKey: string, active: boolean, covered: boolean, url: string): Frozen | null {
   const page = usePage(pageKey);
   const layout = useContext(LayoutContext);
-  const step = slotStep(page, active, covered);
+  const step = slotStep(page, active, covered, useCanLoad(pageKey));
   const placer = useRef<ReturnType<typeof createPlacer>>(null);
   placer.current ??= createPlacer((r) => browser.place(r), nextPaint);
   const savedUrl = useEffectEvent(() => url);

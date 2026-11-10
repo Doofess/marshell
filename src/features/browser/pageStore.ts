@@ -97,6 +97,31 @@ function subscribe(l: () => void): () => void {
   return () => listeners.delete(l);
 }
 
+let loadable: ReadonlySet<string> | null = null;
+
+/**
+ * Says which keys may have a page: the browser tabs of the open sessions. Null (as at the start) is no rule. A tab asks here and
+ * not its props, because a pane that is hiding is drawn from its last node (MainWindow), whose props are as old as that drawing.
+ */
+export function setLoadable(keys: ReadonlySet<string> | null): void {
+  const same = keys === null || loadable === null ? keys === loadable : keys.size === loadable.size && [...keys].every((k) => loadable?.has(k));
+  if (same) return;
+  loadable = keys;
+  for (const l of listeners) l();
+}
+
+/** Whether the key's tab may open its page: its tab exists and its session is open. */
+export const canLoad = (key: string): boolean => loadable === null || loadable.has(key);
+
+/** `canLoad(key)` for a component: it draws again when the answer changes. */
+export function useCanLoad(key: string): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => canLoad(key),
+    () => true,
+  );
+}
+
 /** Calls `listener` after every change to any page's state. Returns the unsubscribe function. */
 export const subscribePages = subscribe;
 

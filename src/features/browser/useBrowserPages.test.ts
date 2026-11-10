@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import type { PaneView } from "../../generated/PaneView";
 import { paneReducer } from "../pane/paneState";
-import { pageReducer, type PageEvent, type PageState } from "./pageStore";
+import { canLoad, pageReducer, setLoadable, subscribePages, type PageEvent, type PageState } from "./pageStore";
 import { openKeys, owners, pageAction, popupActions, unload } from "./useBrowserPages";
+import { nextLive } from "./pages";
 import { slotStep } from "./usePageSlot";
 
 const empty: PaneView = { open: false, width: null, sessions: {}, recent: [] };
@@ -16,17 +17,57 @@ describe("openKeys", () => {
     s = page(s, "b", "http://localhost:3000/");
     s = page(s, "b", "about:blank");
     s = file(s, "b", "C:\\x\\b.md");
-    expect(openKeys(s)).toEqual(new Set(["a/t2", "b/t1", "b/t2"]));
+    expect(openKeys(s, new Set(["a", "b"]))).toEqual(new Set(["a/t2", "b/t1", "b/t2"]));
   });
   it("is empty with no tabs", () => {
-    expect(openKeys(empty).size).toBe(0);
+    expect(openKeys(empty, new Set(["a"])).size).toBe(0);
+  });
+  // Found in review: the pane keeps a closed session's tabs (a reopened session gets them back), and its pages stayed loaded
+  // with no way to them: a video kept playing.
+  it("leaves out the tabs of a session that is closed, so its pages unload", () => {
+    const s = page(page(empty, "a", "https://example.com/"), "b", "http://localhost:3000/");
+    expect(openKeys(s, new Set(["a"]))).toEqual(new Set(["a/t1"]));
+    expect(nextLive(["b/t1", "a/t1"], "a/t1", openKeys(s, new Set(["a"])))).toEqual({ live: ["a/t1"], close: ["b/t1"] });
+  });
+  it("counts every session while the session list isn't known, so a core that is starting again unloads nothing", () => {
+    const s = page(page(empty, "a", "https://example.com/"), "b", "http://localhost:3000/");
+    expect(openKeys(s, null)).toEqual(new Set(["a/t1", "b/t1"]));
   });
 });
 
 describe("owners", () => {
   it("names the session and the pane tab of each key", () => {
     const s = page(page(empty, "a", "https://example.com/"), "b", "https://example.org/");
-    expect(owners(s).get("b/t1")).toEqual({ session: "b", paneTab: "t1" });
+    expect(owners(s, new Set(["a", "b"])).get("b/t1")).toEqual({ session: "b", paneTab: "t1" });
+    expect(owners(s, new Set(["a"])).has("b/t1")).toBe(false);
+  });
+});
+
+// Found in the live re-check: a hide keeps drawing the pane's last node until its motion ends (MainWindow), so a closed session's
+// shown tab was still drawn, as active as it last was, when its page was unloaded. It opened the page again (the test site got a
+// second request), and nothing unloaded that one. No prop reaches a kept node, so the tab asks the store.
+describe("canLoad", () => {
+  afterEach(() => setLoadable(null));
+  it("a tab whose session is closed opens no page, however active its last drawing was", () => {
+    const s = page(page(empty, "a", "https://example.com/"), "b", "http://localhost:3000/");
+    setLoadable(openKeys(s, new Set(["a"])));
+    expect(canLoad("b/t1")).toBe(false);
+    expect(slotStep(undefined, true, false, canLoad("b/t1"))).toBe("none");
+    expect(canLoad("a/t1")).toBe(true);
+    expect(slotStep(undefined, true, false, canLoad("a/t1"))).toBe("open");
+  });
+  it("tells the tabs that are drawn when the keys change, and only then", () => {
+    let calls = 0;
+    const stop = subscribePages(() => calls++);
+    setLoadable(new Set(["a/t1"]));
+    setLoadable(new Set(["a/t1"]));
+    expect(calls).toBe(1);
+    setLoadable(new Set());
+    expect(calls).toBe(2);
+    stop();
+  });
+  it("any page may load before the app has said which", () => {
+    expect(canLoad("a/t1")).toBe(true);
   });
 });
 

@@ -1355,7 +1355,7 @@ export function LiveApp() {
   const shownPane = tabsOf(view.pane, focusedId);
   const shownTab = shownPane.tabs.find((t) => t.id === (shownPane.active ?? shownPane.tabs[0]?.id));
   const shownPage = browserTabs(os) && view.pane.open && mainView === "sessions" && focusedId && shownTab && isBrowserTab(shownTab) ? pageKey(focusedId, shownTab.id) : null;
-  useBrowserPages(view.pane, shownPage, { dispatch: paneDispatch, focusedSession: () => stateRef.current.focusedId });
+  useBrowserPages(view.pane, shownPage, { sessions: loaded ? rows.map((r) => r.id) : null, dispatch: paneDispatch, focusedSession: () => stateRef.current.focusedId });
   const pageIcons = usePageIcons(shownPane.tabs.filter(isBrowserTab).map((t) => pageKey(focusedId ?? "", t.id)));
 
   // The window's shortcuts and commands (side pane, shell panel, history, menu, next waiting). True when it was one of them.

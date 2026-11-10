@@ -5,24 +5,29 @@ import { isBrowserTab, tabsOf, type PaneAction } from "../pane/paneState";
 import { passingBlank } from "./address";
 import { browser, onBrowser, pageKey } from "./browserApi";
 import { nextLive } from "./pages";
-import { dispatchPage, pageIcon, startPageStore, subscribePages, type PageEvent } from "./pageStore";
+import { dispatchPage, pageIcon, setLoadable, startPageStore, subscribePages, type PageEvent } from "./pageStore";
 
 const ignore = () => {};
 
 /** Where a page's key points: its session and its pane tab. */
 export type Owner = { session: string; paneTab: string };
 
-/** Every browser tab of every session in the pane, by its page's key: the pages that may be loaded. File tabs are not counted. */
-export function owners(pane: PaneView): Map<string, Owner> {
+/**
+ * Every browser tab of every open session, by its page's key: the pages that may be loaded. File tabs are not counted. The pane
+ * keeps a closed session's tabs, so that reopening it brings them back; `sessions` (the ids in the session list) leaves those
+ * out, and their pages unload. Null while the list isn't known: every session counts, and nothing unloads.
+ */
+export function owners(pane: PaneView, sessions: ReadonlySet<string> | null): Map<string, Owner> {
   const out = new Map<string, Owner>();
   for (const session of Object.keys(pane.sessions)) {
+    if (sessions !== null && !sessions.has(session)) continue;
     for (const t of tabsOf(pane, session).tabs) if (isBrowserTab(t)) out.set(pageKey(session, t.id), { session, paneTab: t.id });
   }
   return out;
 }
 
-/** The keys of every browser tab of every session in the pane. */
-export const openKeys = (pane: PaneView): Set<string> => new Set(owners(pane).keys());
+/** The keys of every browser tab of every open session. */
+export const openKeys = (pane: PaneView, sessions: ReadonlySet<string> | null): Set<string> => new Set(owners(pane, sessions).keys());
 
 /**
  * What a page's popup does to the pane: a new browser tab in the popup's own session, selected only when that session is on screen
@@ -62,6 +67,8 @@ export async function unload(keys: readonly string[], close: (key: string) => Pr
 }
 
 type Options = {
+  /** The ids of the sessions in the list, or null while the list isn't known. A session that is not there has no page loaded. */
+  sessions: readonly string[] | null;
   dispatch(action: PaneAction): void;
   /** The session on screen, if any. */
   focusedSession(): string | null | undefined;
@@ -72,17 +79,20 @@ type Options = {
  * drops and the store forgets them; the shell's `browser://` events reach the store, and a page's address and title reach its tab; a popup opens a tab; the
  * pages follow the app's theme. Nothing is closed on unmount: the shell closes the pages at quit.
  */
-export function useBrowserPages(pane: PaneView, shownKey: string | null, { dispatch, focusedSession }: Options): void {
+export function useBrowserPages(pane: PaneView, shownKey: string | null, { sessions, dispatch, focusedSession }: Options): void {
   const live = useRef<string[]>([]);
-  const open = openKeys(pane);
+  const owned = owners(pane, sessions === null ? null : new Set(sessions));
+  const open = new Set(owned.keys());
   useEffect(() => {
+    // Before the unloading: a tab still drawn must know it may not open the page again.
+    setLoadable(open);
     const next = nextLive(live.current, shownKey, open);
     live.current = next.live;
     void unload(next.close, browser.close, dispatchPage);
   });
 
-  const ownersRef = useRef(owners(pane));
-  ownersRef.current = owners(pane);
+  const ownersRef = useRef(owned);
+  ownersRef.current = owned;
   const paneRef = useRef(pane);
   paneRef.current = pane;
   const send = useEffectEvent((action: PaneAction) => dispatch(action));

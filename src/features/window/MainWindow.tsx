@@ -8,6 +8,7 @@ import { Wordmark } from "../../components/Logo/Wordmark";
 import { StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
 import { ApproveCard } from "../approval/ApproveCard";
+import { useCoverPage } from "../browser/pageCover";
 import { Composer } from "../composer/Composer";
 import { StatusBar } from "../composer/StatusBar";
 import { APPROVALS } from "../approval/fixtures";
@@ -345,6 +346,8 @@ export function MainWindow({
   // A hide keeps drawing the last pane until its motion ends, so the node is kept (in the same slot, so its state stays).
   const keptPane = useRef<{ node: ReactNode; width: number } | null>(null);
   const paneDrawn = paneOn || paneMotion.moving;
+  // The request-details drawer lies over the pane in a narrow window, where a browser tab's page would be drawn above it.
+  useCoverPage(drawer && Boolean(drawerCard || requests[0]) && paneDrawn);
   const drawnPane = paneOn ? { node: pane, width: geometry.pane } : keptPane.current;
   useEffect(() => {
     if (paneOn) keptPane.current = { node: pane, width: geometry.pane };

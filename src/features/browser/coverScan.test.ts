@@ -13,10 +13,11 @@ const NOT_COVERING: Record<string, string> = {
   "features/window/AllSessionsMenu.tsx": "drawn only in a story so far; no app screen mounts it",
 };
 
-const DRAWS_OVER = /aria-modal="true"|role="menu"|role="dialog"/;
+// A modal, a menu, a dialog, and the request-details drawer, which lies over the pane in a narrow window.
+const DRAWS_OVER = /aria-modal="true"|role="menu"|role="dialog"|className="drawer"/;
 
 describe("every overlay covers the page", () => {
-  it("each .tsx that draws a modal, a menu or a dialog calls useCoverPage(), or is listed with its reason", () => {
+  it("each .tsx that draws a modal, a menu, a dialog or the drawer calls useCoverPage(), or is listed with its reason", () => {
     const missing = walk(SRC)
       .filter((f) => !/\.(test|stories)\.tsx$/.test(f))
       .filter((f) => {
