@@ -1,7 +1,7 @@
 import "@xterm/xterm/css/xterm.css";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal, type ITerminalOptions } from "@xterm/xterm";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Endpoint } from "../../generated/Endpoint";
 import { sessionShortcut } from "../../lib/appShortcuts";
 import { osOfPlatform } from "../../lib/keymap";
@@ -19,6 +19,7 @@ import "./PromptMarks.css";
 import { pathLinkProvider } from "./pathLinks";
 import { ReplayGate } from "./replayGate";
 import { sendsFirstSize, shouldFit } from "./fitGate";
+import { FitHoldContext, fitHold } from "./fitHold";
 import { registerTerminal } from "./terminals";
 import { loadRenderer, type RendererKind } from "./renderer";
 import { privateRedraw, reportMissingRedraw, syncRedraw } from "./syncRedraw";
@@ -132,6 +133,32 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
     socketRef.current?.resize(term.cols, term.rows);
     sizeRef.current?.(term.cols, term.rows);
   };
+  // While the window runs a layout motion (FitHoldContext) the terminal keeps its grid and the host clips it; the fit waits and runs
+  // once when the last hold ends. A release because this terminal is going away must not fit: `alive` is cleared first, because
+  // layout-effect cleanups run in order on unmount.
+  const layoutMoving = useContext(FitHoldContext);
+  const aliveRef = useRef(true);
+  const hold = useMemo(
+    () =>
+      fitHold(() => {
+        if (!aliveRef.current || !termRef.current) return;
+        fitIfShown();
+        sendFirstSize();
+      }),
+    // Everything the release reads is a ref, so the first render's functions stay right.
+    [],
+  );
+  useLayoutEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
+  // A layout effect, so the hold is taken before the resize observer hears the first frame of the motion.
+  useLayoutEffect(() => {
+    if (!layoutMoving) return;
+    return hold.hold();
+  }, [layoutMoving, hold]);
   const promptsRef = useRef<Prompt[]>([]);
   const jumpRef = useRef(onPromptJump);
   jumpRef.current = onPromptJump;
@@ -280,6 +307,8 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
     if (sync) fitRef.current = sync;
     let frame = 0;
     const observer = new ResizeObserver(() => {
+      // A layout motion is running: the grid stays as it is, and the release of the hold fits once.
+      if (hold.held()) return;
       if (sync) return fitIfShown();
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(fitIfShown);
@@ -376,9 +405,12 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
   useEffect(() => {
     if (!visible) return;
     // Shown again after being hidden: the window may have changed size meanwhile, and a hidden host measures as zero.
-    fitIfShown();
-    // The fit sent the size if it changed the grid; a grid that already matched is sent here, once.
-    sendFirstSize();
+    // Shown in the middle of a layout motion, the host measures a size on its way somewhere: the hold's release fits instead.
+    if (!hold.held()) {
+      fitIfShown();
+      // The fit sent the size if it changed the grid; a grid that already matched is sent here, once.
+      sendFirstSize();
+    }
     if (autoFocus) termRef.current?.focus();
   }, [autoFocus, visible, endpoint, tabId, focusToken, fontReady]);
 

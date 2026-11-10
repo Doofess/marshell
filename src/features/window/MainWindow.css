@@ -31,11 +31,18 @@
 .window[data-mode="rail"] .window__bar {
   grid-template-columns: max-content minmax(0, 1fr) auto;
 }
+/* While the sidebar column moves, --side-w is the animated width; the rail's bar column holds at what its buttons need. */
+.window[data-side-moving][data-mode="rail"] .window__bar {
+  grid-template-columns: minmax(max-content, var(--side-w)) minmax(0, 1fr) auto;
+}
 .window__bar-side {
   display: flex;
   align-items: center;
   min-inline-size: 0;
   padding-inline: var(--space-1);
+}
+.window[data-side-moving] .window__bar-side {
+  overflow: clip;
 }
 .window[data-mode="focus"] .window__bar-side {
   inline-size: 0;
@@ -189,6 +196,19 @@
   display: flex;
   min-block-size: 0;
 }
+/*
+ * The sidebar column is as wide as --side-w, which is a number the window animates (200 ms, motion.ts) when the sidebar changes
+ * between its expanded, rail and focus forms. There is no CSS transition on it. While it moves the column clips, and what it holds
+ * (the sidebar or the rail) keeps its own settled width, so nothing inside reflows: the sidebar is revealed from the start edge.
+ */
+.window__side {
+  flex: none;
+  inline-size: var(--side-w);
+  min-inline-size: 0;
+}
+.window__side[data-moving] {
+  overflow: clip;
+}
 /* The terminals and, under them, the prompt bar. Nothing in here scrolls except the conversation. */
 .window__center {
   display: flex;
@@ -214,6 +234,26 @@
 }
 .window__main[data-pane="cover"] {
   grid-template-columns: minmax(0, 1fr);
+}
+/*
+ * The pane's slot is the grid item and is as wide as its track, which the window animates when the pane opens, closes or starts
+ * to cover. While it moves, the slot clips and the body keeps the pane's settled width, pinned to the end edge, so the pane is
+ * uncovered rather than squeezed. The body's width is set inline.
+ */
+.window__pane {
+  display: flex;
+  justify-content: flex-end;
+  min-inline-size: 0;
+  min-block-size: 0;
+}
+.window__pane[data-moving] {
+  overflow: clip;
+}
+.window__pane-body {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  flex: none;
+  min-block-size: 0;
 }
 
 /* The side pane's divider: a 1 px hairline whose 8 px hit area overhangs both sides, so it costs one pixel of the terminal. */
@@ -244,6 +284,13 @@
   .pane__divider:hover {
     background: var(--accent);
   }
+}
+/* While the pane moves the divider only holds its track: nothing to hover, press or reach. */
+.pane__divider[data-still] {
+  pointer-events: none;
+}
+.pane__divider[data-still]::before {
+  content: none;
 }
 /* Forced colours replace the accent with Canvas, which would hide the divider while it is hovered or dragged: use system colours. */
 @media (forced-colors: active) {

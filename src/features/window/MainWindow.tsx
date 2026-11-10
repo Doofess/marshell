@@ -17,7 +17,7 @@ import type { RowModel } from "../sidebar/types";
 import { ScriptedTerminal } from "../terminal/ScriptedTerminal";
 import { SHELL_SIZE, shellSession } from "../terminal/scriptedShell";
 import type { TerminalThemeSetting } from "../terminal/terminalTheme";
-import { COMPOSER, DRAWER, STATUS_BAR_HEIGHT, SIDEBAR, drawerPlacement, sidebarMode, sidebarWidth as widthFor, type SidebarPref } from "./layout";
+import { COMPOSER, DRAWER, STATUS_BAR_HEIGHT, SIDEBAR, drawerPlacement, sidebarMode, sidebarWidth as widthFor, type SidebarMode, type SidebarPref } from "./layout";
 import { SearchIcon } from "./SearchIcon";
 import { SidebarIcon } from "./SidebarIcon";
 import { isTool } from "../../components/AgentMark/kinds";
@@ -35,6 +35,8 @@ import { windowTitle } from "./windowTitle";
 import { Sidebar, type SidebarFooter } from "./Sidebar";
 import { shellNameFor } from "./ShellPanel";
 import { PANE, draggedWidth, paneGeometry } from "./paneLayout";
+import { useLayoutMotion } from "./motion";
+import { FitHoldContext } from "../terminal/fitHold";
 import { sidebarToggleFor } from "./viewState";
 import "./MainWindow.css";
 
@@ -44,6 +46,9 @@ const BAR = 40;
 /** How far one arrow key press moves the sidebar's edge. */
 const SIDEBAR_STEP = 8;
 const clampSidebar = (w: number) => Math.round(Math.min(SIDEBAR.max, Math.max(SIDEBAR.min, w)));
+const WIDTH_RANK: Record<SidebarMode, number> = { focus: 0, rail: 1, expanded: 2 };
+/** The widest of the sidebar modes given: while the column moves it shows that one, so nothing in it reflows. */
+const widestMode = (...modes: Array<SidebarMode | null>): SidebarMode => modes.reduce<SidebarMode>((w, m) => (m !== null && WIDTH_RANK[m] > WIDTH_RANK[w] ? m : w), "focus");
 
 export type WindowLayout = "default" | "focus" | "rail";
 /** What makes the sidebar's shell panel live (see `MainWindowProps.shell`). */
@@ -253,6 +258,18 @@ export function MainWindow({
   const blocked = sidebarToggleFor(pref, mode) === null;
   const shellOptions: ShellOptions = typeof shell === "object" ? shell : {};
   const sideW = widthFor(mode, sidebarWidth);
+  const expandedW = widthFor("expanded", sidebarWidth);
+  // The column's width is an animated number. While it moves it shows its widest end (the sidebar for the rail, the rail for
+  // focus mode) at that end's own width, clipped, and swaps to the settled one when the motion ends.
+  const sideMotion = useLayoutMotion(mode, sideW);
+  const sideAnim = Math.round(sideMotion.value);
+  const prevMode = useRef<SidebarMode>(mode);
+  const keptMode = useRef<SidebarMode | null>(null);
+  const shownMode = sideMotion.moving ? widestMode(mode, prevMode.current, keptMode.current) : mode;
+  useEffect(() => {
+    keptMode.current = sideMotion.moving ? widestMode(mode, prevMode.current, keptMode.current) : null;
+    prevMode.current = mode;
+  });
   // No sessions at all is a real state (first run, everything closed): the window shows its empty state, never a missing row.
   const selected: RowModel | null = rows.find((r) => r.id === selectedId) ?? rows[0] ?? null;
   const empty = selected === null;
@@ -310,6 +327,27 @@ export function MainWindow({
   const geometry = paneGeometry({ room: spaceW, shown: paneShown && !viewing && !empty, saved: paneWidth, terminalMin: terminalMinWidth });
   const paneOn = geometry.mode !== "hidden";
   const paneCovers = geometry.mode === "cover";
+  // The pane moves for 200 ms when its mode changes. A drag or a window resize that leaves the mode alone changes only the
+  // target, which the motion follows at once.
+  const paneMotion = useLayoutMotion(geometry.mode, geometry.pane);
+  const layoutMoving = sideMotion.moving || paneMotion.moving;
+  const roomNow = Math.max(0, width - sideAnim - pushed);
+  const paneP = Math.max(0, Math.min(Math.round(paneMotion.value), roomNow));
+  // A hide keeps drawing the last pane until its motion ends, so the node is kept (in the same slot, so its state stays).
+  const keptPane = useRef<{ node: ReactNode; width: number } | null>(null);
+  const paneDrawn = paneOn || paneMotion.moving;
+  const drawnPane = paneOn ? { node: pane, width: geometry.pane } : keptPane.current;
+  useEffect(() => {
+    if (paneOn) keptPane.current = { node: pane, width: geometry.pane };
+    else if (!paneMotion.moving) keptPane.current = null;
+  });
+  // During its own motion the pane keeps its settled width and its track cuts it; otherwise it is as wide as its track.
+  const paneBodyWidth = paneMotion.moving ? (drawnPane?.width ?? paneP) : paneP;
+  const threeTracks = paneMotion.moving || geometry.mode === "beside";
+  const dividerLive = geometry.mode === "beside" && !paneMotion.moving;
+  const dividerWidth = paneMotion.moving ? (paneP > 0 && paneP < roomNow ? 1 : 0) : 1;
+  // Settled, the terminal's track is the pixel width it has always had; while anything moves it takes what the others leave.
+  const paneColumns = threeTracks ? `${layoutMoving ? "minmax(0, 1fr)" : `${geometry.terminal}px`} ${dividerWidth}px ${paneP}px` : undefined;
   const dragPane = (e: ReactPointerEvent<HTMLElement>) => {
     const main = mainRef.current;
     if (!onPaneWidth || !main || !e.currentTarget.hasPointerCapture(e.pointerId)) return;
@@ -333,7 +371,7 @@ export function MainWindow({
     e.preventDefault();
   };
   return (
-    <div className="window" style={{ inlineSize: width, blockSize: height, "--side-w": `${sideW}px` } as CSSProperties} data-mode={mode} data-layout={layout} data-title={title}>
+    <div className="window" style={{ inlineSize: width, blockSize: height, "--side-w": `${sideAnim}px` } as CSSProperties} data-mode={mode} data-side-moving={sideMotion.moving || undefined} data-layout={layout} data-title={title}>
       <SessionAnnouncer row={selected} needsYou={waiting} notice={notice} />
       {portMenu && (
         <ContextMenu
@@ -399,7 +437,10 @@ export function MainWindow({
       </header>
 
       <div ref={bodyRef} className="window__body">
-        {mode === "expanded" && <Sidebar rows={rows} requests={requests} renderCard={renderCard} onJumpRequest={onJumpRequest} readScreen={readScreen} onPeekClose={onPeekClose} height={height - BAR} width={sideW} selectedId={selected?.id} visibleIds={visibleIds} os={os} footer={footer ?? undefined} onOpenDoctor={onOpenDoctor} onOpenMenu={onOpenMenu} menuOpen={menuOpen} shell={shell ? { cwd: shellOptions.cwd ?? selected?.project, shellName: shellNameFor(os), collapsed: shellCollapsed || shellOptions.hidden === true, os, terminal: shellOptions.terminal, failed: shellOptions.failed, onRetry: shellOptions.onRetry, openDisabled: shellOptions.openDisabled, forceOpen: shellOptions.forceOpen, onToggle: shellOptions.onToggle, onOpenAsSession: shellOptions.onOpenAsSession } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} onSelect={onSelect} onReview={onReview} onSetup={onSetup} menuItems={menuItems} onMenuRun={onMenuRun} grouped={grouped} />}
+        <div className="window__side" data-moving={sideMotion.moving || undefined}>
+        {shownMode === "expanded" && <Sidebar rows={rows} requests={requests} renderCard={renderCard} onJumpRequest={onJumpRequest} readScreen={readScreen} onPeekClose={onPeekClose} height={height - BAR} width={expandedW} selectedId={selected?.id} visibleIds={visibleIds} os={os} footer={footer ?? undefined} onOpenDoctor={onOpenDoctor} onOpenMenu={onOpenMenu} menuOpen={menuOpen} shell={shell ? { cwd: shellOptions.cwd ?? selected?.project, shellName: shellNameFor(os), collapsed: shellCollapsed || shellOptions.hidden === true, os, terminal: shellOptions.terminal, failed: shellOptions.failed, onRetry: shellOptions.onRetry, openDisabled: shellOptions.openDisabled, forceOpen: shellOptions.forceOpen, onToggle: shellOptions.onToggle, onOpenAsSession: shellOptions.onOpenAsSession } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} onSelect={onSelect} onReview={onReview} onSetup={onSetup} menuItems={menuItems} onMenuRun={onMenuRun} grouped={grouped} />}
+        {shownMode === "rail" && <Rail rows={rows} needsYou={waiting} selectedId={selected?.id} visibleIds={visibleIds} os={os} onSelect={onSelect} onOpenMenu={onOpenMenu} menuOpen={menuOpen} />}
+        </div>
         {mode === "expanded" && (
           <div
             className="window__side-handle"
@@ -416,18 +457,18 @@ export function MainWindow({
             onDoubleClick={onSidebarReset}
           />
         )}
-        {mode === "rail" && <Rail rows={rows} needsYou={waiting} selectedId={selected?.id} visibleIds={visibleIds} os={os} onSelect={onSelect} onOpenMenu={onOpenMenu} menuOpen={menuOpen} />}
 
         <div className="window__center">
         {/* The terminal is slot 0 to the keyboard cursor. */}
+        <FitHoldContext.Provider value={layoutMoving}>
         <main
           ref={mainRef}
           className="window__main"
           tabIndex={-1}
-          data-placement={drawer && !paneOn ? placement : undefined}
+          data-placement={drawer && !paneDrawn ? placement : undefined}
           data-nav-pane={!viewing && !empty ? 0 : undefined}
-          data-pane={paneOn ? geometry.mode : undefined}
-          style={geometry.mode === "beside" ? { gridTemplateColumns: `${geometry.terminal}px 1px ${geometry.pane}px` } : undefined}
+          data-pane={paneOn ? geometry.mode : paneMotion.moving ? "hiding" : undefined}
+          style={paneColumns ? { gridTemplateColumns: paneColumns } : undefined}
         >
           {empty ? (
             viewing ? null : (
@@ -437,30 +478,41 @@ export function MainWindow({
             )
           ) : renderTerminal ? (
             // Under a main view every terminal stays mounted and none is on screen.
-            <KeptTerminals rows={rows} selectedId={selected.id} render={renderTerminal} suspended={paneCovers || viewing} />
+            <KeptTerminals rows={rows} selectedId={selected.id} render={renderTerminal} suspended={(paneCovers && !paneMotion.moving) || viewing} />
           ) : viewing ? null : (
             <ScriptedTerminal setting={terminalSetting} label={`Terminal for ${selected.name}`} {...(isTool(selected.agent) ? { script: shellSession({ cwd: selected.project }), size: SHELL_SIZE } : {})} />
           )}
 
           {viewing && mainView}
 
-          {geometry.mode === "beside" && (
-            <div
-              className="pane__divider"
-              role="separator"
-              aria-orientation="vertical"
-              aria-label="Resize the side pane"
-              aria-valuemin={PANE.min}
-              aria-valuemax={geometry.max}
-              aria-valuenow={geometry.pane}
-              tabIndex={0}
-              onPointerDown={(e) => e.button === 0 && e.currentTarget.setPointerCapture(e.pointerId)}
-              onPointerMove={dragPane}
-              onKeyDown={nudgePane}
-              onDoubleClick={() => onPaneWidth?.(null)}
-            />
+          {threeTracks &&
+            (dividerLive ? (
+              <div
+                className="pane__divider"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize the side pane"
+                aria-valuemin={PANE.min}
+                aria-valuemax={geometry.max}
+                aria-valuenow={geometry.pane}
+                tabIndex={0}
+                onPointerDown={(e) => e.button === 0 && e.currentTarget.setPointerCapture(e.pointerId)}
+                onPointerMove={dragPane}
+                onKeyDown={nudgePane}
+                onDoubleClick={() => onPaneWidth?.(null)}
+              />
+            ) : (
+              // While the pane moves the divider holds its track as a line nobody can reach.
+              <div className="pane__divider" data-still="" aria-hidden="true" />
+            ))}
+          {/* The slot cuts the pane to its track while it moves; the body keeps the pane's settled width, pinned to the end edge. */}
+          {paneDrawn && (
+            <div className="window__pane" data-moving={paneMotion.moving || undefined}>
+              <div className="window__pane-body" style={{ inlineSize: paneBodyWidth }}>
+                {drawnPane?.node}
+              </div>
+            </div>
           )}
-          {paneOn && pane}
 
           {mode === "focus" && waiting > 0 && (
             <button type="button" className="focus-pill" aria-label={`${waiting} need you ${pillKeys}`}>
@@ -494,6 +546,7 @@ export function MainWindow({
             </aside>
           )}
         </main>
+        </FitHoldContext.Provider>
         {toast}
         {showFull && selected && (
           <div className="window__composer" style={{ blockSize: COMPOSER.full }}>
