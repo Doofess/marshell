@@ -21,6 +21,7 @@ import type { TerminalThemeSetting } from "../terminal/terminalTheme";
 import { COMPOSER, DRAWER, STATUS_BAR_HEIGHT, SIDEBAR, drawerPlacement, sidebarWidth as widthFor, type SidebarMode, type SidebarPref } from "./layout";
 import { SearchIcon } from "./SearchIcon";
 import { SidebarIcon } from "./SidebarIcon";
+import { SidePaneIcon } from "./SidePaneIcon";
 import { isTool } from "../../components/AgentMark/kinds";
 import { hasPromptLine } from "../sidebar/promptLine";
 import type { Rect } from "../../lib/navigation/types";
@@ -158,6 +159,8 @@ export type MainWindowProps = {
   onPalette?: () => void;
   /** The click on the sidebar button next to it: fold the sidebar to the rail, or open it. Not called when a narrow window cannot open it. */
   onToggleSidebar?: () => void;
+  /** The click on the side pane button at the bar's end: show or hide the pane. Not called with no session or a main view in place. */
+  onTogglePane?: () => void;
   /** No terminal is selected (Ctrl+Shift+Backspace): no terminal is marked focused, and the window says how to pick one. */
   noneSelected?: boolean;
   /** The keyboard cursor while Ctrl+Shift is held, measured against the window. */
@@ -243,6 +246,7 @@ export function MainWindow({
   onMenuRun,
   onPalette,
   onToggleSidebar,
+  onTogglePane,
   onSidebarWidth,
   onSidebarReset,
   noneSelected = false,
@@ -337,6 +341,7 @@ export function MainWindow({
     if (mainRef.current) setRtl(getComputedStyle(mainRef.current).direction === "rtl");
   });
   const paneListed = paneShown && !viewing && !empty;
+  const paneBlocked = viewing || empty;
   const layoutValue = useMemo<Layout>(
     () => ({ inputs: { pref, sidebarWidth, drawer, shown: paneListed, saved: paneWidth, terminalMin: terminalMinWidth, rtl }, moving: layoutMoving }),
     [pref, sidebarWidth, drawer, paneListed, paneWidth, terminalMinWidth, rtl, layoutMoving],
@@ -417,6 +422,10 @@ export function MainWindow({
           {mode === "focus" && !showHeader && <div className="window__peek" aria-hidden="true" onPointerEnter={() => setPeeking(true)} />}
         </div>
         <div className="window__bar-end" data-tauri-drag-region>
+          {/* Always in the bar, on every OS and in every sidebar mode; aria-disabled, like the sidebar's, so it says why it does nothing. */}
+          <button type="button" className="window__pane-toggle" data-nav-top="pane" aria-label="Side pane" aria-expanded={paneListed} aria-disabled={paneBlocked || undefined} title={paneBlocked ? "The side pane shows beside a session" : `${paneListed ? "Hide" : "Show"} the side pane (${shortcutLabel(commandById("preview").binding!, os)})`} onClick={paneBlocked ? undefined : onTogglePane}>
+            <SidePaneIcon open={paneListed} />
+          </button>
           {os === "windows" && (
             <div className="window__controls">
               <button type="button" className="window__control" aria-label="Minimize" onClick={windowControls?.onMinimize}>

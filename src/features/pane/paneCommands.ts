@@ -5,6 +5,12 @@ import { PANE_LIMITS, activeTab, openRefused, tabsOf } from "./paneState";
 /** What the announcer says for the side pane. */
 export const NO_SESSION_TO_OPEN = "No session to open it in.";
 export const NO_TABS_OPEN = "No tabs open.";
+export const PANE_BESIDE_SESSION = "The side pane shows beside a session.";
+
+/** The title-bar button and the cursor: toggle the pane when a session is on screen and no main view replaces it, else say where it shows. */
+export function paneToggleOutcome(session: string | null | undefined, viewing: boolean): "toggle" | "blocked" {
+  return session == null || viewing ? "blocked" : "toggle";
+}
 export const TAB_LIMIT = `This session has ${PANE_LIMITS.tabs} tabs. Close one to open another.`;
 export const FOLDER_REFUSED = "A folder can't be shown in the side pane.";
 export const openedText = (name: string) => `Opened ${name} in the side pane.`;

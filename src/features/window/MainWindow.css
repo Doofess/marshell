@@ -148,6 +148,36 @@
     color: var(--text-1);
   }
 }
+/* Shows and hides the side pane, at the bar's end edge. The sidebar button's twin, with its margin on the other side. */
+.window__pane-toggle {
+  display: grid;
+  place-items: center;
+  flex: none;
+  inline-size: 32px;
+  block-size: 28px;
+  margin-inline-end: var(--space-1);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-2);
+}
+.window__pane-toggle:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+.window__pane-toggle:active {
+  background: var(--selected);
+}
+.window__pane-toggle[aria-disabled="true"] {
+  opacity: 0.5;
+}
+@media (hover: hover) and (pointer: fine) {
+  .window__pane-toggle:hover {
+    background: var(--hover);
+    color: var(--text-1);
+  }
+}
 /* The icon and the name are one button: the app menu. In the 52 px rail only the icon fits. */
 .window__brand {
   display: flex;
@@ -423,6 +453,7 @@
   .window,
   .window__palette,
   .window__sidebar-toggle,
+  .window__pane-toggle,
   .focus-pill {
     outline: 1px solid CanvasText;
   }

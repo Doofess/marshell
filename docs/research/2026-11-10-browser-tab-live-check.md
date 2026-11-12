@@ -57,3 +57,26 @@ The user's answers to the open points (PLAN §9 "Slice 6q-3 decisions" 13), chec
 16. **A page could open `http://tauri.localhost:3000/` in 6q-3a.** wry answers every `http://tauri.…` and `http://ipc.…` address itself inside a page, at any port and under any ending, and the slice refused those names only on the default port. Found by reading wry 0.57 and Tauri 2.12 for the change above; not seen live before it. A page there got no command, because no capability names a page. Fixed with the change: the shell's names are refused at every port and under every ending (failing-first tests in `rules.rs`).
 17. **Esc in a palette opened from the Address box puts the keyboard in the terminal,** as it does from any control of the app; only a page gets the keyboard back. Text typed in the box and not yet opened is gone by then, as after any click away. Not changed.
 18. **From the review of the change.** A key pressed with AltGr in the Address box would have reached the app's shortcuts (AltGr+Shift+T, a letter on some layouts, is Ctrl+Shift+Alt+T to Windows: "Reopen closed session"). Fixed before the merge: AltGr keeps the key in the box (failing-first test in `LiveApp.test.tsx`); not checked live, since CDP has no AltGr. The list of the shell's names lost `asset` and `isolation`, which this build doesn't serve, and the test that guards the list now reads the lock file for the wry and Tauri versions and for every package that builds on Tauri.
+
+## The user's hand checks
+
+The rows above marked "Not run", with real keys, clicks and a drag by the user, on 2026-11-11 from 00:27 to 00:34 local time. Build: `main` at `75927498` under `pnpm tauri dev`, on a fifth scratch home, one display at 100% scale, a keyboard layout with no AltGr. The test site ran on loopback ports 80 and 47620 and logged each load, key and focus change of its page; a listener added over CDP logged the keys and focus changes of the app's own webview. One PowerShell 7 session, started by the check.
+
+| Check | Result |
+| --- | --- |
+| A name under `.localhost` with no port, typed by hand | Pass. `app.localhost` in the Address box loads the site, and Enter puts the keyboard in the page. |
+| 4. Keys | Pass. Letters reach the page's text box. Ctrl+F opens WebView2's find bar and Esc closes it, F5 reloads (the site logs the load) and F12 opens DevTools. Ctrl+L puts the keyboard in the Address box with its text selected, and Ctrl+Shift+K opens the palette; the page sees only the modifier keys of those two. |
+| 5. Focus: Tab | Tab walks the page's stops and then leaves it for the window's first control ("Marshell menu"), on through the title bar and the sidebar to the terminal, which keeps Tab for the shell. So Tab alone never comes back to the page; Ctrl+Shift+Tab is the key for that (not pressed in this run). Not run: Shift+Tab out of the page's first stop. |
+| 6. Freeze, by eye | The palette over a page: "without any noticable flash" (the user). |
+| 12. Drop | A Markdown file dragged from Explorer onto a page opens as a new tab in the pane, announced "Opened … in the side pane.". The page gets no drag or drop event. |
+| Shortcuts from the Address box | Pass. Ctrl+Shift+K opens the palette from the box. |
+| AltGr in the Address box | Not testable here. The layout has no AltGr: Right Alt with Shift+T arrived as Alt+Shift+T, with no Ctrl and `AltGraph` false. Finding 18's rule stays unseen with a real AltGr key. |
+| 5. Focus: Alt+Tab, and the alert after leaving with the keyboard in a page | Not run: see finding 20. |
+| 8 and 10. The tray's Quit, and a sign-in after it | Not run yet. |
+| A real 125% or 150% display, the motion's feel, the request drawer over a page in a narrow window | Not run yet. |
+
+19. **A session started without choosing a folder begins in the person's real home folder,** though the check sets `USERPROFILE` to a scratch one. Only a command that failed ran there. A live check should choose a scratch folder in the launcher, or `cd` first.
+20. **The alert check was set up wrong.** The check defined its notifying command (`ESC ] 9 ; text BEL` after 15 seconds) in the shell panel instead of the session. The session didn't know the command, and the notification the shell panel then sent raised nothing: the panel is not a session and has no row. The check has to run again with the command in the session.
+21. **Esc in a palette opened from a page put the keyboard in the terminal, once.** Finding 17 says a page gets the keyboard back. In this run the palette's key was pressed a second time while the palette was open, and the Esc after that landed in the terminal; the logs can't tell which press that close belonged to. To be run again by hand.
+22. **Nothing on screen shows the side pane again once it is hidden** (the user). Only Ctrl+Shift+Q and the palette did. A button in the title bar now does: PLAN §9 "Slice 6q-2 decisions" 14.
+23. **The test site was stopped for memory.** Claude Code ended the site's process while the PC was low on memory and the check sat idle; the dev app stayed up. The checks that read the page (the keyboard back in the page after Alt+Tab, the sign-in after Quit) need the site started again.

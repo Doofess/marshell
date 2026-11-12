@@ -89,6 +89,14 @@ describe("pointer: the command palette button", () => {
     expect(button(MainWindow({ width: 900, height: 800, rows, selectedId: row(0).id, onToggleSidebar }), "Sidebar").props.onClick).toBeUndefined();
   });
 
+  it("the side pane button calls onTogglePane, unless no session is shown or a main view replaces it", () => {
+    const onTogglePane = vi.fn();
+    (button(MainWindow({ width: 1180, height: 800, rows, selectedId: row(0).id, onTogglePane }), "Side pane").props.onClick as () => void)();
+    expect(onTogglePane).toHaveBeenCalledTimes(1);
+    expect(button(MainWindow({ width: 1180, height: 800, rows: [], onTogglePane }), "Side pane").props.onClick).toBeUndefined();
+    expect(button(MainWindow({ width: 1180, height: 800, rows, selectedId: row(0).id, mainView: "x", onTogglePane }), "Side pane").props.onClick).toBeUndefined();
+  });
+
   it("without a callback the buttons stay as they were (stories)", () => {
     const tree = MainWindow({ width: 1180, height: 800, rows, selectedId: row(0).id });
     expect(button(tree, "Command palette").props.onClick).toBeUndefined();

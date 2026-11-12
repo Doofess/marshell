@@ -7,7 +7,7 @@ import type { SessionInfo } from "../../generated/SessionInfo";
 import type { PaneView } from "../../generated/PaneView";
 import type { Task } from "../../generated/Task";
 import { EmptyPane } from "../pane/EmptyPane";
-import { paneBody, toggleOutcome } from "../pane/paneCommands";
+import { PANE_BESIDE_SESSION, paneBody, paneToggleOutcome, toggleOutcome } from "../pane/paneCommands";
 import { SidePane } from "../pane/SidePane";
 import { paneReducer, recentFor } from "../pane/paneState";
 import { FIXTURES } from "../sidebar/fixtures";
@@ -726,6 +726,12 @@ describe("LiveApp: the side pane", () => {
         {paneBody(pane, session) === "empty" ? <EmptyPane recent={recentFor(pane, "C:\\dev\\my-app", session)} onOpenFile={() => {}} onBrowse={() => {}} onRecent={() => {}} /> : null}
       </SidePane>,
     );
+  it("the title-bar button toggles beside a session, and otherwise says where the pane shows", () => {
+    expect(paneToggleOutcome("t1", false)).toBe("toggle");
+    expect(paneToggleOutcome(undefined, false)).toBe("blocked");
+    expect(paneToggleOutcome("t1", true)).toBe("blocked");
+    expect(PANE_BESIDE_SESSION).toBe("The side pane shows beside a session.");
+  });
   it("Ctrl+Shift+Q with no tabs shows the empty pane", () => {
     const next = paneReducer(closedPane, { type: "toggle" });
     expect(toggleOutcome(closedPane, "t1")).toEqual({ shown: true, body: "empty" });
