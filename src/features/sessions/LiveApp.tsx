@@ -71,7 +71,7 @@ import { browser, pageKey } from "../browser/browserApi";
 import type { UrlBarHandle } from "../browser/UrlBar";
 import { usePageIcons, useBrowserPages } from "../browser/useBrowserPages";
 import { focusPane } from "../pane/focusPane";
-import { FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, PAGE_REFUSED, TAB_LIMIT, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome } from "../pane/paneCommands";
+import { FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, PANE_BESIDE_SESSION, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome } from "../pane/paneCommands";
 import { activeTab, currentEntry, isBrowserTab, openRefused, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
 import { plusChoice, plusMenuItems } from "../pane/plusMenu";
 import { SidePane } from "../pane/SidePane";
@@ -885,6 +885,11 @@ export function LiveApp() {
         return browseFile();
     }
   };
+  // The title-bar button and the cursor's release on it: Ctrl+Shift+Q beside a session, else a line saying where the pane shows.
+  const togglePane = () => {
+    if (paneToggleOutcome(stateRef.current.focusedId, mainViewRef.current !== "sessions") === "blocked") return announce(PANE_BESIDE_SESSION);
+    paneRun({ kind: "preview" });
+  };
   const paneRunRef = useRef(paneRun);
   paneRunRef.current = paneRun;
   // The + menu: where it opened and the button that opened it.
@@ -1324,6 +1329,8 @@ export function LiveApp() {
           case "sidebar":
             // As the button's click: fold or open, or say why a narrow window cannot open it.
             return void toggleSidebar(view);
+          case "pane":
+            return void togglePane();
         }
         return;
       case "deselect":
@@ -1970,6 +1977,7 @@ export function LiveApp() {
           onMenuRun={onMenuRun}
           onPalette={() => setOverlay("palette")}
           onToggleSidebar={() => toggleSidebar(view)}
+          onTogglePane={togglePane}
           noneSelected={nav.noneSelected}
           navCursor={nav.cursor}
         />

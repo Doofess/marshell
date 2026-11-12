@@ -497,6 +497,53 @@ describe("MainWindow: the sidebar toggle", () => {
   });
 });
 
+describe("MainWindow: the side pane toggle", () => {
+  const stand = <aside className="preview-stand-in" />;
+  const toggle = (h: string) => h.match(/<button[^>]*class="window__pane-toggle"[^>]*>/)?.[0];
+  it("is the first child of the bar's end side, before the window controls", () => {
+    const h = html();
+    const end = h.indexOf('class="window__bar-end"');
+    expect(end).toBeGreaterThan(-1);
+    expect(h.indexOf("window__pane-toggle")).toBeGreaterThan(end);
+    expect(h.indexOf("window__pane-toggle")).toBeLessThan(h.indexOf("window__controls"));
+    expect(h.slice(end, end + 200)).toMatch(/^[^>]*data-tauri-drag-region[^>]*><button[^>]*class="window__pane-toggle"/);
+  });
+  it("says Show with aria-expanded false while the pane is hidden", () => {
+    const t = toggle(html())!;
+    expect(t).toContain('data-nav-top="pane"');
+    expect(t).toContain('aria-label="Side pane"');
+    expect(t).toContain('aria-expanded="false"');
+    expect(t).toContain('title="Show the side pane (Ctrl+Shift+Q)"');
+    expect(t).not.toContain("aria-disabled");
+    expect(html()).toContain('data-icon="side-pane"');
+  });
+  it("says Hide with aria-expanded true while the pane is shown", () => {
+    const t = toggle(html({ pane: stand, paneShown: true }))!;
+    expect(t).toContain('aria-expanded="true"');
+    expect(t).toContain('title="Hide the side pane (Ctrl+Shift+Q)"');
+  });
+  it("stays in the bar in the rail, in focus mode and on another OS", () => {
+    expect(toggle(html({ sidebarPref: "rail" }))).toBeDefined();
+    expect(toggle(html({ sidebarPref: "focus" }))).toBeDefined();
+    const mac = html({ os: "mac" });
+    expect(toggle(mac)).toBeDefined();
+    expect(mac).not.toContain("window__controls");
+  });
+  it("is aria-disabled, not disabled, with no session selected", () => {
+    const t = toggle(html({ rows: [], selectedId: undefined, pane: stand, paneShown: true }))!;
+    expect(t).toContain('aria-disabled="true"');
+    expect(t).not.toMatch(/\sdisabled/);
+    expect(t).toContain('aria-expanded="false"');
+    expect(t).toContain('title="The side pane shows beside a session"');
+  });
+  it("is aria-disabled while a main view replaces the terminal", () => {
+    const t = toggle(html({ mainView: <section />, pane: stand, paneShown: true }))!;
+    expect(t).toContain('aria-disabled="true"');
+    expect(t).toContain('aria-expanded="false"');
+    expect(t).toContain('title="The side pane shows beside a session"');
+  });
+});
+
 describe("MainWindow: one terminal", () => {
   it("the top bar has no layout button", () => {
     const h = html({ rows: SCENARIO_ROWS.slice(0, 3) });
@@ -509,7 +556,7 @@ describe("MainWindow: one terminal", () => {
     for (const p of [{}, { sidebarPref: "rail" as const }, { width: 900 }]) {
       for (const m of html({ rows: SCENARIO_ROWS.slice(0, 3), ...p }).matchAll(/data-nav-top="([^"]+)"/g)) ids.add(m[1]!);
     }
-    expect([...ids].sort()).toEqual(["palette", "sidebar"]);
+    expect([...ids].sort()).toEqual(["palette", "pane", "sidebar"]);
     for (const id of ids) expect(topAction(id), id).not.toBeNull();
   });
   it("the divider reports the pane's width in pixels", () => {

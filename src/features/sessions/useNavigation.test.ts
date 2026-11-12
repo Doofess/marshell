@@ -5,7 +5,7 @@ import { reduce } from "../../lib/navigation/machine";
 import { GRID_CONTEXT, GRID_LAYOUT, NAMES } from "../../lib/navigation/fixtures";
 import { INITIAL_NAV } from "../../lib/navigation/types";
 import { dispatchPage } from "../browser/pageStore";
-import { claimsKey, focusKindOf, setNavState, step, subscribeNav } from "./useNavigation";
+import { claimsKey, focusKindOf, setNavState, step, subscribeNav, topAction, topName } from "./useNavigation";
 
 const key = (code: string, mods: { ctrl?: boolean; shift?: boolean } = { ctrl: true, shift: true }) => ({ code, key: code, ctrlKey: mods.ctrl ?? false, shiftKey: mods.shift ?? false, altKey: false, metaKey: false });
 
@@ -20,6 +20,16 @@ const el = (matches: string[], tagName = "DIV", extra: Record<string, unknown> =
   }) as unknown as Element;
 
 afterEach(() => setNavState(INITIAL_NAV));
+
+describe("topAction", () => {
+  it("knows the side pane button, as well as the palette, sidebar and launcher", () => {
+    for (const id of ["palette", "launcher", "sidebar", "pane"]) expect(topAction(id), id).toBe(id);
+    expect(topAction("nothing")).toBeNull();
+  });
+  it("names the side pane button for the cursor's hint", () => {
+    expect(topName("pane")).toBe("Side pane");
+  });
+});
 
 describe("focusKindOf", () => {
   it("is a terminal inside xterm, a text box for an input, a control for a button, and nothing for null", () => {
