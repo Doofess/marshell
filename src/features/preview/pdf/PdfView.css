@@ -167,9 +167,17 @@
 }
 
 @media (forced-colors: active) {
+  /* Filled, as the side pane's chosen tab is; an outline here took the focus ring's place. `none` keeps the system from
+     painting a Canvas backplate behind the label. */
   .pdf__button[aria-pressed="true"] {
-    outline: 1px solid ButtonText;
-    outline-offset: -1px;
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+  /* CanvasText may not show on Highlight; HighlightText does. Set in from the edge, so the fill shows on both sides of it. */
+  .pdf__button[aria-pressed="true"]:focus-visible {
+    outline-color: HighlightText;
+    outline-offset: -4px;
   }
   .pdf__field {
     outline: 1px solid ButtonText;
