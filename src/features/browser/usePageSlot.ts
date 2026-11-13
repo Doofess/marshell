@@ -223,6 +223,8 @@ export function usePageSlot(ref: RefObject<HTMLElement | null>, pageKey: string,
       observer.disconnect();
       ratio?.removeEventListener("change", onRatio);
       cancelAnimationFrame(frame);
+      // A report still waiting would measure a slot that may be gone, and place the page at 0 × 0.
+      placer.current!.cancel();
     };
   }, [ref, active, layout, moving]);
 
