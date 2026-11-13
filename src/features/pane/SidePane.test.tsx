@@ -6,8 +6,8 @@ import { SidePane, type SidePaneProps, type StripTab } from "./SidePane";
 
 const noop = () => {};
 const tabs: StripTab[] = [
-  { id: "t1", title: "a.md", path: "C:\\w\\a.md" },
-  { id: "t2", title: "b.rs", path: "C:\\w\\b.rs" },
+  { id: "t1", title: "a.md", path: "C:\\w\\a.md", kind: "text" },
+  { id: "t2", title: "b.rs", path: "C:\\w\\b.rs", kind: "text" },
 ];
 const html = (more: Partial<SidePaneProps> = {}) =>
   renderToStaticMarkup(
@@ -53,21 +53,27 @@ describe("SidePane", () => {
     expect(out).toMatch(/aria-label="Hide the side pane" title="Hide the side pane \(Ctrl\+Shift\+Q\)"/);
     expect(out.indexOf('aria-label="Close b.rs"')).toBeLessThan(out.indexOf('aria-label="New tab"'));
   });
-  it("a browser tab shows its site's icon, or a globe", () => {
-    const site = html({ tabs: [{ id: "b1", title: "Example", path: "https://example.com/", icon: "data:image/png;base64,AAAA" }], activeId: "b1" });
-    expect(site).toMatch(/<img[^>]*alt=""[^>]*src="data:image\/png;base64,AAAA"|<img[^>]*src="data:image\/png;base64,AAAA"[^>]*alt=""/);
-    expect(site).toContain("side-pane__icon");
-    const globe = html({ tabs: [{ id: "b1", title: "Example", path: "https://example.com/", icon: "globe" }], activeId: "b1" });
+  it("a web tab shows the globe and never an image", () => {
+    const globe = html({ tabs: [{ id: "b1", title: "Example.com", path: "https://example.com/", kind: "web" }], activeId: "b1" });
     expect(globe).not.toContain("<img");
-    expect(globe).toMatch(/<svg[^>]*class="side-pane__icon"[^>]*aria-hidden="true"|<svg[^>]*aria-hidden="true"[^>]*class="side-pane__icon"/);
+    expect(globe).toMatch(/<svg[^>]*class="side-pane__icon"[^>]*data-kind="web"[^>]*aria-hidden="true"|<svg(?=[^>]*data-kind="web")(?=[^>]*class="side-pane__icon")(?=[^>]*aria-hidden="true")/);
     // The icon sits inside the tab button, before the title.
     expect(globe.indexOf("side-pane__icon")).toBeLessThan(globe.indexOf("side-pane__title"));
     expect(globe.indexOf('role="tab"')).toBeLessThan(globe.indexOf("side-pane__icon"));
+    // A web title shortens at its end: it is not split.
+    expect(globe).not.toContain("side-pane__name-head");
+    expect(globe).toContain('<span class="side-pane__title">Example.com</span>');
   });
-  it("a file tab shows no icon", () => {
-    const out = html();
-    expect(out).not.toContain("side-pane__icon");
-    expect(out).not.toContain("<img");
+  it("text, pdf and image tabs each show their own icon", () => {
+    for (const kind of ["text", "pdf", "image"] as const) {
+      const out = html({ tabs: [{ id: "f1", title: "a.x", path: "a.x", kind }], activeId: "f1" });
+      expect(out).toMatch(new RegExp(`<svg(?=[^>]*data-kind="${kind}")(?=[^>]*class="side-pane__icon")`));
+      expect(out).not.toContain("<img");
+    }
+  });
+  it("a file tab's name is a head that shortens and a tail that keeps its extension", () => {
+    const out = html({ tabs: [{ id: "f1", title: "sample-long-name.txt", path: "C:\\w\\sample-long-name.txt", kind: "text" }], activeId: "f1" });
+    expect(out).toContain('<span class="side-pane__name-head">sample-long-name</span><span class="side-pane__name-tail">.txt</span>');
   });
   it("with no tabs shows no tablist, and still the two buttons", () => {
     const out = html({ tabs: [], activeId: null });

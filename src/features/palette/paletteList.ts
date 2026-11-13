@@ -38,6 +38,11 @@ export function recordsRecent(id: string): boolean {
   return !id.startsWith("session:") && !id.startsWith("file:") && id !== "palette" && id !== "change-mode" && !MOVED_COMMANDS.includes(id);
 }
 
+/** The session a palette row goes to (`session:<tab id>`), whose terminal then takes the keyboard; null for any other row. */
+export function sessionRowTarget(id: string): string | null {
+  return id.startsWith("session:") ? id.slice("session:".length) : null;
+}
+
 /** Esc in the mode list goes back to the commands; in the commands it closes. */
 export function paletteEscape(list: "commands" | "modes"): "back" | "close" {
   return list === "modes" ? "back" : "close";

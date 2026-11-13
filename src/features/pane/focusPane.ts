@@ -1,5 +1,5 @@
 import { browser } from "../browser/browserApi";
-import { quietly } from "../browser/pageFocus";
+import { entryReason, quietly } from "../browser/pageFocus";
 
 /** The selected tab's scrolling body. */
 const BODY = '[data-nav-side] [role="tabpanel"]:not([hidden]) .preview__body';
@@ -28,7 +28,7 @@ export function focusPane(): void {
       if (page === undefined) return void target.focus({ preventScroll: true });
       // A browser tab's slot: the page takes the keyboard, wherever focus was and whether or not the slot already had it.
       quietly(() => target.focus({ preventScroll: true }));
-      return void browser.focus(page, "programmatic").catch(() => {});
+      return void browser.focus(page, entryReason(page)).catch(() => {});
     }
     // The pane may take a second frame to be laid out when the same click shows it.
     if (++frames < 3) requestAnimationFrame(attempt);

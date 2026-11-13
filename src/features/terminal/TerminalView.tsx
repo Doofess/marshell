@@ -1,7 +1,8 @@
 import "@xterm/xterm/css/xterm.css";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal, type ITerminalOptions } from "@xterm/xterm";
-import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { focusOnChange, focusOnUnblock } from "./terminalFocus";
 import type { Endpoint } from "../../generated/Endpoint";
 import { sessionShortcut } from "../../lib/appShortcuts";
 import { osOfPlatform } from "../../lib/keymap";
@@ -52,8 +53,10 @@ type Props = {
   onOutput?: () => void;
   /** Hears the terminal's size once it is measured and whenever it changes. */
   onSize?: (cols: number, rows: number) => void;
-  /** False while something else (the launcher) has the keys: the terminal takes focus when this turns true. Default true. */
+  /** This is the selected session's terminal: it takes focus when it appears, is selected or shown again, or `focusToken` changes. Default true. */
   autoFocus?: boolean;
+  /** An overlay, the launcher or a held link has the keyboard; the terminal doesn't take focus meanwhile. */
+  focusBlocked?: boolean;
   /** Bumping this takes focus back to the terminal (a closed question or a finished rename hands the keys back). */
   focusToken?: number;
   /** False while the terminal is kept mounted but hidden behind another session's. It fits and takes focus when this turns true. Default true. */
@@ -91,7 +94,7 @@ function loadFont(family: string, size: number, wtFamily?: string): Promise<void
 }
 
 /** One session's terminal. */
-export function TerminalView({ endpoint, tabId, elevated = false, placeholder, onOutput, onSize, autoFocus = true, focusToken = 0, visible = true, paused = false, onBlockedInput, promptJump, onPromptJump, theme = FOLLOW_APP, font = BUNDLED, onImagePaste }: Props) {
+export function TerminalView({ endpoint, tabId, elevated = false, placeholder, onOutput, onSize, autoFocus = true, focusBlocked = false, focusToken = 0, visible = true, paused = false, onBlockedInput, promptJump, onPromptJump, theme = FOLLOW_APP, font = BUNDLED, onImagePaste }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const meter = useMemo(() => new LatencyMeter(), []);
   const [renderer, setRenderer] = useState<RendererKind>("dom");
@@ -413,6 +416,8 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
     restyleRef.current?.();
   }, [theme]);
 
+  const blockedNow = useEffectEvent(() => focusBlocked);
+
   // Declared after the effect above so a new terminal exists by the time this runs. The terminal is made only once its font has
   // loaded, after the first render, so `fontReady` runs this again then: without it a new session's terminal never took focus.
   useEffect(() => {
@@ -424,8 +429,19 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
       // The fit sent the size if it changed the grid; a grid that already matched is sent here, once.
       sendFirstSize();
     }
-    if (autoFocus) termRef.current?.focus();
+    if (focusOnChange({ selected: autoFocus, blocked: blockedNow() })) termRef.current?.focus();
   }, [autoFocus, visible, endpoint, tabId, focusToken, fontReady]);
+
+  // A block that lifts doesn't run the effect above: the overlay's cleanup has just put focus back on what opened it, and the
+  // terminal takes it only when that left the keyboard on nothing.
+  const wasBlocked = useRef(focusBlocked);
+  useEffect(() => {
+    const lifted = wasBlocked.current && !focusBlocked;
+    wasBlocked.current = focusBlocked;
+    if (!lifted || !visible) return;
+    const active = document.activeElement;
+    if (focusOnUnblock({ selected: autoFocus, onNothing: active === null || active === document.body })) termRef.current?.focus();
+  }, [focusBlocked]);
 
   useEffect(() => {
     if (!promptJump || promptJump.token === lastJump.current) return;

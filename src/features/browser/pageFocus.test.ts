@@ -1,6 +1,26 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { dispatchPage } from "./pageStore";
-import { afterCover, afterKey, enterReason, handBack, isQuiet, keyForCode, onDragArea, pageOnScreen, quietly, tabNeighbour, windowFocused } from "./pageFocus";
+import { afterCover, afterKey, enterReason, entryReason, handBack, isQuiet, keyForCode, markEntered, markTabbedOut, onDragArea, pageOnScreen, quietly, tabNeighbour, windowFocused } from "./pageFocus";
+
+describe("entryReason", () => {
+  afterEach(() => {
+    markEntered("a");
+    markEntered("b");
+  });
+  it("a page never left by Tab is restored", () => {
+    expect(entryReason("a")).toBe("programmatic");
+  });
+  it("a page left by Tab starts at its first stop", () => {
+    markTabbedOut("a");
+    expect(entryReason("a")).toBe("next");
+    expect(entryReason("b")).toBe("programmatic");
+  });
+  it("entering the page again clears it", () => {
+    markTabbedOut("a");
+    markEntered("a");
+    expect(entryReason("a")).toBe("programmatic");
+  });
+});
 
 describe("the page's turn at the keyboard", () => {
   it("a key that left focus on the slot gives the keys back to the page", () => {

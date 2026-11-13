@@ -3,10 +3,11 @@ import { selectedProps } from "../../components/a11y/SelectedMark";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
 import { clickGuard } from "./clickGuard";
 import { dragIndex, stripKey } from "./stripKeys";
+import { splitName, type TabKind } from "./tabType";
 import "./SidePane.css";
 
-/** `icon` is a browser tab's site icon (an image address), or "globe" for the drawn one; a file tab has none. */
-export type StripTab = { id: string; title: string; path: string; icon?: string | "globe" };
+/** `kind` picks the tab's drawn icon, and whether its title is a file name that keeps its extension. */
+export type StripTab = { id: string; title: string; path: string; kind: TabKind };
 export type SidePaneProps = {
   tabs: StripTab[];
   activeId: string | null;
@@ -29,13 +30,51 @@ const icon = (d: string) => (
   </svg>
 );
 
-/** The tab's icon when a page has none: a globe, 14 px. */
-const globe = (
-  <svg className="side-pane__icon" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round">
-    <circle cx="7" cy="7" r="5.5" />
-    <path d="M1.5 7h11M7 1.5c1.7 1.5 2.5 3.4 2.5 5.5S8.7 11 7 12.5C5.3 11 4.5 9.1 4.5 7S5.3 3 7 1.5Z" />
-  </svg>
-);
+/** The tab's icon, 14 px, drawn in the current color: a globe for a web page, a page for text, the page with a band for a PDF, a frame for an image. */
+function TabIcon({ kind }: { kind: TabKind }) {
+  const page = "M3.5 1.5h4.5l3 3v8h-7.5Z M8 1.5v3h3";
+  return (
+    <svg className="side-pane__icon" data-kind={kind} width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round">
+      {kind === "web" && (
+        <>
+          <circle cx="7" cy="7" r="5.5" />
+          <path d="M1.5 7h11M7 1.5c1.7 1.5 2.5 3.4 2.5 5.5S8.7 11 7 12.5C5.3 11 4.5 9.1 4.5 7S5.3 3 7 1.5Z" />
+        </>
+      )}
+      {kind === "text" && (
+        <>
+          <path d={page} />
+          <path d="M5.5 7h3M5.5 9h3M5.5 11h1.5" />
+        </>
+      )}
+      {kind === "pdf" && (
+        <>
+          <path d={page} />
+          <path d="M5 8.5h4v2.5H5Z" />
+        </>
+      )}
+      {kind === "image" && (
+        <>
+          <rect x="1.5" y="2.5" width="11" height="9" rx="1" />
+          <circle cx="5" cy="5.5" r="1" />
+          <path d="m2 11 3.5-3 2.5 2 2-1.5 2.5 2.5" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+/** A file's name as two spans with no space between: the head shortens with an ellipsis, the tail keeps the extension. A web title is one span, cut at its end. */
+function TabTitle({ kind, title }: { kind: TabKind; title: string }) {
+  if (kind === "web") return <span className="side-pane__title">{title}</span>;
+  const { head, tail } = splitName(title);
+  return (
+    <span className="side-pane__title">
+      <span className="side-pane__name-head">{head}</span>
+      <span className="side-pane__name-tail">{tail}</span>
+    </span>
+  );
+}
 
 type Drag = { id: string; pointerId: number; startX: number; started: boolean };
 
@@ -158,8 +197,8 @@ export function SidePane({ tabs, activeId, os, children, onSelect, onClose, onMo
                       close(t.id);
                     }}
                   >
-                    {t.icon !== undefined && (t.icon === "globe" ? globe : <img className="side-pane__icon" src={t.icon} alt="" width="14" height="14" />)}
-                    <span className="side-pane__title">{t.title}</span>
+                    <TabIcon kind={t.kind} />
+                    <TabTitle kind={t.kind} title={t.title} />
                   </button>
                   <button type="button" className="side-pane__close" tabIndex={-1} aria-label={`Close ${t.title}`} onClick={() => close(t.id)}>
                     {icon("M3 3l6 6M9 3 3 9")}

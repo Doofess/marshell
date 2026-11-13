@@ -44,3 +44,14 @@ A second run, 03:26 to 03:32, with a new scratch home and two PowerShell 7 sessi
 | Recent files of two folders with one name | Pass. After two files were opened in `other\proj`, the session in `proj` showed an empty pane with no recent files, and `layout.json` held the full folder as each recent file's project. |
 
 Not run again: the drop behind a dialog (a drop needs a hand) and the oversized line number, which their unit tests cover.
+
+## The user's hand checks (2026-11-13)
+
+The checks due on 2026-11-11, run by the user on 2026-11-13 with real clicks and an Explorer drag, in the browser tab's sixth scratch home (`main` at `3824d4b1`).
+
+| Check | Result |
+| --- | --- |
+| Browse… | Pass. The dialog first said "Location is not available … \Desktop is unavailable", because the check's scratch `USERPROFILE` had no Desktop folder; after OK it worked, and `notes.md` opened rendered. The live-check script now makes `Desktop`, `Documents` and `Downloads` in its scratch home. |
+| An Explorer drop on the pane | Pass. |
+| A drop with the launcher open | Pass. Nothing opened (`drop-test.txt`). |
+| The scrollbar under `sample.txt` | Correct: the longest line is 305 px, and with the gutter it is 8 px wider than the 320 px pane. |

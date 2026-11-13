@@ -3,7 +3,7 @@ import { BLANK } from "./address";
 import { browser, type NavAction } from "./browserApi";
 import { usePageCovered } from "./pageCover";
 import { enterReason, isQuiet, quietly } from "./pageFocus";
-import { openPage, usePage, type PageState } from "./pageStore";
+import { openPage, useFocusedPage, usePage, type PageState } from "./pageStore";
 import { UrlBar, type UrlBarHandle } from "./UrlBar";
 import { usePageSlot } from "./usePageSlot";
 import "./BrowserTab.css";
@@ -18,6 +18,8 @@ export type BrowserTabViewProps = {
   /** False where the shell has no browser tabs. */
   available: boolean;
   frozen: Frozen | null;
+  /** The page has the keyboard: the slot draws its focus ring in the gutter around the page. */
+  keys: boolean;
   slotRef: Ref<HTMLDivElement>;
   barRef?: Ref<UrlBarHandle>;
   onGo(url: string): void;
@@ -32,7 +34,7 @@ export type BrowserTabViewProps = {
 };
 
 /** The tab's markup: the bar, its status line, and the slot the shell's page sits over. Without browser tabs, a plain explanation. */
-export function BrowserTabView({ page, url, available, frozen, slotRef, barRef, onGo, onNav, onOpenOutside, onEscape, announce, pageKey, onSlotFocus }: BrowserTabViewProps) {
+export function BrowserTabView({ page, url, available, frozen, keys, slotRef, barRef, onGo, onNav, onOpenOutside, onEscape, announce, pageKey, onSlotFocus }: BrowserTabViewProps) {
   if (!available) {
     const address = page?.url || url;
     return (
@@ -47,7 +49,7 @@ export function BrowserTabView({ page, url, available, frozen, slotRef, barRef, 
   return (
     <div className="browser-tab">
       <UrlBar ref={barRef} page={page} fallbackUrl={url} onGo={onGo} onNav={onNav} onOpenOutside={onOpenOutside} onEscape={onEscape} announce={announce} />
-      <div ref={slotRef} className="browser-tab__slot" tabIndex={0} aria-label="Web page" data-page-key={pageKey} onFocus={onSlotFocus}>
+      <div ref={slotRef} className="browser-tab__slot" tabIndex={0} aria-label="Web page" data-page-key={pageKey} data-keys={keys ? "" : undefined} onFocus={onSlotFocus}>
         {frozen !== null && (frozen.picture !== null ? <img alt="" className="browser-tab__picture" src={frozen.picture} /> : <div className="browser-tab__fill" />)}
       </div>
     </div>
@@ -103,6 +105,7 @@ export function BrowserTab({ pageKey, url, active, available = true, onPage, onO
   const slot = useRef<HTMLDivElement>(null);
   const covered = usePageCovered();
   const frozen = usePageSlot(slot, pageKey, active && available, covered, url);
+  const keys = useFocusedPage() === pageKey;
 
   const say = useEffectEvent((u: string, t: string) => onPage(u, t));
   const pageUrl = page?.url ?? "";
@@ -136,6 +139,7 @@ export function BrowserTab({ pageKey, url, active, available = true, onPage, onO
       url={url}
       available={available}
       frozen={frozen}
+      keys={keys}
       slotRef={slot}
       barRef={ref}
       onGo={go}

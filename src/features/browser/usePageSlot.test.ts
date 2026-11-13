@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { paneColumn, type ColumnInputs } from "../window/paneColumn";
 import type { PageState } from "./pageStore";
-import { openUnder, slotReport, slotStep } from "./usePageSlot";
+import { insetRect, openUnder, PAGE_GUTTER, slotReport, slotStep } from "./usePageSlot";
 
 const page: PageState = { url: "https://example.com/", title: "", canBack: false, canForward: false, loading: false, icon: null, focused: false, status: null, live: true };
 const rect = (x: number, y: number, width: number, height: number) => ({ x, y, width, height, right: x + width, bottom: y + height });
@@ -82,5 +82,28 @@ describe("slotReport", () => {
     const r = slotReport(rect(Number.NaN, Number.NaN, 0, 0), win, inputs, false);
     expect(r.rect).toEqual({ x: 0, y: 0, width: 0, height: 0 });
     expect(r.rule).toBeNull();
+  });
+});
+
+describe("the page's gutter", () => {
+  const win = rect(0, 0, 1400, 900);
+  it("the page sits 2 px inside its slot", () => {
+    expect(insetRect({ x: 10, y: 20, width: 100, height: 50, right: 110, bottom: 70 }, 2)).toEqual({ x: 12, y: 22, width: 96, height: 46, right: 108, bottom: 68 });
+  });
+  it("a slot no wider than the gutter gives no box", () => {
+    const thin = insetRect(rect(10, 20, 3, 50), PAGE_GUTTER);
+    expect(thin.width).toBe(0);
+    const r = slotReport(thin, win, inputs, false);
+    expect(r.rect).toEqual({ x: 0, y: 0, width: 0, height: 0 });
+    expect(r.rule).toBeNull();
+  });
+  it("the rule keeps the gutter", () => {
+    const col = paneColumn(1400, inputs);
+    const slot = rect(col.x, 70, col.width, 800);
+    const plain = slotReport(slot, win, inputs, false);
+    const inset = slotReport(insetRect(slot, PAGE_GUTTER), win, inputs, false);
+    expect(inset.rule!.top).toBe(plain.rule!.top + 2);
+    expect(inset.rule!.bottom).toBe(plain.rule!.bottom + 2);
+    expect(inset.rule!.pieces[0]!.x).toBe(plain.rule!.pieces[0]!.x + 2);
   });
 });
