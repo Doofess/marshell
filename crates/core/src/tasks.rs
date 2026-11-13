@@ -1145,11 +1145,30 @@ mod tests {
     use crate::scripts;
     use std::time::{Duration, Instant};
 
-    /// The budget where a test expects the teardown to be stopped (the one that hangs) or never waits for it.
+    /// The budget where a test never waits for the teardown.
     const SHORT: Duration = Duration::from_secs(1);
     /// The budget for a teardown that should finish. The default shell alone can take over a second to start on a
-    /// busy CI runner, so a tight budget stops it and adds the timeout note (a CI failure on PR #120).
+    /// busy CI runner, so a tight budget stops it and adds the timeout note.
     const ENOUGH: Duration = Duration::from_secs(60);
+    /// The budget for the teardown that hangs: long enough for the default shell to start a second shell, which writes
+    /// its PID, on a loaded CI runner (as `TREE_TIMEOUT` in the agents tests). Stopped any sooner, the test proves nothing.
+    const HANG: Duration = Duration::from_secs(20);
+
+    /// Whether a process with this PID is still running.
+    fn pid_alive(pid: u32) -> bool {
+        if cfg!(windows) {
+            let out = std::process::Command::new("tasklist")
+                .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+                .output()
+                .expect("tasklist runs");
+            String::from_utf8_lossy(&out.stdout).contains(&format!("\"{pid}\""))
+        } else {
+            std::process::Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .status()
+                .is_ok_and(|s| s.success())
+        }
+    }
 
     /// A repo with one commit on `main`, a task worktree made from it, and a `home`.
     fn new_task(tmp: &tempfile::TempDir) -> (PathBuf, Task) {
@@ -1357,25 +1376,40 @@ mod tests {
     fn a_teardown_that_hangs_is_stopped() {
         let tmp = tempfile::tempdir().unwrap();
         let (home, task) = new_task(&tmp);
-        let marker = tmp.path().join("late.txt");
-        // A child of the script's shell: it writes the marker after 3 s unless the whole tree is killed.
-        let late = marker.to_string_lossy();
+        let pid_file = tmp.path().join("child.pid");
+        // A child of the script's shell writes its PID, then sleeps 60 s; only stopping the whole tree ends it sooner.
+        let pid_path = pid_file.to_string_lossy();
         let script = if cfg!(windows) {
+            // The backtick keeps the script's shell from expanding `$PID` itself, so the child writes its own.
             format!(
-                "& (Get-Process -Id $PID).Path -NoProfile -Command \"Start-Sleep 3; Set-Content -LiteralPath '{late}' -Value x\""
+                "& (Get-Process -Id $PID).Path -NoProfile -Command \"`$PID | Set-Content -LiteralPath '{pid_path}'; Start-Sleep 60\""
             )
         } else {
-            format!("sh -c \"sleep 3; echo x > '{late}'\"")
+            // `exec` keeps the PID: the sleep replaces the shell that wrote it.
+            format!("sh -c 'echo $$ > \"{pid_path}\"; exec sleep 60'")
         };
         teardown_file(&home, &task, &script, true);
         let req = request_for(&home, &task);
         let started = Instant::now();
-        let notes = remove_with_timeout(&state_in(&home), &task, &req, SHORT).unwrap();
+        let notes = remove_with_timeout(&state_in(&home), &task, &req, HANG).unwrap();
         assert_eq!(notes, ["Teardown didn't finish within 5 minutes, so it was stopped."]);
-        assert!(started.elapsed() < Duration::from_secs(20));
+        assert!(
+            started.elapsed() < HANG + Duration::from_secs(20),
+            "{:?}",
+            started.elapsed()
+        );
         assert!(!Path::new(&task.path).exists());
-        std::thread::sleep(Duration::from_secs(4));
-        assert!(!marker.exists(), "the script's child outlived the timeout");
+        let pid: u32 = std::fs::read_to_string(&pid_file)
+            .expect("the script's child started before the timeout")
+            .trim()
+            .parse()
+            .expect("a PID");
+        // Ending a process returns before it leaves the process list (#115), so give it a moment to go.
+        let gone_by = Instant::now() + Duration::from_secs(5);
+        while pid_alive(pid) && Instant::now() < gone_by {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        assert!(!pid_alive(pid), "the script's child {pid} outlived the timeout");
     }
 
     fn merge_request_for(home: &Path, task: &Task, remove: bool) -> MergeRequest {
