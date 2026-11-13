@@ -109,8 +109,16 @@ describe("Rendered and Source", () => {
   it("offers the toggle for Markdown and HTML, with the current view pressed", () => {
     const out = html(text, md);
     expect(out).toContain('aria-label="View"');
-    expect(out).toMatch(/aria-pressed="false"[^>]*>Rendered</);
-    expect(out).toMatch(/aria-pressed="true"[^>]*>Source</);
+    expect(out).toMatch(/<button[^>]*aria-label="Rendered"[^>]*aria-pressed="false"/);
+    expect(out).toMatch(/<button[^>]*aria-label="Source"[^>]*aria-pressed="true"/);
+  });
+  // The user's picture (2026-11-13): an eye for Rendered and </> for Source, each named by its label and its tooltip, no text.
+  it("shows each view as an icon named by its label and tooltip", () => {
+    const out = html(text, md);
+    for (const v of ["Rendered", "Source"]) {
+      expect(out, v).toMatch(new RegExp(`<button[^>]*aria-label="${v}"[^>]*title="${v}"[^>]*><svg[^>]*aria-hidden="true"`));
+      expect(out, v).not.toContain(`>${v}<`);
+    }
   });
   it("has no toggle for code, and none until the text has loaded", () => {
     expect(html(text)).not.toContain('aria-label="View"');

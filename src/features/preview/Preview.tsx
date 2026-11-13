@@ -38,6 +38,20 @@ const arrow = (d: string) => (
   </svg>
 );
 
+const viewIcon = (...d: string[]) => (
+  <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round">
+    {d.map((p) => (
+      <path key={p} d={p} />
+    ))}
+  </svg>
+);
+
+/** The Rendered / Source toggle's icons: an eye for the rendered view, `</>` for the source. */
+const VIEW_ICONS = {
+  rendered: viewIcon("M1.5 7S3.5 3 7 3s5.5 4 5.5 4-2 4-5.5 4S1.5 7 1.5 7Z", "M8.75 7a1.75 1.75 0 1 1-3.5 0 1.75 1.75 0 0 1 3.5 0Z"),
+  source: viewIcon("M4.5 4 1.5 7l3 3", "M9.5 4l3 3-3 3", "M8 2.5 6 11.5"),
+} as const;
+
 export type PreviewPaneProps = {
   entry: PaneEntry;
   file: FileState;
@@ -323,11 +337,14 @@ export function PreviewPane({ entry, file, updated, theme, os, canBack, canForwa
         <span className="preview__spacer" />
         {toggle && (
           <div className="preview__views" role="group" aria-label="View">
-            {(["rendered", "source"] as const).map((v) => (
-              <button key={v} type="button" className="preview__view" aria-pressed={entry.view === v} onClick={() => onView(v)}>
-                {v === "rendered" ? "Rendered" : "Source"}
-              </button>
-            ))}
+            {(["rendered", "source"] as const).map((v) => {
+              const label = v === "rendered" ? "Rendered" : "Source";
+              return (
+                <button key={v} type="button" className="preview__view" aria-label={label} title={label} aria-pressed={entry.view === v} onClick={() => onView(v)}>
+                  {VIEW_ICONS[v]}
+                </button>
+              );
+            })}
           </div>
         )}
         {canMark && (
