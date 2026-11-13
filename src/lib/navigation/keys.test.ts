@@ -54,6 +54,9 @@ describe("keys with the modifier held", () => {
   it("sends modifier-down first when the press of Tab is the first the page has heard of the modifier", () => {
     expect(down(ev("Tab", CS))).toEqual({ events: [{ type: "modifier-down" }, { type: "tab" }], preventDefault: true });
   });
+  it("Shift with the modifier already held gives nothing, so a held Ctrl+Tab's Shift and its re-sent Ctrl+Shift+Tab may come in either order", () => {
+    expect(down(ev("ShiftLeft", CS), "terminal", held())).toBeNull();
+  });
   it("Backspace selects no terminal", () => {
     expect(down(ev("Backspace", CS), "terminal", held())).toEqual({ events: [{ type: "select-none" }], preventDefault: true });
   });
