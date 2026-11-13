@@ -67,9 +67,11 @@
   min-inline-size: 0;
   min-block-size: 0;
   overflow: clip;
+  /* The page sits PAGE_GUTTER (usePageSlot) inside the slot, the room its focus ring is drawn in. */
+  padding: 2px;
   background: var(--bg-base);
 }
-/* The picture and the fill share the slot's one cell and fill it exactly, so the picture lands where the page was. */
+/* The picture and the fill share the slot's one cell, inside its padding, so the picture lands exactly where the page was. */
 .browser-tab__picture,
 .browser-tab__fill {
   grid-area: 1 / 1;

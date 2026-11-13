@@ -103,6 +103,7 @@ import { changesFor, keepsOwnKeys, keyBlocked, markTasks, missingTask, paletteHi
 import { ReviewSheet } from "../tasks/ReviewSheet";
 import { reviewApi } from "../tasks/reviewRun";
 import { jumpWords } from "../terminal/promptMarks";
+import { terminalFocusProps } from "../terminal/terminalFocus";
 import { resolveTerminalFont } from "../terminal/terminalFont";
 import { TerminalView, type TerminalThemeProp } from "../terminal/TerminalView";
 import { appScheme, resolveTerminalTheme } from "../terminal/terminalTheme";
@@ -120,7 +121,7 @@ import { LiveLauncher } from "./LiveLauncher";
 import { AppMenu } from "../appMenu/AppMenuPopup";
 import { pressMenuButton, toggleMenu, type AppMenuRun, type MenuState } from "../appMenu/appMenu";
 import { LivePalette } from "./LivePalette";
-import { recordsRecent } from "../palette/paletteList";
+import { recordsRecent, sessionRowTarget } from "../palette/paletteList";
 import { cannotRun } from "../palette/runnable";
 import { LiveShortcuts } from "./LiveShortcuts";
 import { ResumeBar } from "./ResumeBar";
@@ -1529,7 +1530,12 @@ export function LiveApp() {
     const section = paletteSection(id);
     if (section) return openSettings(section);
     setOverlay(id === "departures" || id === "doctor" ? id : id === "cheatsheet" ? "shortcuts" : null);
-    if (id.startsWith("session:")) return pick(id.slice("session:".length));
+    // Its terminal takes the keyboard, also when the session is already on screen and the palette gave focus back to its opener.
+    const session = sessionRowTarget(id);
+    if (session !== null) {
+      pick(session);
+      return void setTimeout(() => actions.focusTerminal(), 0);
+    }
     // Palette-only commands. The menu opens after the palette has given the focus back, so it keeps the focus it takes.
     if (id === "pause-notifications") return void togglePause();
     // The same event the chord sends (useNavigation), so the palette's row and the keys behave the same.
@@ -1736,8 +1742,7 @@ export function LiveApp() {
                 placeholder={startingTexts[row.id]}
                 onOutput={() => setStartingTexts((t) => without(t, row.id))}
                 onSize={onSize}
-                autoFocus={row.id === focusedId}
-                focusBlocked={linkHeld || launcherOpen || reopening !== null || overlay !== null || review !== null}
+                {...terminalFocusProps({ selected: row.id === focusedId, linkHeld, overlayUp: launcherOpen || reopening !== null || overlay !== null || review !== null })}
                 visible={shown}
                 paused={info?.paused === true}
                 onBlockedInput={() => actions.showPausedBar(row.id)}

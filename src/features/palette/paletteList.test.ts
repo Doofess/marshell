@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { COMMANDS, MOVED_COMMANDS } from "../../lib/keymap";
-import { MODE_IDS, emptyBox, paletteEscape, recordsRecent, withModeStep } from "./paletteList";
+import { MODE_IDS, emptyBox, paletteEscape, recordsRecent, sessionRowTarget, withModeStep } from "./paletteList";
 
 const ids = (cs: { id: string }[]) => cs.map((c) => c.id);
 
@@ -37,6 +37,12 @@ describe("paletteList", () => {
   it("only_palette_runs_of_listed_commands_are_recorded", () => {
     expect(recordsRecent("find")).toBe(true);
     for (const id of ["session:3", "file:a.ts", "change-mode", "appearance", "palette"]) expect(recordsRecent(id), id).toBe(false);
+  });
+  // Going to a session gives its terminal the keyboard, also the session already on screen, where the palette put focus back on
+  // what opened it (a page, the title bar's button).
+  it("a_session_row_names_the_session_whose_terminal_takes_the_keyboard", () => {
+    expect(sessionRowTarget("session:t7")).toBe("t7");
+    for (const id of ["find", "file:a.ts", "focus-session-2"]) expect(sessionRowTarget(id), id).toBeNull();
   });
   it("escape_goes_back_from_the_mode_list_then_closes", () => {
     expect(paletteEscape("modes")).toBe("back");
