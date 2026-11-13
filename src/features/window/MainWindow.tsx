@@ -39,6 +39,7 @@ import { shellNameFor } from "./ShellPanel";
 import { LayoutContext, mainRoom, type Layout } from "./paneColumn";
 import { PANE, draggedWidth, paneGeometry, paneMotionKey } from "./paneLayout";
 import { useLayoutMotion } from "./motion";
+import { usePaneHold } from "./paneHold";
 import { FitHoldContext } from "../terminal/fitHold";
 import { sidebarToggleFor } from "./viewState";
 import "./MainWindow.css";
@@ -327,7 +328,10 @@ export function MainWindow({
   // The side pane's divider reports the pane's width in pixels and holds none of its own; the saved width comes in as `paneWidth`.
   const mainRef = useRef<HTMLElement>(null);
   const viewing = mainView !== undefined && mainView !== null && mainView !== false;
-  const geometry = paneGeometry({ room: spaceW, shown: paneShown && !viewing && !empty, saved: paneWidth, terminalMin: terminalMinWidth });
+  // What the pane is asked to be (the toggle answers to this at once), and whether a hide holds it shown while its page freezes.
+  const paneWanted = paneShown && !viewing && !empty;
+  const paneHeld = usePaneHold(paneWanted);
+  const geometry = paneGeometry({ room: spaceW, shown: paneWanted || paneHeld, saved: paneWidth, terminalMin: terminalMinWidth });
   const paneOn = geometry.mode !== "hidden";
   const paneCovers = geometry.mode === "cover";
   // The pane moves for 200 ms when its mode changes, and with the sidebar when that switches beside it (paneMotionKey). A drag
@@ -340,11 +344,10 @@ export function MainWindow({
   useEffect(() => {
     if (mainRef.current) setRtl(getComputedStyle(mainRef.current).direction === "rtl");
   });
-  const paneListed = paneShown && !viewing && !empty;
   const paneBlocked = viewing || empty;
   const layoutValue = useMemo<Layout>(
-    () => ({ inputs: { pref, sidebarWidth, drawer, shown: paneListed, saved: paneWidth, terminalMin: terminalMinWidth, rtl }, moving: layoutMoving }),
-    [pref, sidebarWidth, drawer, paneListed, paneWidth, terminalMinWidth, rtl, layoutMoving],
+    () => ({ inputs: { pref, sidebarWidth, drawer, shown: paneWanted || paneHeld, saved: paneWidth, terminalMin: terminalMinWidth, rtl }, moving: layoutMoving }),
+    [pref, sidebarWidth, drawer, paneWanted, paneHeld, paneWidth, terminalMinWidth, rtl, layoutMoving],
   );
   const roomNow = Math.max(0, width - sideAnim - pushed);
   const paneP = Math.max(0, Math.min(Math.round(paneMotion.value), roomNow));
@@ -353,6 +356,8 @@ export function MainWindow({
   const paneDrawn = paneOn || paneMotion.moving;
   // The request-details drawer lies over the pane in a narrow window, where a browser tab's page would be drawn above it.
   useCoverPage(drawer && Boolean(drawerCard || requests[0]) && paneDrawn);
+  // A hide freezes its page first (the pane is held shown meanwhile), and the picture stays until the pane has folded and unmounted.
+  useCoverPage(paneHeld || (paneMotion.moving && !paneOn));
   const drawnPane = paneOn ? { node: pane, width: geometry.pane } : keptPane.current;
   useEffect(() => {
     if (paneOn) keptPane.current = { node: pane, width: geometry.pane };
@@ -423,8 +428,8 @@ export function MainWindow({
         </div>
         <div className="window__bar-end" data-tauri-drag-region>
           {/* Always in the bar, on every OS and in every sidebar mode; aria-disabled, like the sidebar's, so it says why it does nothing. */}
-          <button type="button" className="window__pane-toggle" data-nav-top="pane" aria-label="Side pane" aria-expanded={paneListed} aria-disabled={paneBlocked || undefined} title={paneBlocked ? "The side pane shows beside a session" : `${paneListed ? "Hide" : "Show"} the side pane (${shortcutLabel(commandById("preview").binding!, os)})`} onClick={paneBlocked ? undefined : onTogglePane}>
-            <SidePaneIcon open={paneListed} />
+          <button type="button" className="window__pane-toggle" data-nav-top="pane" aria-label="Side pane" aria-expanded={paneWanted} aria-disabled={paneBlocked || undefined} title={paneBlocked ? "The side pane shows beside a session" : `${paneWanted ? "Hide" : "Show"} the side pane (${shortcutLabel(commandById("preview").binding!, os)})`} onClick={paneBlocked ? undefined : onTogglePane}>
+            <SidePaneIcon open={paneWanted} />
           </button>
           {os === "windows" && (
             <div className="window__controls">

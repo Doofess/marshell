@@ -110,6 +110,11 @@ function nextPaint(): Promise<void> {
 // still the one shown, so a tab that took over in the same commit isn't hidden by the one before it.
 let shownKey: string | null = null;
 
+/** Whether the app has a page shown: the side pane's hide waits for this to turn false (the freeze hides the page) before it folds. */
+export function pageShown(): boolean {
+  return shownKey !== null;
+}
+
 const ignore = () => {};
 
 /**
