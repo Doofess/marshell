@@ -232,21 +232,33 @@
   content: "\200b";
 }
 
-/* Rendered / Source: two buttons, one pressed. The pressed one is filled, so it reads without colour or a box. */
+/*
+ * Rendered / Source: two icon buttons on one filled track, one pressed. The pressed one takes a stronger fill, so it reads
+ * without colour or a box. The buttons' corners follow the track's.
+ */
 .preview__views {
+  --views-pad: 2px;
   display: flex;
   flex: none;
-  gap: 2px;
+  gap: var(--views-pad);
   margin-inline-end: var(--space-1);
+  padding: var(--views-pad);
+  border-radius: calc(var(--radius) + var(--views-pad));
+  background: var(--fill);
 }
 .preview__view {
+  display: grid;
+  place-items: center;
+  inline-size: 24px;
   block-size: 20px;
-  padding-inline: var(--space-2);
+  padding: 0;
   border: 0;
   border-radius: var(--radius);
   background: transparent;
   color: var(--text-2);
-  font: inherit;
+}
+.preview__view[aria-pressed="false"]:active {
+  box-shadow: inset 0 0 0 100vmax var(--selected);
 }
 .preview__view[aria-pressed="true"] {
   background: var(--fill-strong);

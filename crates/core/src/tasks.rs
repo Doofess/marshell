@@ -1145,7 +1145,11 @@ mod tests {
     use crate::scripts;
     use std::time::{Duration, Instant};
 
+    /// The budget where a test expects the teardown to be stopped (the one that hangs) or never waits for it.
     const SHORT: Duration = Duration::from_secs(1);
+    /// The budget for a teardown that should finish. The default shell alone can take over a second to start on a
+    /// busy CI runner, so a tight budget stops it and adds the timeout note (a CI failure on PR #120).
+    const ENOUGH: Duration = Duration::from_secs(60);
 
     /// A repo with one commit on `main`, a task worktree made from it, and a `home`.
     fn new_task(tmp: &tempfile::TempDir) -> (PathBuf, Task) {
@@ -1273,7 +1277,7 @@ mod tests {
         let marker = tmp.path().join("marker.txt");
         teardown_file(&home, &task, &write_marker(&marker), true);
         let req = request_for(&home, &task);
-        let notes = remove_with_timeout(&state_in(&home), &task, &req, SHORT).unwrap();
+        let notes = remove_with_timeout(&state_in(&home), &task, &req, ENOUGH).unwrap();
         assert!(notes.is_empty(), "{notes:?}");
         assert!(marker.exists());
         assert!(!Path::new(&task.path).exists());
@@ -1299,7 +1303,7 @@ mod tests {
             "{:?}",
             req.warnings
         );
-        let notes = remove_with_timeout(&state_in(&home), &task, &req, SHORT).unwrap();
+        let notes = remove_with_timeout(&state_in(&home), &task, &req, ENOUGH).unwrap();
         assert!(notes.is_empty(), "{notes:?}");
         assert!(!Path::new(&task.path).exists());
     }
@@ -1312,7 +1316,7 @@ mod tests {
         let log = Path::new(&task.path).join("teardown.log");
         teardown_file(&home, &task, &write_marker(&log), true);
         let req = merge_request_for(&home, &task, true);
-        let outcome = merge_with_timeout(&state_in(&home), &task, &req, SHORT);
+        let outcome = merge_with_timeout(&state_in(&home), &task, &req, ENOUGH);
         assert_eq!(
             outcome,
             MergeOutcome::Merged {
@@ -1331,7 +1335,7 @@ mod tests {
         // A locked worktree can't be removed, even with --force.
         teardown_file(&home, &task, "git worktree lock .; exit 3", true);
         let req = request_for(&home, &task);
-        let reason = remove_with_timeout(&state_in(&home), &task, &req, SHORT).unwrap_err();
+        let reason = remove_with_timeout(&state_in(&home), &task, &req, ENOUGH).unwrap_err();
         assert!(
             reason.starts_with("Teardown failed (exit 3). Couldn't remove the worktree."),
             "{reason}"
@@ -1344,7 +1348,7 @@ mod tests {
         let (home, task) = new_task(&tmp);
         teardown_file(&home, &task, "exit 3", true);
         let req = request_for(&home, &task);
-        let notes = remove_with_timeout(&state_in(&home), &task, &req, SHORT).unwrap();
+        let notes = remove_with_timeout(&state_in(&home), &task, &req, ENOUGH).unwrap();
         assert_eq!(notes, ["Teardown failed (exit 3)."]);
         assert!(!Path::new(&task.path).exists());
     }
@@ -1398,7 +1402,7 @@ mod tests {
         teardown_file(&home, &task, &write_marker(&marker), true);
         let req = merge_request_for(&home, &task, true);
         assert!(req.teardown.is_some());
-        let outcome = merge_with_timeout(&state_in(&home), &task, &req, SHORT);
+        let outcome = merge_with_timeout(&state_in(&home), &task, &req, ENOUGH);
         assert_eq!(
             outcome,
             MergeOutcome::Merged {
