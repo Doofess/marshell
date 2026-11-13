@@ -53,8 +53,7 @@ type Props = {
   onOutput?: () => void;
   /** Hears the terminal's size once it is measured and whenever it changes. */
   onSize?: (cols: number, rows: number) => void;
-  /** False while something else (the launcher) has the keys: the terminal takes focus when this turns true. Default true. */
-  /** This is the selected session's terminal. */
+  /** This is the selected session's terminal: it takes focus when it appears, is selected or shown again, or `focusToken` changes. Default true. */
   autoFocus?: boolean;
   /** An overlay, the launcher or a held link has the keyboard; the terminal doesn't take focus meanwhile. */
   focusBlocked?: boolean;

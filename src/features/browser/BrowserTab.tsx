@@ -105,6 +105,7 @@ export function BrowserTab({ pageKey, url, active, available = true, onPage, onO
   const slot = useRef<HTMLDivElement>(null);
   const covered = usePageCovered();
   const frozen = usePageSlot(slot, pageKey, active && available, covered, url);
+  const keys = useFocusedPage() === pageKey;
 
   const say = useEffectEvent((u: string, t: string) => onPage(u, t));
   const pageUrl = page?.url ?? "";
@@ -138,7 +139,7 @@ export function BrowserTab({ pageKey, url, active, available = true, onPage, onO
       url={url}
       available={available}
       frozen={frozen}
-      keys={useFocusedPage() === pageKey}
+      keys={keys}
       slotRef={slot}
       barRef={ref}
       onGo={go}
