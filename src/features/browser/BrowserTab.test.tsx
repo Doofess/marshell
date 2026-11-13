@@ -18,7 +18,7 @@ const page = (more: Partial<PageState> = {}): PageState => ({
 });
 type Props = Partial<Parameters<typeof BrowserTabView>[0]>;
 const html = (more: Props = {}) =>
-  renderToStaticMarkup(<BrowserTabView page={page()} url="https://example.com/" available frozen={null} slotRef={() => {}} onGo={noop} onNav={noop} onOpenOutside={noop} onEscape={noop} {...more} />);
+  renderToStaticMarkup(<BrowserTabView page={page()} url="https://example.com/" available keys={false} frozen={null} slotRef={() => {}} onGo={noop} onNav={noop} onOpenOutside={noop} onEscape={noop} {...more} />);
 
 describe("BrowserTabView", () => {
   it('has a focusable slot labelled "Web page"', () => {
@@ -31,6 +31,11 @@ describe("BrowserTabView", () => {
     const slot = html({ pageKey: "s1/p2" }).match(/<div[^>]*class="browser-tab__slot"[^>]*>/)![0];
     expect(slot).toContain('data-page-key="s1/p2"');
     expect(html()).not.toContain("data-page-key");
+  });
+  it("the slot says when its page has the keys", () => {
+    const slot = (out: string) => out.match(/<div[^>]*class="browser-tab__slot"[^>]*>/)![0];
+    expect(slot(html({ keys: true }))).toContain('data-keys=""');
+    expect(slot(html({ keys: false }))).not.toContain("data-keys");
   });
   it("a refused address shows the status line", () => {
     expect(html({ page: page({ status: "refused" }) })).toContain("That address can&#x27;t be opened in the side pane.");

@@ -78,7 +78,19 @@ export function slotReport(slot: DOMRectLike, win: DOMRectLike, inputs: ColumnIn
   return { rect, win: size, rule: { pieces: rulePiecesFor(inputs, start, end), top: y, bottom: size.height - (y + height) }, moving };
 }
 
-/** The slot's box in the window's coordinates, and the window's size. That is `.window`, which the app sizes itself. */
+/** The gutter, in px, between the slot's edge and its page. The slot draws the page's focus ring there while the page has the keys. */
+export const PAGE_GUTTER = 2;
+
+/** `r` drawn in by `by` on every side. A box no wider or taller than twice `by` shrinks to nothing in that direction. */
+export function insetRect(r: DOMRectLike, by: number): DOMRectLike {
+  const width = Math.max(0, r.width - 2 * by);
+  const height = Math.max(0, r.height - 2 * by);
+  const x = r.x + by;
+  const y = r.y + by;
+  return { x, y, width, height, right: x + width, bottom: y + height };
+}
+
+/** The slot's box in the window's coordinates, and the window's size. That is `.window`, which the app sizes itself. The page sits `PAGE_GUTTER` inside it. */
 function measure(el: HTMLElement, layout: Layout | null): Report {
   const r = el.getBoundingClientRect();
   const w = el.closest<HTMLElement>(".window")?.getBoundingClientRect();
@@ -86,7 +98,7 @@ function measure(el: HTMLElement, layout: Layout | null): Report {
   const top = w?.top ?? 0;
   const win = { x: 0, y: 0, width: w?.width ?? window.innerWidth, height: w?.height ?? window.innerHeight, right: w?.width ?? window.innerWidth, bottom: w?.height ?? window.innerHeight };
   const slot = { x: r.left - left, y: r.top - top, width: r.width, height: r.height, right: r.right - left, bottom: r.bottom - top };
-  return slotReport(slot, win, layout?.inputs ?? null, layout?.moving ?? false);
+  return slotReport(insetRect(slot, PAGE_GUTTER), win, layout?.inputs ?? null, layout?.moving ?? false);
 }
 
 /** Resolves after the next frame has been painted: a timeout queued from the frame's callback runs after that paint (S12). */
