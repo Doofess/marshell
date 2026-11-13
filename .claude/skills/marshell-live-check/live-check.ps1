@@ -16,7 +16,8 @@ stop:  prints the tree and stops it by PID, leaves first. If the tree holds an a
 Nothing here deletes a folder. With -CodexAuth, start copies ~/.codex/auth.json into the scratch CODEX_HOME
        and stop deletes that copy. -CodexHome <short path> puts CODEX_HOME there instead of <Scratch>\cx; that
        folder is deleted with the scratch folder at the end of the work.
-       start always creates <Scratch>\home\.gemini and starts the app with USERPROFILE=<Scratch>\home, so agy and
+       start always creates <Scratch>\home\.gemini, with Desktop, Documents and Downloads beside it (the system's
+       file dialogs open there), and starts the app with USERPROFILE=<Scratch>\home, so agy and
        the core's reads and writes of agy's settings.json use the scratch home; CARGO_HOME and RUSTUP_HOME are pinned
        to the real ones first. With -AgyAuth, it also copies ~/.gemini/oauth_creds.json and google_accounts.json into
        <Scratch>\home\.gemini (nothing else), and stop deletes those two copies.
@@ -198,6 +199,8 @@ switch ($Mode) {
         # Always a scratch home: agy has no home variable of its own, and the app writes agy's settings.json.
         $agyHome = (New-Item -ItemType Directory -Path (Join-Path $Scratch 'home')).FullName
         $gemini = (New-Item -ItemType Directory -Path (Join-Path $agyHome '.gemini')).FullName
+        # The system's file dialogs start in these; without them Browse... says "Desktop is unavailable".
+        foreach ($known in 'Desktop', 'Documents', 'Downloads') { New-Item -ItemType Directory -Path (Join-Path $agyHome $known) | Out-Null }
         if ($AgyAuth) {
             foreach ($name in @('oauth_creds.json', 'google_accounts.json')) {
                 $from = Join-Path $HOME ".gemini\$name"
