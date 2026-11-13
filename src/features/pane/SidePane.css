@@ -61,12 +61,11 @@
   background: var(--bg-base);
   color: var(--text-1);
 }
-/* A browser tab's site icon or globe, 14 px, before the title. */
+/* The tab's type icon, 14 px, before the title; it draws in the tab's text color. */
 .side-pane__icon {
   flex: none;
   inline-size: 14px;
   block-size: 14px;
-  object-fit: contain;
 }
 .side-pane__title {
   display: block;
@@ -74,6 +73,21 @@
   min-inline-size: 0;
   overflow: clip;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A file's name: the head shortens with an ellipsis and the tail (the extension) never shrinks. */
+.side-pane__title:has(> .side-pane__name-head) {
+  display: flex;
+}
+.side-pane__name-head {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.side-pane__name-tail {
+  flex: none;
   white-space: nowrap;
 }
 .side-pane__tab:active {
