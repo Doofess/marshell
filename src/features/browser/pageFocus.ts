@@ -95,6 +95,25 @@ export function keyForCode(code: string, shift: boolean): string {
   return code;
 }
 
+// Pages Tab left since the keyboard last entered them. WebView2 puts the keyboard back where the page last had it, and after Tab left
+// that is its BODY, where typed keys go nowhere.
+const tabbedOut = new Set<string>();
+
+/** Tab took the keyboard off this page, in either direction. */
+export function markTabbedOut(key: string): void {
+  tabbedOut.add(key);
+}
+
+/** The page has the keyboard again. */
+export function markEntered(key: string): void {
+  tabbedOut.delete(key);
+}
+
+/** How the app enters a page from a chord: a page Tab left starts at its first stop, any other is restored to where it was. */
+export function entryReason(key: string): Extract<FocusReason, "next" | "programmatic"> {
+  return tabbedOut.has(key) ? "next" : "programmatic";
+}
+
 // Focusing the slot to hand the keys to the app (a forwarded key) must not read as Tab arriving at the page, which would enter it.
 let quiet = false;
 

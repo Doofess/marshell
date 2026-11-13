@@ -4,7 +4,7 @@ import { subscribeNav } from "../sessions/useNavigation";
 import { appClaims, claimedChords } from "./claimedChords";
 import { browser, onBrowser } from "./browserApi";
 import { pageCovered, subscribeCover } from "./pageCover";
-import { afterCover, afterKey, handBack, keyForCode, onDragArea, pageOnScreen, quietly, tabNeighbour } from "./pageFocus";
+import { afterCover, afterKey, handBack, keyForCode, markEntered, markTabbedOut, onDragArea, pageOnScreen, quietly, tabNeighbour } from "./pageFocus";
 import { dispatchPage } from "./pageStore";
 
 const TABBABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -67,10 +67,14 @@ export function useBrowserKeys({ os, focusTerminal }: Options): void {
 
     const stops = [
       onBrowser("focus", ({ key, focused }) => {
-        if (focused) owner = key;
+        if (focused) {
+          owner = key;
+          markEntered(key);
+        }
       }),
       onBrowser("focus-out", ({ key, direction }) => {
         owner = null;
+        markTabbedOut(key);
         const slot = slotOf(key);
         if (!slot) return;
         const target = tabNeighbour(tabbables(), slot, direction);
