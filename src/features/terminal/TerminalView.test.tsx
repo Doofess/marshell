@@ -24,7 +24,7 @@ describe("TerminalView (server markup)", () => {
 describe("TerminalView: focus on a new terminal", () => {
   it("runs the focus effect again once the terminal exists, after its font has loaded", () => {
     const src = readFileSync(new URL("./TerminalView.tsx", import.meta.url), "utf8");
-    const effect = /if \(autoFocus\) termRef\.current\?\.focus\(\);\s*\}, \[([^\]]*)\]\);/.exec(src);
+    const effect = /focusOnChange\(\{ selected: autoFocus, blocked: blockedNow\(\) \}\)\) termRef\.current\?\.focus\(\);\s*\}, \[([^\]]*)\]\);/.exec(src);
     expect(effect).not.toBeNull();
     expect(effect![1]!.split(",").map((d) => d.trim())).toContain("fontReady");
   });

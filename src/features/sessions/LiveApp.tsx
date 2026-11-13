@@ -1736,7 +1736,8 @@ export function LiveApp() {
                 placeholder={startingTexts[row.id]}
                 onOutput={() => setStartingTexts((t) => without(t, row.id))}
                 onSize={onSize}
-                autoFocus={!linkHeld && !launcherOpen && !reopening && overlay === null && review === null && row.id === focusedId}
+                autoFocus={row.id === focusedId}
+                focusBlocked={linkHeld || launcherOpen || reopening !== null || overlay !== null || review !== null}
                 visible={shown}
                 paused={info?.paused === true}
                 onBlockedInput={() => actions.showPausedBar(row.id)}
