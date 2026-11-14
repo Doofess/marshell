@@ -62,7 +62,7 @@ gh workflow run release.yml -f action=check -f tag=v0.1.0-alpha.1 -f source=comm
 
 ## Known limits of the alpha installer
 
-- Uninstalling from Windows' Settings runs with Explorer's environment. A `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or `COPILOT_HOME` that is set only in a shell isn't seen, and Marshell's hooks in that folder stay. `winget uninstall` from that shell sees it.
+- Uninstalling from Windows' Settings runs with Explorer's environment. A `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or `COPILOT_HOME` that is set only in a shell isn't seen, and what Marshell put in that folder (its skill, and for Codex and Copilot its hooks) stays. `winget uninstall` from that shell sees it.
 - The installer closes a running Marshell before it replaces or removes files. It doesn't close an administrator session's helper (`marshell-host.exe`); a file in use stays until the next install.
 - Windows SmartScreen warns when the installer is run by hand, because it isn't signed.
 

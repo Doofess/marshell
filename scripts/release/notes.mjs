@@ -44,7 +44,7 @@ Uninstalling takes Marshell's hooks and its skill out of every agent CLI's files
 Two things stay:
 
 - Your Marshell settings, history and the backups of every file Marshell changed, in \`%USERPROFILE%\\.marshell\`. Delete that folder yourself for a full clean-up.
-- Hooks in a CLI config folder that only a shell knows about. If you set \`CLAUDE_CONFIG_DIR\`, \`CODEX_HOME\` or \`COPILOT_HOME\` in a shell profile and not in Windows' environment variables, uninstall from that shell (\`winget uninstall\`), not from Settings.
+- What Marshell put in a CLI config folder that only a shell knows about. If you set \`CLAUDE_CONFIG_DIR\`, \`CODEX_HOME\` or \`COPILOT_HOME\` in a shell profile and not in Windows' environment variables, uninstall from that shell (\`winget uninstall\`), not from Settings.
 
 ## Checksum
 
