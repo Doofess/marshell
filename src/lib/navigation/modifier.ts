@@ -43,6 +43,12 @@ export function isNavModifierHeld(f: Flags, m: NavModifier): boolean {
   return f.ctrlKey === k.ctrl && f.shiftKey === k.shift && f.altKey === k.alt && !f.metaKey;
 }
 
+/** True when every key of the modifier is down, whatever else is: a hold lasts while they are. */
+export function navModifierKeysDown(f: Flags, m: NavModifier): boolean {
+  const k = byId(m).keys;
+  return (!k.ctrl || f.ctrlKey) && (!k.shift || f.shiftKey) && (!k.alt || f.altKey);
+}
+
 export function navModifierLabel(os: Os, m: NavModifier): string {
   const k = byId(m).keys;
   if (os === "mac") return `${k.ctrl ? "⌃" : ""}${k.alt ? "⌥" : ""}${k.shift ? "⇧" : ""}`;

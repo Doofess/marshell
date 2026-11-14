@@ -1,6 +1,6 @@
 import type { KeyEventLike } from "../bindings";
 import type { Os } from "../keymap";
-import { isNavModifierHeld, type NavModifier } from "./modifier";
+import { isNavModifierHeld, navModifierKeysDown, type NavModifier } from "./modifier";
 import type { Dir, NavEvent, NavState } from "./types";
 
 /**
@@ -58,6 +58,15 @@ export function interpretKeyUp(e: KeyEventLike, ctx: { nav: NavModifier; state: 
   if (!ctx.state.held) return [];
   if (!MODIFIER_KEYS.test(e.code)) return [];
   return isNavModifierHeld(e, ctx.nav) ? [] : [{ type: "modifier-up" }];
+}
+
+/**
+ * A key going down without the modifier while a hold is on: the modifier's release went somewhere else (a page took the keys
+ * while it came up), so the hold ends here, as that release would have ended it. Read before every other handler.
+ */
+export function interpretMissedRelease(e: KeyEventLike, ctx: { nav: NavModifier; state: NavState }): NavEvent[] {
+  if (!ctx.state.held || navModifierKeysDown(e, ctx.nav)) return [];
+  return [{ type: "modifier-up" }];
 }
 
 /** The window lost focus mid-hold: the key-up will never come, so the cursor is cancelled, not committed. */

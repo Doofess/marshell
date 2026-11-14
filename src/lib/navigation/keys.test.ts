@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { interpretBlur, interpretKeyDown, interpretKeyUp, type FocusKind } from "./keys";
+import { interpretBlur, interpretKeyDown, interpretKeyUp, interpretMissedRelease, type FocusKind } from "./keys";
 import { INITIAL_NAV, type NavState } from "./types";
 import type { KeyEventLike } from "../bindings";
 
@@ -38,6 +38,14 @@ describe("the navigation modifier going down and up", () => {
     expect(interpretBlur(held({ cursor: { kind: "row", number: 3 } }))).toEqual([{ type: "escape" }, { type: "modifier-up" }]);
     expect(interpretBlur(held())).toEqual([{ type: "modifier-up" }]);
     expect(interpretBlur(INITIAL_NAV)).toEqual([]);
+  });
+  it("ends at the next key going down without it, when its release went to a page", () => {
+    const missed = (e: KeyEventLike, state: NavState) => interpretMissedRelease(e, { nav: "ctrl+shift", state });
+    for (const e of [ev("ControlLeft", { ctrlKey: true }), ev("ShiftLeft", { shiftKey: true }), ev("KeyA")])
+      expect(missed(e, held({ engaged: true })), e.code).toEqual([{ type: "modifier-up" }]);
+    expect(missed(ev("ArrowLeft", CS), held({ engaged: true }))).toEqual([]);
+    expect(missed(ev("AltRight", { ...CS, altKey: true }), held())).toEqual([]);
+    expect(missed(ev("ControlLeft", { ctrlKey: true }), INITIAL_NAV)).toEqual([]);
   });
 });
 
