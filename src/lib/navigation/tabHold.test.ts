@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
-import { installTabHold, tabHoldStep, type HoldKey, type HoldWindow } from "./tabHold";
+import cases from "../../../src-tauri/src/browser/tab-hold.json";
+import { afterTabHold, installTabHold, tabHoldStep, type HoldKey, type HoldWindow } from "./tabHold";
 
 type Mods = { ctrl?: boolean; shift?: boolean; alt?: boolean; meta?: boolean; repeat?: boolean };
 const key = (type: HoldKey["type"], code: string, m: Mods = {}): HoldKey => ({
@@ -46,6 +47,25 @@ describe("tabHoldStep", () => {
   });
   it("does nothing for a key-up with nothing held", () => {
     expect(tabHoldStep(false, up("Tab", { ctrl: true }))).toEqual(NOTHING);
+  });
+  it("ends the hold as the shell's rules do, in every shared case (tab-hold.json)", () => {
+    expect(cases.length).toBeGreaterThan(0);
+    for (const c of cases) {
+      let held = false;
+      const sends: string[] = [];
+      for (const k of c.keys as { at: string; code?: string; ctrl?: boolean; shift?: boolean; alt?: boolean; repeat?: boolean }[]) {
+        if (k.at === "late") {
+          // The timer sends what was held: a Shift meanwhile would have ended the hold at its key-down.
+          if (held) sends.push("Ctrl+Tab");
+          held = false;
+          continue;
+        }
+        const step = tabHoldStep(held, key(k.at === "down" ? "keydown" : "keyup", k.code ?? "", k));
+        held = step.held;
+        if (step.release) sends.push(step.release.shift ? "Ctrl+Shift+Tab" : "Ctrl+Tab");
+      }
+      expect(sends, c.case).toEqual(c.sends);
+    }
   });
 });
 
@@ -144,6 +164,30 @@ describe("installTabHold", () => {
     expect(forwarded.preventDefault).not.toHaveBeenCalled();
     expect(forwarded.stopImmediatePropagation).not.toHaveBeenCalled();
     vi.runAllTimers();
+    expect(send).not.toHaveBeenCalled();
+  });
+  it("runs a waiter at once with nothing held, and after the held key went out, once, when one is", () => {
+    const waiter = vi.fn();
+    afterTabHold(waiter);
+    expect(waiter).toHaveBeenCalledTimes(1);
+    fire(ev("keydown", "Tab", { ctrl: true }));
+    afterTabHold(waiter);
+    vi.advanceTimersByTime(20);
+    expect(waiter).toHaveBeenCalledTimes(1);
+    fire(ev("keyup", "Tab", { ctrl: true }));
+    expect(send).toHaveBeenCalledTimes(1);
+    vi.runAllTimers();
+    expect(waiter).toHaveBeenCalledTimes(2);
+    vi.runAllTimers();
+    expect(waiter).toHaveBeenCalledTimes(2);
+  });
+  it("runs a waiter when a hold is dropped, too", () => {
+    const waiter = vi.fn();
+    fire(ev("keydown", "Tab", { ctrl: true }));
+    afterTabHold(waiter);
+    fire({ type: "blur" });
+    vi.runAllTimers();
+    expect(waiter).toHaveBeenCalledTimes(1);
     expect(send).not.toHaveBeenCalled();
   });
   it("drops a held key and removes its listeners when uninstalled", () => {
