@@ -2,7 +2,8 @@
 //! reads its event and queues what follows with `post`, and never calls back into a webview from inside the callback.
 
 use super::rules::{
-    KeyEvent, KeyRoute, MAX_ICON_BYTES, TAB_HOLD, TabHold, focus_out_direction, icon_src, key_event, route_key,
+    HOLD_LOOK, HoldLook, KeyEvent, KeyRoute, MAX_ICON_BYTES, TAB_HOLD, TabHold, focus_out_direction, icon_src,
+    key_event, route_key,
 };
 use super::{
     BrowserState, FocusOut, Job, PageFocus, PageIcon, PageKey, PageKeyEvent, PageState, emit, focus_app, lock, post,
@@ -11,7 +12,7 @@ use super::{
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, Url, Webview};
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG, COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG, COREWEBVIEW2_KEY_EVENT_KIND,
@@ -58,10 +59,16 @@ fn down(vk: u16) -> bool {
     unsafe { GetKeyState(i32::from(vk)) < 0 }
 }
 
-/// Whether a key is down now, for a held Ctrl+Tab's timeout, which comes with no key event to read the state of.
+/// Whether a key is down now, for a held Ctrl+Tab's look at the keys, which comes with no key event to read the state of.
 fn held_now(vk: u16) -> bool {
     // SAFETY: reads the keyboard's state now, which needs nothing from the calling thread.
     unsafe { GetAsyncKeyState(i32::from(vk)) < 0 }
+}
+
+/// A held Ctrl+Tab, settled, goes to the app after what is already queued.
+fn send_held(app: &AppHandle, key: &str, event: KeyEvent) {
+    let (to, key) = (app.clone(), key.to_string());
+    post(app, move || forward(&to, &key, event));
 }
 
 /// A key the app claims goes to the app's webview, and the keyboard goes with it.
@@ -314,7 +321,8 @@ fn focus_handlers(
 ///
 /// A fresh Ctrl+Tab the app claims waits in `hold` for Tab's release or `TAB_HOLD` first (docs/PLAN.md §9, "Slice
 /// 6q-3 decisions" 14 and 15): Ctrl+Tab is the navigation chord without its Shift, and a quick hand can put Tab
-/// down a few milliseconds before Shift. WebView2 never reports Shift here, so the hold reads it when it ends.
+/// down a few milliseconds before Shift. WebView2 never reports Shift here, so a pooled thread looks for it every
+/// `HOLD_LOOK` while the hold lasts.
 fn key_handler(
     page: &Page,
     controller: &ICoreWebView2Controller,
@@ -342,15 +350,11 @@ fn key_handler(
         }
         let (ctrl, shift, alt) = (down(VK_CONTROL), down(VK_SHIFT), down(VK_MENU));
         // Each lock below ends with its statement: none is held across a post or a COM call.
-        let send_held = |event: Option<KeyEvent>| {
-            if let Some(event) = event {
-                let (app, key) = (page.app.clone(), page.key.clone());
-                post(&page.app, move || forward(&app, &key, event));
-            }
-        };
         if is_up {
             let released = lock(&hold).up(vk, ctrl, shift, alt);
-            send_held(released);
+            if let Some(event) = released {
+                send_held(&page.app, &page.key, event);
+            }
             let was_taken = lock(&taken).remove(&vk);
             if was_taken {
                 // SAFETY: setting the event's own answer inside its callback.
@@ -364,20 +368,26 @@ fn key_handler(
         };
         let step = lock(&hold).down(vk, ctrl, shift, alt, status.WasKeyDown.as_bool(), route);
         // Another key during a hold sends the held Ctrl+Tab first, then goes on as itself.
-        send_held(step.release);
+        if let Some(event) = step.release {
+            send_held(&page.app, &page.key, event);
+        }
         if let Some(n) = step.started {
             let (app, key, hold) = (page.app.clone(), page.key.clone(), hold.clone());
-            std::thread::spawn(move || {
-                std::thread::sleep(TAB_HOLD);
-                // The job runs on the main thread like every callback here, so it takes its turn with the keys. It
-                // reads the modifiers as they are now, since Shift's press never reached this handler.
-                let to = app.clone();
-                post(&to, move || {
-                    let released = lock(&hold).timeout(n, held_now(VK_CONTROL), held_now(VK_SHIFT), held_now(VK_MENU));
-                    if let Some(event) = released {
-                        forward(&app, &key, event);
+            // A thread from the blocking pool, not one of its own per press. It reads the modifiers as they are now,
+            // since Shift's press never reaches this handler, and stops when the hold has ended by any road.
+            tauri::async_runtime::spawn_blocking(move || {
+                let start = Instant::now();
+                loop {
+                    std::thread::sleep(HOLD_LOOK);
+                    let late = start.elapsed() >= TAB_HOLD;
+                    let (ctrl, shift, alt) = (held_now(VK_CONTROL), held_now(VK_SHIFT), held_now(VK_MENU));
+                    let look = lock(&hold).look(n, ctrl, shift, alt, late);
+                    match look {
+                        HoldLook::Wait => {}
+                        HoldLook::Over => return,
+                        HoldLook::Send(event) => return send_held(&app, &key, event),
                     }
-                });
+                }
             });
         }
         if step.taken {
