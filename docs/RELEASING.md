@@ -73,3 +73,11 @@ gh workflow run release.yml -f action=check -f tag=v0.1.0-alpha.1 -f source=comm
 ```sh
 gh api repos/microsoft/winget-create/releases/latest --jq '.tag_name, (.assets[] | select(.name == "wingetcreate.exe") | .digest)'
 ```
+
+## Moving to a newer pinned action
+
+The `build` job pins the two actions that aren't GitHub's own (`Swatinem/rust-cache`, `pnpm/action-setup`) to a commit, with the version in a comment. To move one, take the commit behind its release tag:
+
+```sh
+gh api repos/Swatinem/rust-cache/commits/v2.9.3 --jq .sha
+```
