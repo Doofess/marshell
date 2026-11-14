@@ -423,7 +423,12 @@ function Invoke-CycleA {
     $ready = Wait-AppReady $app $script:Inst
     Check 'A6 start again: marshell list --json answers within 90 s' { $ready }
 
-    # 7 and 8: uninstall with the app open.
+    # 7 and 8: uninstall with the app open. The hooks must still be there, or step 8 would prove nothing.
+    if ($Fixture) {
+        Check "A6 before the uninstall: Claude Code's and Codex's files still name marshell-hook" {
+            (Test-Contains $ClaudeFile 'marshell-hook') -and (Test-Contains $CodexFile 'marshell-hook')
+        }
+    }
     $instDir = $script:Inst
     $appId = $app.Id
     $res = Uninstall-Marshell

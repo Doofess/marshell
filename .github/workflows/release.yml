@@ -2,7 +2,7 @@ name: release
 
 # An alpha release (PLAN §9, slice 9a; how to cut one: docs/RELEASING.md).
 #
-#   a tag v0.1.0-alpha.N   build -> publish -> winget-check and winget-submit
+#   a tag v0.1.0-alpha.N   build -> publish -> winget-check -> winget-submit
 #   a pull request         build only, as a dry run, when it touches the installer or the release scripts
 #   run by hand            dry-run: build only. check: winget-check for a published tag.
 #                          submit: winget-submit for a published tag.
@@ -115,12 +115,14 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: ./scripts/release/smoke.ps1 -Installer "out/Marshell_${env:VERSION}_x64-setup.exe" -Version $env:VERSION -Fixture out/smoke-fixture.exe
+      # Kept when the smoke test fails too, to look at what was built. Only `publish` releases it, and
+      # that needs this job to pass.
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: release
           path: out/
-          if-no-files-found: error
+          if-no-files-found: warn
 
   publish:
     needs: build
@@ -209,11 +211,12 @@ jobs:
           if (Test-Path out/smoke-fixture.exe) { $how.Fixture = 'out/smoke-fixture.exe' }
           ./scripts/release/smoke.ps1 -Version $env:VERSION @how
 
-  # Opens the pull request on microsoft/winget-pkgs from the token owner's fork. A release that went out
-  # before the token existed is submitted later with `action: submit`.
+  # Opens the pull request on microsoft/winget-pkgs from the token owner's fork, once winget-check has
+  # installed and uninstalled the release with winget. A release that went out before the token existed
+  # is submitted later with `action: submit`.
   winget-submit:
-    needs: publish
-    if: always() && (needs.publish.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.action == 'submit'))
+    needs: [publish, winget-check]
+    if: always() && ((needs.publish.result == 'success' && needs.winget-check.result == 'success') || (github.event_name == 'workflow_dispatch' && inputs.action == 'submit'))
     runs-on: windows-latest
     timeout-minutes: 15
     env:

@@ -9,7 +9,9 @@
 ; Takes Marshell's hooks and its skill out of every agent CLI's files, and removes ~/.marshell/bin, before
 ; the program files go: `marshell uninstall --yes` (PLAN §9, slice 9a decisions 7, 9 and 14). Its exit
 ; code is read and not acted on. When a CLI's file can't be changed the uninstall still goes on, and
-; ~/.marshell/bin stays so the hooks left behind still find their bridge.
+; ~/.marshell/bin stays so the hooks left behind still find their bridge. The command bounds its own WSL
+; calls; the timeout here (two minutes with no output) is for a file share that hangs, so the uninstall
+; still ends.
 ;
 ; An uninstall that is part of an install keeps the hooks. There are two:
 ; - the updater's, which passes /UPDATE;
@@ -21,7 +23,7 @@
   ${AndIf} $EXEDIR != $INSTDIR
   ${AndIf} ${FileExists} "$INSTDIR\marshell.exe"
     DetailPrint "Taking Marshell's hooks out of the agent CLIs"
-    nsExec::ExecToLog '"$INSTDIR\marshell.exe" uninstall --yes'
+    nsExec::ExecToLog /TIMEOUT=120000 '"$INSTDIR\marshell.exe" uninstall --yes'
     Pop $R7
   ${EndIf}
 !macroend
