@@ -22,7 +22,7 @@ The codebase is still being built. Treat the source and current phase plans as a
 - `crates/protocol/` (`marshell-protocol`): shared Rust protocol types and brand constants.
 - `crates/core/` (`marshell-core`): Rust core, local API, sessions, and terminal handling.
 - `src-tauri/` (`marshell-app`): thin Tauri application shell.
-- `scripts/`: check, fetch, and review scripts run through `package.json`.
+- `scripts/`: check, fetch, and review scripts run through `package.json`; `scripts/release/` holds what the release workflow runs.
 - `spikes/`: spike code in its own Cargo workspace, not part of the build.
 - `docs/`: product plans, research, accessibility checks, and spikes.
 
@@ -39,6 +39,8 @@ Use pnpm for the frontend and Cargo for Rust; both versions are pinned (`package
 - `cargo fmt --all` and `cargo clippy --workspace --all-targets -- -D warnings`.
 
 CI (`.github/workflows/ci.yml`, Windows only for now) runs the format check, clippy with warnings as errors, both test suites, `check:generated`, `pnpm build`, and `pnpm tauri build --no-bundle`.
+
+A tag `v0.1.0-alpha.N` starts the release workflow (`.github/workflows/release.yml`), which builds the installer, smoke-tests it and publishes an alpha. A pull request that touches the installer or `scripts/release/` gets the same build and smoke test as a dry run. `docs/RELEASING.md` has the steps; don't push a tag unless the task is a release.
 
 ## Verifying a change
 

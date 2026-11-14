@@ -1,0 +1,278 @@
+name: release
+
+# An alpha release (PLAN §9, slice 9a; how to cut one: docs/RELEASING.md).
+#
+#   a tag v0.1.0-alpha.N   build -> publish -> winget-check -> winget-submit
+#   a pull request         build only, as a dry run, when it touches the installer or the release scripts
+#   run by hand            dry-run: build only. check: winget-check for a published tag.
+#                          submit: winget-submit for a published tag.
+#
+# Only `publish` writes to the repo, and only `winget-submit` reads the WINGET_TOKEN secret. Neither runs
+# for a pull request.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - src-tauri/windows/**
+      - src-tauri/tauri*.conf.json
+      - src-tauri/build.rs
+      - scripts/release/**
+      - crates/cli/examples/**
+      - crates/cli/src/uninstall.rs
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "dry-run: build and smoke-test, publish nothing. check: install a published release with winget. submit: send a published release to winget-pkgs."
+        type: choice
+        options: [dry-run, check, submit]
+        default: dry-run
+      tag:
+        description: "For check and submit: the release's tag, like v0.1.0-alpha.1"
+        required: false
+        type: string
+      source:
+        description: "For check: install from the release's manifest folder, or from the community repository"
+        type: choice
+        options: [manifest, community]
+        default: manifest
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}-${{ inputs.action }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    if: github.event_name != 'workflow_dispatch' || inputs.action == 'dry-run'
+    runs-on: windows-latest
+    timeout-minutes: 90
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      # rust-toolchain.toml pins the toolchain; rustup installs it on first use.
+      # The two actions that aren't GitHub's own are pinned to a commit: this job builds what people install.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: release
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm fetch:conpty
+      # The tag is the version. It is stamped into this checkout and never committed. Anything but
+      # v0.1.0-alpha.N stops the run here.
+      - name: Stamp the version
+        id: version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $version = node scripts/release/set-version.mjs --tag $env:GITHUB_REF_NAME
+          } else {
+            $version = node scripts/release/set-version.mjs --dry-run
+          }
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "Building Marshell $version"
+      - name: Build the installer
+        run: pnpm tauri build --bundles nsis --config src-tauri/tauri.release.conf.json
+      - name: Build the smoke test's fixture
+        run: cargo build --release -p marshell-cli --example smoke-fixture
+      - name: Manifest, checksum and notes
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $name = "Marshell_${env:VERSION}_x64-setup.exe"
+          New-Item -ItemType Directory out | Out-Null
+          Copy-Item "target/release/bundle/nsis/$name" out/
+          $sha = node scripts/release/winget-manifest.mjs --version $env:VERSION --installer "out/$name" --out out/manifest
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          # The form `sha256sum --check` reads: one line that ends in a line feed alone.
+          Set-Content -Path "out/$name.sha256" -Value "$($sha.ToLower())  $name`n" -NoNewline
+          node scripts/release/notes.mjs --version $env:VERSION --sha256 $sha | Set-Content -Path out/notes.md
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Compress-Archive -Path out/manifest/* -DestinationPath "out/winget-manifest-${env:VERSION}.zip"
+          Copy-Item target/release/examples/smoke-fixture.exe out/
+          Get-ChildItem out | Format-Table Name, Length
+      - name: Validate the manifest
+        shell: pwsh
+        run: |
+          if (Get-Command winget -ErrorAction SilentlyContinue) {
+            winget validate --manifest out/manifest --disable-interactivity
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          } else {
+            "::notice::winget isn't on this runner, so the manifest wasn't validated here. winget-check validates it."
+          }
+      - name: Smoke test (install, start, update over it, uninstall)
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: ./scripts/release/smoke.ps1 -Installer "out/Marshell_${env:VERSION}_x64-setup.exe" -Version $env:VERSION -Fixture out/smoke-fixture.exe
+      # Kept when the smoke test fails too, to look at what was built. Only `publish` releases it, and
+      # that needs this job to pass.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release
+          path: out/
+          if-no-files-found: warn
+
+  publish:
+    needs: build
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: out
+      - name: Publish the pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease --verify-tag \
+            --title "Marshell $VERSION" --notes-file out/notes.md \
+            "out/Marshell_${VERSION}_x64-setup.exe" \
+            "out/Marshell_${VERSION}_x64-setup.exe.sha256" \
+            "out/winget-manifest-${VERSION}.zip"
+
+  # A fresh runner is a PC that never had Marshell: it installs the published release with winget, starts
+  # it and uninstalls it with winget.
+  winget-check:
+    needs: publish
+    if: always() && (needs.publish.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.action == 'check'))
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: The release's tag and version
+        id: release
+        shell: pwsh
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          $version = node --input-type=module -e "import { versionFromTag } from './scripts/release/version.mjs'; console.log(versionFromTag(process.argv[1]));" -- $env:TAG
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          "tag=$env:TAG" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+      # The fixture that puts real hooks in scratch CLI folders is built by `build`. A check run by hand
+      # has none, and the smoke test then skips its hook checks.
+      - uses: actions/download-artifact@v4
+        if: needs.publish.result == 'success'
+        with:
+          name: release
+          path: out
+      - name: Make winget available
+        shell: pwsh
+        run: |
+          if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+            Install-Module Microsoft.WinGet.Client -Force -Scope CurrentUser
+            Repair-WinGetPackageManager -Latest -Force
+          }
+          winget --version
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Download the release's manifest folder
+        if: inputs.source != 'community'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          gh release download $env:TAG --repo $env:GITHUB_REPOSITORY --pattern "winget-manifest-${env:VERSION}.zip" --dir fallback
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Expand-Archive "fallback/winget-manifest-${env:VERSION}.zip" -DestinationPath fallback/manifest
+          winget settings --enable LocalManifestFiles
+          winget validate --manifest fallback/manifest --disable-interactivity
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Smoke test with winget
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          SOURCE: ${{ inputs.source }}
+        run: |
+          $how = if ($env:SOURCE -eq 'community') { @{ WingetId = 'Doofess.Marshell' } } else { @{ WingetManifest = 'fallback/manifest' } }
+          if (Test-Path out/smoke-fixture.exe) { $how.Fixture = 'out/smoke-fixture.exe' }
+          ./scripts/release/smoke.ps1 -Version $env:VERSION @how
+
+  # Opens the pull request on microsoft/winget-pkgs from the token owner's fork, once winget-check has
+  # installed and uninstalled the release with winget. A release that went out before the token existed
+  # is submitted later with `action: submit`.
+  winget-submit:
+    needs: [publish, winget-check]
+    if: always() && ((needs.publish.result == 'success' && needs.winget-check.result == 'success') || (github.event_name == 'workflow_dispatch' && inputs.action == 'submit'))
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      # v1.28.1.0. docs/RELEASING.md says how to move to a newer one.
+      WINGETCREATE_URL: https://github.com/microsoft/winget-create/releases/download/v1.28.1.0/wingetcreate.exe
+      WINGETCREATE_SHA256: 63d980ba79e97042395bd6eb5992c2db9e01e9e7a8a22958a95c288f27310413
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: The release's tag and version
+        id: release
+        shell: pwsh
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+          HAS_TOKEN: ${{ secrets.WINGET_TOKEN != '' }}
+        run: |
+          $version = node --input-type=module -e "import { versionFromTag } from './scripts/release/version.mjs'; console.log(versionFromTag(process.argv[1]));" -- $env:TAG
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          "tag=$env:TAG" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "token=$env:HAS_TOKEN" >> $env:GITHUB_OUTPUT
+          if ($env:HAS_TOKEN -ne 'true') {
+            "::notice::No WINGET_TOKEN secret, so $env:TAG wasn't submitted to winget-pkgs. Add the secret (docs/RELEASING.md), then run this workflow with action 'submit' and tag '$env:TAG'."
+          }
+      - name: Download the release's manifest folder
+        if: steps.release.outputs.token == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          gh release download $env:TAG --repo $env:GITHUB_REPOSITORY --pattern "winget-manifest-${env:VERSION}.zip" --dir fallback
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Expand-Archive "fallback/winget-manifest-${env:VERSION}.zip" -DestinationPath fallback/manifest
+      - name: Download wingetcreate
+        if: steps.release.outputs.token == 'true'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest $env:WINGETCREATE_URL -OutFile wingetcreate.exe
+          $sha = (Get-FileHash wingetcreate.exe -Algorithm SHA256).Hash.ToLower()
+          if ($sha -ne $env:WINGETCREATE_SHA256) {
+            "::error::wingetcreate.exe's SHA-256 is $sha, not the pinned one."
+            exit 1
+          }
+      - name: Submit to microsoft/winget-pkgs
+        if: steps.release.outputs.token == 'true'
+        shell: pwsh
+        env:
+          # wingetcreate reads the token from here, so it never appears on a command line.
+          WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          ./wingetcreate.exe submit --prtitle "New version: Doofess.Marshell version $env:VERSION" --no-open fallback/manifest
+          if ($LASTEXITCODE -ne 0) { exit 1 }

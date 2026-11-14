@@ -1,0 +1,91 @@
+# Releasing an alpha
+
+Alpha builds are for people who want to try Marshell before v1. They install with winget, cost nothing to publish and are not signed. The decisions are in `docs/PLAN.md` §9, "Slice 9a decisions"; the evidence is in `docs/research/2026-11-14-winget-alpha.md` and `docs/research/2026-11-14-alpha-installer.md`.
+
+## Cut a release
+
+1. `main` is green and holds what the release should carry.
+2. Run a dry run on `main` and wait for it: `gh workflow run release.yml -f action=dry-run`. A pull request runs one only when it touches the installer or the release scripts, and a change elsewhere (the CLI's uninstall, an adapter's hooks) can break what the smoke test checks. A tag whose build fails publishes nothing, but its number is used up.
+3. Tag it and push the tag. The tag is the version: `v0.1.0-alpha.N`, with N one more than the last release.
+
+   ```sh
+   git tag v0.1.0-alpha.2
+   git push origin v0.1.0-alpha.2
+   ```
+
+4. Watch the `release` workflow. Nothing else is needed: the version is stamped into the build from the tag, and no file in the repo changes.
+
+A tag of any other form stops the workflow before it builds.
+
+## What the workflow does
+
+`.github/workflows/release.yml` has four jobs.
+
+| Job | When | What it does |
+| --- | --- | --- |
+| `build` | A tag, a pull request that touches the installer or the release scripts, or a manual `dry-run` | Stamps the version (`0.1.0-alpha.0` for a dry run), builds the per-user NSIS installer, writes the winget manifest, the checksum and the release notes, and runs the smoke test on the installer. |
+| `publish` | A tag, after `build` | Creates the GitHub pre-release with the installer, its `.sha256` and `winget-manifest-<version>.zip`. |
+| `winget-check` | After `publish`, or a manual `check` | On a fresh runner: installs the release with winget from its manifest folder, starts the app and uninstalls it with winget. |
+| `winget-submit` | After `winget-check` passes, or a manual `submit` | Opens the pull request on `microsoft/winget-pkgs` with Microsoft's `wingetcreate`. Without the token it says so and ends green. |
+
+The smoke test is `scripts/release/smoke.ps1`. It installs silently, checks the uninstall entry and the installed files, starts the app and asks it for its sessions, updates over the running app, uninstalls, and checks what is left: no hooks in the CLI files, no program files, and `~/.marshell` kept without its `bin` folder. It runs on GitHub's runners and nowhere else: each uninstall in it is a real one, which also takes Marshell's hooks out of `~/.gemini`, `~/.agents` and every WSL distro, and no variable moves those. The script refuses to start outside GitHub Actions (a VM that is thrown away afterwards can pass `-ThrowawayMachine`), and where Marshell is installed or running.
+
+To try a change to the installer without releasing, open a pull request (the dry run starts by itself) or run the workflow by hand with `action: dry-run`.
+
+## The winget token
+
+`winget-submit` needs a GitHub token of the repo owner's, because the pull request on `microsoft/winget-pkgs` comes from the owner's fork.
+
+1. On GitHub: Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token. Tick `public_repo` and nothing else. `wingetcreate` doesn't accept fine-grained tokens.
+2. In this repo: Settings → Secrets and variables → Actions → New repository secret, named `WINGET_TOKEN`.
+
+The token reaches `wingetcreate` through an environment variable and is never on a command line. Only `winget-submit` reads it, and that job doesn't run for pull requests.
+
+The first pull request on `microsoft/winget-pkgs` gets a comment from Microsoft's bot asking for the contributor agreement. The repo owner answers it once, from the account that owns the token.
+
+## A release that went out before the token, or whose submission failed
+
+Run the workflow by hand with `action: submit` and the release's tag:
+
+```sh
+gh workflow run release.yml -f action=submit -f tag=v0.1.0-alpha.1
+```
+
+## When Microsoft hasn't accepted a version yet
+
+Review takes from hours to days, and nothing guarantees that an unsigned alpha is accepted. Until then, and if it is refused, the release page's fallback works: the manifest folder in `winget-manifest-<version>.zip`, installed with `winget install --manifest`. The release notes explain it.
+
+Once a version is in the community repository, check it end to end:
+
+```sh
+gh workflow run release.yml -f action=check -f tag=v0.1.0-alpha.1 -f source=community
+```
+
+## Known limits of the alpha installer
+
+The release notes (`scripts/release/notes.mjs`) tell friends about each of these.
+
+- Uninstalling from Windows' Settings runs with Explorer's environment. A `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME` or `QWEN_HOME` that is set only in a shell isn't seen, and what Marshell put in that folder stays: Claude Code's skill (its hooks file doesn't follow `CLAUDE_CONFIG_DIR`), Codex's hooks, Copilot CLI's hooks and status line, Qwen Code's hooks, status line and skill. `~/.marshell/bin` is removed all the same, so those hooks then point at a bridge that is gone. `winget uninstall` from that shell is expected to see the variable; the first release's `winget-check` shows whether it does.
+- A CLI file that can't be read or doesn't parse is left as it is, and `~/.marshell/bin` stays so the hooks in it keep working.
+- Uninstalling with the setup program itself (running the installer over an install and choosing to uninstall, or cancelling right after its "uninstall before installing" step) removes the program and leaves the hooks. The uninstaller can't tell that from an update by hand, which must keep them. `%USERPROFILE%\.marshell\bin\marshell.exe uninstall` takes them out.
+- The installer and the uninstaller close a running Marshell, and the sessions in it, before they replace or remove files. They don't close an administrator session's helper (`marshell-host.exe`) or a hook that is running at that moment. What the installer does with a file that is in use hasn't been tested.
+- Windows SmartScreen warns when the installer is run by hand, because it isn't signed.
+- An uninstall returns before it has finished, as every NSIS uninstaller does: it hands over to a copy of itself, which then removes the files and takes the hooks out (up to a couple of minutes when a WSL distro has to start). A `winget install` that meets it can lose the files it just wrote. Wait until `winget list Marshell` no longer shows it.
+- An install from the release page's manifest folder isn't tied to the package id until Microsoft accepts the package, so `winget upgrade Doofess.Marshell` and `winget uninstall Doofess.Marshell` don't find it. The notes give the forms that work.
+- The installer carries `LICENSE` and `THIRD_PARTY_NOTICES.md` as they are in the repo. The full licence list for every bundled crate and package is phase 9 work that this slice doesn't do.
+
+## Moving to a newer wingetcreate
+
+`release.yml` pins `wingetcreate.exe` by its release address and SHA-256 (`WINGETCREATE_URL`, `WINGETCREATE_SHA256`). To move, take both from the new release:
+
+```sh
+gh api repos/microsoft/winget-create/releases/latest --jq '.tag_name, (.assets[] | select(.name == "wingetcreate.exe") | .digest)'
+```
+
+## Moving to a newer pinned action
+
+The `build` job pins the two actions that aren't GitHub's own (`Swatinem/rust-cache`, `pnpm/action-setup`) to a commit, with the version in a comment. To move one, take the commit behind its release tag:
+
+```sh
+gh api repos/Swatinem/rust-cache/commits/v2.9.3 --jq .sha
+```

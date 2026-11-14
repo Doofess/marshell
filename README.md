@@ -4,7 +4,15 @@
 
 Marshell is a desktop terminal for running AI coding agents side by side. Claude Code, Codex CLI, other agent CLIs and ordinary shells each get their own session. Marshell keeps the sessions organised and works the same way whichever agent a session runs.
 
-> **Status: early development.** No release yet. Windows 11 is the only platform tested. Linux and macOS are planned but not yet verified. Expect things to change.
+> **Status: alpha.** Alpha builds for Windows 11 are on the [Releases](https://github.com/Doofess/marshell/releases) page. Linux and macOS are planned but not yet verified. Expect things to change.
+
+## Install the alpha
+
+```
+winget install Doofess.Marshell
+```
+
+The alpha builds aren't signed, and Microsoft reviews each version before winget finds it. The release page of each version says how to install it meanwhile, how to update and what uninstalling removes.
 
 ## What works today
 
