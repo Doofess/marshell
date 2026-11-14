@@ -5,7 +5,7 @@
 //! Exit codes: 0 done or nothing to do, 1 refused, failed or declined, or a WSL distro that didn't answer.
 
 use marshell_core::agents::antigravity::hooks as agy_hooks;
-use marshell_core::agents::claude::hooks::{remove_plan, settings_path};
+use marshell_core::agents::claude::hooks::{RemovePlan, remove_plan, settings_path};
 use marshell_core::agents::codex::hooks as codex_hooks;
 use marshell_core::agents::copilot;
 use marshell_core::agents::copilot::hooks as copilot_hooks;
@@ -218,25 +218,35 @@ pub fn run(
 ) -> i32 {
     let settings = settings_path(env, user_home);
     let chain = paths::statusline_chain(home, "claude");
-    let (text, chain_text) = match (read_text(&settings), read_text(&chain)) {
-        (Ok(text), Ok(chain_text)) => (text, chain_text),
-        (Err(e), _) | (_, Err(e)) => {
-            let _ = writeln!(out, "{e}");
-            return 1;
-        }
-    };
-    let mut plan = match remove_plan(
-        &settings,
-        user_home,
-        text.as_deref(),
-        chain_text.as_deref(),
-        Some(&chain),
-        None,
-    ) {
+    // Claude Code's settings.json and its chain. A file that can't be read or planned from is reported and left
+    // alone, like every other CLI's below: the rest of the removal goes on without it, and the bin folder stays,
+    // because Claude Code's entries may still point at the bridge.
+    let claude = read_text(&settings).and_then(|text| {
+        let chain_text = read_text(&chain)?;
+        remove_plan(
+            &settings,
+            user_home,
+            text.as_deref(),
+            chain_text.as_deref(),
+            Some(&chain),
+            None,
+        )
+        .map_err(|e| e.to_string())
+    });
+    let mut claude_failed = false;
+    let mut plan = match claude {
         Ok(plan) => plan,
         Err(e) => {
             let _ = writeln!(out, "{e}");
-            return 1;
+            claude_failed = true;
+            RemovePlan {
+                changes: ChangeSet {
+                    title: String::new(),
+                    reason: String::new(),
+                    edits: Vec::new(),
+                },
+                statusline_left: false,
+            }
         }
     };
     // Codex's hooks.json. Nothing about its config.toml is read or written here. A file that can't be
@@ -502,11 +512,18 @@ pub fn run(
         }
     }
     let bin = paths::bin_dir(home);
-    let others_failed = hooks_failed || skill_unread || !distro_kept.is_empty();
+    let others_failed = claude_failed || hooks_failed || skill_unread || !distro_kept.is_empty();
     let has_bin = bin.exists() && !others_failed;
     // Non-zero when something was left, so a script notices.
     let ok = i32::from(others_failed || distro_unanswered);
     let keep_note = |out: &mut dyn Write| {
+        if claude_failed && bin.exists() {
+            let _ = writeln!(
+                out,
+                "The folder {} was left in place, because Claude Code's hooks may still point at it.",
+                bin.display()
+            );
+        }
         if hooks_failed && bin.exists() {
             let _ = writeln!(
                 out,
@@ -526,7 +543,7 @@ pub fn run(
     let left_note = "Your status line was changed since the setup and was left as it is.";
 
     if plan.changes.edits.is_empty() {
-        if claude_empty {
+        if claude_empty && !claude_failed {
             let _ = writeln!(out, "Marshell has no hooks in {}.", settings.display());
         }
         if plan.statusline_left {
@@ -905,6 +922,27 @@ mod tests {
         assert!(out.contains("left in place"), "{out}");
         assert!(!out.contains("will be removed"), "{out}");
         let _ = broken;
+    }
+
+    #[test]
+    fn a_claude_file_that_does_not_parse_does_not_stop_codexs_removal() {
+        let f = installed(ORIGINAL);
+        let mine = "{\"hooks\": {\"Stop\": [{\"hooks\": [{\"type\": \"command\", \"command\": \"my-stop\"}]}]}}\n";
+        let codex = install_codex(&f, Some(mine));
+        let broken = "{ \"hooks\": [oops\n";
+        std::fs::write(&f.settings, broken).unwrap();
+        let (code, out) = run_with(&f, "", true);
+        // Claude Code's file is reported by name and left byte for byte as it was.
+        assert!(out.contains(&*f.settings.to_string_lossy()), "{out}");
+        assert!(!out.contains("Marshell has no hooks in"), "{out}");
+        assert_eq!(std::fs::read_to_string(&f.settings).unwrap(), broken);
+        // Codex's hooks still came out.
+        let after = std::fs::read_to_string(&codex).unwrap();
+        assert!(after.contains("my-stop") && !after.contains("mshl1"), "{after}");
+        // Claude Code's entries may still point at the bridge, so bin stays, and the exit says so.
+        assert!(marshell_core::paths::bridge_exe(&f.home).exists(), "{out}");
+        assert!(out.contains("left in place") && out.contains("Claude Code's"), "{out}");
+        assert_ne!(code, 0, "{out}");
     }
 
     /// Installs Antigravity's hooks under the fixture's user home with the real plan and config service.
