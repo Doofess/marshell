@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { interpretBlur, interpretKeyDown, interpretKeyUp, type FocusKind } from "./keys";
+import { interpretBlur, interpretKeyDown, interpretKeyUp, interpretMissedRelease, type FocusKind } from "./keys";
 import { INITIAL_NAV, type NavState } from "./types";
 import type { KeyEventLike } from "../bindings";
 
@@ -39,6 +39,14 @@ describe("the navigation modifier going down and up", () => {
     expect(interpretBlur(held())).toEqual([{ type: "modifier-up" }]);
     expect(interpretBlur(INITIAL_NAV)).toEqual([]);
   });
+  it("ends at the next key going down without it, when its release went to a page", () => {
+    const missed = (e: KeyEventLike, state: NavState) => interpretMissedRelease(e, { nav: "ctrl+shift", state });
+    for (const e of [ev("ControlLeft", { ctrlKey: true }), ev("ShiftLeft", { shiftKey: true }), ev("KeyA")])
+      expect(missed(e, held({ engaged: true })), e.code).toEqual([{ type: "modifier-up" }]);
+    expect(missed(ev("ArrowLeft", CS), held({ engaged: true }))).toEqual([]);
+    expect(missed(ev("AltRight", { ...CS, altKey: true }), held())).toEqual([]);
+    expect(missed(ev("ControlLeft", { ctrlKey: true }), INITIAL_NAV)).toEqual([]);
+  });
 });
 
 describe("keys with the modifier held", () => {
@@ -53,6 +61,9 @@ describe("keys with the modifier held", () => {
   });
   it("sends modifier-down first when the press of Tab is the first the page has heard of the modifier", () => {
     expect(down(ev("Tab", CS))).toEqual({ events: [{ type: "modifier-down" }, { type: "tab" }], preventDefault: true });
+  });
+  it("Shift with the modifier already held gives nothing, so a held Ctrl+Tab's Shift and its re-sent Ctrl+Shift+Tab may come in either order", () => {
+    expect(down(ev("ShiftLeft", CS), "terminal", held())).toBeNull();
   });
   it("Backspace selects no terminal", () => {
     expect(down(ev("Backspace", CS), "terminal", held())).toEqual({ events: [{ type: "select-none" }], preventDefault: true });

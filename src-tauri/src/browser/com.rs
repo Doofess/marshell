@@ -1,7 +1,10 @@
 //! The WebView2 layer under a page (Windows). A handler runs inside WebView2's own callback, on the main thread: it
 //! reads its event and queues what follows with `post`, and never calls back into a webview from inside the callback.
 
-use super::rules::{KeyRoute, MAX_ICON_BYTES, focus_out_direction, icon_src, key_event, route_key};
+use super::rules::{
+    HOLD_LOOK, HoldLook, KeyEvent, KeyRoute, MAX_ICON_BYTES, TAB_HOLD, TabHold, focus_out_direction, icon_src,
+    key_event, route_key,
+};
 use super::{
     BrowserState, FocusOut, Job, PageFocus, PageIcon, PageKey, PageKeyEvent, PageState, emit, focus_app, lock, post,
     refuse,
@@ -9,7 +12,7 @@ use super::{
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, Url, Webview};
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG, COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG, COREWEBVIEW2_KEY_EVENT_KIND,
@@ -34,7 +37,9 @@ use windows::Win32::System::Com::{IStream, STREAM_SEEK_SET};
 use windows_core::Interface;
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
 use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject};
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetFocus, GetKeyState, VK_CONTROL, VK_MENU, VK_SHIFT};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    GetAsyncKeyState, GetFocus, GetKeyState, VK_CONTROL, VK_MENU, VK_SHIFT,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, IsWindowVisible};
 
 fn failed(what: &str, e: &windows_core::Error) {
@@ -52,6 +57,31 @@ fn missing(what: &str, e: &windows_core::Error) {
 fn down(vk: u16) -> bool {
     // SAFETY: reads this thread's key state; the handler runs on the thread that took the key message.
     unsafe { GetKeyState(i32::from(vk)) < 0 }
+}
+
+/// Whether a key is down now, for a held Ctrl+Tab's look at the keys, which comes with no key event to read the state of.
+fn held_now(vk: u16) -> bool {
+    // SAFETY: reads the keyboard's state now, which needs nothing from the calling thread.
+    unsafe { GetAsyncKeyState(i32::from(vk)) < 0 }
+}
+
+/// A held Ctrl+Tab, settled, goes to the app after what is already queued.
+fn send_held(app: &AppHandle, key: &str, event: KeyEvent) {
+    let (to, key) = (app.clone(), key.to_string());
+    post(app, move || forward(&to, &key, event));
+}
+
+/// A key the app claims goes to the app's webview, and the keyboard goes with it.
+fn forward(app: &AppHandle, key: &str, event: KeyEvent) {
+    focus_app(app);
+    emit(
+        app,
+        "browser://key",
+        PageKeyEvent {
+            key: key.to_string(),
+            event,
+        },
+    );
 }
 
 /// What a page's handlers carry: no pointer to the webview, so a handler can't keep its own webview alive.
@@ -121,10 +151,12 @@ pub fn install(app: &AppHandle, page: &Webview, key: &str, loading: Arc<AtomicBo
         }
         // The key-ups of the keys taken from the page, by virtual key.
         let taken: Arc<Mutex<HashSet<u32>>> = Arc::default();
-        if let Err(e) = focus_handlers(&page_of, &controller, taken.clone()) {
+        // A Ctrl+Tab waiting for its Shift.
+        let hold: Arc<Mutex<TabHold>> = Arc::default();
+        if let Err(e) = focus_handlers(&page_of, &controller, taken.clone(), hold.clone()) {
             failed("focus handlers", &e);
         }
-        if let Err(e) = key_handler(&page_of, &controller, taken) {
+        if let Err(e) = key_handler(&page_of, &controller, taken, hold) {
             failed("key handler", &e);
         }
         if let Err(e) = focus_out_handler(&page_of, &controller) {
@@ -244,11 +276,13 @@ fn process_handler(page: &Page, w: &ICoreWebView2) -> windows_core::Result<()> {
 }
 
 /// The app knows which page holds the keyboard. A page that takes it starts with no key held back: a key-up that
-/// went elsewhere (Alt+Tab with a taken key still down) must not swallow that key's next release.
+/// went elsewhere (Alt+Tab with a taken key still down) must not swallow that key's next release. A page that loses
+/// it drops a held Ctrl+Tab unsent: the person has moved on.
 fn focus_handlers(
     page: &Page,
     controller: &ICoreWebView2Controller,
     taken: Arc<Mutex<HashSet<u32>>>,
+    hold: Arc<Mutex<TabHold>>,
 ) -> windows_core::Result<()> {
     let mut token = 0i64;
     let send = |page: &Page, focused: bool| {
@@ -272,6 +306,7 @@ fn focus_handlers(
         )?;
         controller.add_LostFocus(
             &FocusChangedEventHandler::create(Box::new(move |_, _| {
+                lock(&hold).drop_hold();
                 send(&lost, false);
                 Ok(())
             })),
@@ -283,10 +318,16 @@ fn focus_handlers(
 /// Marshell's keys and F12 are taken from the page (6q-0 decision 9). The key-up of a taken key is taken too, by
 /// its virtual key, so a modifier let go first can't leak the release into the page. Nothing moves focus from
 /// inside this callback: what follows a taken key is posted.
+///
+/// A fresh Ctrl+Tab the app claims waits in `hold` for Tab's release or `TAB_HOLD` first (docs/PLAN.md §9, "Slice
+/// 6q-3 decisions" 14 and 15): Ctrl+Tab is the navigation chord without its Shift, and a quick hand can put Tab
+/// down a few milliseconds before Shift. WebView2 never reports Shift here, so a pooled thread looks for it every
+/// `HOLD_LOOK` while the hold lasts.
 fn key_handler(
     page: &Page,
     controller: &ICoreWebView2Controller,
     taken: Arc<Mutex<HashSet<u32>>>,
+    hold: Arc<Mutex<TabHold>>,
 ) -> windows_core::Result<()> {
     let page = page.clone();
     let mut token = 0i64;
@@ -304,7 +345,16 @@ fn key_handler(
         let is_down =
             kind == COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN || kind == COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN;
         let is_up = kind == COREWEBVIEW2_KEY_EVENT_KIND_KEY_UP || kind == COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_UP;
+        if !is_down && !is_up {
+            return Ok(());
+        }
+        let (ctrl, shift, alt) = (down(VK_CONTROL), down(VK_SHIFT), down(VK_MENU));
+        // Each lock below ends with its statement: none is held across a post or a COM call.
         if is_up {
+            let released = lock(&hold).up(vk, ctrl, shift, alt);
+            if let Some(event) = released {
+                send_held(&page.app, &page.key, event);
+            }
             let was_taken = lock(&taken).remove(&vk);
             if was_taken {
                 // SAFETY: setting the event's own answer inside its callback.
@@ -312,14 +362,40 @@ fn key_handler(
             }
             return Ok(());
         }
-        if !is_down {
-            return Ok(());
-        }
-        let (ctrl, shift, alt) = (down(VK_CONTROL), down(VK_SHIFT), down(VK_MENU));
         let route = match page.app.try_state::<BrowserState>() {
             Some(state) => route_key(vk, ctrl, shift, alt, &lock(&state.claimed)),
             None => KeyRoute::Page,
         };
+        let step = lock(&hold).down(vk, ctrl, shift, alt, status.WasKeyDown.as_bool(), route);
+        // Another key during a hold sends the held Ctrl+Tab first, then goes on as itself.
+        if let Some(event) = step.release {
+            send_held(&page.app, &page.key, event);
+        }
+        if let Some(n) = step.started {
+            let (app, key, hold) = (page.app.clone(), page.key.clone(), hold.clone());
+            // A thread from the blocking pool, not one of its own per press. It reads the modifiers as they are now,
+            // since Shift's press never reaches this handler, and stops when the hold has ended by any road.
+            tauri::async_runtime::spawn_blocking(move || {
+                let start = Instant::now();
+                loop {
+                    std::thread::sleep(HOLD_LOOK);
+                    let late = start.elapsed() >= TAB_HOLD;
+                    let (ctrl, shift, alt) = (held_now(VK_CONTROL), held_now(VK_SHIFT), held_now(VK_MENU));
+                    let look = lock(&hold).look(n, ctrl, shift, alt, late);
+                    match look {
+                        HoldLook::Wait => {}
+                        HoldLook::Over => return,
+                        HoldLook::Send(event) => return send_held(&app, &key, event),
+                    }
+                }
+            });
+        }
+        if step.taken {
+            lock(&taken).insert(vk);
+            // SAFETY: setting the event's own answer inside its callback.
+            unsafe { args.SetHandled(true)? };
+            return Ok(());
+        }
         let (app, key) = (page.app.clone(), page.key.clone());
         let then: Job = match route {
             KeyRoute::Page => return Ok(()),
@@ -328,10 +404,7 @@ fn key_handler(
                 let Some(event) = key_event(vk, ctrl, shift, alt, status.WasKeyDown.as_bool()) else {
                     return Ok(());
                 };
-                Box::new(move || {
-                    focus_app(&app);
-                    emit(&app, "browser://key", PageKeyEvent { key, event });
-                })
+                Box::new(move || forward(&app, &key, event))
             }
         };
         lock(&taken).insert(vk);

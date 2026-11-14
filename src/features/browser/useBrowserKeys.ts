@@ -1,5 +1,6 @@
 import { useEffect, useEffectEvent } from "react";
 import type { Os } from "../../lib/keymap";
+import { afterTabHold } from "../../lib/navigation/tabHold";
 import { subscribeNav } from "../sessions/useNavigation";
 import { appClaims, claimedChords } from "./claimedChords";
 import { browser, onBrowser } from "./browserApi";
@@ -102,12 +103,13 @@ export function useBrowserKeys({ os, focusTerminal }: Options): void {
         quietly(() => slot.focus({ preventScroll: true }));
         slot.dispatchEvent(new KeyboardEvent("keydown", { code, key: keyForCode(code, shift), ctrlKey: ctrl, shiftKey: shift, altKey: alt, repeat, bubbles: true, cancelable: true }));
         // The key was the app's, and the page's turn comes back with the next frame unless the key moved focus or covered the page.
+        // A Ctrl+Tab held in the app meanwhile goes first: handing the page the keys would drop it.
         cancelAnimationFrame(frame);
-        frame = requestAnimationFrame(() => {
+        frame = requestAnimationFrame(() => afterTabHold(() => {
           const then = afterKey({ onSlot: document.activeElement === slot, covered: pageCovered() });
           if (then === "giveBack") browser.focus(key, "programmatic").catch(ignore);
           else if (then === "end" && owner === key) owner = null;
-        });
+        }));
       }),
     ];
 
@@ -121,7 +123,8 @@ export function useBrowserKeys({ os, focusTerminal }: Options): void {
       const key = heldAtCover;
       heldAtCover = null;
       if (key === null) return;
-      requestAnimationFrame(() => {
+      // A Ctrl+Tab held in the app meanwhile goes first, as after a key.
+      requestAnimationFrame(() => afterTabHold(() => {
         const slot = slotOf(key);
         // The cover took the person to another tab or session: the page's turn is over.
         if (!slot || !pageOnScreen(slot)) {
@@ -136,7 +139,7 @@ export function useBrowserKeys({ os, focusTerminal }: Options): void {
         }
         if (on !== slot) quietly(() => slot.focus({ preventScroll: true }));
         browser.focus(key, "programmatic").catch(ignore);
-      });
+      }));
     });
 
     // The window comes back to the front (Alt+Tab, a click on the title bar): wry has moved the keys to the app's webview, and the
@@ -150,13 +153,14 @@ export function useBrowserKeys({ os, focusTerminal }: Options): void {
       const at = performance.now();
       const key = owner;
       if (key === null) return;
-      setTimeout(() => {
+      // A Ctrl+Tab pressed since the window came back goes first: handing the page the keys would blur the window and drop it.
+      setTimeout(() => afterTabHold(() => {
         if (key !== owner) return;
         const onScreen = pageOnScreen(slotOf(key));
         // A page that left the screen since it had the keys has had its turn.
         if (!onScreen) owner = null;
         if (handBack({ pageHadKeys: true, pointerSince: pointerAt > at, covered: pageCovered(), docHasFocus: document.hasFocus(), onScreen })) browser.focus(key, "programmatic").catch(ignore);
-      }, 100);
+      }), 100);
     };
     window.addEventListener("pointerdown", onPointer, true);
     window.addEventListener("focus", onWindowFocus);

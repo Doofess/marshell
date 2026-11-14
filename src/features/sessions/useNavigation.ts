@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 import { inMenu } from "../../components/ContextMenu/menuKeys";
 import type { KeyEventLike } from "../../lib/bindings";
 import type { Os } from "../../lib/keymap";
-import { interpretBlur, interpretKeyDown, interpretKeyUp, type FocusKind } from "../../lib/navigation/keys";
+import { interpretBlur, interpretKeyDown, interpretKeyUp, interpretMissedRelease, type FocusKind } from "../../lib/navigation/keys";
 import { run, type Result } from "../../lib/navigation/machine";
 import { DEFAULT_NAV_MODIFIER, isNavModifierHeld } from "../../lib/navigation/modifier";
 import { INITIAL_NAV, sameTarget, type NavContext, type NavEffect, type NavEvent, type NavLayout, type NavState, type Rect, type Target } from "../../lib/navigation/types";
@@ -141,6 +141,8 @@ export function useNavigation(opts: Options): { cursor: NavCursorView | null; no
       }
       send(result.events);
     };
+    // First of all: a hold whose release went to a page ends at the next key without the modifier.
+    const missed = (e: KeyboardEvent) => send(interpretMissedRelease(e, { nav: DEFAULT_NAV_MODIFIER, state: current }));
     const capture = keyDown(true);
     const bubble = keyDown(false);
     const keyUp = (e: KeyboardEvent) => send(interpretKeyUp(e, { nav: DEFAULT_NAV_MODIFIER, state: current }));
@@ -149,12 +151,14 @@ export function useNavigation(opts: Options): { cursor: NavCursorView | null; no
     const focusIn = (e: FocusEvent) => {
       if (noneRef.current && e.target instanceof Element && focusKindOf(e.target) === "terminal") setNoneSelected((noneRef.current = false));
     };
+    window.addEventListener("keydown", missed, true);
     window.addEventListener("keydown", capture, true);
     window.addEventListener("keydown", bubble);
     window.addEventListener("keyup", keyUp, true);
     window.addEventListener("blur", blur);
     window.addEventListener("focusin", focusIn);
     return () => {
+      window.removeEventListener("keydown", missed, true);
       window.removeEventListener("keydown", capture, true);
       window.removeEventListener("keydown", bubble);
       window.removeEventListener("keyup", keyUp, true);

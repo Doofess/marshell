@@ -3,6 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 use tauri::Url;
 
 /// An origin a page may never open: the dev server's, the local API's. A host and a port.
@@ -99,6 +100,7 @@ pub struct Chord {
 }
 
 // Windows virtual-key codes the rules name.
+pub const VK_TAB: u32 = 0x09;
 pub const VK_ESCAPE: u32 = 0x1B;
 pub const VK_L: u32 = 0x4C;
 pub const VK_F12: u32 = 0x7B;
@@ -216,6 +218,113 @@ pub fn key_event(vk: u32, ctrl: bool, shift: bool, alt: bool, was_down: bool) ->
         alt,
         repeat: was_down,
     })
+}
+
+/// How long a page's Ctrl+Tab waits for its Shift (docs/PLAN.md §9, "Slice 6q-3 decisions" 14 and 15).
+pub const TAB_HOLD: Duration = Duration::from_millis(50);
+
+/// How often a held Ctrl+Tab looks at the keys for its Shift.
+pub const HOLD_LOOK: Duration = Duration::from_millis(2);
+
+/// A page's Ctrl+Tab held back from the app for a moment. Ctrl+Tab ("Next tab") is the navigation chord Ctrl+Shift+Tab
+/// without its Shift, and a quick hand can put Tab down a few milliseconds before Shift. WebView2 never reports Shift
+/// to the shell ("A few specific keys are never considered accelerators, such as Shift"), so the shell looks at the
+/// keys every `HOLD_LOOK` while it holds, and ends the hold as Ctrl+Shift+Tab when it sees Ctrl and Shift down, as
+/// the app does at Shift's key-down. Otherwise the hold ends at Tab's release, at `TAB_HOLD`, or at another key.
+#[derive(Debug, Default)]
+pub struct TabHold {
+    /// The hold now running, by number, so a late look from an earlier hold sends nothing.
+    held: Option<u64>,
+    next: u64,
+}
+
+/// What a key going down does to the hold.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct HoldStep {
+    /// The chord to send to the app now.
+    pub release: Option<KeyEvent>,
+    /// The key is the hold's: keep it from the page and skip its routing.
+    pub taken: bool,
+    /// A hold began: call `look` with this number every `HOLD_LOOK` until it answers `Over` or `Send`.
+    pub started: Option<u64>,
+}
+
+/// What a look at the keys during a hold does.
+#[derive(Debug, PartialEq, Eq)]
+pub enum HoldLook {
+    /// The hold has ended, or was dropped: stop looking.
+    Over,
+    /// Still holding.
+    Wait,
+    /// The hold ended now: send this chord to the app.
+    Send(KeyEvent),
+}
+
+/// The chord a hold ends as, from the keys down when it ends: Ctrl+Shift+Tab only with Ctrl and Shift and no Alt.
+fn settled(ctrl: bool, shift: bool, alt: bool) -> KeyEvent {
+    KeyEvent {
+        code: "Tab",
+        ctrl: true,
+        shift: ctrl && shift && !alt,
+        alt: false,
+        repeat: false,
+    }
+}
+
+impl TabHold {
+    /// A key going down; `route` is where it goes without the hold. A fresh Ctrl+Tab the app claims is held; while
+    /// one is, Tab's repeat is taken and any other key ends the hold, then goes on itself.
+    pub fn down(&mut self, vk: u32, ctrl: bool, shift: bool, alt: bool, repeat: bool, route: KeyRoute) -> HoldStep {
+        if self.held.is_some() {
+            if vk == VK_TAB && repeat {
+                return HoldStep {
+                    taken: true,
+                    ..HoldStep::default()
+                };
+            }
+            self.held = None;
+            return HoldStep {
+                release: Some(settled(ctrl, shift, alt)),
+                ..HoldStep::default()
+            };
+        }
+        if vk != VK_TAB || !ctrl || shift || alt || repeat || route != KeyRoute::App {
+            return HoldStep::default();
+        }
+        self.next += 1;
+        self.held = Some(self.next);
+        HoldStep {
+            taken: true,
+            started: self.held,
+            ..HoldStep::default()
+        }
+    }
+
+    /// A key coming up: Tab's release ends the hold. Ctrl coming up first changes nothing; the time running out ends it.
+    pub fn up(&mut self, vk: u32, ctrl: bool, shift: bool, alt: bool) -> Option<KeyEvent> {
+        if vk != VK_TAB || self.held.take().is_none() {
+            return None;
+        }
+        Some(settled(ctrl, shift, alt))
+    }
+
+    /// A look at the keys down now during hold `hold`, `late` once `TAB_HOLD` has passed. Ctrl and Shift with no Alt
+    /// end it as Ctrl+Shift+Tab at once; when it is late it ends as what is down.
+    pub fn look(&mut self, hold: u64, ctrl: bool, shift: bool, alt: bool, late: bool) -> HoldLook {
+        if self.held != Some(hold) {
+            return HoldLook::Over;
+        }
+        if !late && !(ctrl && shift && !alt) {
+            return HoldLook::Wait;
+        }
+        self.held = None;
+        HoldLook::Send(settled(ctrl, shift, alt))
+    }
+
+    /// The page lost the keyboard: the person moved on, so the held key is dropped unsent.
+    pub fn drop_hold(&mut self) {
+        self.held = None;
+    }
 }
 
 /// The largest site icon passed to the app's webview.
@@ -740,8 +849,9 @@ mod tests {
     const VK_T: u32 = 0x54;
     const VK_V: u32 = 0x56;
     const VK_Z: u32 = 0x5A;
-    const VK_TAB: u32 = 0x09;
     const VK_F5: u32 = 0x74;
+    /// The tests' own: `com.rs` reads Ctrl through the `windows` crate's `VK_CONTROL`.
+    const VK_CONTROL: u32 = 0x11;
 
     fn chord(code: &str, ctrl: bool, shift: bool, alt: bool) -> Chord {
         Chord {
@@ -798,6 +908,207 @@ mod tests {
         assert_eq!(route_key(VK_Q, true, false, true, &c), KeyRoute::Page);
         // A key with no code can't be in the app's list.
         assert_eq!(route_key(0x07, true, true, false, &c), KeyRoute::Page);
+    }
+
+    /// The chord a hold sends on: Ctrl+Tab, or Ctrl+Shift+Tab.
+    fn tab(shift: bool) -> KeyEvent {
+        KeyEvent {
+            code: "Tab",
+            ctrl: true,
+            shift,
+            alt: false,
+            repeat: false,
+        }
+    }
+
+    /// A hold begun by a claimed Ctrl+Tab, and its number for `timeout`.
+    fn held() -> (TabHold, u64) {
+        let mut hold = TabHold::default();
+        let step = hold.down(VK_TAB, true, false, false, false, KeyRoute::App);
+        (hold, step.started.expect("a hold began"))
+    }
+
+    #[test]
+    fn a_claimed_ctrl_tab_from_a_page_is_held() {
+        let mut hold = TabHold::default();
+        let step = hold.down(VK_TAB, true, false, false, false, KeyRoute::App);
+        assert!(step.taken);
+        assert!(step.started.is_some());
+        assert_eq!(step.release, None);
+    }
+
+    #[test]
+    fn an_unclaimed_ctrl_tab_or_another_chord_is_not_held() {
+        for (ctrl, shift, alt, repeat, route) in [
+            (true, false, false, false, KeyRoute::Page),
+            (true, true, false, false, KeyRoute::App),
+            (true, false, true, false, KeyRoute::App),
+            (true, false, false, true, KeyRoute::App),
+            (false, false, false, false, KeyRoute::App),
+        ] {
+            let mut hold = TabHold::default();
+            assert_eq!(
+                hold.down(VK_TAB, ctrl, shift, alt, repeat, route),
+                HoldStep::default(),
+                "{ctrl} {shift} {alt} {repeat} {route:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn tabs_release_with_shift_in_sends_ctrl_shift_tab() {
+        let (mut hold, _) = held();
+        assert_eq!(hold.up(VK_TAB, true, true, false), Some(tab(true)));
+        assert_eq!(hold.up(VK_TAB, true, true, false), None);
+    }
+
+    #[test]
+    fn tabs_release_without_shift_or_ctrl_or_with_alt_sends_ctrl_tab() {
+        for (ctrl, shift, alt) in [(true, false, false), (false, true, false), (true, true, true)] {
+            let (mut hold, _) = held();
+            assert_eq!(
+                hold.up(VK_TAB, ctrl, shift, alt),
+                Some(tab(false)),
+                "{ctrl} {shift} {alt}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_time_running_out_reads_the_keys_and_sends_once_and_a_stale_look_nothing() {
+        let (mut hold, n) = held();
+        assert_eq!(hold.look(n, true, true, false, true), HoldLook::Send(tab(true)));
+        assert_eq!(hold.look(n, true, true, false, true), HoldLook::Over);
+        let m = hold
+            .down(VK_TAB, true, false, false, false, KeyRoute::App)
+            .started
+            .expect("a second hold began");
+        assert_ne!(m, n);
+        assert_eq!(hold.look(n, true, false, false, true), HoldLook::Over);
+        assert_eq!(hold.look(m, true, false, false, true), HoldLook::Send(tab(false)));
+    }
+
+    #[test]
+    fn the_time_running_out_with_ctrl_up_or_alt_down_sends_ctrl_tab() {
+        for (ctrl, shift, alt) in [(false, true, false), (true, true, true), (false, false, false)] {
+            let (mut hold, n) = held();
+            assert_eq!(
+                hold.look(n, ctrl, shift, alt, true),
+                HoldLook::Send(tab(false)),
+                "{ctrl} {shift} {alt}"
+            );
+        }
+    }
+
+    #[test]
+    fn ctrl_and_shift_seen_during_the_hold_send_ctrl_shift_tab_at_once() {
+        let (mut hold, n) = held();
+        assert_eq!(hold.look(n, true, false, false, false), HoldLook::Wait);
+        assert_eq!(hold.look(n, false, true, false, false), HoldLook::Wait);
+        assert_eq!(hold.look(n, true, true, true, false), HoldLook::Wait);
+        assert_eq!(hold.look(n, true, true, false, false), HoldLook::Send(tab(true)));
+        assert_eq!(hold.look(n, true, true, false, false), HoldLook::Over);
+        assert_eq!(hold.up(VK_TAB, true, false, false), None);
+    }
+
+    /// One case of `tab-hold.json`, which the app's tests run through `tabHoldStep` too, so the two holds can't
+    /// drift apart.
+    #[derive(Deserialize)]
+    struct HoldCase {
+        case: String,
+        keys: Vec<HoldCaseKey>,
+        sends: Vec<String>,
+    }
+
+    /// A key going down or up, or `late`: the hold's time running out. The modifiers are as they are after the key.
+    #[derive(Deserialize)]
+    struct HoldCaseKey {
+        at: String,
+        #[serde(default)]
+        code: String,
+        #[serde(default)]
+        ctrl: bool,
+        #[serde(default)]
+        shift: bool,
+        #[serde(default)]
+        alt: bool,
+        #[serde(default)]
+        repeat: bool,
+    }
+
+    #[test]
+    fn the_shared_cases_end_the_hold_as_the_app_does() {
+        let cases: Vec<HoldCase> = serde_json::from_str(include_str!("tab-hold.json")).unwrap();
+        assert!(!cases.is_empty());
+        let vk = |code: &str| match code {
+            "Tab" => VK_TAB,
+            "ControlLeft" => VK_CONTROL,
+            "AltLeft" => 0x12,
+            "KeyL" => VK_L,
+            other => panic!("no virtual key for {other}"),
+        };
+        let sent = |look: HoldLook| match look {
+            HoldLook::Send(event) => Some(event),
+            HoldLook::Wait | HoldLook::Over => None,
+        };
+        for c in cases {
+            let (mut hold, mut n, mut sends) = (TabHold::default(), 0, Vec::new());
+            for k in &c.keys {
+                let event = match (k.at.as_str(), k.code.as_str()) {
+                    // WebView2 never reports Shift: the shell sees it by looking at the keys during the hold.
+                    (_, "ShiftLeft") => sent(hold.look(n, k.ctrl, k.shift, k.alt, false)),
+                    ("late", _) => sent(hold.look(n, k.ctrl, k.shift, k.alt, true)),
+                    ("down", code) => {
+                        let step = hold.down(vk(code), k.ctrl, k.shift, k.alt, k.repeat, KeyRoute::App);
+                        n = step.started.unwrap_or(n);
+                        step.release
+                    }
+                    ("up", code) => hold.up(vk(code), k.ctrl, k.shift, k.alt),
+                    (at, _) => panic!("{}: no step {at}", c.case),
+                };
+                if let Some(event) = event {
+                    sends.push(if event.shift { "Ctrl+Shift+Tab" } else { "Ctrl+Tab" });
+                }
+            }
+            assert_eq!(sends, c.sends, "{}", c.case);
+        }
+    }
+
+    #[test]
+    fn ctrls_release_keeps_the_hold() {
+        let (mut hold, _) = held();
+        assert_eq!(hold.up(VK_CONTROL, false, false, false), None);
+        assert_eq!(hold.up(VK_TAB, false, false, false), Some(tab(false)));
+    }
+
+    #[test]
+    fn a_repeat_during_the_hold_is_taken_and_sends_nothing() {
+        let (mut hold, _) = held();
+        let step = hold.down(VK_TAB, true, false, false, true, KeyRoute::App);
+        assert!(step.taken);
+        assert_eq!(step.release, None);
+        assert_eq!(step.started, None);
+        assert_eq!(hold.up(VK_TAB, true, false, false), Some(tab(false)));
+    }
+
+    #[test]
+    fn another_key_during_the_hold_sends_the_chord_and_is_not_taken() {
+        let (mut hold, _) = held();
+        let step = hold.down(VK_L, true, false, false, false, KeyRoute::App);
+        assert_eq!(step.release, Some(tab(false)));
+        assert!(!step.taken);
+        let (mut hold, _) = held();
+        let step = hold.down(VK_K, true, true, false, false, KeyRoute::App);
+        assert_eq!(step.release, Some(tab(true)));
+        assert!(!step.taken);
+    }
+
+    #[test]
+    fn a_dropped_hold_sends_nothing() {
+        let (mut hold, n) = held();
+        hold.drop_hold();
+        assert_eq!(hold.look(n, true, true, false, true), HoldLook::Over);
+        assert_eq!(hold.up(VK_TAB, true, false, false), None);
     }
 
     #[test]

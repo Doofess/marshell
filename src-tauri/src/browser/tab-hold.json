@@ -1,0 +1,89 @@
+[
+  {
+    "case": "a rolled Ctrl+Shift+Tab, Shift after Tab, sends Ctrl+Shift+Tab",
+    "keys": [
+      { "at": "down", "code": "ControlLeft", "ctrl": true },
+      { "at": "down", "code": "Tab", "ctrl": true },
+      { "at": "down", "code": "ShiftLeft", "ctrl": true, "shift": true },
+      { "at": "up", "code": "Tab", "ctrl": true, "shift": true },
+      { "at": "up", "code": "ShiftLeft", "ctrl": true },
+      { "at": "up", "code": "ControlLeft" }
+    ],
+    "sends": ["Ctrl+Shift+Tab"]
+  },
+  {
+    "case": "a Shift let go again before Tab still counts",
+    "keys": [
+      { "at": "down", "code": "Tab", "ctrl": true },
+      { "at": "down", "code": "ShiftLeft", "ctrl": true, "shift": true },
+      { "at": "up", "code": "ShiftLeft", "ctrl": true },
+      { "at": "up", "code": "Tab", "ctrl": true }
+    ],
+    "sends": ["Ctrl+Shift+Tab"]
+  },
+  {
+    "case": "Shift first is not held",
+    "keys": [
+      { "at": "down", "code": "ShiftLeft", "ctrl": true, "shift": true },
+      { "at": "down", "code": "Tab", "ctrl": true, "shift": true },
+      { "at": "up", "code": "Tab", "ctrl": true, "shift": true }
+    ],
+    "sends": []
+  },
+  {
+    "case": "a quick Ctrl+Tab sends Ctrl+Tab at Tab's release",
+    "keys": [
+      { "at": "down", "code": "Tab", "ctrl": true },
+      { "at": "up", "code": "Tab", "ctrl": true },
+      { "at": "late", "ctrl": true }
+    ],
+    "sends": ["Ctrl+Tab"]
+  },
+  {
+    "case": "a held Ctrl+Tab sends Ctrl+Tab once when the time runs out",
+    "keys": [
+      { "at": "down", "code": "Tab", "ctrl": true },
+      { "at": "late", "ctrl": true },
+      { "at": "up", "code": "Tab", "ctrl": true }
+    ],
+    "sends": ["Ctrl+Tab"]
+  },
+  {
+    "case": "a repeat during the hold sends nothing more",
+    "keys": [
+      { "at": "down", "code": "Tab", "ctrl": true },
+      { "at": "down", "code": "Tab", "ctrl": true, "repeat": true },
+      { "at": "up", "code": "Tab", "ctrl": true }
+    ],
+    "sends": ["Ctrl+Tab"]
+  },
+  {
+    "case": "Shift after Ctrl's release sends Ctrl+Tab",
+    "keys": [
+      { "at": "down", "code": "Tab", "ctrl": true },
+      { "at": "up", "code": "ControlLeft" },
+      { "at": "down", "code": "ShiftLeft", "shift": true },
+      { "at": "up", "code": "Tab", "shift": true }
+    ],
+    "sends": ["Ctrl+Tab"]
+  },
+  {
+    "case": "another key during the hold sends Ctrl+Tab first",
+    "keys": [
+      { "at": "down", "code": "Tab", "ctrl": true },
+      { "at": "down", "code": "KeyL", "ctrl": true },
+      { "at": "up", "code": "KeyL", "ctrl": true },
+      { "at": "up", "code": "Tab", "ctrl": true }
+    ],
+    "sends": ["Ctrl+Tab"]
+  },
+  {
+    "case": "Alt during the hold sends Ctrl+Tab",
+    "keys": [
+      { "at": "down", "code": "Tab", "ctrl": true },
+      { "at": "down", "code": "AltLeft", "ctrl": true, "alt": true },
+      { "at": "up", "code": "Tab", "ctrl": true, "alt": true }
+    ],
+    "sends": ["Ctrl+Tab"]
+  }
+]
