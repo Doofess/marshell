@@ -131,6 +131,7 @@ import { holdsResume, offersModeChange, offersResume, resumeBlockedReason, resum
 import { PAUSED_TYPING_TEXT, SessionActions, closeBarText, needsCloseConfirm, pauseBarStale, pauseBarText, reopenBarText, restartBarStale, restartBarText, tabIdOfNumber } from "./sessionActions";
 import { topAction, useNavigation } from "./useNavigation";
 import type { NavEffect } from "../../lib/navigation/types";
+import { installTabHold, sendHeldTab } from "../../lib/navigation/tabHold";
 import { Toast } from "./Toast";
 import { pruneClosed, without, type StartingTexts } from "./startingTexts";
 import { SHELL_FAILED } from "../window/ShellPanel";
@@ -1346,6 +1347,9 @@ export function LiveApp() {
         return;
     }
   };
+  // A rolled Ctrl+Shift+Tab, Tab a few ms before Shift, must not run Ctrl+Tab: each real Ctrl+Tab waits for Tab's release or 50 ms
+  // and is then sent on as Ctrl+Tab or Ctrl+Shift+Tab, ahead of every handler below (PLAN §9, "Slice 6q-3 decisions" 14 and 15).
+  useEffect(() => installTabHold(window, sendHeldTab), []);
   const nav = useNavigation({
     os: os ?? "windows",
     enabled: os !== undefined && !launcherOpen && overlay === null && review === null,
