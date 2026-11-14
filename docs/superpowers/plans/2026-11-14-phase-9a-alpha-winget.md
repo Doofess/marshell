@@ -69,7 +69,7 @@
 - Consumes: Task 1's findings (macro names, `${UNINSTKEY}`, `$UpdateMode`).
 - Produces, relied on by Task 4's assertions:
   - After install, the uninstall key holds `QuietUninstallString` = `"<install folder>\uninstall.exe" /S`.
-  - The uninstaller runs `"$INSTDIR\marshell.exe" uninstall --yes` through `nsExec::ExecToLog` before any file is removed, when `$UpdateMode <> 1` and the program exists. Its exit code is read and ignored: the uninstall goes on (decision 14).
+  - The uninstaller runs `"$INSTDIR\marshell.exe" uninstall --yes` through `nsExec::ExecToLog` before any file is removed, when `$UpdateMode <> 1`, the uninstaller isn't running from the install folder (`$EXEDIR != $INSTDIR`; Task 1's finding 5) and the program exists. Its exit code is read and ignored: the uninstall goes on (decision 14).
 
 - [ ] **Step 1:** Add `NSIS_HOOK_POSTINSTALL` (the registry value) and `NSIS_HOOK_PREUNINSTALL` (the unhook), each with a comment that says why and cites decision 14. Keep `NSIS_HOOK_POSTUNINSTALL` as it is.
 - [ ] **Step 2:** If Task 1 found a flow that runs the old uninstaller without `/UPDATE` during an install, and the script gives the hook a way to tell (a variable, a command-line switch the hook can read with `${GetOptions}`), skip the unhook there too. If it gives none, write that in the research note for Task 5's release notes.
@@ -137,6 +137,7 @@
     3. Start `marshell-app.exe` and keep its PID. Within 90 s the installed `marshell.exe list --json` exits 0, and `<home>\bin` holds `marshell-hook.exe` and `marshell.exe`.
     4. Write a known Claude Code `settings.json` (with a `statusLine` of its own), create Codex's folder with no `hooks.json`, and run the fixture. Check that both files now name `marshell-hook`.
     5. Install again over the running app, the way `winget upgrade` does (`-Installer` only; the winget modes `SKIP`). Check that the installer exits 0, the app's PID has ended, and Claude Code's file still names `marshell-hook` (Review Focus 2).
+    5b. Update the way a newer installer run by hand does (`-Installer` only; Review Focus 1): run the installed uninstaller in place, `"<install folder>\uninstall.exe" /S _?=<install folder>` (it is waited for; it doesn't hand over to a copy), then the setup file with `/S` again. Check after the uninstaller that Claude Code's file still names `marshell-hook` and `<home>\bin\marshell-hook.exe` is still there; check after the install that the uninstall key is back.
     6. Start the app again, wait for `list` as in 3.
     7. Uninstall with the app open. `-Installer`: run the key's `QuietUninstallString`. The winget modes: `winget uninstall --id Doofess.Marshell --exact --silent --disable-interactivity` (`--manifest <folder>` in manifest mode if the id isn't found). The uninstaller hands over to a copy of itself and returns early, so wait up to 120 s for the key to go.
     8. Check the uninstall: the key is gone; the app's PID has ended; the install folder holds no file; Claude Code's `settings.json` is byte for byte the known one; Codex's `hooks.json` is gone or doesn't name `marshell-hook`; `<home>\bin` is gone; `<home>\snapshots` is still there (decision 9); `HKCU:\Software\Classes\marshell` doesn't point into the install folder; the Start menu has no `Marshell.lnk`.

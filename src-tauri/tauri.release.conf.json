@@ -1,0 +1,12 @@
+{
+  "build": {
+    "beforeBuildCommand": "pnpm build:hook:release && node scripts/release/stage-programs.mjs && pnpm build"
+  },
+  "bundle": {
+    "resources": {
+      "staged/marshell-hook.exe": "marshell-hook.exe",
+      "staged/marshell.exe": "marshell.exe",
+      "staged/marshell-host.exe": "marshell-host.exe"
+    }
+  }
+}
