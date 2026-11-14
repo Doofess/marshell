@@ -25,4 +25,24 @@
 
 ## 2. Runs on a clean runner
 
-Filled in by the release workflow's dry runs (plan Task 6).
+From the release workflow's dry runs on pull request #125 (`build` job, `scripts/release/smoke.ps1 -Installer`). The first run, [43638410084](https://github.com/Doofess/marshell/actions/runs/43638410084), passed without a change to the script: `RESULT 54 passed, 0 failed, 0 skipped`.
+
+The runner: `windows-latest` is Windows Server 2025 (image `windows-2025-vs2026`, version 20261103.298.1). The job runs as `runneradmin`, an administrator.
+
+| Question | What the runner showed |
+| --- | --- |
+| Is winget there? | Yes. `winget validate --manifest` ran in `build` and printed "Manifest validation succeeded." with exit code 0. The `Install-Module Microsoft.WinGet.Client` fallback in `winget-check` wasn't needed here; it stays for an image without winget. |
+| Does the app start (a desktop, WebView2)? | Yes. `marshell-app.exe` started and `marshell list --json` answered within the 90 s wait, in both cycles. The app copied `marshell-hook.exe` and `marshell.exe` into `<home>\bin`. |
+| Is the install per-user though the account is an administrator? | Yes. The uninstall key is under HKCU and not under HKLM, and the folder is under `%LOCALAPPDATA%`. `DisplayName`, `Publisher` (Doofess) and `DisplayVersion` (`0.1.0-alpha.0`) are as the manifest says. |
+| Does a silent install over a running app work (what `winget upgrade` does)? | Yes. The installer exited 0, the running app ended, and the hooks in Claude Code's file stayed. |
+| Does an update by hand keep the hooks (section 1's guard)? | Yes. `uninstall.exe /S _?=<folder>` exited 0, Claude Code's file still named `marshell-hook`, and `<home>\bin\marshell-hook.exe` stayed. So `$EXEDIR` equals `$INSTDIR` in that flow, as the generated script suggested. |
+| Does `QuietUninstallString` uninstall with the app open? | Yes. It exited 0 at once (the uninstaller hands over to a copy of itself), the key went within the 120 s wait, the app ended and no file was left in the install folder. |
+| What does the uninstall leave? | Claude Code's `settings.json` byte for byte as before the hooks; Codex's `hooks.json` without `marshell-hook`; no `<home>\bin`; `<home>\snapshots` kept; no `marshell://` link into the install folder; no Start menu shortcut. |
+| A CLI file that doesn't parse? | The uninstall finished, Claude Code's file was restored, Codex's broken `hooks.json` was byte for byte the same, and `<home>\bin\marshell-hook.exe` stayed. |
+| Does the scratch environment reach the uninstaller? | Yes. The unhook ran against the scratch `MARSHELL_HOME`, `MARSHELL_CLAUDE_SETTINGS` and `CODEX_HOME`, which the uninstaller's copy inherited from the script. |
+
+Times: the installer build took 12 min 44 s with a cold cache, the smoke test 23 s. The installer is 13.15 MiB.
+
+Not shown by a dry run, because those jobs run only for a published tag: `winget install --manifest` and `winget uninstall` on a fresh runner (`winget-check`), and `wingetcreate submit` for a package that isn't in the community repository yet (`winget-submit`). The first release, `v0.1.0-alpha.1`, shows both, and what it shows is added to this note.
+
+One thing the fixture check on the development PC showed: Marshell finds Claude Code's hooks file with `MARSHELL_CLAUDE_SETTINGS` and nothing else. `CLAUDE_CONFIG_DIR` moves Claude Code's skill, not its `settings.json`. The fixture refuses to run unless `MARSHELL_CLAUDE_SETTINGS` and `CODEX_HOME` are set, and the smoke test sets both.
