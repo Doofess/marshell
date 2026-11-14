@@ -1,0 +1,34 @@
+import { describe, expect, it } from "vitest";
+import { releaseNotes } from "./notes.mjs";
+
+const SHA = "AB".repeat(32);
+
+describe("the release notes", () => {
+  const notes = releaseNotes({ version: "0.1.0-alpha.1", sha256: SHA });
+
+  it("carry the commands, the warning and the checksum", () => {
+    for (const text of [
+      "winget install Doofess.Marshell",
+      "winget upgrade Doofess.Marshell",
+      "winget uninstall Doofess.Marshell",
+      "winget settings --enable LocalManifestFiles",
+      "SmartScreen",
+      "%USERPROFILE%\\.marshell",
+      "winget-manifest-0.1.0-alpha.1.zip",
+      "Marshell_0.1.0-alpha.1_x64-setup.exe",
+      SHA,
+    ]) {
+      expect(notes, text).toContain(text);
+    }
+  });
+
+  it("are plain ASCII, so the workflow's shell pipe can't garble them", () => {
+    expect(notes).toMatch(/^[\x09\x0a\x20-\x7e]*$/);
+  });
+
+  it("name no other version", () => {
+    const other = releaseNotes({ version: "0.1.0-alpha.2", sha256: SHA });
+    expect(other).toContain("Marshell_0.1.0-alpha.2_x64-setup.exe");
+    expect(other).not.toContain("alpha.1");
+  });
+});
