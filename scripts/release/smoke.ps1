@@ -2,15 +2,17 @@
 <#
 .SYNOPSIS
   Release smoke test: installs the alpha, starts it, updates over it, uninstalls it, and checks what each step left
-  behind. Run it on a clean machine (the release workflow's runner, or a VM). It installs and uninstalls Marshell for
-  the current user, so it refuses to run where Marshell is installed or running.
+  behind. It runs on the release workflow's runner. It installs and uninstalls Marshell for the current user, and each
+  uninstall takes Marshell's hooks out of the CLI files the way a real one does: also out of ~/.gemini, ~/.agents and
+  every WSL distro, which no variable moves. So it refuses to run anywhere but GitHub Actions unless
+  -ThrowawayMachine says the machine holds nothing to lose, and it refuses where Marshell is installed or running.
 
 .DESCRIPTION
   Exit 0 when every check passed, 1 otherwise. Every check prints exactly one PASS, FAIL or SKIP line. A failed check
   does not stop the later ones unless they cannot run without it. The scratch folder is left in place.
 
-  Everything the script starts runs with MARSHELL_HOME, MARSHELL_CLAUDE_SETTINGS, CLAUDE_CONFIG_DIR, CODEX_HOME and
-  COPILOT_HOME pointing into the scratch folder. The script never reads run/endpoint.json or a token: it asks the app
+  Everything the script starts runs with MARSHELL_HOME, MARSHELL_CLAUDE_SETTINGS, CLAUDE_CONFIG_DIR, CODEX_HOME,
+  COPILOT_HOME and QWEN_HOME pointing into the scratch folder. The script never reads run/endpoint.json or a token: it asks the app
   only through `marshell list --json`.
 
 .PARAMETER Version
@@ -23,6 +25,8 @@
   A package id (Doofess.Marshell); installs with `winget install --id <id> --version <v>`.
 .PARAMETER Fixture
   smoke-fixture.exe (cargo build --release -p marshell-cli --example smoke-fixture). Without it the hook checks SKIP.
+.PARAMETER ThrowawayMachine
+  Allows a run outside GitHub Actions. Only for a VM that is thrown away afterwards.
 .PARAMETER Scratch
   A folder that does not exist yet, under the user profile (the config guard allows only that). Default: a new
   folder under $env:TEMP.
@@ -34,7 +38,8 @@ param(
     [string]$WingetManifest,
     [string]$WingetId,
     [string]$Fixture,
-    [string]$Scratch
+    [string]$Scratch,
+    [switch]$ThrowawayMachine
 )
 
 $ErrorActionPreference = 'Stop'
@@ -46,7 +51,7 @@ $HklmKeys = @(
     'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Marshell'
 )
 $AppName = 'marshell-app'
-$Programs = @('marshell-app.exe', 'marshell.exe', 'marshell-hook.exe', 'marshell-host.exe', 'conpty.dll', 'OpenConsole.exe', 'uninstall.exe')
+$Programs = @('marshell-app.exe', 'marshell.exe', 'marshell-hook.exe', 'marshell-host.exe', 'conpty.dll', 'OpenConsole.exe', 'uninstall.exe', 'LICENSE', 'THIRD_PARTY_NOTICES.md')
 $KnownText = "{`n  `"theme`": `"dark`",`n  `"statusLine`": {`"type`": `"command`", `"command`": `"my-line`"}`n}`n"
 $KnownBytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($KnownText)
 $BrokenBytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes("{ `"hooks`": [oops`n")
@@ -99,7 +104,11 @@ function Wait-Until([scriptblock]$Cond, [int]$Seconds, [int]$StepMs = 1000) {
 # Starts a program and waits for it up to $TimeoutSec. Gives its exit code, or $null when it was still running (it is
 # then stopped, by the PID this started).
 function Invoke-Setup([string]$File, [string]$ArgString, [int]$TimeoutSec) {
-    $p = Start-Process -FilePath $File -ArgumentList $ArgString -PassThru -WindowStyle Hidden
+    $p = if ($ArgString) {
+        Start-Process -FilePath $File -ArgumentList $ArgString -PassThru -WindowStyle Hidden
+    } else {
+        Start-Process -FilePath $File -PassThru -WindowStyle Hidden
+    }
     $null = $p.Handle
     if (-not $p.WaitForExit($TimeoutSec * 1000)) {
         Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
@@ -165,23 +174,38 @@ function Install-Marshell {
     }
 }
 
-# Starts the uninstall the way a person would and waits up to 120 s for the uninstall key to go: the uninstaller
-# hands over to a copy of itself in the temp folder and returns early. Gives the first command's result.
+# The uninstaller's copy of itself: NSIS runs it from a folder named ~nsu<x>.tmp under the temp folder.
+function Get-UninstallerCopies {
+    return @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path -like '*\~nsu*.tmp\*' })
+}
+
+# Starts the uninstall the way a person would. The uninstaller hands over to a copy of itself in the temp folder and
+# returns early, so this waits up to 120 s for the uninstall key to go, and then up to 180 s for that copy to end:
+# it takes the hooks out after the key is gone. Gives the first command's result.
 function Uninstall-Marshell {
-    if ($script:Mode -eq 'installer') {
-        $k = Get-Uninst
-        $q = if ($k) { [string]$k.QuietUninstallString } else { '' }
-        if ($q -notmatch '^\s*"([^"]+)"\s*(.*)$') { throw "the uninstall key has no usable QuietUninstallString: '$q'" }
-        $argText = if ($Matches[2]) { $Matches[2] } else { '/S' }
-        $code = Invoke-Setup $Matches[1] $argText 120
-        $res = [pscustomobject]@{ Code = $code; Output = '' }
-    } else {
-        $res = Invoke-Native 'winget' @('uninstall', '--id', 'Doofess.Marshell', '--exact', '--silent', '--disable-interactivity')
-        if ($res.Code -ne 0 -and $script:Mode -eq 'manifest') {
+    switch ($script:Mode) {
+        'installer' {
+            # Exactly what the key says, as winget runs it.
+            $k = Get-Uninst
+            $q = if ($k) { [string]$k.QuietUninstallString } else { '' }
+            if ($q -notmatch '^\s*"([^"]+)"\s*(.*)$') { throw "the uninstall key has no usable QuietUninstallString: '$q'" }
+            $code = Invoke-Setup $Matches[1] $Matches[2] 120
+            $res = [pscustomobject]@{ Code = $code; Output = '' }
+        }
+        'manifest' {
+            # An install from a manifest folder isn't tied to a package id until the package is in the community
+            # repository, so the release notes give this form. What `winget list` says about the id is printed.
+            $listed = Invoke-Native 'winget' @('list', '--id', 'Doofess.Marshell', '--exact', '--disable-interactivity')
+            Write-Host "NOTE winget list --id Doofess.Marshell --exact exited $($listed.Code) after an install from a manifest folder"
             $res = Invoke-Native 'winget' @('uninstall', '--manifest', $WingetManifest, '--silent', '--disable-interactivity')
+        }
+        default {
+            $res = Invoke-Native 'winget' @('uninstall', '--id', $WingetId, '--exact', '--silent', '--disable-interactivity')
         }
     }
     $null = Wait-Until { -not (Test-Path -LiteralPath $UninstKey) } 120 2000
+    $ended = Wait-Until { (Get-UninstallerCopies).Count -eq 0 } 180 1000
+    if (-not $ended) { Write-Host 'NOTE the uninstaller was still running 180 s after the uninstall key went' }
     return $res
 }
 
@@ -222,6 +246,10 @@ function Stop-Started {
 
 # ---------------------------------------------------------------- checks run before anything
 
+if ($env:GITHUB_ACTIONS -ne 'true' -and -not $ThrowawayMachine) {
+    Write-Host 'FAIL refused to run: this is not a GitHub Actions runner. The uninstalls take Marshell hooks out of the real ~/.gemini, ~/.agents and WSL distros. Nothing was changed.'
+    exit 1
+}
 if (-not $Version.Trim()) { Write-Host 'FAIL arguments: -Version is empty'; exit 1 }
 $modes = @()
 if ($Installer) { $modes += 'installer' }
@@ -263,13 +291,15 @@ $ClaudeFile = Join-Path $ClaudeDir 'settings.json'
 $CodexDir = Join-Path $Scratch 'codex'
 $CodexFile = Join-Path $CodexDir 'hooks.json'
 $CopilotDir = Join-Path $Scratch 'copilot'
-foreach ($d in @($Scratch, $MHome, $ClaudeDir, $CodexDir, $CopilotDir)) { $null = New-Item -ItemType Directory -Path $d }
+$QwenDir = Join-Path $Scratch 'qwen'
+foreach ($d in @($Scratch, $MHome, $ClaudeDir, $CodexDir, $CopilotDir, $QwenDir)) { $null = New-Item -ItemType Directory -Path $d }
 
 $env:MARSHELL_HOME = $MHome
 $env:MARSHELL_CLAUDE_SETTINGS = $ClaudeFile
 $env:CLAUDE_CONFIG_DIR = $ClaudeDir
 $env:CODEX_HOME = $CodexDir
 $env:COPILOT_HOME = $CopilotDir
+$env:QWEN_HOME = $QwenDir
 Write-Host "NOTE scratch folder $Scratch, mode $($script:Mode), version $Version"
 
 function Write-KnownSettings { [System.IO.File]::WriteAllBytes($ClaudeFile, $KnownBytes) }
@@ -285,8 +315,12 @@ function Test-InstallState {
     Check 'install: DisplayName is Marshell' { $v = (Get-Uninst).DisplayName; if ($v -eq 'Marshell') { $true } else { "it is '$v'" } }
     Check 'install: Publisher is Doofess' { $v = (Get-Uninst).Publisher; if ($v -eq 'Doofess') { $true } else { "it is '$v'" } }
     Check 'install: DisplayVersion is the version' { $v = (Get-Uninst).DisplayVersion; if ($v -eq $Version) { $true } else { "it is '$v', wanted '$Version'" } }
-    Check 'install: QuietUninstallString is there' { $v = (Get-Uninst).QuietUninstallString; if ($v) { $true } else { 'the value is missing or empty' } }
     $script:Inst = Get-InstallDir
+    Check 'install: QuietUninstallString is the uninstaller with /S' {
+        $v = [string](Get-Uninst).QuietUninstallString
+        $want = '"' + $script:Inst + '\uninstall.exe" /S'
+        if ($v -eq $want) { $true } else { "it is '$v', wanted '$want'" }
+    }
     Check 'install: the folder is under LOCALAPPDATA' {
         if (-not $script:Inst) { return 'the key has no InstallLocation' }
         if ($script:Inst.StartsWith($env:LOCALAPPDATA.TrimEnd('\') + '\', [System.StringComparison]::OrdinalIgnoreCase)) { $true } else { "it is $($script:Inst)" }

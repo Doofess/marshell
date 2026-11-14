@@ -23,6 +23,9 @@ describe("winget manifest", () => {
     expect(text).toContain("InstallerType: nullsoft");
     expect(text).toContain("Scope: user");
     expect(text).toContain("ProductCode: Marshell");
+    // winget upgrade installs over the old version. With uninstallPrevious it would run the old uninstaller,
+    // and that takes the hooks out.
+    expect(text).toContain("UpgradeBehavior: install");
     expect(text).toContain(`InstallerUrl: ${installerUrl(version)}`);
     expect(text).toContain(`InstallerSha256: ${sha}`);
     expect(text).toContain("ReleaseDate: 2026-11-15");

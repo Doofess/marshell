@@ -31,7 +31,9 @@ The installer needs no administrator rights and installs for your user only.
 winget upgrade Doofess.Marshell
 \`\`\`
 
-The alpha doesn't update itself. An update keeps your settings, your history and the hooks Marshell set up in your agent CLIs.
+If you installed from this page (the manifest folder or the installer), winget doesn't know the package yet: install the new version from its release page the same way.
+
+The alpha doesn't update itself. An update keeps your settings, your history and the hooks Marshell set up in your agent CLIs. Updating and uninstalling close Marshell and the sessions running in it, so finish what your agents are doing first.
 
 ## Uninstall
 
@@ -39,12 +41,16 @@ The alpha doesn't update itself. An update keeps your settings, your history and
 winget uninstall Doofess.Marshell
 \`\`\`
 
-Uninstalling takes Marshell's hooks and its skill out of every agent CLI's files, in Windows and in each WSL distro, and removes the program. If a distro is stopped, the uninstall starts it to look.
+If you installed from this page: \`winget uninstall --manifest <the extracted folder>\`, or Windows Settings > Apps > Installed apps.
 
-Two things stay:
+Uninstalling takes Marshell's hooks, its status line and its skill out of every agent CLI's files, in Windows and in each WSL distro, and removes the program. If a distro is stopped, the uninstall starts it to look. It goes on working for a moment after the command returns, so wait until \`winget list Marshell\` no longer shows it before you install again.
 
-- Your Marshell settings, history and the backups of every file Marshell changed, in \`%USERPROFILE%\\.marshell\`. Delete that folder yourself for a full clean-up.
-- What Marshell put in a CLI config folder that only a shell knows about. If you set \`CLAUDE_CONFIG_DIR\`, \`CODEX_HOME\` or \`COPILOT_HOME\` in a shell profile and not in Windows' environment variables, uninstall from that shell (\`winget uninstall\`), not from Settings.
+What stays:
+
+- Your Marshell settings, history and the backups of every file Marshell changed, in \`%USERPROFILE%\\.marshell\`. For a full clean-up delete that folder and \`%LOCALAPPDATA%\\dev.marshell.app\`.
+- What Marshell put in a CLI config folder that only a shell knows about. If you set \`CLAUDE_CONFIG_DIR\`, \`CODEX_HOME\`, \`COPILOT_HOME\` or \`QWEN_HOME\` in a shell profile and not in Windows' environment variables, uninstall from that shell (\`winget uninstall\`), not from Settings.
+- A CLI file that Marshell can't read or that doesn't parse is left as it is, with Marshell's hooks still in it. The hooks keep working, because \`%USERPROFILE%\\.marshell\\bin\` then stays too.
+- The hooks, if you uninstall with the setup program itself (run the installer again and choose to uninstall). Run \`%USERPROFILE%\\.marshell\\bin\\marshell.exe uninstall\` first, or afterwards: it shows what it will change and asks.
 
 ## Checksum
 

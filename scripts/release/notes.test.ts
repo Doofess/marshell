@@ -26,6 +26,22 @@ describe("the release notes", () => {
     expect(notes).toMatch(/^[\x09\x0a\x20-\x7e]*$/);
   });
 
+  it("say how a friend who installed from the release page updates and uninstalls", () => {
+    expect(notes).toContain("winget uninstall --manifest");
+    expect(notes).toContain("install the new version from its release page the same way");
+  });
+
+  it("say what an uninstall closes and what it leaves", () => {
+    for (const text of [
+      "close Marshell and the sessions running in it",
+      "QWEN_HOME",
+      "%LOCALAPPDATA%\\dev.marshell.app",
+      "%USERPROFILE%\\.marshell\\bin\\marshell.exe uninstall",
+    ]) {
+      expect(notes, text).toContain(text);
+    }
+  });
+
   it("name no other version", () => {
     const other = releaseNotes({ version: "0.1.0-alpha.2", sha256: SHA });
     expect(other).toContain("Marshell_0.1.0-alpha.2_x64-setup.exe");

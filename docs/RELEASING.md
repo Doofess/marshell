@@ -28,7 +28,7 @@ A tag of any other form stops the workflow before it builds.
 | `winget-check` | After `publish`, or a manual `check` | On a fresh runner: installs the release with winget from its manifest folder, starts the app and uninstalls it with winget. |
 | `winget-submit` | After `winget-check` passes, or a manual `submit` | Opens the pull request on `microsoft/winget-pkgs` with Microsoft's `wingetcreate`. Without the token it says so and ends green. |
 
-The smoke test is `scripts/release/smoke.ps1`. It installs silently, checks the uninstall entry and the installed files, starts the app and asks it for its sessions, updates over the running app, uninstalls, and checks what is left: no hooks in the CLI files, no program files, and `~/.marshell` kept without its `bin` folder. It runs on GitHub's runners. Don't run it on a PC where Marshell is installed or running; it refuses to start there.
+The smoke test is `scripts/release/smoke.ps1`. It installs silently, checks the uninstall entry and the installed files, starts the app and asks it for its sessions, updates over the running app, uninstalls, and checks what is left: no hooks in the CLI files, no program files, and `~/.marshell` kept without its `bin` folder. It runs on GitHub's runners and nowhere else: each uninstall in it is a real one, which also takes Marshell's hooks out of `~/.gemini`, `~/.agents` and every WSL distro, and no variable moves those. The script refuses to start outside GitHub Actions (a VM that is thrown away afterwards can pass `-ThrowawayMachine`), and where Marshell is installed or running.
 
 To try a change to the installer without releasing, open a pull request (the dry run starts by itself) or run the workflow by hand with `action: dry-run`.
 
@@ -63,10 +63,16 @@ gh workflow run release.yml -f action=check -f tag=v0.1.0-alpha.1 -f source=comm
 
 ## Known limits of the alpha installer
 
-- Uninstalling from Windows' Settings runs with Explorer's environment. A `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or `COPILOT_HOME` that is set only in a shell isn't seen, and what Marshell put in that folder (its skill, and for Codex and Copilot its hooks) stays. `winget uninstall` from that shell sees it.
-- The installer closes a running Marshell before it replaces or removes files. It doesn't close an administrator session's helper (`marshell-host.exe`); a file in use stays until the next install.
+The release notes (`scripts/release/notes.mjs`) tell friends about each of these.
+
+- Uninstalling from Windows' Settings runs with Explorer's environment. A `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME` or `QWEN_HOME` that is set only in a shell isn't seen, and what Marshell put in that folder stays: Claude Code's skill (its hooks file doesn't follow `CLAUDE_CONFIG_DIR`), Codex's hooks, Copilot CLI's hooks and status line, Qwen Code's hooks, status line and skill. `~/.marshell/bin` is removed all the same, so those hooks then point at a bridge that is gone. `winget uninstall` from that shell is expected to see the variable; the first release's `winget-check` shows whether it does.
+- A CLI file that can't be read or doesn't parse is left as it is, and `~/.marshell/bin` stays so the hooks in it keep working.
+- Uninstalling with the setup program itself (running the installer over an install and choosing to uninstall, or cancelling right after its "uninstall before installing" step) removes the program and leaves the hooks. The uninstaller can't tell that from an update by hand, which must keep them. `%USERPROFILE%\.marshell\bin\marshell.exe uninstall` takes them out.
+- The installer and the uninstaller close a running Marshell, and the sessions in it, before they replace or remove files. They don't close an administrator session's helper (`marshell-host.exe`) or a hook that is running at that moment. What the installer does with a file that is in use hasn't been tested.
 - Windows SmartScreen warns when the installer is run by hand, because it isn't signed.
-- An uninstall returns before it has finished, as every NSIS uninstaller does: it hands over to a copy of itself. `winget uninstall` followed at once by `winget install` can meet the uninstall still at work; wait a few seconds between them.
+- An uninstall returns before it has finished, as every NSIS uninstaller does: it hands over to a copy of itself, which then removes the files and takes the hooks out (up to a couple of minutes when a WSL distro has to start). A `winget install` that meets it can lose the files it just wrote. Wait until `winget list Marshell` no longer shows it.
+- An install from the release page's manifest folder isn't tied to the package id until Microsoft accepts the package, so `winget upgrade Doofess.Marshell` and `winget uninstall Doofess.Marshell` don't find it. The notes give the forms that work.
+- The installer carries `LICENSE` and `THIRD_PARTY_NOTICES.md` as they are in the repo. The full licence list for every bundled crate and package is phase 9 work that this slice doesn't do.
 
 ## Moving to a newer wingetcreate
 
