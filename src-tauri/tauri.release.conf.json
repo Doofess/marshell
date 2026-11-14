@@ -6,7 +6,9 @@
     "resources": {
       "staged/marshell-hook.exe": "marshell-hook.exe",
       "staged/marshell.exe": "marshell.exe",
-      "staged/marshell-host.exe": "marshell-host.exe"
+      "staged/marshell-host.exe": "marshell-host.exe",
+      "../LICENSE": "LICENSE",
+      "../THIRD_PARTY_NOTICES.md": "THIRD_PARTY_NOTICES.md"
     }
   }
 }
