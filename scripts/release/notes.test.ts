@@ -42,6 +42,13 @@ describe("the release notes", () => {
     }
   });
 
+  // What alpha.1's winget-check showed: winget starts the unsigned installer through the shell, and SmartScreen's
+  // dialog holds it until someone answers.
+  it("say that winget from the manifest folder meets SmartScreen too", () => {
+    expect(notes).toContain("when winget starts it for an install from the manifest folder, SmartScreen shows");
+    expect(notes).toContain('winget looks stuck at "Starting package install..."');
+  });
+
   // Slice 9a decision 15. The caveat and this test go when THIRD_PARTY_NOTICES.md lists every crate and
   // package (phase 9). That the installer carries both files is checked by smoke.ps1, not here.
   it("say the third-party notices aren't complete yet", () => {

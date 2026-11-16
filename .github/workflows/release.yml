@@ -110,7 +110,10 @@ jobs:
           } else {
             "::notice::winget isn't on this runner, so the manifest wasn't validated here. winget-check validates it."
           }
+      # The limit is there for a step that stops moving: it took under half a minute in every run that passed, and a run
+      # that hung here (v0.1.0-alpha.1's first attempt) went on until it was cancelled and left no log.
       - name: Smoke test (install, start, update over it, uninstall)
+        timeout-minutes: 15
         shell: pwsh
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -202,6 +205,7 @@ jobs:
           winget validate --manifest fallback/manifest --disable-interactivity
           if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Smoke test with winget
+        timeout-minutes: 20
         shell: pwsh
         env:
           VERSION: ${{ steps.release.outputs.version }}
