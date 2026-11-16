@@ -42,6 +42,12 @@ describe("the release notes", () => {
     }
   });
 
+  it("say the third-party notices aren't complete yet", () => {
+    expect(notes).toContain("THIRD_PARTY_NOTICES.md");
+    expect(notes).toContain("not all of them yet: the complete list comes before v1");
+    expect(notes).toContain("`Cargo.lock` and `pnpm-lock.yaml`");
+  });
+
   it("name no other version", () => {
     const other = releaseNotes({ version: "0.1.0-alpha.2", sha256: SHA });
     expect(other).toContain("Marshell_0.1.0-alpha.2_x64-setup.exe");

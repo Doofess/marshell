@@ -52,6 +52,10 @@ What stays:
 - A CLI file that Marshell can't read or that doesn't parse is left as it is, with Marshell's hooks still in it. The hooks keep working, because \`%USERPROFILE%\\.marshell\\bin\` then stays too.
 - The hooks, if you uninstall with the setup program itself (run the installer again and choose to uninstall). Run \`%USERPROFILE%\\.marshell\\bin\\marshell.exe uninstall\` first, or afterwards: it shows what it will change and asks.
 
+## Licences
+
+Marshell is MIT-licensed. The installer puts \`LICENSE\` and \`THIRD_PARTY_NOTICES.md\` next to the program. The notices file covers ConPTY, the fonts and some of the libraries Marshell is built with, not all of them yet: the complete list comes before v1. Until then, \`Cargo.lock\` and \`pnpm-lock.yaml\` in the repository name every library in the build.
+
 ## Checksum
 
 SHA-256 of \`${installer}\`:
