@@ -23,7 +23,7 @@ You can also download \`${installer}\` and run it.
 
 The installer needs no administrator rights and installs for your user only.
 
-**Windows will warn you.** The alpha builds aren't signed. When you run the installer yourself, SmartScreen shows "Windows protected your PC": choose **More info**, then **Run anyway**.
+**Windows will warn you.** The alpha builds aren't signed. When you run the installer yourself, and when winget starts it for an install from the manifest folder, SmartScreen shows "Windows protected your PC": choose **More info**, then **Run anyway**. Until you answer it, winget looks stuck at "Starting package install...".
 
 ## Update
 

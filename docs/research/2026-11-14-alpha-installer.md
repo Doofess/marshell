@@ -43,6 +43,43 @@ The runner: `windows-latest` is Windows Server 2025 (image `windows-2025-vs2026`
 
 Times: the installer build took 12 min 44 s with a cold cache, the smoke test 23 s. The installer is 13.15 MiB.
 
-Not shown by a dry run, because those jobs run only for a published tag: `winget install --manifest` and `winget uninstall` on a fresh runner (`winget-check`), and `wingetcreate submit` for a package that isn't in the community repository yet (`winget-submit`). The first release, `v0.1.0-alpha.1`, shows both, and what it shows is added to this note.
+Not shown by a dry run, because those jobs run only for a published tag: `winget install --manifest` and `winget uninstall` on a fresh runner (`winget-check`), and `wingetcreate submit` for a package that isn't in the community repository yet (`winget-submit`). Section 3 has what the first release showed.
 
 One thing the fixture check on the development PC showed: Marshell finds Claude Code's hooks file with `MARSHELL_CLAUDE_SETTINGS` and nothing else. `CLAUDE_CONFIG_DIR` moves Claude Code's skill, not its `settings.json`. The fixture refuses to run unless `MARSHELL_CLAUDE_SETTINGS` and `CODEX_HOME` are set, and the smoke test sets both.
+
+## 3. The later dry runs and the first release (2026-11-14 to 2026-11-16)
+
+| Run | What | Result |
+| --- | --- | --- |
+| [43639873043](https://github.com/Doofess/marshell/actions/runs/43639873043) | Dry run 2, pull request #125, with the added check before the uninstall | `RESULT 55 passed, 0 failed, 0 skipped` |
+| [43641744963](https://github.com/Doofess/marshell/actions/runs/43641744963) | Dry run 3, pull request #125, after the review's fixes: the unhook runs after the running-app check, the uninstall runs the exact `QuietUninstallString`, the installer carries `LICENSE` and `THIRD_PARTY_NOTICES.md` | 55 passed, 0 failed, 0 skipped |
+| [43928986084](https://github.com/Doofess/marshell/actions/runs/43928986084), [43934722937](https://github.com/Doofess/marshell/actions/runs/43934722937) | Dry runs on `main` before the tag (674e5dc3, f9bfb91f) | 55 passed, 0 failed, 0 skipped, both |
+| [43942007171](https://github.com/Doofess/marshell/actions/runs/43942007171), attempt 1 | The tag `v0.1.0-alpha.1`: `build` | The smoke step did not end. It was cancelled after 39 minutes, and GitHub kept no log for the job, so what it waited on isn't known. Nothing was published. |
+| The same run, attempt 2 | `build`, `publish` | Smoke test 55 passed, 0 failed, 0 skipped, in 25 s. The pre-release was published with the installer, its `.sha256` and the manifest folder's zip. |
+| The same run, attempt 2 | `winget-check` | `winget install --manifest` did not return. The job's 30-minute limit ended it. `winget-submit` was skipped. |
+
+### Why winget did not return
+
+A probe workflow on a throwaway branch (draft pull request #128, never merged) installed the published release with winget 1.11.510 under a 4-minute limit and printed the processes, the visible windows and a screenshot.
+
+| Question | What the runner showed |
+| --- | --- |
+| Where does winget stop? | It downloads the installer, prints "Successfully verified installer hash" and "Starting package install...", and waits. The uninstall key never appears: the installer has not started. |
+| What is it waiting on? | Microsoft Defender SmartScreen's dialog, "Windows protected your PC. Microsoft Defender SmartScreen prevented an unrecognized app from starting", with "More info" and "Don't run" ([run 43959477047](https://github.com/Doofess/marshell/actions/runs/43959477047), the screenshot is in its artifact). `smartscreen.exe` and `CHXSmartScreen.exe` are running, and Explorer owns an `ApplicationFrameWindow` and a `ProxyModalWindow` that were not there before. |
+| Why does the dialog come up under winget and not in the `build` job? | The file winget downloads carries the internet mark (`Zone.Identifier`, `ZoneId=3`, with the release's address), and winget starts it through the shell. The `build` job's installer was built on the runner and has no mark. |
+| Does turning SmartScreen off by policy help? | No. With `EnableSmartScreen=0` and `SmartScreenEnabled=Off` the shell shows its own dialog, "Open File - Security Warning", owned by `winget.exe`, and winget waits on that ([run 43960558467](https://github.com/Doofess/marshell/actions/runs/43960558467), variant `policy`). |
+| Does `SEE_MASK_NOZONECHECKS=1` in winget's environment help? | Yes. The shell skips the check, and winget prints "Successfully installed" and exits 0 after 22 s (the same run, variant `nozonechecks`). |
+| Does `winget uninstall --manifest` work without more switches? | No. With `--disable-interactivity` it stops at the Microsoft Store source's agreements and exits 0x8A150046 ("One or more of the source agreements were not agreed to"), even after an install that passed `--accept-source-agreements`. It needs `--accept-source-agreements` itself. |
+
+### The smoke test through winget, after the fix
+
+`scripts/release/smoke.ps1` now sets `SEE_MASK_NOZONECHECKS=1` in its winget modes, passes `--accept-source-agreements` to `winget list` and `winget uninstall`, and runs every program with a time limit and its output in files. Run from the fix's branch against the published release, on a fresh runner with the fixture from the release's build ([run 43961947372](https://github.com/Doofess/marshell/actions/runs/43961947372)): `RESULT 47 passed, 0 failed, 2 skipped`. The two skips are the reinstall and the in-place update, which only the installer mode runs.
+
+| Question | What the runner showed |
+| --- | --- |
+| Does `winget install --manifest` install per-user, and does the app start? | Yes, in both cycles: the key under HKCU, none under HKLM, `marshell list --json` answers. |
+| Does `winget uninstall --manifest` run the unhook? | Yes. The command exited 0, the key went, the app ended, the install folder was empty, and Claude Code's `settings.json` was byte for byte the known one. |
+| Does winget pass the shell's environment to the uninstaller? | Yes. The unhook worked on the scratch `MARSHELL_HOME`, `MARSHELL_CLAUDE_SETTINGS` and `CODEX_HOME`, so the release notes' advice to uninstall from the shell that sets a CLI's folder holds. |
+| Does winget know the package by its id after an install from a manifest folder? | No. `winget list --id Doofess.Marshell --exact` exited 0x8A150014 (no package found), as `docs/RELEASING.md` says. |
+
+Still not shown: what a person sees after "More info" and "Run anyway" when winget started the installer (nobody can press it on a runner); whether an install from the community repository meets the dialog; `wingetcreate submit` for a new package, which waits for the token; and why the first attempt's `build` job stopped.
