@@ -1,4 +1,4 @@
-// The text of an alpha release's page on GitHub (PLAN §9, slice 9a decisions 2, 3, 6 and 9).
+// The text of an alpha release's page on GitHub (PLAN §9, slice 9a decisions 2, 3, 6, 9 and 15).
 // Usage: node scripts/release/notes.mjs --version <v> --sha256 <hash>
 import { fileURLToPath } from "node:url";
 import { installerName } from "./version.mjs";
@@ -54,7 +54,7 @@ What stays:
 
 ## Licences
 
-Marshell is MIT-licensed. The installer puts \`LICENSE\` and \`THIRD_PARTY_NOTICES.md\` next to the program. The notices file covers ConPTY, the fonts and some of the libraries Marshell is built with, not all of them yet: the complete list comes before v1. Until then, \`Cargo.lock\` and \`pnpm-lock.yaml\` in the repository name every library in the build.
+Marshell is MIT-licensed. The installer puts \`LICENSE\` and \`THIRD_PARTY_NOTICES.md\` next to the program. The notices file isn't complete yet: it covers ConPTY, the fonts and a few of the Rust crates, and not the other crates or the JavaScript packages in the app. The complete list comes before v1. Until then, \`Cargo.lock\` and \`pnpm-lock.yaml\` in the repository list the crates and packages the build draws on, along with ones used only to build and test it.
 
 ## Checksum
 
