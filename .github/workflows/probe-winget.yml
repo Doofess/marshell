@@ -14,7 +14,12 @@ jobs:
   probe:
     runs-on: windows-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [nozonechecks, policy]
     env:
+      VARIANT: ${{ matrix.variant }}
       TAG: v0.1.0-alpha.1
       VERSION: 0.1.0-alpha.1
       GH_TOKEN: ${{ github.token }}
@@ -95,6 +100,18 @@ jobs:
               } catch { Write-Host "PROBE screenshot failed: $($_.Exception.Message)" }
           }
 
+          if ($env:VARIANT -eq 'nozonechecks') {
+              $env:SEE_MASK_NOZONECHECKS = '1'
+              Write-Host 'PROBE variant: SEE_MASK_NOZONECHECKS=1 in the environment'
+          }
+          if ($env:VARIANT -eq 'policy') {
+              New-Item -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' -Force | Out-Null
+              Set-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\System' -Name EnableSmartScreen -Value 0 -Type DWord
+              Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer' -Name SmartScreenEnabled -Value 'Off' -Type String
+              Get-Process smartscreen -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+              Write-Host 'PROBE variant: SmartScreen for apps and files turned off by policy (EnableSmartScreen=0, SmartScreenEnabled=Off)'
+          }
+          $uninstKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Marshell'
           Show-State 'before'
           $manifest = (Resolve-Path fallback/manifest).Path
           $argLine = "install --manifest `"$manifest`" --silent --accept-package-agreements --accept-source-agreements --disable-interactivity --verbose-logs"
@@ -118,6 +135,22 @@ jobs:
           }
           Start-Sleep -Seconds 5
           Show-State 'after'
+          if ($p.HasExited -and (Test-Path -LiteralPath $uninstKey)) {
+              $k = Get-ItemProperty -LiteralPath $uninstKey
+              Write-Host "PROBE installed: DisplayVersion $($k.DisplayVersion), InstallLocation $($k.InstallLocation)"
+              $uout = Join-Path (Resolve-Path probe) 'winget-uninstall-out.txt'
+              $uerr = Join-Path (Resolve-Path probe) 'winget-uninstall-err.txt'
+              $uargs = "uninstall --manifest `"$manifest`" --silent --disable-interactivity --verbose-logs"
+              Write-Host "PROBE starting: winget $uargs"
+              $u = Start-Process -FilePath winget -ArgumentList $uargs -PassThru -RedirectStandardOutput $uout -RedirectStandardError $uerr -NoNewWindow
+              $null = $u.Handle
+              if ($u.WaitForExit(180000)) { Write-Host "PROBE winget uninstall exited with $($u.ExitCode)" } else { Write-Host 'PROBE winget uninstall was still running after 180 s' }
+              $usw = [System.Diagnostics.Stopwatch]::StartNew()
+              while ((Test-Path -LiteralPath $uninstKey) -and $usw.Elapsed.TotalSeconds -lt 120) { Start-Sleep -Seconds 2 }
+              Write-Host ("PROBE uninstall key gone: {0} after {1:n0} s" -f (-not (Test-Path -LiteralPath $uninstKey)), $usw.Elapsed.TotalSeconds)
+              Show-State 'after the uninstall'
+              Write-Host 'PROBE ---- winget uninstall stdout'; if (Test-Path $uout) { Get-Content $uout | Where-Object { $_.Trim() } | Select-Object -Last 20 | Write-Host }
+          }
           Write-Host 'PROBE ---- winget stdout'; if (Test-Path $out) { Get-Content $out | Where-Object { $_.Trim() } | Select-Object -Last 60 | Write-Host }
           Write-Host 'PROBE ---- winget stderr'; if (Test-Path $err) { Get-Content $err | Select-Object -Last 30 | Write-Host }
           $diag = Join-Path $env:LOCALAPPDATA 'Packages\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\LocalState\DiagOutputDir'
@@ -138,6 +171,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: probe
+          name: probe-${{ matrix.variant }}
           path: probe
           if-no-files-found: ignore
