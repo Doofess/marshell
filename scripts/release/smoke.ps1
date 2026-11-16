@@ -136,8 +136,9 @@ function Get-WaitingOn {
 
 # Runs a program and waits for it up to $TimeoutSec. Its output goes to files in the scratch folder, not through a
 # pipe: a pipe stays open for as long as anything the program started holds it, and reading it has no limit. Gives the
-# exit code and the output. A program that is still running at the limit is stopped, by the PID this started; Code is
-# then $null and Output says what was open on the desktop.
+# exit code and the output. A program that is still running at the limit is stopped together with what it started
+# (a setup file winget began would otherwise go on under the checks that follow); Code is then $null and Output says
+# what was open on the desktop.
 function Invoke-Native([string]$File, [string[]]$Arguments, [int]$TimeoutSec = 300) {
     $script:NativeRuns++
     $outFile = Join-Path $Scratch "native-$($script:NativeRuns)-out.txt"
@@ -147,11 +148,25 @@ function Invoke-Native([string]$File, [string[]]$Arguments, [int]$TimeoutSec = 3
     $ended = $p.WaitForExit($TimeoutSec * 1000)
     if (-not $ended) {
         $why = "$(Split-Path -Leaf $File) $($Arguments[0]) was still running after $TimeoutSec s and was stopped; $(Get-WaitingOn)"
+        & taskkill.exe /PID $p.Id /T /F *> $null
         Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
     }
     $text = (@($outFile, $errFile) | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { Get-Content -LiteralPath $_ -Raw -ErrorAction SilentlyContinue }) -join "`n"
     if (-not $ended) { return [pscustomobject]@{ Code = $null; Output = "$why`n$text".Trim() } }
     return [pscustomobject]@{ Code = $p.ExitCode; Output = $text.Trim() }
+}
+
+# winget marks the setup file it downloads as coming from the internet and starts it through the shell. For an unsigned
+# file SmartScreen then shows "Windows protected your PC" (and, with SmartScreen off, the shell shows "Open File -
+# Security Warning"), which nobody can answer on a runner: winget waits without a limit. SEE_MASK_NOZONECHECKS makes
+# the shell skip that check. It is set for winget and what winget starts, and taken away again, so the app and the
+# fixture run without it. A person at a PC gets the dialog and chooses "More info", then "Run anyway"; the release
+# notes say so.
+function Invoke-Winget([string[]]$Arguments, [int]$TimeoutSec) {
+    $before = $env:SEE_MASK_NOZONECHECKS
+    $env:SEE_MASK_NOZONECHECKS = '1'
+    try { return Invoke-Native 'winget' $Arguments $TimeoutSec }
+    finally { $env:SEE_MASK_NOZONECHECKS = $before }
 }
 
 function Get-Uninst {
@@ -198,10 +213,10 @@ function Install-Marshell {
             return [pscustomobject]@{ Code = $code; Output = '' }
         }
         'manifest' {
-            return Invoke-Native 'winget' @('install', '--manifest', $WingetManifest, '--silent', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity') 600
+            return Invoke-Winget @('install', '--manifest', $WingetManifest, '--silent', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity') 600
         }
         default {
-            return Invoke-Native 'winget' @('install', '--id', $WingetId, '--exact', '--version', $Version, '--source', 'winget', '--silent', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity') 600
+            return Invoke-Winget @('install', '--id', $WingetId, '--exact', '--version', $Version, '--source', 'winget', '--silent', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity') 600
         }
     }
 }
@@ -229,12 +244,12 @@ function Uninstall-Marshell {
             # repository, so the release notes give this form. What `winget list` says about the id is printed.
             # winget asks about its sources' agreements for `list` and `uninstall` too, and with interactivity off it
             # stops there (0x8A150046) unless they are accepted on the command line.
-            $listed = Invoke-Native 'winget' @('list', '--id', 'Doofess.Marshell', '--exact', '--accept-source-agreements', '--disable-interactivity') 120
+            $listed = Invoke-Winget @('list', '--id', 'Doofess.Marshell', '--exact', '--accept-source-agreements', '--disable-interactivity') 120
             Write-Host "NOTE winget list --id Doofess.Marshell --exact exited $($listed.Code) after an install from a manifest folder"
-            $res = Invoke-Native 'winget' @('uninstall', '--manifest', $WingetManifest, '--silent', '--accept-source-agreements', '--disable-interactivity') 300
+            $res = Invoke-Winget @('uninstall', '--manifest', $WingetManifest, '--silent', '--accept-source-agreements', '--disable-interactivity') 300
         }
         default {
-            $res = Invoke-Native 'winget' @('uninstall', '--id', $WingetId, '--exact', '--silent', '--accept-source-agreements', '--disable-interactivity') 300
+            $res = Invoke-Winget @('uninstall', '--id', $WingetId, '--exact', '--silent', '--accept-source-agreements', '--disable-interactivity') 300
         }
     }
     $null = Wait-Until { -not (Test-Path -LiteralPath $UninstKey) } 120 2000
@@ -335,13 +350,7 @@ $env:COPILOT_HOME = $CopilotDir
 $env:QWEN_HOME = $QwenDir
 Write-Host "NOTE scratch folder $Scratch, mode $($script:Mode), version $Version"
 if ($script:Mode -ne 'installer') {
-    # winget marks the setup file it downloads as coming from the internet and starts it through the shell. For an
-    # unsigned file SmartScreen then shows "Windows protected your PC" (and, with SmartScreen off, the shell shows
-    # "Open File - Security Warning"), which nobody can answer on a runner: winget waits without a limit. This
-    # variable makes the shell skip that check for what winget starts from here. A person at a PC gets the dialog
-    # and chooses "More info", then "Run anyway"; the release notes say so.
-    $env:SEE_MASK_NOZONECHECKS = '1'
-    Write-Host 'NOTE SEE_MASK_NOZONECHECKS=1 is set for winget: the SmartScreen dialog a person would get is skipped here'
+    Write-Host 'NOTE winget runs with SEE_MASK_NOZONECHECKS=1: the SmartScreen dialog a person would get is skipped here'
 }
 
 function Write-KnownSettings { [System.IO.File]::WriteAllBytes($ClaudeFile, $KnownBytes) }
