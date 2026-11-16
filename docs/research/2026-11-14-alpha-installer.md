@@ -84,4 +84,10 @@ The probe ran the script from the fix's branch against the published release, on
 | Does winget pass the shell's environment to the uninstaller? | Yes. The unhook worked on the scratch `MARSHELL_HOME`, `MARSHELL_CLAUDE_SETTINGS` and `CODEX_HOME`, so the release notes' advice to uninstall from the shell that sets a CLI's folder holds. |
 | Does winget know the package by its id after an install from a manifest folder? | No. `winget list --id Doofess.Marshell --exact` exited 0x8A150014 (no package found), as `docs/RELEASING.md` says. |
 
+### The check run by hand, without the fixture
+
+After the fix merged (444ea9b9), `gh workflow run release.yml -f action=check -f tag=v0.1.0-alpha.1` ran `winget-check` on `main` ([run 43970750829](https://github.com/Doofess/marshell/actions/runs/43970750829)). winget installed the release, the app started and winget uninstalled it, but the smoke test ended `RESULT 20 passed, 1 failed, 5 skipped`. The failed check was "A8 after uninstall: the home snapshots folder is still there".
+
+A check run by hand has no `build` job, so it has no fixture, and the smoke test skips its hook checks. The snapshots folder holds the backups of files Marshell changed, and in the smoke test only the fixture changes a file. Without the fixture nothing made the folder, so the check asked for something that was never there. It had not run this way before: the tag's own `winget-check` gets the fixture from `build`, and the probe took it from the tag's run. The check now runs only with the fixture.
+
 Still not shown: what a person sees after "More info" and "Run anyway" when winget started the installer (nobody can press it on a runner); whether an install from the community repository meets the dialog; `wingetcreate submit` for a new package, which waits for the token; and why the first attempt's `build` job stopped.
