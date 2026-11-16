@@ -529,14 +529,15 @@ function Invoke-CycleA {
             if (-not (Test-Contains $CodexFile 'marshell-hook')) { return $true }
             'it still names marshell-hook'
         }
+        # The fixture's changes are what puts backups in the home's snapshots folder. Without it nothing made one.
+        Check 'A8 after uninstall: the home snapshots folder is still there' { Test-Path -LiteralPath (Join-Path $MHome 'snapshots') -PathType Container }
     } else {
-        Report-Skip 'A8 after uninstall: the hook files' 'no -Fixture given'
+        Report-Skip 'A8 after uninstall: the hook files and the home snapshots folder' 'no -Fixture given'
     }
     Check 'A8 after uninstall: the home bin is gone' {
         $bin = Join-Path $MHome 'bin'
         if (Wait-Until { -not (Test-Path -LiteralPath $bin) } 30) { $true } else { "$bin is still there" }
     }
-    Check 'A8 after uninstall: the home snapshots folder is still there' { Test-Path -LiteralPath (Join-Path $MHome 'snapshots') -PathType Container }
     Check 'A8 after uninstall: HKCU Classes marshell does not point into the install folder' {
         $k = 'HKCU:\Software\Classes\marshell\shell\open\command'
         if (-not (Test-Path -LiteralPath $k)) { return $true }
