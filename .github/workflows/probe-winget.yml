@@ -1,4 +1,4 @@
-# TEMPORARY, never merged: runs the fixed scripts/release/smoke.ps1 (branch winget-check-smartscreen) in
+# TEMPORARY, never merged: runs the fixed scripts/release/smoke.ps1 (branch smoke-check-without-fixture) in
 # winget mode against the published v0.1.0-alpha.1, the way winget-check does after a release.
 name: probe-winget
 
@@ -15,6 +15,10 @@ jobs:
   probe:
     runs-on: windows-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        fixture: [with, without]
     env:
       TAG: v0.1.0-alpha.1
       VERSION: 0.1.0-alpha.1
@@ -22,9 +26,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: winget-check-smartscreen
+          ref: smoke-check-without-fixture
           persist-credentials: false
       - name: The fixture the release's build made
+        if: matrix.fixture == 'with'
         shell: pwsh
         run: |
           gh run download 43942007171 --repo $env:GITHUB_REPOSITORY --name release --dir out
