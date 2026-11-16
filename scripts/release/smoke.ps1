@@ -206,6 +206,8 @@ function Test-FileBytes([string]$Path, [byte[]]$Want) {
     return ((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -eq (Get-BytesHash $Want))
 }
 
+# winget's install took 22 s on a runner. Its limit is 300 s, so that an install that hangs in both cycles is over
+# after 10 minutes, well inside the workflow step's 20, and the step ends with this script's own result.
 function Install-Marshell {
     switch ($script:Mode) {
         'installer' {
@@ -213,10 +215,10 @@ function Install-Marshell {
             return [pscustomobject]@{ Code = $code; Output = '' }
         }
         'manifest' {
-            return Invoke-Winget @('install', '--manifest', $WingetManifest, '--silent', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity') 600
+            return Invoke-Winget @('install', '--manifest', $WingetManifest, '--silent', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity') 300
         }
         default {
-            return Invoke-Winget @('install', '--id', $WingetId, '--exact', '--version', $Version, '--source', 'winget', '--silent', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity') 600
+            return Invoke-Winget @('install', '--id', $WingetId, '--exact', '--version', $Version, '--source', 'winget', '--silent', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity') 300
         }
     }
 }

@@ -73,7 +73,9 @@ A probe workflow on a throwaway branch (draft pull request #128, never merged) i
 
 ### The smoke test through winget, after the fix
 
-`scripts/release/smoke.ps1` now sets `SEE_MASK_NOZONECHECKS=1` in its winget modes, passes `--accept-source-agreements` to `winget list` and `winget uninstall`, and runs every program with a time limit and its output in files. Run from the fix's branch against the published release, on a fresh runner with the fixture from the release's build ([run 43961947372](https://github.com/Doofess/marshell/actions/runs/43961947372)): `RESULT 47 passed, 0 failed, 2 skipped`. The two skips are the reinstall and the in-place update, which only the installer mode runs.
+`scripts/release/smoke.ps1` now sets `SEE_MASK_NOZONECHECKS=1` for winget and what winget starts (the app and the fixture run without it), passes `--accept-source-agreements` to `winget list` and `winget uninstall`, and runs every program with a time limit and its output in files. A program still running at its limit is stopped together with what it started.
+
+The probe ran the script from the fix's branch against the published release, on a fresh runner with the fixture from the release's build ([run 43961947372](https://github.com/Doofess/marshell/actions/runs/43961947372)). Both attempts ended `RESULT 47 passed, 0 failed, 2 skipped`: the first at f3c24f50, with the variable set for the whole script, the second at 4d3fa89f, with it set for winget alone. The two skips are the reinstall and the in-place update, which only the installer mode runs. The one later change to the script lowers the limit on winget's install from 600 s to 300 s. The release's own `winget-check` job runs only on `main`, so it runs after the merge.
 
 | Question | What the runner showed |
 | --- | --- |
