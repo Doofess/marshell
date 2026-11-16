@@ -1,4 +1,4 @@
-// The text of an alpha release's page on GitHub (PLAN §9, slice 9a decisions 2, 3, 6 and 9).
+// The text of an alpha release's page on GitHub (PLAN §9, slice 9a decisions 2, 3, 6, 9 and 15).
 // Usage: node scripts/release/notes.mjs --version <v> --sha256 <hash>
 import { fileURLToPath } from "node:url";
 import { installerName } from "./version.mjs";
@@ -51,6 +51,10 @@ What stays:
 - What Marshell put in a CLI config folder that only a shell knows about. If you set \`CLAUDE_CONFIG_DIR\`, \`CODEX_HOME\`, \`COPILOT_HOME\` or \`QWEN_HOME\` in a shell profile and not in Windows' environment variables, uninstall from that shell (\`winget uninstall\`), not from Settings.
 - A CLI file that Marshell can't read or that doesn't parse is left as it is, with Marshell's hooks still in it. The hooks keep working, because \`%USERPROFILE%\\.marshell\\bin\` then stays too.
 - The hooks, if you uninstall with the setup program itself (run the installer again and choose to uninstall). Run \`%USERPROFILE%\\.marshell\\bin\\marshell.exe uninstall\` first, or afterwards: it shows what it will change and asks.
+
+## Licences
+
+Marshell is MIT-licensed. The installer puts \`LICENSE\` and \`THIRD_PARTY_NOTICES.md\` next to the program. The notices file isn't complete yet: it covers ConPTY, the fonts and a few of the Rust crates, and not the other crates or the JavaScript packages in the app. The complete list comes before v1. Until then, \`Cargo.lock\` and \`pnpm-lock.yaml\` in the repository list the crates and packages the build draws on, along with ones used only to build and test it.
 
 ## Checksum
 

@@ -42,6 +42,15 @@ describe("the release notes", () => {
     }
   });
 
+  // Slice 9a decision 15. The caveat and this test go when THIRD_PARTY_NOTICES.md lists every crate and
+  // package (phase 9). That the installer carries both files is checked by smoke.ps1, not here.
+  it("say the third-party notices aren't complete yet", () => {
+    expect(notes).toContain("THIRD_PARTY_NOTICES.md");
+    expect(notes).toContain("The notices file isn't complete yet");
+    expect(notes).toContain("JavaScript packages");
+    expect(notes).toContain("`Cargo.lock` and `pnpm-lock.yaml`");
+  });
+
   it("name no other version", () => {
     const other = releaseNotes({ version: "0.1.0-alpha.2", sha256: SHA });
     expect(other).toContain("Marshell_0.1.0-alpha.2_x64-setup.exe");
