@@ -53,6 +53,17 @@ describe("takeOpens", () => {
     expect(asked).toContain("https://bad.dev/");
   });
 
+  it("takeOpens_refuses_an_address_too_long_for_the_layout_once_it_is_written_out", () => {
+    // 2000 characters as the core counted them; each "é" is six once the address is written the way a tab keeps it.
+    const long = `https://ok.dev/${"é".repeat(2000)}`;
+    const r = takeOpens(EMPTY, [req(1, long, { kind: "browser" }), req(2, `https://ok.dev/${"a".repeat(2000)}`, { kind: "browser" })], none, ctx());
+    expect(r.done).toEqual([
+      { id: 1, refused: "address" },
+      { id: 2, refused: null },
+    ]);
+    expect(titles(r.view)).toHaveLength(1);
+  });
+
   it("takeOpens_stores_a_typed_address_the_way_the_url_bar_does", () => {
     const first = takeOpens(EMPTY, [req(1, "HTTP://EXAMPLE.COM/", { kind: "browser" })], none, ctx());
     expect(titles(first.view)).toEqual(["http://example.com/"]);

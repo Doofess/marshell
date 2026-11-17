@@ -1,7 +1,7 @@
 import type { PaneOpen } from "../../generated/PaneOpen";
 import type { PaneOpenDone } from "../../generated/PaneOpenDone";
 import type { PaneView } from "../../generated/PaneView";
-import { addressFor, pageTitle } from "../browser/address";
+import { addressFor, isPageUrl, pageTitle } from "../browser/address";
 import { agentLabel } from "../sessions/sessionActions";
 import { openedByText, openedText } from "./paneCommands";
 import { lastSegment, openRefused, paneReducer, type PaneAction } from "./paneState";
@@ -55,7 +55,8 @@ export function takeOpens(view: PaneView, opens: readonly PaneOpen[], seen: Read
     if (open.kind === "browser") {
       // As the URL bar reads a typed address: `HTTP://EXAMPLE.COM/` is `http://example.com/`.
       const typed = addressFor(target);
-      if (typed.kind !== "open" || ctx.refuses(typed.url)) {
+      // `isPageUrl` holds the length a tab's address may have: written out, an address can be longer than it was typed.
+      if (typed.kind !== "open" || !isPageUrl(typed.url) || ctx.refuses(typed.url)) {
         answer(open.id, "address");
         continue;
       }
