@@ -98,9 +98,23 @@ The token was added on 2026-11-17, and `gh workflow run release.yml -f action=su
 
 | Question | What the runner showed |
 | --- | --- |
-| Does `wingetcreate submit` (v1.28.1.0) take a manifest folder for a package that isn't in the repository yet? | Yes. It printed "Manifest validation succeeded: True" and opened [microsoft/winget-pkgs pull request 482075](https://github.com/microsoft/winget-pkgs/pull/482075), "New version: Doofess.Marshell version 0.1.0-alpha.1", from the owner's account. |
-| Does it need anything but the token? | No. The token came from `WINGET_CREATE_GITHUB_TOKEN`, a classic token with `public_repo`, and the job took under a minute. |
+| Does `wingetcreate submit` (v1.28.1.0) take a manifest folder for a package that isn't in the repository yet? | It validates it and opens the pull request. It printed "Manifest validation succeeded: True" and opened [microsoft/winget-pkgs pull request 482075](https://github.com/microsoft/winget-pkgs/pull/482075), "New version: Doofess.Marshell version 0.1.0-alpha.1", from the owner's account, with the folder's three files. |
+| Does it need anything but the token? | No. The token came from `WINGET_CREATE_GITHUB_TOKEN`, a classic token with `public_repo`, and the job took 41 s. |
+| Was the pull request reviewed? | No. `microsoft-github-policy-service[bot]` closed it 46 s after it opened (07:28:42Z to 07:29:28Z), without a comment or a label. Nothing is waiting with Microsoft. |
 
-When this was written the pull request was open, with no label and no comment yet. The release page's notes went back to the text `scripts/release/notes.mjs` writes.
+Why the bot closed it isn't known. What the repository shows about that hour:
 
-Still not shown: what a person sees after "More info" and "Run anyway" when winget started the installer (nobody can press it on a runner); whether Microsoft accepts an unsigned alpha; whether an install from the community repository meets the dialog; and why the first attempt's `build` job stopped.
+- Every pull request opened up to 07:24:25Z (482067 to 482073) stayed open and got the bot's usual first comment, the validation badges.
+- Every pull request opened from 07:27:27Z to 07:35:13Z (482074 to 482078) was closed by the same bot within 30 to 46 s, with no comment and no label. They came from first-time and from established contributors, with "New package:" and with "New version:" titles.
+- The rule in the repository's own policy files that closes a pull request when it opens (`.github/policies/labelManagement.issueOpened.yml`, for one that changes no file) also posts a reply. None of these got one.
+
+That points away from Marshell's manifest and its title, and at something on Microsoft's side that changed or broke at about 07:25Z. The submission has to be run again once new pull requests there stay open.
+
+Two things about the pull request itself, for the next run:
+
+- Its title said "New version:". The repository's template asks for "New package: Publisher.Name version X.Y.Z" for a package that isn't there yet. `release.yml` passes the title, so the first submission of a package needs the other one.
+- Its body was the repository's template with nothing ticked. The checklist asks for the contributor agreement, and for `winget validate` and `winget install --manifest`, both of which `winget-check` runs.
+
+The release page's notes carry a line that the package isn't in winget's repository yet. Without it they would say Microsoft is still reviewing the version.
+
+Still not shown: what a person sees after "More info" and "Run anyway" when winget started the installer (nobody can press it on a runner); a submission that reaches Microsoft's review, and whether they accept an unsigned alpha; whether an install from the community repository meets the dialog; why the first attempt's `build` job stopped; and the tag's own `publish`, `winget-check`, `winget-submit` chain passing in one run, which alpha.2 will show.
