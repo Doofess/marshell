@@ -29,7 +29,7 @@ describe("paneReducer", () => {
     const s = run(EMPTY, open("/a.md"));
     const t = tabsOf(s, "s");
     expect(t.tabs).toEqual([
-      { id: "t1", kind: "file", history: [{ path: "/a.md", line: null, col: null, view: "rendered" }], index: 0, title: null },
+      { id: "t1", kind: "file", history: [{ path: "/a.md", line: null, col: null, view: "rendered" }], index: 0, title: null, opened_by: null, unseen: false },
     ]);
     expect(t.active).toBe("t1");
     expect(s.open).toBe(true);
@@ -267,7 +267,7 @@ describe("browser tabs", () => {
   it("openPage makes a browser tab and shows the pane", () => {
     const s = run(EMPTY, page("https://a.dev/"));
     expect(tabsOf(s, "s")).toEqual({
-      tabs: [{ id: "t1", kind: "browser", history: [{ path: "https://a.dev/", line: null, col: null, view: "rendered" }], index: 0, title: null }],
+      tabs: [{ id: "t1", kind: "browser", history: [{ path: "https://a.dev/", line: null, col: null, view: "rendered" }], index: 0, title: null, opened_by: null, unseen: false }],
       active: "t1",
     });
     expect(s.open).toBe(true);
@@ -366,5 +366,94 @@ describe("browser tabs", () => {
   it("an open of a file path never selects a browser tab", () => {
     const s = run(EMPTY, page("https://a.dev/"), open("https://a.dev/"));
     expect(ids(s)).toEqual(["t1", "t2"]);
+  });
+});
+
+describe("openBackground", () => {
+  const page = (url: string, session = "s"): PaneAction => ({ type: "openPage", session, url });
+  const bg = (target: string, o: { session?: string; kind?: "file" | "browser"; by?: string; onScreen?: boolean } = {}): PaneAction => ({
+    type: "openBackground",
+    session: o.session ?? "s",
+    kind: o.kind ?? "file",
+    target,
+    by: o.by ?? "claude",
+    project: "p",
+    onScreen: o.onScreen ?? false,
+  });
+  const tab = (s: PaneView, id: string, session = "s") => tabsOf(s, session).tabs.find((t) => t.id === id)!;
+
+  it("openBackground_adds_an_unselected_tab_and_keeps_the_pane_hidden", () => {
+    const s = run(EMPTY, open("/a"), { type: "hide" }, bg("/b.md"), bg("https://a.dev/", { kind: "browser", by: "shell" }));
+    expect(s.open).toBe(false);
+    expect(tabsOf(s, "s").active).toBe("t1");
+    expect(tab(s, "t2")).toMatchObject({ kind: "file", opened_by: "claude", unseen: true });
+    expect(tab(s, "t3")).toMatchObject({ kind: "browser", opened_by: "shell", unseen: true });
+    expect(s.recent[0]).toEqual({ project: "p", path: "/b.md" });
+  });
+
+  it("openBackground_in_an_empty_session_selects_it_and_still_keeps_the_pane_hidden", () => {
+    const s = run(EMPTY, bg("/a.md"));
+    expect(tabsOf(s, "s").active).toBe("t1");
+    expect(s.open).toBe(false);
+  });
+
+  it("openBackground_marks_a_tab_already_open", () => {
+    const base = run(EMPTY, open("/a"), open("/b"), page("https://a.dev/"));
+    expect(tab(base, "t1").unseen).toBe(false);
+    const s = run(base, bg("/a", { by: "codex" }), bg("HTTPS://A.dev", { kind: "browser", by: "codex" }));
+    expect(ids(s)).toEqual(["t1", "t2", "t3"]);
+    expect(tab(s, "t1")).toMatchObject({ opened_by: "codex", unseen: true });
+    expect(tab(s, "t3")).toMatchObject({ opened_by: "codex", unseen: true });
+    expect(tab(s, "t2").unseen).toBe(false);
+    expect(s.open).toBe(base.open);
+    expect(tabsOf(s, "s").active).toBe(tabsOf(base, "s").active);
+  });
+
+  it("openBackground_leaves_the_tab_on_screen_unmarked", () => {
+    const base = run(EMPTY, open("/a"));
+    expect(paneReducer(base, bg("/a", { onScreen: true }))).toBe(base);
+    const marked = paneReducer(base, bg("/a", { onScreen: false }));
+    expect(tab(marked, "t1").unseen).toBe(true);
+  });
+
+  it("openBackground_at_32_tabs_changes_nothing", () => {
+    let s = EMPTY;
+    for (let i = 0; i < 32; i++) s = run(s, open(`/f${i}`));
+    expect(paneReducer(s, bg("/new"))).toBe(s);
+    expect(paneReducer(s, bg("https://a.dev/", { kind: "browser" }))).toBe(s);
+    expect(tab(paneReducer(s, bg("/f3")), "t4").unseen).toBe(true);
+  });
+
+  it("selecting_a_tab_clears_unseen_and_keeps_the_opener", () => {
+    const s = run(EMPTY, open("/a"), bg("/b", { by: "codex" }), { type: "select", session: "s", paneTab: "t2" });
+    expect(tab(s, "t2")).toMatchObject({ opened_by: "codex", unseen: false });
+  });
+
+  it("selecting_the_tab_on_screen_clears_its_mark", () => {
+    const s = run(EMPTY, bg("/a", { by: "codex" }), { type: "select", session: "s", paneTab: "t1" });
+    expect(tab(s, "t1")).toMatchObject({ opened_by: "codex", unseen: false });
+  });
+
+  it("stepping_onto_a_tab_clears_unseen", () => {
+    const s = run(EMPTY, open("/a"), bg("/b"), { type: "step", session: "s", by: 1 });
+    expect(tab(s, "t2").unseen).toBe(false);
+    const back = run(EMPTY, open("/a"), bg("/b"), { type: "step", session: "s", by: -1 });
+    expect(tab(back, "t2").unseen).toBe(false);
+  });
+
+  it("opening_a_marked_tab_clears_unseen", () => {
+    const s = run(EMPTY, open("/a"), bg("/b"), bg("https://a.dev/", { kind: "browser" }), open("/b"), page("https://a.dev/"));
+    expect(tab(s, "t2").unseen).toBe(false);
+    expect(tab(s, "t3").unseen).toBe(false);
+  });
+
+  it("closing_the_active_tab_clears_unseen_on_the_one_that_takes_over", () => {
+    const s = run(EMPTY, open("/a"), bg("/b"), bg("/c"), close("t1"));
+    expect(tabsOf(s, "s").active).toBe("t2");
+    expect(tab(s, "t2").unseen).toBe(false);
+    expect(tab(s, "t3").unseen).toBe(true);
+    const last = run(EMPTY, open("/a"), bg("/b"), { type: "select", session: "s", paneTab: "t2" }, bg("/c"), close("t2"));
+    expect(tabsOf(last, "s").active).toBe("t3");
+    expect(tab(last, "t3").unseen).toBe(false);
   });
 });

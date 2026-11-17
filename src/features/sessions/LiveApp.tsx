@@ -7,6 +7,7 @@ import type { CreateSessionRequest } from "../../generated/CreateSessionRequest"
 import type { CreateSessionResponse } from "../../generated/CreateSessionResponse";
 import type { RepoScripts } from "../../generated/RepoScripts";
 import type { Endpoint } from "../../generated/Endpoint";
+import type { PaneOpenDone } from "../../generated/PaneOpenDone";
 import type { Task } from "../../generated/Task";
 import type { TaskChanges } from "../../generated/TaskChanges";
 import { ApiError } from "../../lib/api/client";
@@ -37,6 +38,7 @@ import { statFile } from "../preview/previewApi";
 import { inMenu } from "../../components/ContextMenu/menuKeys";
 import { focusAfterMenu, menuFacts, modeOfItem, runResumeItem } from "./sessionMenuRun";
 import { ContextMenu } from "../../components/ContextMenu/ContextMenu";
+import { opensApi } from "../../lib/api/opens";
 import { tasksApi } from "../../lib/api/tasks";
 import { findCommand } from "../../lib/bindings";
 import { cancelsCloseBar, commandShortcut, sessionShortcut, type SessionShortcut } from "../../lib/appShortcuts";
@@ -73,6 +75,7 @@ import { useBrowserPages } from "../browser/useBrowserPages";
 import { focusPane } from "../pane/focusPane";
 import { FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, PANE_BESIDE_SESSION, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome } from "../pane/paneCommands";
 import { activeTab, currentEntry, isBrowserTab, openRefused, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
+import { takeOpens } from "../pane/opens";
 import { plusChoice, plusMenuItems } from "../pane/plusMenu";
 import { SidePane } from "../pane/SidePane";
 import { tabKind } from "../pane/tabType";
@@ -189,7 +192,7 @@ export function LiveApp() {
   // Each hook agent's (Claude Code, Codex, Antigravity) hook state, read when the window opens and again after each change in the Agents dialog or the onboarding. Never polled.
   const [{ detections, detectionFailed }, setSetupDetections] = useState<SetupDetections>(() => ({ detections: [], detectionFailed: new Set() }));
   const [hooks, setHooks] = useState<Partial<Record<HookAgent, HookInstall>>>({});
-  const { endpoint, profiles, rows, infos, closed, permissions, now, selectedId, loaded, select, reloadProfiles, error, doctor } = useSessions(hooks, detections);
+  const { endpoint, profiles, rows, infos, closed, permissions, opens, now, selectedId, loaded, select, reloadProfiles, error, doctor } = useSessions(hooks, detections);
   // The company CLIs found on this machine: Settings lists Accounts and a section for each. Read with the hooks.
   const [found, setFound] = useState<ReadonlySet<CompanyAgent>>(() => new Set());
   const readFound = useCallback(async (): Promise<ReadonlySet<CompanyAgent>> => {
@@ -772,6 +775,30 @@ export function LiveApp() {
   // ended session keeps its own. A session switch only swaps which tabs are drawn, so nothing here moves focus except the one that opens.
   const paneDispatch = useCallback((action: PaneAction) => dispatch({ type: "pane", action }), [dispatch]);
   const paneProject = () => projectKeyOf(stateRef.current.rows, stateRef.current.focusedId);
+  // `marshell open`: every frame lists the requests still waiting. Each becomes a background tab and is answered; the pane is never shown
+  // and focus never moves. `answered` keeps what was said to each request still in the list, so a frame delivered twice applies once and
+  // a lost answer is sent again with the next frame (the core ignores an answer it already has).
+  const answered = useRef(new Map<number, PaneOpenDone>());
+  useEffect(() => {
+    const waiting = new Set(opens.map((o) => o.id));
+    for (const id of answered.current.keys()) if (!waiting.has(id)) answered.current.delete(id);
+    const ep = endpointRef.current;
+    if (!settled || !loaded || !ep || opens.length === 0) return;
+    const taken = takeOpens(viewRef.current.pane, opens, new Set(answered.current.keys()), {
+      sessions: new Map(rows.map((r) => [r.id, { project: r.projectKey }])),
+      shown: focusedId ?? null,
+      paneOpen: viewRef.current.pane.open && mainView === "sessions",
+      refuses: () => false,
+    });
+    const repeat = opens.flatMap((o) => answered.current.get(o.id) ?? []);
+    for (const a of taken.actions) paneDispatch(a);
+    for (const d of taken.done) answered.current.set(d.id, d);
+    // The announcer holds one notice at a time, so a frame's tabs are said together.
+    if (taken.said.length > 0) announce(taken.said.join(" "));
+    const reply = [...taken.done, ...repeat];
+    if (reply.length > 0) void opensApi.done(ep, reply).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- a frame is applied when it arrives; the rest is read as it stands.
+  }, [opens, settled, loaded]);
   // A new tab, or the file's own tab; shows the pane and moves focus into it. False when it was refused (and said so).
   const openInPane = (target: OpenTarget): boolean => {
     const session = stateRef.current.focusedId;

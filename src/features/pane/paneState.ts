@@ -31,6 +31,11 @@ export type PaneAction =
   | { type: "move"; session: string; paneTab: string; to: number }
   /** A web address: a new browser tab, or the tab already showing it (about:blank always makes a new one); shows the pane. */
   | { type: "openPage"; session: string; url: string }
+  /**
+   * `marshell open`: a tab added behind the one on screen, or the tab already showing it, marked as new. It never changes `open`. It
+   * selects the tab only in a session that had none. `onScreen`: the pane is open with this session shown.
+   */
+  | { type: "openBackground"; session: string; kind: "file" | "browser"; target: string; by: string; project: string; onScreen: boolean }
   /** A browser tab's page moved or got a title: the tab's entry follows it. */
   | { type: "page"; session: string; paneTab: string; url: string; title: string | null }
   | { type: "show" }
@@ -82,7 +87,7 @@ export function openRefused(s: PaneView, session: string, path: string): boolean
   return isPageUrl(path) ? !tabs.some((t) => tabShows(t, path)) : !tabs.some((t) => tabHas(t, path));
 }
 
-const lastSegment = (p: string) => p.split(/[/\\]/).filter((x) => x !== "").pop() ?? p;
+export const lastSegment = (p: string) => p.split(/[/\\]/).filter((x) => x !== "").pop() ?? p;
 const folderOf = (p: string) => p.split(/[/\\]/).filter((x) => x !== "").slice(-2, -1)[0] ?? "";
 
 /** Each tab's title: a browser tab's page title, else the file's name, plus " — folder" for file tabs that share a name. */
@@ -143,6 +148,12 @@ function setTabs(s: PaneView, session: string, next: SessionTabs): PaneView {
   return { ...s, sessions: { ...s.sessions, [session]: next } };
 }
 
+/** The tabs with this one no longer marked new (the same object when it isn't). */
+function seenTab(cur: SessionTabs, id: string): SessionTabs {
+  if (!cur.tabs.some((t) => t.id === id && t.unseen)) return cur;
+  return { ...cur, tabs: cur.tabs.map((t) => (t.id === id ? { ...t, unseen: false } : t)) };
+}
+
 /**
  * A line or column as the layout can hold it (a u32 in the core), or null. Output such as `app.log:1731234567890` reads as a path
  * and a line; a number the core can't hold would make it refuse every save of the layout while the tab is open.
@@ -180,8 +191,9 @@ function openPage(s: PaneView, session: string, url: string): PaneView {
   const cur = tabsOf(s, session);
   const existing = cur.tabs.find((t) => tabShows(t, url));
   if (existing) {
-    if (cur.active === existing.id && s.open) return s;
-    return { ...setTabs(s, session, { ...cur, active: existing.id }), open: true };
+    const shown = seenTab(cur, existing.id);
+    if (cur.active === existing.id && s.open && shown === cur) return s;
+    return { ...setTabs(s, session, { ...shown, active: existing.id }), open: true };
   }
   if (cur.tabs.length >= PANE_LIMITS.tabs) return s;
   const tab: PaneTab = { id: nextId(cur.tabs), kind: "browser", history: [entryOf({ path: url })], index: 0, title: null, opened_by: null, unseen: false };
@@ -203,13 +215,13 @@ function open(s: PaneView, session: string, project: string, target: OpenTarget)
   const existing = cur.tabs.find((t) => tabHas(t, target.path));
   let next: PaneView;
   if (existing) {
-    let tab = existing;
+    let tab = existing.unseen ? { ...existing, unseen: false } : existing;
     const line = place(target.line);
     if (line !== null) {
       const e = currentEntry(existing);
       const col = place(target.col);
       if (e.line !== line || e.col !== col) {
-        tab = { ...existing, history: existing.history.map((x, i) => (i === existing.index ? { ...x, line, col } : x)) };
+        tab = { ...tab, history: existing.history.map((x, i) => (i === existing.index ? { ...x, line, col } : x)) };
       }
     }
     if (tab === existing && cur.active === existing.id && s.open) {
@@ -224,6 +236,23 @@ function open(s: PaneView, session: string, project: string, target: OpenTarget)
     next = { ...setTabs(s, session, { tabs: [...cur.tabs, tab], active: tab.id }), open: true };
   }
   return withRecent(next, project, target.path);
+}
+
+function openBackground(s: PaneView, a: Extract<PaneAction, { type: "openBackground" }>): PaneView {
+  const { session, kind, target, by } = a;
+  const cur = tabsOf(s, session);
+  const existing = cur.tabs.find((t) => (kind === "browser" ? tabShows(t, target) : tabHas(t, target)));
+  let next: PaneView;
+  if (existing) {
+    // The tab in front of the person needs no mark.
+    const marked = a.onScreen && cur.active === existing.id ? existing : existing.opened_by === by && existing.unseen ? existing : { ...existing, opened_by: by, unseen: true };
+    next = marked === existing ? s : setTabs(s, session, { ...cur, tabs: cur.tabs.map((t) => (t === existing ? marked : t)) });
+  } else {
+    if (cur.tabs.length >= PANE_LIMITS.tabs) return s;
+    const tab: PaneTab = { id: nextId(cur.tabs), kind, history: [entryOf({ path: target })], index: 0, title: null, opened_by: by, unseen: true };
+    next = setTabs(s, session, { tabs: [...cur.tabs, tab], active: cur.tabs.length === 0 ? tab.id : cur.active });
+  }
+  return kind === "file" ? withRecent(next, a.project, target) : next;
 }
 
 function navigate(s: PaneView, session: string, paneTab: string, project: string, target: OpenTarget): PaneView {
@@ -243,8 +272,9 @@ function close(s: PaneView, session: string, paneTab: string): PaneView {
     const { [session]: _gone, ...sessions } = s.sessions;
     return { ...s, sessions };
   }
-  const active = cur.active === paneTab ? (tabs[at] ?? tabs[at - 1])!.id : cur.active;
-  return setTabs(s, session, { tabs, active });
+  if (cur.active !== paneTab) return setTabs(s, session, { tabs, active: cur.active });
+  const active = (tabs[at] ?? tabs[at - 1])!.id;
+  return setTabs(s, session, seenTab({ tabs, active }, active));
 }
 
 export function paneReducer(s: PaneView, a: PaneAction): PaneView {
@@ -255,6 +285,8 @@ export function paneReducer(s: PaneView, a: PaneAction): PaneView {
       return navigate(s, a.session, a.paneTab, a.project, a.target);
     case "openPage":
       return openPage(s, a.session, a.url);
+    case "openBackground":
+      return openBackground(s, a);
     case "page":
       return pageMoved(s, a.session, a.paneTab, a.url, a.title);
     case "back":
@@ -267,8 +299,11 @@ export function paneReducer(s: PaneView, a: PaneAction): PaneView {
       );
     case "select": {
       const cur = s.sessions[a.session];
-      if (!cur || cur.active === a.paneTab || !cur.tabs.some((t) => t.id === a.paneTab)) return s;
-      return setTabs(s, a.session, { ...cur, active: a.paneTab });
+      if (!cur || !cur.tabs.some((t) => t.id === a.paneTab)) return s;
+      // Choosing the tab already selected is still the person's first look at it.
+      const shown = seenTab(cur, a.paneTab);
+      if (cur.active === a.paneTab && shown === cur) return s;
+      return setTabs(s, a.session, { ...shown, active: a.paneTab });
     }
     case "step": {
       const cur = s.sessions[a.session];
@@ -276,7 +311,7 @@ export function paneReducer(s: PaneView, a: PaneAction): PaneView {
       const at = cur.tabs.findIndex((t) => t.id === cur.active);
       const n = cur.tabs.length;
       const id = cur.tabs[(((at < 0 ? 0 : at + a.by) % n) + n) % n]!.id;
-      return id === cur.active ? s : setTabs(s, a.session, { ...cur, active: id });
+      return id === cur.active ? s : setTabs(s, a.session, { ...seenTab(cur, id), active: id });
     }
     case "close":
       return close(s, a.session, a.paneTab);

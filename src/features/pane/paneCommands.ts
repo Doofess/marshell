@@ -14,6 +14,8 @@ export function paneToggleOutcome(session: string | null | undefined, viewing: b
 export const TAB_LIMIT = `This session has ${PANE_LIMITS.tabs} tabs. Close one to open another.`;
 export const FOLDER_REFUSED = "A folder can't be shown in the side pane.";
 export const openedText = (name: string) => `Opened ${name} in the side pane.`;
+/** The announcement for a tab an agent opened with `marshell open`; `who` is the agent's name. */
+export const openedByText = (who: string, name: string) => `${who} opened ${name} in the side pane.`;
 export const closedText = (name: string) => `Closed ${name}.`;
 export const movedText = (name: string, to: number, count: number) => `Moved ${name} to position ${to + 1} of ${count}.`;
 export const coverText = (cover: string) => `Close ${cover} to open a file.`;
