@@ -90,4 +90,17 @@ After the fix merged (444ea9b9), `gh workflow run release.yml -f action=check -f
 
 A check run by hand has no `build` job, so it has no fixture, and the smoke test skips its hook checks. The snapshots folder holds the backups of files Marshell changed, and in the smoke test only the fixture changes a file. Without the fixture nothing made the folder, so the check asked for something that was never there. It had not run this way before: the tag's own `winget-check` gets the fixture from `build`, and the probe took it from the tag's run. The check now runs only with the fixture.
 
-Still not shown: what a person sees after "More info" and "Run anyway" when winget started the installer (nobody can press it on a runner); whether an install from the community repository meets the dialog; `wingetcreate submit` for a new package, which waits for the token; and why the first attempt's `build` job stopped.
+With that merged (bccd3e69), the same command passed ([run 43975803189](https://github.com/Doofess/marshell/actions/runs/43975803189)): `RESULT 20 passed, 0 failed, 5 skipped`. The five skips are the fixture's steps and checks, cycle B, and the two steps only the installer mode runs. So the hooks' removal through winget is shown by the probe's runs with the fixture, and not by a check run by hand.
+
+### The submission
+
+The token was added on 2026-11-17, and `gh workflow run release.yml -f action=submit -f tag=v0.1.0-alpha.1` ran `winget-submit` ([run 44038920114](https://github.com/Doofess/marshell/actions/runs/44038920114)).
+
+| Question | What the runner showed |
+| --- | --- |
+| Does `wingetcreate submit` (v1.28.1.0) take a manifest folder for a package that isn't in the repository yet? | Yes. It printed "Manifest validation succeeded: True" and opened [microsoft/winget-pkgs pull request 482075](https://github.com/microsoft/winget-pkgs/pull/482075), "New version: Doofess.Marshell version 0.1.0-alpha.1", from the owner's account. |
+| Does it need anything but the token? | No. The token came from `WINGET_CREATE_GITHUB_TOKEN`, a classic token with `public_repo`, and the job took under a minute. |
+
+When this was written the pull request was open, with no label and no comment yet. The release page's notes went back to the text `scripts/release/notes.mjs` writes.
+
+Still not shown: what a person sees after "More info" and "Run anyway" when winget started the installer (nobody can press it on a runner); whether Microsoft accepts an unsigned alpha; whether an install from the community repository meets the dialog; and why the first attempt's `build` job stopped.
