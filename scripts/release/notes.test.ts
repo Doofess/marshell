@@ -49,6 +49,13 @@ describe("the release notes", () => {
     expect(notes).toContain('winget looks stuck at "Starting package install..."');
   });
 
+  // The page is written before anything is submitted, and a submission can be closed or refused (alpha.1's was
+  // closed within a minute), so the notes must hold in every state.
+  it("don't say that Microsoft is reviewing the version", () => {
+    expect(notes).toContain("If winget can't find this version, it isn't in winget's repository yet.");
+    expect(notes).not.toContain("reviewing");
+  });
+
   // Slice 9a decision 15. The caveat and this test go when THIRD_PARTY_NOTICES.md lists every crate and
   // package (phase 9). That the installer carries both files is checked by smoke.ps1, not here.
   it("say the third-party notices aren't complete yet", () => {

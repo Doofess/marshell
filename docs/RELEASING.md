@@ -26,7 +26,7 @@ A tag of any other form stops the workflow before it builds.
 | `build` | A tag, a pull request that touches the installer or the release scripts, or a manual `dry-run` | Stamps the version (`0.1.0-alpha.0` for a dry run), builds the per-user NSIS installer, writes the winget manifest, the checksum and the release notes, and runs the smoke test on the installer. |
 | `publish` | A tag, after `build` | Creates the GitHub pre-release with the installer, its `.sha256` and `winget-manifest-<version>.zip`. |
 | `winget-check` | After `publish`, or a manual `check` | On a fresh runner: installs the release with winget from its manifest folder, starts the app and uninstalls it with winget. |
-| `winget-submit` | After `winget-check` passes, or a manual `submit` | Opens the pull request on `microsoft/winget-pkgs` with Microsoft's `wingetcreate`. Without the token it says so and ends green. |
+| `winget-submit` | After `winget-check` passes, or a manual `submit` | Opens the pull request on `microsoft/winget-pkgs` with Microsoft's `wingetcreate`, titled "New package:" until the package has a folder there and "New version:" after. Without the token it says so and ends green. |
 
 The smoke test is `scripts/release/smoke.ps1`. It installs silently, checks the uninstall entry and the installed files, starts the app and asks it for its sessions, updates over the running app, uninstalls, and checks what is left: no hooks in the CLI files, no program files, and `~/.marshell` kept without its `bin` folder. It runs on GitHub's runners and nowhere else: each uninstall in it is a real one, which also takes Marshell's hooks out of `~/.gemini`, `~/.agents` and every WSL distro, and no variable moves those. The script refuses to start outside GitHub Actions (a VM that is thrown away afterwards can pass `-ThrowawayMachine`), and where Marshell is installed or running.
 
@@ -42,6 +42,11 @@ To try a change to the installer without releasing, open a pull request (the dry
 The token reaches `wingetcreate` through an environment variable and is never on a command line. Only `winget-submit` reads it, and that job doesn't run for pull requests.
 
 The first pull request on `microsoft/winget-pkgs` gets a comment from Microsoft's bot asking for the contributor agreement. The repo owner answers it once, from the account that owns the token.
+
+After a submission, open the pull request and look at it: a green `winget-submit` only means it was opened.
+
+- Its body is the repository's template with nothing ticked. Tick what holds: the contributor agreement once it is signed, and `winget validate` and `winget install --manifest`, both of which `winget-check` runs.
+- Microsoft's bot can close it. alpha.1's first one was closed within a minute, without a comment, together with every other pull request opened in those minutes. When that happens, wait until new pull requests there stay open and run `submit` again. Never run it while an earlier pull request for the same version is still open: that opens a duplicate.
 
 ## A release that went out before the token, or whose submission failed
 

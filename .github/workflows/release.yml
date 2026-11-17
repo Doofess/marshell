@@ -270,6 +270,27 @@ jobs:
             "::error::wingetcreate.exe's SHA-256 is $sha, not the pinned one."
             exit 1
           }
+      # winget-pkgs asks for "New package:" in the title until the package has a folder there, and wingetcreate's
+      # own titles say "New version:" after that. Anything but a clear yes or no stops the job before it submits.
+      # This step has the workflow's token, to read a public repository, and the next one has only the owner's.
+      - name: The pull request's title
+        id: title
+        if: steps.release.outputs.token == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $first = gh api -i repos/microsoft/winget-pkgs/contents/manifests/d/Doofess/Marshell 2>$null | Select-Object -First 1
+          if ("$first" -match '^HTTP/\S+ 200\b') { $kind = 'New version' }
+          elseif ("$first" -match '^HTTP/\S+ 404\b') { $kind = 'New package' }
+          else {
+            "::error::Couldn't tell whether Doofess.Marshell is in microsoft/winget-pkgs yet. The answer began: '$first'"
+            exit 1
+          }
+          "kind=$kind" >> $env:GITHUB_OUTPUT
+          "The pull request's title starts with '${kind}:'"
+          # gh's own exit code is 1 for a 404, and the shell would end the step with it.
+          exit 0
       - name: Submit to microsoft/winget-pkgs
         if: steps.release.outputs.token == 'true'
         shell: pwsh
@@ -277,6 +298,7 @@ jobs:
           # wingetcreate reads the token from here, so it never appears on a command line.
           WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
           VERSION: ${{ steps.release.outputs.version }}
+          KIND: ${{ steps.title.outputs.kind }}
         run: |
-          ./wingetcreate.exe submit --prtitle "New version: Doofess.Marshell version $env:VERSION" --no-open fallback/manifest
+          ./wingetcreate.exe submit --prtitle "${env:KIND}: Doofess.Marshell version $env:VERSION" --no-open fallback/manifest
           if ($LASTEXITCODE -ne 0) { exit 1 }
