@@ -926,6 +926,35 @@ mod tests {
         }
     }
 
+    /// One case of `allowed.json`, which the app's tests run through `shellRefuses` (`address.ts`) too, so the page
+    /// that is refused in the shell is refused before a tab is made for it.
+    #[derive(Deserialize)]
+    struct AllowedCase {
+        url: String,
+        own: Vec<Own>,
+        allowed: bool,
+        /// Where the app's URL parser and this one differ, or why a case is there; read by people only.
+        #[allow(dead_code)]
+        #[serde(default)]
+        note: String,
+    }
+
+    #[test]
+    fn every_shared_case_matches_the_rule() {
+        let cases: Vec<AllowedCase> = serde_json::from_str(include_str!("allowed.json")).unwrap();
+        assert!(cases.len() >= 40, "{} cases", cases.len());
+        for c in cases {
+            let url = Url::parse(&c.url).unwrap_or_else(|e| panic!("{}: {e}", c.url));
+            assert_eq!(
+                allowed_navigation(&url, &c.own),
+                c.allowed,
+                "{} with {:?}",
+                c.url,
+                c.own
+            );
+        }
+    }
+
     #[test]
     fn an_own_origin_on_another_computer_is_only_that_host() {
         let own = vec![("devbox.lan".to_string(), 1420)];

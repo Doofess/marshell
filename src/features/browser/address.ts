@@ -91,6 +91,94 @@ export function isPageUrl(url: string): boolean {
   return (u.protocol === "http:" || u.protocol === "https:") && u.username === "" && u.password === "";
 }
 
+/** The names the shell serves from inside every webview (`SHELL_NAMES` in `src-tauri/src/browser/rules.rs`). */
+const SHELL_NAMES = ["tauri", "ipc"];
+
+type HostName = { name: string; thisComputer: boolean };
+
+/** The groups of an IPv6 address written without its brackets, or null when it is not one. */
+function ipv6Groups(text: string): number[] | null {
+  let tail: number[] = [];
+  let body = text;
+  const v4 = /(?:^|:)(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(text);
+  if (v4) {
+    const [a, b, c, d] = v4.slice(1).map(Number) as [number, number, number, number];
+    if ([a, b, c, d].some((n) => n > 255)) return null;
+    tail = [a * 256 + b, c * 256 + d];
+    body = text.slice(0, text.length - v4[0].length + (v4[0].startsWith(":") ? 1 : 0));
+    if (body === ":") body = "::";
+  }
+  const parts = body.split("::");
+  if (parts.length > 2) return null;
+  const groups = (list: string): number[] | null => {
+    if (list === "") return [];
+    const out = list.split(":").map((g) => (/^[0-9a-f]{1,4}$/i.test(g) ? parseInt(g, 16) : NaN));
+    return out.some(Number.isNaN) ? null : out;
+  };
+  const head = groups(parts[0]!);
+  const rest = parts.length === 2 ? groups(parts[1]!) : [];
+  if (head === null || rest === null) return null;
+  if (parts.length === 1) return head.length + tail.length === 8 ? [...head, ...tail] : null;
+  const missing = 8 - head.length - rest.length - tail.length;
+  return missing < 1 ? null : [...head, ...Array<number>(missing).fill(0), ...rest, ...tail];
+}
+
+/** A host as `HostName::parse` reads it in rules.rs: lower case, no trailing dot, and whether it names this computer. */
+function hostName(host: string): HostName {
+  const name = host.replace(/\.+$/, "").toLowerCase();
+  const loopbackOrAny = (octets: readonly number[]) => octets[0] === 127 || octets.every((n) => n === 0);
+  const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(name);
+  if (v4) {
+    const octets = v4.slice(1).map(Number);
+    // Rust's Ipv4Addr parser refuses an octet over 255 and falls through to a name.
+    if (octets.every((n) => n <= 255)) return { name, thisComputer: loopbackOrAny(octets) };
+  }
+  if (name.startsWith("[") && name.endsWith("]")) {
+    const g = ipv6Groups(name.slice(1, -1));
+    if (g) {
+      const loopback = g.slice(0, 7).every((n) => n === 0) && g[7] === 1;
+      const unspecified = g.every((n) => n === 0);
+      const mapped = g.slice(0, 5).every((n) => n === 0) && g[5] === 0xffff && loopbackOrAny([g[6]! >> 8, g[6]! & 255, g[7]! >> 8, g[7]! & 255]);
+      return { name, thisComputer: loopback || unspecified || mapped };
+    }
+  }
+  return { name, thisComputer: name === "localhost" || name.endsWith(".localhost") };
+}
+
+/** Whether the shell answers this address itself, or Tauri takes it for the app's own origin (`is_the_shells`). */
+function isTheShells(host: HostName, scheme: string): boolean {
+  const first = host.name.split(".")[0] ?? "";
+  if (scheme === "http:" && SHELL_NAMES.includes(first)) return true;
+  return SHELL_NAMES.some((shell) => host.name.endsWith(".localhost") && (host.name.slice(0, -".localhost".length) === shell || host.name.slice(0, -".localhost".length).endsWith(`.${shell}`)));
+}
+
+/**
+ * The mirror of `allowed_navigation` in `src-tauri/src/browser/rules.rs`: true when the shell would refuse this address (a user
+ * name or password, the shell's own names, any of the app's own origins in `own`, a scheme but http, https and about:blank). Asked
+ * before a tab is made, so an address the shell refuses never gets one. It must never allow what the shell refuses: both read the
+ * same cases (`allowed.json`).
+ */
+export function shellRefuses(url: string, own: readonly (readonly [string, number])[]): boolean {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return true;
+  }
+  if (u.protocol === "about:") return u.href !== BLANK;
+  if (u.protocol !== "http:" && u.protocol !== "https:") return true;
+  if (u.username !== "" || u.password !== "") return true;
+  const host = hostName(u.hostname);
+  if (host.name === "" || isTheShells(host, u.protocol)) return true;
+  // The URL parser leaves a scheme's own port out.
+  const port = u.port === "" ? (u.protocol === "https:" ? 443 : 80) : Number(u.port);
+  return own.some(([ownHost, ownPort]) => {
+    if (ownPort !== port) return false;
+    const mine = hostName(ownHost);
+    return (host.thisComputer && mine.thisComputer) || host.name === mine.name;
+  });
+}
+
 /** "example.com", "localhost:3000"; "" for about:blank or a string that is no URL. */
 export function hostOf(url: string): string {
   try {

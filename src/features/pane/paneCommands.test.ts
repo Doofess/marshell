@@ -112,21 +112,27 @@ describe("pageOpenCheck", () => {
   const urls = (n: number) => Array.from({ length: n }, (_, i) => `https://site${i}.example/`);
   const withPages = (session: string, list: string[]): PaneView => list.reduce((acc, url) => paneReducer(acc, { type: "openPage", session, url }), EMPTY);
   it("refuses with no session on screen first", () => {
-    expect(pageOpenCheck(EMPTY, undefined, "https://example.com/")).toBe("no-session");
-    expect(pageOpenCheck(EMPTY, null, "https://example.com/")).toBe("no-session");
+    expect(pageOpenCheck(EMPTY, undefined, "https://example.com/", [])).toBe("no-session");
+    expect(pageOpenCheck(EMPTY, null, "https://example.com/", [])).toBe("no-session");
   });
   it("refuses an address that is not a web page: another scheme, a path, userinfo", () => {
-    for (const url of ["file:///C:/x", "javascript:alert(1)", "C:\\x\\a.md", "https://user:pw@example.com/", "mailto:a@b.c"]) expect(pageOpenCheck(EMPTY, "s1", url), url).toBe("refused");
+    for (const url of ["file:///C:/x", "javascript:alert(1)", "C:\\x\\a.md", "https://user:pw@example.com/", "mailto:a@b.c"]) expect(pageOpenCheck(EMPTY, "s1", url, []), url).toBe("refused");
   });
   it("refuses the 33rd tab, but not an address already open or a tab of another session", () => {
     const full = withPages("s1", urls(32));
-    expect(pageOpenCheck(full, "s1", "https://new.example/")).toBe("limit");
-    expect(pageOpenCheck(full, "s1", "about:blank")).toBe("limit");
-    expect(pageOpenCheck(full, "s1", "https://site3.example/")).toBe("ok");
-    expect(pageOpenCheck(full, "s2", "https://new.example/")).toBe("ok");
+    expect(pageOpenCheck(full, "s1", "https://new.example/", [])).toBe("limit");
+    expect(pageOpenCheck(full, "s1", "about:blank", [])).toBe("limit");
+    expect(pageOpenCheck(full, "s1", "https://site3.example/", [])).toBe("ok");
+    expect(pageOpenCheck(full, "s2", "https://new.example/", [])).toBe("ok");
+  });
+  it("an_own_origin_is_refused_before_a_tab_opens", () => {
+    const own = [["localhost", 1420], ["127.0.0.1", 49152]] as const;
+    for (const url of ["http://localhost:1420/", "http://127.0.0.1:49152/v1/health", "http://tauri.localhost/", "http://[::1]:1420/"]) expect(pageOpenCheck(EMPTY, "s1", url, own), url).toBe("refused");
+    for (const url of ["http://localhost:3000/", "https://example.com/", "about:blank"]) expect(pageOpenCheck(EMPTY, "s1", url, own), url).toBe("ok");
+    expect(pageOpenCheck(EMPTY, undefined, "http://localhost:1420/", own)).toBe("no-session");
   });
   it("accepts http, https and about:blank", () => {
-    for (const url of ["http://localhost:3000/", "https://example.com/a?b=1", "about:blank"]) expect(pageOpenCheck(EMPTY, "s1", url), url).toBe("ok");
+    for (const url of ["http://localhost:3000/", "https://example.com/a?b=1", "about:blank"]) expect(pageOpenCheck(EMPTY, "s1", url, []), url).toBe("ok");
   });
 });
 

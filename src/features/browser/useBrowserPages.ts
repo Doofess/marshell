@@ -2,7 +2,8 @@ import { useEffect, useEffectEvent, useMemo, useRef, useSyncExternalStore } from
 import type { PaneView } from "../../generated/PaneView";
 import { appScheme } from "../terminal/terminalTheme";
 import { isBrowserTab, tabsOf, type PaneAction } from "../pane/paneState";
-import { passingBlank } from "./address";
+import { PAGE_REFUSED } from "../pane/paneCommands";
+import { passingBlank, shellRefuses } from "./address";
 import { browser, onBrowser, pageKey } from "./browserApi";
 import { nextLive } from "./pages";
 import { dispatchPage, pageIcon, setLoadable, startPageStore, subscribePages, type PageEvent } from "./pageStore";
@@ -31,9 +32,11 @@ export const openKeys = (pane: PaneView, sessions: ReadonlySet<string> | null): 
 
 /**
  * What a page's popup does to the pane: a new browser tab in the popup's own session, selected only when that session is on screen
- * (6q second round 5). A session that is not on screen keeps its selected tab, and the pane its state.
+ * (6q second round 5). A session that is not on screen keeps its selected tab, and the pane its state. Nothing for an address the shell
+ * would refuse (one of the app's own origins, in `own`).
  */
-export function popupActions(pane: PaneView, session: string, url: string, onScreen: boolean): PaneAction[] {
+export function popupActions(pane: PaneView, session: string, url: string, onScreen: boolean, own: readonly (readonly [string, number])[]): PaneAction[] {
+  if (shellRefuses(url, own)) return [];
   const actions: PaneAction[] = [{ type: "openPage", session, url }];
   if (onScreen) return actions;
   const before = tabsOf(pane, session).active;
@@ -72,6 +75,10 @@ type Options = {
   dispatch(action: PaneAction): void;
   /** The session on screen, if any. */
   focusedSession(): string | null | undefined;
+  /** The app's own origins now (host and port): a popup to one opens no tab. */
+  own(): readonly (readonly [string, number])[];
+  /** Says something to the person. */
+  announce(text: string): void;
 };
 
 /**
@@ -79,7 +86,7 @@ type Options = {
  * drops and the store forgets them; the shell's `browser://` events reach the store, and a page's address and title reach its tab; a popup opens a tab; the
  * pages follow the app's theme. Nothing is closed on unmount: the shell closes the pages at quit.
  */
-export function useBrowserPages(pane: PaneView, shownKey: string | null, { sessions, dispatch, focusedSession }: Options): void {
+export function useBrowserPages(pane: PaneView, shownKey: string | null, { sessions, dispatch, focusedSession, own, announce }: Options): void {
   const live = useRef<string[]>([]);
   const owned = owners(pane, sessions === null ? null : new Set(sessions));
   const open = new Set(owned.keys());
@@ -97,6 +104,8 @@ export function useBrowserPages(pane: PaneView, shownKey: string | null, { sessi
   paneRef.current = pane;
   const send = useEffectEvent((action: PaneAction) => dispatch(action));
   const onScreen = useEffectEvent(() => focusedSession());
+  const ownOrigins = useEffectEvent(() => own());
+  const say = useEffectEvent((text: string) => announce(text));
   useEffect(() => {
     const stops = [
       startPageStore(),
@@ -107,7 +116,9 @@ export function useBrowserPages(pane: PaneView, shownKey: string | null, { sessi
       onBrowser("popup", (p) => {
         const owner = ownersRef.current.get(p.key);
         if (!owner) return;
-        for (const action of popupActions(paneRef.current, owner.session, p.url, onScreen() === owner.session)) send(action);
+        const actions = popupActions(paneRef.current, owner.session, p.url, onScreen() === owner.session, ownOrigins());
+        if (actions.length === 0) say(PAGE_REFUSED);
+        for (const action of actions) send(action);
       }),
     ];
     return () => stops.forEach((stop) => stop());

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { SEARCH_URL, addressFor, hostOf, isPageUrl, pageTitle, sameUrl } from "./address";
+import cases from "../../../src-tauri/src/browser/allowed.json";
+import { SEARCH_URL, addressFor, hostOf, isPageUrl, pageTitle, sameUrl, shellRefuses } from "./address";
 
 const open = (url: string) => ({ kind: "open", url });
 const search = (words: string) => ({ kind: "search", url: SEARCH_URL + words });
@@ -105,5 +106,16 @@ describe("hostOf, pageTitle and sameUrl", () => {
     expect(sameUrl("https://a.dev/x", "https://a.dev/y")).toBe(false);
     expect(sameUrl("not a url", "not a url")).toBe(true);
     expect(sameUrl("not a url", "https://a.dev/")).toBe(false);
+  });
+});
+
+describe("shellRefuses", () => {
+  it("shellRefuses_agrees_with_the_shell_in_every_shared_case", () => {
+    expect(cases.length).toBeGreaterThanOrEqual(40);
+    for (const c of cases) expect(shellRefuses(c.url, c.own as [string, number][]), `${c.url} with ${JSON.stringify(c.own)}`).toBe(!c.allowed);
+  });
+  it("refuses an address that does not parse", () => {
+    expect(shellRefuses("not a url", [])).toBe(true);
+    expect(shellRefuses("", [])).toBe(true);
   });
 });
