@@ -26,8 +26,7 @@ This section describes what Marshell does today. Planned work is marked as such.
 - The `Host` header must be exactly `127.0.0.1:<port>`, which blocks DNS rebinding.
 - The port and the token are written to `~/.marshell/run/endpoint.json`.
   - On Linux and macOS the file is owner-only (0600, in a 0700 folder).
-  - On Windows it inherits the permissions of your user profile.
-  - The Marshell home that holds it gets an explicit owner-only ACL on Windows (`crates/core/src/private.rs`).
+  - On Windows the Marshell home that holds it has a protected ACL for your account and SYSTEM only, checked on every start (`crates/core/src/private.rs`). The file inherits it.
 
 **Webview.**
 - The Content Security Policy allows content from the app itself and connections only to the app and loopback. No remote content is loaded.
