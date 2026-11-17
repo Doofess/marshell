@@ -138,7 +138,12 @@ struct Shared {
 
 impl Shared {
     /// The watcher saw `path` change (once it had been quiet for the debounce time). A change that
-    /// leaves the file as we last wrote it is our own write; anything else marks the previews stale.
+    /// leaves the file as we last wrote it is our own write; anything else marks stale the previews that did not see
+    /// the file as it is now.
+    ///
+    /// The event comes at least the debounce time after the change it reports, so it can describe an edit made before a
+    /// preview was built. That preview recorded the file's hash after the edit, so it is left alone. This only narrows
+    /// the flag: apply plans again from disk and refuses a file whose hash moved, whatever the flag says.
     fn on_change(&self, path: PathBuf) {
         // Only the files of stored previews matter. Events for anything else in the folder, such as
         // our own `.<name>.marshell-<pid>-<n>.tmp`, match no target.
@@ -146,16 +151,33 @@ impl Shared {
         if !wanted {
             return;
         }
-        let now = hash_file(&path).unwrap_or_else(|e| {
-            tracing::warn!("hashing {}: {e}", path.display());
-            None
-        });
+        // `Ok(None)` is a file that is gone. A file that can't be read (or is half written) has no hash to compare, so
+        // every preview on it goes stale.
+        let now = match hash_file(&path) {
+            Ok(now) => now,
+            Err(e) => {
+                tracing::warn!("hashing {}: {e}", path.display());
+                self.mark_stale(&[path]);
+                return;
+            }
+        };
         // The file as we last left it (bytes or gone) is our own write; a file we never wrote that
         // changes or disappears is an outside edit.
         if lock(&self.own_writes).get(&path) == Some(&now) {
             return;
         }
-        self.mark_stale(&[path]);
+        let mut previews = lock(&self.previews);
+        for stored in previews.map.values_mut() {
+            let Some(at) = stored.targets.iter().position(|t| *t == path) else {
+                continue;
+            };
+            // A path the preview has no file for goes stale, as does any hash that differs from the file's now.
+            // `before_hash: None` means the file did not exist then, so a file an outside program created differs.
+            let seen = stored.preview.files.get(at).is_some_and(|f| f.before_hash == now);
+            if !seen {
+                stored.preview.stale = true;
+            }
+        }
     }
 
     /// The guard of this moment: the open folders, plus the agent folders of each looked-up distro that is still
@@ -1365,6 +1387,123 @@ mod tests {
         let p3 = e.svc.preview(changeset(vec![edit(&path, set("/b", "1"))]));
         std::thread::sleep(Duration::from_secs(1));
         assert!(!e.svc.get_preview(&p3.changeset_id).unwrap().stale);
+    }
+
+    /// The watcher's callback, called by hand so a test doesn't wait on its debounce.
+    fn deliver(e: &Env, path: &Path) {
+        e.svc.shared.on_change(path.to_path_buf());
+    }
+
+    fn is_stale(e: &Env, preview: &ConfigPreview) -> bool {
+        e.svc.get_preview(&preview.changeset_id).unwrap().stale
+    }
+
+    #[test]
+    fn a_late_event_for_an_edit_the_preview_already_saw_leaves_it_fresh() {
+        let e = env();
+        let path = e.root.join("settings.json");
+        write(&path, "{}\n");
+        // An outside edit, then a preview that read the edited file; the edit's event comes after the preview.
+        write(&path, "{\"mine\": 1}\n");
+        let preview = e.svc.preview(changeset(vec![edit(&path, set("/a", "1"))]));
+        deliver(&e, &path);
+        assert!(!is_stale(&e, &preview));
+        apply_shown(&e.svc, &preview).unwrap();
+        assert!(read(&path).contains("\"mine\""));
+        assert!(read(&path).contains("\"a\""));
+    }
+
+    #[test]
+    fn an_event_after_a_real_outside_change_marks_the_preview_stale_and_apply_conflicts() {
+        let e = env();
+        let path = e.root.join("settings.json");
+        write(&path, "{}\n");
+        let preview = e.svc.preview(changeset(vec![edit(&path, set("/a", "1"))]));
+        write(&path, "{\"mine\": 1}\n");
+        deliver(&e, &path);
+        assert!(is_stale(&e, &preview));
+        match apply_shown(&e.svc, &preview) {
+            Err(ApplyError::Conflict { reason, .. }) => assert_eq!(reason, "changed outside Marshell"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(read(&path), "{\"mine\": 1}\n");
+    }
+
+    #[test]
+    fn one_event_stales_the_earlier_preview_and_spares_the_later_one() {
+        let e = env();
+        let path = e.root.join("settings.json");
+        write(&path, "{}\n");
+        let before = e.svc.preview(changeset(vec![edit(&path, set("/a", "1"))]));
+        write(&path, "{\"mine\": 1}\n");
+        let after = e.svc.preview(changeset(vec![edit(&path, set("/b", "1"))]));
+        deliver(&e, &path);
+        assert!(is_stale(&e, &before));
+        assert!(!is_stale(&e, &after));
+        assert!(is_conflict(&apply_shown(&e.svc, &before)));
+        apply_shown(&e.svc, &after).unwrap();
+    }
+
+    #[test]
+    fn an_event_for_a_file_still_missing_leaves_a_preview_of_its_creation_fresh() {
+        let e = env();
+        let path = e.root.join("settings.json");
+        let preview = e.svc.preview(changeset(vec![edit(&path, set("/a", "1"))]));
+        assert_eq!(preview.files[0].before_hash, None);
+        deliver(&e, &path);
+        assert!(!is_stale(&e, &preview));
+        apply_shown(&e.svc, &preview).unwrap();
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn a_file_an_outside_program_creates_stales_the_preview_made_while_it_was_missing() {
+        let e = env();
+        let path = e.root.join("settings.json");
+        let preview = e.svc.preview(changeset(vec![edit(&path, set("/a", "1"))]));
+        write(&path, "{\"mine\": 1}\n");
+        deliver(&e, &path);
+        assert!(is_stale(&e, &preview));
+        assert!(is_conflict(&apply_shown(&e.svc, &preview)));
+        assert_eq!(read(&path), "{\"mine\": 1}\n");
+    }
+
+    #[test]
+    fn a_file_removed_since_the_preview_saw_it_stales_it() {
+        let e = env();
+        let path = e.root.join("settings.json");
+        write(&path, "{}\n");
+        let preview = e.svc.preview(changeset(vec![edit(&path, set("/a", "1"))]));
+        std::fs::remove_file(&path).unwrap();
+        deliver(&e, &path);
+        assert!(is_stale(&e, &preview));
+        assert!(is_conflict(&apply_shown(&e.svc, &preview)));
+    }
+
+    #[test]
+    fn an_event_for_a_file_that_cant_be_read_stales_the_preview() {
+        let e = env();
+        let path = e.root.join("settings.json");
+        write(&path, "{}\n");
+        let preview = e.svc.preview(changeset(vec![edit(&path, set("/a", "1"))]));
+        // A folder in the file's place: reading it fails, so there is no hash to compare.
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        deliver(&e, &path);
+        assert!(is_stale(&e, &preview));
+        assert!(is_conflict(&apply_shown(&e.svc, &preview)));
+    }
+
+    #[test]
+    fn apply_refuses_a_file_that_moved_even_when_no_event_staled_the_preview() {
+        let e = env();
+        let path = e.root.join("settings.json");
+        write(&path, "{}\n");
+        let preview = e.svc.preview(changeset(vec![edit(&path, set("/a", "1"))]));
+        write(&path, "{\"mine\": 1}\n");
+        // No event is delivered by hand, and the real watcher is still inside its debounce.
+        assert!(is_conflict(&apply_shown(&e.svc, &preview)));
+        assert_eq!(read(&path), "{\"mine\": 1}\n");
     }
 
     /// The edit a caller sends to delete `path`, against the bytes it read.

@@ -260,6 +260,20 @@ mod tests {
             String::from_utf8_lossy(&out.stdout).contains(&format!("\"{pid}\""))
         }
 
+        /// Fails unless `pid` has left the process list within 5 s. Ending a process returns before its PID is gone
+        /// from the list, so one look right after the timeout can still see it (issue #115).
+        fn assert_gone_soon(pid: u32) {
+            let started = Instant::now();
+            while pid_alive(pid) {
+                assert!(
+                    started.elapsed() < Duration::from_secs(5),
+                    "the grandchild {pid} outlived the timeout: still in the process list {:?} after it",
+                    started.elapsed()
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+
         /// The args of a `cmd.exe /c powershell ...` tree: the grandchild writes its PID to `pid_file`, then sleeps 60 s
         /// (so a failed test leaves nothing behind for long).
         fn sleeper_args(pid_file: &Path) -> Vec<String> {
@@ -303,8 +317,7 @@ mod tests {
             let args: Vec<&str> = args.iter().map(String::as_str).collect();
             let got = super::super::run_capture(Path::new("cmd.exe"), &args, TREE_TIMEOUT);
             assert!(got.is_none(), "{got:?}");
-            let pid = grandchild_pid(&pid_file);
-            assert!(!pid_alive(pid), "the grandchild {pid} outlived the timeout");
+            assert_gone_soon(grandchild_pid(&pid_file));
         }
 
         #[test]
@@ -314,8 +327,7 @@ mod tests {
             let mut cmd = std::process::Command::new("cmd.exe");
             cmd.args(sleeper_args(&pid_file));
             assert!(super::super::run_bounded(cmd, TREE_TIMEOUT).is_none());
-            let pid = grandchild_pid(&pid_file);
-            assert!(!pid_alive(pid), "the grandchild {pid} outlived the timeout");
+            assert_gone_soon(grandchild_pid(&pid_file));
         }
 
         #[test]

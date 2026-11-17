@@ -25,8 +25,9 @@ pub const CONTEXT_BUDGET: std::time::Duration = std::time::Duration::from_millis
 fn note_in_budget(
     found: Option<marshell_protocol::api::ReferenceNote>,
     elapsed: std::time::Duration,
+    budget: std::time::Duration,
 ) -> Option<marshell_protocol::api::ReferenceNote> {
-    found.filter(|_| elapsed <= CONTEXT_BUDGET)
+    found.filter(|_| elapsed <= budget)
 }
 
 fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
@@ -230,14 +231,14 @@ pub async fn post(
     };
     let lookup = async {
         let tab = note_tab?;
-        let left = CONTEXT_BUDGET.saturating_sub(started.elapsed());
+        let left = st.context_budget().saturating_sub(started.elapsed());
         tokio::time::timeout(left, references_for(&st, tab, prompt))
             .await
             .unwrap_or(None)
     };
     let ((), found) = tokio::join!(fold, lookup);
     if let Some(tab) = note_tab {
-        let found = note_in_budget(found, started.elapsed());
+        let found = note_in_budget(found, started.elapsed(), st.context_budget());
         st.registry().set_references(tab, found.clone());
         if let Some(found) = found {
             let output = match agent.as_str() {
@@ -637,15 +638,19 @@ mod tests {
 
     #[test]
     fn a_note_inside_the_budget_is_kept_and_a_late_one_is_dropped() {
-        assert_eq!(note_in_budget(Some(note()), Duration::from_millis(10)), Some(note()));
-        assert_eq!(note_in_budget(Some(note()), CONTEXT_BUDGET), Some(note()));
+        let b = CONTEXT_BUDGET;
+        assert_eq!(b, Duration::from_millis(350));
+        assert_eq!(note_in_budget(Some(note()), Duration::from_millis(10), b), Some(note()));
+        assert_eq!(note_in_budget(Some(note()), b, b), Some(note()));
         // The bridge has given up by then and printed nothing: the chip must not claim a note the agent never got.
+        assert_eq!(note_in_budget(Some(note()), b + Duration::from_millis(1), b), None);
+        assert_eq!(note_in_budget(Some(note()), Duration::from_millis(500), b), None);
+        assert_eq!(note_in_budget(None, Duration::from_millis(1), b), None);
+        // A longer budget, as the integration tests set, keeps a note a default budget would drop.
         assert_eq!(
-            note_in_budget(Some(note()), CONTEXT_BUDGET + Duration::from_millis(1)),
-            None
+            note_in_budget(Some(note()), Duration::from_millis(500), Duration::from_secs(30)),
+            Some(note())
         );
-        assert_eq!(note_in_budget(Some(note()), Duration::from_millis(500)), None);
-        assert_eq!(note_in_budget(None, Duration::from_millis(1)), None);
     }
 
     #[tokio::test]

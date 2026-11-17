@@ -43,6 +43,8 @@ fn state_with(version: Option<&str>, profiles: Vec<marshell_protocol::api::Profi
         profiles,
     )
     .with_agent_check(|_| true)
+    // The real 350 ms budget drops the note on a busy runner (issue #112); no test here depends on it running out.
+    .with_context_budget(std::time::Duration::from_secs(30))
     // No test here finds a program on this machine's PATH: CI has no Grok.
     .with_tab_path(|| None)
     .with_claude_version(version.map(str::to_string))
