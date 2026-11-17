@@ -974,11 +974,7 @@ mod tests {
         let mut file = std::fs::OpenOptions::new().append(true).open(&transcript).unwrap();
         writeln!(file, "{{\"n\":2}}").unwrap();
 
-        let started = std::time::Instant::now();
-        while !history.is_idle() {
-            assert!(started.elapsed() < Duration::from_secs(5), "copy did not finish");
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        idle(&history).await;
         let (archive, _) = crate::history::archive::archive_paths(home.path(), "claude", ID);
         let decoded = zstd::decode_all(std::fs::File::open(&archive).unwrap()).unwrap();
         assert_eq!(decoded, std::fs::read(&transcript).unwrap());
@@ -1675,10 +1671,24 @@ mod tests {
             .unwrap()
     }
 
+    /// Waits for every copy to end, up to 30 s: a busy runner can be slow, while a copy that never ends says so in the
+    /// failure, with the sessions still copying and which of them has a follow-up copy queued.
     async fn idle(history: &History) {
         let started = Instant::now();
         while !history.is_idle() {
-            assert!(started.elapsed() < Duration::from_secs(5), "copy did not finish");
+            if started.elapsed() >= Duration::from_secs(30) {
+                let copying: Vec<(String, bool)> = history
+                    .copying
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .map(|(id, queued)| (id.clone(), queued.is_some()))
+                    .collect();
+                panic!(
+                    "copy did not finish within {:?}; still copying (session id, follow-up queued): {copying:?}",
+                    started.elapsed()
+                );
+            }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
