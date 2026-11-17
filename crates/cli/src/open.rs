@@ -86,6 +86,10 @@ pub fn target_for(text: &str, cwd: &dyn Fn() -> io::Result<PathBuf>) -> Result<S
 }
 
 /// Typed text that looks like a web address without its scheme: no separator or drive letter, a `.` or a `:`.
+/// The core's line for a path it won't look at. On Windows `localhost:3000` gets it rather than "No file": a colon in
+/// a file name names a stream.
+const BAD_PATH: &str = "That path can't be opened in the side pane.";
+
 fn looks_like_bare_address(text: &str) -> bool {
     let b = text.as_bytes();
     let drive = b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':';
@@ -146,7 +150,7 @@ pub fn run(
             Opened::Refused(line) => {
                 let line = if line == "No such session." {
                     format!("No session {session}.")
-                } else if line.starts_with("No file ") && looks_like_bare_address(text) {
+                } else if (line.starts_with("No file ") || line == BAD_PATH) && looks_like_bare_address(text) {
                     format!("No file {text}. For a web page, type the whole address: http://{text}")
                 } else {
                     line
@@ -324,6 +328,17 @@ mod tests {
     #[test]
     fn open_run_hints_at_the_whole_address() {
         let fake = Fake::new(vec![Opened::Refused("No file C:\\w\\localhost:3000.".into())]);
+        let (code, err) = go(&[], &["localhost:3000"], Some("2"), Some(&fake));
+        assert_eq!(code, 1);
+        assert_eq!(
+            err,
+            "No file localhost:3000. For a web page, type the whole address: http://localhost:3000\n"
+        );
+        // On Windows the core refuses `C:\w\localhost:3000` before it looks for the file: a colon in a file name is
+        // a stream, not a file. The person still gets the hint.
+        let fake = Fake::new(vec![Opened::Refused(
+            "That path can't be opened in the side pane.".into(),
+        )]);
         let (code, err) = go(&[], &["localhost:3000"], Some("2"), Some(&fake));
         assert_eq!(code, 1);
         assert_eq!(
