@@ -105,16 +105,16 @@ The token was added on 2026-11-17, and `gh workflow run release.yml -f action=su
 Why the bot closed it isn't known. What the repository shows about that hour:
 
 - Every pull request opened up to 07:24:25Z (482067 to 482073) stayed open and got the bot's usual first comment, the validation badges.
-- Every pull request opened from 07:27:27Z to 07:35:13Z (482074 to 482078) was closed by the same bot within 30 to 46 s, with no comment and no label. They came from first-time and from established contributors, with "New package:" and with "New version:" titles.
+- Every pull request opened from 07:27:27Z to 07:35:13Z (482074 to 482078) was closed by the same bot within 29 to 46 s, with no comment and no label. They came from first-time and from established contributors, with "New package:" and with "New version:" titles.
 - The rule in the repository's own policy files that closes a pull request when it opens (`.github/policies/labelManagement.issueOpened.yml`, for one that changes no file) also posts a reply. None of these got one.
 
 That points away from Marshell's manifest and its title, and at something on Microsoft's side that changed or broke at about 07:25Z. The submission has to be run again once new pull requests there stay open.
 
-Two things about the pull request itself, for the next run:
+Two things about the pull request itself, for the next run (issue #133 tracks both, and the notes' sentence below):
 
 - Its title said "New version:". The repository's template asks for "New package: Publisher.Name version X.Y.Z" for a package that isn't there yet. `release.yml` passes the title, so the first submission of a package needs the other one.
 - Its body was the repository's template with nothing ticked. The checklist asks for the contributor agreement, and for `winget validate` and `winget install --manifest`, both of which `winget-check` runs.
 
-The release page's notes carry a line that the package isn't in winget's repository yet. Without it they would say Microsoft is still reviewing the version.
+The release page of alpha.1 has a line, added by hand, that the package isn't in winget's repository yet. `scripts/release/notes.mjs` doesn't write it. What it writes is "If winget can't find this version yet, Microsoft is still reviewing it", which is false while no submission is open, so on alpha.1's page that sentence was shortened by hand too. Until the generator's sentence is reworded (issue #133), each new release page needs the same two edits. The hand-added line goes when Microsoft has the package.
 
 Still not shown: what a person sees after "More info" and "Run anyway" when winget started the installer (nobody can press it on a runner); a submission that reaches Microsoft's review, and whether they accept an unsigned alpha; whether an install from the community repository meets the dialog; why the first attempt's `build` job stopped; and the tag's own `publish`, `winget-check`, `winget-submit` chain passing in one run, which alpha.2 will show.
