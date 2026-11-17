@@ -45,6 +45,11 @@ pub fn target_for(text: &str, cwd: &dyn Fn() -> io::Result<PathBuf>) -> Result<S
         return Ok(text.to_string());
     }
     let path = Path::new(text);
+    // A drive with no root (`D:x.md`) is a file in the folder that drive was last in, which nothing here knows.
+    // It goes as typed, and the app refuses it, rather than opening another file of that name.
+    if !path.is_absolute() && matches!(path.components().next(), Some(Component::Prefix(_))) {
+        return Ok(text.to_string());
+    }
     // The root (a drive and its separator) and the folder names after it. Names are joined as text, as
     // `PathBuf::push` would read a name such as `C:` as a new drive.
     let mut root = PathBuf::new();
@@ -60,7 +65,8 @@ pub fn target_for(text: &str, cwd: &dyn Fn() -> io::Result<PathBuf>) -> Result<S
         .chain(path.components().map(|p| (p, true)))
     {
         match part {
-            Component::Prefix(_) | Component::RootDir if from_text && !path.is_absolute() => {}
+            // A leading separator in relative text is the root of the current drive.
+            Component::RootDir if from_text && !path.is_absolute() => names.clear(),
             Component::Prefix(_) | Component::RootDir => root.push(part.as_os_str()),
             Component::CurDir => {}
             Component::ParentDir => {
@@ -223,6 +229,20 @@ mod tests {
         assert_eq!(t("localhost:3000", r"C:\w").unwrap(), r"C:\w\localhost:3000");
         assert!(t("file:///C:/x", r"C:\w").unwrap().starts_with(r"C:\w\"));
         assert!(t("", r"C:\w").is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn target_for_reads_a_rooted_or_drive_relative_path_as_windows_does() {
+        let t = |text: &str, here: &str| target_for(text, &|| Ok(PathBuf::from(here))).unwrap();
+        // A leading separator is the root of the current drive, not the current folder.
+        assert_eq!(t(r"\x.md", r"C:\w\p"), r"C:\x.md");
+        assert_eq!(t("/a/../x.md", r"D:\w"), r"D:\x.md");
+        // `D:x.md` is a file in whatever folder drive D was last in, which nothing here knows: it goes as typed,
+        // and the app refuses it, rather than opening another file of that name.
+        assert_eq!(t("D:x.md", r"C:\w"), "D:x.md");
+        // `..` stops at the root.
+        assert_eq!(t(r"..\..\..\x.md", r"C:\w"), r"C:\x.md");
     }
 
     #[cfg(not(windows))]
