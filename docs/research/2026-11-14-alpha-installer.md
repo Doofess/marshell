@@ -105,16 +105,33 @@ The token was added on 2026-11-17, and `gh workflow run release.yml -f action=su
 Why the bot closed it isn't known. What the repository shows about that hour:
 
 - Every pull request opened up to 07:24:25Z (482067 to 482073) stayed open and got the bot's usual first comment, the validation badges.
-- Every pull request opened from 07:27:27Z to 07:35:13Z (482074 to 482078) was closed by the same bot within 29 to 46 s, with no comment and no label. They came from first-time and from established contributors, with "New package:" and with "New version:" titles.
-- The rule in the repository's own policy files that closes a pull request when it opens (`.github/policies/labelManagement.issueOpened.yml`, for one that changes no file) also posts a reply. None of these got one.
+- Every pull request opened from 07:27:27Z to 07:39:10Z (482074 to 482080) was closed by the same bot within 25 to 46 s, with no comment and no label. They came from first-time and from established contributors, with "New package:" and with "New version:" titles.
+- From 482081 (07:42:02Z) on, pull requests stayed open again and got the badges, with "New version:" titles as well (482085, 482086), among them a second try by one of the people whose first was closed.
+- The rule in the repository's own policy files that closes a pull request when it opens (`.github/policies/labelManagement.issueOpened.yml`, for one that changes no file) also posts a reply. None of the closed ones got one.
 
-That points away from Marshell's manifest and its title, and at something on Microsoft's side that changed or broke at about 07:25Z. The submission has to be run again once new pull requests there stay open.
+That points away from Marshell's manifest and its title, and at something on Microsoft's side that broke at about 07:25Z and worked again about a quarter of an hour later. The submission had to be run again (below).
 
-Two things about the pull request itself, for the next run (issue #133 tracks both, and the notes' sentence below):
+Two things about the pull request itself, for the next run (issue #133 tracked both, and the notes' sentence below):
 
 - Its title said "New version:". The repository's template asks for "New package: Publisher.Name version X.Y.Z" for a package that isn't there yet. `release.yml` passes the title, so the first submission of a package needs the other one.
 - Its body was the repository's template with nothing ticked. The checklist asks for the contributor agreement, and for `winget validate` and `winget install --manifest`, both of which `winget-check` runs.
 
-The release page of alpha.1 has a line, added by hand, that the package isn't in winget's repository yet. `scripts/release/notes.mjs` doesn't write it. What it writes is "If winget can't find this version yet, Microsoft is still reviewing it", which is false while no submission is open, so on alpha.1's page that sentence was shortened by hand too. Until the generator's sentence is reworded (issue #133), each new release page needs the same two edits. The hand-added line goes when Microsoft has the package.
+The release page of alpha.1 has a line, added by hand, that the package isn't in winget's repository yet. `scripts/release/notes.mjs` doesn't write it. What it writes is "If winget can't find this version yet, Microsoft is still reviewing it", which is false while no submission is open, so on alpha.1's page that sentence was shortened by hand too.
 
-Still not shown: what a person sees after "More info" and "Run anyway" when winget started the installer (nobody can press it on a runner); a submission that reaches Microsoft's review, and whether they accept an unsigned alpha; whether an install from the community repository meets the dialog; why the first attempt's `build` job stopped; and the tag's own `publish`, `winget-check`, `winget-submit` chain passing in one run, which alpha.2 will show.
+### The second submission
+
+Pull request #134 (merge 8670fc2b) closed issue #133:
+
+- `winget-submit` has a step before the submission, "The pull request's title". It asks GitHub for `manifests/d/Doofess/Marshell` in `microsoft/winget-pkgs` and reads the answer's status line: 404 gives "New package:", 200 gives "New version:", and anything else stops the job before it submits.
+- The notes' sentence now reads "If winget can't find this version, it isn't in winget's repository yet", which holds whether or not anything is submitted. alpha.1's page has the generator's text again, plus the one hand-added line, which goes when Microsoft has the package.
+- `docs/RELEASING.md` says to open the pull request after a submission and tick its checklist by hand. Nothing in the workflow does that.
+
+The submission was run again from `main` at 8670fc2b, the same command as before ([run 44044914732](https://github.com/Doofess/marshell/actions/runs/44044914732), the job took 39 s):
+
+| Question | What was shown |
+| --- | --- |
+| Does the title step choose on a runner? | Yes. It printed "The pull request's title starts with 'New package:'", and `wingetcreate` opened [microsoft/winget-pkgs pull request 482096](https://github.com/microsoft/winget-pkgs/pull/482096), "New package: Doofess.Marshell version 0.1.0-alpha.1", at 08:14:13Z. The 200 answer has only been tried from the development PC, with the step's lines against `manifests/m/Microsoft/PowerToys`, which gave "New version:" (pull request #134, "Live check"). |
+| Did it stay open? | Yes. Seven minutes later it was open with the labels `Needs-CLA` and `New-Package`, and the bot had posted the badges and asked the owner for the contributor agreement. |
+| What waits on the owner? | A reply on the pull request that agrees to the contributor agreement, from the account that opened it. The body's seven boxes are unticked. |
+
+Still not shown: what a person sees after "More info" and "Run anyway" when winget started the installer (nobody can press it on a runner); what Microsoft's validation and its reviewers say about the pull request, and whether they accept an unsigned alpha; whether an install from the community repository meets the dialog; why the first attempt's `build` job stopped; and the tag's own `publish`, `winget-check`, `winget-submit` chain passing in one run, which alpha.2 will show.
