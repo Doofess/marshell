@@ -72,10 +72,21 @@ export function regionLabel(name: string, page: number | null): string {
 
 const MAX_ADDRESS = 500;
 
+/**
+ * Text a web page chose, made safe to paste into a terminal: every run of whitespace and control characters is one space, and the
+ * marks that turn the reading order around (so a line could read as something it is not) are dropped.
+ */
+const oneLine = (text: string): string =>
+  text
+    .replace(/[؜‎‏‪-‮⁦-⁩]/g, "")
+    .replace(/[\s\p{Cc}]+/gu, " ")
+    .trim();
+
 /** "Title (https://address)" for a region on a web page, the address cut at 500 characters; with no title, the address alone. */
 export function pageRegionLabel(title: string, url: string): string {
-  const address = Array.from(url).slice(0, MAX_ADDRESS).join("");
-  return title === "" ? address : `${title} (${address})`;
+  const address = Array.from(oneLine(url)).slice(0, MAX_ADDRESS).join("");
+  const name = oneLine(title);
+  return name === "" ? address : `${name} (${address})`;
 }
 
 /**
