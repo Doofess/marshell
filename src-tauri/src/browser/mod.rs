@@ -240,12 +240,12 @@ fn refusal(key: &str, url: &str, why: Option<&'static str>) -> PageUrl {
     }
 }
 
-/// A tab the page asked for, on the main thread: the app opens it when a person asked (a click, a key), or when
-/// nothing recorded who did. A script that opens tabs on its own is told no, and the app says so under the bar.
+/// A tab the page asked for, on the main thread: the app opens it only when a person asked (a click, a key). A
+/// script that opens tabs on its own is told no, and the app says so under the bar.
 fn popup(app: &AppHandle, key: &str, url: &Url, gate: &Mutex<PopupGate>) {
     let now = app.state::<BrowserState>().now_ms();
-    let asked = lock(gate).take(url, now);
-    if asked == Some(false) {
+    let person = lock(gate).by_a_person(url, now);
+    if !person {
         emit(app, "browser://refused", refusal(key, url.as_str(), Some("popup")));
     } else if url.as_str().chars().count() > rules::ADDRESS_MAX {
         // Longer than a tab's address may be: the app would drop it without a word.

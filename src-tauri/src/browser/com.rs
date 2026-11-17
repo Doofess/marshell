@@ -157,12 +157,16 @@ pub fn install(
         key: key.to_string(),
         loading,
     };
+    let unseen = gate.clone();
     let result = page.with_webview(move |pv| {
         let controller = pv.controller();
         // SAFETY: a COM call on the live controller, on the webview's own thread (with_webview runs it there).
         let w = match unsafe { controller.CoreWebView2() } {
             Ok(w) => w,
-            Err(e) => return failed("webview", &e),
+            Err(e) => {
+                lock(&gate).blind();
+                return failed("webview", &e);
+            }
         };
         if let Err(e) = state_handlers(&page_of, &w) {
             failed("state handlers", &e);
@@ -170,7 +174,9 @@ pub fn install(
         if let Err(e) = process_handler(&page_of, &w) {
             failed("process handler", &e);
         }
-        if let Err(e) = popup_handler(&page_of, &w, gate) {
+        if let Err(e) = popup_handler(&page_of, &w, gate.clone()) {
+            // Nothing will say who asked for a tab: the page opens them as it did before the gate.
+            lock(&gate).blind();
             failed("popup handler", &e);
         }
         // The key-ups of the keys taken from the page, by virtual key.
@@ -209,6 +215,7 @@ pub fn install(
         }
     });
     if let Err(e) = result {
+        lock(&unseen).blind();
         eprintln!("Marshell: a browser page's handlers were not added: {e}");
     }
 }

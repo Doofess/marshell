@@ -147,6 +147,8 @@ const POPUP_KEPT: usize = 32;
 pub struct PopupGate {
     /// The address asked for (None when it doesn't parse), the answer, and when it was recorded.
     asked: std::collections::VecDeque<(Option<Url>, bool, u64)>,
+    /// True when no handler records anything.
+    blind: bool,
 }
 
 impl PopupGate {
@@ -158,8 +160,8 @@ impl PopupGate {
         self.asked.push_back((uri.parse().ok(), user, now_ms));
     }
 
-    /// The oldest answer recorded for `url`, given once. None when nothing recorded the request: the handler was
-    /// not in yet, or it failed.
+    /// The oldest answer recorded for `url`, given once. None when nothing recorded the request, or its record was
+    /// dropped.
     pub fn take(&mut self, url: &Url, now_ms: u64) -> Option<bool> {
         self.forget_old(now_ms);
         let at = self
@@ -167,6 +169,18 @@ impl PopupGate {
             .iter()
             .position(|(asked, _, _)| asked.as_ref() == Some(url))?;
         self.asked.remove(at).map(|(_, user, _)| user)
+    }
+
+    /// The page's handler could not be added, so nothing will ever be recorded.
+    pub fn blind(&mut self) {
+        self.blind = true;
+    }
+
+    /// Whether the tab asked for at `url` may open: only when a person's request for it is on record. A request
+    /// nothing recorded is refused like a script's, so a page can't get a tab by asking before the handler is in or
+    /// by asking for more than the gate keeps. A gate that can't see opens every tab, as the pane did before it.
+    pub fn by_a_person(&mut self, url: &Url, now_ms: u64) -> bool {
+        self.blind || self.take(url, now_ms) == Some(true)
     }
 
     fn forget_old(&mut self, now_ms: u64) {
@@ -1631,6 +1645,47 @@ mod tests {
         // An address that doesn't parse never reaches the app's handler, so its answer is never asked for.
         gate.asked("http://[::1", false, 0);
         assert_eq!(gate.take(&a, 0), None);
+    }
+
+    #[test]
+    fn popup_gate_opens_a_tab_only_for_a_person() {
+        let (a, b) = ("https://a.example/", "https://b.example/");
+        let url = |s: &str| Url::parse(s).unwrap();
+        let mut gate = PopupGate::default();
+        gate.asked(a, true, 0);
+        gate.asked(b, false, 0);
+        assert!(!gate.by_a_person(&url(b), 1));
+        assert!(gate.by_a_person(&url(a), 1));
+        // One click opens one tab.
+        assert!(!gate.by_a_person(&url(a), 1));
+    }
+
+    #[test]
+    fn popup_gate_refuses_a_tab_nothing_vouched_for() {
+        let url = |s: &str| Url::parse(s).unwrap();
+        let mut gate = PopupGate::default();
+        // Never recorded: the handler was not in yet, or it could not read the request.
+        assert!(!gate.by_a_person(&url("https://a.example/"), 0));
+        // Pushed out by a page that asks for more tabs than the gate keeps: the first ones don't slip through.
+        gate.asked("https://a.example/first", false, 0);
+        gate.asked("https://a.example/clicked", true, 0);
+        for n in 0..100 {
+            gate.asked(&format!("https://a.example/{n}"), false, 0);
+        }
+        assert!(!gate.by_a_person(&url("https://a.example/first"), 1));
+        assert!(!gate.by_a_person(&url("https://a.example/clicked"), 1));
+        // Recorded too long ago to be the request in hand.
+        gate.asked("https://a.example/old", true, 0);
+        assert!(!gate.by_a_person(&url("https://a.example/old"), POPUP_KEPT_MS + 1));
+    }
+
+    #[test]
+    fn popup_gate_that_cannot_see_opens_every_tab_as_before() {
+        let a = Url::parse("https://a.example/").unwrap();
+        let mut gate = PopupGate::default();
+        gate.blind();
+        assert!(gate.by_a_person(&a, 0));
+        assert!(gate.by_a_person(&a, 0));
     }
 
     #[test]
