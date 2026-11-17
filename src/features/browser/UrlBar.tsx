@@ -8,6 +8,8 @@ export type UrlBarHandle = { focusAddress(): void };
 
 export const REFUSED_TEXT = "That address can't be opened in the side pane.";
 export const FAILED_TEXT = "This page stopped working. Reload to try again.";
+export const POPUP_TEXT = "This page tried to open a tab.";
+const STATUS_TEXT = { refused: REFUSED_TEXT, failed: FAILED_TEXT, popup: POPUP_TEXT } as const;
 
 export type UrlBarProps = {
   /** The page's state; undefined while it isn't loaded. */
@@ -53,7 +55,7 @@ export function UrlBar({ page, fallbackUrl = "", onGo, onNav, onOpenOutside, onE
 
   const address = page?.url || fallbackUrl;
   const loading = page?.loading ?? false;
-  const pageStatus = page?.status === "refused" ? REFUSED_TEXT : page?.status === "failed" ? FAILED_TEXT : null;
+  const pageStatus = page?.status ? STATUS_TEXT[page.status] : null;
   const status = refused ? REFUSED_TEXT : pageStatus;
   useAnnounceOnce(pageStatus, announce);
 

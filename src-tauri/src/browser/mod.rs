@@ -9,7 +9,7 @@
 mod com;
 pub mod rules;
 
-use rules::{Chord, Own, Placer, Rect, Registry, Report, Size};
+use rules::{Chord, Own, Placer, PopupGate, Rect, Registry, Report, Size};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -124,6 +124,9 @@ struct PageState {
 struct PageUrl {
     key: String,
     url: String,
+    /// Why a refused address was refused, when it wasn't the allow-list: "popup" for a tab no person asked for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    why: Option<&'static str>,
 }
 
 #[derive(Clone, Serialize)]
@@ -217,13 +220,52 @@ fn post(app: &AppHandle, job: impl FnOnce() + Send + 'static) {
     }
 }
 
+/// The blank page.
+fn blank() -> Url {
+    "about:blank".parse().expect("about:blank is an address")
+}
+
 fn refuse(app: &AppHandle, key: &str, url: &str) {
     let on_main = app.clone();
-    let payload = PageUrl {
-        key: key.to_string(),
-        url: url.to_string(),
-    };
+    let payload = refusal(key, url, None);
     post(app, move || emit(&on_main, "browser://refused", payload));
+}
+
+/// What the app hears about a refused address: the address cut to what it keeps, since a page chose its length.
+fn refusal(key: &str, url: &str, why: Option<&'static str>) -> PageUrl {
+    PageUrl {
+        key: key.to_string(),
+        url: rules::clipped_address(url),
+        why,
+    }
+}
+
+/// A tab the page asked for, on the main thread: the app opens it when a person asked (a click, a key), or when
+/// nothing recorded who did. A script that opens tabs on its own is told no, and the app says so under the bar.
+fn popup(app: &AppHandle, key: &str, url: &Url, gate: &Mutex<PopupGate>) {
+    let now = app.state::<BrowserState>().now_ms();
+    let asked = lock(gate).take(url, now);
+    if asked == Some(false) {
+        emit(app, "browser://refused", refusal(key, url.as_str(), Some("popup")));
+    } else if url.as_str().chars().count() > rules::ADDRESS_MAX {
+        // Longer than a tab's address may be: the app would drop it without a word.
+        emit(app, "browser://refused", refusal(key, url.as_str(), None));
+    } else {
+        let payload = PageUrl {
+            key: key.to_string(),
+            url: url.to_string(),
+            why: None,
+        };
+        emit(app, "browser://popup", payload);
+    }
+}
+
+/// Runs `job` off the async runtime's own threads. Making a page waits for the main thread, and WebView2 can take
+/// a while there: on a runtime worker that wait would hold up every command and every timer that shares it.
+async fn off_the_runtime<T: Send + 'static>(job: impl FnOnce() -> T + Send + 'static) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(job)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// The typed or asked-for address as a URL the allow-list lets through; None, and the app is told, otherwise.
@@ -401,6 +443,8 @@ fn create(app: &AppHandle, key: &str, label: &str, url: Url) -> Result<(), Strin
     // starts as loading: its first state, sent while it still says `about:blank`, must not read as a page that
     // has arrived there (the app would save that as the tab's address).
     let loading = Arc::new(AtomicBool::new(true));
+    // What WebView2 says about each tab the page asks for: recorded by the COM handler, read by the builder's.
+    let gate = Arc::new(Mutex::new(PopupGate::default()));
     let builder = WebviewBuilder::new(label, WebviewUrl::External(url))
         .focused(false)
         .data_directory(state.profile.clone())
@@ -420,18 +464,19 @@ fn create(app: &AppHandle, key: &str, label: &str, url: Url) -> Result<(), Strin
         })
         // A page never opens a window. What it asked for goes to the app, which opens it as a tab or doesn't.
         .on_new_window({
-            let (app, key) = (app.clone(), key.to_string());
+            let (app, key, gate) = (app.clone(), key.to_string(), gate.clone());
             move |url, _features| {
-                if allowed(&app, &url) {
-                    let on_main = app.clone();
-                    let payload = PageUrl {
-                        key: key.clone(),
-                        url: url.to_string(),
-                    };
-                    post(&app, move || emit(&on_main, "browser://popup", payload));
-                } else {
-                    refuse(&app, &key, url.as_str());
-                }
+                // Queued either way, so the gate's answer for this address is taken and can't answer for the next.
+                let (on_main, key, gate, ok) = (app.clone(), key.clone(), gate.clone(), allowed(&app, &url));
+                post(&app, move || {
+                    if ok {
+                        popup(&on_main, &key, &url, &gate);
+                    } else {
+                        let now = on_main.state::<BrowserState>().now_ms();
+                        lock(&gate).take(&url, now);
+                        emit(&on_main, "browser://refused", refusal(&key, url.as_str(), None));
+                    }
+                });
                 NewWindowResponse::Deny
             }
         })
@@ -456,7 +501,7 @@ fn create(app: &AppHandle, key: &str, label: &str, url: Url) -> Result<(), Strin
         move |event| on_drag(&app, &key, event)
     });
     #[cfg(windows)]
-    com::install(app, &page, key, loading, *lock(&state.dark));
+    com::install(app, &page, key, loading, gate, *lock(&state.dark));
     if lock(&state.registry).label(key) != Some(label) {
         // Closed while it was being created.
         let _ = page.close();
@@ -486,9 +531,13 @@ pub async fn browser_open(app: AppHandle, key: String, url: String) -> Result<()
         let page = page(&app, &key).ok_or("The page is still opening.")?;
         return page.navigate(url).map_err(|e| e.to_string());
     };
-    create(&app, &key, &label, url).inspect_err(|_| {
-        lock(&app.state::<BrowserState>().registry).close(&key);
-    })
+    let (on_runtime, made) = (app.clone(), key.clone());
+    off_the_runtime(move || create(&on_runtime, &made, &label, url))
+        .await
+        .and_then(|created| created)
+        .inspect_err(|_| {
+            lock(&app.state::<BrowserState>().registry).close(&key);
+        })
 }
 
 /// Shows the key's page and hides every other; `None` hides them all.
@@ -681,5 +730,39 @@ mod tests {
             [("devbox.lan".to_string(), 80)]
         );
         assert_eq!(own_origins(Some("not a url"), None), []);
+    }
+
+    #[test]
+    fn making_a_page_leaves_the_runtime_free() {
+        // One thread runs everything on this runtime. The job waits for something only that thread can do, so a
+        // job run on it never gets its answer.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let (tx, rx) = mpsc::channel::<()>();
+        let answered = runtime.block_on(async move {
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                let _ = tx.send(());
+            });
+            off_the_runtime(move || rx.recv_timeout(Duration::from_secs(3)).is_ok()).await
+        });
+        assert_eq!(answered, Ok(true));
+    }
+
+    #[test]
+    fn a_refusal_carries_its_reason_and_a_short_address() {
+        let json = |r: PageUrl| serde_json::to_value(r).unwrap();
+        assert_eq!(
+            json(refusal("s/t1", "javascript:alert(1)", None)),
+            serde_json::json!({"key": "s/t1", "url": "javascript:alert(1)"})
+        );
+        assert_eq!(
+            json(refusal("s/t1", "https://example.com/", Some("popup"))),
+            serde_json::json!({"key": "s/t1", "url": "https://example.com/", "why": "popup"})
+        );
+        let long = format!("https://example.com/{}", "a".repeat(5000));
+        assert_eq!(json(refusal("s/t1", &long, None))["url"].as_str().unwrap().len(), 4096);
     }
 }

@@ -81,6 +81,7 @@ describe("UrlBar", () => {
   });
   it("shows the status line for a refused or a failed page, in the plan's words", () => {
     expect(html(page({ status: "refused" }))).toContain("That address can&#x27;t be opened in the side pane.");
+    expect(html(page({ status: "popup" }))).toContain("This page tried to open a tab.");
     expect(html(page({ status: "failed" }))).toContain("This page stopped working. Reload to try again.");
     expect(html()).not.toContain("url-bar__status");
   });

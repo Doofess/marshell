@@ -90,6 +90,91 @@ impl HostName {
     }
 }
 
+/// The longest title and address the app's webview hears from a page, in characters: what the layout keeps
+/// (`paneState.ts`, `address.ts`). A page sets both itself, as long as it likes and as often as it likes.
+pub const TITLE_MAX: usize = 200;
+pub const ADDRESS_MAX: usize = 4096;
+
+fn first_chars(text: &str, max: usize) -> &str {
+    match text.char_indices().nth(max) {
+        Some((end, _)) => &text[..end],
+        None => text,
+    }
+}
+
+/// A page's title as the app hears it: its first 200 characters.
+pub fn clipped_title(title: String) -> String {
+    match first_chars(&title, TITLE_MAX).len() {
+        whole if whole == title.len() => title,
+        end => title[..end].to_string(),
+    }
+}
+
+/// An address the app is told was refused, cut at 4096 characters: it is shown, never opened.
+pub fn clipped_address(url: &str) -> String {
+    first_chars(url, ADDRESS_MAX).to_string()
+}
+
+/// A page's address as the app hears it. The app saves it as the tab's, so one over 4096 characters is not cut,
+/// which would name another page: it is reported as its site's root, or as no address when it names no site.
+pub fn reported_address(url: String) -> String {
+    if url.len() <= ADDRESS_MAX || url.chars().count() <= ADDRESS_MAX {
+        return url;
+    }
+    match url.parse::<Url>() {
+        Ok(parsed) if matches!(parsed.scheme(), "http" | "https") => {
+            format!("{}/", parsed.origin().ascii_serialization())
+        }
+        _ => String::new(),
+    }
+}
+
+/// True for an address a page is at or on its way to that doesn't parse. Tauri hands its handlers a parsed
+/// address and lets one that doesn't parse through, so the allow-list never saw it.
+pub fn unparsed_address(uri: &str) -> bool {
+    !uri.is_empty() && uri.parse::<Url>().is_err()
+}
+
+/// How long the gate keeps an answer nobody took, in milliseconds.
+pub const POPUP_KEPT_MS: u64 = 5_000;
+/// The most answers it keeps.
+const POPUP_KEPT: usize = 32;
+
+/// Whether a person asked for each tab a page wants to open: a click or a key press, as against a script running
+/// on its own. WebView2 says so only on its own event (`IsUserInitiated`), which Tauri's handler doesn't pass on;
+/// the page's COM handler records each answer here, and the work Tauri's handler queued takes it by address.
+#[derive(Default)]
+pub struct PopupGate {
+    /// The address asked for (None when it doesn't parse), the answer, and when it was recorded.
+    asked: std::collections::VecDeque<(Option<Url>, bool, u64)>,
+}
+
+impl PopupGate {
+    pub fn asked(&mut self, uri: &str, user: bool, now_ms: u64) {
+        self.forget_old(now_ms);
+        if self.asked.len() == POPUP_KEPT {
+            self.asked.pop_front();
+        }
+        self.asked.push_back((uri.parse().ok(), user, now_ms));
+    }
+
+    /// The oldest answer recorded for `url`, given once. None when nothing recorded the request: the handler was
+    /// not in yet, or it failed.
+    pub fn take(&mut self, url: &Url, now_ms: u64) -> Option<bool> {
+        self.forget_old(now_ms);
+        let at = self
+            .asked
+            .iter()
+            .position(|(asked, _, _)| asked.as_ref() == Some(url))?;
+        self.asked.remove(at).map(|(_, user, _)| user)
+    }
+
+    fn forget_old(&mut self, now_ms: u64) {
+        self.asked
+            .retain(|(_, _, at)| now_ms.saturating_sub(*at) <= POPUP_KEPT_MS);
+    }
+}
+
 /// A key with its modifiers, as the app's keymap names it (`KeyboardEvent.code`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
 pub struct Chord {
@@ -1465,5 +1550,100 @@ mod tests {
             assert_eq!(base64(raw.as_bytes()), encoded, "{raw:?}");
         }
         assert_eq!(base64(&[0xfb, 0xff, 0xbf]), "+/+/");
+    }
+
+    #[test]
+    fn a_long_title_is_cut_at_200_characters() {
+        assert_eq!(clipped_title("é".repeat(300)), "é".repeat(200));
+        assert_eq!(clipped_title("é".repeat(200)), "é".repeat(200));
+        assert_eq!(clipped_title("Example Domain".to_string()), "Example Domain");
+        assert_eq!(clipped_title(String::new()), "");
+    }
+
+    #[test]
+    fn an_address_over_4096_characters_is_reported_as_its_site() {
+        let long = |start: &str| format!("{start}{}", "a".repeat(5000));
+        assert_eq!(reported_address(long("https://example.com/")), "https://example.com/");
+        assert_eq!(
+            reported_address(long("http://localhost:3000/x?q=")),
+            "http://localhost:3000/"
+        );
+        // Nothing to name the site by: the app hears no address, and keeps the one it had.
+        assert_eq!(reported_address(long("not an address ")), "");
+        assert_eq!(reported_address(long("about:")), "");
+    }
+
+    #[test]
+    fn a_short_address_is_reported_as_it_is() {
+        for url in ["https://example.com/a?b#c", "about:blank", ""] {
+            assert_eq!(reported_address(url.to_string()), url);
+        }
+        let at_the_limit = format!("https://example.com/{}", "a".repeat(4096 - 20));
+        assert_eq!(at_the_limit.len(), 4096);
+        assert_eq!(reported_address(at_the_limit.clone()), at_the_limit);
+    }
+
+    #[test]
+    fn a_refused_address_is_cut_at_4096_characters() {
+        assert_eq!(clipped_address(&"é".repeat(5000)), "é".repeat(4096));
+        assert_eq!(clipped_address("javascript:alert(1)"), "javascript:alert(1)");
+    }
+
+    #[test]
+    fn an_address_that_doesnt_parse_is_caught() {
+        for uri in ["http://[::1", "https://exa mple.com/", "//no-scheme"] {
+            assert!(unparsed_address(uri), "{uri}");
+        }
+        // An empty address is a page that has none yet.
+        for uri in ["https://example.com/", "about:blank", "file:///C:/x", ""] {
+            assert!(!unparsed_address(uri), "{uri}");
+        }
+    }
+
+    #[test]
+    fn popup_gate_answers_for_the_address_that_was_asked() {
+        let (a, b) = ("https://a.example/", "https://b.example/");
+        let url = |s: &str| Url::parse(s).unwrap();
+        let mut gate = PopupGate::default();
+        gate.asked(a, true, 0);
+        gate.asked(b, false, 0);
+        assert_eq!(gate.take(&url(b), 1), Some(false));
+        assert_eq!(gate.take(&url(a), 1), Some(true));
+        // Each answer is given once.
+        assert_eq!(gate.take(&url(a), 1), None);
+    }
+
+    #[test]
+    fn popup_gate_answers_the_same_address_in_order() {
+        let a = Url::parse("https://a.example/").unwrap();
+        let mut gate = PopupGate::default();
+        gate.asked(a.as_str(), false, 0);
+        gate.asked(a.as_str(), true, 0);
+        assert_eq!(gate.take(&a, 1), Some(false));
+        assert_eq!(gate.take(&a, 1), Some(true));
+    }
+
+    #[test]
+    fn popup_gate_knows_nothing_it_was_not_told() {
+        let a = Url::parse("https://a.example/").unwrap();
+        let mut gate = PopupGate::default();
+        assert_eq!(gate.take(&a, 0), None);
+        // An address that doesn't parse never reaches the app's handler, so its answer is never asked for.
+        gate.asked("http://[::1", false, 0);
+        assert_eq!(gate.take(&a, 0), None);
+    }
+
+    #[test]
+    fn popup_gate_forgets_an_answer_nobody_took() {
+        let a = Url::parse("https://a.example/").unwrap();
+        let mut gate = PopupGate::default();
+        gate.asked(a.as_str(), false, 0);
+        assert_eq!(gate.take(&a, POPUP_KEPT_MS + 1), None);
+        // And it never holds more than a page could ask for in one turn.
+        for n in 0..100 {
+            gate.asked(&format!("https://a.example/{n}"), false, 10);
+        }
+        assert_eq!(gate.take(&Url::parse("https://a.example/0").unwrap(), 10), None);
+        assert_eq!(gate.take(&Url::parse("https://a.example/99").unwrap(), 10), Some(false));
     }
 }

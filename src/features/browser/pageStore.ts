@@ -10,7 +10,8 @@ export type PageState = {
   loading: boolean;
   icon: string | null;
   focused: boolean;
-  status: "refused" | "failed" | null;
+  /** "refused": an address the shell won't open. "popup": the page tried to open a tab no person asked for. "failed": its process died. */
+  status: "refused" | "popup" | "failed" | null;
   /** The shell has the page: it has reported its state. False from the app asking for it until then, and for good when the shell refused to open it. */
   live: boolean;
 };
@@ -21,7 +22,7 @@ export type PageEvent =
   | { type: "state"; key: string; url: string; title: string; canBack: boolean; canForward: boolean; loading: boolean }
   | { type: "icon"; key: string; src: string | null }
   | { type: "focus"; key: string; focused: boolean }
-  | { type: "refused"; key: string }
+  | { type: "refused"; key: string; why?: "popup" }
   | { type: "failed"; key: string }
   | { type: "closed"; key: string }
   | { type: "gone" };
@@ -51,13 +52,14 @@ export function pageReducer(pages: ReadonlyMap<string, PageState>, e: PageEvent)
       const started = e.loading && !before?.loading;
       // A page on its way to its first address says `about:blank`; the bar keeps the address it had.
       const url = passingBlank(e.url, e.loading) ? (before?.url ?? "") : e.url;
-      const status = before?.status === "refused" && !started && url === before.url ? "refused" : null;
+      const kept = before?.status === "refused" || before?.status === "popup" ? before.status : null;
+      const status = kept !== null && !started && url === before?.url ? kept : null;
       return put(pages, e.key, { url, title: e.title, canBack: e.canBack, canForward: e.canForward, loading: e.loading, status, live: true });
     }
     case "icon":
       return put(pages, e.key, { icon: e.src });
     case "refused":
-      return put(pages, e.key, { status: "refused" });
+      return put(pages, e.key, { status: e.why === "popup" ? "popup" : "refused" });
     case "failed":
       return put(pages, e.key, { status: "failed", loading: false });
     case "focus": {
@@ -155,7 +157,7 @@ export function startPageStore(): () => void {
     onBrowser("state", (p) => dispatchPage({ type: "state", ...p })),
     onBrowser("icon", (p) => dispatchPage({ type: "icon", key: p.key, src: p.src })),
     onBrowser("focus", (p) => dispatchPage({ type: "focus", key: p.key, focused: p.focused })),
-    onBrowser("refused", (p) => dispatchPage({ type: "refused", key: p.key })),
+    onBrowser("refused", (p) => dispatchPage({ type: "refused", key: p.key, why: p.why === "popup" ? "popup" : undefined })),
     onBrowser("failed", (p) => dispatchPage({ type: "failed", key: p.key })),
     onBrowser("gone", () => dispatchPage({ type: "gone" })),
   ];
