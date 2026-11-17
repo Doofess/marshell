@@ -441,6 +441,57 @@ pub struct PaneTab {
     /// A browser tab's last title, for the strip before its page loads.
     #[serde(default)]
     pub title: Option<String>,
+    /// Who opened it with `marshell open`: an agent's id, or `shell`. None when the person opened it in the app.
+    #[serde(default)]
+    pub opened_by: Option<String>,
+    /// True until the tab is first selected after `marshell open` added or marked it.
+    #[serde(default)]
+    pub unseen: bool,
+}
+
+/// The body of a `marshell open` request: one address or file for a session's side pane.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct OpenRequest {
+    /// A web address (http or https) or an absolute path.
+    pub target: String,
+    /// The caller's own `tab_id`, when it runs inside a session.
+    #[serde(default)]
+    pub from: Option<String>,
+}
+
+/// One queued open request, as the app sees it.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PaneOpen {
+    #[ts(type = "number")]
+    pub id: u64,
+    /// The session whose side pane gets the tab.
+    pub tab_id: String,
+    /// "file" or "browser".
+    pub kind: String,
+    /// An address or an absolute path.
+    pub target: String,
+    /// Who asked: an agent's id, or `shell`.
+    pub by: String,
+}
+
+/// The app's answer for one queued open request.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PaneOpenDone {
+    #[ts(type = "number")]
+    pub id: u64,
+    /// None when the tab was opened; "limit" or "address" when the app refused it.
+    #[serde(default)]
+    pub refused: Option<String>,
+}
+
+/// The app's answers to a batch of queued open requests.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PaneOpensDone {
+    pub done: Vec<PaneOpenDone>,
 }
 
 /// One session's tabs in the side pane.

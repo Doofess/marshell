@@ -184,7 +184,7 @@ function openPage(s: PaneView, session: string, url: string): PaneView {
     return { ...setTabs(s, session, { ...cur, active: existing.id }), open: true };
   }
   if (cur.tabs.length >= PANE_LIMITS.tabs) return s;
-  const tab: PaneTab = { id: nextId(cur.tabs), kind: "browser", history: [entryOf({ path: url })], index: 0, title: null };
+  const tab: PaneTab = { id: nextId(cur.tabs), kind: "browser", history: [entryOf({ path: url })], index: 0, title: null, opened_by: null, unseen: false };
   return { ...setTabs(s, session, { tabs: [...cur.tabs, tab], active: tab.id }), open: true };
 }
 
@@ -220,7 +220,7 @@ function open(s: PaneView, session: string, project: string, target: OpenTarget)
     }
   } else {
     if (cur.tabs.length >= PANE_LIMITS.tabs) return s;
-    const tab: PaneTab = { id: nextId(cur.tabs), kind: "file", history: [entryOf(target)], index: 0, title: null };
+    const tab: PaneTab = { id: nextId(cur.tabs), kind: "file", history: [entryOf(target)], index: 0, title: null, opened_by: null, unseen: false };
     next = { ...setTabs(s, session, { tabs: [...cur.tabs, tab], active: tab.id }), open: true };
   }
   return withRecent(next, project, target.path);

@@ -107,7 +107,7 @@ async fn put_view_round_trips_the_pane() {
     let app = app_in(home.path());
     let tab = |id: &str, path: &str| {
         serde_json::json!({
-            "id": id, "kind": "file", "index": 0, "title": null,
+            "id": id, "kind": "file", "index": 0, "title": null, "opened_by": null, "unseen": false,
             "history": [{ "path": path, "line": 12, "col": null, "view": "source" }]
         })
     };
@@ -141,17 +141,50 @@ async fn put_view_round_trips_a_browser_tab() {
     std::fs::write(home.path().join("layout.json"), saved.to_string()).unwrap();
     let app = app_in(home.path());
     let file = serde_json::json!({
-        "id": "t1", "kind": "file", "index": 0, "title": null,
+        "id": "t1", "kind": "file", "index": 0, "title": null, "opened_by": null, "unseen": false,
         "history": [{ "path": "C:/a.md", "line": null, "col": null, "view": "rendered" }]
     });
     let browser = serde_json::json!({
-        "id": "t2", "kind": "browser", "index": 0, "title": "Example Domain",
+        "id": "t2", "kind": "browser", "index": 0, "title": "Example Domain", "opened_by": null, "unseen": false,
         "history": [{ "path": "https://example.com/", "line": null, "col": null, "view": "rendered" }]
     });
     let mut body = view(serde_json::json!(["a"]));
     body["pane"] = serde_json::json!({
         "open": true, "width": null,
         "sessions": { "a": { "tabs": [file, browser], "active": "t2" } },
+        "recent": []
+    });
+    let res = app
+        .clone()
+        .oneshot(request("PUT", "/v1/layout/view", Some(body.clone())))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    let res = app.oneshot(request("GET", "/v1/layout", None)).await.unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let doc: serde_json::Value = serde_json::from_slice(&body_bytes(res).await).unwrap();
+    assert_eq!(doc["view"]["pane"], body["pane"]);
+}
+
+#[tokio::test]
+async fn put_view_round_trips_an_opened_tab() {
+    let home = tempfile::tempdir().unwrap();
+    let saved = serde_json::json!({
+        "version": 1,
+        "tabs": [{ "tab_id": "a", "number": 1, "name": "a", "agent": null, "profile_id": "sleeper", "cwd": "C:/work" }],
+        "view": view(serde_json::json!(["a"])),
+        "launcher": {}
+    });
+    std::fs::write(home.path().join("layout.json"), saved.to_string()).unwrap();
+    let app = app_in(home.path());
+    let browser = serde_json::json!({
+        "id": "t1", "kind": "browser", "index": 0, "title": null, "opened_by": "codex", "unseen": true,
+        "history": [{ "path": "https://example.com/", "line": null, "col": null, "view": "rendered" }]
+    });
+    let mut body = view(serde_json::json!(["a"]));
+    body["pane"] = serde_json::json!({
+        "open": true, "width": null,
+        "sessions": { "a": { "tabs": [browser], "active": "t1" } },
         "recent": []
     });
     let res = app

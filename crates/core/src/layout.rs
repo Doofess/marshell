@@ -219,6 +219,10 @@ fn repair_pane(pane: &mut PaneView, tabs: &[SavedTab]) {
             if !matches!(tab.kind.as_str(), "file" | "browser") || !is_pane_id(&tab.id) || seen.contains(&tab.id) {
                 continue;
             }
+            if !tab.opened_by.as_deref().is_some_and(is_opener) {
+                tab.opened_by = None;
+                tab.unseen = false;
+            }
             if tab.kind == "browser" {
                 // A browser tab holds one address: the entry it was showing.
                 let at = (tab.index as usize).min(tab.history.len().saturating_sub(1));
@@ -277,6 +281,11 @@ fn fold_to_one_pane(view: &mut ViewLayout) {
     let kept = at(view.active).or_else(|| view.panes.iter().flatten().next().cloned());
     view.panes = vec![kept];
     view.active = 0;
+}
+
+/// An opener: 1 to 32 characters of a-z, 0-9 and "-".
+fn is_opener(id: &str) -> bool {
+    (1..=32).contains(&id.len()) && id.bytes().all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-'))
 }
 
 const MAX_RECENT: usize = 5;
@@ -344,6 +353,15 @@ pub fn validate_pane(p: &PaneView) -> Result<(), String> {
                     "{at}: kind must be \"file\" or \"browser\", not \"{}\"",
                     tab.kind
                 ));
+            }
+            if tab.opened_by.as_deref().is_some_and(|o| !is_opener(o)) {
+                return Err(format!(
+                    "{at}: opened_by must be 1 to 32 of a-z, 0-9 and -, not \"{}\"",
+                    tab.opened_by.as_deref().unwrap_or_default()
+                ));
+            }
+            if tab.unseen && tab.opened_by.is_none() {
+                return Err(format!("{at}: unseen needs opened_by"));
             }
             let browser = tab.kind == "browser";
             if !browser && tab.title.is_some() {
@@ -684,6 +702,8 @@ mod tests {
                 .collect(),
             index: 0,
             title: None,
+            opened_by: None,
+            unseen: false,
         }
     }
 
@@ -952,6 +972,69 @@ mod tests {
         f.title = Some("x".into());
         v.pane = pane_with("a", session(vec![f]));
         assert!(validate_view(&v).unwrap_err().contains("title"));
+    }
+
+    fn opened(mut t: PaneTab, by: Option<&str>, unseen: bool) -> PaneTab {
+        t.opened_by = by.map(str::to_string);
+        t.unseen = unseen;
+        t
+    }
+
+    #[test]
+    fn repair_keeps_who_opened_a_tab() {
+        let t = opened(file_tab("t1", &["C:/a.md"]), Some("claude"), true);
+        let pane = repaired("a", session(vec![t.clone()]));
+        assert_eq!(pane.sessions["a"].tabs, vec![t]);
+    }
+
+    #[test]
+    fn repair_drops_a_bad_opener() {
+        for bad in ["", "Claude Code", &"a".repeat(33)] {
+            let t = opened(file_tab("t1", &["C:/a.md"]), Some(bad), true);
+            let pane = repaired("a", session(vec![t]));
+            let kept = &pane.sessions["a"].tabs[0];
+            assert_eq!(kept.opened_by, None, "{bad:?}");
+            assert!(!kept.unseen, "{bad:?}");
+        }
+        let mut b = browser_tab("t2", "https://example.com/");
+        b.opened_by = Some("A".into());
+        b.unseen = true;
+        let pane = repaired("a", session(vec![b]));
+        assert_eq!(pane.sessions["a"].tabs[0].opened_by, None);
+        assert!(!pane.sessions["a"].tabs[0].unseen);
+    }
+
+    #[test]
+    fn repair_clears_unseen_without_an_opener() {
+        let t = opened(file_tab("t1", &["C:/a.md"]), None, true);
+        let pane = repaired("a", session(vec![t]));
+        assert!(!pane.sessions["a"].tabs[0].unseen);
+    }
+
+    #[test]
+    fn validate_view_names_the_opener_field() {
+        let one = |t: PaneTab| {
+            let v = ViewLayout {
+                pane: pane_with("a", session(vec![t])),
+                ..ViewLayout::default()
+            };
+            validate_view(&v)
+        };
+        for bad in ["", "Claude Code", &"a".repeat(33)] {
+            let err = one(opened(file_tab("t1", &["C:/a"]), Some(bad), false)).unwrap_err();
+            assert!(err.contains("opened_by"), "{bad:?}: {err}");
+        }
+        let err = one(opened(file_tab("t1", &["C:/a"]), None, true)).unwrap_err();
+        assert!(err.contains("unseen"), "{err}");
+        assert_eq!(one(opened(file_tab("t1", &["C:/a"]), Some("shell"), true)), Ok(()));
+    }
+
+    #[test]
+    fn an_older_layout_file_loads_without_the_new_fields() {
+        let json = r#"{"id":"t1","kind":"file","history":[{"path":"C:/a","view":"rendered"}],"index":0}"#;
+        let t: PaneTab = serde_json::from_str(json).unwrap();
+        assert_eq!(t.opened_by, None);
+        assert!(!t.unseen);
     }
 
     #[test]
