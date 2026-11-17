@@ -1067,6 +1067,8 @@ pub async fn recording(State(st): State<AppState>, Path(tab): Path<String>) -> R
 /// Always 204, also when the tab is already closed or unknown, so a retry is harmless.
 pub async fn close(State(st): State<AppState>, Path(tab): Path<String>) -> StatusCode {
     st.0.registry.close(&tab);
+    // After the row is gone, so a request that arrives now finds no session.
+    st.opens().drop_session(&tab);
     if let Some(session) = st.remove_session(&tab) {
         session.kill();
     }

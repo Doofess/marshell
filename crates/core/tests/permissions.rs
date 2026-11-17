@@ -786,14 +786,15 @@ async fn next_frame(ws: &mut Ws) -> serde_json::Value {
     }
 }
 
-/// The data of the next `permissions` frame, skipping `sessions` frames.
+/// The data of the next `permissions` frame, skipping the other kinds.
 async fn next_permissions(ws: &mut Ws) -> Vec<serde_json::Value> {
     loop {
         let frame = next_frame(ws).await;
         if frame["type"] == "permissions" {
             return frame["data"].as_array().unwrap().clone();
         }
-        assert!(frame["type"] == "sessions" || frame["type"] == "doctor", "{frame}");
+        let kind = frame["type"].as_str().unwrap_or_default();
+        assert!(["sessions", "doctor", "opens"].contains(&kind), "{frame}");
     }
 }
 
@@ -864,6 +865,7 @@ async fn decision_sends_sessions_before_permissions() {
     assert_eq!(next_frame(&mut ws).await["type"], "sessions");
     assert_eq!(next_frame(&mut ws).await["type"], "permissions");
     assert_eq!(next_frame(&mut ws).await["type"], "doctor");
+    assert_eq!(next_frame(&mut ws).await["type"], "opens");
 
     // Both channels can be ready together; exercise that choice across repeated decisions.
     for _ in 0..32 {

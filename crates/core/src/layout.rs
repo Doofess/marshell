@@ -104,7 +104,7 @@ impl Versioned for FileDoc {
 const SIDEBAR_MODES: [&str; 3] = ["expanded", "rail", "focus"];
 const SIDEBAR_WIDTH: std::ops::RangeInclusive<u32> = 200..=400;
 const PANE_WIDTH: std::ops::RangeInclusive<u32> = 320..=4096;
-const MAX_PANE_TABS: usize = 32;
+pub(crate) const MAX_PANE_TABS: usize = 32;
 const MAX_PANE_HISTORY: usize = 50;
 const MAX_RECENT_FILES: usize = 200;
 const MAX_PATH_CHARS: usize = 4096;
@@ -284,7 +284,7 @@ fn fold_to_one_pane(view: &mut ViewLayout) {
 }
 
 /// An opener: 1 to 32 characters of a-z, 0-9 and "-".
-fn is_opener(id: &str) -> bool {
+pub(crate) fn is_opener(id: &str) -> bool {
     (1..=32).contains(&id.len()) && id.bytes().all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-'))
 }
 

@@ -117,6 +117,44 @@ async fn events_send_snapshot_on_connect_and_change() {
 }
 
 #[tokio::test]
+async fn events_sends_the_queue_at_connect_and_on_change() {
+    let (core, _home) = core().await;
+    let mut ws = connect(&core).await;
+    assert_eq!(next_event(&mut ws).await["type"], "sessions");
+    assert_eq!(next_event(&mut ws).await["type"], "permissions");
+    assert_eq!(next_event(&mut ws).await["type"], "doctor");
+    // Nothing waits yet.
+    assert_eq!(
+        next_event(&mut ws).await,
+        serde_json::json!({ "type": "opens", "data": [] })
+    );
+
+    let opens = core.state.opens();
+    let (id, _answer) = opens
+        .push("t1", "browser", "https://example.com/".into(), "claude".into())
+        .expect("the queue has room");
+    let event = next_event(&mut ws).await;
+    assert_eq!(
+        event,
+        serde_json::json!({ "type": "opens", "data": [
+            { "id": id, "tab_id": "t1", "kind": "browser", "target": "https://example.com/", "by": "claude" }
+        ] })
+    );
+
+    // A window that connects while a request waits (a reload) is shown it at once.
+    let mut second = connect(&core).await;
+    for kind in ["sessions", "permissions", "doctor"] {
+        assert_eq!(next_event(&mut second).await["type"], kind);
+    }
+    assert_eq!(next_event(&mut second).await, event);
+
+    opens.done(&[marshell_protocol::api::PaneOpenDone { id, refused: None }]);
+    for ws in [&mut ws, &mut second] {
+        assert_eq!(next_event(ws).await, serde_json::json!({ "type": "opens", "data": [] }));
+    }
+}
+
+#[tokio::test]
 async fn events_close_when_the_client_closes() {
     let (core, _home) = core().await;
     let mut ws = connect(&core).await;

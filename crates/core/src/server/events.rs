@@ -1,7 +1,9 @@
 //! `GET /v1/events`: pushes the session list and the held permission requests to the UI. Every
 //! message is a text frame: `{"type":"sessions","data":SessionsSnapshot}` and
 //! `{"type":"permissions","data":[PermissionView]}` (oldest request first) and
-//! `{"type":"doctor","data":DoctorSummary}`. Each kind is sent once on connect (in that order), then once per change.
+//! `{"type":"doctor","data":DoctorSummary}` and `{"type":"opens","data":[PaneOpen]}` (what `marshell open` asked
+//! for and the app has not answered, oldest first). Each kind is sent once on connect (in that order), then once
+//! per change.
 //! The UI sends nothing; whatever text it does send is ignored.
 
 use super::AppState;
@@ -10,7 +12,7 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::Response;
 use futures_util::SinkExt;
 use futures_util::StreamExt;
-use marshell_protocol::api::SessionsSnapshot;
+use marshell_protocol::api::{PaneOpen, SessionsSnapshot};
 use marshell_protocol::brand;
 use marshell_protocol::doctor::DoctorSummary;
 use marshell_protocol::hook::PermissionView;
@@ -23,9 +25,10 @@ pub async fn handler(State(st): State<AppState>, ws: WebSocketUpgrade) -> Respon
     let rx = st.0.registry.subscribe();
     let holds = st.holds().subscribe();
     let doctor = st.doctor().summary.subscribe();
+    let opens = st.opens().subscribe();
     // Echo our subprotocol, or browsers drop the connection.
     ws.protocols([brand::WS_SUBPROTOCOL])
-        .on_upgrade(move |socket| run(socket, st, rx, holds, doctor))
+        .on_upgrade(move |socket| run(socket, st, rx, holds, doctor, opens))
 }
 
 fn event(snapshot: &SessionsSnapshot) -> Message {
@@ -43,12 +46,18 @@ fn doctor_event(summary: &DoctorSummary) -> Message {
     Message::Text(json.to_string().into())
 }
 
+fn opens_event(waiting: &[PaneOpen]) -> Message {
+    let json = serde_json::json!({ "type": "opens", "data": waiting });
+    Message::Text(json.to_string().into())
+}
+
 async fn run(
     socket: WebSocket,
     st: AppState,
     mut rx: watch::Receiver<SessionsSnapshot>,
     mut holds: watch::Receiver<u64>,
     mut doctor: watch::Receiver<DoctorSummary>,
+    mut opens: watch::Receiver<Vec<PaneOpen>>,
 ) {
     let (mut tx, mut incoming) = socket.split();
     // The first send covers the state at connect; `borrow_and_update` marks it as seen.
@@ -63,6 +72,11 @@ async fn run(
         return;
     }
     let first = doctor_event(&doctor.borrow_and_update());
+    if !send(&mut tx, first).await {
+        return;
+    }
+    // A window that connects again (a reload) gets what waited while it was away.
+    let first = opens_event(&opens.borrow_and_update());
     if !send(&mut tx, first).await {
         return;
     }
@@ -92,6 +106,15 @@ async fn run(
                     break;
                 }
                 let msg = doctor_event(&doctor.borrow_and_update());
+                if !send(&mut tx, msg).await {
+                    break;
+                }
+            }
+            changed = opens.changed() => {
+                if changed.is_err() {
+                    break;
+                }
+                let msg = opens_event(&opens.borrow_and_update());
                 if !send(&mut tx, msg).await {
                     break;
                 }
