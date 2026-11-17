@@ -31,7 +31,8 @@ const LATE: &str = "Marshell hasn't answered yet. The tab opens when its window 
 pub enum Outcome {
     /// The app added the tab, or marked the one that was there.
     Opened,
-    /// The app refused it: "limit" (the session has its 32 tabs) or "address" (the shell would not open it).
+    /// The app refused it: "limit" (the session has its 32 tabs), "address" (the shell would not open it) or
+    /// "session" (the app has no such session).
     Refused(String),
     /// Its session closed first.
     Closed,
@@ -198,6 +199,10 @@ fn text(status: StatusCode, line: impl Into<String>) -> Response {
     (status, line.into()).into_response()
 }
 
+fn closed(number: u32) -> Response {
+    text(StatusCode::CONFLICT, format!("Session {number} has closed."))
+}
+
 /// POST /v1/sessions/{tab}/open
 pub async fn open(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<OpenRequest>) -> Response {
     let Some(row) = st.registry().row(&tab) else {
@@ -233,9 +238,10 @@ pub async fn open(State(st): State<AppState>, Path(tab): Path<String>, Json(req)
                 crate::layout::MAX_PANE_TABS
             ),
         ),
+        Ok(Ok(Outcome::Refused(why))) if why == "session" => closed(row.number),
         Ok(Ok(Outcome::Refused(_))) => text(StatusCode::CONFLICT, BAD_ADDRESS),
         // Err: the queue went with the core. The session is as gone as a closed one.
-        Ok(Ok(Outcome::Closed) | Err(_)) => text(StatusCode::CONFLICT, format!("Session {} has closed.", row.number)),
+        Ok(Ok(Outcome::Closed) | Err(_)) => closed(row.number),
         // The request stays in the queue: the tab opens when the app next looks.
         Err(_) => text(StatusCode::ACCEPTED, LATE),
     }

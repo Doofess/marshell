@@ -482,7 +482,8 @@ pub struct PaneOpen {
 pub struct PaneOpenDone {
     #[ts(type = "number")]
     pub id: u64,
-    /// None when the tab was opened; "limit" or "address" when the app refused it.
+    /// None when the tab was opened. When the app refused it: "limit" (the session has its 32 tabs), "address"
+    /// (the page would not open it) or "session" (the app has no such session).
     #[serde(default)]
     pub refused: Option<String>,
 }

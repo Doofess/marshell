@@ -363,6 +363,8 @@ async fn open_answers_the_apps_refusal() {
     for (refused, line) in [
         ("limit", "Session 1 already has 32 tabs in its side pane."),
         ("address", "That address can't be opened in the side pane."),
+        // The app has no such session (it closed there first).
+        ("session", "Session 1 has closed."),
     ] {
         let st = state(&tmp.path().join(refused));
         let app = router(st.clone());
