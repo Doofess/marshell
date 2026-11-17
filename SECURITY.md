@@ -41,8 +41,8 @@ This section describes what Marshell does today. Planned work is marked as such.
 - Image crops are saved under `~/.marshell/attachments/` and are owner-only.
 
 **Your CLI configuration.**
-- Marshell does not write to any agent CLI's configuration today.
-- Later phases add hook entries and a status line. Every such change will be previewed, backed up, written atomically and undoable, and uninstalling removes it.
+- Marshell writes to an agent CLI's configuration to add its hook entries, its status line and its skill, and when you apply a change from the settings page or the doctor.
+- Every such change is previewed, backed up, written atomically and undoable, and uninstalling removes Marshell's entries.
 
 **Credentials.**
 - Marshell never reads, stores or brokers CLI credentials or OAuth tokens.
