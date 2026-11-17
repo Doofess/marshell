@@ -14,7 +14,7 @@ Expect an acknowledgement within a week. Once a fix is ready, it is published to
 
 ## Supported versions
 
-Marshell is in early development and has no release yet. Security fixes land on `main`. Once releases start, the latest release gets security fixes.
+Marshell is in early development and has only a pre-release so far (`v0.1.0-alpha.1`). Security fixes land on `main`. Once stable releases start, the latest release gets security fixes.
 
 ## Security model
 
@@ -26,8 +26,7 @@ This section describes what Marshell does today. Planned work is marked as such.
 - The `Host` header must be exactly `127.0.0.1:<port>`, which blocks DNS rebinding.
 - The port and the token are written to `~/.marshell/run/endpoint.json`.
   - On Linux and macOS the file is owner-only (0600, in a 0700 folder).
-  - On Windows it inherits the permissions of your user profile.
-  - An explicit owner-only ACL on Windows is planned for when the hook bridge starts reading the file.
+  - On Windows the Marshell home that holds it has a protected ACL for your account and SYSTEM only, checked on every start (`crates/core/src/private.rs`). The file inherits it.
 
 **Webview.**
 - The Content Security Policy allows content from the app itself and connections only to the app and loopback. No remote content is loaded.
@@ -42,8 +41,8 @@ This section describes what Marshell does today. Planned work is marked as such.
 - Image crops are saved under `~/.marshell/attachments/` and are owner-only.
 
 **Your CLI configuration.**
-- Marshell does not write to any agent CLI's configuration today.
-- Later phases add hook entries and a status line. Every such change will be previewed, backed up, written atomically and undoable, and uninstalling removes it.
+- Marshell writes to an agent CLI's configuration to add its hook entries, its status line and its skill, and when you apply a change from the settings page or the doctor.
+- Every such change is previewed, backed up, written atomically and undoable, and uninstalling removes Marshell's entries.
 
 **Credentials.**
 - Marshell never reads, stores or brokers CLI credentials or OAuth tokens.
@@ -58,9 +57,8 @@ This section describes what Marshell does today. Planned work is marked as such.
 - An attacker who already runs code as your user. They can read the token file and drive your CLIs directly.
 - Vulnerabilities in the agent CLIs themselves, such as Claude Code or Codex CLI. Report those to their vendors.
 
-### Planned
+### Reviewed and planned
 
-Before approve-from-anywhere ships (phase 3 of [`docs/PLAN.md`](docs/PLAN.md)), two pieces of work come first:
-
-- a written threat model, covering the loopback server, terminal input, the `marshell://` link and instruction-library injection;
-- a security review.
+- The threat model is written: [ADR 0001](docs/adr/0001-threat-model.md) covers the loopback server, terminal input, the `marshell://` link and instruction-library injection.
+- The in-app approval card had a security review against that record before it shipped.
+- Answering a request from an operating-system notification needs its own security review before it ships.
