@@ -13,7 +13,7 @@ export function releaseNotes({ version, sha256 }) {
 winget install Doofess.Marshell
 \`\`\`
 
-If winget can't find this version yet, Microsoft is still reviewing it. Install it from this page instead:
+If winget can't find this version, it isn't in winget's repository yet. Install it from this page instead:
 
 1. Download \`winget-manifest-${version}.zip\` below and extract it.
 2. Once, in a terminal opened as administrator: \`winget settings --enable LocalManifestFiles\`

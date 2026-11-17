@@ -276,7 +276,18 @@ jobs:
         env:
           # wingetcreate reads the token from here, so it never appears on a command line.
           WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          # Only to read microsoft/winget-pkgs, which is public.
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.release.outputs.version }}
         run: |
-          ./wingetcreate.exe submit --prtitle "New version: Doofess.Marshell version $env:VERSION" --no-open fallback/manifest
+          # winget-pkgs asks for "New package:" in the title until the package has a folder there, and
+          # wingetcreate's own titles say "New version:" after that. Anything but a clear yes or no stops the job.
+          $found = gh api repos/microsoft/winget-pkgs/contents/manifests/d/Doofess/Marshell --silent 2>&1
+          if ($LASTEXITCODE -eq 0) { $kind = 'New version' }
+          elseif ("$found" -match 'HTTP 404') { $kind = 'New package' }
+          else {
+            "::error::Couldn't tell whether Doofess.Marshell is in microsoft/winget-pkgs yet: $found"
+            exit 1
+          }
+          ./wingetcreate.exe submit --prtitle "${kind}: Doofess.Marshell version $env:VERSION" --no-open fallback/manifest
           if ($LASTEXITCODE -ne 0) { exit 1 }
