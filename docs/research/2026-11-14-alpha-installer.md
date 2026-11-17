@@ -106,9 +106,8 @@ Why the bot closed it isn't known. What the repository shows about that hour:
 
 - Every pull request opened up to 07:24:25Z (482067 to 482073) stayed open and got the bot's usual first comment, the validation badges.
 - Every pull request opened from 07:27:27Z to 07:39:10Z (482074 to 482080) was closed by the same bot within 25 to 46 s, with no comment and no label. They came from first-time and from established contributors, with "New package:" and with "New version:" titles.
-- The rule in the repository's own policy files that closes a pull request when it opens (`.github/policies/labelManagement.issueOpened.yml`, for one that changes no file) also posts a reply. None of these got one.
-
-- From 482081 (07:42:02Z) on, pull requests stayed open again and got the badges, among them a second try by one of the people whose first was closed.
+- From 482081 (07:42:02Z) on, pull requests stayed open again and got the badges, with "New version:" titles as well (482085, 482086), among them a second try by one of the people whose first was closed.
+- The rule in the repository's own policy files that closes a pull request when it opens (`.github/policies/labelManagement.issueOpened.yml`, for one that changes no file) also posts a reply. None of the closed ones got one.
 
 That points away from Marshell's manifest and its title, and at something on Microsoft's side that broke at about 07:25Z and worked again about a quarter of an hour later. The submission had to be run again (below).
 
@@ -131,7 +130,7 @@ The submission was run again from `main` at 8670fc2b, the same command as before
 
 | Question | What was shown |
 | --- | --- |
-| Does the title step choose on a runner? | Yes. It printed "The pull request's title starts with 'New package:'", and `wingetcreate` opened [microsoft/winget-pkgs pull request 482096](https://github.com/microsoft/winget-pkgs/pull/482096), "New package: Doofess.Marshell version 0.1.0-alpha.1", at 08:14:13Z. The 200 answer has only been tried from the development PC, against another package's folder. |
+| Does the title step choose on a runner? | Yes. It printed "The pull request's title starts with 'New package:'", and `wingetcreate` opened [microsoft/winget-pkgs pull request 482096](https://github.com/microsoft/winget-pkgs/pull/482096), "New package: Doofess.Marshell version 0.1.0-alpha.1", at 08:14:13Z. The 200 answer has only been tried from the development PC, with the step's lines against `manifests/m/Microsoft/PowerToys`, which gave "New version:" (pull request #134, "Live check"). |
 | Did it stay open? | Yes. Seven minutes later it was open with the labels `Needs-CLA` and `New-Package`, and the bot had posted the badges and asked the owner for the contributor agreement. |
 | What waits on the owner? | A reply on the pull request that agrees to the contributor agreement, from the account that opened it. The body's seven boxes are unticked. |
 
