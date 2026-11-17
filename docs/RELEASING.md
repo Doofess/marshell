@@ -46,7 +46,7 @@ The first pull request on `microsoft/winget-pkgs` gets a comment from Microsoft'
 After a submission, open the pull request and look at it: a green `winget-submit` only means it was opened.
 
 - Its body is the repository's template with nothing ticked. Tick what holds: the contributor agreement once it is signed, and `winget validate` and `winget install --manifest`, both of which `winget-check` runs.
-- Microsoft's bot can close it. alpha.1's first one was closed within a minute, without a comment, together with every other pull request opened in those minutes. Run `submit` again when new pull requests there stay open.
+- Microsoft's bot can close it. alpha.1's first one was closed within a minute, without a comment, together with every other pull request opened in those minutes. When that happens, wait until new pull requests there stay open and run `submit` again. Never run it while an earlier pull request for the same version is still open: that opens a duplicate.
 
 ## A release that went out before the token, or whose submission failed
 

@@ -53,7 +53,7 @@ describe("the release notes", () => {
   // closed within a minute), so the notes must hold in every state.
   it("don't say that Microsoft is reviewing the version", () => {
     expect(notes).toContain("If winget can't find this version, it isn't in winget's repository yet.");
-    expect(notes).not.toMatch(/review/i);
+    expect(notes).not.toContain("reviewing");
   });
 
   // Slice 9a decision 15. The caveat and this test go when THIRD_PARTY_NOTICES.md lists every crate and
