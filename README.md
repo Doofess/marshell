@@ -15,9 +15,9 @@ Each AI vendor's desktop app manages that vendor's agent only. Marshell does tha
 
 ## What it does
 
-- Permission requests become cards. Marshell holds an agent's permission request through its hook and shows it as a card: allow once, always allow in this project, or deny. Typing in that terminal hands the question back to the agent's own prompt.
+- Permission requests become cards. Marshell holds an agent's permission request through its hook and shows it as a card: allow once or deny, and for Claude Code and Codex also always allow in this project, unless the request is flagged risky or comes from an administrator session. Typing in that terminal hands the question back to the agent's own prompt.
 - Live status for every session (working, needs you, done, error, context used), from each agent's hooks and status line. Claude Code, Codex CLI, Antigravity and Qwen Code have full adapters. GitHub Copilot CLI reports status through its hooks and status line but asks for permission in its own terminal. Cursor CLI, opencode, Amp, Grok, Kimi, aider and crush launch without hook status, and any other program runs as a plain shell.
-- Agent config you can see and undo. A settings page has a section for each of Claude Code, Codex, Antigravity and Qwen Code, and a raw editor, and every write, including Marshell's own hooks, is a diff preview with a snapshot and an undo. Uninstalling restores the files byte for byte. A doctor lists MCP servers and skills with an estimated token cost and fixes or switches off existing entries; adding new ones from the app is not built.
+- Agent config you can see and undo. A settings page has a section for each of Claude Code, Codex, Antigravity and Qwen Code, and a raw editor, and every write, including Marshell's own hooks, is a diff preview with a snapshot and an undo. Uninstalling takes Marshell's entries out of those files again and keeps the snapshots; in the installer test, Claude Code's `settings.json` came back byte for byte. A doctor lists MCP servers and skills with an estimated token cost and fixes or switches off existing entries; adding new ones from the app is not built.
 - Real terminals: ConPTY sessions, shell integration for PowerShell, bash, zsh and fish, agents inside WSL, administrator sessions, a git worktree per task, and asciicast recordings.
 - Searchable history. Claude Code, Codex and Qwen Code transcripts are archived with zstd and indexed with SQLite FTS5, so they outlive the CLI's own cleanup.
 - Windows toasts and a different system sound per event kind, with quiet hours. A preview pane opens code, Markdown, images, PDF and HTML and sends a marked region of a PDF or image to the agent.
@@ -83,7 +83,7 @@ flowchart LR
 
 ## Try it
 
-Download `Marshell_0.1.0-alpha.1_x64-setup.exe` from the [v0.1.0-alpha.1 pre-release](https://github.com/Doofess/marshell/releases/tag/v0.1.0-alpha.1) and run it. It needs Windows 11 x64 and no administrator rights. The build is unsigned: at the SmartScreen warning, choose More info, then Run anyway.
+Download `Marshell_0.1.0-alpha.1_x64-setup.exe` from the [v0.1.0-alpha.1 pre-release](https://github.com/Doofess/marshell/releases/tag/v0.1.0-alpha.1) and run it. It needs Windows 11 x64 and no administrator rights. The build is unsigned: at the SmartScreen warning, choose More info, then Run anyway. The release page has the installer's SHA-256 file, the steps for updating and what uninstalling removes.
 
 ### Develop
 
@@ -117,8 +117,8 @@ pnpm check:generated
 
 ## How it was built
 
-Built with AI coding agents (Claude Code).
+Built with AI coding agents (Claude Code). The plan and the decisions taken slice by slice are in [docs/PLAN.md](docs/PLAN.md).
 
 ## License
 
-[MIT](LICENSE).
+[MIT](LICENSE). Notices for bundled components are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). To report a vulnerability, see [SECURITY.md](SECURITY.md).

@@ -57,9 +57,8 @@ This section describes what Marshell does today. Planned work is marked as such.
 - An attacker who already runs code as your user. They can read the token file and drive your CLIs directly.
 - Vulnerabilities in the agent CLIs themselves, such as Claude Code or Codex CLI. Report those to their vendors.
 
-### Planned
+### Reviewed and planned
 
-Before approve-from-anywhere ships (phase 3 of [`docs/PLAN.md`](docs/PLAN.md)), two pieces of work come first:
-
-- a written threat model, covering the loopback server, terminal input, the `marshell://` link and instruction-library injection;
-- a security review.
+- The threat model is written: [ADR 0001](docs/adr/0001-threat-model.md) covers the loopback server, terminal input, the `marshell://` link and instruction-library injection.
+- The in-app approval card had a security review against that record before it shipped.
+- Answering a request from an operating-system notification needs its own security review before it ships.
