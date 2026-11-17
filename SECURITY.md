@@ -14,7 +14,7 @@ Expect an acknowledgement within a week. Once a fix is ready, it is published to
 
 ## Supported versions
 
-Marshell is in early development and has no release yet. Security fixes land on `main`. Once releases start, the latest release gets security fixes.
+Marshell is in early development and has only a pre-release so far (`v0.1.0-alpha.1`). Security fixes land on `main`. Once stable releases start, the latest release gets security fixes.
 
 ## Security model
 
@@ -27,7 +27,7 @@ This section describes what Marshell does today. Planned work is marked as such.
 - The port and the token are written to `~/.marshell/run/endpoint.json`.
   - On Linux and macOS the file is owner-only (0600, in a 0700 folder).
   - On Windows it inherits the permissions of your user profile.
-  - An explicit owner-only ACL on Windows is planned for when the hook bridge starts reading the file.
+  - The Marshell home that holds it gets an explicit owner-only ACL on Windows (`crates/core/src/private.rs`).
 
 **Webview.**
 - The Content Security Policy allows content from the app itself and connections only to the app and loopback. No remote content is loaded.
