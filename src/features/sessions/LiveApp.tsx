@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import type { ComponentProps } from "react";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import { invoke } from "@tauri-apps/api/core";
@@ -76,6 +76,7 @@ import { focusPane } from "../pane/focusPane";
 import { FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, PANE_BESIDE_SESSION, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome } from "../pane/paneCommands";
 import { activeTab, currentEntry, isBrowserTab, openRefused, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
 import { takeOpens } from "../pane/opens";
+import { newsReducer } from "../pane/paneNews";
 import { plusChoice, plusMenuItems } from "../pane/plusMenu";
 import { SidePane } from "../pane/SidePane";
 import { tabKind } from "../pane/tabType";
@@ -779,6 +780,8 @@ export function LiveApp() {
   // and focus never moves. `answered` keeps what was said to each request still in the list, so a frame delivered twice applies once and
   // a lost answer is sent again with the next frame (the core ignores an answer it already has).
   const answered = useRef(new Map<number, PaneOpenDone>());
+  // The sessions with a tab `marshell open` added that nobody has looked at yet: the title bar's pane button shows a dot for them.
+  const [paneNews, newsDispatch] = useReducer(newsReducer, new Set<string>() as ReadonlySet<string>);
   useEffect(() => {
     const waiting = new Set(opens.map((o) => o.id));
     for (const id of answered.current.keys()) if (!waiting.has(id)) answered.current.delete(id);
@@ -792,6 +795,7 @@ export function LiveApp() {
     });
     const repeat = opens.flatMap((o) => answered.current.get(o.id) ?? []);
     for (const a of taken.actions) paneDispatch(a);
+    if (taken.news.length > 0) newsDispatch({ type: "add", sessions: taken.news });
     for (const d of taken.done) answered.current.set(d.id, d);
     // The announcer holds one notice at a time, so a frame's tabs are said together.
     if (taken.said.length > 0) announce(taken.said.join(" "));
@@ -799,6 +803,20 @@ export function LiveApp() {
     if (reply.length > 0) void opensApi.done(ep, reply).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps -- a frame is applied when it arrives; the rest is read as it stands.
   }, [opens, settled, loaded]);
+  // A tab loses its "new" mark as soon as it is in front of the person: the pane open, the sessions view on screen and the session
+  // shown. That clears the session's news and, when its selected tab is marked, the tab's own mark.
+  const shownTabUnseen = focusedId != null && Boolean(activeTab(view.pane, focusedId)?.unseen);
+  useEffect(() => {
+    if (!view.pane.open || mainView !== "sessions" || focusedId == null) return;
+    newsDispatch({ type: "seen", session: focusedId });
+    if (shownTabUnseen) paneDispatch({ type: "seen", session: focusedId });
+  }, [view.pane.open, mainView, focusedId, shownTabUnseen, paneNews, paneDispatch]);
+  // A session that is gone from the list is forgotten (derived from `rows`; the core's closed list is a different thing).
+  useEffect(() => {
+    if (!loaded) return;
+    const ids = new Set(rows.map((r) => r.id));
+    for (const id of paneNews) if (!ids.has(id)) newsDispatch({ type: "closed", session: id });
+  }, [rows, loaded, paneNews]);
   // A new tab, or the file's own tab; shows the pane and moves focus into it. False when it was refused (and said so).
   const openInPane = (target: OpenTarget): boolean => {
     const session = stateRef.current.focusedId;
@@ -1827,7 +1845,7 @@ export function LiveApp() {
   const paneNode =
     os ? (
       <SidePane
-        tabs={paneTabs.tabs.map((t) => ({ id: t.id, title: paneTitles.get(t.id) ?? "", path: currentEntry(t).path, kind: tabKind(isBrowserTab(t), currentEntry(t).path) }))}
+        tabs={paneTabs.tabs.map((t) => ({ id: t.id, title: paneTitles.get(t.id) ?? "", path: currentEntry(t).path, kind: tabKind(isBrowserTab(t), currentEntry(t).path), openedBy: t.opened_by, unseen: t.unseen }))}
         activeId={paneActive}
         os={os}
         onSelect={(id) => paneSession !== undefined && paneDispatch({ type: "select", session: paneSession, paneTab: id })}
@@ -1920,6 +1938,7 @@ export function LiveApp() {
           visibleIds={onScreenIds}
           pane={paneNode}
           paneShown={view.pane.open}
+          paneNews={paneNews.size > 0}
           paneWidth={view.pane.width}
           onPaneWidth={(w) => paneDispatch({ type: "width", width: w })}
           terminalMinWidth={terminalMinWidth}

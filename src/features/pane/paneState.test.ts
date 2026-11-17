@@ -441,6 +441,22 @@ describe("openBackground", () => {
     expect(tab(back, "t2").unseen).toBe(false);
   });
 
+  it("seen_clears_the_mark_on_the_active_tab_and_keeps_the_opener", () => {
+    const s = run(EMPTY, bg("/a", { by: "codex" }), { type: "seen", session: "s" });
+    expect(tab(s, "t1")).toMatchObject({ opened_by: "codex", unseen: false });
+  });
+
+  it("seen_leaves_other_tabs_marked", () => {
+    const s = run(EMPTY, open("/a"), bg("/b", { by: "codex" }), { type: "seen", session: "s" });
+    expect(tab(s, "t2")).toMatchObject({ opened_by: "codex", unseen: true });
+  });
+
+  it("seen_with_nothing_marked_returns_the_same_state", () => {
+    const s = run(EMPTY, open("/a"));
+    expect(paneReducer(s, { type: "seen", session: "s" })).toBe(s);
+    expect(paneReducer(s, { type: "seen", session: "none" })).toBe(s);
+  });
+
   it("opening_a_marked_tab_clears_unseen", () => {
     const s = run(EMPTY, open("/a"), bg("/b"), bg("https://a.dev/", { kind: "browser" }), open("/b"), page("https://a.dev/"));
     expect(tab(s, "t2").unseen).toBe(false);

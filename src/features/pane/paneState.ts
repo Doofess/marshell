@@ -36,6 +36,8 @@ export type PaneAction =
    * selects the tab only in a session that had none. `onScreen`: the pane is open with this session shown.
    */
   | { type: "openBackground"; session: string; kind: "file" | "browser"; target: string; by: string; project: string; onScreen: boolean }
+  /** The session's selected tab is in front of the person: it loses its "new" mark (`opened_by` stays). */
+  | { type: "seen"; session: string }
   /** A browser tab's page moved or got a title: the tab's entry follows it. */
   | { type: "page"; session: string; paneTab: string; url: string; title: string | null }
   | { type: "show" }
@@ -287,6 +289,12 @@ export function paneReducer(s: PaneView, a: PaneAction): PaneView {
       return openPage(s, a.session, a.url);
     case "openBackground":
       return openBackground(s, a);
+    case "seen": {
+      const cur = tabsOf(s, a.session);
+      if (cur.active === null) return s;
+      const shown = seenTab(cur, cur.active);
+      return shown === cur ? s : setTabs(s, a.session, shown);
+    }
     case "page":
       return pageMoved(s, a.session, a.paneTab, a.url, a.title);
     case "back":
