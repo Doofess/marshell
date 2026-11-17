@@ -229,6 +229,8 @@ struct Inner {
     holds: crate::hooks::holds::Holds,
     /// How long the core holds a permission request before it lets the agent ask.
     permission_hold: Duration,
+    /// How long after a prompt arrived the hook route may still answer with a reference note.
+    context_budget: Duration,
     /// How long a Working agent can go without a hook event before it reads Stuck.
     stuck_quiet: Duration,
     /// How long to wait for Claude to resume after its last background subagent stops.
@@ -391,6 +393,7 @@ impl AppState {
             hook_log: crate::hooks::log::HookLog::default(),
             holds: crate::hooks::holds::Holds::default(),
             permission_hold: DEFAULT_PERMISSION_HOLD,
+            context_budget: hook::CONTEXT_BUDGET,
             stuck_quiet: DEFAULT_STUCK_QUIET,
             subagent_wait: DEFAULT_SUBAGENT_WAIT,
             done_settle: DEFAULT_DONE_SETTLE,
@@ -662,6 +665,17 @@ impl AppState {
     }
     pub fn permission_hold(&self) -> Duration {
         self.0.permission_hold
+    }
+    /// Sets how long after a prompt arrived the hook route may still answer with a reference note (350 ms by default,
+    /// the bridge's own budget). Call it before the state is cloned.
+    pub fn with_context_budget(mut self, budget: Duration) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_context_budget runs before the state is shared")
+            .context_budget = budget;
+        self
+    }
+    pub fn context_budget(&self) -> Duration {
+        self.0.context_budget
     }
     /// Sets the hook silence threshold. Call it before the state is cloned.
     pub fn with_stuck_quiet(mut self, quiet: Duration) -> Self {
