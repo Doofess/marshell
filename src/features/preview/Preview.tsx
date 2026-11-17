@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode, type Ref } from "react";
 import { createPortal } from "react-dom";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -76,6 +76,14 @@ export type PreviewPaneProps = {
   regionTarget: RegionTarget | null;
   /** Hands over a marked region's crop and comment. Resolves when it is placed; rejects with the reason it was not. */
   onRegion: (r: { png: Blob; label: string; comment: string }) => Promise<void>;
+  /** The palette's "Select region" starts a region through this. */
+  ref?: Ref<PreviewHandle>;
+};
+
+/** What a parent holds of a preview tab. */
+export type PreviewHandle = {
+  /** Starts marking a region. False when the file has no page to mark (a PDF still loading, text, an error). */
+  selectRegion(): boolean;
 };
 
 /** What the pane keeps while a region is being marked. */
@@ -132,7 +140,7 @@ function Body({ entry, file, onImageSize, onPages, onLink, onKey, region }: Body
 }
 
 /** The pane for one file: header, then the scrolling body. Everything it shows comes in as props, so it renders the same on any state. */
-export function PreviewPane({ entry, file, updated, theme, os, canBack, canForward, onBack, onForward, onOpen, onView, active, onEscape, regionTarget, onRegion }: PreviewPaneProps) {
+export function PreviewPane({ entry, file, updated, theme, os, canBack, canForward, onBack, onForward, onOpen, onView, active, onEscape, regionTarget, onRegion, ref }: PreviewPaneProps) {
   const { name, folder } = splitPath(entry.path);
   const body = useRef<HTMLDivElement>(null);
   // Focus goes into the scroll body when the tab goes somewhere (a link, Back, Forward, another line), so the arrow keys and
@@ -220,6 +228,13 @@ export function PreviewPane({ entry, file, updated, theme, os, canBack, canForwa
     setSelect({ region: initialRegion(shown.phase === "pdf" ? currentPage : 1, visible), step: "box", busy: false, error: null });
     setFocusBox((n) => n + 1);
   };
+  useImperativeHandle(ref, () => ({
+    selectRegion() {
+      if (!canMark) return false;
+      if (!select) startSelect();
+      return true;
+    },
+  }));
   const add = async (comment: string) => {
     if (!select) return;
     const region = select.region;

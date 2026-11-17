@@ -95,6 +95,8 @@ export const COMMANDS: Command[] = [
   { id: "new-browser-tab", label: "New browser tab", group: "Window" },
   { id: "open-url", label: "Open URL…", group: "Window" },
   { id: "clear-browser-data", label: "Clear the browser's data…", group: "Window" },
+  // A page, a PDF or an image in the side pane; no default key.
+  { id: "select-region", label: "Select region", group: "Window" },
   { id: "pane-next-tab", label: "Next tab", group: "Window", binding: { code: "Tab", ctrl: true } },
   { id: "pane-previous-tab", label: "Previous tab", group: "Window" },
   { id: "pane-close-tab", label: "Close tab", group: "Window" },

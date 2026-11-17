@@ -4,11 +4,12 @@ import { addressFor, BLANK } from "./address";
 import type { NavAction } from "./browserApi";
 import type { PageState } from "./pageStore";
 
-export type UrlBarHandle = { focusAddress(): void };
+export type UrlBarHandle = { focusAddress(): void; focusRegion(): void };
 
 export const REFUSED_TEXT = "That address can't be opened in the side pane.";
 export const FAILED_TEXT = "This page stopped working. Reload to try again.";
 export const POPUP_TEXT = "This page tried to open a tab.";
+export const NO_PICTURE_TEXT = "The page's picture couldn't be taken, so there is nothing to select.";
 const STATUS_TEXT = { refused: REFUSED_TEXT, failed: FAILED_TEXT, popup: POPUP_TEXT } as const;
 
 export type UrlBarProps = {
@@ -23,6 +24,14 @@ export type UrlBarProps = {
   onOpenOutside(url: string): void;
   /** Esc in the box: the address is restored, and the owner takes focus away. */
   onEscape(): void;
+  /** Starts or ends marking a region on the page. Without it the bar has no "Select region" button. */
+  onRegion?: () => void;
+  /** The page is live, so a region can be marked on it. */
+  canRegion?: boolean;
+  /** A region is being marked: the button reads as pressed. */
+  selecting?: boolean;
+  /** A line under the bar, ahead of the page's own status. */
+  note?: string | null;
   /** Says a message through the window's announcer. */
   announce?: (text: string) => void;
   ref?: Ref<UrlBarHandle>;
@@ -38,11 +47,13 @@ const BACK = "M10 3.5 5.5 8l4.5 4.5";
 const FORWARD = "M6 3.5 10.5 8 6 12.5";
 const RELOAD = "M13 8a5 5 0 1 1-1.6-3.7M13 2.8v2.9h-2.9";
 const STOP = "M4 4l8 8M12 4 4 12";
+const REGION = "M5 3H3v2M11 3h2v2M13 11v2h-2M5 13H3v-2";
 const OUTSIDE = "M9.5 3H13v3.5M13 3 7.5 8.5M11 9.5V11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h1.5";
 
 /** The browser tab's bar: Back, Forward, Reload or Stop, the address box, and a button that opens the page in the system browser. */
-export function UrlBar({ page, fallbackUrl = "", onGo, onNav, onOpenOutside, onEscape, announce, ref }: UrlBarProps) {
+export function UrlBar({ page, fallbackUrl = "", onGo, onNav, onOpenOutside, onEscape, onRegion, canRegion = false, selecting = false, note = null, announce, ref }: UrlBarProps) {
   const input = useRef<HTMLInputElement>(null);
+  const regionButton = useRef<HTMLButtonElement>(null);
   // What the person has typed since the box took focus; null shows the page's own address.
   const [draft, setDraft] = useState<string | null>(null);
   const [refused, setRefused] = useState(false);
@@ -51,13 +62,16 @@ export function UrlBar({ page, fallbackUrl = "", onGo, onNav, onOpenOutside, onE
       input.current?.focus();
       input.current?.select();
     },
+    focusRegion() {
+      regionButton.current?.focus();
+    },
   }));
 
   const address = page?.url || fallbackUrl;
   const loading = page?.loading ?? false;
   const pageStatus = page?.status ? STATUS_TEXT[page.status] : null;
-  const status = refused ? REFUSED_TEXT : pageStatus;
-  useAnnounceOnce(pageStatus, announce);
+  const status = refused ? REFUSED_TEXT : (note ?? pageStatus);
+  useAnnounceOnce(note ?? pageStatus, announce);
 
   const submit = () => {
     const typed = addressFor(draft ?? (address === BLANK ? "" : address));
@@ -118,6 +132,11 @@ export function UrlBar({ page, fallbackUrl = "", onGo, onNav, onOpenOutside, onE
           onBlur={() => setDraft(null)}
           onKeyDown={onKey}
         />
+        {onRegion && (
+          <button ref={regionButton} type="button" className="url-bar__button" aria-label="Select region" title="Select region" aria-pressed={selecting} disabled={!canRegion} onClick={onRegion}>
+            {icon(REGION)}
+          </button>
+        )}
         <button
           type="button"
           className="url-bar__button"

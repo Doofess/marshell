@@ -838,6 +838,8 @@ export function LiveApp() {
   // said so) for an address a page may not hold, with no session on screen, and for the 33rd tab. The keyboard goes into the page,
   // or to the address box of a new blank tab.
   const addressBars = useRef(new Map<string, UrlBarHandle>());
+  // The side pane's tabs that can mark a region (a page, a PDF, an image), by key: "Select region" in the palette starts the shown one's.
+  const regionTabs = useRef(new Map<string, { selectRegion(): boolean }>());
   const focusAddressSoon = (key: string) => {
     let frames = 0;
     const attempt = () => {
@@ -1438,6 +1440,15 @@ export function LiveApp() {
         case "clearBrowserData":
           setClearData("ask");
           return true;
+        // A box on the shown tab's page, PDF or image; any other tab has nothing to mark.
+        case "selectRegion": {
+          const session = stateRef.current.focusedId;
+          const shown = tabsOf(v.pane, session);
+          const id = shown.active ?? shown.tabs[0]?.id;
+          const handle = v.pane.open && session !== undefined && id !== undefined ? regionTabs.current.get(pageKey(session, id)) : undefined;
+          if (!handle?.selectRegion()) announce("This tab has nothing to select a region in.");
+          return true;
+        }
         case "capture":
           void runCaptureRef.current();
           return true;
@@ -1611,7 +1622,7 @@ export function LiveApp() {
     }
     const shortcut = commandShortcut(id);
     // These move the focus (or open a panel that takes it), so they wait for the palette to hand it back first.
-    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "menu" || shortcut?.kind === "paneTab" || shortcut?.kind === "closePaneTab" || shortcut?.kind === "browse" || shortcut?.kind === "newBrowserTab" || shortcut?.kind === "clearBrowserData") return void setTimeout(() => windowCommand(shortcut), 0);
+    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "menu" || shortcut?.kind === "paneTab" || shortcut?.kind === "closePaneTab" || shortcut?.kind === "browse" || shortcut?.kind === "newBrowserTab" || shortcut?.kind === "clearBrowserData" || shortcut?.kind === "selectRegion") return void setTimeout(() => windowCommand(shortcut), 0);
     if (windowCommand(shortcut)) return;
     if (shortcut?.kind === "launcher") setLauncherOpen(true);
     else if (shortcut?.kind === "prompt") jumpPrompt(shortcut.by);
@@ -1885,11 +1896,19 @@ export function LiveApp() {
                   }}
                   onEscape={() => actions.focusTerminal()}
                   announce={announce}
+                  regionTarget={deliveryFor(focusedRow ?? null)}
+                  onRegion={addRegion}
                   ref={(bar) => {
-                    // The address box of a new blank tab takes the keyboard through this (openPageInPane).
+                    // The address box of a new blank tab takes the keyboard through this (openPageInPane); the palette's "Select region" the region.
                     const key = pageKey(paneSession ?? "", tab.id);
-                    if (bar) addressBars.current.set(key, bar);
-                    return () => void addressBars.current.delete(key);
+                    if (bar) {
+                      addressBars.current.set(key, bar);
+                      regionTabs.current.set(key, bar);
+                    }
+                    return () => {
+                      addressBars.current.delete(key);
+                      regionTabs.current.delete(key);
+                    };
                   }}
                 />
               ) : (
@@ -1907,6 +1926,11 @@ export function LiveApp() {
                   onEscape={() => actions.focusTerminal()}
                   regionTarget={deliveryFor(focusedRow ?? null)}
                   onRegion={addRegion}
+                  ref={(preview) => {
+                    const key = pageKey(paneSession ?? "", tab.id);
+                    if (preview) regionTabs.current.set(key, preview);
+                    return () => void regionTabs.current.delete(key);
+                  }}
                 />
               )
             }

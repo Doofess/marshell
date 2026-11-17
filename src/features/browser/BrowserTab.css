@@ -37,6 +37,10 @@
 .url-bar__button:disabled {
   opacity: 0.4;
 }
+.url-bar__button[aria-pressed="true"] {
+  background: var(--fill-strong);
+  color: var(--text-1);
+}
 .url-bar__box {
   flex: 1 1 0;
   min-inline-size: 0;
@@ -84,6 +88,13 @@
 .browser-tab__fill {
   background: var(--bg-base);
 }
+/* The region's layer shares that cell, over the picture and the picture's size: the box and the drag surface are positioned in it. */
+.browser-tab__region {
+  grid-area: 1 / 1;
+  position: relative;
+  min-inline-size: 0;
+  min-block-size: 0;
+}
 
 /* Where the shell has no browser tabs. */
 .browser-tab--unavailable {
@@ -125,7 +136,7 @@
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .url-bar__button:hover:not(:disabled) {
+  .url-bar__button:hover:not(:disabled):not([aria-pressed="true"]) {
     background: var(--hover);
     color: var(--text-1);
   }
@@ -152,6 +163,16 @@
   .browser-tab__slot:focus-visible,
   .browser-tab__button:focus-visible {
     outline-color: CanvasText;
+  }
+  /* A button that is on is filled, as the preview's are; `none` keeps the system from painting a Canvas backplate behind the icon. */
+  .url-bar__button[aria-pressed="true"] {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+  .url-bar__button[aria-pressed="true"]:focus-visible {
+    outline-color: HighlightText;
+    outline-offset: -4px;
   }
   /* The ring in the page's gutter: Highlight, a system color, as the page covers the rest of the slot. */
   .browser-tab__slot[data-keys] {

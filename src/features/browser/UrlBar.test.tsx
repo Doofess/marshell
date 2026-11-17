@@ -17,6 +17,8 @@ const page = (more: Partial<PageState> = {}): PageState => ({
   ...more,
 });
 const html = (p: PageState | null = page()) => renderToStaticMarkup(<UrlBar page={p ?? undefined} onGo={noop} onNav={noop} onOpenOutside={noop} onEscape={noop} />);
+const withRegion = (more: { canRegion?: boolean; selecting?: boolean; note?: string | null } = {}, p: PageState | null = page()) =>
+  renderToStaticMarkup(<UrlBar page={p ?? undefined} onGo={noop} onNav={noop} onOpenOutside={noop} onEscape={noop} onRegion={noop} {...more} />);
 const buttons = (out: string) => [...out.matchAll(/<button\b[^>]*>[\s\S]*?<\/button>/g)].map((m) => m[0]);
 const button = (out: string, label: string) => buttons(out).find((b) => b.includes(`aria-label="${label}"`))!;
 
@@ -87,5 +89,28 @@ describe("UrlBar", () => {
   });
   it("draws the status line as plain text, not a live region", () => {
     expect(html(page({ status: "refused" }))).not.toMatch(/role="(?:status|alert)"|aria-live/);
+  });
+  it("puts the region button after the box and before the system browser, with its label and title", () => {
+    const out = withRegion({ canRegion: true });
+    expect(button(out, "Select region")).toContain('title="Select region"');
+    expect(button(out, "Select region")).toMatch(/<svg[^>]*aria-hidden="true"/);
+    const at = (s: string) => out.indexOf(s);
+    expect(at('aria-label="Address"')).toBeLessThan(at('aria-label="Select region"'));
+    expect(at('aria-label="Select region"')).toBeLessThan(at('aria-label="Open in the system browser"'));
+    expect(buttons(out)).toHaveLength(5);
+  });
+  it("the_region_button_is_disabled_without_a_live_page", () => {
+    expect(button(withRegion({ canRegion: false }), "Select region")).toContain("disabled");
+    expect(button(withRegion({}, null), "Select region")).toContain("disabled");
+    expect(button(withRegion({ canRegion: true }), "Select region")).not.toContain("disabled");
+  });
+  it("the_region_button_is_pressed_while_selecting", () => {
+    expect(button(withRegion({ canRegion: true, selecting: true }), "Select region")).toContain('aria-pressed="true"');
+    expect(button(withRegion({ canRegion: true, selecting: false }), "Select region")).toContain('aria-pressed="false"');
+  });
+  it("shows a note under the bar as plain text", () => {
+    const out = withRegion({ canRegion: true, note: "The page's picture couldn't be taken, so there is nothing to select." });
+    expect(out).toContain("The page&#x27;s picture couldn&#x27;t be taken, so there is nothing to select.");
+    expect(out).not.toMatch(/role="(?:status|alert)"|aria-live/);
   });
 });

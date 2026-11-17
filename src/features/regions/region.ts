@@ -70,6 +70,14 @@ export function regionLabel(name: string, page: number | null): string {
   return page === null ? name : `${name}, page ${page}`;
 }
 
+const MAX_ADDRESS = 500;
+
+/** "Title (https://address)" for a region on a web page, the address cut at 500 characters; with no title, the address alone. */
+export function pageRegionLabel(title: string, url: string): string {
+  const address = Array.from(url).slice(0, MAX_ADDRESS).join("");
+  return title === "" ? address : `${title} (${address})`;
+}
+
 /**
  * The reference the agent is given: the label, then the comment with every run of whitespace and control characters
  * (ESC, BEL, NUL, DEL, C1: what pasted terminal output carries, and what the core refuses) collapsed to a space;

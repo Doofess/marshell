@@ -16,6 +16,21 @@ const page = (more: Partial<PageState> = {}): PageState => ({
   live: true,
   ...more,
 });
+const PICTURE = { picture: "data:image/png;base64,AAAA", phase: "frozen" } as const;
+const selection = (more: Partial<NonNullable<Props["selection"]>> = {}): NonNullable<Props["selection"]> => ({
+  step: "box",
+  region: { page: 1, x: 0.3, y: 0.375, w: 0.4, h: 0.25 },
+  busy: false,
+  error: null,
+  target: { name: "Claude", via: "paste" },
+  onChange: noop,
+  onConfirm: noop,
+  onCancel: noop,
+  onBack: noop,
+  onAdd: noop,
+  onDrag: {},
+  ...more,
+});
 type Props = Partial<Parameters<typeof BrowserTabView>[0]>;
 const html = (more: Props = {}) =>
   renderToStaticMarkup(<BrowserTabView page={page()} url="https://example.com/" available keys={false} frozen={null} slotRef={() => {}} onGo={noop} onNav={noop} onOpenOutside={noop} onEscape={noop} {...more} />);
@@ -51,13 +66,51 @@ describe("BrowserTabView", () => {
     expect(out).not.toContain('aria-label="Address"');
   });
   it("holds the picture while frozen, and a plain fill when the capture failed", () => {
-    const picture = html({ frozen: { picture: "data:image/png;base64,AAAA" } });
+    const picture = html({ frozen: { picture: "data:image/png;base64,AAAA", phase: "frozen" } });
     expect(picture).toContain('<img alt=""');
     expect(picture).toContain('src="data:image/png;base64,AAAA"');
-    const none = html({ frozen: { picture: null } });
+    const none = html({ frozen: { picture: null, phase: "frozen" } });
     expect(none).not.toContain("<img");
     expect(none).toContain("browser-tab__fill");
     expect(html()).not.toContain("<img");
+  });
+});
+
+describe("BrowserTabView: a region on the page", () => {
+  it("a_selection_draws_the_box_over_the_picture", () => {
+    const out = html({ frozen: PICTURE, selection: selection() });
+    expect(out).toContain('class="region-box"');
+    expect(out).toContain("region-capture");
+    expect(out.indexOf("<img")).toBeGreaterThan(-1);
+    expect(out.indexOf("<img")).toBeLessThan(out.indexOf("region-capture"));
+    expect(out.indexOf("region-capture")).toBeLessThan(out.indexOf("region-box"));
+    // The box sits in the slot, so it is drawn where the page was.
+    expect(out.indexOf("browser-tab__slot")).toBeLessThan(out.indexOf("region-box"));
+    expect(out).not.toContain("region-comment");
+  });
+  it("the comment step adds the comment box, and says where the crop goes", () => {
+    const out = html({ frozen: PICTURE, selection: selection({ step: "comment" }) });
+    expect(out).toContain("region-comment");
+    expect(out).toContain("Adds to Claude");
+  });
+  it("no_picture_no_box", () => {
+    for (const frozen of [{ picture: null, phase: "frozen" }, null] as const) {
+      const out = html({ frozen, selection: selection() });
+      expect(out).not.toContain("region-box");
+      expect(out).not.toContain("region-capture");
+      expect(out).not.toContain("region-comment");
+    }
+  });
+  it("draws no box while it waits for the picture", () => {
+    const out = html({ frozen: { picture: PICTURE.picture, phase: "capturing" }, selection: selection({ step: "wait" }) });
+    expect(out).not.toContain("region-box");
+  });
+  it("draws nothing when there is no selection", () => {
+    expect(html({ frozen: PICTURE })).not.toContain("region-");
+  });
+  it("gives the bar a region button", () => {
+    expect(html({ onRegion: noop, canRegion: true })).toContain('aria-label="Select region"');
+    expect(html()).not.toContain('aria-label="Select region"');
   });
 });
 

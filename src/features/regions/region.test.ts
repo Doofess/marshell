@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canMarkRegion, describeRegion, fromDrag, initialRegion, nudge, regionLabel, regionStillValid, regionText } from "./region";
+import { canMarkRegion, describeRegion, fromDrag, initialRegion, nudge, pageRegionLabel, regionLabel, regionStillValid, regionText } from "./region";
 
 describe("region", () => {
   it("starts 40% x 25%, centred in the visible part of the page", () => {
@@ -62,5 +62,20 @@ describe("canMarkRegion", () => {
   });
   it("marks nothing else", () => {
     for (const phase of ["text", "loading", "error", "deleted", "missing"]) expect(canMarkRegion(phase, true)).toBe(false);
+  });
+});
+
+describe("pageRegionLabel", () => {
+  it("is the title and the address in brackets", () => {
+    expect(pageRegionLabel("Docs", "https://example.com/docs")).toBe("Docs (https://example.com/docs)");
+  });
+  it("is the address alone when the page has no title", () => {
+    expect(pageRegionLabel("", "https://example.com/docs")).toBe("https://example.com/docs");
+  });
+  it("cuts a 600-character address at 500 characters", () => {
+    const url = `https://example.com/${"a".repeat(580)}`;
+    expect(url).toHaveLength(600);
+    expect(pageRegionLabel("T", url)).toBe(`T (${url.slice(0, 500)})`);
+    expect(pageRegionLabel("", url)).toBe(url.slice(0, 500));
   });
 });
