@@ -3,6 +3,7 @@
 //! files, anywhere they can write, so nothing here goes through the config service, which is for
 //! the changes Marshell itself proposes.
 
+pub mod drafts;
 pub mod guard;
 pub mod history;
 pub mod write;

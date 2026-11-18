@@ -8,6 +8,7 @@ pub(crate) mod doctor;
 mod doctor_ext;
 mod doctor_measure;
 mod doctor_usage;
+mod drafts;
 mod events;
 mod files;
 mod fill;
@@ -1313,6 +1314,14 @@ pub fn router(state: AppState) -> Router {
                 .layer(DefaultBodyLimit::max(files::TEXT_CAP as usize)),
         )
         .route("/v1/files/unsave", post(save::unsave))
+        .route("/v1/drafts", get(drafts::list))
+        .route(
+            "/v1/drafts/one",
+            get(drafts::get)
+                .put(drafts::put)
+                .delete(drafts::delete)
+                .layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
+        )
         .route("/v1/sessions/{tab}", patch(sessions::rename).delete(sessions::close))
         .route("/v1/shell-panel", post(shell_panel::open))
         .route("/v1/shell-panel/adopt", post(shell_panel::adopt))
