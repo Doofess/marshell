@@ -104,7 +104,7 @@ export type Saver = {
   cancel(): void;
 };
 
-export function createSaver(o: { doc: () => DocState; dispatch: (e: DocEvent) => void; readOnly: () => boolean }): Saver {
+export function createSaver(o: { doc: () => DocState; dispatch: (e: DocEvent) => void; readOnly: () => boolean; /** The document has been opened. Absent: it has. */ open?: () => boolean }): Saver {
   let waiting: Array<(saved: boolean) => void> = [];
   const answer = (s: DocState) => !s.dirty && s.conflict === null;
   const settle = (saved: (s: DocState) => boolean, s: DocState) => {
@@ -114,7 +114,8 @@ export function createSaver(o: { doc: () => DocState; dispatch: (e: DocEvent) =>
   };
   return {
     save() {
-      if (o.readOnly()) return Promise.resolve(false);
+      // Before the document is open the state is the empty start, which a save would send as an empty file.
+      if (o.readOnly() || o.open?.() === false) return Promise.resolve(false);
       o.dispatch({ type: "save" });
       const s = o.doc();
       // No save started and none is in flight: the reducer said there is nothing to save, or that it can't be.
@@ -250,7 +251,8 @@ export function useEditorFile(path: string, file: FileState, o: { announce: (tex
   }, []);
   const readOnly = useRef(o.readOnly);
   readOnly.current = o.readOnly;
-  saver.current ??= createSaver({ doc: () => docRef.current, dispatch, readOnly: () => readOnly.current() });
+  const phase = useRef<"waiting" | "opening" | "open">("waiting");
+  saver.current ??= createSaver({ doc: () => docRef.current, dispatch, readOnly: () => readOnly.current(), open: () => phase.current === "open" });
   deps.current = {
     path,
     name,
@@ -267,7 +269,6 @@ export function useEditorFile(path: string, file: FileState, o: { announce: (tex
 
   const latest = useRef(file);
   latest.current = file;
-  const phase = useRef<"waiting" | "opening" | "open">("waiting");
   const gone = useRef(false);
   useEffect(() => {
     gone.current = false;

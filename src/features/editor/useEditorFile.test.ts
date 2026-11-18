@@ -255,6 +255,14 @@ describe("createSaver", () => {
     expect(t.f.calls).toEqual([]);
   });
 
+  it("a_save_before_the_document_is_open_is_nothing", async () => {
+    // The draft is still being looked for: the state is the empty start, and a save of it would ask the core to make an empty file.
+    const events: DocEvent[] = [];
+    const saver = createSaver({ doc: () => start, dispatch: (e) => events.push(e), readOnly: () => false, open: () => false });
+    expect(await saver.save()).toBe(false);
+    expect(events).toEqual([]);
+  });
+
   it("a_second_save_while_one_is_in_flight_waits_for_the_same_answer", async () => {
     const t = saverSetup({}, saved);
     const first = t.saver.save();

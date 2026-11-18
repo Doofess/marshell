@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { Draft } from "../../generated/Draft";
 import { start, step, type DocEvent, type DocState } from "./editorDoc";
-import { TextTabView, readOnlyLine, type TextTabViewProps, isSaveKey } from "./TextTab";
+import { TextTabView, readOnlyLine, type TextTabViewProps, dirtyNews, isSaveKey } from "./TextTab";
 
 // The rendered Markdown needs the DOM, which these tests run without: the stand-in shows the text it was given.
 vi.mock("../preview/MarkdownView", () => ({ MarkdownView: ({ text }: { text: string }) => <div data-md="">{text}</div> }));
@@ -88,6 +88,17 @@ describe("TextTabView", () => {
     const out = html(doc, { kind: "markdown", entry: { path: "C:\p\a.md", line: null, col: null, view: "rendered" } });
     expect(out).toMatch(/<div class="text-tab__status">/);
     expect(out).toMatch(/<div class="text-tab__footer" hidden="">/);
+  });
+
+  it("a_tab_says_whether_it_is_unsaved_once_it_is_open_and_then_on_each_change", () => {
+    // Nothing before the draft has been looked for: the window still shows what the list of drafts said.
+    expect(dirtyNews(null, false, false)).toBeNull();
+    // Open and clean: said once, so a dot left by a draft that matched the disk goes.
+    expect(dirtyNews(null, true, false)).toBe(false);
+    expect(dirtyNews(null, true, true)).toBe(true);
+    expect(dirtyNews(false, true, false)).toBeNull();
+    expect(dirtyNews(false, true, true)).toBe(true);
+    expect(dirtyNews(true, true, false)).toBe(false);
   });
 
   it("ctrl_s_is_the_save_key_on_any_keyboard_layout", () => {

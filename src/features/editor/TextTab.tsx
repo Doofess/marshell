@@ -44,6 +44,14 @@ export function isSaveKey(e: { key: string; code: string; ctrlKey: boolean; meta
   return /^[a-z]$/i.test(e.key) ? e.key.toLowerCase() === "s" : e.code === "KeyS";
 }
 
+/**
+ * What a tab tells the window about its unsaved edits: `dirty` once the document is open, and after that on each change. Null
+ * when there is nothing new to say. `told` is what it last said, null for nothing yet.
+ */
+export function dirtyNews(told: boolean | null, ready: boolean, dirty: boolean): boolean | null {
+  return !ready || told === dirty ? null : dirty;
+}
+
 /** How long the rendered view waits after the last key. */
 export const RENDER_MS = 150;
 
@@ -229,12 +237,14 @@ export function TextTab({ entry, file, kind, active, os, onDirty, commands, anno
     [dispatch, save, discard],
   );
 
-  const wasDirty = useRef(false);
+  // Said once when the document opens, clean or not: the window may show a dot for a draft that turned out to match the disk.
+  const saidDirty = useRef<boolean | null>(null);
   useEffect(() => {
-    if (wasDirty.current === doc.dirty) return;
-    wasDirty.current = doc.dirty;
-    onDirty(entry.path, doc.dirty);
-  }, [doc.dirty, entry.path, onDirty]);
+    const news = dirtyNews(saidDirty.current, ready, doc.dirty);
+    if (news === null) return;
+    saidDirty.current = news;
+    onDirty(entry.path, news);
+  }, [ready, doc.dirty, entry.path, onDirty]);
 
   // A tab that is no longer on screen leaves its marks and its offer to undo behind.
   useEffect(() => {
