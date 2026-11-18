@@ -135,7 +135,7 @@ export function BrowserTabView({ page, url, available, frozen, keys, slotRef, ba
         note={note}
         announce={announce}
       />
-      <div ref={slotRef} className="browser-tab__slot" tabIndex={0} aria-label="Web page" data-page-key={pageKey} data-keys={keys ? "" : undefined} onFocus={onSlotFocus}>
+      <div ref={slotRef} className="browser-tab__slot" tabIndex={selection != null ? -1 : 0} aria-label="Web page" data-page-key={pageKey} data-keys={keys ? "" : undefined} onFocus={onSlotFocus}>
         {frozen !== null && (frozen.picture !== null ? <img alt="" className="browser-tab__picture" src={frozen.picture} /> : <div className="browser-tab__fill" />)}
         {selection != null && selection.step !== "wait" && frozen?.picture != null && (
           // In the slot's one cell, over the picture and the size of it, so the box's fractions are the picture's.
@@ -207,6 +207,14 @@ export async function goTo(api: GoApi, key: string, exists: boolean, to: string,
   await api.focus(key, "programmatic").catch(ignore);
 }
 
+/** A line under the bar, with the page's address and status as they were when it was set. */
+export type PageNote = { text: string; url: string; status: PageState["status"] };
+
+/** The note while the page's address and status are still those it was set for; the next page event makes it stale. */
+export function noteFor(note: PageNote | null, url: string, status: PageState["status"]): string | null {
+  return note !== null && note.url === url && note.status === status ? note.text : null;
+}
+
 /** A browser tab: the URL bar over a slot, and the page the shell keeps there while the tab is on screen. */
 export function BrowserTab({ pageKey, url, active, available = true, onPage, onOpenOutside, onEscape, announce, regionTarget = null, onRegion, ref }: BrowserTabProps) {
   const page = usePage(pageKey);
@@ -226,7 +234,7 @@ export function BrowserTab({ pageKey, url, active, available = true, onPage, onO
   // A region marked on the page. The selection works on the picture the freeze takes while the selection holds a cover, and on nothing
   // else: no script runs in the page. The picture is pinned when the box comes up, and the crop is made from that one.
   const [sel, setSel] = useState<PageRegion>(null);
-  const [note, setNote] = useState<string | null>(null);
+  const [note, setNote] = useState<PageNote | null>(null);
   const pinned = useRef<string | null>(null);
   const latest = useRef({ title: pageTitle, url: pageUrl });
   latest.current = { title: pageTitle, url: pageUrl };
@@ -248,7 +256,7 @@ export function BrowserTab({ pageKey, url, active, available = true, onPage, onO
       if (phase !== "frozen") return;
       if (picture === null) {
         // The capture failed: there is no box, and the bar says why.
-        setNote(NO_PICTURE_TEXT);
+        setNote({ text: NO_PICTURE_TEXT, url: pageUrl, status: page?.status ?? null });
         end({ type: "picture", ok: false }, true);
       } else {
         pinned.current = picture;
@@ -364,7 +372,7 @@ export function BrowserTab({ pageKey, url, active, available = true, onPage, onO
   // the page's: the page is hidden behind its picture then.
   const enter = (e: FocusEvent<HTMLDivElement>) => {
     const from = e.relatedTarget;
-    if (!available || e.target !== e.currentTarget || isQuiet() || !(from instanceof Element)) return;
+    if (!available || sel !== null || e.target !== e.currentTarget || isQuiet() || !(from instanceof Element)) return;
     const slotIsBefore = (e.currentTarget.compareDocumentPosition(from) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
     browser.focus(pageKey, enterReason(slotIsBefore)).catch(ignore);
   };
@@ -387,7 +395,7 @@ export function BrowserTab({ pageKey, url, active, available = true, onPage, onO
       onRegion={onRegion ? () => (sel ? end({ type: "cancel" }, true) : void start()) : undefined}
       canRegion={canRegion}
       selection={view}
-      note={note}
+      note={noteFor(note, pageUrl, page?.status ?? null)}
     />
   );
 }

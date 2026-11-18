@@ -50,6 +50,11 @@ const STOP = "M4 4l8 8M12 4 4 12";
 const REGION = "M5 3H3v2M11 3h2v2M13 11v2h-2M5 13H3v-2";
 const OUTSIDE = "M9.5 3H13v3.5M13 3 7.5 8.5M11 9.5V11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h1.5";
 
+/** Where focus goes after a selection ends: the "Select region" button, or the address box when that button is disabled (the page went blank). */
+export function regionFocusTarget(button: { disabled: boolean; focus(): void } | null, box: { focus(): void } | null): { focus(): void } | null {
+  return button !== null && !button.disabled ? button : box;
+}
+
 /** The browser tab's bar: Back, Forward, Reload or Stop, the address box, and a button that opens the page in the system browser. */
 export function UrlBar({ page, fallbackUrl = "", onGo, onNav, onOpenOutside, onEscape, onRegion, canRegion = false, selecting = false, note = null, announce, ref }: UrlBarProps) {
   const input = useRef<HTMLInputElement>(null);
@@ -63,7 +68,7 @@ export function UrlBar({ page, fallbackUrl = "", onGo, onNav, onOpenOutside, onE
       input.current?.select();
     },
     focusRegion() {
-      regionButton.current?.focus();
+      regionFocusTarget(regionButton.current, input.current)?.focus();
     },
   }));
 

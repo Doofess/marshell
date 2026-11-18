@@ -1,8 +1,9 @@
 import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { AgentMark } from "../../components/AgentMark/AgentMark";
-import { AGENT_NAMES, isAgentId } from "../../components/AgentMark/agents";
+import { isAgentId } from "../../components/AgentMark/agents";
 import { selectedProps } from "../../components/a11y/SelectedMark";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
+import { agentLabel } from "../sessions/sessionActions";
 import { clickGuard } from "./clickGuard";
 import { dragIndex, stripKey } from "./stripKeys";
 import { splitName, type TabKind } from "./tabType";
@@ -24,7 +25,7 @@ export type StripTab = {
 export function tabTitle(t: Pick<StripTab, "path" | "openedBy">): string {
   if (t.openedBy === null) return t.path;
   if (t.openedBy === "shell") return `${t.path} · Opened with marshell open`;
-  return `${t.path} · Opened by ${isAgentId(t.openedBy) ? AGENT_NAMES[t.openedBy] : t.openedBy}`;
+  return `${t.path} · Opened by ${agentLabel(t.openedBy)}`;
 }
 
 /** Before the type icon: the opener's own mark for a known agent, else a plain dot. Hidden from the reader; the tab's name says ", new". */

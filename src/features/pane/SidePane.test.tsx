@@ -2,7 +2,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { PreviewPane, type PreviewPaneProps } from "../preview/Preview";
 import { PALETTES } from "../terminal/palettes";
-import { AGENT_NAMES } from "../../components/AgentMark/agents";
 import { SidePane, type SidePaneProps, type StripTab } from "./SidePane";
 
 const noop = () => {};
@@ -117,7 +116,7 @@ describe("SidePane: the mark on a tab that marshell open added", () => {
     expect(t).toContain("agent-mark");
     expect(t).toContain("side-pane__mark");
     expect(t).not.toContain("side-pane__new\"");
-    expect(t).toContain(`title="${PATH1} · Opened by ${AGENT_NAMES.codex}"`);
+    expect(t).toContain(`title="${PATH1} · Opened by Codex"`);
     expect(t).toMatch(/side-pane__new-word[^>]*>, new</);
     expect(t).toMatch(/<span class="side-pane__mark" aria-hidden="true"><svg/);
   });
@@ -128,7 +127,7 @@ describe("SidePane: the mark on a tab that marshell open added", () => {
   });
   it("a_seen_tab_keeps_only_the_tooltip", () => {
     const t = tab1(html({ tabs: marked("claude", false) }));
-    expect(t).toContain(`Opened by ${AGENT_NAMES.claude}`);
+    expect(t).toContain(`Opened by Claude Code`);
     expect(t).not.toContain("side-pane__new");
     expect(t).not.toContain("agent-mark");
     expect(t).not.toContain(", new");

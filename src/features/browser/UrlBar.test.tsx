@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { UrlBar } from "./UrlBar";
+import { UrlBar, regionFocusTarget } from "./UrlBar";
 import type { PageState } from "./pageStore";
 
 const noop = () => {};
@@ -112,5 +112,20 @@ describe("UrlBar", () => {
     const out = withRegion({ canRegion: true, note: "The page's picture couldn't be taken, so there is nothing to select." });
     expect(out).toContain("The page&#x27;s picture couldn&#x27;t be taken, so there is nothing to select.");
     expect(out).not.toMatch(/role="(?:status|alert)"|aria-live/);
+  });
+});
+
+describe("regionFocusTarget", () => {
+  const el = (disabled: boolean) => ({ disabled, focus: () => {} });
+  it("takes_the_button_when_it_can_be_pressed", () => {
+    const button = el(false);
+    const box = el(false);
+    expect(regionFocusTarget(button, box)).toBe(button);
+  });
+  it("falls_back_to_the_address_box_when_the_button_is_disabled", () => {
+    const button = el(true);
+    const box = el(false);
+    expect(regionFocusTarget(button, box)).toBe(box);
+    expect(regionFocusTarget(null, box)).toBe(box);
   });
 });

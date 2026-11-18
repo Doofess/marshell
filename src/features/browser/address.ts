@@ -179,6 +179,19 @@ export function shellRefuses(url: string, own: readonly (readonly [string, numbe
   });
 }
 
+/**
+ * The app's own origins, which a page may never open (`own_origins` in src-tauri/src/browser/mod.rs): where the window is loaded from
+ * only under `tauri dev` (the dev server; an installed build loads `http://tauri.localhost/`, which the shell refuses anyway), and
+ * the local API's port on 127.0.0.1.
+ */
+export function ownOrigins(location: { protocol: string; hostname: string; port: string }, apiPort: number | null, dev: boolean): [string, number][] {
+  const list: [string, number][] = [];
+  const web = location.protocol === "http:" || location.protocol === "https:";
+  if (dev && web) list.push([location.hostname, location.port !== "" ? Number(location.port) : location.protocol === "https:" ? 443 : 80]);
+  if (apiPort !== null) list.push(["127.0.0.1", apiPort]);
+  return list;
+}
+
 /** "example.com", "localhost:3000"; "" for about:blank or a string that is no URL. */
 export function hostOf(url: string): string {
   try {

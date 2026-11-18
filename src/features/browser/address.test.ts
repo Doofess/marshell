@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import cases from "../../../src-tauri/src/browser/allowed.json";
-import { SEARCH_URL, addressFor, hostOf, isPageUrl, pageTitle, sameUrl, shellRefuses } from "./address";
+import { SEARCH_URL, addressFor, hostOf, isPageUrl, ownOrigins, pageTitle, sameUrl, shellRefuses } from "./address";
 
 const open = (url: string) => ({ kind: "open", url });
 const search = (words: string) => ({ kind: "search", url: SEARCH_URL + words });
@@ -117,5 +117,24 @@ describe("shellRefuses", () => {
   it("refuses an address that does not parse", () => {
     expect(shellRefuses("not a url", [])).toBe(true);
     expect(shellRefuses("", [])).toBe(true);
+  });
+});
+
+describe("ownOrigins", () => {
+  it("an_installed_build_names_only_the_api_port", () => {
+    const own = ownOrigins({ protocol: "http:", hostname: "tauri.localhost", port: "" }, 51000, false);
+    expect(own).toEqual([["127.0.0.1", 51000]]);
+    for (const url of ["http://localhost/", "http://127.0.0.1/", "http://myapp.localhost/", "http://[::1]/"]) expect(shellRefuses(url, own), url).toBe(false);
+    for (const url of ["http://127.0.0.1:51000/", "http://tauri.localhost/"]) expect(shellRefuses(url, own), url).toBe(true);
+  });
+  it("the_dev_server_is_named_under_tauri_dev", () => {
+    const own = ownOrigins({ protocol: "http:", hostname: "localhost", port: "1420" }, 51000, true);
+    expect(own).toEqual([["localhost", 1420], ["127.0.0.1", 51000]]);
+    expect(shellRefuses("http://127.0.0.1:1420/", own)).toBe(true);
+  });
+  it("names_no_api_entry_without_a_port", () => {
+    expect(ownOrigins({ protocol: "http:", hostname: "localhost", port: "1420" }, null, true)).toEqual([["localhost", 1420]]);
+    expect(ownOrigins({ protocol: "https:", hostname: "x.dev", port: "" }, null, true)).toEqual([["x.dev", 443]]);
+    expect(ownOrigins({ protocol: "tauri:", hostname: "localhost", port: "" }, null, true)).toEqual([]);
   });
 });

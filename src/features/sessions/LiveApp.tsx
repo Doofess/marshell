@@ -67,7 +67,7 @@ import { useBrowserKeys } from "../browser/useBrowserKeys";
 import { useFocusedPage } from "../browser/pageStore";
 import { BrowserTab } from "../browser/BrowserTab";
 import { ClearDataDialog } from "../browser/ClearDataDialog";
-import { BLANK, isPageUrl, shellRefuses } from "../browser/address";
+import { BLANK, isPageUrl, ownOrigins as ownOriginsOf, shellRefuses } from "../browser/address";
 import { browserTabs } from "../browser/available";
 import { browser, pageKey } from "../browser/browserApi";
 import type { UrlBarHandle } from "../browser/UrlBar";
@@ -779,15 +779,10 @@ export function LiveApp() {
   // `marshell open`: every frame lists the requests still waiting. Each becomes a background tab and is answered; the pane is never shown
   // and focus never moves. `answered` keeps what was said to each request still in the list, so a frame delivered twice applies once and
   // a lost answer is sent again with the next frame (the core ignores an answer it already has).
-  // The app's own origins, which a page may never open (`own_origins` in src-tauri/src/browser/mod.rs): where this window is loaded from
-  // (the dev server; an installed build loads a custom scheme and names none) and the local API.
-  const ownOrigins = (): [string, number][] => {
-    const here = window.location;
-    const web = here.protocol === "http:" || here.protocol === "https:";
-    const list: [string, number][] = web ? [[here.hostname, here.port !== "" ? Number(here.port) : here.protocol === "https:" ? 443 : 80]] : [];
-    if (endpointRef.current) list.push(["127.0.0.1", endpointRef.current.port]);
-    return list;
-  };
+  // The app's own origins, which a page may never open (`own_origins` in src-tauri/src/browser/mod.rs): the dev server under `tauri dev`
+  // (an installed build is loaded from `http://tauri.localhost/`, which the shell refuses anyway, and names no other origin) and the
+  // local API.
+  const ownOrigins = (): [string, number][] => ownOriginsOf(window.location, endpointRef.current?.port ?? null, import.meta.env.DEV);
   const answered = useRef(new Map<number, PaneOpenDone>());
   // The sessions with a tab `marshell open` added that nobody has looked at yet: the title bar's pane button shows a dot for them.
   const [paneNews, newsDispatch] = useReducer(newsReducer, new Set<string>() as ReadonlySet<string>);

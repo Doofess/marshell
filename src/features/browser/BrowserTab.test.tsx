@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { BrowserTabView, goTo } from "./BrowserTab";
+import { BrowserTabView, goTo, noteFor } from "./BrowserTab";
 import type { PageState } from "./pageStore";
 
 const noop = () => {};
@@ -150,5 +150,28 @@ describe("goTo", () => {
     const calls: string[] = [];
     await goTo(api(calls), "s/t", true, "https://a.test/", () => false, slot(calls));
     expect(calls).toEqual(["nav s/t go https://a.test/"]);
+  });
+});
+
+describe("slot while selecting", () => {
+  it("the_slot_is_no_tab_stop_while_a_region_box_is_up", () => {
+    const slot = html({ frozen: PICTURE, selection: selection() }).match(/<div[^>]*class="browser-tab__slot"[^>]*>/)![0];
+    expect(slot).toContain('tabindex="-1"');
+  });
+});
+
+describe("noteFor", () => {
+  const note = { text: "No picture.", url: "https://example.com/", status: null };
+  it("shows_the_note_while_the_address_and_status_are_unchanged", () => {
+    expect(noteFor(note, "https://example.com/", null)).toBe("No picture.");
+  });
+  it("drops_the_note_when_the_address_changes", () => {
+    expect(noteFor(note, "https://example.com/other", null)).toBeNull();
+  });
+  it("drops_the_note_when_the_status_changes", () => {
+    expect(noteFor(note, "https://example.com/", "failed")).toBeNull();
+  });
+  it("has_no_text_without_a_note", () => {
+    expect(noteFor(null, "https://example.com/", null)).toBeNull();
   });
 });
