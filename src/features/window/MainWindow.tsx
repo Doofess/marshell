@@ -169,6 +169,8 @@ export type MainWindowProps = {
   /** The side pane's content. Shown (`paneShown`), it sits beside the session, or over it in a narrow window, and the terminals stay mounted. */
   pane?: ReactNode;
   paneShown?: boolean;
+  /** A tab `marshell open` added is waiting unseen: the pane button shows a dot. */
+  paneNews?: boolean;
   /** The saved width in pixels, or null for half the room. The window holds no width of its own. */
   paneWidth?: number | null;
   onPaneWidth?: (width: number | null) => void;
@@ -254,6 +256,7 @@ export function MainWindow({
   navCursor = null,
   pane,
   paneShown = false,
+  paneNews = false,
   paneWidth = null,
   onPaneWidth,
   terminalMinWidth = 0,
@@ -428,7 +431,7 @@ export function MainWindow({
         </div>
         <div className="window__bar-end" data-tauri-drag-region>
           {/* Always in the bar, on every OS and in every sidebar mode; aria-disabled, like the sidebar's, so it says why it does nothing. */}
-          <button type="button" className="window__pane-toggle" data-nav-top="pane" aria-label="Side pane" aria-expanded={paneWanted} aria-disabled={paneBlocked || undefined} title={paneBlocked ? "The side pane shows beside a session" : `${paneWanted ? "Hide" : "Show"} the side pane (${shortcutLabel(commandById("preview").binding!, os)})`} onClick={paneBlocked ? undefined : onTogglePane}>
+          <button type="button" className="window__pane-toggle" data-nav-top="pane" aria-label="Side pane" aria-expanded={paneWanted} aria-disabled={paneBlocked || undefined} data-news={paneNews ? "" : undefined} title={(paneBlocked ? "The side pane shows beside a session" : `${paneWanted ? "Hide" : "Show"} the side pane (${shortcutLabel(commandById("preview").binding!, os)})`) + (paneNews ? " · A new tab is waiting" : "")} onClick={paneBlocked ? undefined : onTogglePane}>
             <SidePaneIcon open={paneWanted} />
           </button>
           {os === "windows" && (

@@ -7,19 +7,21 @@ type Props = {
   onChange: (r: Region) => void;
   onConfirm: () => void;
   onCancel: () => void;
+  /** False where there are no pages: the box's name then leaves the page number out. */
+  paged?: boolean;
 };
 
 const ARROWS = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"] as const;
 
 /** The box over a page: focusable, moved and resized with the arrow keys. The page wrapper it sits in is positioned. */
-export const RegionLayer = forwardRef<HTMLDivElement, Props>(function RegionLayer({ region, onChange, onConfirm, onCancel }, ref) {
+export const RegionLayer = forwardRef<HTMLDivElement, Props>(function RegionLayer({ region, onChange, onConfirm, onCancel, paged = true }, ref) {
   const own = useRef<HTMLDivElement | null>(null);
   // What a screen reader hears follows the last move by 300 ms, so a run of key presses is one sentence.
-  const [spoken, setSpoken] = useState(() => describeRegion(region));
+  const [spoken, setSpoken] = useState(() => describeRegion(region, paged));
   useEffect(() => {
-    const t = setTimeout(() => setSpoken(describeRegion(region)), 300);
+    const t = setTimeout(() => setSpoken(describeRegion(region, paged)), 300);
     return () => clearTimeout(t);
-  }, [region]);
+  }, [region, paged]);
 
   const keys = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.altKey || e.metaKey) return;
@@ -51,7 +53,7 @@ export const RegionLayer = forwardRef<HTMLDivElement, Props>(function RegionLaye
       tabIndex={0}
       role="group"
       aria-roledescription="region"
-      aria-label={describeRegion(region)}
+      aria-label={describeRegion(region, paged)}
       style={{ left: `${region.x * 100}%`, top: `${region.y * 100}%`, width: `${region.w * 100}%`, height: `${region.h * 100}%` }}
       onKeyDown={keys}
       onDoubleClick={onConfirm}

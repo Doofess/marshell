@@ -67,6 +67,28 @@
   inline-size: 14px;
   block-size: 14px;
 }
+/* A tab `marshell open` added and nobody has looked at yet: the opener's mark (12 px, in the tab's text color) or a plain dot. */
+.side-pane__mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+}
+.side-pane__new {
+  flex: none;
+  inline-size: 8px;
+  block-size: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+/* ", new" for a screen reader, never seen. */
+.side-pane__new-word {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: clip;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 .side-pane__title {
   display: block;
   flex: 0 1 auto;
@@ -255,6 +277,14 @@
   box-shadow: inset 0 0 0 100vmax var(--selected);
 }
 @media (forced-colors: active) {
+  /* The dot is a fill, which forced colors would drop. */
+  .side-pane__new {
+    background: Highlight;
+    forced-color-adjust: none;
+  }
+  .side-pane__tab[aria-selected="true"] .side-pane__new {
+    background: HighlightText;
+  }
   /* `none` keeps the system from painting a Canvas backplate behind the title, which made HighlightText unreadable. */
   .side-pane__tab[aria-selected="true"] {
     background: Highlight;

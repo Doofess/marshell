@@ -59,15 +59,35 @@ export function regionStillValid(r: Region, pageCount: number): boolean {
   return Number.isInteger(r.page) && r.page >= 1 && r.page <= pageCount;
 }
 
-/** The box in words, for a screen reader. */
-export function describeRegion(r: Region): string {
+/** The box in words, for a screen reader. `paged` is false where there are no pages to name (a web page). */
+export function describeRegion(r: Region, paged = true): string {
   const pct = (v: number) => `${Math.round(v * 100)}%`;
-  return `Box ${pct(r.w)} wide, ${pct(r.h)} high, ${pct(r.x)} across, ${pct(r.y)} down, page ${r.page}`;
+  const box = `Box ${pct(r.w)} wide, ${pct(r.h)} high, ${pct(r.x)} across, ${pct(r.y)} down`;
+  return paged ? `${box}, page ${r.page}` : box;
 }
 
 /** "report.pdf, page 3" for a PDF, "chart.png" for an image (page null). */
 export function regionLabel(name: string, page: number | null): string {
   return page === null ? name : `${name}, page ${page}`;
+}
+
+const MAX_ADDRESS = 500;
+
+/**
+ * Text a web page chose, made safe to paste into a terminal: every run of whitespace and control characters is one space, and the
+ * marks that turn the reading order around (so a line could read as something it is not) are dropped.
+ */
+const oneLine = (text: string): string =>
+  text
+    .replace(/[؜‎‏‪-‮⁦-⁩]/g, "")
+    .replace(/[\s\p{Cc}]+/gu, " ")
+    .trim();
+
+/** "Title (https://address)" for a region on a web page, the address cut at 500 characters; with no title, the address alone. */
+export function pageRegionLabel(title: string, url: string): string {
+  const address = Array.from(oneLine(url)).slice(0, MAX_ADDRESS).join("");
+  const name = oneLine(title);
+  return name === "" ? address : `${name} (${address})`;
 }
 
 /**

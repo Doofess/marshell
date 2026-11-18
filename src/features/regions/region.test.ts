@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canMarkRegion, describeRegion, fromDrag, initialRegion, nudge, regionLabel, regionStillValid, regionText } from "./region";
+import { canMarkRegion, describeRegion, fromDrag, initialRegion, nudge, pageRegionLabel, regionLabel, regionStillValid, regionText } from "./region";
 
 describe("region", () => {
   it("starts 40% x 25%, centred in the visible part of the page", () => {
@@ -52,6 +52,10 @@ describe("region", () => {
   it("describes the box for a screen reader", () => {
     expect(describeRegion({ page: 3, x: 0.3, y: 0.2, w: 0.4, h: 0.25 })).toBe("Box 40% wide, 25% high, 30% across, 20% down, page 3");
   });
+
+  it("leaves the page out where there are no pages (a web page)", () => {
+    expect(describeRegion({ page: 1, x: 0.3, y: 0.2, w: 0.4, h: 0.25 }, false)).toBe("Box 40% wide, 25% high, 30% across, 20% down");
+  });
 });
 
 describe("canMarkRegion", () => {
@@ -62,5 +66,29 @@ describe("canMarkRegion", () => {
   });
   it("marks nothing else", () => {
     for (const phase of ["text", "loading", "error", "deleted", "missing"]) expect(canMarkRegion(phase, true)).toBe(false);
+  });
+});
+
+describe("pageRegionLabel", () => {
+  it("is the title and the address in brackets", () => {
+    expect(pageRegionLabel("Docs", "https://example.com/docs")).toBe("Docs (https://example.com/docs)");
+  });
+  it("is the address alone when the page has no title", () => {
+    expect(pageRegionLabel("", "https://example.com/docs")).toBe("https://example.com/docs");
+  });
+  it("keeps a title the page wrote on one line, with nothing a terminal would act on", () => {
+    // The page chooses its title, and the label is pasted into a terminal or put on the clipboard.
+    expect(pageRegionLabel("Docs\r\nrm -rf ~\n", "https://example.com/")).toBe("Docs rm -rf ~ (https://example.com/)");
+    expect(pageRegionLabel("a\u001b[2Jb\u0007c\u0000d e\tf", "https://example.com/")).toBe("a [2Jb c d e f (https://example.com/)");
+    // Marks that turn the reading order around are dropped.
+    expect(pageRegionLabel("safe‮gpj.exe⁦x‏", "https://example.com/")).toBe("safegpj.exex (https://example.com/)");
+    expect(pageRegionLabel(" \n\t ", "https://example.com/")).toBe("https://example.com/");
+    expect(pageRegionLabel("T", "https://example.com/a\nb")).toBe("T (https://example.com/a b)");
+  });
+  it("cuts a 600-character address at 500 characters", () => {
+    const url = `https://example.com/${"a".repeat(580)}`;
+    expect(url).toHaveLength(600);
+    expect(pageRegionLabel("T", url)).toBe(`T (${url.slice(0, 500)})`);
+    expect(pageRegionLabel("", url)).toBe(url.slice(0, 500));
   });
 });

@@ -508,6 +508,16 @@ describe("MainWindow: the side pane toggle", () => {
     expect(h.indexOf("window__pane-toggle")).toBeLessThan(h.indexOf("window__controls"));
     expect(h.slice(end, end + 200)).toMatch(/^[^>]*data-tauri-drag-region[^>]*><button[^>]*class="window__pane-toggle"/);
   });
+  it("the_pane_button_shows_news", () => {
+    const t = toggle(html({ paneNews: true }))!;
+    expect(t).toContain('data-news=""');
+    expect(t).toMatch(/title="[^"]* · A new tab is waiting"/);
+  });
+  it("no_news_no_dot", () => {
+    const t = toggle(html())!;
+    expect(t).not.toContain("data-news");
+    expect(t).not.toContain("A new tab is waiting");
+  });
   it("says Show with aria-expanded false while the pane is hidden", () => {
     const t = toggle(html())!;
     expect(t).toContain('data-nav-top="pane"');

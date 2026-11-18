@@ -162,6 +162,20 @@
   background: transparent;
   color: var(--text-2);
 }
+/* A tab an agent opened is waiting: a dot at the icon's top corner, until the pane has shown it. */
+.window__pane-toggle {
+  position: relative;
+}
+.window__pane-toggle[data-news]::after {
+  content: "";
+  position: absolute;
+  inset-block-start: 4px;
+  inset-inline-end: 5px;
+  inline-size: 7px;
+  block-size: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
 .window__pane-toggle:focus-visible {
   outline: 2px solid var(--focus, var(--accent));
   outline-offset: -2px;
@@ -456,6 +470,10 @@
   .window__pane-toggle,
   .focus-pill {
     outline: 1px solid CanvasText;
+  }
+  .window__pane-toggle[data-news]::after {
+    background: Highlight;
+    forced-color-adjust: none;
   }
 }
 

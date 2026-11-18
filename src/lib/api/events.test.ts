@@ -150,6 +150,34 @@ describe("EventSocket", () => {
     socket.close();
   });
 
+  it("an_opens_frame_reaches_its_handler", () => {
+    const opens = [{ id: 4, tab_id: "t", kind: "file", target: "C:/a.md", by: "claude" }];
+    expect(parseEvent(JSON.stringify({ type: "opens", data: opens }))).toEqual({ type: "opens", data: opens });
+    expect(parseEvent(JSON.stringify({ type: "opens", data: [] }))).toEqual({ type: "opens", data: [] });
+    const onOpens = vi.fn();
+    const socket = new EventSocket(endpoint, vi.fn(), undefined, undefined, onOpens);
+    const ws = FakeWebSocket.instances[0]!;
+    ws.open();
+    ws.receive(JSON.stringify({ type: "opens", data: opens }));
+    ws.receive(JSON.stringify({ type: "opens", data: [] }));
+    expect(onOpens.mock.calls).toEqual([[opens], [[]]]);
+    socket.close();
+  });
+
+  it("a_malformed_opens_frame_is_dropped", () => {
+    const good = { id: 1, tab_id: "t", kind: "file", target: "x", by: "claude" };
+    for (const data of [undefined, null, {}, "x", [null], [{ ...good, id: "1" }], [{ ...good, target: 5 }], [good, { id: 2 }]]) {
+      expect(parseEvent(JSON.stringify({ type: "opens", data }))).toBeNull();
+    }
+    const onOpens = vi.fn();
+    const socket = new EventSocket(endpoint, vi.fn(), undefined, undefined, onOpens);
+    const ws = FakeWebSocket.instances[0]!;
+    ws.open();
+    ws.receive(JSON.stringify({ type: "opens", data: {} }));
+    expect(onOpens).not.toHaveBeenCalled();
+    socket.close();
+  });
+
   it("does not reconnect after close()", () => {
     const socket = new EventSocket(endpoint, vi.fn());
     socket.close();

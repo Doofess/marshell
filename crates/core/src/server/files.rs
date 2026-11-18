@@ -199,7 +199,7 @@ fn links_refused_with(
 
 /// `links_refused_with` against the disk: `symlink_metadata` never follows, and a Windows junction
 /// counts as a link. A link `read_link` can't read is an error, so the path is refused.
-fn links_refused(path: &std::path::Path) -> bool {
+pub(super) fn links_refused(path: &std::path::Path) -> bool {
     links_refused_with(path, &|p| {
         if std::fs::symlink_metadata(p)?.file_type().is_symlink() {
             std::fs::read_link(p).map(Some)

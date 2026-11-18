@@ -57,6 +57,16 @@ describe("pageReducer", () => {
     expect(pageReducer(m, state("k")).get("k")!.status).toBeNull();
   });
 
+  it("a refused popup reads as a blocked tab, until the page goes somewhere", () => {
+    const rest = { type: "state" as const, key: "k", url: "https://a/", title: "A", canBack: false, canForward: false, loading: false };
+    const m = pageReducer(pageReducer(asked("k"), rest), { type: "refused", key: "k", why: "popup" });
+    expect(m.get("k")).toMatchObject({ status: "popup", live: true, url: "https://a/" });
+    // The page's own reports don't clear it; its next navigation does.
+    expect(pageReducer(m, { ...rest, title: "A, later" }).get("k")!.status).toBe("popup");
+    expect(pageReducer(m, { ...rest, loading: true }).get("k")!.status).toBeNull();
+    expect(pageReducer(m, { ...rest, url: "https://b/" }).get("k")!.status).toBeNull();
+  });
+
   // A refused link or redirect is a cancelled navigation, and WebView2 reports its end like any other: the same address, not loading.
   it("keeps refused through the state events of the navigation that was refused", () => {
     const rest = { ...state("k"), loading: false } as const;

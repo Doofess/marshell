@@ -1,4 +1,4 @@
-//! `marshell`: the command line program. `list`, `send`, `new` and `focus` drive the running app (and `new` and
+//! `marshell`: the command line program. `list`, `send`, `new`, `focus` and `open` drive the running app (and `new` and
 //! `focus` can start it), `uninstall` takes Marshell out.
 
 mod args;
@@ -6,6 +6,7 @@ mod client;
 mod focus;
 mod list;
 mod new;
+mod open;
 mod send;
 mod start;
 mod uninstall;
@@ -80,6 +81,19 @@ fn main() -> ExitCode {
                 tty,
                 &mut stdin().lock(),
                 &mut stdout(),
+                &mut stderr(),
+            );
+            exit(code)
+        }
+        Ok(Command::Open { targets, session }) => {
+            let env = |name: &str| std::env::var(name).ok();
+            let client = client::Client::connect(&env).ok();
+            let code = open::run(
+                &env,
+                &targets,
+                session.as_deref(),
+                &std::env::current_dir,
+                client.as_ref().map(|c| c as &dyn open::Api),
                 &mut stderr(),
             );
             exit(code)

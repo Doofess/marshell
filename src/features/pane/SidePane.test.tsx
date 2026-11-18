@@ -5,9 +5,10 @@ import { PALETTES } from "../terminal/palettes";
 import { SidePane, type SidePaneProps, type StripTab } from "./SidePane";
 
 const noop = () => {};
+const PATH1 = "C:\\w\\a.md";
 const tabs: StripTab[] = [
-  { id: "t1", title: "a.md", path: "C:\\w\\a.md", kind: "text" },
-  { id: "t2", title: "b.rs", path: "C:\\w\\b.rs", kind: "text" },
+  { id: "t1", title: "a.md", path: "C:\\w\\a.md", kind: "text", openedBy: null, unseen: false },
+  { id: "t2", title: "b.rs", path: "C:\\w\\b.rs", kind: "text", openedBy: null, unseen: false },
 ];
 const html = (more: Partial<SidePaneProps> = {}) =>
   renderToStaticMarkup(
@@ -54,7 +55,7 @@ describe("SidePane", () => {
     expect(out.indexOf('aria-label="Close b.rs"')).toBeLessThan(out.indexOf('aria-label="New tab"'));
   });
   it("a web tab shows the globe and never an image", () => {
-    const globe = html({ tabs: [{ id: "b1", title: "Example.com", path: "https://example.com/", kind: "web" }], activeId: "b1" });
+    const globe = html({ tabs: [{ id: "b1", title: "Example.com", path: "https://example.com/", kind: "web", openedBy: null, unseen: false }], activeId: "b1" });
     expect(globe).not.toContain("<img");
     expect(globe).toMatch(/<svg[^>]*class="side-pane__icon"[^>]*data-kind="web"[^>]*aria-hidden="true"|<svg(?=[^>]*data-kind="web")(?=[^>]*class="side-pane__icon")(?=[^>]*aria-hidden="true")/);
     // The icon sits inside the tab button, before the title.
@@ -66,13 +67,13 @@ describe("SidePane", () => {
   });
   it("text, pdf and image tabs each show their own icon", () => {
     for (const kind of ["text", "pdf", "image"] as const) {
-      const out = html({ tabs: [{ id: "f1", title: "a.x", path: "a.x", kind }], activeId: "f1" });
+      const out = html({ tabs: [{ id: "f1", title: "a.x", path: "a.x", kind, openedBy: null, unseen: false }], activeId: "f1" });
       expect(out).toMatch(new RegExp(`<svg(?=[^>]*data-kind="${kind}")(?=[^>]*class="side-pane__icon")`));
       expect(out).not.toContain("<img");
     }
   });
   it("a file tab's name is a head that shortens and a tail that keeps its extension", () => {
-    const out = html({ tabs: [{ id: "f1", title: "sample-long-name.txt", path: "C:\\w\\sample-long-name.txt", kind: "text" }], activeId: "f1" });
+    const out = html({ tabs: [{ id: "f1", title: "sample-long-name.txt", path: "C:\\w\\sample-long-name.txt", kind: "text", openedBy: null, unseen: false }], activeId: "f1" });
     expect(out).toContain('<span class="side-pane__name-head">sample-long-name</span><span class="side-pane__name-tail">.txt</span>');
   });
   it("with no tabs shows no tablist, and still the two buttons", () => {
@@ -104,5 +105,40 @@ describe("SidePane", () => {
     expect(out).toContain('id="pane-tab-t1"');
     expect(out).toContain('aria-label="Close a.md"');
     expect(out).toContain("This file can&#x27;t be previewed.");
+  });
+});
+
+describe("SidePane: the mark on a tab that marshell open added", () => {
+  const marked = (openedBy: string | null, unseen: boolean): StripTab[] => [{ ...tabs[0]!, openedBy, unseen }, tabs[1]!];
+  const tab1 = (out: string) => out.match(/<button[^>]*id="pane-tab-t1"[\s\S]*?<\/button>/)![0];
+  it("an_unseen_tab_shows_its_agents_mark", () => {
+    const t = tab1(html({ tabs: marked("codex", true) }));
+    expect(t).toContain("agent-mark");
+    expect(t).toContain("side-pane__mark");
+    expect(t).not.toContain("side-pane__new\"");
+    expect(t).toContain(`title="${PATH1} · Opened by Codex"`);
+    expect(t).toMatch(/side-pane__new-word[^>]*>, new</);
+    expect(t).toMatch(/<span class="side-pane__mark" aria-hidden="true"><svg/);
+  });
+  it("an_unseen_shell_tab_shows_a_plain_dot", () => {
+    const t = tab1(html({ tabs: marked("shell", true) }));
+    expect(t).toContain('class="side-pane__new"');
+    expect(t).toContain("Opened with marshell open");
+  });
+  it("a_seen_tab_keeps_only_the_tooltip", () => {
+    const t = tab1(html({ tabs: marked("claude", false) }));
+    expect(t).toContain(`Opened by Claude Code`);
+    expect(t).not.toContain("side-pane__new");
+    expect(t).not.toContain("agent-mark");
+    expect(t).not.toContain(", new");
+  });
+  it("an_unknown_agent_id_shows_the_plain_dot", () => {
+    const t = tab1(html({ tabs: marked("my-agent", true) }));
+    expect(t).toContain('class="side-pane__new"');
+    expect(t).toContain("Opened by my-agent");
+    expect(t).not.toContain("marshell open");
+  });
+  it("a_tab_nobody_opened_keeps_its_path_as_the_title", () => {
+    expect(tab1(html({ tabs: marked(null, false) }))).toContain(`title="${PATH1}"`);
   });
 });

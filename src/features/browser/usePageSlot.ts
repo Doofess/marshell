@@ -233,5 +233,5 @@ export function usePageSlot(ref: RefObject<HTMLElement | null>, pageKey: string,
     };
   }, [ref, active, layout, moving]);
 
-  return freeze.phase === "live" ? null : { picture: freeze.picture };
+  return freeze.phase === "live" ? null : { picture: freeze.picture, phase: freeze.phase };
 }

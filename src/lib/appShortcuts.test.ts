@@ -138,6 +138,12 @@ describe("side pane commands", () => {
   });
 });
 
+describe("select region command", () => {
+  it("maps to its shortcut kind", () => {
+    expect(commandShortcut("select-region")).toEqual({ kind: "selectRegion" });
+  });
+});
+
 describe("browser tab commands", () => {
   it("map to their shortcut kinds", () => {
     expect(commandShortcut("new-browser-tab")).toEqual({ kind: "newBrowserTab" });

@@ -2,8 +2,8 @@
 //! reads its event and queues what follows with `post`, and never calls back into a webview from inside the callback.
 
 use super::rules::{
-    HOLD_LOOK, HoldLook, KeyEvent, KeyRoute, MAX_ICON_BYTES, TAB_HOLD, TabHold, focus_out_direction, icon_src,
-    key_event, route_key,
+    HOLD_LOOK, HoldLook, KeyEvent, KeyRoute, MAX_ICON_BYTES, PopupGate, TAB_HOLD, TabHold, clipped_title,
+    focus_out_direction, icon_src, key_event, reported_address, route_key, unparsed_address,
 };
 use super::{
     BrowserState, FocusOut, Job, PageFocus, PageIcon, PageKey, PageKeyEvent, PageState, emit, focus_app, lock, post,
@@ -13,7 +13,7 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Manager, Url, Webview};
+use tauri::{AppHandle, Manager, Webview};
 use webview2_com::Microsoft::Web::WebView2::Win32::{
     COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG, COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG, COREWEBVIEW2_KEY_EVENT_KIND,
     COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_KEY_UP,
@@ -29,7 +29,8 @@ use webview2_com::{
     AcceleratorKeyPressedEventHandler, CapturePreviewCompletedHandler, ClearBrowsingDataCompletedHandler,
     DocumentTitleChangedEventHandler, FaviconChangedEventHandler, FocusChangedEventHandler, GetFaviconCompletedHandler,
     HistoryChangedEventHandler, MoveFocusRequestedEventHandler, NavigationCompletedEventHandler,
-    NavigationStartingEventHandler, ProcessFailedEventHandler, SourceChangedEventHandler, take_pwstr,
+    NavigationStartingEventHandler, NewWindowRequestedEventHandler, ProcessFailedEventHandler,
+    SourceChangedEventHandler, take_pwstr,
 };
 use windows::Win32::Foundation::HGLOBAL;
 use windows::Win32::System::Com::StructuredStorage::CreateStreamOnHGlobal;
@@ -107,12 +108,25 @@ impl Page {
         }
         Ok(PageState {
             key: self.key.clone(),
-            url: take_pwstr(url),
-            title: take_pwstr(title),
+            url: reported_address(take_pwstr(url)),
+            title: clipped_title(take_pwstr(title)),
             can_back: back.as_bool(),
             can_forward: forward.as_bool(),
             loading: self.loading.load(Ordering::SeqCst),
         })
+    }
+
+    /// The page is at an address the allow-list never saw: it goes to a blank page, and the app is told.
+    fn leave(&self, uri: &str) {
+        refuse(&self.app, &self.key, uri);
+        let (app, key) = (self.app.clone(), self.key.clone());
+        post(&self.app, move || {
+            if let Some(page) = super::page(&app, &key)
+                && let Err(e) = page.navigate(super::blank())
+            {
+                eprintln!("Marshell: a browser page did not leave an address it may not be at: {e}");
+            }
+        });
     }
 
     /// Queues the page's state for the app's webview.
@@ -130,24 +144,40 @@ impl Page {
 
 /// Adds the page's handlers and sends its first state. `loading` is the flag the builder's own handlers keep;
 /// `dark` is the colour scheme the app asked for, if it has.
-pub fn install(app: &AppHandle, page: &Webview, key: &str, loading: Arc<AtomicBool>, dark: Option<bool>) {
+pub fn install(
+    app: &AppHandle,
+    page: &Webview,
+    key: &str,
+    loading: Arc<AtomicBool>,
+    gate: Arc<Mutex<PopupGate>>,
+    dark: Option<bool>,
+) {
     let page_of = Page {
         app: app.clone(),
         key: key.to_string(),
         loading,
     };
+    let unseen = gate.clone();
     let result = page.with_webview(move |pv| {
         let controller = pv.controller();
         // SAFETY: a COM call on the live controller, on the webview's own thread (with_webview runs it there).
         let w = match unsafe { controller.CoreWebView2() } {
             Ok(w) => w,
-            Err(e) => return failed("webview", &e),
+            Err(e) => {
+                lock(&gate).blind();
+                return failed("webview", &e);
+            }
         };
         if let Err(e) = state_handlers(&page_of, &w) {
             failed("state handlers", &e);
         }
         if let Err(e) = process_handler(&page_of, &w) {
             failed("process handler", &e);
+        }
+        if let Err(e) = popup_handler(&page_of, &w, gate.clone()) {
+            // Nothing will say who asked for a tab: the page opens them as it did before the gate.
+            lock(&gate).blind();
+            failed("popup handler", &e);
         }
         // The key-ups of the keys taken from the page, by virtual key.
         let taken: Arc<Mutex<HashSet<u32>>> = Arc::default();
@@ -185,8 +215,33 @@ pub fn install(app: &AppHandle, page: &Webview, key: &str, loading: Arc<AtomicBo
         }
     });
     if let Err(e) = result {
+        lock(&unseen).blind();
         eprintln!("Marshell: a browser page's handlers were not added: {e}");
     }
+}
+
+/// Records, for each tab the page asks for, whether a person asked (`PopupGate`). It decides nothing and leaves
+/// the event as it found it: the builder's own handler refuses the window and passes the address on.
+fn popup_handler(page: &Page, w: &ICoreWebView2, gate: Arc<Mutex<PopupGate>>) -> windows_core::Result<()> {
+    let page = page.clone();
+    let handler = NewWindowRequestedEventHandler::create(Box::new(move |_, args| {
+        let Some(args) = args else { return Ok(()) };
+        let mut uri = windows_core::PWSTR::null();
+        let mut user = windows_core::BOOL::default();
+        // SAFETY: getters on the event's own arguments inside its callback, each writing to a local that
+        // outlives the call; take_pwstr frees the string.
+        unsafe {
+            args.Uri(&mut uri)?;
+            args.IsUserInitiated(&mut user)?;
+        }
+        let now = page.app.state::<BrowserState>().now_ms();
+        lock(&gate).asked(&take_pwstr(uri), user.as_bool(), now);
+        Ok(())
+    }));
+    let mut token = 0i64;
+    // SAFETY: a COM call on the live webview, on its own thread; the webview owns the handler from here on, and
+    // `token` outlives the call.
+    unsafe { w.add_NewWindowRequested(&handler, &mut token) }
 }
 
 /// The bar follows the page: its address, its title, whether Back and Forward can go anywhere, and whether it is
@@ -206,6 +261,19 @@ fn state_handlers(page: &Page, w: &ICoreWebView2) -> windows_core::Result<()> {
         )?;
         w.add_SourceChanged(
             &SourceChangedEventHandler::create(Box::new(move |sender, _| {
+                // The navigation handler below cancels an address that doesn't parse, but a page's first
+                // navigation starts before it is in: a redirect inside it can bring the page to one. The page
+                // then goes back to a blank one, after this callback.
+                if let Some(w) = &sender {
+                    let mut uri = windows_core::PWSTR::null();
+                    // SAFETY: a getter on the event's own sender inside its callback; take_pwstr frees the string.
+                    w.Source(&mut uri)?;
+                    let uri = take_pwstr(uri);
+                    if unparsed_address(&uri) {
+                        b.leave(&uri);
+                        return Ok(());
+                    }
+                }
                 b.send_state(sender);
                 Ok(())
             })),
@@ -227,7 +295,7 @@ fn state_handlers(page: &Page, w: &ICoreWebView2) -> windows_core::Result<()> {
                     // SAFETY: reading the event's own argument inside its callback; take_pwstr frees the string.
                     args.Uri(&mut uri)?;
                     let uri = take_pwstr(uri);
-                    if uri.parse::<Url>().is_err() {
+                    if unparsed_address(&uri) {
                         // SAFETY: as above.
                         args.SetCancel(true)?;
                         refuse(&d.app, &d.key, &uri);

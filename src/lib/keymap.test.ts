@@ -272,3 +272,9 @@ describe("browser tab commands", () => {
     for (const id of ["new-browser-tab", "open-url", "clear-browser-data"]) expect(commandById(id).binding).toBeUndefined();
   });
 });
+describe("the select region command", () => {
+  it("is in the Window group with no default key", () => {
+    expect(commandById("select-region")).toMatchObject({ label: "Select region", group: "Window" });
+    expect(commandById("select-region").binding).toBeUndefined();
+  });
+});

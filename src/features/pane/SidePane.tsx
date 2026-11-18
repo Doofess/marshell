@@ -1,13 +1,44 @@
 import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { AgentMark } from "../../components/AgentMark/AgentMark";
+import { isAgentId } from "../../components/AgentMark/agents";
 import { selectedProps } from "../../components/a11y/SelectedMark";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
+import { agentLabel } from "../sessions/sessionActions";
 import { clickGuard } from "./clickGuard";
 import { dragIndex, stripKey } from "./stripKeys";
 import { splitName, type TabKind } from "./tabType";
 import "./SidePane.css";
 
 /** `kind` picks the tab's drawn icon, and whether its title is a file name that keeps its extension. */
-export type StripTab = { id: string; title: string; path: string; kind: TabKind };
+export type StripTab = {
+  id: string;
+  title: string;
+  path: string;
+  kind: TabKind;
+  /** Who `marshell open` opened it for: an agent id or `shell`; null for a tab the person opened. */
+  openedBy: string | null;
+  /** Opened by `marshell open` and not yet in front of the person: it carries the opener's mark. */
+  unseen: boolean;
+};
+
+/** The tab's tooltip: its path or address, then who opened it. */
+export function tabTitle(t: Pick<StripTab, "path" | "openedBy">): string {
+  if (t.openedBy === null) return t.path;
+  if (t.openedBy === "shell") return `${t.path} · Opened with marshell open`;
+  return `${t.path} · Opened by ${agentLabel(t.openedBy)}`;
+}
+
+/** Before the type icon: the opener's own mark for a known agent, else a plain dot. Hidden from the reader; the tab's name says ", new". */
+function NewMark({ openedBy }: { openedBy: string | null }) {
+  if (openedBy !== null && isAgentId(openedBy)) {
+    return (
+      <span className="side-pane__mark" aria-hidden="true">
+        <AgentMark agent={openedBy} size={12} />
+      </span>
+    );
+  }
+  return <span className="side-pane__new" aria-hidden="true" />;
+}
 export type SidePaneProps = {
   tabs: StripTab[];
   activeId: string | null;
@@ -179,7 +210,7 @@ export function SidePane({ tabs, activeId, os, children, onSelect, onClose, onMo
                     id={`pane-tab-${t.id}`}
                     aria-controls={`pane-panel-${t.id}`}
                     tabIndex={t.id === tabbable ? 0 : -1}
-                    title={t.path}
+                    title={tabTitle(t)}
                     {...selectedProps(selected, "selected", "side-pane__tab")}
                     onClick={() => {
                       // The click that ends a drag selects nothing.
@@ -197,8 +228,10 @@ export function SidePane({ tabs, activeId, os, children, onSelect, onClose, onMo
                       close(t.id);
                     }}
                   >
+                    {t.unseen && <NewMark openedBy={t.openedBy} />}
                     <TabIcon kind={t.kind} />
                     <TabTitle kind={t.kind} title={t.title} />
+                    {t.unseen && <span className="side-pane__new-word">, new</span>}
                   </button>
                   <button type="button" className="side-pane__close" tabIndex={-1} aria-label={`Close ${t.title}`} onClick={() => close(t.id)}>
                     {icon("M3 3l6 6M9 3 3 9")}

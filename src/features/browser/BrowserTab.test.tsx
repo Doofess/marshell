@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { BrowserTabView, goTo } from "./BrowserTab";
+import { BrowserTabView, goTo, noteFor } from "./BrowserTab";
 import type { PageState } from "./pageStore";
 
 const noop = () => {};
@@ -14,6 +14,21 @@ const page = (more: Partial<PageState> = {}): PageState => ({
   focused: false,
   status: null,
   live: true,
+  ...more,
+});
+const PICTURE = { picture: "data:image/png;base64,AAAA", phase: "frozen" } as const;
+const selection = (more: Partial<NonNullable<Props["selection"]>> = {}): NonNullable<Props["selection"]> => ({
+  step: "box",
+  region: { page: 1, x: 0.3, y: 0.375, w: 0.4, h: 0.25 },
+  busy: false,
+  error: null,
+  target: { name: "Claude", via: "paste" },
+  onChange: noop,
+  onConfirm: noop,
+  onCancel: noop,
+  onBack: noop,
+  onAdd: noop,
+  onDrag: {},
   ...more,
 });
 type Props = Partial<Parameters<typeof BrowserTabView>[0]>;
@@ -51,13 +66,56 @@ describe("BrowserTabView", () => {
     expect(out).not.toContain('aria-label="Address"');
   });
   it("holds the picture while frozen, and a plain fill when the capture failed", () => {
-    const picture = html({ frozen: { picture: "data:image/png;base64,AAAA" } });
+    const picture = html({ frozen: { picture: "data:image/png;base64,AAAA", phase: "frozen" } });
     expect(picture).toContain('<img alt=""');
     expect(picture).toContain('src="data:image/png;base64,AAAA"');
-    const none = html({ frozen: { picture: null } });
+    const none = html({ frozen: { picture: null, phase: "frozen" } });
     expect(none).not.toContain("<img");
     expect(none).toContain("browser-tab__fill");
     expect(html()).not.toContain("<img");
+  });
+});
+
+describe("BrowserTabView: a region on the page", () => {
+  it("a_selection_draws_the_box_over_the_picture", () => {
+    const out = html({ frozen: PICTURE, selection: selection() });
+    expect(out).toContain('class="region-box"');
+    expect(out).toContain("region-capture");
+    expect(out.indexOf("<img")).toBeGreaterThan(-1);
+    expect(out.indexOf("<img")).toBeLessThan(out.indexOf("region-capture"));
+    expect(out.indexOf("region-capture")).toBeLessThan(out.indexOf("region-box"));
+    // The box sits in the slot, so it is drawn where the page was.
+    expect(out.indexOf("browser-tab__slot")).toBeLessThan(out.indexOf("region-box"));
+    expect(out).not.toContain("region-comment");
+  });
+  it("names the box without a page number: a web page has none", () => {
+    const out = html({ frozen: PICTURE, selection: selection() });
+    expect(out).toMatch(/aria-label="Box \d+% wide, \d+% high, \d+% across, \d+% down"/);
+    expect(out).not.toContain(", page ");
+  });
+  it("the comment step adds the comment box, and says where the crop goes", () => {
+    const out = html({ frozen: PICTURE, selection: selection({ step: "comment" }) });
+    expect(out).toContain("region-comment");
+    expect(out).toContain("Adds to Claude");
+  });
+  it("no_picture_no_box", () => {
+    for (const frozen of [{ picture: null, phase: "frozen" }, null] as const) {
+      const out = html({ frozen, selection: selection() });
+      expect(out).not.toContain("region-box");
+      expect(out).not.toContain("region-capture");
+      expect(out).not.toContain("region-comment");
+    }
+  });
+  it("draws no box while it waits for the picture", () => {
+    const out = html({ frozen: { picture: PICTURE.picture, phase: "capturing" }, selection: selection({ step: "wait" }) });
+    expect(out).not.toContain("region-box");
+  });
+  it("draws nothing when there is no selection", () => {
+    expect(html({ frozen: PICTURE })).not.toContain("region-");
+  });
+  it("gives the bar a region button", () => {
+    expect(html({ onRegion: noop, canRegion: true })).toContain('aria-label="Select region"');
+    expect(html()).not.toContain('aria-label="Select region"');
   });
 });
 
@@ -92,5 +150,28 @@ describe("goTo", () => {
     const calls: string[] = [];
     await goTo(api(calls), "s/t", true, "https://a.test/", () => false, slot(calls));
     expect(calls).toEqual(["nav s/t go https://a.test/"]);
+  });
+});
+
+describe("slot while selecting", () => {
+  it("the_slot_is_no_tab_stop_while_a_region_box_is_up", () => {
+    const slot = html({ frozen: PICTURE, selection: selection() }).match(/<div[^>]*class="browser-tab__slot"[^>]*>/)![0];
+    expect(slot).toContain('tabindex="-1"');
+  });
+});
+
+describe("noteFor", () => {
+  const note = { text: "No picture.", url: "https://example.com/", status: null };
+  it("shows_the_note_while_the_address_and_status_are_unchanged", () => {
+    expect(noteFor(note, "https://example.com/", null)).toBe("No picture.");
+  });
+  it("drops_the_note_when_the_address_changes", () => {
+    expect(noteFor(note, "https://example.com/other", null)).toBeNull();
+  });
+  it("drops_the_note_when_the_status_changes", () => {
+    expect(noteFor(note, "https://example.com/", "failed")).toBeNull();
+  });
+  it("has_no_text_without_a_note", () => {
+    expect(noteFor(null, "https://example.com/", null)).toBeNull();
   });
 });

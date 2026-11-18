@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import type { ComponentProps } from "react";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import { invoke } from "@tauri-apps/api/core";
@@ -7,6 +7,7 @@ import type { CreateSessionRequest } from "../../generated/CreateSessionRequest"
 import type { CreateSessionResponse } from "../../generated/CreateSessionResponse";
 import type { RepoScripts } from "../../generated/RepoScripts";
 import type { Endpoint } from "../../generated/Endpoint";
+import type { PaneOpenDone } from "../../generated/PaneOpenDone";
 import type { Task } from "../../generated/Task";
 import type { TaskChanges } from "../../generated/TaskChanges";
 import { ApiError } from "../../lib/api/client";
@@ -37,6 +38,7 @@ import { statFile } from "../preview/previewApi";
 import { inMenu } from "../../components/ContextMenu/menuKeys";
 import { focusAfterMenu, menuFacts, modeOfItem, runResumeItem } from "./sessionMenuRun";
 import { ContextMenu } from "../../components/ContextMenu/ContextMenu";
+import { opensApi } from "../../lib/api/opens";
 import { tasksApi } from "../../lib/api/tasks";
 import { findCommand } from "../../lib/bindings";
 import { cancelsCloseBar, commandShortcut, sessionShortcut, type SessionShortcut } from "../../lib/appShortcuts";
@@ -65,7 +67,7 @@ import { useBrowserKeys } from "../browser/useBrowserKeys";
 import { useFocusedPage } from "../browser/pageStore";
 import { BrowserTab } from "../browser/BrowserTab";
 import { ClearDataDialog } from "../browser/ClearDataDialog";
-import { BLANK, isPageUrl } from "../browser/address";
+import { BLANK, isPageUrl, ownOrigins as ownOriginsOf, shellRefuses } from "../browser/address";
 import { browserTabs } from "../browser/available";
 import { browser, pageKey } from "../browser/browserApi";
 import type { UrlBarHandle } from "../browser/UrlBar";
@@ -73,6 +75,8 @@ import { useBrowserPages } from "../browser/useBrowserPages";
 import { focusPane } from "../pane/focusPane";
 import { FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, PANE_BESIDE_SESSION, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome } from "../pane/paneCommands";
 import { activeTab, currentEntry, isBrowserTab, openRefused, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
+import { takeOpens } from "../pane/opens";
+import { newsReducer } from "../pane/paneNews";
 import { plusChoice, plusMenuItems } from "../pane/plusMenu";
 import { SidePane } from "../pane/SidePane";
 import { tabKind } from "../pane/tabType";
@@ -189,7 +193,7 @@ export function LiveApp() {
   // Each hook agent's (Claude Code, Codex, Antigravity) hook state, read when the window opens and again after each change in the Agents dialog or the onboarding. Never polled.
   const [{ detections, detectionFailed }, setSetupDetections] = useState<SetupDetections>(() => ({ detections: [], detectionFailed: new Set() }));
   const [hooks, setHooks] = useState<Partial<Record<HookAgent, HookInstall>>>({});
-  const { endpoint, profiles, rows, infos, closed, permissions, now, selectedId, loaded, select, reloadProfiles, error, doctor } = useSessions(hooks, detections);
+  const { endpoint, profiles, rows, infos, closed, permissions, opens, now, selectedId, loaded, select, reloadProfiles, error, doctor } = useSessions(hooks, detections);
   // The company CLIs found on this machine: Settings lists Accounts and a section for each. Read with the hooks.
   const [found, setFound] = useState<ReadonlySet<CompanyAgent>>(() => new Set());
   const readFound = useCallback(async (): Promise<ReadonlySet<CompanyAgent>> => {
@@ -772,6 +776,51 @@ export function LiveApp() {
   // ended session keeps its own. A session switch only swaps which tabs are drawn, so nothing here moves focus except the one that opens.
   const paneDispatch = useCallback((action: PaneAction) => dispatch({ type: "pane", action }), [dispatch]);
   const paneProject = () => projectKeyOf(stateRef.current.rows, stateRef.current.focusedId);
+  // `marshell open`: every frame lists the requests still waiting. Each becomes a background tab and is answered; the pane is never shown
+  // and focus never moves. `answered` keeps what was said to each request still in the list, so a frame delivered twice applies once and
+  // a lost answer is sent again with the next frame (the core ignores an answer it already has).
+  // The app's own origins, which a page may never open (`own_origins` in src-tauri/src/browser/mod.rs): the dev server under `tauri dev`
+  // (an installed build is loaded from `http://tauri.localhost/`, which the shell refuses anyway, and names no other origin) and the
+  // local API.
+  const ownOrigins = (): [string, number][] => ownOriginsOf(window.location, endpointRef.current?.port ?? null, import.meta.env.DEV);
+  const answered = useRef(new Map<number, PaneOpenDone>());
+  // The sessions with a tab `marshell open` added that nobody has looked at yet: the title bar's pane button shows a dot for them.
+  const [paneNews, newsDispatch] = useReducer(newsReducer, new Set<string>() as ReadonlySet<string>);
+  useEffect(() => {
+    const waiting = new Set(opens.map((o) => o.id));
+    for (const id of answered.current.keys()) if (!waiting.has(id)) answered.current.delete(id);
+    const ep = endpointRef.current;
+    if (!settled || !loaded || !ep || opens.length === 0) return;
+    const taken = takeOpens(viewRef.current.pane, opens, new Set(answered.current.keys()), {
+      sessions: new Map(rows.map((r) => [r.id, { project: r.projectKey }])),
+      shown: focusedId ?? null,
+      paneOpen: viewRef.current.pane.open && mainView === "sessions",
+      refuses: (url) => shellRefuses(url, ownOrigins()),
+    });
+    const repeat = opens.flatMap((o) => answered.current.get(o.id) ?? []);
+    for (const a of taken.actions) paneDispatch(a);
+    if (taken.news.length > 0) newsDispatch({ type: "add", sessions: taken.news });
+    for (const d of taken.done) answered.current.set(d.id, d);
+    // The announcer holds one notice at a time, so a frame's tabs are said together.
+    if (taken.said.length > 0) announce(taken.said.join(" "));
+    const reply = [...taken.done, ...repeat];
+    if (reply.length > 0) void opensApi.done(ep, reply).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- a frame is applied when it arrives; the rest is read as it stands.
+  }, [opens, settled, loaded]);
+  // A tab loses its "new" mark as soon as it is in front of the person: the pane open, the sessions view on screen and the session
+  // shown. That clears the session's news and, when its selected tab is marked, the tab's own mark.
+  const shownTabUnseen = focusedId != null && Boolean(activeTab(view.pane, focusedId)?.unseen);
+  useEffect(() => {
+    if (!view.pane.open || mainView !== "sessions" || focusedId == null) return;
+    newsDispatch({ type: "seen", session: focusedId });
+    if (shownTabUnseen) paneDispatch({ type: "seen", session: focusedId });
+  }, [view.pane.open, mainView, focusedId, shownTabUnseen, paneNews, paneDispatch]);
+  // A session that is gone from the list is forgotten (derived from `rows`; the core's closed list is a different thing).
+  useEffect(() => {
+    if (!loaded) return;
+    const ids = new Set(rows.map((r) => r.id));
+    for (const id of paneNews) if (!ids.has(id)) newsDispatch({ type: "closed", session: id });
+  }, [rows, loaded, paneNews]);
   // A new tab, or the file's own tab; shows the pane and moves focus into it. False when it was refused (and said so).
   const openInPane = (target: OpenTarget): boolean => {
     const session = stateRef.current.focusedId;
@@ -793,6 +842,8 @@ export function LiveApp() {
   // said so) for an address a page may not hold, with no session on screen, and for the 33rd tab. The keyboard goes into the page,
   // or to the address box of a new blank tab.
   const addressBars = useRef(new Map<string, UrlBarHandle>());
+  // The side pane's tabs that can mark a region (a page, a PDF, an image), by key: "Select region" in the palette starts the shown one's.
+  const regionTabs = useRef(new Map<string, { selectRegion(): boolean }>());
   const focusAddressSoon = (key: string) => {
     let frames = 0;
     const attempt = () => {
@@ -806,7 +857,7 @@ export function LiveApp() {
   const openPageInPane: OpenPageInPane = (url, opts) => {
     const session = stateRef.current.focusedId;
     const pane = viewRef.current.pane;
-    const check = pageOpenCheck(pane, session, url);
+    const check = pageOpenCheck(pane, session, url, ownOrigins());
     if (check !== "ok" || session == null) {
       announce(check === "no-session" ? NO_SESSION_TO_OPEN : check === "limit" ? TAB_LIMIT : PAGE_REFUSED);
       return false;
@@ -1368,7 +1419,7 @@ export function LiveApp() {
   const shownPane = tabsOf(view.pane, focusedId);
   const shownTab = shownPane.tabs.find((t) => t.id === (shownPane.active ?? shownPane.tabs[0]?.id));
   const shownPage = browserTabs(os) && view.pane.open && mainView === "sessions" && focusedId && shownTab && isBrowserTab(shownTab) ? pageKey(focusedId, shownTab.id) : null;
-  useBrowserPages(view.pane, shownPage, { sessions: loaded ? rows.map((r) => r.id) : null, dispatch: paneDispatch, focusedSession: () => stateRef.current.focusedId });
+  useBrowserPages(view.pane, shownPage, { sessions: loaded ? rows.map((r) => r.id) : null, dispatch: paneDispatch, focusedSession: () => stateRef.current.focusedId, own: ownOrigins, announce });
 
   // The window's shortcuts and commands (side pane, shell panel, history, menu, next waiting). True when it was one of them.
   const windowCommand = useCallback(
@@ -1393,6 +1444,15 @@ export function LiveApp() {
         case "clearBrowserData":
           setClearData("ask");
           return true;
+        // A box on the shown tab's page, PDF or image; any other tab has nothing to mark.
+        case "selectRegion": {
+          const session = stateRef.current.focusedId;
+          const shown = tabsOf(v.pane, session);
+          const id = shown.active ?? shown.tabs[0]?.id;
+          const handle = v.pane.open && session !== undefined && id !== undefined ? regionTabs.current.get(pageKey(session, id)) : undefined;
+          if (!handle?.selectRegion()) announce("This tab has nothing to select a region in.");
+          return true;
+        }
         case "capture":
           void runCaptureRef.current();
           return true;
@@ -1566,7 +1626,7 @@ export function LiveApp() {
     }
     const shortcut = commandShortcut(id);
     // These move the focus (or open a panel that takes it), so they wait for the palette to hand it back first.
-    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "menu" || shortcut?.kind === "paneTab" || shortcut?.kind === "closePaneTab" || shortcut?.kind === "browse" || shortcut?.kind === "newBrowserTab" || shortcut?.kind === "clearBrowserData") return void setTimeout(() => windowCommand(shortcut), 0);
+    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "menu" || shortcut?.kind === "paneTab" || shortcut?.kind === "closePaneTab" || shortcut?.kind === "browse" || shortcut?.kind === "newBrowserTab" || shortcut?.kind === "clearBrowserData" || shortcut?.kind === "selectRegion") return void setTimeout(() => windowCommand(shortcut), 0);
     if (windowCommand(shortcut)) return;
     if (shortcut?.kind === "launcher") setLauncherOpen(true);
     else if (shortcut?.kind === "prompt") jumpPrompt(shortcut.by);
@@ -1800,7 +1860,7 @@ export function LiveApp() {
   const paneNode =
     os ? (
       <SidePane
-        tabs={paneTabs.tabs.map((t) => ({ id: t.id, title: paneTitles.get(t.id) ?? "", path: currentEntry(t).path, kind: tabKind(isBrowserTab(t), currentEntry(t).path) }))}
+        tabs={paneTabs.tabs.map((t) => ({ id: t.id, title: paneTitles.get(t.id) ?? "", path: currentEntry(t).path, kind: tabKind(isBrowserTab(t), currentEntry(t).path), openedBy: t.opened_by, unseen: t.unseen }))}
         activeId={paneActive}
         os={os}
         onSelect={(id) => paneSession !== undefined && paneDispatch({ type: "select", session: paneSession, paneTab: id })}
@@ -1840,11 +1900,19 @@ export function LiveApp() {
                   }}
                   onEscape={() => actions.focusTerminal()}
                   announce={announce}
+                  regionTarget={deliveryFor(focusedRow ?? null)}
+                  onRegion={addRegion}
                   ref={(bar) => {
-                    // The address box of a new blank tab takes the keyboard through this (openPageInPane).
+                    // The address box of a new blank tab takes the keyboard through this (openPageInPane); the palette's "Select region" the region.
                     const key = pageKey(paneSession ?? "", tab.id);
-                    if (bar) addressBars.current.set(key, bar);
-                    return () => void addressBars.current.delete(key);
+                    if (bar) {
+                      addressBars.current.set(key, bar);
+                      regionTabs.current.set(key, bar);
+                    }
+                    return () => {
+                      addressBars.current.delete(key);
+                      regionTabs.current.delete(key);
+                    };
                   }}
                 />
               ) : (
@@ -1862,6 +1930,11 @@ export function LiveApp() {
                   onEscape={() => actions.focusTerminal()}
                   regionTarget={deliveryFor(focusedRow ?? null)}
                   onRegion={addRegion}
+                  ref={(preview) => {
+                    const key = pageKey(paneSession ?? "", tab.id);
+                    if (preview) regionTabs.current.set(key, preview);
+                    return () => void regionTabs.current.delete(key);
+                  }}
                 />
               )
             }
@@ -1893,6 +1966,7 @@ export function LiveApp() {
           visibleIds={onScreenIds}
           pane={paneNode}
           paneShown={view.pane.open}
+          paneNews={paneNews.size > 0}
           paneWidth={view.pane.width}
           onPaneWidth={(w) => paneDispatch({ type: "width", width: w })}
           terminalMinWidth={terminalMinWidth}

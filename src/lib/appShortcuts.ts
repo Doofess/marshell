@@ -35,6 +35,8 @@ export type SessionShortcut =
   | { kind: "newBrowserTab" }
   /** "Clear the browser's data…": asks first. Has no key of its own. */
   | { kind: "clearBrowserData" }
+  /** "Select region": a box on the side pane's page, PDF or image. Has no key of its own. */
+  | { kind: "selectRegion" }
   /** "Browse…": the system's file dialog, to pick a file for the side pane. Has no key of its own. */
   | { kind: "browse" }
   /** Capture a screen region with the system's snipping tool and add the image to the focused session (Ctrl+Shift+X). Windows only for now. */
@@ -101,6 +103,8 @@ export function commandShortcut(id: string): SessionShortcut | null {
       return { kind: "newBrowserTab" };
     case "clear-browser-data":
       return { kind: "clearBrowserData" };
+    case "select-region":
+      return { kind: "selectRegion" };
     case "pane-next-tab":
       return { kind: "paneTab", by: 1 };
     case "pane-previous-tab":

@@ -1,7 +1,9 @@
 //! `GET /v1/events`: pushes the session list and the held permission requests to the UI. Every
 //! message is a text frame: `{"type":"sessions","data":SessionsSnapshot}` and
 //! `{"type":"permissions","data":[PermissionView]}` (oldest request first) and
-//! `{"type":"doctor","data":DoctorSummary}`. Each kind is sent once on connect (in that order), then once per change.
+//! `{"type":"doctor","data":DoctorSummary}` and `{"type":"opens","data":[PaneOpen]}` (what `marshell open` asked
+//! for and the app has not answered, oldest first). Each kind is sent once on connect (in that order), then once
+//! per change.
 //! The UI sends nothing; whatever text it does send is ignored.
 
 use super::AppState;
@@ -10,7 +12,7 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::Response;
 use futures_util::SinkExt;
 use futures_util::StreamExt;
-use marshell_protocol::api::SessionsSnapshot;
+use marshell_protocol::api::{PaneOpen, SessionsSnapshot};
 use marshell_protocol::brand;
 use marshell_protocol::doctor::DoctorSummary;
 use marshell_protocol::hook::PermissionView;
@@ -23,9 +25,10 @@ pub async fn handler(State(st): State<AppState>, ws: WebSocketUpgrade) -> Respon
     let rx = st.0.registry.subscribe();
     let holds = st.holds().subscribe();
     let doctor = st.doctor().summary.subscribe();
+    let opens = st.opens().subscribe();
     // Echo our subprotocol, or browsers drop the connection.
     ws.protocols([brand::WS_SUBPROTOCOL])
-        .on_upgrade(move |socket| run(socket, st, rx, holds, doctor))
+        .on_upgrade(move |socket| run(socket, st, rx, holds, doctor, opens))
 }
 
 fn event(snapshot: &SessionsSnapshot) -> Message {
@@ -43,12 +46,29 @@ fn doctor_event(summary: &DoctorSummary) -> Message {
     Message::Text(json.to_string().into())
 }
 
+fn opens_event(waiting: &[PaneOpen]) -> Message {
+    let json = serde_json::json!({ "type": "opens", "data": waiting });
+    Message::Text(json.to_string().into())
+}
+
+/// What a change to the waiting tabs sends: the session list first when it changed too and hasn't gone out, so the window
+/// knows every session a request names before it reads the request. `select!` takes either of two ready branches.
+fn opens_frames(rx: &mut watch::Receiver<SessionsSnapshot>, waiting: &[PaneOpen]) -> Vec<Message> {
+    let mut frames = Vec::with_capacity(2);
+    if rx.has_changed().unwrap_or(false) {
+        frames.push(event(&rx.borrow_and_update()));
+    }
+    frames.push(opens_event(waiting));
+    frames
+}
+
 async fn run(
     socket: WebSocket,
     st: AppState,
     mut rx: watch::Receiver<SessionsSnapshot>,
     mut holds: watch::Receiver<u64>,
     mut doctor: watch::Receiver<DoctorSummary>,
+    mut opens: watch::Receiver<Vec<PaneOpen>>,
 ) {
     let (mut tx, mut incoming) = socket.split();
     // The first send covers the state at connect; `borrow_and_update` marks it as seen.
@@ -63,6 +83,11 @@ async fn run(
         return;
     }
     let first = doctor_event(&doctor.borrow_and_update());
+    if !send(&mut tx, first).await {
+        return;
+    }
+    // A window that connects again (a reload) gets what waited while it was away.
+    let first = opens_event(&opens.borrow_and_update());
     if !send(&mut tx, first).await {
         return;
     }
@@ -96,6 +121,19 @@ async fn run(
                     break;
                 }
             }
+            changed = opens.changed() => {
+                if changed.is_err() {
+                    break;
+                }
+                let frames = opens_frames(&mut rx, &opens.borrow_and_update());
+                let mut sent = true;
+                for msg in frames {
+                    sent = sent && send(&mut tx, msg).await;
+                }
+                if !sent {
+                    break;
+                }
+            }
             msg = incoming.next() => match msg {
                 Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
                 Some(Ok(_)) => {}
@@ -124,4 +162,44 @@ async fn send_permissions(
 /// False when the peer is gone or stuck.
 async fn send(tx: &mut futures_util::stream::SplitSink<WebSocket, Message>, msg: Message) -> bool {
     matches!(tokio::time::timeout(SEND_TIMEOUT, tx.send(msg)).await, Ok(Ok(())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn kind(msg: &Message) -> String {
+        let Message::Text(text) = msg else {
+            panic!("not a text frame")
+        };
+        let json: serde_json::Value = serde_json::from_str(text.as_str()).unwrap();
+        json["type"].as_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn a_waiting_tab_goes_out_after_the_session_it_is_for() {
+        let empty = SessionsSnapshot {
+            sessions: Vec::new(),
+            closed: Vec::new(),
+        };
+        let (tx, mut rx) = watch::channel(empty.clone());
+        rx.borrow_and_update();
+        let open = PaneOpen {
+            id: 1,
+            tab_id: "t9".into(),
+            kind: "file".into(),
+            target: r"C:\a.md".into(),
+            by: "shell".into(),
+        };
+        // The session list changed too (a session that has just started), and has not gone out yet.
+        tx.send_replace(empty);
+        let frames: Vec<_> = opens_frames(&mut rx, std::slice::from_ref(&open))
+            .iter()
+            .map(kind)
+            .collect();
+        assert_eq!(frames, ["sessions", "opens"]);
+        // Nothing new in the list: the waiting tabs alone.
+        let frames: Vec<_> = opens_frames(&mut rx, &[open]).iter().map(kind).collect();
+        assert_eq!(frames, ["opens"]);
+    }
 }

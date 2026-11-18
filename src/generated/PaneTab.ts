@@ -16,4 +16,12 @@ kind: string, history: Array<PaneEntry>, index: number,
 /**
  * A browser tab's last title, for the strip before its page loads.
  */
-title: string | null, };
+title: string | null, 
+/**
+ * Who opened it with `marshell open`: an agent's id, or `shell`. None when the person opened it in the app.
+ */
+opened_by: string | null, 
+/**
+ * True until the tab is first selected after `marshell open` added or marked it.
+ */
+unseen: boolean, };

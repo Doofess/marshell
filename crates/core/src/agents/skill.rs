@@ -10,7 +10,10 @@ use std::path::{Path, PathBuf};
 pub const SKILL_TEXT: &str = include_str!("skill/SKILL.md");
 
 /// The `hash_bytes` hex of every earlier shipped `SKILL_TEXT`. A release that changes the text adds the old hash.
-pub const PREVIOUS: &[&str] = &[];
+pub const PREVIOUS: &[&str] = &[
+    // v0.1.0-alpha.1
+    "89a9f54c5bb39440efa95cf7f015f0aaafda70bbba626123eac742a26f8bdc32",
+];
 
 /// Every agent with a skill: its id and the CLI's name, as a plan's title says it.
 pub const AGENTS: [(&str, &str); 4] = [
@@ -156,6 +159,23 @@ mod tests {
         assert_eq!(state_of(Some(SKILL_TEXT.as_bytes())), SkillInstall::Installed);
         assert_eq!(state_of(Some(b"mine")), SkillInstall::Edited);
         assert_eq!(state_with(Some(b"old"), &[&hash_bytes(b"old")]), SkillInstall::Outdated);
+    }
+
+    #[test]
+    fn the_skill_names_every_command() {
+        for name in ["list", "send", "new", "focus", "open"] {
+            assert!(SKILL_TEXT.contains(&format!("`marshell {name}")), "{name}");
+        }
+    }
+
+    /// `git show v0.1.0-alpha.1:crates/core/src/agents/skill/SKILL.md`, hashed: the text alpha.1 shipped.
+    const ALPHA_1: &str = "89a9f54c5bb39440efa95cf7f015f0aaafda70bbba626123eac742a26f8bdc32";
+
+    #[test]
+    fn the_shipped_alpha_1_text_is_a_previous_one() {
+        assert!(PREVIOUS.contains(&ALPHA_1));
+        assert_ne!(hash_bytes(SKILL_TEXT.as_bytes()), ALPHA_1);
+        assert!(!PREVIOUS.contains(&hash_bytes(SKILL_TEXT.as_bytes()).as_str()));
     }
 
     #[test]

@@ -18,6 +18,7 @@ mod guard;
 mod history;
 mod hook;
 mod layout;
+pub mod opens;
 mod outside;
 mod permissions;
 mod ports;
@@ -237,6 +238,10 @@ struct Inner {
     subagent_wait: Duration,
     /// How long a Stop is held before the row reads Done.
     done_settle: Duration,
+    /// What `marshell open` asked for and the app has not answered yet.
+    opens: opens::Opens,
+    /// How long the open route waits for the app's answer.
+    open_wait: Duration,
     /// Previews and applies changes to the CLIs' config files.
     config: crate::config::service::ConfigService,
     /// The sessions index and the transcript archive.
@@ -397,6 +402,8 @@ impl AppState {
             stuck_quiet: DEFAULT_STUCK_QUIET,
             subagent_wait: DEFAULT_SUBAGENT_WAIT,
             done_settle: DEFAULT_DONE_SETTLE,
+            opens: opens::Opens::default(),
+            open_wait: opens::DEFAULT_WAIT,
             config,
             history,
             importer: std::sync::OnceLock::new(),
@@ -709,6 +716,20 @@ impl AppState {
     }
     pub fn holds(&self) -> &crate::hooks::holds::Holds {
         &self.0.holds
+    }
+    /// The open requests waiting for the app.
+    pub fn opens(&self) -> &opens::Opens {
+        &self.0.opens
+    }
+    /// Sets how long the open route waits for the app's answer (5 s by default). Call it before the state is cloned.
+    pub fn with_open_wait(mut self, wait: Duration) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_open_wait runs before the state is shared")
+            .open_wait = wait;
+        self
+    }
+    pub fn open_wait(&self) -> Duration {
+        self.0.open_wait
     }
     /// The cards of the held requests, oldest first. Each was built when its hold opened.
     /// A card of an administrator session has no always-allow rule: Marshell can't keep one for it.
@@ -1266,6 +1287,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{tab}/input", post(sessions::input))
         .route("/v1/sessions/{tab}/fill", post(fill::fill))
         .route("/v1/sessions/{tab}/focus", post(sessions::focus))
+        .route("/v1/sessions/{tab}/open", post(opens::open))
+        .route("/v1/pane/opens/done", post(opens::done))
         .route("/v1/sessions/{tab}/resume-command", get(outside::tab_resume_command))
         .route("/v1/sessions/{tab}/open-outside", post(outside::tab_open_outside))
         .route("/v1/sessions/{tab}/recording", get(sessions::recording))

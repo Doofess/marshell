@@ -1,7 +1,10 @@
 //! The CLI's client of the running app's loopback API. It finds the app through `<home>/run/endpoint.json`, as the
 //! hook bridge does, and sends the token as a bearer. The token is never printed: it is replaced in any error text.
 
-use marshell_protocol::api::{CreateSessionRequest, CreateSessionResponse, FillRequest, SessionInfo, SessionsSnapshot};
+use crate::open::Opened;
+use marshell_protocol::api::{
+    CreateSessionRequest, CreateSessionResponse, FillRequest, OpenRequest, SessionInfo, SessionsSnapshot,
+};
 use std::io;
 use std::time::Duration;
 
@@ -46,6 +49,8 @@ pub struct Client {
 
 /// How long a request may take.
 const TIMEOUT: Duration = Duration::from_secs(5);
+/// The core waits up to 5 s for the app to answer an open request: this is longer than that.
+const OPEN_TIMEOUT: Duration = Duration::from_secs(10);
 /// `fill` with `wait` is held by the core for up to 30 s: it gets a little longer than that.
 const WAIT_TIMEOUT: Duration = Duration::from_secs(35);
 /// `create` may wait on a cold version check; giving up early would fail a session that still opens, and a retry would open another.
@@ -107,6 +112,21 @@ impl Client {
             Ok((204, _)) => Ok(()),
             Ok((_, body)) => Err(body.trim().to_string()),
             Err(e) => Err(e.to_string()),
+        }
+    }
+
+    /// `POST /v1/sessions/{tab}/open`: 204 opened, 202 the app hasn't answered yet, anything else is a line to print.
+    pub fn open(&self, tab: &str, req: &OpenRequest) -> Opened {
+        let body = match serde_json::to_value(req) {
+            Ok(body) => body,
+            Err(e) => return Opened::Refused(e.to_string()),
+        };
+        match self.request(&format!("/v1/sessions/{tab}/open"), Some(&body), OPEN_TIMEOUT) {
+            Ok((204, _)) => Opened::Done,
+            Ok((202, body)) => Opened::Late(body.trim().to_string()),
+            Ok((_, body)) => Opened::Refused(body.trim().to_string()),
+            Err(e) if e.kind() == io::ErrorKind::ConnectionRefused => Opened::Refused(NOT_RUNNING.to_string()),
+            Err(e) => Opened::Refused(e.to_string()),
         }
     }
 

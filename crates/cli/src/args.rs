@@ -1,5 +1,5 @@
 //! The command line, parsed by hand: `marshell list [--json]`, `send <session> <text>`, `new [options]`,
-//! `focus <session> [--start]`, `uninstall [--yes]`, `--help`, `--version`.
+//! `focus <session> [--start]`, `open [--session <session>] <address or file>...`, `uninstall [--yes]`, `--help`, `--version`.
 
 use marshell_protocol::api::SessionMode;
 use std::path::{Path, PathBuf};
@@ -20,6 +20,10 @@ Commands:
   focus <session> [--start]
                       Bring Marshell's window to the session. --start starts Marshell first when it is
                       closed, without asking.
+  open [--session <session>] <address or file>...
+                      Open a web address or a file as a tab in a session's side pane, in the background. An
+                      address starts with http:// or https://; anything else is a file. --session defaults
+                      to the session the command runs in.
   uninstall [--yes]   Take Marshell's hooks and its marshell skill out of each agent CLI's files, in
                       Windows and in each WSL distro (which it may start), and remove the program folder
                       <home>/bin. Shows what changes first and asks; --yes skips the question.
@@ -49,6 +53,10 @@ pub enum Command {
     Focus {
         session: String,
         start: bool,
+    },
+    Open {
+        targets: Vec<String>,
+        session: Option<String>,
     },
     Uninstall {
         yes: bool,
@@ -131,6 +139,48 @@ pub fn parse_in(argv: &[String], current_dir: &dyn Fn() -> std::io::Result<PathB
 {USAGE}"
                 )),
             }
+        }
+        "open" => {
+            let mut targets = Vec::new();
+            let mut session = None;
+            let mut args = rest.iter();
+            while let Some(arg) = args.next() {
+                match arg.as_str() {
+                    "--session" => match args.next() {
+                        Some(value) if session.is_none() => session = Some(value.clone()),
+                        Some(_) => {
+                            return Err(format!(
+                                "--session can be given once.
+
+{USAGE}"
+                            ));
+                        }
+                        None => {
+                            return Err(format!(
+                                "--session takes a value.
+
+{USAGE}"
+                            ));
+                        }
+                    },
+                    flag if flag.starts_with("--") => {
+                        return Err(format!(
+                            "Unknown argument `{flag}` for open.
+
+{USAGE}"
+                        ));
+                    }
+                    other => targets.push(other.to_string()),
+                }
+            }
+            if targets.is_empty() {
+                return Err(format!(
+                    "open takes at least one address or file.
+
+{USAGE}"
+                ));
+            }
+            Ok(Command::Open { targets, session })
         }
         "uninstall" => {
             let mut yes = false;
@@ -363,6 +413,62 @@ mod tests {
         assert!(parse_in(&args(&["new", "--cwd", &absolute]), &unreadable).is_ok());
         let e = parse_in(&args(&["new", "--cwd", "sub"]), &unreadable).unwrap_err();
         assert_eq!(e, "Could not read the current folder: gone");
+    }
+
+    #[test]
+    fn parse_open_one_target() {
+        assert_eq!(
+            parse(&args(&["open", "a.md"])),
+            Ok(Command::Open {
+                targets: vec!["a.md".into()],
+                session: None
+            })
+        );
+    }
+
+    #[test]
+    fn parse_open_several_targets() {
+        assert_eq!(
+            parse(&args(&["open", "a.md", "https://x.dev/"])),
+            Ok(Command::Open {
+                targets: vec!["a.md".into(), "https://x.dev/".into()],
+                session: None
+            })
+        );
+    }
+
+    #[test]
+    fn parse_open_with_session() {
+        let want = Ok(Command::Open {
+            targets: vec!["a.md".into(), "b.md".into()],
+            session: Some("3".into()),
+        });
+        assert_eq!(parse(&args(&["open", "--session", "3", "a.md", "b.md"])), want);
+        assert_eq!(parse(&args(&["open", "a.md", "b.md", "--session", "3"])), want);
+    }
+
+    #[test]
+    fn parse_open_without_a_target_is_a_usage_error() {
+        for list in [&["open"][..], &["open", "--session", "3"]] {
+            let e = parse(&args(list)).unwrap_err();
+            assert!(
+                e.contains("open takes at least one address or file.") && e.contains("Usage:"),
+                "{e}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_open_session_twice_is_a_usage_error() {
+        let e = parse(&args(&["open", "--session", "1", "--session", "2", "a.md"])).unwrap_err();
+        assert!(e.contains("--session") && e.contains("Usage:"), "{e}");
+        assert!(parse(&args(&["open", "a.md", "--session"])).is_err());
+    }
+
+    #[test]
+    fn parse_open_unknown_flag_is_a_usage_error() {
+        let e = parse(&args(&["open", "--bogus", "a.md"])).unwrap_err();
+        assert!(e.contains("--bogus") && e.contains("Usage:"), "{e}");
     }
 
     #[test]

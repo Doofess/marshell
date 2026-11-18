@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { DoctorSummary } from "../../generated/DoctorSummary";
 import type { Endpoint } from "../../generated/Endpoint";
+import type { PaneOpen } from "../../generated/PaneOpen";
 import type { PermissionView } from "../../generated/PermissionView";
 import type { Profile } from "../../generated/Profile";
 import type { SessionInfo } from "../../generated/SessionInfo";
@@ -26,6 +27,8 @@ export type SessionsState = {
   permissions: PermissionView[];
   /** The doctor frame: how many issues the last check found. Null until the first one arrives. */
   doctor: DoctorSummary | null;
+  /** The `marshell open` requests still waiting for the app, oldest first. Replaced whole by every `opens` frame. */
+  opens: PaneOpen[];
   selectedId: string | undefined;
   /** True once the core has sent the list on this connection, so an empty list really is empty. */
   loaded: boolean;
@@ -34,7 +37,7 @@ export type SessionsState = {
   error: string | null;
 };
 
-const EMPTY: SessionsState = { endpoint: null, profiles: [], infos: [], closed: [], permissions: [], doctor: null, selectedId: undefined, loaded: false, restarts: 0, error: null };
+const EMPTY: SessionsState = { endpoint: null, profiles: [], infos: [], closed: [], permissions: [], doctor: null, opens: [], selectedId: undefined, loaded: false, restarts: 0, error: null };
 const FAILED_TEXT = "Marshell's core stopped and could not restart. Restart Marshell to continue.";
 
 /** Which session is selected after the list changed: the newest one, else the same one, else its neighbour. */
@@ -132,7 +135,7 @@ export class SessionsStore {
       // A profile list that won't load only costs the shell marks (rows fall back to the generic one), so it is not an error.
       const doc = await profilesApi.get(endpoint).catch(() => null);
       if (gen !== this.generation) return;
-      this.socket = new EventSocket(endpoint, (snapshot) => gen === this.generation && this.apply(snapshot), (permissions) => gen === this.generation && this.set({ permissions }), (doctor) => gen === this.generation && this.set({ doctor }));
+      this.socket = new EventSocket(endpoint, (snapshot) => gen === this.generation && this.apply(snapshot), (permissions) => gen === this.generation && this.set({ permissions }), (doctor) => gen === this.generation && this.set({ doctor }), (opens) => gen === this.generation && this.set({ opens }));
       this.set({ endpoint, profiles: doc?.profiles ?? [], error: null });
     } catch (e) {
       if (gen === this.generation) this.set({ error: `Couldn't reach the core: ${String(e)}` });
@@ -156,6 +159,8 @@ export function useSessions(setup?: Partial<Record<HookAgent, HookInstall>>, det
   permissions: PermissionView[];
   /** The doctor frame: how many issues the last check found. Null until the first one arrives. */
   doctor: DoctorSummary | null;
+  /** The `marshell open` requests still waiting for the app, oldest first. */
+  opens: PaneOpen[];
   /** The clock the rows' ages count from (it also dates the lane's waits). */
   now: number;
   selectedId: string | undefined;

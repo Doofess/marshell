@@ -23,7 +23,8 @@ export function pageKey(session: string, paneTab: string): string {
 export type BrowserEvents = {
   state: { key: string; url: string; title: string; canBack: boolean; canForward: boolean; loading: boolean };
   popup: { key: string; url: string };
-  refused: { key: string; url: string };
+  /** `why` is "popup" for a tab the page tried to open with no click or key behind it. */
+  refused: { key: string; url: string; why?: string };
   failed: { key: string };
   gone: Record<string, never>;
   focus: { key: string; focused: boolean };
