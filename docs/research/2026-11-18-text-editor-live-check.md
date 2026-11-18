@@ -58,3 +58,13 @@ The whole-branch review found five things worth fixing before the merge. Each wa
 | A close asked from the tab strip leaves the keyboard on the strip | Pass. Delete on an unsaved tab, then "Don't save": the keyboard was on the next tab in the strip, and a second Delete closed that tab. Before, it went to the next tab's editor, where Delete removes a character. Fixed in `7897fb72`; `focusPane.test.ts` `is the strip's selected tab for a close asked from the strip` and `askedFrom` failed first. |
 
 The console showed nothing new: the `favicon.ico` 404 and the core's 404 for the stat of the deleted file, which is how the pane has always learned that a file is gone.
+
+## After the review before the merge (2026-11-19)
+
+The review of the pull request's head found ten things. Four of them are answered by three changes, each with a test that failed first; none was run in the app again, because none can be set up by hand (a full disk, a request overtaking another on loopback) or changes anything the person sees on the paths checked above.
+
+- **A save that fails leaves the file as it was.** `save.rs` opened the file only after it had copied the old text, so every try at a file another program held added a copy, and twenty of them pushed the file's real copies out. A write cut short left part of the new text in the file with the old one only in `file-history/`. Now the file is opened first, and a failed write puts the old bytes back through the same handle. Tests: `a_file_another_program_holds_is_not_copied` and `a_write_cut_short_puts_the_old_bytes_back` in `save.rs`.
+- **A tab that takes a file over waits for the other tab's draft.** The fix for two tabs on one file relied on the leaving tab's last draft reaching the core before the arriving tab asked for it. Nothing ordered the two requests. Now a draft request is known by its file, and the tab that opens waits for it. Test: `waits_for_the_draft_the_other_tab_is_still_sending` in `useEditorFile.test.ts`.
+- **A draft may be as long as a UTF-16 file at the limit.** The draft route measured the text's UTF-8 bytes against the 2 MB file limit, so a UTF-16 file with more than about 1.3 MB of East Asian text had every draft refused. The limit for a draft's text is now 3 MB. Test: `put_keeps_the_text_of_a_utf16_file_at_the_file_cap` in `drafts_api.rs`.
+
+The other six stand, with the reason for each in the pull request's review comment.
