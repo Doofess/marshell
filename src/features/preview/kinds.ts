@@ -31,18 +31,3 @@ export function splitPath(path: string): { name: string; folder: string } {
   const cut = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return cut < 0 ? { name: path, folder: "" } : { name: path.slice(cut + 1), folder: path.slice(0, cut) };
 }
-
-export type Decoded = { kind: "text"; text: string } | { kind: "binary" };
-
-const SNIFF_BYTES = 8192;
-
-/** Bytes as UTF-8 text, or "binary" when a NUL byte sits in the first 8 KB or the bytes are not valid UTF-8. */
-export function decodeText(bytes: ArrayBuffer): Decoded {
-  const head = new Uint8Array(bytes, 0, Math.min(SNIFF_BYTES, bytes.byteLength));
-  if (head.includes(0)) return { kind: "binary" };
-  try {
-    return { kind: "text", text: new TextDecoder("utf-8", { fatal: true }).decode(bytes) };
-  } catch {
-    return { kind: "binary" };
-  }
-}

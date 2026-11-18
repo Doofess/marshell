@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { IMAGE_CAP, PDF_CAP, TEXT_CAP, fetchContent, statFile, type Content } from "./previewApi";
-import { decodeText, kindOf } from "./kinds";
-import { START, next, type ReloadState } from "./reload";
+import { decodeFile, type Encoding, type Eol } from "../editor/textFile";
+import { kindOf } from "./kinds";
+import { START, next, type ReadOnlyReason, type ReloadState } from "./reload";
 
 /** What the pane shows for the file: one state at a time. */
 export type FileState =
   | { phase: "loading" }
-  | { phase: "text"; text: string }
+  | { phase: "text"; text: string; encoding: Encoding; eol: Eol; hash: string; readOnly: ReadOnlyReason | null }
   | { phase: "image"; url: string }
   | { phase: "tooLarge"; size: number; limit: number }
   | { phase: "binary" }
@@ -96,7 +97,7 @@ export function usePreviewFile(path: string, opts: { paused?: boolean } = {}): {
     const cap = kind === "pdf" ? PDF_CAP : kind === "image" ? IMAGE_CAP : TEXT_CAP;
     let version = 0;
 
-    const show = (content: Content) => {
+    const show = (content: Content, readOnly: ReadOnlyReason | null) => {
       if (content.kind === "missing") {
         state = { seen: null, status: "deleted" };
         loaded.current = false;
@@ -113,8 +114,8 @@ export function usePreviewFile(path: string, opts: { paused?: boolean } = {}): {
       } else if (wire === "image") {
         setFile({ phase: "image", url: URL.createObjectURL(new Blob([content.bytes], { type: imageType(path) })) });
       } else {
-        const d = decodeText(content.bytes);
-        setFile(d.kind === "text" ? { phase: "text", text: d.text } : { phase: "binary" });
+        const d = decodeFile(content.bytes);
+        setFile(d.kind === "text" ? { phase: "text", text: d.text, encoding: d.encoding, eol: d.eol, hash: content.hash, readOnly } : { phase: "binary" });
       }
       if (loaded.current) {
         setUpdated(true);
@@ -134,7 +135,7 @@ export function usePreviewFile(path: string, opts: { paused?: boolean } = {}): {
         state = step.state;
         if (step.action === "refetch") {
           const content = await fetchContent(path, wire);
-          if (!cancelled) show(content);
+          if (!cancelled) show(content, stat.kind === "ok" ? stat.readOnly : null);
         } else if (step.action === "tooLarge" && stat.kind === "ok") {
           loaded.current = false;
           setFile({ phase: "tooLarge", size: stat.size, limit: cap });

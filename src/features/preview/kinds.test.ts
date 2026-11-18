@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decodeText, kindOf, languageOf, splitPath } from "./kinds";
+import { kindOf, languageOf, splitPath } from "./kinds";
 
 describe("kindOf", () => {
   it("reads the kind from the extension, whatever its case", () => {
@@ -38,23 +38,5 @@ describe("splitPath", () => {
     expect(splitPath("C:\\dev\\Airport\\src\\a.rs")).toEqual({ name: "a.rs", folder: "C:\\dev\\Airport\\src" });
     expect(splitPath("/home/me/a.rs")).toEqual({ name: "a.rs", folder: "/home/me" });
     expect(splitPath("a.rs")).toEqual({ name: "a.rs", folder: "" });
-  });
-});
-
-describe("decodeText", () => {
-  const bytes = (s: string) => new TextEncoder().encode(s).buffer as ArrayBuffer;
-  it("decodes UTF-8", () => {
-    expect(decodeText(bytes("héllo\n"))).toEqual({ kind: "text", text: "héllo\n" });
-  });
-  it("is not text with a NUL byte in the first 8 KB", () => {
-    expect(decodeText(new Uint8Array([104, 105, 0, 33]).buffer)).toEqual({ kind: "binary" });
-  });
-  it("lets a NUL after the first 8 KB through, if the bytes still decode", () => {
-    const b = new Uint8Array(8200).fill(97);
-    b[8195] = 0;
-    expect(decodeText(b.buffer).kind).toBe("text");
-  });
-  it("is not text when the bytes are not valid UTF-8", () => {
-    expect(decodeText(new Uint8Array([0xff, 0xfe, 0x41]).buffer)).toEqual({ kind: "binary" });
   });
 });

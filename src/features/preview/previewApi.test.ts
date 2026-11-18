@@ -32,7 +32,7 @@ describe("the caps", () => {
 describe("statFile", () => {
   it("asks the core with the token and the path, encoded", async () => {
     arrange(new Response(JSON.stringify({ size: 12, modified_ms: 7 }), { status: 200 }));
-    expect(await statFile("C:\\dev\\a b.rs")).toEqual({ kind: "ok", size: 12, modified_ms: 7 });
+    expect(await statFile("C:\\dev\\a b.rs")).toEqual({ kind: "ok", size: 12, modified_ms: 7, readOnly: null });
     expect(urlOf().pathname).toBe("/v1/files/stat");
     expect(urlOf().searchParams.get("path")).toBe("C:\\dev\\a b.rs");
     expect(fetchMock.mock.calls[0]![1].headers.Authorization).toBe("Bearer secret");

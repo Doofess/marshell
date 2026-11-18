@@ -27,7 +27,7 @@ const html = (file: FileState, more: Partial<PreviewPaneProps> = {}) => renderTo
 
 describe("PreviewPane", () => {
   it("has no region label of its own: the tab panel names it", () => {
-    const out = html({ phase: "text", text: "fn main() {}\n" });
+    const out = html({ phase: "text", text: "fn main() {}\n", encoding: "utf-8", eol: "lf", hash: "", readOnly: null });
     expect(out).not.toContain('aria-label="Preview, ');
     expect(out).not.toContain("data-drop-preview");
   });
@@ -47,12 +47,12 @@ describe("PreviewPane", () => {
     expect(html({ phase: "loading" }, { canBack: true })).not.toMatch(/aria-label="Back"[^>]*disabled|disabled[^>]*aria-label="Back"/);
   });
   it("makes the scroll body focusable and names it", () => {
-    const out = html({ phase: "text", text: "x" });
+    const out = html({ phase: "text", text: "x", encoding: "utf-8", eol: "lf", hash: "", readOnly: null });
     expect(out).toMatch(/class="preview__body"[^>]*tabindex="0"|tabindex="0"[^>]*class="preview__body"/);
     expect(out).toContain('aria-label="a.rs, contents"');
   });
   it("shows the text one row per line, with the line numbers hidden from a screen reader", () => {
-    const out = html({ phase: "text", text: "one\ntwo\n" });
+    const out = html({ phase: "text", text: "one\ntwo\n", encoding: "utf-8", eol: "lf", hash: "", readOnly: null });
     expect(out).toContain("one");
     expect(out).toContain("two");
     expect(out).toContain('class="code__no" aria-hidden="true"');
@@ -74,7 +74,7 @@ describe("PreviewPane", () => {
     expect(html({ phase: "deleted" })).toContain("This file was deleted.");
   });
   it("keeps the last content under a deleted banner", () => {
-    const out = html({ phase: "deleted", last: { phase: "text", text: "kept line\n" } });
+    const out = html({ phase: "deleted", last: { phase: "text", text: "kept line\n", encoding: "utf-8", eol: "lf", hash: "", readOnly: null } });
     expect(out).toContain("This file was deleted.");
     expect(out).toContain("kept line");
     expect(out).toContain('role="status"');
@@ -91,10 +91,10 @@ describe("PreviewPane", () => {
     expect(out).toContain('alt="a.rs"');
   });
   it("always renders the Updated note, silent until focus is inside the preview", () => {
-    const quiet = html({ phase: "text", text: "x" }, { updated: false });
+    const quiet = html({ phase: "text", text: "x", encoding: "utf-8", eol: "lf", hash: "", readOnly: null }, { updated: false });
     expect(quiet).toContain('class="preview__updated"');
     expect(quiet).not.toContain("Updated</span>");
-    const shown = html({ phase: "text", text: "x" }, { updated: true });
+    const shown = html({ phase: "text", text: "x", encoding: "utf-8", eol: "lf", hash: "", readOnly: null }, { updated: true });
     expect(shown).toContain("Updated</span>");
     // Focus is not inside in a static render, so nothing announces it.
     expect(shown).not.toContain('aria-live="polite"');
@@ -104,7 +104,7 @@ describe("PreviewPane", () => {
 describe("Rendered and Source", () => {
   const md = { entry: { path: "C:\\p\\docs\\a.md", line: null, col: null, view: "source" as const } };
   const page = (view: "rendered" | "source") => ({ entry: { path: "C:\\p\\site\\index.html", line: null, col: null, view } });
-  const text: FileState = { phase: "text", text: "<h1>Hi</h1>\n" };
+  const text: FileState = { phase: "text", text: "<h1>Hi</h1>\n", encoding: "utf-8", eol: "lf", hash: "", readOnly: null };
 
   it("offers the toggle for Markdown and HTML, with the current view pressed", () => {
     const out = html(text, md);
@@ -151,7 +151,7 @@ describe("PreviewPane: select region", () => {
   it("offers the button on an image and on a PDF, not on Markdown", () => {
     const image = html({ phase: "image", url: "blob:x" }, { entry: { path: "C:\\a\\p.png", line: null, col: null, view: "rendered" } });
     const pdf = html({ phase: "pdf", bytes: new ArrayBuffer(0), version: 1 }, { entry: { path: "C:\\a\\p.pdf", line: null, col: null, view: "rendered" } });
-    const md = html({ phase: "text", text: "# hi" }, { entry: { path: "C:\\a\\p.md", line: null, col: null, view: "source" } });
+    const md = html({ phase: "text", text: "# hi", encoding: "utf-8", eol: "lf", hash: "", readOnly: null }, { entry: { path: "C:\\a\\p.md", line: null, col: null, view: "source" } });
     expect(image).toContain("Select region");
     expect(image).toContain('title="Select region (R)"');
     // A PDF is offered it once its document has loaded, not while it is loading or when it failed (the first render has none).
