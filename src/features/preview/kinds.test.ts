@@ -12,7 +12,7 @@ describe("kindOf", () => {
     expect(kindOf("d.pdf")).toBe("pdf");
   });
   it("calls a file with no known extension text, and leaves the bytes to say it isn't", () => {
-    expect(kindOf("Makefile")).toBe("text");
+    expect(kindOf("README")).toBe("text");
     expect(kindOf("notes.txt")).toBe("text");
     expect(kindOf("a.unknownext")).toBe("text");
     expect(kindOf("dir.d/file")).toBe("text");
@@ -28,7 +28,7 @@ describe("languageOf", () => {
     expect(languageOf("index.html")).toBe("html");
   });
   it("is undefined for plain text", () => {
-    expect(languageOf("Makefile")).toBeUndefined();
+    expect(languageOf("README")).toBeUndefined();
     expect(languageOf("notes.txt")).toBeUndefined();
   });
 });
