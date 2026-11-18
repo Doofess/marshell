@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { Draft } from "../../generated/Draft";
 import { start, step, type DocEvent, type DocState } from "./editorDoc";
-import { TextTabView, readOnlyLine, type TextTabViewProps, dirtyNews, isSaveKey, keyboardTo } from "./TextTab";
+import { TextTabView, readOnlyLine, type TextTabViewProps, dirtyNews, isSaveKey, keyboardTo, wrapAtStart } from "./TextTab";
 
 // The rendered Markdown needs the DOM, which these tests run without: the stand-in shows the text it was given.
 vi.mock("../preview/MarkdownView", () => ({ MarkdownView: ({ text }: { text: string }) => <div data-md="">{text}</div> }));
@@ -174,5 +174,18 @@ describe("keyboardTo", () => {
     keyboardTo({ rendered: false, editor: null, body: s.body });
     keyboardTo({ rendered: true, editor: null, body: null });
     expect(s.calls).toEqual(["body", "body"]);
+  });
+});
+
+describe("wrapAtStart", () => {
+  it("is on for prose and plain text, off for code and markup", () => {
+    expect(wrapAtStart("markdown", "C:\p\a.md", "# A")).toBe(true);
+    expect(wrapAtStart("text", "C:\p\notes.txt", "one")).toBe(true);
+    expect(wrapAtStart("text", "C:\p\notes", undefined)).toBe(true);
+    expect(wrapAtStart("code", "C:\p\a.ts", "const a = 1;")).toBe(false);
+    expect(wrapAtStart("html", "C:\p\a.html", "<!doctype html>")).toBe(false);
+  });
+  it("is off for a file whose first line says it is code, though its name does not", () => {
+    expect(wrapAtStart("text", "C:\p\script", "#!/usr/bin/env python3")).toBe(false);
   });
 });

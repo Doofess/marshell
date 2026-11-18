@@ -13,6 +13,7 @@ import { ChangedBar } from "./ChangedBar";
 import { Editor, type EditorHandle } from "./Editor";
 import type { DocEvent, DocState } from "./editorDoc";
 import { EditorFooter } from "./EditorFooter";
+import { languageFor } from "./fileTypes";
 import { COLOUR_CAP } from "./tokens";
 import { lf, useEditorFile } from "./useEditorFile";
 import type { Encoding, Eol } from "./textFile";
@@ -54,6 +55,12 @@ export function dirtyNews(told: boolean | null, ready: boolean, dirty: boolean):
 
 /** How long the rendered view waits after the last key. */
 export const RENDER_MS = 150;
+
+/** Word wrap starts on for prose and plain text, and off for code and markup: also code that only the file's first line names. */
+export function wrapAtStart(kind: PreviewKind, path: string, firstLine: string | undefined): boolean {
+  if (kind === "markdown") return true;
+  return kind === "text" && languageFor(path, firstLine) === undefined;
+}
 
 /** Why a file is read-only, in the plan's words. */
 export function readOnlyLine(reason: ReadOnlyReason, name: string): string {
@@ -204,11 +211,11 @@ export function TextTab({ entry, file, kind, active, os, onDirty, commands, anno
   const { doc, ready, dispatch, save, discard } = useEditorFile(entry.path, file, { announce, refetch, editor, readOnly: () => readOnlyNow.current !== null });
   const hintId = useId();
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
-  // Word wrap starts on for prose and plain text and off for code and markup; the editor keeps the choice while the tab is loaded.
-  const wrap = kind === "markdown" || kind === "text";
   // A shebang tells the type of a file whose name does not: read from the text the tab opened with.
   const firstLine = useRef<string | undefined>(undefined);
   if (firstLine.current === undefined && text) firstLine.current = text.text.split(/\r\n|\r|\n/, 1)[0] ?? "";
+  // The editor keeps the choice while the tab is loaded.
+  const wrap = wrapAtStart(kind, entry.path, firstLine.current);
   const appChord = useCallback((e: KeyboardEvent) => findCommand(e, os) !== undefined, [os]);
 
   // The rendered view gets the editor's text 150 ms after the last key, and the file's own text until the document is open.
