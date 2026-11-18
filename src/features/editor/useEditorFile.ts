@@ -27,7 +27,28 @@ export type DraftQueue = {
   drop(): void;
 };
 
-export function createDraftQueue(o: { put: (d: Draft) => Promise<boolean>; drop: () => Promise<void>; failed: () => void; delay?: number }): DraftQueue {
+// The draft requests on their way to the core, by file. A session draws one editor for a file, and the tab that takes over opens on
+// the draft the other left: it must not read the draft before the other's last put has landed. The key folds case and slashes on
+// every system; two files that differ only there wait for each other, which costs nothing.
+const onTheWay = new Map<string, Promise<void>>();
+const fileKey = (path: string): string => path.replace(/\\/g, "/").toLowerCase();
+
+/** Tells that a draft request for the file is on its way; `work` ends when the core has answered it. */
+export function draftBusy(path: string, work: Promise<void>): void {
+  const key = fileKey(path);
+  onTheWay.set(key, work);
+  void work.then(() => {
+    if (onTheWay.get(key) === work) onTheWay.delete(key);
+  });
+}
+
+/** The file's draft, asked for once every draft request for the file has been answered. */
+export async function draftOnceSent(path: string, get: (path: string) => Promise<Draft | null>): Promise<Draft | null> {
+  await onTheWay.get(fileKey(path));
+  return get(path);
+}
+
+export function createDraftQueue(o: { put: (d: Draft) => Promise<boolean>; drop: () => Promise<void>; failed: () => void; busy?: (work: Promise<void>) => void; delay?: number }): DraftQueue {
   const delay = o.delay ?? DRAFT_MS;
   let timer: ReturnType<typeof setTimeout> | undefined;
   // The newest put asked for and not yet sent.
@@ -41,6 +62,7 @@ export function createDraftQueue(o: { put: (d: Draft) => Promise<boolean>; drop:
   let tail: Promise<void> = Promise.resolve();
   const chain = (job: () => Promise<void>) => {
     tail = tail.then(job).catch(() => {});
+    o.busy?.(tail);
   };
 
   const send = async (mine: number) => {
@@ -262,6 +284,7 @@ export function useEditorFile(path: string, file: FileState, o: { announce: (tex
     put: putDraft,
     drop: () => dropDraft(live.current.path),
     failed: () => deps.current.announce(`The unsaved edits to ${live.current.name} couldn't be kept as a draft.`),
+    busy: (work) => draftBusy(live.current.path, work),
   });
 
   const saver = useRef<Saver | null>(null);
@@ -308,7 +331,7 @@ export function useEditorFile(path: string, file: FileState, o: { announce: (tex
     if (phase.current === "waiting") {
       if (!opensOn(file)) return;
       phase.current = "opening";
-      void opening(path, () => latest.current, getDraft).then((found) => {
+      void opening(path, () => latest.current, (p) => draftOnceSent(p, getDraft)).then((found) => {
         if (gone.current) return;
         // A file that is gone is written again the way its draft says it was stored.
         if (latest.current.phase !== "text" && found.draft) format.current = formatOf(found.draft);

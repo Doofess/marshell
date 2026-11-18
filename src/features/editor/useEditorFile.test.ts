@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Draft } from "../../generated/Draft";
 import { start, step, type DocEvent, type DocState } from "./editorDoc";
 import type { FileState } from "../preview/usePreviewFile";
-import { DRAFT_MS, createDraftQueue, createSaver, formatOf, opening, opensOn, runEffect, type EffectDeps } from "./useEditorFile";
+import { DRAFT_MS, createDraftQueue, createSaver, draftBusy, draftOnceSent, formatOf, opening, opensOn, runEffect, type EffectDeps } from "./useEditorFile";
 
 const N = "a.txt";
 const H1 = "1".repeat(64);
@@ -326,5 +326,52 @@ describe("what a document opens on", () => {
   it("nothing_opens_on_a_file_still_loading_or_one_that_is_not_text", () => {
     for (const file of [{ phase: "loading" }, { phase: "binary" }, { phase: "error" }] as FileState[]) expect(opensOn(file)).toBe(false);
     expect(opensOn(text())).toBe(true);
+  });
+});
+
+describe("a tab that opens on a file another tab has just left", () => {
+  const draft: Draft = { path: "C:\\proj\\a.txt", text: "mine", base_text: "one", base_hash: H1, encoding: "utf-8", eol: "lf", edited_ms: 1 };
+  const turn = async () => {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  };
+
+  it("waits_for_the_draft_the_other_tab_is_still_sending", async () => {
+    const order: string[] = [];
+    let answer!: (ok: boolean) => void;
+    const put = () => {
+      order.push("put sent");
+      return new Promise<boolean>((done) => (answer = done)).then((ok) => (order.push("put answered"), ok));
+    };
+    const queue = createDraftQueue({ put, drop: async () => {}, failed: () => {}, busy: (work) => draftBusy(draft.path, work) });
+    queue.put(() => draft);
+    // The tab goes: its waiting put is sent at once.
+    queue.flush();
+    // The other tab names the file its own way.
+    const got = draftOnceSent("c:/proj/A.TXT", async () => (order.push("get"), draft));
+    await turn();
+    expect(order).toEqual(["put sent"]);
+    answer(true);
+    expect(await got).toEqual(draft);
+    expect(order).toEqual(["put sent", "put answered", "get"]);
+  });
+
+  it("asks_at_once_when_nothing_is_on_its_way_for_the_file", async () => {
+    const order: string[] = [];
+    const queue = createDraftQueue({ put: () => new Promise<boolean>(() => {}), drop: async () => {}, failed: () => {}, busy: (work) => draftBusy("C:\\proj\\other.txt", work) });
+    queue.put(() => draft);
+    queue.flush();
+    await draftOnceSent(draft.path, async () => (order.push("get"), null));
+    expect(order).toEqual(["get"]);
+  });
+
+  it("asks_again_without_waiting_once_the_request_is_answered", async () => {
+    const queue = createDraftQueue({ put: async () => true, drop: async () => {}, failed: () => {}, busy: (work) => draftBusy(draft.path, work) });
+    queue.put(() => draft);
+    queue.flush();
+    await turn();
+    const order: string[] = [];
+    void draftOnceSent(draft.path, async () => (order.push("get"), null));
+    await Promise.resolve();
+    expect(order).toEqual(["get"]);
   });
 });
