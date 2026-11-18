@@ -30,6 +30,7 @@ pub mod store;
 pub mod stuck;
 pub mod supervisor;
 pub mod tasks;
+pub mod userfiles;
 pub mod watch;
 pub mod wsl;
 pub mod wt;

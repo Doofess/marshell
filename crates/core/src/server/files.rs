@@ -386,6 +386,7 @@ pub async fn stat(Query(q): Query<FileQuery>) -> Response {
         Ok(Some(meta)) => Json(FileStat {
             size: meta.len(),
             modified_ms: modified_ms(&meta),
+            read_only: None,
         })
         .into_response(),
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
