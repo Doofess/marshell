@@ -76,7 +76,7 @@ import { browserTabs } from "../browser/available";
 import { browser, pageKey } from "../browser/browserApi";
 import type { UrlBarHandle } from "../browser/UrlBar";
 import { useBrowserPages } from "../browser/useBrowserPages";
-import { focusPane } from "../pane/focusPane";
+import { askedFrom, focusPane } from "../pane/focusPane";
 import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, PANE_BESIDE_SESSION, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome } from "../pane/paneCommands";
 import { activeTab, currentEntry, isBrowserTab, openRefused, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
 import { takeOpens } from "../pane/opens";
@@ -816,24 +816,24 @@ export function LiveApp() {
   }, [settled, loaded, os]);
   // Closing one tab whose file is unsaved asks first (the x button, a middle click, Delete in the strip, "Close tab"). Quitting, closing a
   // session and hiding the pane never ask: the draft keeps the edits.
-  const [saveAsk, setSaveAsk] = useState<{ session: string; paneTab: string; path: string; inside: boolean } | null>(null);
+  const [saveAsk, setSaveAsk] = useState<{ session: string; paneTab: string; path: string; from: "strip" | "pane" | null } | null>(null);
   const askToClose = (session: string, tab: PaneTab): boolean => {
     const entry = currentEntry(tab);
     if (tabCloseAsk({ id: tab.id, path: entry.path, kind: tabKind(isBrowserTab(tab), entry.path) }, unsavedRef.current, osName) !== "ask") return false;
     const shown = tabsOf(viewRef.current.pane, session);
     if ((shown.active ?? shown.tabs[0]?.id) !== tab.id) paneDispatch({ type: "select", session, paneTab: tab.id });
-    setSaveAsk({ session, paneTab: tab.id, path: entry.path, inside: document.activeElement?.closest("[data-nav-side]") != null });
+    setSaveAsk({ session, paneTab: tab.id, path: entry.path, from: askedFrom(document.activeElement) });
     return true;
   };
-  const closeAskedTab = (ask: { session: string; paneTab: string; inside: boolean }) => {
+  const closeAskedTab = (ask: { session: string; paneTab: string; from: "strip" | "pane" | null }) => {
     const shown = tabsOf(viewRef.current.pane, ask.session);
     const tab = shown.tabs.find((t) => t.id === ask.paneTab);
     if (!tab) return;
     paneDispatch({ type: "close", session: ask.session, paneTab: ask.paneTab });
     announce(closedText(paneTabName(tab, tabTitles(shown.tabs))));
     // The dialog gave focus back to the tab it was asked from, which is going. After a save the close is drawn later than the next
-    // frame, so focus waits for it.
-    if (ask.inside) focusPane(ask.paneTab);
+    // frame, so focus waits for it. A close asked from the strip leaves the keyboard on the strip.
+    if (ask.from !== null) focusPane(ask.paneTab, ask.from);
   };
   // A tab that was not on screen mounts when it is selected, and its draft is read a moment later: wait for it, up to two seconds.
   const loadedText = async (key: string): Promise<TextTabCommands | null> => {
