@@ -156,8 +156,13 @@ describe("step", () => {
     const s = doc();
     expect(step(s, { type: "save" }, N)).toEqual({ state: s, effects: [] });
   });
-  it("step_save_while_a_conflict_is_up_is_nothing", () => {
+  it("step_save_while_a_conflict_is_up_writes_nothing_and_says_why", () => {
     const s = run(doc(), { type: "edited", text: "mine" }, { type: "disk", disk: { text: "x", hash: H2 } }).state;
+    const line = "a.txt changed on disk, so it wasn't saved.";
+    expect(step(s, { type: "save" }, N)).toEqual({ state: { ...s, line }, effects: [{ type: "announce", text: line }] });
+  });
+  it("step_save_while_a_conflict_is_up_and_a_save_is_out_is_nothing", () => {
+    const s = { ...run(doc(), { type: "edited", text: "mine" }, { type: "disk", disk: { text: "x", hash: H2 } }).state, saving: true };
     expect(step(s, { type: "save" }, N)).toEqual({ state: s, effects: [] });
   });
   it("step_a_second_save_while_saving_is_nothing", () => {

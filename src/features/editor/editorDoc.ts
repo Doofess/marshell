@@ -152,8 +152,11 @@ function disk(s: DocState, d: Disk, name: string): Out {
   return reload(s, d, name);
 }
 
-function save(s: DocState): Out {
-  if (s.saving || s.conflict !== null || (!s.dirty && s.base.hash !== null)) return unchanged(s);
+function save(s: DocState, name: string): Out {
+  if (s.saving) return unchanged(s);
+  // The bar is up: nothing is written until it is answered, and the person who pressed the key is told so.
+  if (s.conflict !== null) return said(s, `${name} changed on disk, so it wasn't saved.`);
+  if (!s.dirty && s.base.hash !== null) return unchanged(s);
   return { state: { ...s, saving: true, sent: s.text }, effects: [{ type: "save", expect: s.base.hash }] };
 }
 
@@ -205,7 +208,7 @@ export function step(s: DocState, e: DocEvent, name: string): Out {
     case "gone":
       return gone(s);
     case "save":
-      return save(s);
+      return save(s, name);
     case "saved":
       return saved(s, e.hash, e.snapshot, name);
     case "saveConflict":
