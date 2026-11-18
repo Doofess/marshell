@@ -59,10 +59,11 @@ export function regionStillValid(r: Region, pageCount: number): boolean {
   return Number.isInteger(r.page) && r.page >= 1 && r.page <= pageCount;
 }
 
-/** The box in words, for a screen reader. */
-export function describeRegion(r: Region): string {
+/** The box in words, for a screen reader. `paged` is false where there are no pages to name (a web page). */
+export function describeRegion(r: Region, paged = true): string {
   const pct = (v: number) => `${Math.round(v * 100)}%`;
-  return `Box ${pct(r.w)} wide, ${pct(r.h)} high, ${pct(r.x)} across, ${pct(r.y)} down, page ${r.page}`;
+  const box = `Box ${pct(r.w)} wide, ${pct(r.h)} high, ${pct(r.x)} across, ${pct(r.y)} down`;
+  return paged ? `${box}, page ${r.page}` : box;
 }
 
 /** "report.pdf, page 3" for a PDF, "chart.png" for an image (page null). */

@@ -52,6 +52,10 @@ describe("region", () => {
   it("describes the box for a screen reader", () => {
     expect(describeRegion({ page: 3, x: 0.3, y: 0.2, w: 0.4, h: 0.25 })).toBe("Box 40% wide, 25% high, 30% across, 20% down, page 3");
   });
+
+  it("leaves the page out where there are no pages (a web page)", () => {
+    expect(describeRegion({ page: 1, x: 0.3, y: 0.2, w: 0.4, h: 0.25 }, false)).toBe("Box 40% wide, 25% high, 30% across, 20% down");
+  });
 });
 
 describe("canMarkRegion", () => {

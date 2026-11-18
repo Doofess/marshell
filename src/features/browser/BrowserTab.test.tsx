@@ -88,6 +88,11 @@ describe("BrowserTabView: a region on the page", () => {
     expect(out.indexOf("browser-tab__slot")).toBeLessThan(out.indexOf("region-box"));
     expect(out).not.toContain("region-comment");
   });
+  it("names the box without a page number: a web page has none", () => {
+    const out = html({ frozen: PICTURE, selection: selection() });
+    expect(out).toMatch(/aria-label="Box \d+% wide, \d+% high, \d+% across, \d+% down"/);
+    expect(out).not.toContain(", page ");
+  });
   it("the comment step adds the comment box, and says where the crop goes", () => {
     const out = html({ frozen: PICTURE, selection: selection({ step: "comment" }) });
     expect(out).toContain("region-comment");

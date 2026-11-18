@@ -141,7 +141,7 @@ export function BrowserTabView({ page, url, available, frozen, keys, slotRef, ba
           // In the slot's one cell, over the picture and the size of it, so the box's fractions are the picture's.
           <div className="browser-tab__region">
             <div className="region-capture" {...selection.onDrag} />
-            <RegionLayer region={selection.region} onChange={selection.onChange} onConfirm={selection.onConfirm} onCancel={selection.onCancel} />
+            <RegionLayer region={selection.region} onChange={selection.onChange} onConfirm={selection.onConfirm} onCancel={selection.onCancel} paged={false} />
             {selection.step === "comment" && (
               <PagePopover region={selection.region}>
                 <RegionComment target={selection.target} busy={selection.busy} error={selection.error} onAdd={selection.onAdd} onCancel={selection.onBack} />
