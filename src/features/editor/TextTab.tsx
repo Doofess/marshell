@@ -11,7 +11,7 @@ import type { ReadOnlyReason } from "../preview/reload";
 import type { FileState } from "../preview/usePreviewFile";
 import { ChangedBar } from "./ChangedBar";
 import { Editor, type EditorHandle } from "./Editor";
-import type { DocState } from "./editorDoc";
+import type { DocEvent, DocState } from "./editorDoc";
 import { EditorFooter } from "./EditorFooter";
 import { COLOUR_CAP } from "./tokens";
 import { lf, useEditorFile } from "./useEditorFile";
@@ -67,6 +67,17 @@ export function readOnlyLine(reason: ReadOnlyReason, name: string): string {
   }
 }
 
+type Focusable = { focus(): void };
+
+/**
+ * Where the keyboard goes after a button that goes away was pressed (Undo, Keep mine, Take disk): the editor, or the tab's body
+ * while the Rendered view hides the editor. Left alone, focus would fall to the page with the button.
+ */
+export function keyboardTo(o: { rendered: boolean; editor: Focusable | null; body: Focusable | null }): void {
+  if (!o.rendered && o.editor) o.editor.focus();
+  else o.body?.focus();
+}
+
 type Outbound = Exclude<LinkTarget, { kind: "anchor" } | { kind: "none" }>;
 type KeyHandler = (e: KeyboardEvent) => void;
 
@@ -89,6 +100,8 @@ export type TextTabViewProps = {
   rendered?: string;
   firstLine?: string;
   editor: Ref<EditorHandle> | null;
+  /** The tab's own element, for the pane's body around it. */
+  root?: Ref<HTMLDivElement>;
   onEdit: (text: string) => void;
   onCursor: (line: number, column: number) => void;
   appChord?: (e: KeyboardEvent) => boolean;
@@ -106,7 +119,7 @@ export function TextTabView(p: TextTabViewProps) {
   const showRendered = paged && entry.view === "rendered";
   const notice = p.gone || doc.deleted ? `${name} was deleted on disk. Ctrl+S saves it again.` : p.readOnly !== null ? readOnlyLine(p.readOnly, name) : null;
   return (
-    <div className="text-tab">
+    <div className="text-tab" ref={p.root}>
       {notice !== null && <div className="text-tab__notice">{notice}</div>}
       {doc.conflict !== null && <ChangedBar name={name} onKeep={p.onKeep} onTake={p.onTake} />}
       <div className="text-tab__body">
@@ -183,6 +196,7 @@ function textOf(file: Props["file"]): Extract<FileState, { phase: "text" }> | nu
 export function TextTab({ entry, file, kind, active, os, onDirty, commands, announce, refetch, onLink, onKey }: Props) {
   const name = splitPath(entry.path).name;
   const editor = useRef<EditorHandle>(null);
+  const root = useRef<HTMLDivElement>(null);
   const text = textOf(file);
   const readOnly = text?.readOnly ?? null;
   const readOnlyNow = useRef(readOnly);
@@ -265,6 +279,12 @@ export function TextTab({ entry, file, kind, active, os, onDirty, commands, anno
     if (ready && line !== null) editor.current?.reveal(line);
   }, [entry, ready]);
 
+  // Each of the three buttons goes away once it is pressed, so the keyboard moves to the text first.
+  const pressed = (event: DocEvent) => {
+    keyboardTo({ rendered: paged && entry.view === "rendered", editor: editor.current, body: root.current?.closest<HTMLElement>(".preview__body") ?? null });
+    dispatch(event);
+  };
+
   return (
     <TextTabView
       entry={entry}
@@ -282,12 +302,13 @@ export function TextTab({ entry, file, kind, active, os, onDirty, commands, anno
       rendered={rendered}
       firstLine={firstLine.current}
       editor={editor}
+      root={root}
       onEdit={(t) => dispatch({ type: "edited", text: t })}
       onCursor={(l, c) => setCursor((p) => (p.line === l && p.column === c ? p : { line: l, column: c }))}
       appChord={appChord}
-      onKeep={() => dispatch({ type: "keepMine" })}
-      onTake={() => dispatch({ type: "takeDisk" })}
-      onUndo={() => dispatch({ type: "unsave" })}
+      onKeep={() => pressed({ type: "keepMine" })}
+      onTake={() => pressed({ type: "takeDisk" })}
+      onUndo={() => pressed({ type: "unsave" })}
       onLink={onLink}
       onKey={onKey}
     />

@@ -272,11 +272,12 @@ describe("step", () => {
     expect(state).toMatchObject({ lastSave: null, undoOffered: false, line: "a.txt is back as it was before the save." });
     expect(effects).toEqual([{ type: "refetch" }, { type: "announce", text: "a.txt is back as it was before the save." }]);
   });
-  it("step_the_disk_after_an_unsave_reloads_a_clean_tab", () => {
+  it("step_the_disk_after_an_unsave_leaves_the_text_which_is_unsaved_again", () => {
+    // PLAN §9, 6q-4 decision 8: undo puts the file back, and the editor keeps the person's text.
     const saved = run(doc(), { type: "edited", text: "mine" }, { type: "save" }, { type: "saved", hash: H2, snapshot: "snap" }).state;
     const { state, effects } = run(saved, { type: "unsaved", hash: H1 }, { type: "disk", disk: { text: "one\ntwo", hash: H1 } });
-    expect(state).toMatchObject({ text: "one\ntwo", dirty: false, conflict: null, base: { text: "one\ntwo", hash: H1 } });
-    expect(effects).toEqual([{ type: "setText", text: "one\ntwo", marks: [1, 2] }]);
+    expect(state).toMatchObject({ text: "mine", dirty: true, conflict: null, base: { text: "one\ntwo", hash: H1 } });
+    expect(effects).toEqual([{ type: "putDraft" }]);
   });
   it("step_undo_after_a_later_edit_keeps_the_edit", () => {
     const saved = run(doc(), { type: "edited", text: "mine" }, { type: "save" }, { type: "saved", hash: H2, snapshot: "snap" }, { type: "edited", text: "mine and more" }).state;

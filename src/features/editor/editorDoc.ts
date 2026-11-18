@@ -137,11 +137,9 @@ function disk(s: DocState, d: Disk, name: string): Out {
     // Nobody else changed the file. A conflict that was up is over.
     const cleared: DocState = { ...s, conflict: null };
     let base = s.base;
-    if (d.text !== s.base.text) {
-      // The base text is stale (an undo put the file back): learn it from the disk.
-      if (!s.dirty) return reload(cleared, d, null);
-      base = d;
-    }
+    // The base text is stale (an undo put the file back): learn it from the disk. The editor keeps the person's text, which is
+    // unsaved again (PLAN §9, 6q-4 decision 8).
+    if (d.text !== s.base.text) base = d;
     const dirty = s.text !== base.text;
     if (base === s.base && s.conflict === null && dirty === s.dirty) return unchanged(s);
     return { state: { ...cleared, base, dirty }, effects: [draftEffect(dirty)] };

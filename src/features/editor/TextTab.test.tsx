@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { Draft } from "../../generated/Draft";
 import { start, step, type DocEvent, type DocState } from "./editorDoc";
-import { TextTabView, readOnlyLine, type TextTabViewProps, dirtyNews, isSaveKey } from "./TextTab";
+import { TextTabView, readOnlyLine, type TextTabViewProps, dirtyNews, isSaveKey, keyboardTo } from "./TextTab";
 
 // The rendered Markdown needs the DOM, which these tests run without: the stand-in shows the text it was given.
 vi.mock("../preview/MarkdownView", () => ({ MarkdownView: ({ text }: { text: string }) => <div data-md="">{text}</div> }));
@@ -154,5 +154,25 @@ describe("TextTabView", () => {
     const big = after({ type: "edited", text: "x".repeat(1024 * 1024 + 1) });
     expect(html(big)).toContain("Syntax colours are off for files over 1 MB.");
     expect(html(after())).not.toContain("Syntax colours");
+  });
+});
+
+describe("keyboardTo", () => {
+  // Undo, Keep mine and Take disk go away when pressed; focus left on a button that is gone falls to the page.
+  const spot = () => {
+    const calls: string[] = [];
+    return { calls, editor: { focus: () => calls.push("editor") }, body: { focus: () => calls.push("body") } };
+  };
+  it("is_the_editor_while_it_shows", () => {
+    const s = spot();
+    keyboardTo({ rendered: false, editor: s.editor, body: s.body });
+    expect(s.calls).toEqual(["editor"]);
+  });
+  it("is_the_tabs_body_behind_the_rendered_view_or_with_no_editor_yet", () => {
+    const s = spot();
+    keyboardTo({ rendered: true, editor: s.editor, body: s.body });
+    keyboardTo({ rendered: false, editor: null, body: s.body });
+    keyboardTo({ rendered: true, editor: null, body: null });
+    expect(s.calls).toEqual(["body", "body"]);
   });
 });
