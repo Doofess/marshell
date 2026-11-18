@@ -19,12 +19,19 @@ import type { Encoding, Eol } from "./textFile";
 
 /** What the pane can ask of a text tab: the palette's commands and the Ctrl+S key. */
 export type TextTabCommands = {
-  save(): void;
+  /** Saves. Resolves when the save has been answered: true when the file is then saved, false when it was refused, conflicted, the bar is up or the file is read-only. True at once with nothing to save. */
+  save(): Promise<boolean>;
   /** Undoes the last save. False when there is none to undo. */
   undoSave(): boolean;
+  /** Whether `undoSave` can run now: a save to undo, and none in flight. */
+  canUndoSave(): boolean;
+  /** Drops the file's draft through the tab's own queue. The tab is about to close; nothing may write the draft back. */
+  discard(): void;
   goToLine(): void;
   toggleWrap(): void;
   dirty(): boolean;
+  /** Puts the keyboard in the editor: where focus goes back to when a save the close question asked for did not go through. */
+  focus(): void;
 };
 
 /**
@@ -168,9 +175,11 @@ function textOf(file: Props["file"]): Extract<FileState, { phase: "text" }> | nu
 export function TextTab({ entry, file, kind, active, os, onDirty, commands, announce, refetch, onLink, onKey }: Props) {
   const name = splitPath(entry.path).name;
   const editor = useRef<EditorHandle>(null);
-  const { doc, ready, dispatch } = useEditorFile(entry.path, file, { announce, refetch, editor });
   const text = textOf(file);
   const readOnly = text?.readOnly ?? null;
+  const readOnlyNow = useRef(readOnly);
+  readOnlyNow.current = readOnly;
+  const { doc, ready, dispatch, save, discard } = useEditorFile(entry.path, file, { announce, refetch, editor, readOnly: () => readOnlyNow.current !== null });
   const hintId = useId();
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
   // Word wrap starts on for prose and plain text and off for code and markup; the editor keeps the choice while the tab is loaded.
@@ -203,20 +212,21 @@ export function TextTab({ entry, file, kind, active, os, onDirty, commands, anno
   useImperativeHandle(
     commands,
     () => ({
-      save() {
-        if (latest.current.readOnly === null) dispatch({ type: "save" });
-      },
+      save,
       undoSave() {
         const { doc: d } = latest.current;
         if (d.lastSave === null || d.saving) return false;
         dispatch({ type: "unsave" });
         return true;
       },
+      canUndoSave: () => latest.current.doc.lastSave !== null && !latest.current.doc.saving,
+      discard,
       goToLine: () => editor.current?.goToLine(),
       toggleWrap: () => editor.current?.toggleWrap(),
       dirty: () => latest.current.doc.dirty,
+      focus: () => editor.current?.focus(),
     }),
-    [dispatch],
+    [dispatch, save, discard],
   );
 
   const wasDirty = useRef(false);

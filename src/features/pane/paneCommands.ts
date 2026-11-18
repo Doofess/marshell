@@ -1,6 +1,9 @@
 import type { PaneView } from "../../generated/PaneView";
+import type { Os } from "../../lib/keymap";
 import { isPageUrl, pageTitle, shellRefuses } from "../browser/address";
+import { isUnsaved } from "../editor/drafts";
 import { PANE_LIMITS, activeTab, openRefused, tabsOf } from "./paneState";
+import type { TabKind } from "./tabType";
 
 /** What the announcer says for the side pane. */
 export const NO_SESSION_TO_OPEN = "No session to open it in.";
@@ -77,4 +80,13 @@ export function closeTabOutcome(pane: PaneView, session: string | null | undefin
   const tab = activeTab(pane, session);
   const entry = tab?.history[tab.index];
   return tab && entry ? { paneTab: tab.id, path: entry.path } : null;
+}
+
+/**
+ * Whether closing this tab asks first: a text tab whose file has unsaved edits does, on every path that closes the one tab (the
+ * x button, a middle click, Delete in the strip, "Close tab"). Quitting, closing a session and hiding the pane never ask: the
+ * draft keeps the edits.
+ */
+export function closeAsk(tab: { id: string; path: string; kind: TabKind }, unsaved: ReadonlySet<string>, os: Os = "windows"): "ask" | "close" {
+  return tab.kind === "text" && isUnsaved(unsaved, tab.path, os) ? "ask" : "close";
 }

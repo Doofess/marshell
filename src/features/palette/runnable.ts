@@ -12,6 +12,10 @@ export type RunFacts = {
   shellPanel: boolean;
   /** The sidebar can fold or open; a window too narrow for it can't open it. */
   sidebarToggle: boolean;
+  /** The selected tab of the pane on screen is a text tab, loaded. */
+  textTab: boolean;
+  /** That text tab has a save that can be undone now. */
+  undoSave: boolean;
 };
 
 type Need = Exclude<keyof RunFacts, "sessions"> | "any session" | "two sessions";
@@ -24,6 +28,8 @@ const NEEDS: ReadonlyArray<[Need, readonly string[]]> = [
   ["closed", ["reopen"]],
   ["shellPanel", ["shell-panel"]],
   ["sidebarToggle", ["sidebar"]],
+  ["textTab", ["pane-save", "pane-undo-save", "pane-go-to-line", "pane-word-wrap"]],
+  ["undoSave", ["pane-undo-save"]],
 ];
 
 /** The palette commands that would do nothing now, each once; the palette leaves them out rather than list a row that does nothing. */

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Draft } from "../../generated/Draft";
-import { start, type DocEvent, type DocState } from "./editorDoc";
-import { DRAFT_MS, createDraftQueue, runEffect, type EffectDeps } from "./useEditorFile";
+import { start, step, type DocEvent, type DocState } from "./editorDoc";
+import { DRAFT_MS, createDraftQueue, createSaver, runEffect, type EffectDeps } from "./useEditorFile";
 
 const N = "a.txt";
 const H1 = "1".repeat(64);
@@ -164,5 +164,110 @@ describe("runEffect", () => {
     deps.api.unsaveFile = async () => ({ kind: "refused", line: "The file is read-only or in use by another program." });
     await runEffect({ type: "unsave", snapshot: "s" }, deps);
     expect(f.events).toEqual([{ type: "unsaved", hash: "back" }, { type: "unsaveRefused" }, { type: "unsaveFailed", line: "The file is read-only or in use by another program." }]);
+  });
+});
+
+describe("discard", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("a_discard_cancels_a_waiting_put_and_the_flush_when_the_tab_goes_writes_nothing", async () => {
+    const { f, queue } = setup();
+    queue.put(() => ({ path: "C:\\a.txt", text: "one two", base_text: "one", base_hash: H1, encoding: "utf-8", eol: "lf", edited_ms: 1 }));
+    await vi.advanceTimersByTimeAsync(100);
+    // What the tab's `discard()` does, and then what its unmount does.
+    queue.drop();
+    queue.flush();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(f.calls).toEqual(["drop"]);
+    expect(f.puts).toEqual([]);
+  });
+});
+
+/** A document run by the real reducer and the real effects, with the saver watching each state, as the hook wires them. */
+function saverSetup(from: Partial<DocState>, answer: Awaited<ReturnType<EffectDeps["api"]["saveFile"]>>, readOnly = false) {
+  const log = setup();
+  let state: DocState = { ...start, base: { text: "one", hash: H1 }, text: "one two", dirty: true, ...from };
+  let hold: () => void = () => {};
+  const gate = new Promise<void>((r) => (hold = r));
+  const deps: EffectDeps = {
+    ...log.deps,
+    doc: () => state,
+    api: {
+      ...log.deps.api,
+      saveFile: async () => {
+        log.f.calls.push("saveFile");
+        await gate;
+        return answer;
+      },
+    },
+    dispatch: (e) => apply(e),
+  };
+  const saver = createSaver({ doc: () => state, dispatch: (e) => apply(e), readOnly: () => readOnly });
+  function apply(e: DocEvent) {
+    const out = step(state, e, N);
+    state = out.state;
+    saver.observe(state);
+    for (const effect of out.effects) void runEffect(effect, deps);
+  }
+  return { ...log, saver, answer: () => hold(), state: () => state };
+}
+
+describe("createSaver", () => {
+  const saved = { kind: "saved", saved: { size: 7, modified_ms: 1, hash: "h2", snapshot: "s" } } as const;
+
+  it("save_resolves_true_after_the_save_is_answered", async () => {
+    const t = saverSetup({}, saved);
+    let result: boolean | undefined;
+    void t.saver.save().then((r) => (result = r));
+    await Promise.resolve();
+    expect(result).toBeUndefined();
+    t.answer();
+    await vi.waitFor(() => expect(result).toBe(true));
+    expect(t.state().dirty).toBe(false);
+  });
+
+  it("save_resolves_false_after_a_refusal_and_after_a_conflict", async () => {
+    for (const answer of [{ kind: "refused", line: "The file is read-only or in use by another program." }, { kind: "conflict", hash: "other" }, { kind: "tooLarge" }] as const) {
+      const t = saverSetup({}, answer as never);
+      const result = t.saver.save();
+      t.answer();
+      expect(await result).toBe(false);
+      expect(t.state().dirty).toBe(true);
+    }
+  });
+
+  it("save_resolves_false_at_once_while_the_bar_is_up", async () => {
+    const t = saverSetup({ conflict: { text: "theirs", hash: "other" } }, saved);
+    expect(await t.saver.save()).toBe(false);
+    expect(t.f.calls).toEqual([]);
+  });
+
+  it("save_resolves_true_at_once_with_nothing_to_save", async () => {
+    const t = saverSetup({ dirty: false, text: "one" }, saved);
+    expect(await t.saver.save()).toBe(true);
+    expect(t.f.calls).toEqual([]);
+  });
+
+  it("save_resolves_false_for_a_read_only_file_without_asking_the_core", async () => {
+    const t = saverSetup({}, saved, true);
+    expect(await t.saver.save()).toBe(false);
+    expect(t.f.calls).toEqual([]);
+  });
+
+  it("a_second_save_while_one_is_in_flight_waits_for_the_same_answer", async () => {
+    const t = saverSetup({}, saved);
+    const first = t.saver.save();
+    const second = t.saver.save();
+    t.answer();
+    expect(await Promise.all([first, second])).toEqual([true, true]);
+    expect(t.f.calls.filter((c) => c === "saveFile")).toHaveLength(1);
+  });
+
+  it("cancel_settles_a_waiting_save_false", async () => {
+    const t = saverSetup({}, saved);
+    const result = t.saver.save();
+    t.saver.cancel();
+    expect(await result).toBe(false);
   });
 });

@@ -74,6 +74,8 @@ export type PreviewPaneProps = {
   regionTarget: RegionTarget | null;
   /** Hands over a marked region's crop and comment. Resolves when it is placed; rejects with the reason it was not. */
   onRegion: (r: { png: Blob; label: string; comment: string }) => Promise<void>;
+  /** A text tab's file gained or lost unsaved edits. The window keeps the dot on the tab strip by it. */
+  onDirty?: (path: string, dirty: boolean) => void;
   /** The palette's "Select region" starts a region through this. */
   ref?: Ref<PreviewHandle>;
 };
@@ -82,6 +84,8 @@ export type PreviewPaneProps = {
 export type PreviewHandle = {
   /** Starts marking a region. False when the file has no page to mark (a PDF still loading, text, an error). */
   selectRegion(): boolean;
+  /** The text tab's commands, or null while the file is not an editor that has loaded. */
+  text(): TextTabCommands | null;
 };
 
 /** What the pane keeps while a region is being marked. */
@@ -109,6 +113,7 @@ type BodyProps = {
   refetch: () => void;
   /** What a text tab hands the pane to call. */
   textCommands: Ref<TextTabCommands>;
+  onDirty: (path: string, dirty: boolean) => void;
   onImageSize: (url: string, w: number, h: number) => void;
   onPages: (count: number) => void;
   onLink: (link: Outbound) => void;
@@ -116,14 +121,13 @@ type BodyProps = {
   region: RegionHooks;
 };
 
-/** The dirty mark on the tab strip is a later step; for now a text tab's changes are only reported here. */
 const noDirty = () => {};
 
-function Body({ entry, file, active, os, announce, refetch, textCommands, onImageSize, onPages, onLink, onKey, region }: BodyProps) {
+function Body({ entry, file, active, os, announce, refetch, textCommands, onDirty, onImageSize, onPages, onLink, onKey, region }: BodyProps) {
   const { name } = splitPath(entry.path);
   // A text file, and a deleted one that was text, are the same tab: the editor stays mounted when the file goes and comes back.
   const textTab = (f: Extract<FileState, { phase: "text" | "deleted" }>) => (
-    <TextTab key={entry.path} entry={entry} file={f} kind={kindOf(entry.path)} active={active} os={os} onDirty={noDirty} commands={textCommands} announce={announce} refetch={refetch} onLink={onLink} onKey={onKey} />
+    <TextTab key={entry.path} entry={entry} file={f} kind={kindOf(entry.path)} active={active} os={os} onDirty={onDirty} commands={textCommands} announce={announce} refetch={refetch} onLink={onLink} onKey={onKey} />
   );
   switch (file.phase) {
     case "loading":
@@ -141,18 +145,19 @@ function Body({ entry, file, active, os, announce, refetch, textCommands, onImag
     case "deleted":
       // With something that was shown, the content stays and the notice sits above it (see PreviewPane); this is the plain case.
       if (file.last?.phase === "text") return textTab(file);
-      return file.last ? <Body entry={entry} file={file.last} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} onImageSize={onImageSize} onPages={onPages} onLink={onLink} onKey={onKey} region={region} /> : <p className="preview__message">This file was deleted.</p>;
+      return file.last ? <Body entry={entry} file={file.last} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} onDirty={onDirty} onImageSize={onImageSize} onPages={onPages} onLink={onLink} onKey={onKey} region={region} /> : <p className="preview__message">This file was deleted.</p>;
     case "error":
       return <p className="preview__message">This file can't be previewed.</p>;
   }
 }
 
 /** The pane for one file: header, then the scrolling body. Everything it shows comes in as props, so it renders the same on any state. */
-export function PreviewPane({ entry, file, updated, os, canBack, canForward, onBack, onForward, onOpen, onView, active, onEscape, announce, refetch, regionTarget, onRegion, ref }: PreviewPaneProps) {
+export function PreviewPane({ entry, file, updated, os, canBack, canForward, onBack, onForward, onOpen, onView, active, onEscape, announce, refetch, regionTarget, onRegion, onDirty, ref }: PreviewPaneProps) {
   const { name, folder } = splitPath(entry.path);
   const body = useRef<HTMLDivElement>(null);
   // What a text tab lets the pane call: Ctrl+S saves through it. Null while no text tab is mounted.
   const textCommands = useRef<TextTabCommands>(null);
+  const noteDirty = onDirty ?? noDirty;
   // Focus goes into the scroll body when the tab goes somewhere (a link, Back, Forward, another line), so the arrow keys and
   // Page Up and Down read it at once. Mounting takes no focus, and neither does being selected: a session switch and the tab
   // strip's own keys mount and select tabs, and focus must stay where the person has it. Whoever opens a file moves focus.
@@ -245,6 +250,7 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
       if (!select) startSelect();
       return true;
     },
+    text: () => textCommands.current,
   }));
   const add = async (comment: string) => {
     if (!select) return;
@@ -315,7 +321,7 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
     if (isSaveKey(e, os) && textCommands.current) {
       // Always taken, so the webview's own save never opens, whether or not there is anything to save.
       e.preventDefault();
-      textCommands.current.save();
+      void textCommands.current.save();
     } else if ((e.key === "r" || e.key === "R") && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && canMark && !inField) {
       e.preventDefault();
       if (select) endSelect();
@@ -396,7 +402,7 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
             This file was deleted.
           </div>
         )}
-        <Body entry={entry} file={file} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} onImageSize={(url, w, h) => setSize({ url, w, h })} onPages={(count) => setPages({ path: entry.path, count })} onLink={follow} onKey={keys} region={regionHooks} />
+        <Body entry={entry} file={file} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} onDirty={noteDirty} onImageSize={(url, w, h) => setSize({ url, w, h })} onPages={(count) => setPages({ path: entry.path, count })} onLink={follow} onKey={keys} region={regionHooks} />
       </div>
       {select?.step === "comment" && body.current
         ? createPortal(

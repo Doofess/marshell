@@ -142,3 +142,29 @@ describe("SidePane: the mark on a tab that marshell open added", () => {
     expect(tab1(html({ tabs: marked(null, false) }))).toContain(`title="${PATH1}"`);
   });
 });
+
+describe("SidePane: the dot on a tab with unsaved edits", () => {
+  const unsaved = (over: Partial<StripTab> = {}): StripTab[] => [{ ...tabs[0]!, unsaved: true, ...over }, tabs[1]!];
+  const tab1 = (out: string) => out.match(/<button[^>]*id="pane-tab-t1"[\s\S]*?<\/button>/)![0];
+  it("an_unsaved_tab_shows_the_dot_and_says_unsaved", () => {
+    const t = tab1(html({ tabs: unsaved() }));
+    expect(t).toMatch(/<span class="side-pane__unsaved" aria-hidden="true"><\/span>/);
+    expect(t).toMatch(/side-pane__new-word[^>]*>, unsaved</);
+    expect(t).toContain(`title="${PATH1} · Unsaved edits"`);
+    // The dot sits in the opener's slot, before the type icon.
+    expect(t.indexOf("side-pane__unsaved")).toBeLessThan(t.indexOf("side-pane__icon"));
+    // A saved tab has none of it.
+    const clean = tab1(html());
+    expect(clean).not.toContain("side-pane__unsaved");
+    expect(clean).not.toContain(", unsaved");
+    expect(clean).not.toContain("Unsaved edits");
+  });
+  it("the_openers_mark_wins_over_the_dot", () => {
+    const t = tab1(html({ tabs: unsaved({ openedBy: "codex", unseen: true }) }));
+    expect(t).toContain("agent-mark");
+    expect(t).not.toContain("side-pane__unsaved");
+    // The name and the tooltip still tell both.
+    expect(t).toMatch(/, new<\/span><span class="side-pane__new-word">, unsaved</);
+    expect(t).toContain(`title="${PATH1} · Opened by Codex · Unsaved edits"`);
+  });
+});

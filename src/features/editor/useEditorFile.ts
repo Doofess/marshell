@@ -91,6 +91,45 @@ export function createDraftQueue(o: { put: (d: Draft) => Promise<boolean>; drop:
   };
 }
 
+/**
+ * What `save()` answers a caller that waits for it (the close question). It asks the reducer for a save and then holds the
+ * promise until the document stops saving: `true` when the file is then saved, `false` for a refused, conflicting or too large
+ * save, a bar that is up, a read-only file, or a tab that went. The reducer stays pure; `observe` is told each new state.
+ */
+export type Saver = {
+  save(): Promise<boolean>;
+  /** Tells the saver the state after a step. */
+  observe(s: DocState): void;
+  /** Settles every waiting save `false`: the tab went. */
+  cancel(): void;
+};
+
+export function createSaver(o: { doc: () => DocState; dispatch: (e: DocEvent) => void; readOnly: () => boolean }): Saver {
+  let waiting: Array<(saved: boolean) => void> = [];
+  const answer = (s: DocState) => !s.dirty && s.conflict === null;
+  const settle = (saved: (s: DocState) => boolean, s: DocState) => {
+    const now = waiting;
+    waiting = [];
+    for (const resolve of now) resolve(saved(s));
+  };
+  return {
+    save() {
+      if (o.readOnly()) return Promise.resolve(false);
+      o.dispatch({ type: "save" });
+      const s = o.doc();
+      // No save started and none is in flight: the reducer said there is nothing to save, or that it can't be.
+      if (!s.saving) return Promise.resolve(answer(s));
+      return new Promise<boolean>((resolve) => waiting.push(resolve));
+    },
+    observe(s) {
+      if (!s.saving && waiting.length > 0) settle(answer, s);
+    },
+    cancel() {
+      settle(() => false, o.doc());
+    },
+  };
+}
+
 /** Everything the effects touch, so the runner is a plain function and a test hands it fakes. */
 export type EffectDeps = {
   path: string;
@@ -168,14 +207,22 @@ export function runEffect(effect: Effect, d: EffectDeps): Promise<void> | void {
   }
 }
 
-export type EditorFile = { doc: DocState; ready: boolean; dispatch: (e: DocEvent) => void };
+export type EditorFile = {
+  doc: DocState;
+  ready: boolean;
+  dispatch: (e: DocEvent) => void;
+  /** Saves and resolves when the save has been answered: true when the file is then saved (see `createSaver`). */
+  save: () => Promise<boolean>;
+  /** Drops the draft through the tab's own queue, so the flush when the tab goes cannot write it back. */
+  discard: () => void;
+};
 
 /**
  * A text tab's document. The first text of the file fetches its draft and opens the document; after that each new text of the
  * file is a `disk` event, and a file that went is `gone`. The state is the reducer's (editorDoc.ts), kept in a ref so that two
  * events in one tick see each other, and the effects it asks for run here, once per step.
  */
-export function useEditorFile(path: string, file: FileState, o: { announce: (text: string) => void; refetch: () => void; editor: RefObject<EditorHandle | null> }): EditorFile {
+export function useEditorFile(path: string, file: FileState, o: { announce: (text: string) => void; refetch: () => void; editor: RefObject<EditorHandle | null>; readOnly: () => boolean }): EditorFile {
   const name = splitPath(path).name;
   const docRef = useRef<DocState>(start);
   const [doc, setDoc] = useState<DocState>(start);
@@ -192,13 +239,18 @@ export function useEditorFile(path: string, file: FileState, o: { announce: (tex
     failed: () => deps.current.announce(`The unsaved edits to ${live.current.name} couldn't be kept as a draft.`),
   });
 
+  const saver = useRef<Saver | null>(null);
   const dispatch = useCallback((e: DocEvent) => {
     const d = deps.current;
     const out = step(docRef.current, e, d.name);
     docRef.current = out.state;
     setDoc(out.state);
+    saver.current?.observe(out.state);
     for (const effect of out.effects) void runEffect(effect, d);
   }, []);
+  const readOnly = useRef(o.readOnly);
+  readOnly.current = o.readOnly;
+  saver.current ??= createSaver({ doc: () => docRef.current, dispatch, readOnly: () => readOnly.current() });
   deps.current = {
     path,
     name,
@@ -221,6 +273,7 @@ export function useEditorFile(path: string, file: FileState, o: { announce: (tex
     gone.current = false;
     return () => {
       gone.current = true;
+      saver.current?.cancel();
     };
   }, []);
 
@@ -262,5 +315,7 @@ export function useEditorFile(path: string, file: FileState, o: { announce: (tex
     };
   }, []);
 
-  return { doc, ready, dispatch };
+  const save = useCallback(() => saver.current!.save(), []);
+  const discard = useCallback(() => drafts.current?.drop(), []);
+  return { doc, ready, dispatch, save, discard };
 }

@@ -100,6 +100,11 @@ export const COMMANDS: Command[] = [
   { id: "pane-next-tab", label: "Next tab", group: "Window", binding: { code: "Tab", ctrl: true } },
   { id: "pane-previous-tab", label: "Previous tab", group: "Window" },
   { id: "pane-close-tab", label: "Close tab", group: "Window" },
+  // A text tab in the side pane: the palette lists these only while one is on screen. None has a key of its own (Ctrl+S saves inside the editor).
+  { id: "pane-save", label: "Save file", group: "Window" },
+  { id: "pane-undo-save", label: "Undo last save", group: "Window" },
+  { id: "pane-go-to-line", label: "Go to line…", group: "Window" },
+  { id: "pane-word-wrap", label: "Word wrap", group: "Window" },
   { id: "sidebar", label: "Collapse sidebar to the rail", group: "Window" },
   { id: "group-by-project", label: "Group sessions by project", group: "Window" },
   { id: "shell-panel", label: "Show or focus the shell panel", group: "Window", binding: { code: "KeyS" } },
