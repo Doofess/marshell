@@ -1,11 +1,12 @@
 import { Annotation, Compartment, EditorSelection, EditorState, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
+import { indentUnit } from "@codemirror/language";
 import { gotoLine } from "@codemirror/search";
 import { useEffect, useImperativeHandle, useMemo, useRef, type Ref } from "react";
 import { EDITOR_HINT } from "./EditorFooter";
 import { languageFor } from "./fileTypes";
 import { lineMarks, setMarks } from "./lineMarks";
-import { access, extensions, READ_ONLY, toggleWrap, WRAP, wrapping } from "./setup";
+import { access, extensions, indentOf, READ_ONLY, toggleWrap, WRAP, wrapping } from "./setup";
 import { shiki } from "./shikiBridge";
 import "./Editor.css";
 
@@ -77,6 +78,8 @@ export function Editor({ name, path, initial, firstLine, readOnly, wrap, target,
         extensions: [
           extensions({ readOnly, wrap, name, appChord: appChord ?? never }),
           COLOURS.of(shiki(language)),
+          // Tab puts in what the file is indented with, so a tab-indented file does not get spaces.
+          indentUnit.of(indentOf(initial, language)),
           lineMarks(),
           EditorView.contentAttributes.of({ "aria-describedby": hintId }),
           EditorView.updateListener.of((u) => {

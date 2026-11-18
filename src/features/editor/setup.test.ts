@@ -6,7 +6,7 @@ import { keymap, type KeyBinding } from "@codemirror/view";
 import { describe, expect, it } from "vitest";
 import { findCommand } from "../../lib/bindings";
 import { COMMANDS, shortcutLabel, type Os } from "../../lib/keymap";
-import { editorChords, editorKeys, extensions } from "./setup";
+import { editorChords, editorKeys, extensions, indentOf } from "./setup";
 
 const make = (o: Partial<Parameters<typeof extensions>[0]> = {}, doc = "one\ntwo") =>
   EditorState.create({ doc, extensions: extensions({ readOnly: false, wrap: false, name: "a.txt", appChord: () => false, ...o }) });
@@ -111,5 +111,20 @@ describe("setup", () => {
       "Go to line": "Go to line",
     };
     for (const [key, text] of Object.entries(want)) expect(state.phrase(key), key).toBe(text);
+  });
+
+  it("the_indent_follows_the_file", () => {
+    expect(indentOf("a\n\tb\n    c")).toBe("\t");
+    expect(indentOf("a\n  b\n    c")).toBe("  ");
+    expect(indentOf("a\n    b")).toBe("    ");
+    // A comment's one space is not an indent, and a file with none gets four spaces, the tab size.
+    expect(indentOf("/**\n * x\n */\nfoo()")).toBe("    ");
+    expect(indentOf("")).toBe("    ");
+    // A deeper first line is cut to eight.
+    expect(indentOf("a\n            b")).toBe("        ");
+    // A Makefile's recipes need a tab, and Go is written with tabs, whatever the file holds so far.
+    expect(indentOf("", "make")).toBe("\t");
+    expect(indentOf("x:\n    y", "make")).toBe("\t");
+    expect(indentOf("", "go")).toBe("\t");
   });
 });

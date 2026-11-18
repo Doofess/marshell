@@ -45,6 +45,29 @@ export const toggleWrap: Command = (view) => {
   return true;
 };
 
+/** Languages whose files are indented with a tab whatever they hold: a Makefile's recipes need one, and Go is written with them. */
+const TAB_LANGUAGES = ["make", "go"];
+
+/**
+ * What the Tab key puts in: the file's own indent, read from its first indented line among the first 500. A tab stays a tab,
+ * spaces stay as many spaces (two to eight), and a file with no indent yet gets four spaces, the tab size.
+ */
+export function indentOf(text: string, language?: string): string {
+  if (language !== undefined && TAB_LANGUAGES.includes(language)) return "\t";
+  let from = 0;
+  for (let n = 0; n < 500 && from <= text.length; n++) {
+    const end = text.indexOf("\n", from);
+    const line = text.slice(from, end === -1 ? text.length : end);
+    if (line.startsWith("\t")) return "\t";
+    const spaces = line.length - line.trimStart().length;
+    // One space is a comment's continuation, not an indent, and a blank line tells nothing.
+    if (spaces >= 2 && line.trim() !== "" && line.startsWith(" ".repeat(spaces))) return " ".repeat(Math.min(spaces, 8));
+    if (end === -1) break;
+    from = end + 1;
+  }
+  return "    ";
+}
+
 /* Keys. A key is a CodeMirror key name ("Mod-Shift-k"). Mod is Ctrl, and Cmd on macOS. */
 
 /** Keys of CodeMirror's own keymaps that the editor leaves out: they clash with the app's or the pane's keys, or they add a second cursor. */
