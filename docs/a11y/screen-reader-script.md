@@ -147,7 +147,7 @@ Run this one in the installed app, not the review page, with a scratch `MARSHELL
 | J4 | Press Ctrl+G | "Go to line" | ☐ | ☐ |
 | J5 | Press Esc, then Tab | Focus leaves the editor to the next control | ☐ | ☐ |
 | J6 | Press Ctrl+S, then Tab to the "Undo" button (it is reachable after the editor) and press it | "Saved notes.txt."; then "notes.txt is back as it was before the save." | ☐ | ☐ |
-| J7 | With no unsaved edits, change `notes.txt` in the other program and save it there | "notes.txt changed on disk. 2 lines changed." | ☐ | ☐ |
+| J7 | With no unsaved edits, change one line of `notes.txt` in the other program and save it there | "notes.txt changed on disk. 1 line changed." | ☐ | ☐ |
 | J8 | Type in the editor, then change `notes.txt` in the other program | "notes.txt changed on disk."; the group with "Keep mine" and "Take disk" is reachable with Tab; the bar did not move focus | ☐ | ☐ |
 | J9 | Close the tab with unsaved edits | A dialog: "Save the changes to notes.txt?", "Its unsaved edits are lost if you don't save them.", with focus on "Save"; Escape closes it and focus is back where it was | ☐ | ☐ |
 | J10 | Set the read-only attribute on `notes.txt` and open it, then move focus into the editor | "notes.txt, read-only", and the line "notes.txt is read-only on disk." | ☐ | ☐ |
