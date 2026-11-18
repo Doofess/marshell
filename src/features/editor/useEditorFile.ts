@@ -3,7 +3,7 @@ import type { Draft } from "../../generated/Draft";
 import { splitPath } from "../preview/kinds";
 import type { FileState } from "../preview/usePreviewFile";
 import type { EditorHandle } from "./Editor";
-import { start, step, type DocEvent, type DocState, type Effect } from "./editorDoc";
+import { start, step, type Disk, type DocEvent, type DocState, type Effect } from "./editorDoc";
 import { dropDraft, getDraft, putDraft, saveFile, unsaveFile } from "./editorApi";
 import { encodeFile, type Encoding, type Eol } from "./textFile";
 
@@ -141,6 +141,8 @@ export type EffectDeps = {
   format: () => { encoding: Encoding; eol: Eol };
   editor: () => EditorHandle | null;
   announce: (text: string) => void;
+  /** The keyboard is in this tab, and the tab is the one on screen. */
+  reading: () => boolean;
   refetch: () => void;
   dispatch: (e: DocEvent) => void;
   drafts: DraftQueue;
@@ -203,9 +205,31 @@ export function runEffect(effect: Effect, d: EffectDeps): Promise<void> | void {
       d.refetch();
       return;
     case "announce":
+      if (effect.reading && !d.reading()) return;
       d.announce(effect.text);
       return;
   }
+}
+
+const ENCODINGS: readonly Encoding[] = ["utf-8", "utf-8-bom", "utf-16le", "utf-16be"];
+
+/** How a draft says its file was stored; anything it doesn't name plainly is UTF-8 with LF endings. */
+export function formatOf(draft: Pick<Draft, "encoding" | "eol">): { encoding: Encoding; eol: Eol } {
+  return { encoding: ENCODINGS.find((e) => e === draft.encoding) ?? "utf-8", eol: draft.eol === "crlf" ? "crlf" : "lf" };
+}
+
+/** A state of the file a document can open on: its text, or a file that is gone and may have left a draft. */
+export const opensOn = (file: FileState): boolean => file.phase === "text" || file.phase === "deleted";
+
+/**
+ * What a document opens on: the draft kept for the file, and the disk as it is once the draft has come (the file may have moved
+ * on while it was fetched). A file that is gone opens as no file. A read-only file's draft is read like any other: the text
+ * typed before the file became read-only shows in the editor, where it can be read and copied.
+ */
+export async function opening(path: string, latest: () => FileState, get: (path: string) => Promise<Draft | null>): Promise<{ disk: Disk; draft: Draft | null }> {
+  const draft = await get(path);
+  const at = latest();
+  return { disk: at.phase === "text" ? { text: lf(at.text), hash: at.hash } : { text: "", hash: null }, draft };
 }
 
 export type EditorFile = {
@@ -223,7 +247,7 @@ export type EditorFile = {
  * file is a `disk` event, and a file that went is `gone`. The state is the reducer's (editorDoc.ts), kept in a ref so that two
  * events in one tick see each other, and the effects it asks for run here, once per step.
  */
-export function useEditorFile(path: string, file: FileState, o: { announce: (text: string) => void; refetch: () => void; editor: RefObject<EditorHandle | null>; readOnly: () => boolean }): EditorFile {
+export function useEditorFile(path: string, file: FileState, o: { announce: (text: string) => void; reading: () => boolean; refetch: () => void; editor: RefObject<EditorHandle | null>; readOnly: () => boolean }): EditorFile {
   const name = splitPath(path).name;
   const docRef = useRef<DocState>(start);
   const [doc, setDoc] = useState<DocState>(start);
@@ -260,6 +284,7 @@ export function useEditorFile(path: string, file: FileState, o: { announce: (tex
     format: () => format.current,
     editor: () => o.editor.current,
     announce: o.announce,
+    reading: o.reading,
     refetch: o.refetch,
     dispatch,
     drafts: drafts.current,
@@ -279,27 +304,22 @@ export function useEditorFile(path: string, file: FileState, o: { announce: (tex
   }, []);
 
   useEffect(() => {
-    if (file.phase === "text") {
-      format.current = { encoding: file.encoding, eol: file.eol };
-      if (phase.current === "waiting") {
-        phase.current = "opening";
-        // A read-only file opens with no draft: nothing can be saved from it.
-        const draft = file.readOnly === null ? getDraft(path) : Promise.resolve(null);
-        void draft.then((found) => {
-          if (gone.current) return;
-          // The file may have moved on while the draft was fetched: open on the newest.
-          const at = latest.current;
-          const disk = at.phase === "text" ? { text: lf(at.text), hash: at.hash } : { text: "", hash: null };
-          phase.current = "open";
-          dispatch({ type: "opened", disk, draft: found });
-          setReady(true);
-        });
-      } else if (phase.current === "open") {
-        // Every new text of the file goes to the reducer: it knows an unchanged one, and learns the text an undo put back.
-        dispatch({ type: "disk", disk: { text: lf(file.text), hash: file.hash } });
-      }
-    } else if (file.phase === "deleted" && phase.current === "open") {
-      dispatch({ type: "gone" });
+    if (file.phase === "text") format.current = { encoding: file.encoding, eol: file.eol };
+    if (phase.current === "waiting") {
+      if (!opensOn(file)) return;
+      phase.current = "opening";
+      void opening(path, () => latest.current, getDraft).then((found) => {
+        if (gone.current) return;
+        // A file that is gone is written again the way its draft says it was stored.
+        if (latest.current.phase !== "text" && found.draft) format.current = formatOf(found.draft);
+        phase.current = "open";
+        dispatch({ type: "opened", disk: found.disk, draft: found.draft });
+        setReady(true);
+      });
+    } else if (phase.current === "open") {
+      // Every new text of the file goes to the reducer: it knows an unchanged one, and learns the text an undo put back.
+      if (file.phase === "text") dispatch({ type: "disk", disk: { text: lf(file.text), hash: file.hash } });
+      else if (file.phase === "deleted") dispatch({ type: "gone" });
     }
   }, [file]);
 

@@ -6,6 +6,7 @@ import { cropImage, cropPdfPage } from "../regions/crop";
 import { placePopover } from "../regions/placement";
 import { RegionComment, type RegionTarget } from "../regions/RegionComment";
 import { RegionLayer } from "../regions/RegionLayer";
+import { getDraft } from "../editor/editorApi";
 import { isSaveKey, TextTab, type TextTabCommands } from "../editor/TextTab";
 import { canMarkRegion, fromDrag, initialRegion, regionLabel, regionStillValid, type Region } from "../regions/region";
 import type { Os } from "../../lib/keymap";
@@ -76,6 +77,8 @@ export type PreviewPaneProps = {
   onRegion: (r: { png: Blob; label: string; comment: string }) => Promise<void>;
   /** A text tab's file gained or lost unsaved edits. The window keeps the dot on the tab strip by it. */
   onDirty?: (path: string, dirty: boolean) => void;
+  /** Unsaved edits are kept for this file, which was already gone when the tab opened: the editor opens on them. */
+  keptDraft?: boolean;
   /** The palette's "Select region" starts a region through this. */
   ref?: Ref<PreviewHandle>;
 };
@@ -119,11 +122,12 @@ type BodyProps = {
   onLink: (link: Outbound) => void;
   onKey: (e: Key) => void;
   region: RegionHooks;
+  keptDraft: boolean;
 };
 
 const noDirty = () => {};
 
-function Body({ entry, file, active, os, announce, refetch, textCommands, onDirty, onImageSize, onPages, onLink, onKey, region }: BodyProps) {
+function Body({ entry, file, active, os, announce, refetch, textCommands, onDirty, onImageSize, onPages, onLink, onKey, region, keptDraft }: BodyProps) {
   const { name } = splitPath(entry.path);
   // A text file, and a deleted one that was text, are the same tab: the editor stays mounted when the file goes and comes back.
   const textTab = (f: Extract<FileState, { phase: "text" | "deleted" }>) => (
@@ -144,15 +148,17 @@ function Body({ entry, file, active, os, announce, refetch, textCommands, onDirt
       return <PdfView bytes={file.bytes} version={file.version} name={name} onPages={onPages} onCurrentPage={region.onCurrentPage} onDocument={region.onDocument} renderOverlay={region.overlay} />;
     case "deleted":
       // With something that was shown, the content stays and the notice sits above it (see PreviewPane); this is the plain case.
-      if (file.last?.phase === "text") return textTab(file);
-      return file.last ? <Body entry={entry} file={file.last} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} onDirty={onDirty} onImageSize={onImageSize} onPages={onPages} onLink={onLink} onKey={onKey} region={region} /> : <p className="preview__message">This file was deleted.</p>;
+      // A file that was gone before the tab ever showed it has only its draft: the editor opens on that, so the edits can be read
+      // and saved again.
+      if (file.last?.phase === "text" || (file.last === undefined && keptDraft)) return textTab(file);
+      return file.last ? <Body entry={entry} file={file.last} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} onDirty={onDirty} onImageSize={onImageSize} onPages={onPages} onLink={onLink} onKey={onKey} region={region} keptDraft={keptDraft} /> : <p className="preview__message">This file was deleted.</p>;
     case "error":
       return <p className="preview__message">This file can't be previewed.</p>;
   }
 }
 
 /** The pane for one file: header, then the scrolling body. Everything it shows comes in as props, so it renders the same on any state. */
-export function PreviewPane({ entry, file, updated, os, canBack, canForward, onBack, onForward, onOpen, onView, active, onEscape, announce, refetch, regionTarget, onRegion, onDirty, ref }: PreviewPaneProps) {
+export function PreviewPane({ entry, file, updated, os, canBack, canForward, onBack, onForward, onOpen, onView, active, onEscape, announce, refetch, regionTarget, onRegion, onDirty, keptDraft = false, ref }: PreviewPaneProps) {
   const { name, folder } = splitPath(entry.path);
   const body = useRef<HTMLDivElement>(null);
   // What a text tab lets the pane call: Ctrl+S saves through it. Null while no text tab is mounted.
@@ -402,7 +408,7 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
             This file was deleted.
           </div>
         )}
-        <Body entry={entry} file={file} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} onDirty={noteDirty} onImageSize={(url, w, h) => setSize({ url, w, h })} onPages={(count) => setPages({ path: entry.path, count })} onLink={follow} onKey={keys} region={regionHooks} />
+        <Body entry={entry} file={file} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} onDirty={noteDirty} onImageSize={(url, w, h) => setSize({ url, w, h })} onPages={(count) => setPages({ path: entry.path, count })} onLink={follow} onKey={keys} region={regionHooks} keptDraft={keptDraft} />
       </div>
       {select?.step === "comment" && body.current
         ? createPortal(
@@ -459,10 +465,30 @@ function RegionPopover({ boxEl, body, region, children }: { boxEl: HTMLElement |
   );
 }
 
-export type PreviewProps = Omit<PreviewPaneProps, "file" | "updated" | "refetch">;
+export type PreviewProps = Omit<PreviewPaneProps, "file" | "updated" | "refetch" | "keptDraft">;
+
+/**
+ * Whether unsaved edits are kept for a file that was already gone when its tab opened. Asked once the file is known to be gone,
+ * and the answer stays for the path: the editor that opens on the draft must not go away when the draft is saved or emptied.
+ */
+function useKeptDraft(path: string, lost: boolean): boolean {
+  const [kept, setKept] = useState<string | null>(null);
+  useEffect(() => {
+    if (!lost) return;
+    let on = true;
+    void getDraft(path).then((draft) => {
+      if (on && draft !== null) setKept(path);
+    });
+    return () => {
+      on = false;
+    };
+  }, [path, lost]);
+  return kept === path;
+}
 
 /** The preview pane for the current entry. It loads the file, keeps it current while it is open, and stops when it closes. */
 export function Preview(props: PreviewProps) {
   const { file, updated, refetch } = usePreviewFile(props.entry.path, { paused: !props.active });
-  return <PreviewPane {...props} file={file} updated={updated} refetch={refetch} />;
+  const keptDraft = useKeptDraft(props.entry.path, file.phase === "deleted" && file.last === undefined);
+  return <PreviewPane {...props} file={file} updated={updated} refetch={refetch} keptDraft={keptDraft} />;
 }

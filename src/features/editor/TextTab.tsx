@@ -208,7 +208,9 @@ export function TextTab({ entry, file, kind, active, os, onDirty, commands, anno
   const readOnly = text?.readOnly ?? null;
   const readOnlyNow = useRef(readOnly);
   readOnlyNow.current = readOnly;
-  const { doc, ready, dispatch, save, discard } = useEditorFile(entry.path, file, { announce, refetch, editor, readOnly: () => readOnlyNow.current !== null });
+  // Someone is reading here when the keyboard is in this tab's panel: a reload is spoken to them, and to nobody typing elsewhere.
+  const reading = useCallback(() => (root.current?.closest('[role="tabpanel"]') ?? root.current)?.contains(document.activeElement) ?? false, []);
+  const { doc, ready, dispatch, save, discard } = useEditorFile(entry.path, file, { announce, reading, refetch, editor, readOnly: () => readOnlyNow.current !== null });
   const hintId = useId();
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
   // A shebang tells the type of a file whose name does not: read from the text the tab opened with.

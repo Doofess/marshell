@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Draft } from "../../generated/Draft";
 import { start, step, type DocEvent, type DocState } from "./editorDoc";
-import { DRAFT_MS, createDraftQueue, createSaver, runEffect, type EffectDeps } from "./useEditorFile";
+import type { FileState } from "../preview/usePreviewFile";
+import { DRAFT_MS, createDraftQueue, createSaver, formatOf, opening, opensOn, runEffect, type EffectDeps } from "./useEditorFile";
 
 const N = "a.txt";
 const H1 = "1".repeat(64);
@@ -10,7 +11,7 @@ const FAILED = "The unsaved edits to a.txt couldn't be kept as a draft.";
 type Fakes = { puts: Draft[]; calls: string[]; events: DocEvent[]; said: string[]; sent: Array<{ bytes: Uint8Array; expect: string | null }> };
 
 /** Deps whose I/O is all recorded. `put` decides what a draft put answers. */
-function setup(over: { doc?: () => DocState; put?: (d: Draft) => Promise<boolean>; format?: EffectDeps["format"]; save?: EffectDeps["api"]["saveFile"] } = {}) {
+function setup(over: { doc?: () => DocState; put?: (d: Draft) => Promise<boolean>; format?: EffectDeps["format"]; save?: EffectDeps["api"]["saveFile"]; reading?: () => boolean } = {}) {
   const f: Fakes = { puts: [], calls: [], events: [], said: [], sent: [] };
   let cur: DocState = { ...start, base: { text: "one", hash: H1 }, text: "one", dirty: true };
   const queue = createDraftQueue({
@@ -25,6 +26,7 @@ function setup(over: { doc?: () => DocState; put?: (d: Draft) => Promise<boolean
     format: over.format ?? (() => ({ encoding: "utf-8", eol: "lf" })),
     editor: () => null,
     announce: (t) => f.said.push(t),
+    reading: over.reading ?? (() => true),
     refetch: () => f.calls.push("refetch"),
     dispatch: (e) => f.events.push(e),
     drafts: queue,
@@ -185,6 +187,20 @@ describe("discard", () => {
 });
 
 /** A document run by the real reducer and the real effects, with the saver watching each state, as the hook wires them. */
+describe("an announcement for someone reading in the tab", () => {
+  it("is_not_spoken_while_the_keyboard_is_elsewhere", () => {
+    const { f, deps } = setup({ reading: () => false });
+    runEffect({ type: "announce", text: "a.txt changed on disk. 1 line changed.", reading: true }, deps);
+    runEffect({ type: "announce", text: "Saved a.txt." }, deps);
+    expect(f.said).toEqual(["Saved a.txt."]);
+  });
+  it("is_spoken_to_someone_whose_keyboard_is_in_the_tab", () => {
+    const { f, deps } = setup({ reading: () => true });
+    runEffect({ type: "announce", text: "a.txt changed on disk. 1 line changed.", reading: true }, deps);
+    expect(f.said).toEqual(["a.txt changed on disk. 1 line changed."]);
+  });
+});
+
 function saverSetup(from: Partial<DocState>, answer: Awaited<ReturnType<EffectDeps["api"]["saveFile"]>>, readOnly = false) {
   const log = setup();
   let state: DocState = { ...start, base: { text: "one", hash: H1 }, text: "one two", dirty: true, ...from };
@@ -277,5 +293,38 @@ describe("createSaver", () => {
     const result = t.saver.save();
     t.saver.cancel();
     expect(await result).toBe(false);
+  });
+});
+
+describe("what a document opens on", () => {
+  const text = (over: Partial<Extract<FileState, { phase: "text" }>> = {}): FileState => ({ phase: "text", text: "one\r\ntwo", encoding: "utf-8", eol: "crlf", hash: H1, readOnly: null, ...over });
+  const kept: Draft = { path: "C:\\a.txt", text: "mine", base_text: "one\ntwo", base_hash: H1, encoding: "utf-16le", eol: "crlf", edited_ms: 1 };
+  const get = async () => kept;
+
+  it("a_file_gets_its_draft_and_its_text_with_lf_endings", async () => {
+    const file = text();
+    expect(await opening("C:\\a.txt", () => file, get)).toEqual({ disk: { text: "one\ntwo", hash: H1 }, draft: kept });
+  });
+  it("a_read_only_file_gets_its_draft_too_so_the_text_typed_before_can_be_read", async () => {
+    const file = text({ readOnly: "attribute" });
+    expect((await opening("C:\\a.txt", () => file, get)).draft).toEqual(kept);
+  });
+  it("opens_on_the_disk_as_it_is_when_the_draft_has_come", async () => {
+    const first = text();
+    const later = text({ text: "newer", hash: "2".repeat(64) });
+    expect((await opening("C:\\a.txt", () => later, get)).disk).toEqual({ text: "newer", hash: "2".repeat(64) });
+  });
+  it("a_file_that_was_gone_when_its_tab_opened_opens_as_no_file_with_its_draft", async () => {
+    const file: FileState = { phase: "deleted" };
+    expect(opensOn(file)).toBe(true);
+    expect(await opening("C:\\a.txt", () => file, get)).toEqual({ disk: { text: "", hash: null }, draft: kept });
+  });
+  it("a_draft_says_how_its_file_was_stored_and_an_unknown_name_is_utf8_with_lf", () => {
+    expect(formatOf(kept)).toEqual({ encoding: "utf-16le", eol: "crlf" });
+    expect(formatOf({ encoding: "latin-1", eol: "cr" })).toEqual({ encoding: "utf-8", eol: "lf" });
+  });
+  it("nothing_opens_on_a_file_still_loading_or_one_that_is_not_text", () => {
+    for (const file of [{ phase: "loading" }, { phase: "binary" }, { phase: "error" }] as FileState[]) expect(opensOn(file)).toBe(false);
+    expect(opensOn(text())).toBe(true);
   });
 });

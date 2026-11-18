@@ -83,12 +83,13 @@ describe("step", () => {
     expect(state).toMatchObject({ text: "one\nTWO\nthree", dirty: false, base: { text: "one\nTWO\nthree", hash: H2 }, conflict: null });
     expect(effects).toEqual([
       { type: "setText", text: "one\nTWO\nthree", marks: [2, 3] },
-      { type: "announce", text: "a.txt changed on disk. 2 lines changed." },
+      // Only for someone reading in the tab: an agent that writes the file every second must not talk over the terminal.
+      { type: "announce", text: "a.txt changed on disk. 2 lines changed.", reading: true },
     ]);
   });
   it("step_disk_while_clean_says_1_line_changed_for_one", () => {
     const { effects } = run(doc(), { type: "disk", disk: { text: "one\nTWO", hash: H2 } });
-    expect(effects).toContainEqual({ type: "announce", text: "a.txt changed on disk. 1 line changed." });
+    expect(effects).toContainEqual({ type: "announce", text: "a.txt changed on disk. 1 line changed.", reading: true });
   });
   it("step_disk_while_dirty_sets_the_conflict_and_keeps_the_text", () => {
     const disk = { text: "other", hash: H2 };
@@ -256,8 +257,8 @@ describe("step", () => {
     expect(step(s, { type: "takeDisk" }, N)).toEqual({ state: s, effects: [] });
   });
   it("step_keep_mine_and_take_disk_wait_for_a_save_in_flight", () => {
-    const s = run(doc(), { type: "edited", text: "mine" }, { type: "save" }, { type: "disk", disk: { text: "other", hash: H2 } }).state;
-    expect(s.conflict).not.toBeNull();
+    // An undo can start with the bar up; a read of the disk during a save is held, so it raises no bar then.
+    const s = doc({ text: "mine", dirty: true, saving: true, lastSave: { snapshot: "snap", hash: H1 }, conflict: { text: "other", hash: H2 } });
     expect(step(s, { type: "keepMine" }, N)).toEqual({ state: s, effects: [] });
     expect(step(s, { type: "takeDisk" }, N)).toEqual({ state: s, effects: [] });
   });
@@ -283,6 +284,40 @@ describe("step", () => {
     const { state, effects } = run(saved, { type: "unsaved", hash: H1 }, { type: "disk", disk: { text: "one\ntwo", hash: H1 } });
     expect(state).toMatchObject({ text: "mine", dirty: true, conflict: null, base: { text: "one\ntwo", hash: H1 } });
     expect(effects).toEqual([{ type: "putDraft" }]);
+  });
+  it("step_a_disk_read_during_an_undo_waits_for_its_answer_and_the_text_stays", () => {
+    // The once-a-second check can read the bytes the undo put back before the undo is answered.
+    const saved = run(doc(), { type: "edited", text: "mine" }, { type: "save" }, { type: "saved", hash: H2, snapshot: "snap" }).state;
+    const during = run(saved, { type: "unsave" }, { type: "disk", disk: { text: "one\ntwo", hash: H1 } });
+    expect(during.state).toMatchObject({ text: "mine", saving: true });
+    expect(during.effects).toEqual([]);
+    const { state, effects } = run(during.state, { type: "unsaved", hash: H1 });
+    expect(state).toMatchObject({ text: "mine", dirty: true, conflict: null, base: { text: "one\ntwo", hash: H1 }, held: null });
+    expect(types(effects)).toEqual(["refetch", "announce", "putDraft"]);
+  });
+  it("step_a_read_of_the_tabs_own_write_during_a_save_raises_no_bar", () => {
+    const typing = run(doc(), { type: "edited", text: "mine" }, { type: "save" }, { type: "edited", text: "mine and more" }).state;
+    const during = run(typing, { type: "disk", disk: { text: "mine", hash: H2 } });
+    expect(during.state.conflict).toBeNull();
+    const { state } = run(during.state, { type: "saved", hash: H2, snapshot: "snap" });
+    expect(state).toMatchObject({ text: "mine and more", dirty: true, conflict: null, base: { text: "mine", hash: H2 }, held: null });
+  });
+  it("step_somebody_elses_change_read_during_a_save_sets_the_bar_when_the_save_is_answered", () => {
+    const saving = run(doc(), { type: "edited", text: "mine" }, { type: "save" }, { type: "disk", disk: { text: "theirs", hash: H3 } }).state;
+    expect(saving.conflict).toBeNull();
+    const { state } = run(saving, { type: "saveConflict", hash: H3 });
+    expect(state).toMatchObject({ text: "mine", dirty: true, saving: false, conflict: { text: "theirs", hash: H3 }, held: null });
+  });
+  it("step_a_file_that_went_during_a_save_is_gone_when_the_save_is_answered", () => {
+    const saving = run(doc(), { type: "edited", text: "mine" }, { type: "save" }, { type: "gone" }).state;
+    expect(saving.deleted).toBe(false);
+    const { state } = run(saving, { type: "saveFailed", line: "x" });
+    expect(state).toMatchObject({ text: "mine", deleted: true, saving: false, held: null });
+  });
+  it("step_only_the_newest_read_during_a_save_is_kept", () => {
+    const saving = run(doc(), { type: "edited", text: "mine" }, { type: "save" }, { type: "disk", disk: { text: "theirs", hash: H3 } }, { type: "disk", disk: { text: "mine", hash: H2 } }).state;
+    const { state } = run(saving, { type: "saved", hash: H2, snapshot: "snap" });
+    expect(state).toMatchObject({ dirty: false, conflict: null });
   });
   it("step_undo_after_a_later_edit_keeps_the_edit", () => {
     const saved = run(doc(), { type: "edited", text: "mine" }, { type: "save" }, { type: "saved", hash: H2, snapshot: "snap" }, { type: "edited", text: "mine and more" }).state;

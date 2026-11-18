@@ -10,7 +10,8 @@ export type Disk = { text: string; hash: string | null };
  * flight sent, and `line` the status line's copy. `saving` is true while a save or an
  * undo of one is in flight. `replaced` is what the disk held before the tab's last write
  * (`hash` null for no file), until the disk has been read again: a read that began before
- * the write can still arrive, and it is not somebody else's change.
+ * the write can still arrive, and it is not somebody else's change. `held` is the newest read of
+ * the disk that came while a save or an undo was in flight: it is taken when that is answered.
  */
 export type DocState = {
   base: Disk;
@@ -25,6 +26,7 @@ export type DocState = {
   undoOffered: boolean;
   sent: string | null;
   replaced: { hash: string | null } | null;
+  held: Extract<DocEvent, { type: "disk" | "gone" }> | null;
 };
 
 export type DocEvent =
@@ -53,7 +55,7 @@ export type Effect =
   | { type: "save"; expect: string | null }
   | { type: "unsave"; snapshot: string }
   | { type: "refetch" }
-  | { type: "announce"; text: string };
+  | { type: "announce"; text: string; /** Only for someone whose keyboard is in the tab. */ reading?: true };
 
 type Out = { state: DocState; effects: Effect[] };
 
@@ -70,6 +72,7 @@ export const start: DocState = {
   undoOffered: false,
   sent: null,
   replaced: null,
+  held: null,
 };
 
 /** A file that is not there reads as empty text. */
@@ -128,7 +131,9 @@ function reload(s: DocState, disk: Disk, announce: string | null): Out {
   const set: Effect = { type: "setText", text: disk.text, marks };
   if (announce === null) return { state, effects: [set] };
   const count = marks.length === 1 ? "1 line changed." : `${marks.length} lines changed.`;
-  return said(state, `${announce} changed on disk. ${count}`, set);
+  const text = `${announce} changed on disk. ${count}`;
+  // A file an agent writes reloads again and again: the line shows each time, and is spoken only to someone reading in the tab.
+  return { state: { ...state, line: text }, effects: [set, { type: "announce", text, reading: true }] };
 }
 
 function disk(s: DocState, d: Disk, name: string): Out {
@@ -191,8 +196,21 @@ function afterOwnWrite(s: DocState, hash: string | null): Out | null {
   return null;
 }
 
-/** One event applied to the state. Pure: the effects are for the caller to run. */
+/**
+ * One event applied to the state. Pure: the effects are for the caller to run. A read of the disk that comes while a save or an
+ * undo is in flight waits for the answer: before it, the read can't be told from the tab's own write, and taking it would reload
+ * the text an undo is meant to leave (PLAN §9, 6q-4 decision 8) or raise the bar over the tab's own save.
+ */
 export function step(s: DocState, e: DocEvent, name: string): Out {
+  if ((e.type === "disk" || e.type === "gone") && s.saving) return unchanged({ ...s, held: e });
+  const out = apply(s, e, name);
+  const held = out.state.held;
+  if (held === null || out.state.saving) return out;
+  const next = apply({ ...out.state, held: null }, held, name);
+  return { state: next.state, effects: [...out.effects, ...next.effects] };
+}
+
+function apply(s: DocState, e: DocEvent, name: string): Out {
   if (e.type === "disk" || e.type === "gone") {
     const stale = afterOwnWrite(s, e.type === "disk" ? e.disk.hash : null);
     if (stale) return stale;

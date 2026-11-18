@@ -91,6 +91,12 @@ describe("PreviewPane", () => {
     // The pane's own banner is for the files that have no notice of theirs.
     expect(out).not.toContain("This file was deleted.");
   });
+  it("opens the editor on a file that was already gone, when unsaved edits are kept for it", () => {
+    const out = html({ phase: "deleted" }, { keptDraft: true });
+    expect(out).toContain('class="text-tab"');
+    expect(out).toContain("a.rs was deleted on disk. Ctrl+S saves it again.");
+    expect(out).not.toContain("This file was deleted.");
+  });
   it("says a file can't be previewed when the core refuses it", () => {
     expect(html({ phase: "error" })).toContain("This file can&#x27;t be previewed.");
   });
