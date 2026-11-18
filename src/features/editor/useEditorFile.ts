@@ -108,9 +108,6 @@ export type EffectDeps = {
   api: { saveFile: typeof saveFile; unsaveFile: typeof unsaveFile };
 };
 
-/** What the status line says when a save is refused for size. The core's `413` carries no line of its own. */
-const TOO_LARGE = "It is over 2 MB, so it can't be saved.";
-
 async function runSave(effect: Extract<Effect, { type: "save" }>, d: EffectDeps): Promise<void> {
   const s = d.doc();
   const { encoding, eol } = d.format();
@@ -125,7 +122,7 @@ async function runSave(effect: Extract<Effect, { type: "save" }>, d: EffectDeps)
       d.dispatch({ type: "saveConflict", hash: r.hash });
       return;
     case "tooLarge":
-      d.dispatch({ type: "saveFailed", line: TOO_LARGE });
+      d.dispatch({ type: "saveTooLarge" });
       return;
     case "refused":
       d.dispatch({ type: "saveFailed", line: r.line });
@@ -137,7 +134,7 @@ async function runUnsave(effect: Extract<Effect, { type: "unsave" }>, d: EffectD
   const r = await d.api.unsaveFile(d.path, effect.snapshot);
   if (r.kind === "saved") d.dispatch({ type: "unsaved", hash: r.saved.hash });
   else if (r.kind === "conflict") d.dispatch({ type: "unsaveRefused" });
-  else d.dispatch({ type: "saveFailed", line: r.line });
+  else d.dispatch({ type: "unsaveFailed", line: r.line });
 }
 
 /** Runs one effect of the reducer. The save and unsave return a promise that settles when their answer has been dispatched. */

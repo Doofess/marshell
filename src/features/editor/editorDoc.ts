@@ -7,7 +7,10 @@ export type Disk = { text: string; hash: string | null };
 /**
  * What a tab knows about its file. Every text here has `\n` line endings; the caller
  * normalises. `text` is the editor's text as last reported, `sent` the text a save in
- * flight sent, and `line` the status line's copy.
+ * flight sent, and `line` the status line's copy. `saving` is true while a save or an
+ * undo of one is in flight. `replaced` is what the disk held before the tab's last write
+ * (`hash` null for no file), until the disk has been read again: a read that began before
+ * the write can still arrive, and it is not somebody else's change.
  */
 export type DocState = {
   base: Disk;
@@ -21,6 +24,7 @@ export type DocState = {
   line: string | null;
   undoOffered: boolean;
   sent: string | null;
+  replaced: { hash: string | null } | null;
 };
 
 export type DocEvent =
@@ -32,11 +36,13 @@ export type DocEvent =
   | { type: "saved"; hash: string; snapshot: string | null }
   | { type: "saveConflict"; hash: string | null }
   | { type: "saveFailed"; line: string }
+  | { type: "saveTooLarge" }
   | { type: "keepMine" }
   | { type: "takeDisk" }
   | { type: "unsave" }
   | { type: "unsaved"; hash: string }
   | { type: "unsaveRefused" }
+  | { type: "unsaveFailed"; line: string }
   | { type: "left" };
 
 /** What the caller runs. The draft effects use the state after the step. */
@@ -63,6 +69,7 @@ export const start: DocState = {
   line: null,
   undoOffered: false,
   sent: null,
+  replaced: null,
 };
 
 /** A file that is not there reads as empty text. */
@@ -101,7 +108,8 @@ function opened(disk: Disk, draft: Draft | null): Out {
 }
 
 function edited(s: DocState, text: string): Out {
-  const next = { ...edit(s, text), marks: [], undoOffered: false };
+  // The status line spoke of the text as it was ("Saved a.txt."), so it goes with the first change.
+  const next = { ...edit(s, text), marks: [], undoOffered: false, line: null };
   return { state: next, effects: [draftEffect(next.dirty)] };
 }
 
@@ -165,12 +173,30 @@ function saved(s: DocState, hash: string, snapshot: string | null, name: string)
     dirty,
     lastSave: snapshot === null ? null : { snapshot, hash },
     undoOffered: snapshot !== null,
+    replaced: s.base.hash === hash ? null : { hash: s.base.hash },
   };
-  return said(state, `Saved ${name}.`, draftEffect(dirty));
+  // The file is read again at once, so what the pane knows of it (its hash, that it is there) is the saved file.
+  return said(state, `Saved ${name}.`, draftEffect(dirty), { type: "refetch" });
+}
+
+/**
+ * The first read of the disk after a write of the tab's own. One that shows what the write replaced began before it: it is
+ * dropped and the file is read again, so a file that really went back is taken on that second read.
+ */
+function afterOwnWrite(s: DocState, hash: string | null): Out | null {
+  if (s.replaced === null) return null;
+  const state = { ...s, replaced: null };
+  if (hash === s.replaced.hash && hash !== s.base.hash) return { state, effects: [{ type: "refetch" }] };
+  return null;
 }
 
 /** One event applied to the state. Pure: the effects are for the caller to run. */
 export function step(s: DocState, e: DocEvent, name: string): Out {
+  if (e.type === "disk" || e.type === "gone") {
+    const stale = afterOwnWrite(s, e.type === "disk" ? e.disk.hash : null);
+    if (stale) return stale;
+    if (s.replaced !== null) s = { ...s, replaced: null };
+  }
   switch (e.type) {
     case "opened":
       return opened(e.disk, e.draft);
@@ -188,6 +214,8 @@ export function step(s: DocState, e: DocEvent, name: string): Out {
       return said({ ...s, saving: false, sent: null }, `${name} changed on disk, so it wasn't saved.`, { type: "refetch" });
     case "saveFailed":
       return said({ ...s, saving: false, sent: null }, `${name} couldn't be saved. ${e.line}`);
+    case "saveTooLarge":
+      return said({ ...s, saving: false, sent: null }, `${name} is over 2 MB, so it can't be saved.`);
     case "keepMine": {
       if (s.conflict === null || s.saving) return unchanged(s);
       const next = edit({ ...s, base: s.conflict, conflict: null }, s.text);
@@ -201,12 +229,20 @@ export function step(s: DocState, e: DocEvent, name: string): Out {
     }
     case "unsave":
       if (s.lastSave === null || s.saving) return unchanged(s);
-      return { state: s, effects: [{ type: "unsave", snapshot: s.lastSave.snapshot }] };
+      // In flight like a save, so a second press, a save or the bar waits for its answer.
+      return { state: { ...s, saving: true }, effects: [{ type: "unsave", snapshot: s.lastSave.snapshot }] };
     case "unsaved":
       // The disk now holds the file as it was; the `disk` event that follows brings its text.
-      return said({ ...s, lastSave: null, undoOffered: false, base: { text: s.base.text, hash: e.hash } }, `${name} is back as it was before the save.`, { type: "refetch" });
+      return said(
+        { ...s, saving: false, lastSave: null, undoOffered: false, base: { text: s.base.text, hash: e.hash }, replaced: s.base.hash === e.hash ? null : { hash: s.base.hash } },
+        `${name} is back as it was before the save.`,
+        { type: "refetch" },
+      );
     case "unsaveRefused":
-      return said({ ...s, lastSave: null, undoOffered: false }, `${name} changed after the save, so the save can't be undone.`);
+      return said({ ...s, saving: false, lastSave: null, undoOffered: false }, `${name} changed after the save, so the save can't be undone.`);
+    case "unsaveFailed":
+      // The core would not write the file (read-only, in use): the save is still there to undo.
+      return said({ ...s, saving: false }, `The save of ${name} couldn't be undone. ${e.line}`);
     case "left":
       return unchanged({ ...s, marks: [], undoOffered: false });
   }

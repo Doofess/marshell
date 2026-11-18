@@ -130,7 +130,7 @@ describe("runEffect", () => {
     };
     expect(await answer({ kind: "conflict", hash: "z" })).toEqual([{ type: "saveConflict", hash: "z" }]);
     expect(await answer({ kind: "refused", line: "That path can't be saved." })).toEqual([{ type: "saveFailed", line: "That path can't be saved." }]);
-    expect(await answer({ kind: "tooLarge" })).toEqual([{ type: "saveFailed", line: "It is over 2 MB, so it can't be saved." }]);
+    expect(await answer({ kind: "tooLarge" })).toEqual([{ type: "saveTooLarge" }]);
   });
 
   it("a_failed_draft_put_announces_once_until_one_succeeds", async () => {
@@ -163,6 +163,6 @@ describe("runEffect", () => {
     await runEffect({ type: "unsave", snapshot: "s" }, deps);
     deps.api.unsaveFile = async () => ({ kind: "refused", line: "The file is read-only or in use by another program." });
     await runEffect({ type: "unsave", snapshot: "s" }, deps);
-    expect(f.events).toEqual([{ type: "unsaved", hash: "back" }, { type: "unsaveRefused" }, { type: "saveFailed", line: "The file is read-only or in use by another program." }]);
+    expect(f.events).toEqual([{ type: "unsaved", hash: "back" }, { type: "unsaveRefused" }, { type: "unsaveFailed", line: "The file is read-only or in use by another program." }]);
   });
 });

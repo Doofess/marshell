@@ -178,7 +178,7 @@ describe("step", () => {
       undoOffered: true,
       line: "Saved a.txt.",
     });
-    expect(effects).toEqual([{ type: "dropDraft" }, { type: "announce", text: "Saved a.txt." }]);
+    expect(effects).toEqual([{ type: "dropDraft" }, { type: "refetch" }, { type: "announce", text: "Saved a.txt." }]);
   });
   it("step_saved_with_no_snapshot_leaves_lastSave_null_and_offers_no_undo", () => {
     const { state } = run(doc(), { type: "gone" }, { type: "save" }, { type: "saved", hash: H2, snapshot: null });
@@ -303,5 +303,93 @@ describe("step", () => {
       step(s, e, N);
     }
     expect(JSON.stringify(s)).toBe(frozen);
+  });
+});
+
+describe("a read of the file from before a write of the tab's own", () => {
+  const savedState = () => run(doc(), { type: "edited", text: "mine" }, { type: "save" }, { type: "saved", hash: H2, snapshot: "snap" }).state;
+
+  it("a_save_reads_the_file_again", () => {
+    const { effects } = run(doc(), { type: "edited", text: "mine" }, { type: "save" }, { type: "saved", hash: H2, snapshot: "snap" });
+    expect(types(effects)).toEqual(["dropDraft", "refetch", "announce"]);
+  });
+  it("a_stale_read_after_a_save_is_dropped_and_the_file_is_read_again", () => {
+    // The check that was reading the file when the save landed answers with the old bytes.
+    const { state, effects } = run(savedState(), { type: "disk", disk: { text: "one\ntwo", hash: H1 } });
+    expect(state).toMatchObject({ text: "mine", base: { text: "mine", hash: H2 }, dirty: false, conflict: null, marks: [], line: "Saved a.txt." });
+    expect(effects).toEqual([{ type: "refetch" }]);
+  });
+  it("text_typed_after_a_stale_read_raises_no_bar", () => {
+    const { state } = run(savedState(), { type: "disk", disk: { text: "one\ntwo", hash: H1 } }, { type: "edited", text: "mine!" }, { type: "disk", disk: { text: "mine", hash: H2 } });
+    expect(state).toMatchObject({ text: "mine!", dirty: true, conflict: null, base: { text: "mine", hash: H2 } });
+  });
+  it("a_file_really_put_back_to_its_old_bytes_is_taken_on_the_second_read", () => {
+    const old: DocEvent = { type: "disk", disk: { text: "one\ntwo", hash: H1 } };
+    const { state, effects } = run(savedState(), old, old);
+    expect(state).toMatchObject({ text: "one\ntwo", base: { text: "one\ntwo", hash: H1 }, dirty: false });
+    expect(types(effects)).toEqual(["setText", "announce"]);
+  });
+  it("another_programs_change_after_a_save_is_not_dropped", () => {
+    const { state, effects } = run(savedState(), { type: "disk", disk: { text: "theirs", hash: H3 } });
+    expect(state).toMatchObject({ text: "theirs", base: { text: "theirs", hash: H3 } });
+    expect(types(effects)).toEqual(["setText", "announce"]);
+  });
+  it("the_disk_as_saved_ends_the_watch_for_a_stale_read", () => {
+    const now: DocEvent = { type: "disk", disk: { text: "mine", hash: H2 } };
+    const { state, effects } = run(savedState(), now, { type: "disk", disk: { text: "one\ntwo", hash: H1 } });
+    expect(state).toMatchObject({ text: "one\ntwo", base: { text: "one\ntwo", hash: H1 } });
+    expect(types(effects)).toEqual(["setText", "announce"]);
+  });
+  it("a_stale_missing_after_a_save_that_made_the_file_again_is_dropped", () => {
+    const made = run(doc(), { type: "gone" }, { type: "save" }, { type: "saved", hash: H2, snapshot: null }).state;
+    const { state, effects } = run(made, { type: "gone" });
+    expect(state).toMatchObject({ deleted: false, dirty: false, base: { text: "one\ntwo", hash: H2 } });
+    expect(effects).toEqual([{ type: "refetch" }]);
+  });
+  it("a_stale_read_after_an_undone_save_is_dropped", () => {
+    const undone = run(savedState(), { type: "unsave" }, { type: "unsaved", hash: H1 }).state;
+    const { state, effects } = run(undone, { type: "disk", disk: { text: "mine", hash: H2 } });
+    expect(state).toMatchObject({ text: "mine", conflict: null, base: { hash: H1 } });
+    expect(effects).toEqual([{ type: "refetch" }]);
+  });
+});
+
+describe("an undo in flight", () => {
+  const savedState = () => run(doc(), { type: "edited", text: "mine" }, { type: "save" }, { type: "saved", hash: H2, snapshot: "snap" }).state;
+
+  it("a_second_undo_while_one_is_in_flight_is_nothing", () => {
+    const first = step(savedState(), { type: "unsave" }, N);
+    expect(types(first.effects)).toEqual(["unsave"]);
+    expect(step(first.state, { type: "unsave" }, N)).toEqual({ state: first.state, effects: [] });
+  });
+  it("a_save_waits_for_an_undo_in_flight", () => {
+    const s = run(savedState(), { type: "edited", text: "more" }, { type: "unsave" }).state;
+    expect(step(s, { type: "save" }, N)).toEqual({ state: s, effects: [] });
+  });
+  it("an_undo_that_is_answered_lets_a_save_go_again", () => {
+    for (const answer of [{ type: "unsaved", hash: H1 }, { type: "unsaveRefused" }, { type: "unsaveFailed", line: "x" }] as DocEvent[]) {
+      const s = run(savedState(), { type: "edited", text: "more" }, { type: "unsave" }, answer).state;
+      expect(s.saving, answer.type).toBe(false);
+      expect(types(step(s, { type: "save" }, N).effects), answer.type).toEqual(["save"]);
+    }
+  });
+  it("an_undo_the_core_refused_says_its_line_and_keeps_the_save", () => {
+    const { state, effects } = run(savedState(), { type: "unsave" }, { type: "unsaveFailed", line: "The file is read-only or in use by another program." });
+    const text = "The save of a.txt couldn't be undone. The file is read-only or in use by another program.";
+    expect(state).toMatchObject({ line: text, lastSave: { snapshot: "snap", hash: H2 }, text: "mine", dirty: false });
+    expect(effects).toEqual([{ type: "announce", text }]);
+  });
+});
+
+describe("the status line", () => {
+  it("a_save_over_2_mb_says_the_plans_line", () => {
+    const { state, effects } = run(doc(), { type: "edited", text: "mine" }, { type: "save" }, { type: "saveTooLarge" });
+    expect(state).toMatchObject({ saving: false, sent: null, dirty: true, text: "mine", line: "a.txt is over 2 MB, so it can't be saved." });
+    expect(effects).toEqual([{ type: "announce", text: "a.txt is over 2 MB, so it can't be saved." }]);
+  });
+  it("an_edit_clears_a_line_that_is_no_longer_true", () => {
+    const saved = run(doc(), { type: "edited", text: "mine" }, { type: "save" }, { type: "saved", hash: H2, snapshot: "snap" }).state;
+    expect(saved.line).toBe("Saved a.txt.");
+    expect(step(saved, { type: "edited", text: "mine!" }, N).state.line).toBeNull();
   });
 });

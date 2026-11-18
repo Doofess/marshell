@@ -6,7 +6,7 @@ import { cropImage, cropPdfPage } from "../regions/crop";
 import { placePopover } from "../regions/placement";
 import { RegionComment, type RegionTarget } from "../regions/RegionComment";
 import { RegionLayer } from "../regions/RegionLayer";
-import { TextTab, type TextTabCommands } from "../editor/TextTab";
+import { isSaveKey, TextTab, type TextTabCommands } from "../editor/TextTab";
 import { canMarkRegion, fromDrag, initialRegion, regionLabel, regionStillValid, type Region } from "../regions/region";
 import type { Os } from "../../lib/keymap";
 import { ImageView } from "./ImageView";
@@ -95,7 +95,7 @@ type RegionHooks = {
 };
 
 /** The keys the pane answers to; a native event from inside the HTML frame has the same shape as React's. */
-type Key = { key: string; ctrlKey: boolean; altKey: boolean; metaKey: boolean; shiftKey: boolean; preventDefault: () => void };
+type Key = { key: string; code: string; ctrlKey: boolean; altKey: boolean; metaKey: boolean; shiftKey: boolean; preventDefault: () => void };
 
 /** A link that goes somewhere outside the document's own scroll: a file, or a web address. */
 type Outbound = Exclude<LinkTarget, { kind: "anchor" } | { kind: "none" }>;
@@ -312,8 +312,7 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
     const inField = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable === true);
     // Escape belongs to the editor while it has the keyboard: it closes the find bar, and Esc then Tab leaves.
     const inEditor = !!t && t.closest?.(".editor") != null;
-    const saveKey = (os === "mac" ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "s";
-    if (saveKey && textCommands.current) {
+    if (isSaveKey(e, os) && textCommands.current) {
       // Always taken, so the webview's own save never opens, whether or not there is anything to save.
       e.preventDefault();
       textCommands.current.save();

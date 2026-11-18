@@ -222,6 +222,11 @@
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
+/* The status line sits under the text, above the footer: its rule is on the side that meets the editor. */
+.text-tab__status {
+  border-block-end: 0;
+  border-block-start: 1px solid var(--hairline);
+}
 .text-tab__line {
   flex: 1 1 auto;
   min-inline-size: 0;

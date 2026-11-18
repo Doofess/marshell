@@ -27,6 +27,16 @@ export type TextTabCommands = {
   dirty(): boolean;
 };
 
+/**
+ * Ctrl+S, or Cmd+S on macOS. The letter is what the key types where the layout is Latin, and the key where S is printed where
+ * it is not (a Hebrew or Cyrillic layout types no "s").
+ */
+export function isSaveKey(e: { key: string; code: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean; shiftKey: boolean }, os: Os): boolean {
+  const mod = os === "mac" ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;
+  if (!mod || e.altKey || e.shiftKey) return false;
+  return /^[a-z]$/i.test(e.key) ? e.key.toLowerCase() === "s" : e.code === "KeyS";
+}
+
 /** How long the rendered view waits after the last key. */
 export const RENDER_MS = 150;
 
@@ -84,16 +94,6 @@ export function TextTabView(p: TextTabViewProps) {
     <div className="text-tab">
       {notice !== null && <div className="text-tab__notice">{notice}</div>}
       {doc.conflict !== null && <ChangedBar name={name} onKeep={p.onKeep} onTake={p.onTake} />}
-      {doc.line !== null && (
-        <div className="text-tab__status">
-          <span className="text-tab__line">{doc.line}</span>
-          {doc.undoOffered && doc.lastSave !== null && (
-            <button type="button" className="text-tab__button" onClick={p.onUndo}>
-              Undo
-            </button>
-          )}
-        </div>
-      )}
       <div className="text-tab__body">
         {paged && (
           <div className="text-tab__pane" data-pane="rendered" hidden={!showRendered}>
@@ -119,6 +119,17 @@ export function TextTabView(p: TextTabViewProps) {
           )}
         </div>
       </div>
+      {/* Under the text, so a save does not move the lines the person is reading. */}
+      {doc.line !== null && (
+        <div className="text-tab__status">
+          <span className="text-tab__line">{doc.line}</span>
+          {doc.undoOffered && doc.lastSave !== null && (
+            <button type="button" className="text-tab__button" onClick={p.onUndo}>
+              Undo
+            </button>
+          )}
+        </div>
+      )}
       <div className="text-tab__footer" hidden={showRendered}>
         <EditorFooter line={p.cursor.line} column={p.cursor.column} encoding={p.encoding} eol={p.eol} hintId={p.hintId} />
       </div>

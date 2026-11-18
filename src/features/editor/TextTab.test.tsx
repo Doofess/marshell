@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { Draft } from "../../generated/Draft";
 import { start, step, type DocEvent, type DocState } from "./editorDoc";
-import { TextTabView, readOnlyLine, type TextTabViewProps } from "./TextTab";
+import { TextTabView, readOnlyLine, type TextTabViewProps, isSaveKey } from "./TextTab";
 
 // The rendered Markdown needs the DOM, which these tests run without: the stand-in shows the text it was given.
 vi.mock("../preview/MarkdownView", () => ({ MarkdownView: ({ text }: { text: string }) => <div data-md="">{text}</div> }));
@@ -75,6 +75,36 @@ describe("TextTabView", () => {
     const out = html(after({ type: "edited", text: "x" }, { type: "save" }, { type: "saved", hash: H2, snapshot: null }));
     expect(out).toContain("Saved a.txt.");
     expect(out).not.toContain(">Undo<");
+  });
+
+  it("the_status_line_sits_under_the_editor_so_a_save_does_not_move_the_text", () => {
+    const out = html(after({ type: "edited", text: "x" }, { type: "save" }, { type: "saved", hash: H2, snapshot: "snap" }));
+    expect(out.indexOf("text-tab__status")).toBeGreaterThan(out.indexOf('data-pane="editor"'));
+    expect(out.indexOf("text-tab__status")).toBeLessThan(out.indexOf("editor-footer"));
+  });
+
+  it("the_status_line_shows_in_the_rendered_view_while_the_cursors_line_does_not", () => {
+    const doc = after({ type: "edited", text: "x" }, { type: "save" }, { type: "saved", hash: H2, snapshot: "snap" });
+    const out = html(doc, { kind: "markdown", entry: { path: "C:\p\a.md", line: null, col: null, view: "rendered" } });
+    expect(out).toMatch(/<div class="text-tab__status">/);
+    expect(out).toMatch(/<div class="text-tab__footer" hidden="">/);
+  });
+
+  it("ctrl_s_is_the_save_key_on_any_keyboard_layout", () => {
+    const key = (over: Partial<Parameters<typeof isSaveKey>[0]>) => ({ key: "s", code: "KeyS", ctrlKey: true, metaKey: false, altKey: false, shiftKey: false, ...over });
+    expect(isSaveKey(key({}), "windows")).toBe(true);
+    expect(isSaveKey(key({ key: "S" }), "windows")).toBe(true);
+    // A layout with no Latin letters: the key where S is printed.
+    expect(isSaveKey(key({ key: "ד" }), "windows")).toBe(true);
+    // A Latin layout that puts its letters elsewhere: the key that types s, not the place a QWERTY keyboard has it.
+    expect(isSaveKey(key({ key: "o" }), "windows")).toBe(false);
+    expect(isSaveKey(key({ code: "Semicolon" }), "windows")).toBe(true);
+    expect(isSaveKey(key({ shiftKey: true }), "windows")).toBe(false);
+    // AltGr is Ctrl and Alt on Windows.
+    expect(isSaveKey(key({ altKey: true }), "windows")).toBe(false);
+    expect(isSaveKey(key({ ctrlKey: false }), "windows")).toBe(false);
+    expect(isSaveKey(key({ ctrlKey: false, metaKey: true }), "mac")).toBe(true);
+    expect(isSaveKey(key({}), "mac")).toBe(false);
   });
 
   it("a_deleted_file_shows_its_notice", () => {
