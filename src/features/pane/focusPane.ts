@@ -12,19 +12,22 @@ const EMPTY_FIRST = "[data-nav-side] .empty-pane__button";
 const PLUS = '[data-nav-side] button[aria-label="New tab"]';
 
 /** The element focus should reach when the side pane takes it: a text tab's editor (so typing goes on where the cursor was), else the selected tab's body or a browser tab's slot, else the empty pane's first button, else the strip's "New tab" button. Null when the pane isn't drawn. */
-export function paneFocusTarget(root: ParentNode = document): HTMLElement | null {
+export function paneFocusTarget(root: ParentNode = document, closing?: string): HTMLElement | null {
+  // A tab that is closing is still drawn: its editor would take the focus and go away with it.
+  if (closing !== undefined && root.querySelector(`[data-nav-side] [role="tab"][id="pane-tab-${closing}"]`)) return null;
   return root.querySelector<HTMLElement>(EDITOR) ?? root.querySelector<HTMLElement>(BODY) ?? root.querySelector<HTMLElement>(SLOT) ?? root.querySelector<HTMLElement>(EMPTY_FIRST) ?? root.querySelector<HTMLElement>(PLUS);
 }
 
 /**
  * Moves focus into the side pane after the next frame (a new tab or a pane that is just showing needs a frame to be there):
  * a text tab's editor, else the selected tab's body (a browser tab's slot, which enters its page), else the empty pane's first button, else the strip's "New tab" button. Opening is the opener's job;
- * mounting or selecting a tab never takes focus, so a session switch leaves it in the terminal.
+ * mounting or selecting a tab never takes focus, so a session switch leaves it in the terminal. `closing` is the id of a tab whose
+ * close may not be drawn yet (a close that follows a save is drawn after the frame): focus waits until that tab is gone.
  */
-export function focusPane(): void {
+export function focusPane(closing?: string): void {
   let frames = 0;
   const attempt = () => {
-    const target = paneFocusTarget();
+    const target = paneFocusTarget(document, closing);
     if (target) {
       const page = target.dataset.pageKey;
       if (page === undefined) return void target.focus({ preventScroll: true });

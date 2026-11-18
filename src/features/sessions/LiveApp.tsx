@@ -831,8 +831,9 @@ export function LiveApp() {
     if (!tab) return;
     paneDispatch({ type: "close", session: ask.session, paneTab: ask.paneTab });
     announce(closedText(paneTabName(tab, tabTitles(shown.tabs))));
-    // The dialog gave focus back to the tab it was asked from, which is gone now.
-    if (ask.inside) focusPane();
+    // The dialog gave focus back to the tab it was asked from, which is going. After a save the close is drawn later than the next
+    // frame, so focus waits for it.
+    if (ask.inside) focusPane(ask.paneTab);
   };
   // A tab that was not on screen mounts when it is selected, and its draft is read a moment later: wait for it, up to two seconds.
   const loadedText = async (key: string): Promise<TextTabCommands | null> => {

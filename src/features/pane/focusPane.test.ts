@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 import { paneFocusTarget } from "./focusPane";
 
 // A stand-in for the document: it answers a selector by what it names.
-const root = (has: { editor?: boolean; body?: boolean; slot?: boolean; empty?: boolean; plus?: boolean }) =>
+const root = (has: { tab?: string; editor?: boolean; body?: boolean; slot?: boolean; empty?: boolean; plus?: boolean }) =>
   ({
     querySelector: (sel: string) => {
+      if (sel.includes("pane-tab-")) return has.tab !== undefined && sel.includes(`"pane-tab-${has.tab}"`) ? "tab" : null;
       if (sel.includes("cm-content")) return has.editor ? "editor" : null;
       if (sel.includes("preview__body")) return has.body ? "body" : null;
       if (sel.includes("browser-tab__slot")) return has.slot ? "slot" : null;
@@ -31,6 +32,15 @@ describe("paneFocusTarget", () => {
   });
   it("is the empty pane's first button with no body", () => {
     expect(paneFocusTarget(root({ empty: true, plus: true }))).toBe("empty");
+  });
+  it("is nothing while a tab that is closing is still drawn, so focus doesn't land in an editor that is about to go", () => {
+    // After a save the close is drawn a moment later than the frame focus is asked in.
+    expect(paneFocusTarget(root({ tab: "t1", editor: true, body: true, plus: true }), "t1")).toBeNull();
+    expect(paneFocusTarget(root({ tab: "t2", editor: true, body: true, plus: true }), "t1")).toBe("editor");
+    expect(paneFocusTarget(root({ editor: true }), "t1")).toBe("editor");
+    const seen: string[] = [];
+    paneFocusTarget({ querySelector: (s: string) => (seen.push(s), null) } as unknown as ParentNode, "t1");
+    expect(seen[0]).toBe('[data-nav-side] [role="tab"][id="pane-tab-t1"]');
   });
   it("is the strip's New tab button when nothing else is there", () => {
     expect(paneFocusTarget(root({ plus: true }))).toBe("plus");
