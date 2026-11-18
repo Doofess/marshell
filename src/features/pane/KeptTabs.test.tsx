@@ -24,6 +24,17 @@ describe("KeptTabs", () => {
     expect(p1).toContain("hidden");
     expect(p2).not.toContain("hidden");
   });
+  it("draws one panel for a file two kept tabs show: the selected tab's", () => {
+    const twice = [tab("t1"), { ...tab("t2"), history: tab("t1").history }, tab("t3")];
+    const keptRef = { current: [] as string[] };
+    show(keptRef, "t1", twice);
+    const out = show(keptRef, "t2", twice);
+    expect(out).toContain('data-body="t2"');
+    expect(out).not.toContain('data-body="t1"');
+    const back = show(keptRef, "t1", twice);
+    expect(back).toContain('data-body="t1"');
+    expect(back).not.toContain('data-body="t2"');
+  });
   it("gives each panel its role, id and label", () => {
     const out = show({ current: [] }, "t1");
     expect(out).toContain('role="tabpanel"');

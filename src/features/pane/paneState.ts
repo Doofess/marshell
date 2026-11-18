@@ -124,6 +124,31 @@ export function keptTabs(prev: readonly string[], active: string | null, open: r
   return [active, ...prev.filter((id) => id !== active && live.has(id))].slice(0, PANE_LIMITS.kept);
 }
 
+/**
+ * The kept tabs that are drawn, in the order of the tabs: one for each file. Two tabs can come to show one file (a link followed
+ * in one, Back, Forward, a layout saved that way), and a file has one document, one draft and one dot: a second editor on it would
+ * write its draft over the first one's and its save would take the dot off both. The selected tab is the one drawn for its file;
+ * for any other file it is the first kept tab that shows it. The one left out is drawn when it is selected, and opens on the draft
+ * the other left.
+ */
+export function drawnTabs(tabs: readonly PaneTab[], kept: readonly string[], active: string | null): string[] {
+  const held = new Set(kept);
+  const fileOf = (t: PaneTab) => (isBrowserTab(t) ? null : currentEntry(t).path);
+  const selected = tabs.find((t) => t.id === active);
+  const taken: string[] = selected && fileOf(selected) !== null ? [fileOf(selected)!] : [];
+  const drawn: string[] = [];
+  for (const t of tabs) {
+    if (!held.has(t.id)) continue;
+    const file = fileOf(t);
+    if (file !== null && t.id !== active) {
+      if (taken.some((p) => samePath(p, file))) continue;
+      taken.push(file);
+    }
+    drawn.push(t.id);
+  }
+  return drawn;
+}
+
 /** The recent list with this file first; the same array when it is already first. */
 function recentAfter(list: readonly RecentFile[], project: string, path: string): readonly RecentFile[] {
   const first = list[0];
