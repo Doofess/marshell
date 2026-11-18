@@ -186,10 +186,11 @@ fn file_refusal(path: &str) -> Option<String> {
     }
 }
 
-/// Who asked, for the mark on the tab: the agent of the session the command ran in, else `shell`.
+/// Who asked, for the mark on the tab: the agent of the session the command ran in, else `shell`. A session launched as
+/// a shell names the agent typed at its prompt (its foreground program), as the sidebar does.
 fn opener(st: &AppState, from: Option<&str>) -> String {
     from.and_then(|tab| st.registry().row(tab))
-        .and_then(|row| row.agent)
+        .and_then(|row| row.agent.or_else(|| row.foreground.and_then(|f| f.agent)))
         // The layout keeps the id, and refuses one it can't: a mark is not worth a layout that won't save.
         .filter(|agent| crate::layout::is_opener(agent))
         .unwrap_or_else(|| "shell".into())

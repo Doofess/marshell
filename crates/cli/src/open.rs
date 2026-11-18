@@ -85,15 +85,23 @@ pub fn target_for(text: &str, cwd: &dyn Fn() -> io::Result<PathBuf>) -> Result<S
     Ok(folded)
 }
 
-/// Typed text that looks like a web address without its scheme: no separator or drive letter, a `.` or a `:`.
 /// The core's line for a path it won't look at. On Windows `localhost:3000` gets it rather than "No file": a colon in
 /// a file name names a stream.
 const BAD_PATH: &str = "That path can't be opened in the side pane.";
 
+/// Typed text that looks like a web address without its scheme: no separator or drive letter, a `.` or a `:`, and a
+/// colon only before a port.
 fn looks_like_bare_address(text: &str) -> bool {
     let b = text.as_bytes();
     let drive = b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':';
-    !drive && !text.contains(['\\', '/']) && text.contains(['.', ':'])
+    !drive && !text.contains(['\\', '/']) && text.contains(['.', ':']) && (!text.contains(':') || has_port(text))
+}
+
+/// `localhost:3000`: a name, one colon, and a port of up to five digits.
+fn has_port(text: &str) -> bool {
+    text.split_once(':').is_some_and(|(host, port)| {
+        !host.is_empty() && (1..=5).contains(&port.len()) && port.bytes().all(|b| b.is_ascii_digit())
+    })
 }
 
 pub fn run(
@@ -150,7 +158,9 @@ pub fn run(
             Opened::Refused(line) => {
                 let line = if line == "No such session." {
                     format!("No session {session}.")
-                } else if (line.starts_with("No file ") || line == BAD_PATH) && looks_like_bare_address(text) {
+                } else if looks_like_bare_address(text)
+                    && (line.starts_with("No file ") || (line == BAD_PATH && has_port(text)))
+                {
                     format!("No file {text}. For a web page, type the whole address: http://{text}")
                 } else {
                     line
@@ -350,6 +360,17 @@ mod tests {
             let fake = Fake::new(vec![Opened::Refused("No file P.".into())]);
             let (_, err) = go(&[], &[text], Some("2"), Some(&fake));
             assert_eq!(err, "No file P.\n", "{text}");
+        }
+        // A colon that is no port isn't a host: the core's line.
+        let fake = Fake::new(vec![Opened::Refused("No file javascript:alert(1).".into())]);
+        let (_, err) = go(&[], &["javascript:alert(1)"], Some("2"), Some(&fake));
+        assert_eq!(err, "No file javascript:alert(1).\n");
+        // A path refused for another reason (a file in a network folder, `README.md` in `\\wsl.localhost\...`) is
+        // no web page: only `host:port` gets the hint after that line.
+        for text in ["README.md", "javascript:alert(1)", "a:b:3000"] {
+            let fake = Fake::new(vec![Opened::Refused(BAD_PATH.into())]);
+            let (_, err) = go(&[], &[text], Some("2"), Some(&fake));
+            assert_eq!(err, format!("{BAD_PATH}\n"), "{text}");
         }
     }
 

@@ -51,6 +51,17 @@ fn opens_event(waiting: &[PaneOpen]) -> Message {
     Message::Text(json.to_string().into())
 }
 
+/// What a change to the waiting tabs sends: the session list first when it changed too and hasn't gone out, so the window
+/// knows every session a request names before it reads the request. `select!` takes either of two ready branches.
+fn opens_frames(rx: &mut watch::Receiver<SessionsSnapshot>, waiting: &[PaneOpen]) -> Vec<Message> {
+    let mut frames = Vec::with_capacity(2);
+    if rx.has_changed().unwrap_or(false) {
+        frames.push(event(&rx.borrow_and_update()));
+    }
+    frames.push(opens_event(waiting));
+    frames
+}
+
 async fn run(
     socket: WebSocket,
     st: AppState,
@@ -114,8 +125,12 @@ async fn run(
                 if changed.is_err() {
                     break;
                 }
-                let msg = opens_event(&opens.borrow_and_update());
-                if !send(&mut tx, msg).await {
+                let frames = opens_frames(&mut rx, &opens.borrow_and_update());
+                let mut sent = true;
+                for msg in frames {
+                    sent = sent && send(&mut tx, msg).await;
+                }
+                if !sent {
                     break;
                 }
             }
@@ -147,4 +162,44 @@ async fn send_permissions(
 /// False when the peer is gone or stuck.
 async fn send(tx: &mut futures_util::stream::SplitSink<WebSocket, Message>, msg: Message) -> bool {
     matches!(tokio::time::timeout(SEND_TIMEOUT, tx.send(msg)).await, Ok(Ok(())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn kind(msg: &Message) -> String {
+        let Message::Text(text) = msg else {
+            panic!("not a text frame")
+        };
+        let json: serde_json::Value = serde_json::from_str(text.as_str()).unwrap();
+        json["type"].as_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn a_waiting_tab_goes_out_after_the_session_it_is_for() {
+        let empty = SessionsSnapshot {
+            sessions: Vec::new(),
+            closed: Vec::new(),
+        };
+        let (tx, mut rx) = watch::channel(empty.clone());
+        rx.borrow_and_update();
+        let open = PaneOpen {
+            id: 1,
+            tab_id: "t9".into(),
+            kind: "file".into(),
+            target: r"C:\a.md".into(),
+            by: "shell".into(),
+        };
+        // The session list changed too (a session that has just started), and has not gone out yet.
+        tx.send_replace(empty);
+        let frames: Vec<_> = opens_frames(&mut rx, std::slice::from_ref(&open))
+            .iter()
+            .map(kind)
+            .collect();
+        assert_eq!(frames, ["sessions", "opens"]);
+        // Nothing new in the list: the waiting tabs alone.
+        let frames: Vec<_> = opens_frames(&mut rx, &[open]).iter().map(kind).collect();
+        assert_eq!(frames, ["opens"]);
+    }
 }

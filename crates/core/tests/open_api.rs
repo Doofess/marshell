@@ -6,7 +6,7 @@ mod common;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use marshell_core::server::{AppState, router};
-use marshell_protocol::api::{PaneOpen, Profile, ShellFamily};
+use marshell_protocol::api::{Foreground, PaneOpen, Profile, ShellFamily};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -255,6 +255,43 @@ async fn open_names_the_callers_agent() {
             (agent.as_str(), "shell")
         ]
     );
+}
+
+#[tokio::test]
+async fn open_from_an_agent_typed_into_a_shell_names_that_agent() {
+    // `claude` typed at a shell's prompt: the row was launched as a shell, and the agent is its foreground program.
+    // The sidebar shows it as Claude Code's, and so does the tab it opens.
+    let tmp = tempfile::tempdir().unwrap();
+    let st = state(&tmp.path().join("home"));
+    let app = router(st.clone());
+    let shell = start(&app, tmp.path()).await;
+    let generation = st
+        .registry()
+        .foreground_candidates()
+        .into_iter()
+        .find(|(tab, _, _)| *tab == shell)
+        .map(|(_, generation, _)| generation)
+        .unwrap();
+    let claude = Foreground {
+        program: "claude".into(),
+        command_line: None,
+        agent: Some("claude".into()),
+    };
+    st.registry().set_foreground(&shell, generation, Some(claude));
+    assert_eq!(
+        st.registry()
+            .row(&shell)
+            .unwrap()
+            .foreground
+            .and_then(|f| f.agent)
+            .as_deref(),
+        Some("claude")
+    );
+    let seen = fake_app(&st, &app, None);
+    let file = a_file(tmp.path(), "a.md");
+    assert_eq!(open(&app, &shell, &file, Some(&shell)).await.0, StatusCode::NO_CONTENT);
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.iter().map(|o| o.by.as_str()).collect::<Vec<_>>(), ["claude"]);
 }
 
 #[tokio::test]
