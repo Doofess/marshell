@@ -1927,6 +1927,7 @@ export function LiveApp() {
                   onView={(v) => paneSession !== undefined && paneDispatch({ type: "setView", session: paneSession, paneTab: tab.id, view: v })}
                   active={active}
                   onEscape={() => actions.focusTerminal()}
+                  announce={announce}
                   regionTarget={deliveryFor(focusedRow ?? null)}
                   onRegion={addRegion}
                   ref={(preview) => {

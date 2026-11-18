@@ -87,6 +87,8 @@ describe("SidePane", () => {
       entry: { path: "C:\\w\\a.md", line: null, col: null, view: "rendered" },
       file: { phase: "error" },
       updated: false,
+      announce: noop,
+      refetch: noop,
       os: "windows",
       active: true,
       canBack: false,

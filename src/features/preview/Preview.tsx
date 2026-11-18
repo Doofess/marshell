@@ -6,14 +6,12 @@ import { cropImage, cropPdfPage } from "../regions/crop";
 import { placePopover } from "../regions/placement";
 import { RegionComment, type RegionTarget } from "../regions/RegionComment";
 import { RegionLayer } from "../regions/RegionLayer";
+import { TextTab, type TextTabCommands } from "../editor/TextTab";
 import { canMarkRegion, fromDrag, initialRegion, regionLabel, regionStillValid, type Region } from "../regions/region";
 import type { Os } from "../../lib/keymap";
-import { CodeView } from "./CodeView";
-import { HtmlView } from "./HtmlView";
 import { ImageView } from "./ImageView";
-import { kindOf, languageOf, splitPath } from "./kinds";
+import { kindOf, splitPath } from "./kinds";
 import type { LinkTarget } from "./links";
-import { MarkdownView } from "./MarkdownView";
 import { PdfView } from "./pdf/PdfView";
 import { useOpenPageInPane, type OpenInPane } from "../pane/PaneContext";
 import type { PaneEntry, View } from "../pane/paneState";
@@ -68,6 +66,10 @@ export type PreviewPaneProps = {
   active: boolean;
   /** Escape: focus goes back to the session's terminal and the pane stays open. */
   onEscape: () => void;
+  /** Says a line through the window's announcer: a save, a file that changed under edits. */
+  announce: (text: string) => void;
+  /** Reads the file again now, whatever its stat says. */
+  refetch: () => void;
   /** Where a marked region goes: the focused session's name and how it gets there, or null with no session. */
   regionTarget: RegionTarget | null;
   /** Hands over a marked region's crop and comment. Resolves when it is placed; rejects with the reason it was not. */
@@ -101,6 +103,12 @@ type Outbound = Exclude<LinkTarget, { kind: "anchor" } | { kind: "none" }>;
 type BodyProps = {
   entry: PaneEntry;
   file: FileState;
+  active: boolean;
+  os: Os;
+  announce: (text: string) => void;
+  refetch: () => void;
+  /** What a text tab hands the pane to call. */
+  textCommands: Ref<TextTabCommands>;
   onImageSize: (url: string, w: number, h: number) => void;
   onPages: (count: number) => void;
   onLink: (link: Outbound) => void;
@@ -108,17 +116,20 @@ type BodyProps = {
   region: RegionHooks;
 };
 
-function Body({ entry, file, onImageSize, onPages, onLink, onKey, region }: BodyProps) {
+/** The dirty mark on the tab strip is a later step; for now a text tab's changes are only reported here. */
+const noDirty = () => {};
+
+function Body({ entry, file, active, os, announce, refetch, textCommands, onImageSize, onPages, onLink, onKey, region }: BodyProps) {
   const { name } = splitPath(entry.path);
+  // A text file, and a deleted one that was text, are the same tab: the editor stays mounted when the file goes and comes back.
+  const textTab = (f: Extract<FileState, { phase: "text" | "deleted" }>) => (
+    <TextTab key={entry.path} entry={entry} file={f} kind={kindOf(entry.path)} active={active} os={os} onDirty={noDirty} commands={textCommands} announce={announce} refetch={refetch} onLink={onLink} onKey={onKey} />
+  );
   switch (file.phase) {
     case "loading":
       return <p className="preview__message">Loading…</p>;
-    case "text": {
-      const kind = kindOf(entry.path);
-      if (entry.view === "rendered" && kind === "markdown") return <MarkdownView text={file.text} docPath={entry.path} onLink={onLink} />;
-      if (entry.view === "rendered" && kind === "html") return <HtmlView text={file.text} name={name} docPath={entry.path} onLink={onLink} onKey={onKey} />;
-      return <CodeView text={file.text} language={languageOf(entry.path)} target={entry} />;
-    }
+    case "text":
+      return textTab(file);
     case "image":
       return <ImageView url={file.url} name={name} onSize={(w, h) => onImageSize(file.url, w, h)} overlay={region.overlay(1)} />;
     case "tooLarge":
@@ -129,16 +140,19 @@ function Body({ entry, file, onImageSize, onPages, onLink, onKey, region }: Body
       return <PdfView bytes={file.bytes} version={file.version} name={name} onPages={onPages} onCurrentPage={region.onCurrentPage} onDocument={region.onDocument} renderOverlay={region.overlay} />;
     case "deleted":
       // With something that was shown, the content stays and the notice sits above it (see PreviewPane); this is the plain case.
-      return file.last ? <Body entry={entry} file={file.last} onImageSize={onImageSize} onPages={onPages} onLink={onLink} onKey={onKey} region={region} /> : <p className="preview__message">This file was deleted.</p>;
+      if (file.last?.phase === "text") return textTab(file);
+      return file.last ? <Body entry={entry} file={file.last} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} onImageSize={onImageSize} onPages={onPages} onLink={onLink} onKey={onKey} region={region} /> : <p className="preview__message">This file was deleted.</p>;
     case "error":
       return <p className="preview__message">This file can't be previewed.</p>;
   }
 }
 
 /** The pane for one file: header, then the scrolling body. Everything it shows comes in as props, so it renders the same on any state. */
-export function PreviewPane({ entry, file, updated, os, canBack, canForward, onBack, onForward, onOpen, onView, active, onEscape, regionTarget, onRegion, ref }: PreviewPaneProps) {
+export function PreviewPane({ entry, file, updated, os, canBack, canForward, onBack, onForward, onOpen, onView, active, onEscape, announce, refetch, regionTarget, onRegion, ref }: PreviewPaneProps) {
   const { name, folder } = splitPath(entry.path);
   const body = useRef<HTMLDivElement>(null);
+  // What a text tab lets the pane call: Ctrl+S saves through it. Null while no text tab is mounted.
+  const textCommands = useRef<TextTabCommands>(null);
   // Focus goes into the scroll body when the tab goes somewhere (a link, Back, Forward, another line), so the arrow keys and
   // Page Up and Down read it at once. Mounting takes no focus, and neither does being selected: a session switch and the tab
   // strip's own keys mount and select tabs, and focus must stay where the person has it. Whoever opens a file moves focus.
@@ -155,7 +169,8 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
   const [size, setSize] = useState<{ url: string; w: number; h: number } | null>(null);
   // A deleted file keeps showing what it last was; the notice below says so.
   const shown = file.phase === "deleted" && file.last ? file.last : file;
-  const gone = file.phase === "deleted" && file.last !== undefined;
+  // A text tab shows its own notice, with the way back.
+  const gone = file.phase === "deleted" && file.last !== undefined && file.last.phase !== "text";
   const [pages, setPages] = useState<{ path: string; count: number } | null>(null);
   const dims =
     shown.phase === "image" && size?.url === shown.url
@@ -295,11 +310,19 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
   const keys = (e: Key) => {
     const t = (e as { target?: unknown }).target as HTMLElement | null | undefined;
     const inField = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable === true);
-    if ((e.key === "r" || e.key === "R") && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && canMark && !inField) {
+    // Escape belongs to the editor while it has the keyboard: it closes the find bar, and Esc then Tab leaves.
+    const inEditor = !!t && t.closest?.(".editor") != null;
+    const saveKey = (os === "mac" ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "s";
+    if (saveKey && textCommands.current) {
+      // Always taken, so the webview's own save never opens, whether or not there is anything to save.
+      e.preventDefault();
+      textCommands.current.save();
+    } else if ((e.key === "r" || e.key === "R") && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && canMark && !inField) {
       e.preventDefault();
       if (select) endSelect();
       else startSelect();
     } else if (e.key === "Escape" && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+      if (inEditor) return;
       e.preventDefault();
       onEscape();
     } else if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.key === "ArrowLeft") {
@@ -315,6 +338,8 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
   const kind = kindOf(entry.path);
   const toggle = shown.phase === "text" && (kind === "markdown" || kind === "html");
   const rendered = toggle && entry.view === "rendered";
+  // A text tab says a change from disk through its marks and the announcer, so the header's note stays out of it.
+  const showUpdated = updated && shown.phase !== "text";
 
   const alt = os === "mac" ? "⌥" : "Alt+";
   return (
@@ -341,8 +366,8 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
           </span>
         )}
         {dims && <span className="preview__meta">{dims}</span>}
-        <span className="preview__updated" data-show={updated ? "true" : undefined} aria-live={inside ? "polite" : "off"}>
-          {updated ? "Updated" : ""}
+        <span className="preview__updated" data-show={showUpdated ? "true" : undefined} aria-live={inside ? "polite" : "off"}>
+          {showUpdated ? "Updated" : ""}
         </span>
         <span className="preview__spacer" />
         {toggle && (
@@ -372,7 +397,7 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
             This file was deleted.
           </div>
         )}
-        <Body entry={entry} file={file} onImageSize={(url, w, h) => setSize({ url, w, h })} onPages={(count) => setPages({ path: entry.path, count })} onLink={follow} onKey={keys} region={regionHooks} />
+        <Body entry={entry} file={file} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} onImageSize={(url, w, h) => setSize({ url, w, h })} onPages={(count) => setPages({ path: entry.path, count })} onLink={follow} onKey={keys} region={regionHooks} />
       </div>
       {select?.step === "comment" && body.current
         ? createPortal(
@@ -429,10 +454,10 @@ function RegionPopover({ boxEl, body, region, children }: { boxEl: HTMLElement |
   );
 }
 
-export type PreviewProps = Omit<PreviewPaneProps, "file" | "updated">;
+export type PreviewProps = Omit<PreviewPaneProps, "file" | "updated" | "refetch">;
 
 /** The preview pane for the current entry. It loads the file, keeps it current while it is open, and stops when it closes. */
 export function Preview(props: PreviewProps) {
-  const { file, updated } = usePreviewFile(props.entry.path, { paused: !props.active });
-  return <PreviewPane {...props} file={file} updated={updated} />;
+  const { file, updated, refetch } = usePreviewFile(props.entry.path, { paused: !props.active });
+  return <PreviewPane {...props} file={file} updated={updated} refetch={refetch} />;
 }

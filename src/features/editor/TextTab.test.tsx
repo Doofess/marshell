@@ -1,0 +1,117 @@
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vitest";
+import type { Draft } from "../../generated/Draft";
+import { start, step, type DocEvent, type DocState } from "./editorDoc";
+import { TextTabView, readOnlyLine, type TextTabViewProps } from "./TextTab";
+
+// The rendered Markdown needs the DOM, which these tests run without: the stand-in shows the text it was given.
+vi.mock("../preview/MarkdownView", () => ({ MarkdownView: ({ text }: { text: string }) => <div data-md="">{text}</div> }));
+
+const N = "a.txt";
+const H1 = "1".repeat(64);
+const H2 = "2".repeat(64);
+
+/** The state after the events, from a clean open of "one\ntwo". */
+function after(...events: DocEvent[]): DocState {
+  let s = step(start, { type: "opened", disk: { text: "one\ntwo", hash: H1 }, draft: null }, N).state;
+  for (const e of events) s = step(s, e, N).state;
+  return s;
+}
+
+const noop = () => {};
+const props = (doc: DocState, over: Partial<TextTabViewProps> = {}): TextTabViewProps => ({
+  entry: { path: "C:\\p\\a.txt", line: null, col: null, view: "source" },
+  name: N,
+  kind: "text",
+  doc,
+  ready: true,
+  gone: false,
+  readOnly: null,
+  encoding: "utf-8",
+  eol: "lf",
+  cursor: { line: 1, column: 1 },
+  wrap: true,
+  hintId: "hint",
+  editor: null,
+  onEdit: noop,
+  onCursor: noop,
+  onKeep: noop,
+  onTake: noop,
+  onUndo: noop,
+  onLink: noop,
+  onKey: noop,
+  ...over,
+});
+const html = (doc: DocState, over: Partial<TextTabViewProps> = {}) => renderToStaticMarkup(<TextTabView {...props(doc, over)} />);
+
+describe("TextTabView", () => {
+  it("a_clean_file_shows_no_bar_and_no_status_line", () => {
+    const out = html(after());
+    expect(out).not.toContain("changed-bar");
+    expect(out).not.toContain("text-tab__status");
+    expect(out).toContain('class="editor__host"');
+  });
+
+  it("a_conflict_shows_the_bar_with_keep_mine_and_take_disk", () => {
+    const draft: Draft = { path: "C:\\p\\a.txt", text: "mine", base_text: "one\ntwo", base_hash: H1, encoding: "utf-8", eol: "lf", edited_ms: 1 };
+    const doc = step(start, { type: "opened", disk: { text: "theirs", hash: H2 }, draft }, N).state;
+    const out = html(doc);
+    expect(out).toContain('role="group"');
+    expect(out).toContain("a.txt changed on disk.");
+    expect(out).toContain(">Keep mine<");
+    expect(out).toContain(">Take disk<");
+    // The bar is not a live region and takes no focus.
+    expect(out).not.toContain("aria-live");
+    expect(out).not.toContain("autofocus");
+  });
+
+  it("a_save_shows_saved_with_undo", () => {
+    const out = html(after({ type: "edited", text: "x" }, { type: "save" }, { type: "saved", hash: H2, snapshot: "snap" }));
+    expect(out).toContain("Saved a.txt.");
+    expect(out).toMatch(/<button[^>]*>Undo<\/button>/);
+  });
+
+  it("no_undo_button_without_a_snapshot", () => {
+    const out = html(after({ type: "edited", text: "x" }, { type: "save" }, { type: "saved", hash: H2, snapshot: null }));
+    expect(out).toContain("Saved a.txt.");
+    expect(out).not.toContain(">Undo<");
+  });
+
+  it("a_deleted_file_shows_its_notice", () => {
+    const out = html(after({ type: "gone" }));
+    expect(out).toContain("a.txt was deleted on disk. Ctrl+S saves it again.");
+    // The file's phase says so before the document has caught up.
+    expect(html(after(), { gone: true })).toContain("a.txt was deleted on disk. Ctrl+S saves it again.");
+    expect(html(after())).not.toContain("was deleted on disk");
+  });
+
+  it("each_read_only_reason_shows_its_line", () => {
+    expect(html(after(), { readOnly: "own" })).toContain("Marshell doesn&#x27;t save files in its own folder.");
+    expect(html(after(), { readOnly: "managed" })).toContain("This file is managed by your organization, so Marshell doesn&#x27;t save it.");
+    expect(html(after(), { readOnly: "attribute" })).toContain("a.txt is read-only on disk.");
+    expect(readOnlyLine("attribute", "b.md")).toBe("b.md is read-only on disk.");
+  });
+
+  it("markdown_renders_the_editors_text_not_the_disks", () => {
+    const doc = after({ type: "edited", text: "## Mine heading" });
+    expect(doc.base.text).toBe("one\ntwo");
+    const out = html(doc, { kind: "markdown", entry: { path: "C:\\p\\a.md", line: null, col: null, view: "rendered" } });
+    expect(out).toContain('<div data-md="">## Mine heading</div>');
+    // Both views are mounted: the editor stays, hidden, under the rendered one.
+    expect(out).toContain('class="editor__host"');
+    expect(out).toMatch(/<div class="text-tab__pane"[^>]* hidden=""/);
+  });
+
+  it("the_footer_names_utf16_and_crlf", () => {
+    const out = html(after(), { encoding: "utf-16le", eol: "crlf", cursor: { line: 3, column: 4 } });
+    expect(out).toContain("Ln 3, Col 4");
+    expect(out).toContain("UTF-16 LE");
+    expect(out).toContain("CRLF");
+  });
+
+  it("a_text_over_1_mb_says_the_colours_are_off", () => {
+    const big = after({ type: "edited", text: "x".repeat(1024 * 1024 + 1) });
+    expect(html(big)).toContain("Syntax colours are off for files over 1 MB.");
+    expect(html(after())).not.toContain("Syntax colours");
+  });
+});
