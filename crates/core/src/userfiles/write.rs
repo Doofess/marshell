@@ -2,19 +2,32 @@
 //! links and its place for a program that watches it. The caller has a copy of the old bytes on
 //! disk before it calls this (`history`), so a write that is cut short can be put back.
 
-use std::io::{self, Write};
+use std::fs::File;
+use std::io::{self, Seek, SeekFrom, Write};
 use std::path::Path;
 
 /// Writes `bytes` as the whole of `path` and flushes them to disk. With `create` the file must not
 /// exist yet; without it the file must exist, and it is written from its start and then cut to the
 /// new length, so it is never empty on the way. A folder is never created.
 pub fn write_in_place(path: &Path, bytes: &[u8], create: bool) -> io::Result<()> {
+    write_whole(&mut open_to_write(path, create)?, bytes)
+}
+
+/// Opens `path` to be written in place. With `create` the file must not exist yet; without it the
+/// file must exist. Nothing in the file changes until `write_whole`.
+pub fn open_to_write(path: &Path, create: bool) -> io::Result<File> {
     let mut options = std::fs::OpenOptions::new();
     options.write(true);
     if create {
         options.create_new(true);
     }
-    let mut file = options.open(path)?;
+    options.open(path)
+}
+
+/// Writes `bytes` as the whole of the open file, from its start, cuts it to the new length and
+/// flushes it to disk.
+pub fn write_whole(file: &mut File, bytes: &[u8]) -> io::Result<()> {
+    file.seek(SeekFrom::Start(0))?;
     file.write_all(bytes)?;
     file.set_len(bytes.len() as u64)?;
     file.sync_all()

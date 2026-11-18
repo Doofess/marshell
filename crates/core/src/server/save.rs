@@ -3,14 +3,15 @@
 //! links on the way (`files::links_refused`), and whose file it is (`userfiles::guard`).
 //!
 //! A save names the hash of the bytes the tab loaded. The file is written only while it still
-//! holds them, and only after a copy of them is on disk (`userfiles::history`).
+//! holds them, and only after a copy of them is on disk (`userfiles::history`). A write that is
+//! cut short puts them back.
 
 use super::{AppState, files};
 use crate::config::hash::hash_bytes;
 use crate::projects::same_path;
 use crate::userfiles::guard::{SaveRefusal, save_refusal};
 use crate::userfiles::history::{History, Saved};
-use crate::userfiles::write::write_in_place;
+use crate::userfiles::write::{open_to_write, write_in_place, write_whole};
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Query, State};
@@ -19,6 +20,7 @@ use axum::response::{IntoResponse, Response};
 use marshell_protocol::api::{FileConflict, FileSaved, FileUnsave};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
@@ -197,8 +199,27 @@ fn save_checked(path: &Path, expect: &Expect, body: &[u8], home: &Path) -> Done 
     }
 }
 
-/// Writes `new` over a file that holds `old`, once a copy of `old` is on disk. The caller holds the lock.
+/// Writes `new` over a file that holds `old`, once a copy of `old` is on disk. A write that fails
+/// leaves the file holding `old`. The caller holds the lock.
 fn replace(path: &Path, old: &[u8], new: &[u8], new_hash: String, home: &Path) -> Done {
+    replace_with(path, old, new, new_hash, home, write_whole)
+}
+
+/// `replace`, with the write of an open file's whole content as `put`, so a test can cut it short.
+fn replace_with(
+    path: &Path,
+    old: &[u8],
+    new: &[u8],
+    new_hash: String,
+    home: &Path,
+    put: impl Fn(&mut File, &[u8]) -> io::Result<()>,
+) -> Done {
+    // The file is opened before its copy is taken: one that can't be written (another program
+    // holds it, or the rights are missing) costs no copy, however often the save is tried.
+    let mut file = match open_to_write(path, false) {
+        Ok(file) => file,
+        Err(e) => return write_failed(e),
+    };
     let snapshot = match History::new(home).take(path, old, &new_hash, super::doctor::now_ms()) {
         Ok(id) => id,
         Err(e) => {
@@ -207,9 +228,18 @@ fn replace(path: &Path, old: &[u8], new: &[u8], new_hash: String, home: &Path) -
             ));
         }
     };
-    match write_in_place(path, new, false) {
-        Ok(()) => saved(path, new_hash, Some(snapshot)),
-        Err(e) => write_failed(e),
+    match put(&mut file, new) {
+        Ok(()) => {
+            // Closed first, so the time the answer carries is the one the file keeps.
+            drop(file);
+            saved(path, new_hash, Some(snapshot))
+        }
+        Err(e) => {
+            // A write cut short (a full disk) left part of the new text in the file: the old bytes
+            // go back over it. If that fails too they are still in the file history.
+            let _ = put(&mut file, old);
+            write_failed(e)
+        }
     }
 }
 
@@ -269,5 +299,69 @@ pub async fn unsave(State(st): State<AppState>, Json(req): Json<FileUnsave>) -> 
     match done {
         Ok(done) => done.into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+    use std::io::Write;
+
+    /// How many copies the file history holds.
+    fn copies(home: &Path) -> usize {
+        let Ok(dir) = std::fs::read_dir(crate::paths::file_history_dir(home)) else {
+            return 0;
+        };
+        dir.filter_map(Result::ok)
+            .filter(|e| e.path().extension().is_some_and(|x| x == "bin"))
+            .count()
+    }
+
+    #[test]
+    fn a_write_cut_short_puts_the_old_bytes_back() {
+        let (home, dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let path = dir.path().join("a.txt");
+        let (old, new) = (
+            b"the old text".as_slice(),
+            b"a new text that is longer than the old one".as_slice(),
+        );
+        std::fs::write(&path, old).unwrap();
+        // The first write stops half-way, as a full disk would; the next one works.
+        let calls = Cell::new(0);
+        let put = |file: &mut File, bytes: &[u8]| {
+            calls.set(calls.get() + 1);
+            if calls.get() > 1 {
+                return write_whole(file, bytes);
+            }
+            file.write_all(&bytes[..bytes.len() / 2])?;
+            Err(io::Error::other("the disk is full"))
+        };
+        let done = replace_with(&path, old, new, hash_bytes(new), home.path(), put);
+        assert!(matches!(done, Done::Failed(_)));
+        assert_eq!(std::fs::read(&path).unwrap(), old);
+        // The copy stays: it is the only one if the second write fails too.
+        assert_eq!(copies(home.path()), 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_file_another_program_holds_is_not_copied() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let (home, dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let path = dir.path().join("a.txt");
+        std::fs::write(&path, "old").unwrap();
+        // Another program reads the file and lets others read it, not write it (FILE_SHARE_READ).
+        let _held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&path)
+            .unwrap();
+        for _ in 0..3 {
+            let done = save_checked(&path, &Expect::Hash(hash_bytes(b"old")), b"new", home.path());
+            assert!(matches!(done, Done::ReadOnly));
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), b"old");
+        assert_eq!(copies(home.path()), 0);
     }
 }

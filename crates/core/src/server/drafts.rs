@@ -13,6 +13,9 @@ use std::path::Path;
 
 const BAD_PATH: &str = "That path can't be saved.";
 const FULL: &str = "Marshell keeps at most 500 drafts. Save some files first.";
+/// The most bytes a draft's text may take. A draft holds text as UTF-8, and a UTF-16 file at the cap
+/// (two bytes a character on disk) can take three bytes a character here.
+const DRAFT_TEXT_CAP: u64 = files::TEXT_CAP / 2 * 3;
 
 #[derive(Deserialize)]
 pub struct DraftQuery {
@@ -30,7 +33,7 @@ fn invalid(draft: &Draft) -> Option<Response> {
     if !["lf", "crlf"].contains(&draft.eol.as_str()) {
         return Some((StatusCode::BAD_REQUEST, "The eol is not one Marshell knows.").into_response());
     }
-    if draft.text.len() as u64 > files::TEXT_CAP || draft.base_text.len() as u64 > files::TEXT_CAP {
+    if draft.text.len() as u64 > DRAFT_TEXT_CAP || draft.base_text.len() as u64 > DRAFT_TEXT_CAP {
         return Some(StatusCode::PAYLOAD_TOO_LARGE.into_response());
     }
     None

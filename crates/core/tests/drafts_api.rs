@@ -10,6 +10,8 @@ const TOKEN: &str = "test-token";
 const PORT: u16 = 5555;
 const ORIGIN: &str = "http://tauri.localhost";
 const TEXT_CAP: usize = 2 * 1024 * 1024;
+/// What a draft's text may take: a file at the cap, in the encoding that is smallest on disk.
+const DRAFT_CAP: usize = TEXT_CAP / 2 * 3;
 
 fn setup() -> (tempfile::TempDir, axum::Router) {
     let home = tempfile::tempdir().unwrap();
@@ -169,15 +171,29 @@ async fn put_refuses_text_over_the_cap() {
     let (_home, app) = setup();
     let dir = tempfile::tempdir().unwrap();
     let path = path_in(dir.path(), "a.txt");
-    let big = "a".repeat(TEXT_CAP + 1);
+    let big = "a".repeat(DRAFT_CAP + 1);
     let (status, _) = call(&app, "PUT", "/v1/drafts/one", &draft(&path, &big, 1), true).await;
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
     let mut base = draft(&path, "x", 1);
     base["base_text"] = json!(big);
     let (status, _) = call(&app, "PUT", "/v1/drafts/one", &base, true).await;
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
-    let at_cap = "a".repeat(TEXT_CAP);
+    let at_cap = "a".repeat(DRAFT_CAP);
     let (status, _) = call(&app, "PUT", "/v1/drafts/one", &draft(&path, &at_cap, 1), true).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn put_keeps_the_text_of_a_utf16_file_at_the_file_cap() {
+    // A UTF-16 file of 2 MiB holds 1 Mi characters, and each can take three bytes in the draft's UTF-8.
+    let (_home, app) = setup();
+    let dir = tempfile::tempdir().unwrap();
+    let path = path_in(dir.path(), "a.txt");
+    let text = "\u{8a9e}".repeat(TEXT_CAP / 2);
+    assert_eq!(text.len(), TEXT_CAP / 2 * 3);
+    let mut both = draft(&path, &text, 1);
+    both["base_text"] = json!(text);
+    let (status, _) = call(&app, "PUT", "/v1/drafts/one", &both, true).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 }
 
