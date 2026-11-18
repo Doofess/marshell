@@ -438,3 +438,155 @@ async fn a_save_through_a_link_into_marshells_home_is_refused() {
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(std::fs::read(home.join("settings.json")).unwrap(), b"{}");
 }
+async fn unsave_as(s: &Setup, path: &str, snapshot: &str, bearer: bool) -> (StatusCode, Vec<u8>) {
+    let body = serde_json::json!({ "path": path, "snapshot": snapshot }).to_string();
+    let mut req = request("POST", "/v1/files/unsave", body.into_bytes(), bearer);
+    req.headers_mut()
+        .insert(header::CONTENT_TYPE, "application/json".parse().unwrap());
+    let res = s.app.clone().oneshot(req).await.unwrap();
+    let status = res.status();
+    (
+        status,
+        axum::body::to_bytes(res.into_body(), 1024 * 1024)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+}
+
+async fn unsave(s: &Setup, path: &Path, snapshot: &str) -> (StatusCode, Vec<u8>) {
+    unsave_as(s, &path.to_string_lossy(), snapshot, true).await
+}
+
+/// `name` in the project holding "old", saved over with "new". The file and the save's snapshot.
+async fn saved_file(s: &Setup, name: &str) -> (PathBuf, String) {
+    let file = s.proj.join(name);
+    std::fs::write(&file, "old").unwrap();
+    let (status, body) = save(s, &file, &hash_bytes(b"old"), b"new").await;
+    assert_eq!(status, StatusCode::OK, "{}", text(&body));
+    (file, json(&body)["snapshot"].as_str().unwrap().to_string())
+}
+
+#[tokio::test]
+async fn unsave_is_refused_without_the_bearer() {
+    let s = setup();
+    let (file, snapshot) = saved_file(&s, "a.txt").await;
+    let (status, _) = unsave_as(&s, &file.to_string_lossy(), &snapshot, false).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert_eq!(std::fs::read(&file).unwrap(), b"new");
+}
+
+#[tokio::test]
+async fn unsave_puts_back_the_bytes_before_the_save() {
+    let s = setup();
+    let (file, snapshot) = saved_file(&s, "a.txt").await;
+    let (status, body) = unsave(&s, &file, &snapshot).await;
+    assert_eq!(status, StatusCode::OK, "{}", text(&body));
+    assert_eq!(std::fs::read(&file).unwrap(), b"old");
+    let undone = json(&body);
+    assert_eq!(undone["hash"], hash_bytes(b"old"));
+    assert_eq!(undone["size"], 3);
+}
+
+#[tokio::test]
+async fn unsave_keeps_what_it_replaced() {
+    let s = setup();
+    let (file, snapshot) = saved_file(&s, "a.txt").await;
+    let (_, body) = unsave(&s, &file, &snapshot).await;
+    let undone = json(&body);
+    let kept = undone["snapshot"].as_str().unwrap();
+    assert_ne!(kept, snapshot);
+    let kept = History::new(s.home.path()).get(kept).unwrap().unwrap();
+    assert_eq!(kept.before, b"new");
+    assert_eq!(kept.after_hash, hash_bytes(b"old"));
+    // So the undo can be undone the same way.
+    let (status, _) = unsave(&s, &file, undone["snapshot"].as_str().unwrap()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(std::fs::read(&file).unwrap(), b"new");
+}
+
+#[tokio::test]
+async fn unsave_conflicts_when_the_file_changed_since() {
+    let s = setup();
+    let (file, snapshot) = saved_file(&s, "a.txt").await;
+    std::fs::write(&file, "an agent wrote this").unwrap();
+    let (status, body) = unsave(&s, &file, &snapshot).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(json(&body)["hash"], hash_bytes(b"an agent wrote this"));
+    assert_eq!(std::fs::read(&file).unwrap(), b"an agent wrote this");
+}
+
+#[tokio::test]
+async fn unsave_conflicts_when_the_file_is_gone() {
+    let s = setup();
+    let (file, snapshot) = saved_file(&s, "a.txt").await;
+    std::fs::remove_file(&file).unwrap();
+    let (status, body) = unsave(&s, &file, &snapshot).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(json(&body)["hash"].is_null());
+    assert!(!file.exists());
+}
+
+#[tokio::test]
+async fn unsave_of_another_files_snapshot_is_a_404() {
+    let s = setup();
+    let (_, snapshot) = saved_file(&s, "a.txt").await;
+    // The other file holds what the save wrote, so only the path tells them apart.
+    let other = s.proj.join("b.txt");
+    std::fs::write(&other, "new").unwrap();
+    let (status, _) = unsave(&s, &other, &snapshot).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(std::fs::read(&other).unwrap(), b"new");
+}
+
+#[tokio::test]
+async fn unsave_of_a_malformed_id_is_a_404() {
+    let s = setup();
+    let (file, _) = saved_file(&s, "a.txt").await;
+    for id in ["../x", "", "f000000000000", "index"] {
+        let (status, _) = unsave(&s, &file, id).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{id:?}");
+    }
+    assert_eq!(std::fs::read(&file).unwrap(), b"new");
+}
+
+#[tokio::test]
+async fn unsave_refuses_marshells_own_folder() {
+    let s = setup();
+    let (_, snapshot) = saved_file(&s, "a.txt").await;
+    let own = canon(s.home.path()).join("settings.json");
+    std::fs::write(&own, "new").unwrap();
+    let (status, body) = unsave(&s, &own, &snapshot).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(text(&body), "Marshell doesn't save files in its own folder.");
+    assert_eq!(std::fs::read(&own).unwrap(), b"new");
+}
+
+#[tokio::test]
+async fn unsave_refuses_a_bad_path() {
+    let s = setup();
+    let (file, snapshot) = saved_file(&s, "a.txt").await;
+    let dotted = s.proj.join("x").join("..").join("a.txt");
+    for path in [
+        r"\\server\share\a.txt".to_string(),
+        "a.txt".into(),
+        dotted.to_string_lossy().into_owned(),
+    ] {
+        let (status, body) = unsave_as(&s, &path, &snapshot, true).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");
+        assert_eq!(text(&body), "That path can't be saved.");
+    }
+    assert_eq!(std::fs::read(&file).unwrap(), b"new");
+}
+
+#[tokio::test]
+async fn unsave_refuses_a_read_only_file() {
+    let s = setup();
+    let (file, snapshot) = saved_file(&s, "a.txt").await;
+    set_read_only(&file, true);
+    let (status, body) = unsave(&s, &file, &snapshot).await;
+    set_read_only(&file, false);
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(text(&body), "The file is read-only or in use by another program.");
+    assert_eq!(std::fs::read(&file).unwrap(), b"new");
+}

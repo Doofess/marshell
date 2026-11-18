@@ -1312,6 +1312,7 @@ pub fn router(state: AppState) -> Router {
                 .put(save::save)
                 .layer(DefaultBodyLimit::max(files::TEXT_CAP as usize)),
         )
+        .route("/v1/files/unsave", post(save::unsave))
         .route("/v1/sessions/{tab}", patch(sessions::rename).delete(sessions::close))
         .route("/v1/shell-panel", post(shell_panel::open))
         .route("/v1/shell-panel/adopt", post(shell_panel::adopt))

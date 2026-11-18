@@ -7,15 +7,16 @@
 
 use super::{AppState, files};
 use crate::config::hash::hash_bytes;
+use crate::projects::same_path;
 use crate::userfiles::guard::{SaveRefusal, save_refusal};
-use crate::userfiles::history::History;
+use crate::userfiles::history::{History, Saved};
 use crate::userfiles::write::write_in_place;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use marshell_protocol::api::{FileConflict, FileSaved};
+use marshell_protocol::api::{FileConflict, FileSaved, FileUnsave};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::io::{self, Read};
@@ -59,6 +60,8 @@ enum Done {
     BadPath,
     Refused(SaveRefusal),
     ReadOnly,
+    /// An undo names a save the history doesn't hold for this file.
+    NoSuchSave,
     Failed(String),
 }
 
@@ -70,6 +73,7 @@ impl IntoResponse for Done {
             Done::BadPath => (StatusCode::BAD_REQUEST, BAD_PATH).into_response(),
             Done::Refused(why) => (StatusCode::FORBIDDEN, why.line()).into_response(),
             Done::ReadOnly => (StatusCode::FORBIDDEN, READ_ONLY).into_response(),
+            Done::NoSuchSave => StatusCode::NOT_FOUND.into_response(),
             Done::Failed(text) => (StatusCode::INTERNAL_SERVER_ERROR, text).into_response(),
         }
     }
@@ -187,21 +191,40 @@ fn save_checked(path: &Path, expect: &Expect, body: &[u8], home: &Path) -> Done 
             if read_only {
                 return Done::ReadOnly;
             }
-            let now = super::doctor::now_ms();
-            let snapshot = match History::new(home).take(path, &bytes, &new_hash, now) {
-                Ok(id) => id,
-                Err(e) => {
-                    return Done::Failed(format!(
-                        "The file's old text could not be copied, so it was not saved: {e:#}"
-                    ));
-                }
-            };
-            match write_in_place(path, body, false) {
-                Ok(()) => saved(path, new_hash, Some(snapshot)),
-                Err(e) => write_failed(e),
-            }
+            replace(path, &bytes, body, new_hash, home)
         }
         (disk, _) => found(disk),
+    }
+}
+
+/// Writes `new` over a file that holds `old`, once a copy of `old` is on disk. The caller holds the lock.
+fn replace(path: &Path, old: &[u8], new: &[u8], new_hash: String, home: &Path) -> Done {
+    let snapshot = match History::new(home).take(path, old, &new_hash, super::doctor::now_ms()) {
+        Ok(id) => id,
+        Err(e) => {
+            return Done::Failed(format!(
+                "The file's old text could not be copied, so it was not saved: {e:#}"
+            ));
+        }
+    };
+    match write_in_place(path, new, false) {
+        Ok(()) => saved(path, new_hash, Some(snapshot)),
+        Err(e) => write_failed(e),
+    }
+}
+
+/// The undo itself, under the lock: the file goes back only while it holds what the save wrote.
+fn unsave_checked(path: &Path, save: &Saved, home: &Path) -> Done {
+    let _guard = SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    match read_disk(path) {
+        Ok(Disk::File(bytes, read_only)) if hash_bytes(&bytes) == save.after_hash => {
+            if read_only {
+                return Done::ReadOnly;
+            }
+            // The undo is a save like any other, so it can be undone too.
+            replace(path, &bytes, &save.before, hash_bytes(&save.before), home)
+        }
+        disk => found(disk),
     }
 }
 
@@ -213,6 +236,34 @@ pub async fn save(State(st): State<AppState>, Query(q): Query<SaveQuery>, body: 
     let home = st.home().to_path_buf();
     let done = tokio::task::spawn_blocking(move || {
         barred(&path, &home).unwrap_or_else(|| save_checked(&path, &expect, &body, &home))
+    })
+    .await;
+    match done {
+        Ok(done) => done.into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// POST /v1/files/unsave: puts back what the save `snapshot` replaced at `path`.
+pub async fn unsave(State(st): State<AppState>, Json(req): Json<FileUnsave>) -> Response {
+    let Some(path) = shaped(&req.path) else {
+        return Done::BadPath.into_response();
+    };
+    let home = st.home().to_path_buf();
+    let done = tokio::task::spawn_blocking(move || {
+        if let Some(no) = barred(&path, &home) {
+            return no;
+        }
+        let save = match History::new(&home).get(&req.snapshot) {
+            Ok(Some(save)) => save,
+            Ok(None) => return Done::NoSuchSave,
+            Err(e) => return Done::Failed(format!("{e:#}")),
+        };
+        // A save's copy goes back to the file it came from and to no other.
+        if !same_path(&save.path.to_string_lossy(), &path.to_string_lossy()) {
+            return Done::NoSuchSave;
+        }
+        unsave_checked(&path, &save, &home)
     })
     .await;
     match done {
