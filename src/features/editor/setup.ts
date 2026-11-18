@@ -27,6 +27,7 @@ const PHRASES: Record<string, string> = {
   "replace all": "Replace all",
   close: "Close",
   "Go to line": "Go to line",
+  go: "Go",
 };
 
 /** Whether word wrap is on, which CodeMirror's own extension does not tell. */
@@ -119,6 +120,16 @@ export function chordOfKey(name: string, platform: Platform): Chord {
   return { code, ctrl: p.ctrl || (p.mod && !mac), shift, alt: p.alt, meta: p.meta || (p.mod && mac) };
 }
 
+/**
+ * Esc makes the next Tab leave the editor, for two seconds. CodeMirror does this itself only when no binding took the Esc, and
+ * one does whenever text is selected (it drops the selection), so the Tab after it would indent instead. This runs first and
+ * takes nothing: the other Esc bindings still run.
+ */
+const armTabFocus = (view: EditorView): boolean => {
+  view.setTabFocusMode(2000);
+  return false;
+};
+
 /** A key press for a chord, as far as the app's shortcut matching reads one. */
 function eventOf(c: Chord): KeyboardEvent {
   return { code: c.code, key: c.code.replace(/^(Key|Digit)/, "").toLowerCase(), ctrlKey: c.ctrl, shiftKey: c.shift, altKey: c.alt, metaKey: c.meta, repeat: false, isComposing: false, getModifierState: () => false } as unknown as KeyboardEvent;
@@ -130,7 +141,7 @@ function bindings(platform: Platform, appChord: (e: KeyboardEvent) => boolean): 
   const line: KeyBinding = { key: "Mod-g", run: gotoLine, scope: "editor search-panel", preventDefault: true };
   // Mod-g is go to line, so find next and previous keep F3 and Shift-F3 (and Shift-Mod-g for the previous one).
   const finds = searchKeymap.filter((b) => b.key !== "Mod-g");
-  const sources: readonly KeyBinding[] = [...closeBracketsKeymap, line, wrap, ...finds, { key: "Shift-Mod-g", run: findPrevious, scope: "editor search-panel", preventDefault: true }, ...historyKeymap, indentWithTab, ...defaultKeymap];
+  const sources: readonly KeyBinding[] = [{ key: "Escape", run: armTabFocus }, ...closeBracketsKeymap, line, wrap, ...finds, { key: "Shift-Mod-g", run: findPrevious, scope: "editor search-panel", preventDefault: true }, ...historyKeymap, indentWithTab, ...defaultKeymap];
   const taken = (key: string) => appChord(eventOf(chordOfKey(key, platform)));
   const out: KeyBinding[] = [];
   for (const b of sources) {

@@ -73,6 +73,15 @@ describe("setup", () => {
     expect(bindings.some((b) => b.key === "Alt-z" && typeof b.run === "function")).toBe(true);
   });
 
+  it("esc_always_makes_the_next_tab_leave", () => {
+    // CodeMirror arms this itself only when no binding took the Esc, and one does whenever text is selected.
+    const first = make().facet(keymap).flat().find((b) => b.key === "Escape");
+    const armed: number[] = [];
+    const view = { setTabFocusMode: (ms: number) => armed.push(ms) } as unknown as Parameters<NonNullable<KeyBinding["run"]>>[0];
+    expect(first?.run?.(view)).toBe(false);
+    expect(armed).toEqual([2000]);
+  });
+
   it("a_bracket_gets_its_closing_one", () => {
     const tr = insertBracket(make({}, ""), "(");
     expect(tr?.state.doc.toString()).toBe("()");
@@ -109,6 +118,7 @@ describe("setup", () => {
       "replace all": "Replace all",
       close: "Close",
       "Go to line": "Go to line",
+      go: "Go",
     };
     for (const [key, text] of Object.entries(want)) expect(state.phrase(key), key).toBe(text);
   });

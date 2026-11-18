@@ -1,6 +1,8 @@
 import { browser } from "../browser/browserApi";
 import { entryReason, quietly } from "../browser/pageFocus";
 
+/** A text tab's editor, when it is the one on screen: not behind the Rendered view, and not in a hidden panel. */
+const EDITOR = '[data-nav-side] [role="tabpanel"]:not([hidden]) [data-pane="editor"]:not([hidden]) .cm-content';
 /** The selected tab's scrolling body. */
 const BODY = '[data-nav-side] [role="tabpanel"]:not([hidden]) .preview__body';
 /** The empty pane's first button, and the strip's "New tab" button: where focus goes when there is no body. */
@@ -9,14 +11,14 @@ const SLOT = '[data-nav-side] [role="tabpanel"]:not([hidden]) .browser-tab__slot
 const EMPTY_FIRST = "[data-nav-side] .empty-pane__button";
 const PLUS = '[data-nav-side] button[aria-label="New tab"]';
 
-/** The element focus should reach when the side pane takes it: the selected tab's body or a browser tab's slot, else the empty pane's first button, else the strip's "New tab" button. Null when the pane isn't drawn. */
+/** The element focus should reach when the side pane takes it: a text tab's editor (so typing goes on where the cursor was), else the selected tab's body or a browser tab's slot, else the empty pane's first button, else the strip's "New tab" button. Null when the pane isn't drawn. */
 export function paneFocusTarget(root: ParentNode = document): HTMLElement | null {
-  return root.querySelector<HTMLElement>(BODY) ?? root.querySelector<HTMLElement>(SLOT) ?? root.querySelector<HTMLElement>(EMPTY_FIRST) ?? root.querySelector<HTMLElement>(PLUS);
+  return root.querySelector<HTMLElement>(EDITOR) ?? root.querySelector<HTMLElement>(BODY) ?? root.querySelector<HTMLElement>(SLOT) ?? root.querySelector<HTMLElement>(EMPTY_FIRST) ?? root.querySelector<HTMLElement>(PLUS);
 }
 
 /**
  * Moves focus into the side pane after the next frame (a new tab or a pane that is just showing needs a frame to be there):
- * the selected tab's body (a browser tab's slot, which enters its page), else the empty pane's first button, else the strip's "New tab" button. Opening is the opener's job;
+ * a text tab's editor, else the selected tab's body (a browser tab's slot, which enters its page), else the empty pane's first button, else the strip's "New tab" button. Opening is the opener's job;
  * mounting or selecting a tab never takes focus, so a session switch leaves it in the terminal.
  */
 export function focusPane(): void {

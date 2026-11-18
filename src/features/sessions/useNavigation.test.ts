@@ -40,6 +40,11 @@ describe("focusKindOf", () => {
     expect(focusKindOf(null)).toBe("none");
   });
 
+  it("is a text box in the editor, whose text is an editable element and no input: Esc, Tab and the word-selecting chords stay its own", () => {
+    expect(focusKindOf(el([], "DIV", { isContentEditable: true }))).toBe("editable");
+    expect(focusKindOf(el([], "DIV", { isContentEditable: false }))).toBe("none");
+  });
+
   it("is a control on a select or a details summary, so Tab moves on from them instead of selecting a terminal", () => {
     expect(focusKindOf(el(["select"], "SELECT"))).toBe("control");
     expect(focusKindOf(el(["summary"], "SUMMARY"))).toBe("control");
