@@ -76,7 +76,8 @@ export async function getDraft(path: string): Promise<Draft | null> {
   try {
     const ep = await getEndpoint();
     const res = await coreFetch(ep, "GET", `/v1/drafts/one?path=${encodeURIComponent(path)}`);
-    if (!res.ok) return null;
+    // 204 is the core's "no draft".
+    if (res.status !== 200) return null;
     return (await res.json()) as Draft;
   } catch {
     return null;

@@ -125,7 +125,7 @@ async fn put_get_list_delete_round_trip() {
     );
     assert_eq!(
         call(&app, "GET", &one(&a), &Value::Null, true).await.0,
-        StatusCode::NOT_FOUND
+        StatusCode::NO_CONTENT
     );
     let (_, body) = call(&app, "GET", "/v1/drafts", &Value::Null, true).await;
     assert_eq!(
@@ -182,13 +182,14 @@ async fn put_refuses_text_over_the_cap() {
 }
 
 #[tokio::test]
-async fn get_of_no_draft_is_a_404() {
+async fn get_of_no_draft_is_a_204() {
+    // Not a 404: the editor asks for every file it opens, and the webview logs each 404 as an error in its console.
     let (_home, app) = setup();
     let dir = tempfile::tempdir().unwrap();
     let path = path_in(dir.path(), "none.txt");
     assert_eq!(
         call(&app, "GET", &one(&path), &Value::Null, true).await.0,
-        StatusCode::NOT_FOUND
+        StatusCode::NO_CONTENT
     );
 }
 

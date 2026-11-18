@@ -109,6 +109,13 @@ describe("the drafts", () => {
     arrange(new Response("", { status: 500 }));
     expect(await listDrafts()).toEqual([]);
   });
+  it("getDraft is null on a 204, the core's answer when there is no draft, without reading a body", async () => {
+    const res = new Response(null, { status: 204 });
+    const json = vi.spyOn(res, "json");
+    arrange(res);
+    expect(await getDraft("C:\a.txt")).toBeNull();
+    expect(json).not.toHaveBeenCalled();
+  });
   it("getDraft returns the draft, and null on a 404", async () => {
     arrange(new Response(JSON.stringify(draft), { status: 200 }));
     expect(await getDraft("C:\\a.txt")).toEqual(draft);

@@ -45,12 +45,13 @@ pub async fn list(State(st): State<AppState>) -> Response {
     }
 }
 
-/// GET /v1/drafts/one?path=: the file's draft, or 404.
+/// GET /v1/drafts/one?path=: the file's draft, or 204 when it has none. Not a 404: the editor asks for every file it opens, and
+/// a webview logs each 404 as an error in its console.
 pub async fn get(State(st): State<AppState>, Query(q): Query<DraftQuery>) -> Response {
     let home = st.home().to_path_buf();
     match tokio::task::spawn_blocking(move || Drafts::new(&home).get(&q.path)).await {
         Ok(Some(draft)) => Json(draft).into_response(),
-        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Ok(None) => StatusCode::NO_CONTENT.into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
