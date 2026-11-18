@@ -1918,7 +1918,6 @@ export function LiveApp() {
               ) : (
                 <Preview
                   entry={currentEntry(tab)}
-                  theme={paneTheme}
                   os={os}
                   canBack={tab.index > 0}
                   canForward={tab.index < tab.history.length - 1}

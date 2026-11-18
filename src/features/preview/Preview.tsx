@@ -1,8 +1,7 @@
-import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode, type Ref } from "react";
+import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type Ref } from "react";
 import { createPortal } from "react-dom";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import type { ITheme } from "@xterm/xterm";
 import { cropImage, cropPdfPage } from "../regions/crop";
 import { placePopover } from "../regions/placement";
 import { RegionComment, type RegionTarget } from "../regions/RegionComment";
@@ -10,7 +9,6 @@ import { RegionLayer } from "../regions/RegionLayer";
 import { canMarkRegion, fromDrag, initialRegion, regionLabel, regionStillValid, type Region } from "../regions/region";
 import type { Os } from "../../lib/keymap";
 import { CodeView } from "./CodeView";
-import { themeVariables } from "./highlight";
 import { HtmlView } from "./HtmlView";
 import { ImageView } from "./ImageView";
 import { kindOf, languageOf, splitPath } from "./kinds";
@@ -57,8 +55,6 @@ export type PreviewPaneProps = {
   file: FileState;
   /** A refetch just happened: the header says "Updated" for a moment. */
   updated: boolean;
-  /** The terminal theme beside the pane; the code takes its colours from it. */
-  theme: ITheme;
   os: Os;
   canBack: boolean;
   canForward: boolean;
@@ -140,7 +136,7 @@ function Body({ entry, file, onImageSize, onPages, onLink, onKey, region }: Body
 }
 
 /** The pane for one file: header, then the scrolling body. Everything it shows comes in as props, so it renders the same on any state. */
-export function PreviewPane({ entry, file, updated, theme, os, canBack, canForward, onBack, onForward, onOpen, onView, active, onEscape, regionTarget, onRegion, ref }: PreviewPaneProps) {
+export function PreviewPane({ entry, file, updated, os, canBack, canForward, onBack, onForward, onOpen, onView, active, onEscape, regionTarget, onRegion, ref }: PreviewPaneProps) {
   const { name, folder } = splitPath(entry.path);
   const body = useRef<HTMLDivElement>(null);
   // Focus goes into the scroll body when the tab goes somewhere (a link, Back, Forward, another line), so the arrow keys and
@@ -325,7 +321,6 @@ export function PreviewPane({ entry, file, updated, theme, os, canBack, canForwa
     <section
       className="preview"
       data-kind={kindOf(entry.path)}
-      style={themeVariables(theme) as CSSProperties}
       onKeyDown={keys}
       onFocus={() => setInside(true)}
       onBlur={(e) => {

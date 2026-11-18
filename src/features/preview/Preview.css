@@ -1,10 +1,10 @@
 /*
- * The preview pane: a header like a pane's, then one scrolling body. The body takes the terminal theme's background and
- * foreground (--code-*, set on the pane from the terminal's ANSI colours), so a file reads as part of the terminal beside it.
+ * The preview pane: a header like a pane's, then one scrolling body. The body takes the code scheme's background and
+ * foreground (--code-* in styles/tokens.css), the same colours the editor uses.
  */
 .preview {
-  --paper: var(--code-background, var(--bg-base));
-  --ink: var(--code-foreground, var(--text-1));
+  --paper: var(--code-background);
+  --ink: var(--code-foreground);
   display: grid;
   grid-template-rows: 28px minmax(0, 1fr);
   min-inline-size: 0;
@@ -474,6 +474,29 @@
     outline-offset: -1px;
   }
   .code__no {
+    color: CanvasText;
+  }
+}
+
+/* The code scheme gives way to the system's colours: the text is CanvasText on Canvas, and every token colour is set back to
+   its empty initial value, so a token takes the text colour. The editor's selector goes beside .preview. */
+@media (forced-colors: active) {
+  .preview {
+    --paper: Canvas;
+    --ink: CanvasText;
+    --code-token-keyword: initial;
+    --code-token-string: initial;
+    --code-token-string-expression: initial;
+    --code-token-constant: initial;
+    --code-token-function: initial;
+    --code-token-parameter: initial;
+    --code-token-punctuation: initial;
+    --code-token-link: initial;
+    --code-token-comment: initial;
+    --code-token-inserted: initial;
+    --code-token-deleted: initial;
+    --code-token-changed: initial;
+    background: Canvas;
     color: CanvasText;
   }
 }

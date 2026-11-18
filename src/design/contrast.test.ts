@@ -21,6 +21,23 @@ describe("text on surfaces", () => {
       });
 });
 
+describe("code colours", () => {
+  const codeTokens = Object.keys(tokens).filter((n) => n.startsWith("--code-token-"));
+  it("every_code_token_is_at_least_4_5_to_1_on_every_surface", () => {
+    expect(codeTokens).toHaveLength(12);
+    for (const theme of THEMES)
+      for (const n of codeTokens) expect(minOnSurfaces(tokens[n]![theme], tokens, theme), `${n} (${theme})`).toBeGreaterThanOrEqual(4.5);
+  });
+  it("the_four_main_code_hues_differ", () => {
+    for (const theme of THEMES) {
+      const names = ["--code-token-keyword", "--code-token-string", "--code-token-constant", "--code-token-function"];
+      for (let i = 0; i < names.length; i++)
+        for (let j = i + 1; j < names.length; j++)
+          expect(deltaE(tokens[names[i]!]![theme], tokens[names[j]!]![theme]), `${names[i]} and ${names[j]} (${theme})`).toBeGreaterThanOrEqual(15);
+    }
+  });
+});
+
 describe("status and brand colours on surfaces", () => {
   const names = ["--error", "--ok", "--caution", "--brand-claude", "--brand-claude-mark", "--brand-codex", "--brand-openai", "--brand-cyan", "--brand-deepseek", "--brand-violet", "--brand-generic", "--tool-shell", "--tool-dev", "--tool-remote"];
   for (const theme of THEMES)

@@ -1,6 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { PALETTES } from "../terminal/palettes";
 import { PreviewPane, formatSize, type PreviewPaneProps } from "./Preview";
 import { followWebLink } from "./webLink";
 import type { FileState } from "./usePreviewFile";
@@ -10,7 +9,6 @@ const base: PreviewPaneProps = {
   entry: { path: "C:\\dev\\app\\src\\a.rs", line: null, col: null, view: "rendered" },
   file: { phase: "loading" },
   updated: false,
-  theme: PALETTES.dark,
   os: "windows",
   canBack: false,
   canForward: false,

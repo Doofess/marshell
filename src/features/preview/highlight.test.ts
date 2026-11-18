@@ -1,24 +1,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { PALETTES } from "../terminal/palettes";
-import { HIGHLIGHT_CAP, highlightLines, themeVariables } from "./highlight";
-
-describe("themeVariables", () => {
-  const theme = PALETTES.dark;
-  const vars = themeVariables(theme);
-  it("maps the code colours to the terminal theme's ANSI colours", () => {
-    expect(vars["--code-token-keyword"]).toBe(theme.magenta);
-    expect(vars["--code-token-string"]).toBe(theme.green);
-    expect(vars["--code-token-function"]).toBe(theme.blue);
-    expect(vars["--code-token-constant"]).toBe(theme.cyan);
-    expect(vars["--code-foreground"]).toBe(theme.foreground);
-  });
-  it("sets every variable the CSS-variables theme reads", () => {
-    for (const k of ["foreground", "background", "token-constant", "token-string", "token-comment", "token-keyword", "token-parameter", "token-function", "token-string-expression", "token-punctuation", "token-link", "token-inserted", "token-deleted", "token-changed"])
-      expect(vars[`--code-${k}`], k).toBeTruthy();
-  });
-});
+import { HIGHLIGHT_CAP, highlightLines } from "./highlight";
 
 describe("highlightLines", () => {
   it("returns one token list per line that joins back to the text, coloured through the code variables", async () => {

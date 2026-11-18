@@ -1,7 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { PreviewPane, type PreviewPaneProps } from "../preview/Preview";
-import { PALETTES } from "../terminal/palettes";
 import { SidePane, type SidePaneProps, type StripTab } from "./SidePane";
 
 const noop = () => {};
@@ -88,7 +87,6 @@ describe("SidePane", () => {
       entry: { path: "C:\\w\\a.md", line: null, col: null, view: "rendered" },
       file: { phase: "error" },
       updated: false,
-      theme: PALETTES.dark,
       os: "windows",
       active: true,
       canBack: false,
