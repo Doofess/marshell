@@ -1,0 +1,334 @@
+/*
+ * The editor: the read-only code view's sibling. The same paper and ink (--code-* in styles/tokens.css), the same code font,
+ * the same line height, so a file looks the same whether it is read or edited. CodeMirror builds its own elements and injects
+ * its own styles at run time, so each rule here is scoped under .editor, which outranks CodeMirror's. No scrollbar shows: the
+ * scroller still scrolls with the wheel, touch and keys.
+ */
+.editor {
+  --paper: var(--code-background);
+  --ink: var(--code-foreground);
+  --quiet: color-mix(in oklch, var(--ink) 55%, transparent);
+  --wash: color-mix(in oklch, var(--ink) 6%, transparent);
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-inline-size: 0;
+  min-block-size: 0;
+  block-size: 100%;
+  background: var(--paper);
+  color: var(--ink);
+}
+.editor__host {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-inline-size: 0;
+  min-block-size: 0;
+  overflow: clip;
+}
+.editor .cm-editor {
+  min-block-size: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-13);
+}
+/* The whole editor shows where the keyboard is, the find bar included; the content area does not draw a second box inside it. */
+.editor .cm-editor:focus-within {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+.editor .cm-content:focus-visible {
+  outline: 0;
+}
+
+.editor .cm-scroller {
+  font-family: inherit;
+  line-height: 1.5;
+  scrollbar-width: none;
+  overscroll-behavior: contain;
+}
+.editor .cm-scroller::-webkit-scrollbar {
+  display: none;
+}
+.editor .cm-content {
+  padding-block: var(--space-2);
+  caret-color: var(--ink);
+}
+.editor .cm-line {
+  padding-inline: var(--space-2) var(--space-4);
+}
+
+/* Line numbers sit on the paper with no rule beside them, as in the read-only view. */
+.editor .cm-gutters {
+  border-inline-end: 0;
+  background: var(--paper);
+  color: var(--quiet);
+}
+.editor .cm-lineNumbers .cm-gutterElement {
+  padding-inline: var(--space-2) var(--space-1);
+}
+.editor .editor__marks {
+  min-inline-size: calc(3px + var(--space-2));
+}
+.editor .editor__mark {
+  display: block;
+  inline-size: 3px;
+  block-size: 100%;
+  margin-inline: var(--space-1);
+  border-radius: 2px;
+  background: var(--code-token-changed);
+}
+
+/* The cursor, the current line, the selection. */
+.editor .cm-cursor,
+.editor .cm-dropCursor {
+  border-inline-start: 2px solid var(--ink);
+}
+.editor .cm-activeLine {
+  background: var(--wash);
+}
+.editor .cm-selectionBackground {
+  background: var(--fill-strong);
+}
+.editor .cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground {
+  background: color-mix(in oklch, var(--accent) 32%, transparent);
+}
+.editor .cm-content ::selection {
+  background: color-mix(in oklch, var(--accent) 32%, transparent);
+}
+.editor .cm-matchingBracket {
+  background: var(--fill-strong);
+  font-weight: 600;
+}
+.editor .cm-nonmatchingBracket {
+  background: color-mix(in oklch, var(--error) 22%, transparent);
+}
+.editor .cm-searchMatch {
+  background: color-mix(in oklch, var(--caution) 24%, transparent);
+}
+.editor .cm-searchMatch.cm-searchMatch-selected {
+  background: color-mix(in oklch, var(--caution) 52%, transparent);
+}
+
+/* Syntax colours: one class for each token the highlighter names (preview/highlight.ts). */
+.tok-keyword {
+  color: var(--code-token-keyword);
+}
+.tok-string {
+  color: var(--code-token-string);
+}
+.tok-string-expression {
+  color: var(--code-token-string-expression);
+}
+.tok-constant {
+  color: var(--code-token-constant);
+}
+.tok-function {
+  color: var(--code-token-function);
+}
+.tok-parameter {
+  color: var(--code-token-parameter);
+}
+.tok-punctuation {
+  color: var(--code-token-punctuation);
+}
+.tok-link {
+  color: var(--code-token-link);
+}
+.tok-comment {
+  color: var(--code-token-comment);
+}
+.tok-inserted {
+  color: var(--code-token-inserted);
+}
+.tok-deleted {
+  color: var(--code-token-deleted);
+}
+.tok-changed {
+  color: var(--code-token-changed);
+}
+.tok-i {
+  font-style: italic;
+}
+.tok-b {
+  font-weight: 600;
+}
+.tok-u {
+  text-decoration: underline;
+}
+
+/* The find bar and the go-to-line box, at the top. Fields and buttons are told apart by a fill, never a box. */
+.editor .cm-panels {
+  background: var(--bg-raised);
+  color: var(--text-1);
+  font-family: var(--font-ui);
+  font-size: var(--text-12);
+}
+.editor .cm-panels-top {
+  border-block-end: 1px solid var(--hairline);
+}
+.editor .cm-panel.cm-search,
+.editor .cm-panel.cm-gotoLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+}
+.editor .cm-gotoLine label,
+.editor .cm-search label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: inherit;
+}
+.editor .cm-search br {
+  display: none;
+}
+.editor .cm-textfield {
+  min-inline-size: 0;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-1);
+  font: inherit;
+}
+.editor .cm-textfield::placeholder {
+  color: var(--text-2);
+}
+.editor .cm-button {
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--fill);
+  background-image: none;
+  color: var(--text-1);
+  font: inherit;
+}
+.editor .cm-button:active,
+.editor .cm-search [name="close"]:active {
+  background: var(--fill-strong);
+}
+.editor .cm-search [name="close"] {
+  position: static;
+  margin-inline-start: auto;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--text-15);
+  line-height: 1;
+}
+@media (hover: hover) and (pointer: fine) {
+  .editor .cm-button:hover {
+    background: var(--fill-strong);
+  }
+  .editor .cm-search [name="close"]:hover {
+    background: var(--hover);
+    color: var(--text-1);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .editor .cm-button,
+  .editor .cm-search [name="close"] {
+    transition: background-color 120ms ease-out;
+  }
+}
+
+/* The line under the editor. It is text, not a control. */
+.editor-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-inline-size: 0;
+  padding-inline: var(--space-3);
+  block-size: 24px;
+  border-block-start: 1px solid var(--hairline);
+  background: var(--bg-raised);
+  color: var(--text-2);
+  font-size: var(--text-12);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.editor-footer__item {
+  flex-shrink: 0;
+}
+.editor-footer__hint {
+  flex-shrink: 1;
+  min-inline-size: 0;
+  margin-inline-start: auto;
+  overflow: clip;
+  text-overflow: ellipsis;
+}
+
+/* System colours only. The text is CanvasText on Canvas (the .editor selector also sits in Preview.css's block, which is
+   not enough alone: this file may load after it). Every mark that colour told apart takes a system colour or a shape. The cursor
+   and the rules are borders, which the system draws in its own colour; no border colour is set here. */
+@media (forced-colors: active) {
+  .editor {
+    --paper: Canvas;
+    --ink: CanvasText;
+    --quiet: CanvasText;
+  }
+  .editor .cm-editor:focus-within {
+    outline-color: Highlight;
+  }
+  .editor .cm-activeLine {
+    background: transparent;
+    outline: 1px solid GrayText;
+    outline-offset: -1px;
+  }
+  .editor .cm-selectionBackground,
+  .editor .cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground {
+    background: Highlight;
+    forced-color-adjust: none;
+  }
+  .editor .cm-content ::selection {
+    background: Highlight;
+    color: HighlightText;
+  }
+  .editor .cm-searchMatch,
+  .editor .cm-searchMatch.cm-searchMatch-selected {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+  .editor .cm-searchMatch.cm-searchMatch-selected {
+    outline: 2px solid HighlightText;
+    outline-offset: -2px;
+  }
+  .editor .cm-matchingBracket,
+  .editor .cm-nonmatchingBracket {
+    background: transparent;
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
+  .editor .editor__mark {
+    background: CanvasText;
+    forced-color-adjust: none;
+  }
+  .editor .cm-panels {
+    background: Canvas;
+    color: CanvasText;
+  }
+  .editor-footer {
+    background: Canvas;
+    color: CanvasText;
+  }
+  .editor .cm-textfield {
+    background: Field;
+    color: FieldText;
+    outline: 1px solid CanvasText;
+    outline-offset: -1px;
+  }
+  .editor .cm-button {
+    background: ButtonFace;
+    color: ButtonText;
+    outline: 1px solid ButtonText;
+    outline-offset: -1px;
+    forced-color-adjust: none;
+  }
+  .editor .cm-search [name="close"] {
+    color: ButtonText;
+  }
+}

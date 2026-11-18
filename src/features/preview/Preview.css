@@ -479,8 +479,9 @@
 }
 
 /* The code scheme gives way to the system's colours: the text is CanvasText on Canvas, and every token colour is set back to
-   its empty initial value, so a token takes the text colour. The editor's selector goes beside .preview. */
+   its empty initial value, so a token takes the text colour. The editor's selector is beside .preview. */
 @media (forced-colors: active) {
+  .editor,
   .preview {
     --paper: Canvas;
     --ink: CanvasText;

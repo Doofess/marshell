@@ -1,0 +1,174 @@
+import { Annotation, Compartment, EditorSelection, EditorState, Transaction } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
+import { gotoLine } from "@codemirror/search";
+import { useEffect, useImperativeHandle, useMemo, useRef, type Ref } from "react";
+import { EDITOR_HINT } from "./EditorFooter";
+import { languageFor } from "./fileTypes";
+import { lineMarks, setMarks } from "./lineMarks";
+import { access, extensions, READ_ONLY, toggleWrap, WRAP, wrapping } from "./setup";
+import { shiki } from "./shikiBridge";
+import "./Editor.css";
+
+/** What the pane can ask of an editor. */
+export type EditorHandle = {
+  /** The text as it is now. */
+  text(): string;
+  /** Replaces the whole text in one step that undo can take back, and marks the lines (1-based) that changed. Not an edit by the person: `onEdit` does not fire. */
+  setText(text: string, marks: number[]): void;
+  focus(): void;
+  /** Opens the go-to-line box. */
+  goToLine(): void;
+  toggleWrap(): void;
+  /** Scrolls a line (1-based) to about a third from the top. */
+  reveal(line: number): void;
+};
+
+type Props = {
+  name: string;
+  path: string;
+  /** The text the editor opens with. Later text comes through `setText`. */
+  initial: string;
+  /** The file's first line, for a type that its name does not tell (a shebang). */
+  firstLine?: string;
+  readOnly: boolean;
+  wrap: boolean;
+  /** A line to scroll to a third from the top; scrolls again when it changes. */
+  target?: number;
+  /** The text after a change the person made: typing, paste, cut, undo, redo, replace. */
+  onEdit: (text: string) => void;
+  /** The cursor's line and column, both from 1. */
+  onCursor: (line: number, column: number) => void;
+  /** Whether a key press is one of the app's shortcuts: the editor leaves such keys out, so they reach the window. Absent: none is. */
+  appChord?: (e: KeyboardEvent) => boolean;
+  /** The id of the footer's hint, which describes the text box. */
+  hintId?: string;
+  ref?: Ref<EditorHandle>;
+};
+
+/** Marks a transaction as `setText`'s, which is not an edit by the person. */
+const FROM_OUTSIDE = Annotation.define<boolean>();
+/** The Shiki language, a compartment of its own so a renamed file is coloured for its new type. */
+const COLOURS = new Compartment();
+
+const never = () => false;
+
+/**
+ * A CodeMirror 6 editor. The element is drawn on the server pass and in tests without a DOM; the view itself is made in an
+ * effect. The props that later change (name, read-only, wrap, language) reconfigure the view; the text only changes through
+ * the person or `setText`.
+ */
+export function Editor({ name, path, initial, firstLine, readOnly, wrap, target, onEdit, onCursor, appChord, hintId = EDITOR_HINT, ref }: Props) {
+  const host = useRef<HTMLDivElement>(null);
+  const view = useRef<EditorView | null>(null);
+  // The callbacks as of the last render, so the view made once never calls an old one.
+  const calls = useRef({ onEdit, onCursor });
+  calls.current = { onEdit, onCursor };
+  const language = useMemo(() => languageFor(path, firstLine), [path, firstLine]);
+  // What the view was last given, so an unchanged prop does not reconfigure it.
+  const given = useRef({ name, readOnly, wrap, language });
+
+  useEffect(() => {
+    const parent = host.current;
+    if (!parent) return;
+    const v = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: initial,
+        extensions: [
+          extensions({ readOnly, wrap, name, appChord: appChord ?? never }),
+          COLOURS.of(shiki(language)),
+          lineMarks(),
+          EditorView.contentAttributes.of({ "aria-describedby": hintId }),
+          EditorView.updateListener.of((u) => {
+            // A change by the person: not one of setText's.
+            if (u.transactions.some((t) => t.docChanged && !t.annotation(FROM_OUTSIDE))) calls.current.onEdit(u.state.doc.toString());
+            if (u.selectionSet || u.docChanged) report(u.state);
+          }),
+        ],
+      }),
+    });
+    const report = (state: EditorState) => {
+      const head = state.selection.main.head;
+      const line = state.doc.lineAt(head);
+      calls.current.onCursor(line.number, head - line.from + 1);
+    };
+    view.current = v;
+    given.current = { name, readOnly, wrap, language };
+    report(v.state);
+    return () => {
+      v.destroy();
+      view.current = null;
+    };
+    // The view is made once; what changes later is applied by the effects below.
+  }, []);
+
+  useEffect(() => {
+    const v = view.current;
+    const was = given.current;
+    if (!v) return;
+    if (was.name !== name || was.readOnly !== readOnly) v.dispatch({ effects: READ_ONLY.reconfigure(access(name, readOnly)) });
+    if (was.wrap !== wrap) v.dispatch({ effects: WRAP.reconfigure(wrapping(wrap)) });
+    if (was.language !== language) v.dispatch({ effects: COLOURS.reconfigure(shiki(language)) });
+    given.current = { name, readOnly, wrap, language };
+  }, [name, readOnly, wrap, language]);
+
+  const reveal = (line: number) => {
+    const v = view.current;
+    if (!v) return;
+    const at = v.state.doc.line(Math.min(Math.max(1, Math.floor(line)), v.state.doc.lines)).from;
+    // Aligned to the top with a margin of a third of the height, so the line sits about a third from the top, as the read-only view puts it.
+    v.dispatch({ effects: EditorView.scrollIntoView(at, { y: "start", yMargin: v.scrollDOM.clientHeight / 3 }) });
+  };
+
+  useEffect(() => {
+    if (target !== undefined) reveal(target);
+  }, [target]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      text: () => view.current?.state.doc.toString() ?? "",
+      setText(text, marks) {
+        const v = view.current;
+        if (!v) return;
+        const { doc, selection } = v.state;
+        if (doc.toString() === text) {
+          v.dispatch({ effects: setMarks.of(marks) });
+          return;
+        }
+        // The cursor stays on its line number, and in its column where the line is long enough.
+        const head = selection.main.head;
+        const at = doc.lineAt(head);
+        const column = head - at.from;
+        const next = EditorState.create({ doc: text }).doc;
+        const line = next.line(Math.min(at.number, next.lines));
+        const cursor = Math.min(line.from + column, line.to);
+        v.dispatch({
+          changes: { from: 0, to: doc.length, insert: text },
+          selection: EditorSelection.cursor(cursor),
+          effects: setMarks.of(marks),
+          annotations: [FROM_OUTSIDE.of(true), Transaction.addToHistory.of(true)],
+        });
+      },
+      focus: () => view.current?.focus(),
+      goToLine() {
+        const v = view.current;
+        if (!v) return;
+        v.focus();
+        gotoLine(v);
+      },
+      toggleWrap() {
+        const v = view.current;
+        if (v) toggleWrap(v);
+      },
+      reveal,
+    }),
+    [],
+  );
+
+  return (
+    <div className="editor">
+      <div className="editor__host" ref={host} data-hint={hintId} />
+    </div>
+  );
+}
