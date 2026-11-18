@@ -135,6 +135,23 @@ Run this one in the installed app, not the review page, with a scratch `MARSHELL
 | I3 | Open Notifications and Tab to the switch in "Terminal programs" | "Alerts from terminal programs (bell, OSC 9, OSC 777), switch, on" by default, with "Off: the row still changes, with no banner or sound." as its description | ☐ | ☐ |
 | I4 | Press Space on that switch, then press Space again | The same switch is announced "off", then "on" | ☐ | ☐ |
 
+## J. The text editor (slice 6q-4a, at release sign-off)
+
+Run this one in the installed app, not the review page, with a scratch `MARSHELL_HOME`. Have a small text file `notes.txt` and a Markdown file to open, and a second program, such as Notepad, to change `notes.txt` on disk.
+
+| # | Do | You should hear | Narrator | NVDA |
+| --- | --- | --- | :-: | :-: |
+| J1 | Open `notes.txt` in the side pane and move focus into the editor | "notes.txt, editor", that it is a multi-line edit field, and its hint "Esc, then Tab, leaves the editor" | ☐ | ☐ |
+| J2 | Type a word | The characters as typed and nothing else, with no announcement per key; the tab's name now ends ", unsaved" | ☐ | ☐ |
+| J3 | Press Ctrl+F, then Esc | "Find"; Esc closes the find bar and focus stays in the editor | ☐ | ☐ |
+| J4 | Press Ctrl+G | "Go to line" | ☐ | ☐ |
+| J5 | Press Esc, then Tab | Focus leaves the editor to the next control | ☐ | ☐ |
+| J6 | Press Ctrl+S, then Tab to the "Undo" button (it is reachable after the editor) and press it | "Saved notes.txt."; then "notes.txt is back as it was before the save." | ☐ | ☐ |
+| J7 | With no unsaved edits, change one line of `notes.txt` in the other program and save it there | "notes.txt changed on disk. 1 line changed." | ☐ | ☐ |
+| J8 | Type in the editor, then change `notes.txt` in the other program | "notes.txt changed on disk."; the group with "Keep mine" and "Take disk" is reachable with Tab; the bar did not move focus | ☐ | ☐ |
+| J9 | Close the tab with unsaved edits | A dialog: "Save the changes to notes.txt?", "Its unsaved edits are lost if you don't save them.", with focus on "Save"; Escape closes it and focus is back where it was | ☐ | ☐ |
+| J10 | Set the read-only attribute on `notes.txt` and open it, then move focus into the editor | "notes.txt, read-only", and the line "notes.txt is read-only on disk." | ☐ | ☐ |
+
 ## Recording the result
 
 In the review page's sign-off, answer with the table's letters (A to F): for example **"Screen reader: A pass, B fail (B6: focus went to the page, not the chip), C pass, Narrator and NVDA"**. A fail is a bug to fix before the sub-review is signed off, not a note for later. Put anything surprising (a phrase that is correct but long or odd) in `docs/IDEAS.md`.

@@ -138,6 +138,15 @@ describe("side pane commands", () => {
   });
 });
 
+describe("the text tab's commands", () => {
+  it("map_to_their_shortcut_kinds_and_have_no_key", () => {
+    expect(commandShortcut("pane-save")).toEqual({ kind: "paneSave" });
+    expect(commandShortcut("pane-undo-save")).toEqual({ kind: "paneUndoSave" });
+    expect(commandShortcut("pane-go-to-line")).toEqual({ kind: "paneGoToLine" });
+    expect(commandShortcut("pane-word-wrap")).toEqual({ kind: "paneWordWrap" });
+  });
+});
+
 describe("select region command", () => {
   it("maps to its shortcut kind", () => {
     expect(commandShortcut("select-region")).toEqual({ kind: "selectRegion" });

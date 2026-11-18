@@ -11,7 +11,7 @@ paths:
 - Reject any `Host` header that isn't `127.0.0.1:<port>`. CORS allows only the Tauri origins. (PLAN.md §3)
 - Never loosen the CSP. `connect-src` allows loopback only. (SCOPE.md; PLAN.md §3)
 - `endpoint.json` is readable by the user only. Never read or copy the token from a running Marshell's `run/endpoint.json`. (PLAN.md §3; SCOPE.md)
-- No route takes a file path to write. (phase-3e2 plan)
+- No route takes a file path to write, except the user-file save routes in `server/save.rs`, which check the path with `userfiles::guard` first. (phase-3e2 plan; PLAN.md §9, 6q second round 7)
 - Needs-you and permission patches skip the 100 ms batch and go out immediately, to meet the 150 ms hook-to-card budget. (PLAN.md §3, §Latency budgets)
 - Never hold a `MutexGuard` across `.await` or I/O. Lock, change, drop, then await. (PLAN.md §4)
 - Run blocking file reads and process sampling in `spawn_blocking`. (phase-3e2 plan)

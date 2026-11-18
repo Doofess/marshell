@@ -278,3 +278,12 @@ describe("the select region command", () => {
     expect(commandById("select-region").binding).toBeUndefined();
   });
 });
+describe("the text tab's commands", () => {
+  it("are_in_the_window_group_with_the_plans_names_and_no_default_key", () => {
+    expect(commandById("pane-save")).toMatchObject({ label: "Save file", group: "Window" });
+    expect(commandById("pane-undo-save")).toMatchObject({ label: "Undo last save", group: "Window" });
+    expect(commandById("pane-go-to-line")).toMatchObject({ label: "Go to line…", group: "Window" });
+    expect(commandById("pane-word-wrap")).toMatchObject({ label: "Word wrap", group: "Window" });
+    for (const id of ["pane-save", "pane-undo-save", "pane-go-to-line", "pane-word-wrap"]) expect(commandById(id).binding).toBeUndefined();
+  });
+});

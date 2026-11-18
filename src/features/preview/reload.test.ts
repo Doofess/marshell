@@ -3,7 +3,7 @@ import { afterDeleted } from "./usePreviewFile";
 import { START, next, type ReloadState, type StatResult } from "./reload";
 
 const CAP = 1000;
-const ok = (size: number, modified_ms: number): StatResult => ({ kind: "ok", size, modified_ms });
+const ok = (size: number, modified_ms: number): StatResult => ({ kind: "ok", size, modified_ms, readOnly: null });
 const MISSING: StatResult = { kind: "missing" };
 const step = (state: ReloadState, stat: StatResult) => next(state, stat, CAP);
 
@@ -52,11 +52,11 @@ describe("next", () => {
 
 describe("afterDeleted", () => {
   it("keeps the previous text or image under the deleted state", () => {
-    expect(afterDeleted({ phase: "text", text: "x" })).toEqual({ phase: "deleted", last: { phase: "text", text: "x" } });
+    expect(afterDeleted({ phase: "text", text: "x", encoding: "utf-8", eol: "lf", hash: "", readOnly: null })).toEqual({ phase: "deleted", last: { phase: "text", text: "x", encoding: "utf-8", eol: "lf", hash: "", readOnly: null } });
     expect(afterDeleted({ phase: "image", url: "blob:a" })).toEqual({ phase: "deleted", last: { phase: "image", url: "blob:a" } });
   });
   it("stays as it is when already deleted, and is plain when nothing was loaded", () => {
-    const d = afterDeleted({ phase: "text", text: "x" });
+    const d = afterDeleted({ phase: "text", text: "x", encoding: "utf-8", eol: "lf", hash: "", readOnly: null });
     expect(afterDeleted(d)).toBe(d);
     expect(afterDeleted({ phase: "loading" })).toEqual({ phase: "deleted" });
     expect(afterDeleted({ phase: "tooLarge", size: 1, limit: 0 })).toEqual({ phase: "deleted" });

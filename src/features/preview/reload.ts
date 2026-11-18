@@ -1,5 +1,8 @@
-/** What one stat poll saw: the file's size and modification time, or that it is gone. */
-export type StatResult = { kind: "ok"; size: number; modified_ms: number } | { kind: "missing" };
+/** Why a save would be refused, from the stat's `read_only`. */
+export type ReadOnlyReason = "own" | "managed" | "attribute";
+
+/** What one stat poll saw: the file's size, modification time and read-only reason, or that it is gone. */
+export type StatResult = { kind: "ok"; size: number; modified_ms: number; readOnly: ReadOnlyReason | null } | { kind: "missing" };
 
 export type ReloadState = {
   /** The last size and mtime acted on. */

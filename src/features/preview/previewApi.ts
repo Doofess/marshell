@@ -3,7 +3,7 @@ import type { FileStat } from "../../generated/FileStat";
 import type { ResolveRequest } from "../../generated/ResolveRequest";
 import type { ResolveResponse } from "../../generated/ResolveResponse";
 import { ApiError, api, coreFetch, getEndpoint } from "../../lib/api/client";
-import type { StatResult } from "./reload";
+import type { ReadOnlyReason, StatResult } from "./reload";
 
 /** The largest file the core serves per kind. Mirrors the core's caps; a bigger file is a 413 there and "too large" here. */
 export const TEXT_CAP = 2 * 1024 * 1024;
@@ -19,11 +19,12 @@ export async function statFile(path: string): Promise<StatResult> {
   if (res.status === 404) return { kind: "missing" };
   if (!res.ok) throw new ApiError(res.status, await res.text());
   const s = (await res.json()) as FileStat;
-  return { kind: "ok", size: s.size, modified_ms: s.modified_ms };
+  const readOnly: ReadOnlyReason | null = s.read_only === "own" || s.read_only === "managed" || s.read_only === "attribute" ? s.read_only : null;
+  return { kind: "ok", size: s.size, modified_ms: s.modified_ms, readOnly };
 }
 
 export type Content =
-  | { kind: "ok"; bytes: ArrayBuffer; modifiedMs: number }
+  | { kind: "ok"; bytes: ArrayBuffer; modifiedMs: number; hash: string }
   | { kind: "tooLarge"; size: number; limit: number }
   | { kind: "missing" };
 
@@ -37,7 +38,7 @@ export async function fetchContent(path: string, kind: "text" | "image" | "pdf")
     return { kind: "tooLarge", size: body.size, limit: body.limit };
   }
   if (!res.ok) throw new ApiError(res.status, await res.text());
-  return { kind: "ok", bytes: await res.arrayBuffer(), modifiedMs: Number(res.headers.get("X-Modified-Ms") ?? 0) };
+  return { kind: "ok", bytes: await res.arrayBuffer(), modifiedMs: Number(res.headers.get("X-Modified-Ms") ?? 0), hash: res.headers.get("X-Content-Hash") ?? "" };
 }
 
 /** Which of these texts name an existing file in the session's project: the absolute path for each, or null. */

@@ -58,6 +58,10 @@ import { accountLine, UNREACHABLE } from "../accounts/accountsText";
 import { getAccount, getInstall } from "../../lib/api/accounts";
 import { pickFile } from "../../lib/filePicker";
 import { Preview } from "../preview/Preview";
+import { isUnsaved, staleDrafts, withUnsaved } from "../editor/drafts";
+import { dropDraft, listDrafts } from "../editor/editorApi";
+import { SaveDialog, type SaveChoice } from "../editor/SaveDialog";
+import type { TextTabCommands } from "../editor/TextTab";
 import type { PaneTab } from "../../generated/PaneTab";
 import { PaneContext, PagePaneContext, type OpenPageInPane } from "../pane/PaneContext";
 import { dropCover, modalOnScreen } from "../pane/dropCover";
@@ -72,8 +76,8 @@ import { browserTabs } from "../browser/available";
 import { browser, pageKey } from "../browser/browserApi";
 import type { UrlBarHandle } from "../browser/UrlBar";
 import { useBrowserPages } from "../browser/useBrowserPages";
-import { focusPane } from "../pane/focusPane";
-import { FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, PANE_BESIDE_SESSION, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome } from "../pane/paneCommands";
+import { askedFrom, focusPane } from "../pane/focusPane";
+import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, PANE_BESIDE_SESSION, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome } from "../pane/paneCommands";
 import { activeTab, currentEntry, isBrowserTab, openRefused, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
 import { takeOpens } from "../pane/opens";
 import { newsReducer } from "../pane/paneNews";
@@ -684,8 +688,22 @@ export function LiveApp() {
   });
   // Only the script command the header would show is listed.
   const os = endpoint ? osOfPlatform(endpoint.platform) : undefined;
+  // The side pane's text tabs that are loaded, by key: each hands over the commands the palette and the close question call on it.
+  const textTabs = useRef(new Map<string, () => TextTabCommands | null>());
+  // The loaded text tab on screen: the selected tab of the pane shown beside the session. Null when the pane is hidden or covered, or the tab is not an editor yet.
+  const shownText = (): TextTabCommands | null => {
+    if (!view.pane.open || mainView !== "sessions" || focusedId == null) return null;
+    const shown = tabsOf(view.pane, focusedId);
+    const id = shown.active ?? shown.tabs[0]?.id;
+    return id === undefined ? null : (textTabs.current.get(pageKey(focusedId, id))?.() ?? null);
+  };
+  const shownTextRef = useRef(shownText);
+  shownTextRef.current = shownText;
+  const textNow = shownText();
   // A command that would do nothing now (Close with no session in focus, Reopen with nothing closed) is left out too.
   const idle = cannotRun({
+    textTab: textNow !== null,
+    undoSave: textNow?.canUndoSave() === true,
     focused: focusedInfo !== undefined,
     sessions: rows.length,
     waiting: nextWaiting(requests) !== null,
@@ -776,6 +794,79 @@ export function LiveApp() {
   // ended session keeps its own. A session switch only swaps which tabs are drawn, so nothing here moves focus except the one that opens.
   const paneDispatch = useCallback((action: PaneAction) => dispatch({ type: "pane", action }), [dispatch]);
   const paneProject = () => projectKeyOf(stateRef.current.rows, stateRef.current.focusedId);
+  // The files with unsaved edits, by path: read from the core's drafts once the layout is known (a draft no tab shows, and over 30 days
+  // old, is dropped first), then kept by each text tab's `onDirty`. A tab whose file is in it shows a dot. A tab that closes or goes to
+  // another file leaves its path in, because its draft is kept; only a save or "Don't save" takes it out.
+  const [unsaved, setUnsaved] = useState<ReadonlySet<string>>(() => new Set());
+  const unsavedRef = useRef(unsaved);
+  unsavedRef.current = unsaved;
+  const osName = os ?? "windows";
+  const noteDirty = useCallback((path: string, dirty: boolean) => setUnsaved((u) => withUnsaved(u, path, dirty, osName)), [osName]);
+  const draftsRead = useRef(false);
+  useEffect(() => {
+    if (!settled || !loaded || !os || draftsRead.current) return;
+    draftsRead.current = true;
+    const paths = Object.values(viewRef.current.pane.sessions).flatMap((s) => s.tabs.filter((t) => !isBrowserTab(t)).map((t) => currentEntry(t).path));
+    void listDrafts().then(async (found) => {
+      const stale = staleDrafts(found, paths, Date.now(), os);
+      await Promise.all(stale.map((p) => dropDraft(p)));
+      const kept = found.filter((d) => !stale.includes(d.path)).map((d) => d.path);
+      setUnsaved((u) => kept.reduce((acc, p) => withUnsaved(acc, p, true, os), u));
+    });
+  }, [settled, loaded, os]);
+  // Closing one tab whose file is unsaved asks first (the x button, a middle click, Delete in the strip, "Close tab"). Quitting, closing a
+  // session and hiding the pane never ask: the draft keeps the edits.
+  const [saveAsk, setSaveAsk] = useState<{ session: string; paneTab: string; path: string; from: "strip" | "pane" | null } | null>(null);
+  const askToClose = (session: string, tab: PaneTab): boolean => {
+    const entry = currentEntry(tab);
+    if (tabCloseAsk({ id: tab.id, path: entry.path, kind: tabKind(isBrowserTab(tab), entry.path) }, unsavedRef.current, osName) !== "ask") return false;
+    const shown = tabsOf(viewRef.current.pane, session);
+    if ((shown.active ?? shown.tabs[0]?.id) !== tab.id) paneDispatch({ type: "select", session, paneTab: tab.id });
+    setSaveAsk({ session, paneTab: tab.id, path: entry.path, from: askedFrom(document.activeElement) });
+    return true;
+  };
+  const closeAskedTab = (ask: { session: string; paneTab: string; from: "strip" | "pane" | null }) => {
+    const shown = tabsOf(viewRef.current.pane, ask.session);
+    const tab = shown.tabs.find((t) => t.id === ask.paneTab);
+    if (!tab) return;
+    paneDispatch({ type: "close", session: ask.session, paneTab: ask.paneTab });
+    announce(closedText(paneTabName(tab, tabTitles(shown.tabs))));
+    // The dialog gave focus back to the tab it was asked from, which is going. After a save the close is drawn later than the next
+    // frame, so focus waits for it. A close asked from the strip leaves the keyboard on the strip.
+    if (ask.from !== null) focusPane(ask.paneTab, ask.from);
+  };
+  // A tab that was not on screen mounts when it is selected, and its draft is read a moment later: wait for it, up to two seconds.
+  const loadedText = async (key: string): Promise<TextTabCommands | null> => {
+    let text: TextTabCommands | null = null;
+    for (let i = 0; i < 40; i++) {
+      text = textTabs.current.get(key)?.() ?? null;
+      if (text?.dirty()) return text;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return text;
+  };
+  const answerSaveAsk = (choice: SaveChoice) => {
+    const ask = saveAsk;
+    setSaveAsk(null);
+    // Cancel: the dialog's own focus handling gives the keyboard back to where it was.
+    if (ask === null || choice === "cancel") return;
+    const key = pageKey(ask.session, ask.paneTab);
+    if (choice === "discard") {
+      // Through the tab's own draft queue, so the flush when the tab goes cannot write the draft back.
+      const text = textTabs.current.get(key)?.();
+      if (text) text.discard();
+      else void dropDraft(ask.path);
+      setUnsaved((u) => withUnsaved(u, ask.path, false, osName));
+      return closeAskedTab(ask);
+    }
+    void (async () => {
+      const text = await loadedText(key);
+      if (text !== null && (await text.save())) return closeAskedTab(ask);
+      // Refused, conflicting or read-only: the tab stays open with its status line or bar, and the keyboard goes back to the editor.
+      if (text === null) announce(`${lastSegment(ask.path)} couldn't be saved.`);
+      text?.focus();
+    })();
+  };
   // `marshell open`: every frame lists the requests still waiting. Each becomes a background tab and is answered; the pane is never shown
   // and focus never moves. `answered` keeps what was said to each request still in the list, so a frame delivered twice applies once and
   // a lost answer is sent again with the next frame (the core ignores an answer it already has).
@@ -927,6 +1018,8 @@ export function LiveApp() {
       case "closePaneTab": {
         const closing = closeTabOutcome(pane, session);
         if (!closing || session === undefined) return announce(NO_TABS_OPEN);
+        const asked = tabsOf(pane, session).tabs.find((t) => t.id === closing.paneTab);
+        if (asked && askToClose(session, asked)) return;
         const inside = document.activeElement?.closest("[data-nav-side]") != null;
         paneDispatch({ type: "close", session, paneTab: closing.paneTab });
         const closed = tabsOf(pane, session).tabs.find((t) => t.id === closing.paneTab);
@@ -1453,6 +1546,19 @@ export function LiveApp() {
           if (!handle?.selectRegion()) announce("This tab has nothing to select a region in.");
           return true;
         }
+        // The text tab's commands run on the shown tab. The palette lists them only while one is loaded; a key can't reach them (they have none).
+        case "paneSave":
+          void shownTextRef.current()?.save();
+          return true;
+        case "paneUndoSave":
+          shownTextRef.current()?.undoSave();
+          return true;
+        case "paneGoToLine":
+          shownTextRef.current()?.goToLine();
+          return true;
+        case "paneWordWrap":
+          shownTextRef.current()?.toggleWrap();
+          return true;
         case "capture":
           void runCaptureRef.current();
           return true;
@@ -1626,7 +1732,7 @@ export function LiveApp() {
     }
     const shortcut = commandShortcut(id);
     // These move the focus (or open a panel that takes it), so they wait for the palette to hand it back first.
-    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "menu" || shortcut?.kind === "paneTab" || shortcut?.kind === "closePaneTab" || shortcut?.kind === "browse" || shortcut?.kind === "newBrowserTab" || shortcut?.kind === "clearBrowserData" || shortcut?.kind === "selectRegion") return void setTimeout(() => windowCommand(shortcut), 0);
+    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "menu" || shortcut?.kind === "paneTab" || shortcut?.kind === "closePaneTab" || shortcut?.kind === "browse" || shortcut?.kind === "newBrowserTab" || shortcut?.kind === "clearBrowserData" || shortcut?.kind === "selectRegion" || shortcut?.kind === "paneSave" || shortcut?.kind === "paneUndoSave" || shortcut?.kind === "paneGoToLine" || shortcut?.kind === "paneWordWrap") return void setTimeout(() => windowCommand(shortcut), 0);
     if (windowCommand(shortcut)) return;
     if (shortcut?.kind === "launcher") setLauncherOpen(true);
     else if (shortcut?.kind === "prompt") jumpPrompt(shortcut.by);
@@ -1860,13 +1966,14 @@ export function LiveApp() {
   const paneNode =
     os ? (
       <SidePane
-        tabs={paneTabs.tabs.map((t) => ({ id: t.id, title: paneTitles.get(t.id) ?? "", path: currentEntry(t).path, kind: tabKind(isBrowserTab(t), currentEntry(t).path), openedBy: t.opened_by, unseen: t.unseen }))}
+        tabs={paneTabs.tabs.map((t) => ({ id: t.id, title: paneTitles.get(t.id) ?? "", path: currentEntry(t).path, kind: tabKind(isBrowserTab(t), currentEntry(t).path), openedBy: t.opened_by, unseen: t.unseen, unsaved: !isBrowserTab(t) && isUnsaved(unsaved, currentEntry(t).path, osName) }))}
         activeId={paneActive}
         os={os}
         onSelect={(id) => paneSession !== undefined && paneDispatch({ type: "select", session: paneSession, paneTab: id })}
         onClose={(id) => {
           const tab = paneTabs.tabs.find((t) => t.id === id);
           if (paneSession === undefined || !tab) return;
+          if (askToClose(paneSession, tab)) return;
           paneDispatch({ type: "close", session: paneSession, paneTab: id });
           announce(closedText(paneTabName(tab, paneTitles)));
         }}
@@ -1918,7 +2025,6 @@ export function LiveApp() {
               ) : (
                 <Preview
                   entry={currentEntry(tab)}
-                  theme={paneTheme}
                   os={os}
                   canBack={tab.index > 0}
                   canForward={tab.index < tab.history.length - 1}
@@ -1926,14 +2032,22 @@ export function LiveApp() {
                   onForward={() => paneSession !== undefined && paneDispatch({ type: "forward", session: paneSession, paneTab: tab.id })}
                   onOpen={(target) => paneSession !== undefined && paneDispatch({ type: "navigate", session: paneSession, paneTab: tab.id, project: paneProjectNow, target })}
                   onView={(v) => paneSession !== undefined && paneDispatch({ type: "setView", session: paneSession, paneTab: tab.id, view: v })}
+                  onDirty={noteDirty}
                   active={active}
                   onEscape={() => actions.focusTerminal()}
+                  announce={announce}
                   regionTarget={deliveryFor(focusedRow ?? null)}
                   onRegion={addRegion}
                   ref={(preview) => {
                     const key = pageKey(paneSession ?? "", tab.id);
-                    if (preview) regionTabs.current.set(key, preview);
-                    return () => void regionTabs.current.delete(key);
+                    if (preview) {
+                      regionTabs.current.set(key, preview);
+                      textTabs.current.set(key, () => preview.text());
+                    }
+                    return () => {
+                      regionTabs.current.delete(key);
+                      textTabs.current.delete(key);
+                    };
                   }}
                 />
               )
@@ -2259,6 +2373,7 @@ export function LiveApp() {
       {overlay === "shortcuts" && os && <LiveShortcuts os={os} onClose={() => setOverlay(null)} />}
       {runAsk && <ScriptsTrustDialog scripts={runAsk.scripts} busy={runAsk.busy} error={runAsk.error} allowLabel="Allow and run" cancelLabel="Cancel" onAllow={() => void allowRun()} onCancel={() => setRunAsk(null)} />}
       {closeAsk && <CloseDialog busy={closeAsk.busy} error={closeAsk.error} onChoose={(keep) => void chooseClose(keep)} onCancel={cancelCloseAsk} />}
+      {saveAsk && <SaveDialog name={lastSegment(saveAsk.path)} onChoose={answerSaveAsk} />}
       {clearData !== null && <ClearDataDialog busy={clearData === "busy"} onClear={() => void clearBrowserData()} onCancel={() => setClearData(null)} />}
     </div>
     </PagePaneContext.Provider>

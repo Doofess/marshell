@@ -832,6 +832,79 @@ pub struct FileStat {
     /// Last modification, in milliseconds since the Unix epoch.
     #[ts(type = "number")]
     pub modified_ms: u64,
+    /// Why a save would be refused: `own`, `managed` or `attribute`. None when the file can be saved.
+    #[serde(default)]
+    pub read_only: Option<String>,
+}
+
+/// PUT /v1/files/content and POST /v1/files/unsave reply: the file as the write left it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct FileSaved {
+    #[ts(type = "number")]
+    pub size: u64,
+    /// Last modification, in milliseconds since the Unix epoch.
+    #[ts(type = "number")]
+    pub modified_ms: u64,
+    /// The SHA-256 of the bytes now on disk, in lowercase hex.
+    pub hash: String,
+    /// The snapshot of the bytes the write replaced. None when the save created the file, or wrote nothing.
+    #[serde(default)]
+    pub snapshot: Option<String>,
+}
+
+/// The 409 body of a save or an unsave: what the disk holds now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct FileConflict {
+    /// The SHA-256 of the file on disk, or None when there is no file.
+    #[serde(default)]
+    pub hash: Option<String>,
+}
+
+/// POST /v1/files/unsave body: put back what the save named by `snapshot` replaced.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct FileUnsave {
+    pub path: String,
+    pub snapshot: String,
+}
+
+/// The unsaved edits to one file, kept in Marshell's home.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Draft {
+    pub path: String,
+    /// The editor's text.
+    pub text: String,
+    /// The text the edits started from: the file as last loaded or saved.
+    pub base_text: String,
+    /// The SHA-256 of the file's bytes the edits started from. None when they started from no file.
+    #[serde(default)]
+    pub base_hash: Option<String>,
+    /// `utf-8`, `utf-8-bom`, `utf-16le` or `utf-16be`.
+    pub encoding: String,
+    /// `lf` or `crlf`.
+    pub eol: String,
+    /// The last edit, in milliseconds since the Unix epoch.
+    #[ts(type = "number")]
+    pub edited_ms: u64,
+}
+
+/// One row of GET /v1/drafts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DraftInfo {
+    pub path: String,
+    #[ts(type = "number")]
+    pub edited_ms: u64,
+}
+
+/// GET /v1/drafts reply, newest first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DraftList {
+    pub drafts: Vec<DraftInfo>,
 }
 
 /// POST /v1/sessions/{tab}/attachments reply: where the image was saved and how to name it to the agent.

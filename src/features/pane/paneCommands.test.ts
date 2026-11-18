@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PaneView } from "../../generated/PaneView";
-import { closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneBody, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome, PAGE_REFUSED, TAB_LIMIT } from "./paneCommands";
+import { closeAsk, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneBody, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome, PAGE_REFUSED, TAB_LIMIT } from "./paneCommands";
 import { paneReducer, recentFor } from "./paneState";
 
 const EMPTY: PaneView = { open: false, width: null, sessions: {}, recent: [] };
@@ -142,5 +142,18 @@ describe("the page announcements", () => {
     expect(pageOpenedText("https://example.com/a")).toBe("Opened example.com in the side pane.");
     expect(pageOpenedText("http://localhost:3000/")).toBe("Opened localhost:3000 in the side pane.");
     expect(pageOpenedText("about:blank")).toBe("Opened New tab in the side pane.");
+  });
+});
+
+describe("closeAsk", () => {
+  it("closing_an_unsaved_tab_asks_first", () => {
+    const t = { id: "t1", path: "C:\\w\\a.txt", kind: "text" as const };
+    expect(closeAsk(t, new Set(["C:\\w\\a.txt"]), "windows")).toBe("ask");
+    // The same file by another spelling.
+    expect(closeAsk(t, new Set(["c:/w/A.txt"]), "windows")).toBe("ask");
+    expect(closeAsk(t, new Set(["C:\\w\\b.txt"]), "windows")).toBe("close");
+    expect(closeAsk(t, new Set(), "windows")).toBe("close");
+    // A page is never asked about, whatever the set holds.
+    expect(closeAsk({ id: "b1", path: "https://a.test/", kind: "web" }, new Set(["https://a.test/"]), "windows")).toBe("close");
   });
 });

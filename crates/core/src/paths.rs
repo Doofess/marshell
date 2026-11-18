@@ -115,6 +115,16 @@ pub fn snapshots_dir(home: &Path) -> PathBuf {
     home.join("snapshots")
 }
 
+/// `<home>/file-history`: `index.json` and one copy of each file a text tab's save replaced.
+pub fn file_history_dir(home: &Path) -> PathBuf {
+    home.join("file-history")
+}
+
+/// `<home>/drafts`: the unsaved edits of text tabs, one file per edited file.
+pub fn drafts_dir(home: &Path) -> PathBuf {
+    home.join("drafts")
+}
+
 /// `<home>/doctor/last-fix.json`: the last fix the Doctor applied, which "Undo last fix" puts back.
 pub fn doctor_last_fix(home: &Path) -> PathBuf {
     home.join("doctor").join("last-fix.json")

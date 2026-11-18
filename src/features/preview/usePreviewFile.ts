@@ -1,12 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { IMAGE_CAP, PDF_CAP, TEXT_CAP, fetchContent, statFile, type Content } from "./previewApi";
-import { decodeText, kindOf } from "./kinds";
-import { START, next, type ReloadState } from "./reload";
+import { decodeFile, type Encoding, type Eol } from "../editor/textFile";
+import { kindOf } from "./kinds";
+import { START, next, type ReadOnlyReason, type ReloadState } from "./reload";
 
 /** What the pane shows for the file: one state at a time. */
 export type FileState =
   | { phase: "loading" }
-  | { phase: "text"; text: string }
+  | { phase: "text"; text: string; encoding: Encoding; eol: Eol; hash: string; readOnly: ReadOnlyReason | null }
   | { phase: "image"; url: string }
   | { phase: "tooLarge"; size: number; limit: number }
   | { phase: "binary" }
@@ -67,7 +68,7 @@ export const imageType = (path: string) => IMAGE_TYPES[path.slice(path.lastIndex
  * the modification time moved (`next()` in reload.ts decides). A refetch replaces the content in place, so the scroll position
  * stays; `updated` is true for two seconds after one. The hook lives as long as the pane is open, so it stops with it.
  */
-export function usePreviewFile(path: string, opts: { paused?: boolean } = {}): { file: FileState; updated: boolean } {
+export function usePreviewFile(path: string, opts: { paused?: boolean } = {}): { file: FileState; updated: boolean; refetch: () => void } {
   const paused = opts.paused === true;
   const [file, setFile] = useState<FileState>({ phase: "loading" });
   const [updated, setUpdated] = useState(false);
@@ -75,6 +76,9 @@ export function usePreviewFile(path: string, opts: { paused?: boolean } = {}): {
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
   const poller = useRef<ReturnType<typeof createPoller> | null>(null);
+  // Reads the file again whatever its stat says; the running effect sets it.
+  const force = useRef<() => void>(() => {});
+  const refetch = useCallback(() => force.current(), []);
   const wasPaused = useRef(paused);
   // Resuming checks once at once; the interval carries on from there.
   useEffect(() => {
@@ -85,6 +89,8 @@ export function usePreviewFile(path: string, opts: { paused?: boolean } = {}): {
   useEffect(() => {
     let cancelled = false;
     let busy = false;
+    // A forced read came while a check was running: that check may have read the file before the change, so one more follows.
+    let again = false;
     let note: ReturnType<typeof setTimeout> | undefined;
     let state: ReloadState = START;
     loaded.current = false;
@@ -96,7 +102,7 @@ export function usePreviewFile(path: string, opts: { paused?: boolean } = {}): {
     const cap = kind === "pdf" ? PDF_CAP : kind === "image" ? IMAGE_CAP : TEXT_CAP;
     let version = 0;
 
-    const show = (content: Content) => {
+    const show = (content: Content, readOnly: ReadOnlyReason | null) => {
       if (content.kind === "missing") {
         state = { seen: null, status: "deleted" };
         loaded.current = false;
@@ -113,8 +119,8 @@ export function usePreviewFile(path: string, opts: { paused?: boolean } = {}): {
       } else if (wire === "image") {
         setFile({ phase: "image", url: URL.createObjectURL(new Blob([content.bytes], { type: imageType(path) })) });
       } else {
-        const d = decodeText(content.bytes);
-        setFile(d.kind === "text" ? { phase: "text", text: d.text } : { phase: "binary" });
+        const d = decodeFile(content.bytes);
+        setFile(d.kind === "text" ? { phase: "text", text: d.text, encoding: d.encoding, eol: d.eol, hash: content.hash, readOnly } : { phase: "binary" });
       }
       if (loaded.current) {
         setUpdated(true);
@@ -130,11 +136,13 @@ export function usePreviewFile(path: string, opts: { paused?: boolean } = {}): {
       try {
         const stat = await statFile(path);
         if (cancelled) return;
+        // Every stat tells whether the file is read-only now, which a change of attribute alone does not move the size or time for.
+        if (stat.kind === "ok") setFile((f) => (f.phase === "text" && f.readOnly !== stat.readOnly ? { ...f, readOnly: stat.readOnly } : f));
         const step = next(state, stat, cap);
         state = step.state;
         if (step.action === "refetch") {
           const content = await fetchContent(path, wire);
-          if (!cancelled) show(content);
+          if (!cancelled) show(content, stat.kind === "ok" ? stat.readOnly : null);
         } else if (step.action === "tooLarge" && stat.kind === "ok") {
           loaded.current = false;
           setFile({ phase: "tooLarge", size: stat.size, limit: cap });
@@ -147,7 +155,21 @@ export function usePreviewFile(path: string, opts: { paused?: boolean } = {}): {
         if (first && !cancelled) setFile({ phase: "error" });
       } finally {
         busy = false;
+        if (again) {
+          again = false;
+          state = START;
+          void tick(false);
+        }
       }
+    };
+    force.current = () => {
+      if (busy) {
+        again = true;
+        return;
+      }
+      // The next check reads the file in full; a paused file does it when it resumes.
+      state = START;
+      if (!pausedRef.current) void tick(false);
     };
 
     const schedule = createPoller({ tick: (first) => void tick(first), isPaused: () => pausedRef.current, visible: () => document.visibilityState === "visible" });
@@ -172,5 +194,5 @@ export function usePreviewFile(path: string, opts: { paused?: boolean } = {}): {
     return () => URL.revokeObjectURL(url);
   }, [url]);
 
-  return { file, updated };
+  return { file, updated, refetch };
 }

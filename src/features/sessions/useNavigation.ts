@@ -40,7 +40,8 @@ export function focusKindOf(el: Element | null): FocusKind {
   if (focusedPage() !== null) return "control";
   if (!el) return "none";
   if (el.closest(".xterm")) return "terminal";
-  if (isTextBox(el as HTMLElement)) return "editable";
+  // The editor's text is an editable element, not an input: its Esc, Tab and Ctrl+Shift+arrows are its own, as a text box's are.
+  if (isTextBox(el as HTMLElement) || (el as HTMLElement).isContentEditable === true) return "editable";
   if (el.matches("button, a, select, summary, [role=option], [tabindex]") && !el.matches(".window__main")) return "control";
   return "none";
 }

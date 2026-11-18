@@ -4,6 +4,7 @@ import {
   type PaneAction,
   activeTab,
   isBrowserTab,
+  drawnTabs,
   keptTabs,
   openRefused,
   paneReducer,
@@ -240,6 +241,25 @@ describe("paneReducer", () => {
 
   it("keptTabs forgets a tab that was closed", () => {
     expect(keptTabs(["a", "b", "c"], "d", ["a", "c", "d"])).toEqual(["d", "a", "c"]);
+  });
+
+  it("drawnTabs draws one tab for a file: the selected one, else the first that shows it", () => {
+    // A link followed in t2, or Back, can bring it to the file t1 shows. One file has one document, one draft and one dot.
+    let s = run(EMPTY, open("C:/p/readme.md"), open("C:/p/notes.md"), open("C:/p/other.md"));
+    s = run(s, { type: "navigate", session: "s", paneTab: "t3", project: "p", target: { path: "c:/P/readme.md" } });
+    const tabs = tabsOf(s, "s").tabs;
+    expect(tabs.map((t) => t.id)).toEqual(["t1", "t2", "t3"]);
+    expect(drawnTabs(tabs, ["t3", "t2", "t1"], "t3")).toEqual(["t2", "t3"]);
+    expect(drawnTabs(tabs, ["t1", "t3", "t2"], "t1")).toEqual(["t1", "t2"]);
+    expect(drawnTabs(tabs, ["t2", "t3", "t1"], "t2")).toEqual(["t1", "t2"]);
+  });
+
+  it("drawnTabs draws every kept tab when each shows its own file, and never drops a browser tab", () => {
+    let s = run(EMPTY, open("/a"), open("/b"), { type: "openPage", session: "s", url: "http://localhost:3000/" });
+    s = run(s, { type: "openPage", session: "s", url: "http://localhost:3000/x" });
+    const tabs = tabsOf(s, "s").tabs;
+    expect(drawnTabs(tabs, ["t4", "t3", "t2", "t1"], "t4")).toEqual(["t1", "t2", "t3", "t4"]);
+    expect(drawnTabs(tabs, ["t1"], "t1")).toEqual(["t1"]);
   });
 
   it("an action for a tab or session that isn't there changes nothing", () => {

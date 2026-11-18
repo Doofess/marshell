@@ -19,13 +19,16 @@ export type StripTab = {
   openedBy: string | null;
   /** Opened by `marshell open` and not yet in front of the person: it carries the opener's mark. */
   unseen: boolean;
+  /** The file has unsaved edits (a text tab): the tab shows a dot, and says so. */
+  unsaved?: boolean;
 };
 
-/** The tab's tooltip: its path or address, then who opened it. */
-export function tabTitle(t: Pick<StripTab, "path" | "openedBy">): string {
-  if (t.openedBy === null) return t.path;
-  if (t.openedBy === "shell") return `${t.path} · Opened with marshell open`;
-  return `${t.path} · Opened by ${agentLabel(t.openedBy)}`;
+/** The tab's tooltip: its path or address, then who opened it, then whether its file has unsaved edits. */
+export function tabTitle(t: Pick<StripTab, "path" | "openedBy"> & { unsaved?: boolean }): string {
+  const edits = t.unsaved === true ? " · Unsaved edits" : "";
+  if (t.openedBy === null) return `${t.path}${edits}`;
+  if (t.openedBy === "shell") return `${t.path} · Opened with marshell open${edits}`;
+  return `${t.path} · Opened by ${agentLabel(t.openedBy)}${edits}`;
 }
 
 /** Before the type icon: the opener's own mark for a known agent, else a plain dot. Hidden from the reader; the tab's name says ", new". */
@@ -38,6 +41,11 @@ function NewMark({ openedBy }: { openedBy: string | null }) {
     );
   }
   return <span className="side-pane__new" aria-hidden="true" />;
+}
+
+/** A file with edits that are not saved: a plain dot, in the slot of the opener's mark. A shape, so it is not told by colour alone; the tab's name says ", unsaved". */
+function UnsavedMark() {
+  return <span className="side-pane__unsaved" aria-hidden="true" />;
 }
 export type SidePaneProps = {
   tabs: StripTab[];
@@ -137,7 +145,9 @@ export function SidePane({ tabs, activeId, os, children, onSelect, onClose, onMo
   const tabbable = activeId !== null && tabs.some((t) => t.id === activeId) ? activeId : tabs[0]?.id;
   const close = (id: string) => {
     // Focus follows only when it was in the strip: a middle click from the terminal closes the tab and leaves focus there.
-    if (root.current?.querySelector(".side-pane__strip")?.contains(document.activeElement)) focusAfter.current = "active";
+    // An unsaved tab is asked about first; the dialog takes the focus and gives it back, and the window moves it after the close.
+    const asks = tabs.find((t) => t.id === id)?.unsaved === true;
+    if (!asks && root.current?.querySelector(".side-pane__strip")?.contains(document.activeElement)) focusAfter.current = "active";
     onClose(id);
   };
 
@@ -228,10 +238,11 @@ export function SidePane({ tabs, activeId, os, children, onSelect, onClose, onMo
                       close(t.id);
                     }}
                   >
-                    {t.unseen && <NewMark openedBy={t.openedBy} />}
+                    {t.unseen ? <NewMark openedBy={t.openedBy} /> : t.unsaved === true && <UnsavedMark />}
                     <TabIcon kind={t.kind} />
                     <TabTitle kind={t.kind} title={t.title} />
                     {t.unseen && <span className="side-pane__new-word">, new</span>}
+                    {t.unsaved === true && <span className="side-pane__new-word">, unsaved</span>}
                   </button>
                   <button type="button" className="side-pane__close" tabIndex={-1} aria-label={`Close ${t.title}`} onClick={() => close(t.id)}>
                     {icon("M3 3l6 6M9 3 3 9")}

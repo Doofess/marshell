@@ -80,7 +80,15 @@
   border-radius: 50%;
   background: var(--accent);
 }
-/* ", new" for a screen reader, never seen. */
+/* A file with edits that are not saved: a dot in the same slot, in the tab's own text color. The opener's mark, while the tab has one, takes the slot. */
+.side-pane__unsaved {
+  flex: none;
+  inline-size: 8px;
+  block-size: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+/* ", new" or ", unsaved" for a screen reader, never seen. */
 .side-pane__new-word {
   position: absolute;
   inline-size: 1px;
@@ -283,6 +291,14 @@
     forced-color-adjust: none;
   }
   .side-pane__tab[aria-selected="true"] .side-pane__new {
+    background: HighlightText;
+  }
+  .side-pane__unsaved {
+    background: CanvasText;
+    forced-color-adjust: none;
+  }
+  /* The selected tab is a Highlight fill, where CanvasText may not show. */
+  .side-pane__tab[aria-selected="true"] .side-pane__unsaved {
     background: HighlightText;
   }
   /* `none` keeps the system from painting a Canvas backplate behind the title, which made HighlightText unreadable. */

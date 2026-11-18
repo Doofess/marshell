@@ -8,6 +8,7 @@ pub(crate) mod doctor;
 mod doctor_ext;
 mod doctor_measure;
 mod doctor_usage;
+mod drafts;
 mod events;
 mod files;
 mod fill;
@@ -27,6 +28,7 @@ mod projects;
 mod pty_ws;
 mod references;
 mod reports;
+mod save;
 mod scripts;
 mod sessions;
 mod settings;
@@ -1245,8 +1247,11 @@ pub fn router(state: AppState) -> Router {
         .allow_origin(AllowOrigin::list(origins))
         .allow_methods([Method::GET, Method::POST, Method::PUT, Method::PATCH, Method::DELETE])
         .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
-        // The webview is another origin and reads this from a content reply.
-        .expose_headers([HeaderName::from_static("x-modified-ms")]);
+        // The webview is another origin and reads these from a content reply.
+        .expose_headers([
+            HeaderName::from_static("x-modified-ms"),
+            HeaderName::from_static("x-content-hash"),
+        ]);
     Router::new()
         .route("/v1/health", get(health))
         .route("/v1/profiles", get(profiles::get).put(profiles::put))
@@ -1302,7 +1307,21 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{tab}/paste", post(attachments::paste))
         .route("/v1/sessions/{tab}/paste-paths", post(attachments::paste_paths))
         .route("/v1/files/stat", get(files::stat))
-        .route("/v1/files/content", get(files::content))
+        .route(
+            "/v1/files/content",
+            get(files::content)
+                .put(save::save)
+                .layer(DefaultBodyLimit::max(files::TEXT_CAP as usize)),
+        )
+        .route("/v1/files/unsave", post(save::unsave))
+        .route("/v1/drafts", get(drafts::list))
+        .route(
+            "/v1/drafts/one",
+            get(drafts::get)
+                .put(drafts::put)
+                .delete(drafts::delete)
+                .layer(DefaultBodyLimit::max(16 * 1024 * 1024)),
+        )
         .route("/v1/sessions/{tab}", patch(sessions::rename).delete(sessions::close))
         .route("/v1/shell-panel", post(shell_panel::open))
         .route("/v1/shell-panel/adopt", post(shell_panel::adopt))

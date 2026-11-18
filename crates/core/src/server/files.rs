@@ -33,6 +33,8 @@ const LIST_BUDGET: Duration = Duration::from_secs(2);
 const SKIPPED_DIRS: [&str; 5] = ["node_modules", ".git", "target", "dist", "build"];
 
 const MODIFIED_MS: HeaderName = HeaderName::from_static("x-modified-ms");
+/// The SHA-256 of the bytes `content` serves. A save names it, so it writes only over what the tab loaded.
+const CONTENT_HASH: HeaderName = HeaderName::from_static("x-content-hash");
 
 /// True for a path that must not reach the filesystem: a UNC or device path, a NUL character, and
 /// on Windows a reserved device name in any component or a drive-relative form. It reads the
@@ -342,7 +344,7 @@ fn checked(path: &str) -> Result<PathBuf, (StatusCode, &'static str)> {
     Ok(path)
 }
 
-fn modified_ms(meta: &std::fs::Metadata) -> u64 {
+pub(super) fn modified_ms(meta: &std::fs::Metadata) -> u64 {
     meta.modified()
         .ok()
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
@@ -351,7 +353,7 @@ fn modified_ms(meta: &std::fs::Metadata) -> u64 {
 
 /// Opens a regular file. None for a missing path, a folder or a device. On Unix the open does not
 /// block, so a FIFO swapped in after the check can't hang the thread.
-fn open_regular(path: &std::path::Path) -> Option<(std::fs::File, std::fs::Metadata)> {
+pub(super) fn open_regular(path: &std::path::Path) -> Option<(std::fs::File, std::fs::Metadata)> {
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -376,16 +378,27 @@ async fn checked_links(path: &str) -> Result<PathBuf, (StatusCode, &'static str)
 }
 
 /// GET /v1/files/stat
-pub async fn stat(Query(q): Query<FileQuery>) -> Response {
+pub async fn stat(State(st): State<AppState>, Query(q): Query<FileQuery>) -> Response {
     let path = match checked_links(&q.path).await {
         Ok(p) => p,
         Err(refusal) => return refusal.into_response(),
     };
-    let meta = tokio::task::spawn_blocking(move || open_regular(&path).map(|(_, meta)| meta)).await;
-    match meta {
-        Ok(Some(meta)) => Json(FileStat {
+    let home = st.home().to_path_buf();
+    let found = tokio::task::spawn_blocking(move || {
+        let (_, meta) = open_regular(&path)?;
+        // Why a save of it would be refused, so the tab opens read-only and says so.
+        let read_only = match crate::userfiles::guard::save_refusal(&path, &home) {
+            Some(why) => Some(why.word()),
+            None => meta.permissions().readonly().then_some("attribute"),
+        };
+        Some((meta, read_only))
+    })
+    .await;
+    match found {
+        Ok(Some((meta, read_only))) => Json(FileStat {
             size: meta.len(),
             modified_ms: modified_ms(&meta),
+            read_only: read_only.map(str::to_string),
         })
         .into_response(),
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
@@ -420,8 +433,11 @@ fn content_type(path: &std::path::Path) -> &'static str {
 
 /// What reading a file ended in.
 enum Outcome {
-    Bytes(Vec<u8>, u64),
-    TooLarge { size: u64 },
+    /// The bytes, when the file was modified, and the bytes' hash.
+    Bytes(Vec<u8>, u64, String),
+    TooLarge {
+        size: u64,
+    },
     Missing,
 }
 
@@ -442,7 +458,8 @@ fn read_capped(path: &std::path::Path, cap: u64) -> Outcome {
         let size = open_regular(path).map_or(0, |(_, m)| m.len()).max(bytes.len() as u64);
         return Outcome::TooLarge { size };
     }
-    Outcome::Bytes(bytes, modified_ms(&meta))
+    let hash = crate::config::hash::hash_bytes(&bytes);
+    Outcome::Bytes(bytes, modified_ms(&meta), hash)
 }
 
 /// GET /v1/files/content
@@ -460,10 +477,11 @@ pub async fn content(Query(q): Query<FileQuery>) -> Response {
     let ctype = content_type(&path);
     let read = tokio::task::spawn_blocking(move || read_capped(&path, cap)).await;
     match read {
-        Ok(Outcome::Bytes(bytes, modified)) => (
+        Ok(Outcome::Bytes(bytes, modified, hash)) => (
             [
                 (header::CONTENT_TYPE, ctype.to_string()),
                 (MODIFIED_MS, modified.to_string()),
+                (CONTENT_HASH, hash),
                 (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
             ],
             bytes,

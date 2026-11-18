@@ -42,6 +42,9 @@ export async function resolveTarget(target: ReviewTarget, infos: () => SessionIn
   return next.kind === "load" ? { kind: "none", message: NOT_A_TASK } : next;
 }
 
+/** The class of a text box that gives up the app's shortcuts as the Address box does. The editor's content element carries it. */
+export const APP_KEYS_BOX = "app-keys";
+
 /** A text box keeps its own keys. xterm's hidden textarea is the terminal, not a box. Duck-typed, so it needs no DOM to test. */
 export function isTextBox(target: { tagName?: string; classList?: { contains(name: string): boolean } } | null): boolean {
   if (!target) return false;
@@ -55,7 +58,10 @@ export function isTextBox(target: { tagName?: string; classList?: { contains(nam
  * Windows reports AltGr as Ctrl+Alt, and AltGr+Shift+T types a letter on some layouts, so a key with AltGr stays the box's.
  */
 export function keepsOwnKeys(target: Parameters<typeof isTextBox>[0], altGraph = false): boolean {
-  return isTextBox(target) && (altGraph || !target?.classList?.contains(ADDRESS_BOX));
+  const givesUp = target?.classList?.contains(ADDRESS_BOX) || target?.classList?.contains(APP_KEYS_BOX);
+  // The editor's content element is a div with role="textbox": it is a box through its class, and only for AltGr.
+  const editor = target?.tagName === "DIV" && target.classList?.contains(APP_KEYS_BOX);
+  return (isTextBox(target) || editor === true) && (altGraph || !givesUp);
 }
 
 /** The key press the window reads for Review: the code and modifiers (lib/bindings), whether it is a held key, and the way to cancel its default. */

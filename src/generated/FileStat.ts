@@ -7,4 +7,8 @@ export type FileStat = { size: number,
 /**
  * Last modification, in milliseconds since the Unix epoch.
  */
-modified_ms: number, };
+modified_ms: number, 
+/**
+ * Why a save would be refused: `own`, `managed` or `attribute`. None when the file can be saved.
+ */
+read_only: string | null, };

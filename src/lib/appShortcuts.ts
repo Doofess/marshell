@@ -37,6 +37,11 @@ export type SessionShortcut =
   | { kind: "clearBrowserData" }
   /** "Select region": a box on the side pane's page, PDF or image. Has no key of its own. */
   | { kind: "selectRegion" }
+  /** The text tab's commands: "Save file", "Undo last save", "Go to line…" and "Word wrap". None has a key of its own; the palette runs them on the shown text tab. */
+  | { kind: "paneSave" }
+  | { kind: "paneUndoSave" }
+  | { kind: "paneGoToLine" }
+  | { kind: "paneWordWrap" }
   /** "Browse…": the system's file dialog, to pick a file for the side pane. Has no key of its own. */
   | { kind: "browse" }
   /** Capture a screen region with the system's snipping tool and add the image to the focused session (Ctrl+Shift+X). Windows only for now. */
@@ -111,6 +116,14 @@ export function commandShortcut(id: string): SessionShortcut | null {
       return { kind: "paneTab", by: -1 };
     case "pane-close-tab":
       return { kind: "closePaneTab" };
+    case "pane-save":
+      return { kind: "paneSave" };
+    case "pane-undo-save":
+      return { kind: "paneUndoSave" };
+    case "pane-go-to-line":
+      return { kind: "paneGoToLine" };
+    case "pane-word-wrap":
+      return { kind: "paneWordWrap" };
     case "capture":
       return { kind: "capture" };
     case "next-waiting":
