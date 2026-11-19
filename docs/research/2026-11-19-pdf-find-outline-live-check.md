@@ -33,6 +33,17 @@
 | 11. A restart opens the place last recorded, with the sidebar closed | Pass. A Page-field jump from page 9 at 0.416 to page 17 left the tab's history at 9@0.4162 then 17@0 in `layout.json`. After the restart (a Rust file's modified time touched, so `tauri dev` rebuilt and relaunched) the tab opened with page 17's top at the top of the view and the field at 17, and the sidebar was closed although it had been open beside the pages. The Claude Code session and its PowerShell from before the restart were left outside the new tree, and were stopped by PID. |
 | 12. The release build renders JPEG 2000 | Pass. `pnpm tauri build --no-bundle` finished in 2 min 12 s. With the dev app stopped (the single-instance lock would hand a second copy to it), `target/release/marshell-app.exe` ran against the same scratch homes from `http://tauri.localhost/`, restored the five tabs, and drew `scanned-jpx.pdf`. 164 of 1,082 sampled pixels were dark, and the screenshot shows the image. The console was empty. |
 
+## Recheck after the final review
+
+The recheck ended at 15:28. It used `pnpm tauri build --no-bundle` at `2be66ab9` and then at `6924912d`. Each build ran as `target/release/marshell-app.exe` against the same scratch homes, with the dev app stopped. Afterwards each tree was stopped by PID, and it held no agent CLI.
+
+| Check | Result |
+| --- | --- |
+| Find in the release build | Pass. "résumé" gave "2 of 2", and Enter announced "Match 1 of 2, page 2. Continued from the start." "find" gave "4 of 4". |
+| Esc on the find bar's controls | Pass. Esc on "Match case" and on "Next" closed the bar, cleared the tints and put the keyboard on the pages ("outline-links.pdf, contents"). Esc in the field did the same. |
+| "Show pages" with the sidebar over the pages | Pass after finding 5. The test used `scanned-plain.pdf`, which has no outline, with a 309 px body. The keys were F4, Shift+Tab, Left to "Outline", Tab to "Show pages", then Enter. The sidebar stayed over the pages on Pages, with the keyboard on "Page 1". |
+| An outline entry with no destination | Not run live. No fixture has one. The broken entry has a destination the file lacks, which is check 6's path. `pickSays_an_entry_with_no_destination_leads_nowhere` covers it. |
+
 ## Findings
 
 1. **Back to a place near the end of a page announced that page, while the Page field showed the next one.**
@@ -47,4 +58,10 @@
    - The tests `a_search_run_again_for_a_new_document_tints_without_scrolling`, `a_search_run_again_for_a_new_document_does_not_turn_the_page` and `the_first_step_after_a_new_document_searches_from_the_view_and_shows_its_match` in `findText.test.ts` failed first.
    - Rechecked live, in check 10's second run.
 3. **Not a fault: rapid link presses read one message behind.** Pressing link after link in the same script made each reading show the previous link's line. The Announcer paces its messages. With two seconds between presses, each link said its own line.
-4. **A note on the emulation.** Emulated forced colours switch the media query and the system colours, but not the author's fills. The sidebar kept its `--bg-raised` in the screenshots, with the same computed colour with the emulation on and off. The sidebar keeps `forced-color-adjust: auto`, so a real high-contrast theme paints it Canvas. This wasn't checked in a real theme; that waits for the release sign-off pass in `docs/a11y/`.
+5. **"Show pages" with the sidebar over the pages closed the sidebar.**
+   - Seen in the recheck below, in the release build at `2be66ab9`. That commit's fix moved the keyboard into the Pages view after the change. But the focused button was removed first, which fired `focusout` with nowhere to go. The sidebar over the pages reads that as the keyboard leaving, and closed.
+   - Fixed in `6924912d`: the button moves the keyboard to the Pages tab before it goes.
+   - The test `show_pages_moves_the_keyboard_to_the_pages_tab_before_the_button_goes` in `PdfSidebar.interaction.test.tsx` failed first.
+   - Rechecked in the release build at `6924912d`.
+6. **Outside this slice: Esc on the pages does nothing when the selected session has ended.** In the recheck the selected session, "PowerShell 7", had ended last time, and the window's only terminal was the shell panel's. The pane's Esc asks for the selected session's terminal, so the keyboard stayed on the pages and nothing was said. Check 7 passed with a live Claude Code session selected. Not fixed; a lead for a later slice.
+7. **A note on the emulation.** Emulated forced colours switch the media query and the system colours, but not the author's fills. The sidebar kept its `--bg-raised` in the screenshots, with the same computed colour with the emulation on and off. The sidebar keeps `forced-color-adjust: auto`, so a real high-contrast theme paints it Canvas. This wasn't checked in a real theme; that waits for the release sign-off pass in `docs/a11y/`.
