@@ -424,6 +424,14 @@ pub struct PaneEntry {
     pub line: Option<u32>,
     #[serde(default)]
     pub col: Option<u32>,
+    /// A PDF's page, from 1. An older layout.json reads as None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub page: Option<u32>,
+    /// How far down that page the view starts, in ten-thousandths of its height (0 to 10000).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub top: Option<u32>,
     /// "rendered" or "source".
     pub view: String,
 }

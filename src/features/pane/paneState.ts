@@ -15,7 +15,9 @@ const WIDTH_MIN = 320;
 const WIDTH_MAX = 4096;
 
 export type View = "rendered" | "source";
-export type OpenTarget = { path: string; line?: number; col?: number; view?: View };
+/** Where a PDF is showing: its page from 1, and how far down it, as a fraction of the page's height from 0 to 1. */
+export type Place = { page: number; top: number };
+export type OpenTarget = { path: string; line?: number; col?: number; view?: View; place?: Place };
 export type PaneAction =
   /** A new tab, or its existing tab; shows the pane. */
   | { type: "open"; session: string; project: string; target: OpenTarget }
@@ -23,6 +25,7 @@ export type PaneAction =
   | { type: "navigate"; session: string; paneTab: string; project: string; target: OpenTarget }
   | { type: "back" | "forward"; session: string; paneTab: string }
   | { type: "setView"; session: string; paneTab: string; view: View }
+  | { type: "place"; session: string; paneTab: string; place: Place }
   | { type: "select"; session: string; paneTab: string }
   /** The next or previous tab, wrapping. */
   | { type: "step"; session: string; by: 1 | -1 }
@@ -189,8 +192,23 @@ function place(n: number | null | undefined): number | null {
   return typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= 0xffff_ffff ? n : null;
 }
 
+const TOP_MAX = 10_000;
+
+/** A place as an entry holds it: the page at least 1 and a whole number, the top in ten-thousandths, clamped. */
+function placeFields(p: Place): { page: number; top: number } {
+  const page = Number.isFinite(p.page) ? Math.min(Math.max(Math.trunc(p.page), 1), 0xffff_ffff) : 1;
+  const top = Number.isFinite(p.top) ? Math.min(Math.max(Math.round(p.top * TOP_MAX), 0), TOP_MAX) : 0;
+  return { page, top };
+}
+
+/** The place an entry keeps, or null when it has no page. */
+export function placeOf(e: PaneEntry): Place | null {
+  return e.page == null ? null : { page: e.page, top: (e.top ?? 0) / TOP_MAX };
+}
+
 function entryOf(target: OpenTarget): PaneEntry {
-  return { path: target.path, line: place(target.line), col: place(target.col), view: target.view ?? "rendered" };
+  const entry: PaneEntry = { path: target.path, line: place(target.line), col: place(target.col), view: target.view ?? "rendered" };
+  return target.place ? { ...entry, ...placeFields(target.place) } : entry;
 }
 
 /** Replaces one tab; the same state when `edit` returns the tab it was given. */
@@ -330,6 +348,15 @@ export function paneReducer(s: PaneView, a: PaneAction): PaneView {
       return editFileTab(s, a.session, a.paneTab, (t) =>
         currentEntry(t).view === a.view ? t : { ...t, history: t.history.map((e, i) => (i === t.index ? { ...e, view: a.view } : e)) },
       );
+    case "place": {
+      const fields = placeFields(a.place);
+      return editFileTab(s, a.session, a.paneTab, (t) => {
+        const e = currentEntry(t);
+        return e.page === fields.page && e.top === fields.top
+          ? t
+          : { ...t, history: t.history.map((x, i) => (i === t.index ? { ...x, ...fields } : x)) };
+      });
+    }
     case "select": {
       const cur = s.sessions[a.session];
       if (!cur || !cur.tabs.some((t) => t.id === a.paneTab)) return s;

@@ -5,6 +5,14 @@
  */
 export type PaneEntry = { path: string, line: number | null, col: number | null, 
 /**
+ * A PDF's page, from 1. An older layout.json reads as None.
+ */
+page?: number, 
+/**
+ * How far down that page the view starts, in ten-thousandths of its height (0 to 10000).
+ */
+top?: number, 
+/**
  * "rendered" or "source".
  */
 view: string, };
