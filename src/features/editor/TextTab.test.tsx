@@ -2,7 +2,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { Draft } from "../../generated/Draft";
 import { start, step, type DocEvent, type DocState } from "./editorDoc";
-import { TextTabView, readOnlyLine, type TextTabViewProps, conflictJump, dirtyNews, isSaveKey, keyboardTo, wrapAtStart } from "./TextTab";
+import { TextTabView, readOnlyLine, type TextTabViewProps, conflictJump, dirtyNews, firstConflict, inBodyNow, isSaveKey, keyboardTo, sourceShown, wrapAtStart } from "./TextTab";
+import { keyboardOnRemoval, mergeWent } from "./ChangedBar";
 
 // The rendered Markdown needs the DOM, which these tests run without: the stand-in shows the text it was given.
 vi.mock("../preview/MarkdownView", () => ({ MarkdownView: ({ text }: { text: string }) => <div data-md="">{text}</div> }));
@@ -76,11 +77,24 @@ describe("TextTabView", () => {
     expect(buttons.slice(0, 3)).toEqual(["Merge", "Keep mine", "Take disk"]);
   });
 
+  it("a read-only tab's bar offers Keep mine and Take disk but no Merge", () => {
+    // A read-only tab can't keep the merged text, and the editor there takes no Ctrl+Z (6q-4b decision 7.1).
+    const draft: Draft = { path: "C:\\p\\a.txt", text: "mine", base_text: "one\ntwo", base_hash: H1, encoding: "utf-8", eol: "lf", edited_ms: 1 };
+    const doc = step(start, { type: "opened", disk: { text: "theirs", hash: H2 }, draft }, N).state;
+    for (const readOnly of ["own", "managed", "attribute"] as const) {
+      const out = html(doc, { readOnly });
+      const bar = out.slice(out.indexOf("changed-bar"));
+      const buttons = [...bar.matchAll(/<button[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]);
+      expect(buttons.slice(0, 2), readOnly).toEqual(["Keep mine", "Take disk"]);
+      expect(out, readOnly).not.toContain(">Merge<");
+    }
+  });
+
   it("the line under the text shows a merge's result", () => {
     const draft: Draft = { path: "C:\\p\\a.txt", text: "mine", base_text: "one\ntwo", base_hash: H1, encoding: "utf-8", eol: "lf", edited_ms: 1 };
     let doc = step(start, { type: "opened", disk: { text: "theirs", hash: H2 }, draft }, N).state;
     doc = step(doc, { type: "merge" }, N).state;
-    doc = step(doc, { type: "merged", id: 1, text: "<<<<<<< mine\nmine\n=======\ntheirs\n>>>>>>> disk", conflicts: 2, mine: "mine", disk: H2 }, N).state;
+    doc = step(doc, { type: "merged", id: 1, text: "<<<<<<< mine\nmine\n=======\ntheirs\n>>>>>>> disk", conflicts: 2, mine: "mine", disk: H2, rendered: false }, N).state;
     const out = html(doc);
     expect(out).toContain("Merged a.txt. 2 conflicts to resolve.");
     expect(out).not.toMatch(/<button[^>]*>Undo<\/button>/);
@@ -224,6 +238,48 @@ describe("conflictJump", () => {
   });
 });
 
+describe("firstConflict", () => {
+  // After a merge that left conflicts (6q-4b decision 7.2).
+  const spot = () => {
+    const calls: string[] = [];
+    return { calls, editor: { toConflict: (which: string) => calls.push(which), focus: () => calls.push("focus") }, toSource: () => calls.push("source") };
+  };
+  it("goes_to_the_first_conflict_while_the_editor_shows", () => {
+    const s = spot();
+    firstConflict({ rendered: false, editor: s.editor, toSource: s.toSource });
+    expect(s.calls).toEqual(["first"]);
+  });
+  it("shows_the_source_view_first_and_waits_behind_the_rendered_view", () => {
+    const s = spot();
+    firstConflict({ rendered: true, editor: s.editor, toSource: s.toSource });
+    expect(s.calls).toEqual(["source"]);
+  });
+  it("once_the_source_view_shows_takes_the_keyboard_on_from_inside_the_tabs_body_only", () => {
+    const s = spot();
+    sourceShown({ rendered: false, editor: s.editor, inBody: true });
+    expect(s.calls).toEqual(["focus", "first"]);
+    s.calls.length = 0;
+    sourceShown({ rendered: false, editor: s.editor, inBody: false });
+    expect(s.calls).toEqual(["first"]);
+    sourceShown({ rendered: false, editor: null, inBody: true });
+  });
+  it("the_keyboard_counts_as_in_the_body_from_where_it_was_when_the_answer_came", () => {
+    // Read before the Source view hides the rendered text, so the browser's handling of a hidden focused element can't change it.
+    const body = { contains: (n: unknown) => n === "link" || n === "body" };
+    expect(inBodyNow(body, "link")).toBe(true);
+    expect(inBodyNow(body, "body")).toBe(true);
+    expect(inBodyNow(body, "terminal")).toBe(false);
+    expect(inBodyNow(null, "link")).toBe(false);
+  });
+  it("a_switch_that_did_not_come_with_the_answer_moves_nothing", () => {
+    // The Source view comes in the same draw as the merge's answer. A tab still in Rendered view did not get it, and a later
+    // switch by the person is not the merge's: neither the cursor nor the keyboard moves.
+    const s = spot();
+    sourceShown({ rendered: true, editor: s.editor, inBody: true });
+    expect(s.calls).toEqual([]);
+  });
+});
+
 describe("wrapAtStart", () => {
   it("is on for prose and plain text, off for code and markup", () => {
     expect(wrapAtStart("markdown", "C:\p\a.md", "# A")).toBe(true);
@@ -234,5 +290,45 @@ describe("wrapAtStart", () => {
   });
   it("is off for a file whose first line says it is code, though its name does not", () => {
     expect(wrapAtStart("text", "C:\p\script", "#!/usr/bin/env python3")).toBe(false);
+  });
+});
+
+describe("mergeWent", () => {
+  // The file became read-only with the keyboard on Merge, which a read-only tab doesn't offer (6q-4b decision 7.1).
+  const keep = () => {
+    const calls: string[] = [];
+    return { calls, button: { focus: () => calls.push("keep") } };
+  };
+  it("keep_mine_takes_the_keyboard_the_merge_button_had", () => {
+    const k = keep();
+    mergeWent({ hadFocus: true, lost: true, keep: k.button });
+    expect(k.calls).toEqual(["keep"]);
+  });
+  it("a_keyboard_elsewhere_stays_there", () => {
+    const k = keep();
+    mergeWent({ hadFocus: false, lost: true, keep: k.button });
+    mergeWent({ hadFocus: true, lost: false, keep: k.button });
+    mergeWent({ hadFocus: true, lost: true, keep: null });
+    expect(k.calls).toEqual([]);
+  });
+});
+
+describe("keyboardOnRemoval", () => {
+  // Read as React detaches the Merge button, before it leaves the page. A window blur (the person in another app) fires the
+  // button's blur but leaves it the document's active element, so it still counts as having the keyboard.
+  it("the_button_that_had_the_keyboard_when_it_went_says_so_even_with_the_window_in_the_background", () => {
+    const had = { current: false };
+    const button = { name: "Merge" };
+    const cleanup = keyboardOnRemoval(had, () => button)(button);
+    expect(had.current).toBe(false);
+    cleanup?.();
+    expect(had.current).toBe(true);
+  });
+  it("a_keyboard_elsewhere_when_it_went_does_not_count", () => {
+    const had = { current: true };
+    const button = { name: "Merge" };
+    keyboardOnRemoval(had, () => "terminal")(button)?.();
+    expect(had.current).toBe(false);
+    expect(keyboardOnRemoval(had, () => button)(null)).toBeUndefined();
   });
 });

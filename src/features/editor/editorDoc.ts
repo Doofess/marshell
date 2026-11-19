@@ -54,8 +54,11 @@ export type DocEvent =
   | { type: "unsaveRefused" }
   | { type: "unsaveFailed"; line: string }
   | { type: "merge" }
-  /** The answer to a merge: `mine` and `disk` are the text and the disk hash the request was made from. */
-  | { type: "merged"; id: number; text: string; conflicts: number; mine: string; disk: string | null }
+  /**
+   * The answer to a merge: `mine` and `disk` are the text and the disk hash the request was made from. `rendered`: the tab
+   * shows its Rendered view as the answer comes.
+   */
+  | { type: "merged"; id: number; text: string; conflicts: number; mine: string; disk: string | null; rendered: boolean }
   | { type: "mergeFailed"; id: number; line: string }
   | { type: "left" };
 
@@ -161,9 +164,13 @@ function merge(s: DocState, name: string): Out {
   return asked(s, s.conflict, name);
 }
 
-function mergedLine(name: string, conflicts: number, own: boolean): string {
+/**
+ * What a merge says. Ctrl+Z works only in the Source view's editor: a clean merge behind the Rendered view leaves it out
+ * (6q-4b decision 7.3), and a merge that left conflicts shows the Source view (decision 7.2).
+ */
+function mergedLine(name: string, conflicts: number, own: boolean, rendered: boolean): string {
   if (own) return `Merged ${name}. No conflicts.`;
-  if (conflicts === 0) return `Merged ${name}. No conflicts. Ctrl+Z undoes the merge.`;
+  if (conflicts === 0) return rendered ? `Merged ${name}. No conflicts.` : `Merged ${name}. No conflicts. Ctrl+Z undoes the merge.`;
   const count = conflicts === 1 ? "1 conflict" : `${conflicts} conflicts`;
   return `Merged ${name}. ${count} to resolve. F7 goes to the next conflict, and Ctrl+Z undoes the merge.`;
 }
@@ -203,7 +210,7 @@ function merged(s: DocState, e: Extract<DocEvent, { type: "merged" }>, name: str
   const more: Effect[] = [{ type: "setText", text: e.text, marks }];
   if (e.conflicts > 0) more.push({ type: "showConflict" });
   more.push(draftEffect(dirty));
-  return said(state, mergedLine(name, e.conflicts, own), ...more);
+  return said(state, mergedLine(name, e.conflicts, own, e.rendered), ...more);
 }
 
 function gone(s: DocState): Out {

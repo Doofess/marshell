@@ -443,7 +443,7 @@ describe("the merge", () => {
   const D2 = { text: "other again", hash: H3 };
   const MERGED = "a\n<<<<<<< mine\nmine\n=======\nother\n>>>>>>> disk";
   const lines = (t: string) => t.split("\n");
-  const merged = (over: Partial<Extract<DocEvent, { type: "merged" }>> = {}): DocEvent => ({ type: "merged", id: 1, text: MERGED, conflicts: 1, mine: M, disk: H2, ...over });
+  const merged = (over: Partial<Extract<DocEvent, { type: "merged" }>> = {}): DocEvent => ({ type: "merged", id: 1, text: MERGED, conflicts: 1, mine: M, disk: H2, rendered: false, ...over });
   /** Base B, text M, the bar up with disk D. */
   const barUp = () => run(start, { type: "opened", disk: D, draft: draftOf() }).state;
   const merging = () => run(barUp(), { type: "merge" }).state;
@@ -480,6 +480,16 @@ describe("the merge", () => {
     expect(none.state.line).toBe("Merged a.txt. No conflicts. Ctrl+Z undoes the merge.");
     expect(types(none.effects)).toEqual(["setText", "putDraft", "announce"]);
     expect(none.effects[2]).toEqual({ type: "announce", text: none.state.line });
+  });
+  it("merged_behind_the_rendered_view_without_conflicts_does_not_name_ctrl_z", () => {
+    // The Rendered view has no undo; the Source view's editor does (6q-4b decision 7.3).
+    const none = done({ text: "one\nmerged", conflicts: 0, rendered: true });
+    expect(none.state.line).toBe("Merged a.txt. No conflicts.");
+    expect(none.effects[2]).toEqual({ type: "announce", text: "Merged a.txt. No conflicts." });
+    // A merge that left conflicts shows the Source view, where F7 and Ctrl+Z work, so its line stays (decision 7.2).
+    const one = done({ conflicts: 1, rendered: true });
+    expect(one.state.line).toBe("Merged a.txt. 1 conflict to resolve. F7 goes to the next conflict, and Ctrl+Z undoes the merge.");
+    expect(types(one.effects)).toContain("showConflict");
   });
   it("merged_to_the_disks_own_text_is_clean", () => {
     const { state, effects } = done({ text: D.text, conflicts: 0 });

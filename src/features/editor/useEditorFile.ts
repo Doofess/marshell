@@ -162,6 +162,12 @@ export type EffectDeps = {
   /** How the file is stored: what a save and a draft write it as. */
   format: () => { encoding: Encoding; eol: Eol };
   editor: () => EditorHandle | null;
+  /** The tab shows its Rendered view, which hides the editor. */
+  rendered: () => boolean;
+  /** The tab is read-only: it can't keep a merge (6q-4b decision 7.1). */
+  readOnly: () => boolean;
+  /** Goes to the first conflict after a merge: the tab knows whether the Source view has to show first. */
+  firstConflict: () => void;
   announce: (text: string) => void;
   /** The keyboard is in this tab, and the tab is the one on screen. */
   reading: () => boolean;
@@ -208,7 +214,9 @@ async function runMerge(effect: Extract<Effect, { type: "merge" }>, d: EffectDep
   // The tab went while the merge ran (closed, or its session put away): an answer taken now would write a draft the person
   // may just have said not to keep, and announce a merge of a tab that is not there.
   if (d.gone()) return;
-  if (r.kind === "merged") d.dispatch({ type: "merged", id: effect.id, text: r.text, conflicts: r.conflicts, mine: effect.mine, disk: effect.disk.hash });
+  // The file became read-only while the merge ran: the tab can't keep the answer, and its editor takes no Ctrl+Z (6q-4b decision 7.1).
+  if (r.kind === "merged" && d.readOnly()) return d.dispatch({ type: "mergeFailed", id: effect.id, line: "It became read-only while the merge ran." });
+  if (r.kind === "merged") d.dispatch({ type: "merged", id: effect.id, text: r.text, conflicts: r.conflicts, mine: effect.mine, disk: effect.disk.hash, rendered: d.rendered() });
   else d.dispatch({ type: "mergeFailed", id: effect.id, line: r.line });
 }
 
@@ -240,7 +248,7 @@ export function runEffect(effect: Effect, d: EffectDeps): Promise<void> | void {
     case "merge":
       return runMerge(effect, d);
     case "showConflict":
-      d.editor()?.toConflict("first");
+      d.firstConflict();
       return;
     case "announce":
       if (effect.reading && !d.reading()) return;
@@ -285,7 +293,11 @@ export type EditorFile = {
  * file is a `disk` event, and a file that went is `gone`. The state is the reducer's (editorDoc.ts), kept in a ref so that two
  * events in one tick see each other, and the effects it asks for run here, once per step.
  */
-export function useEditorFile(path: string, file: FileState, o: { announce: (text: string) => void; reading: () => boolean; refetch: () => void; editor: RefObject<EditorHandle | null>; readOnly: () => boolean }): EditorFile {
+export function useEditorFile(
+  path: string,
+  file: FileState,
+  o: { announce: (text: string) => void; reading: () => boolean; refetch: () => void; editor: RefObject<EditorHandle | null>; readOnly: () => boolean; rendered: () => boolean; firstConflict: () => void },
+): EditorFile {
   const name = splitPath(path).name;
   const docRef = useRef<DocState>(start);
   const [doc, setDoc] = useState<DocState>(start);
@@ -323,6 +335,9 @@ export function useEditorFile(path: string, file: FileState, o: { announce: (tex
     doc: () => docRef.current,
     format: () => format.current,
     editor: () => o.editor.current,
+    rendered: o.rendered,
+    readOnly: () => readOnly.current(),
+    firstConflict: o.firstConflict,
     announce: o.announce,
     reading: o.reading,
     refetch: o.refetch,

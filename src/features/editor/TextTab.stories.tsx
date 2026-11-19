@@ -70,7 +70,7 @@ export const Merged: StoryObj = framed(
     let s = step(start, { type: "opened", disk: { text: "Buy milk\nCall the bank\nBook the plane", hash: H2 }, draft }, NAME).state;
     s = step(s, { type: "merge" }, NAME).state;
     const text = ["Buy oat milk", "Call the bank", "<<<<<<< mine", "Book the train", "=======", "Book the plane", ">>>>>>> disk"].join("\n");
-    return step(s, { type: "merged", id: 1, text, conflicts: 1, mine: draft.text, disk: H2 }, NAME).state;
+    return step(s, { type: "merged", id: 1, text, conflicts: 1, mine: draft.text, disk: H2, rendered: false }, NAME).state;
   })(),
 );
 export const SavedWithUndo: StoryObj = framed("After Ctrl+S: Saved, with an Undo button under the text", after({ type: "edited", text: "Buy oat milk" }, { type: "save" }, { type: "saved", hash: H2, snapshot: "snap" }));

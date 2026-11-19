@@ -26,6 +26,9 @@ function setup(over: { doc?: () => DocState; put?: (d: Draft) => Promise<boolean
     doc: over.doc ?? (() => cur),
     format: over.format ?? (() => ({ encoding: "utf-8", eol: "lf" })),
     editor: () => null,
+    rendered: () => false,
+    readOnly: () => false,
+    firstConflict: () => f.calls.push("firstConflict"),
     announce: (t) => f.said.push(t),
     reading: over.reading ?? (() => true),
     refetch: () => f.calls.push("refetch"),
@@ -166,7 +169,12 @@ describe("runEffect", () => {
     deps.api.mergeTexts = async (base, mine, disk) => (asked.push([base, mine, disk]), { kind: "merged", text: "merged", conflicts: 2 });
     await runEffect({ type: "merge", id: 3, base: "one", mine: "mine", disk: { text: "other", hash: "2".repeat(64) } }, deps);
     expect(asked).toEqual([["one", "mine", "other"]]);
-    expect(f.events).toEqual([{ type: "merged", id: 3, text: "merged", conflicts: 2, mine: "mine", disk: "2".repeat(64) }]);
+    expect(f.events).toEqual([{ type: "merged", id: 3, text: "merged", conflicts: 2, mine: "mine", disk: "2".repeat(64), rendered: false }]);
+    f.events.length = 0;
+    // The answer says which view the tab shows when it comes, not when Merge was pressed.
+    deps.rendered = () => true;
+    await runEffect({ type: "merge", id: 4, base: "one", mine: "mine", disk: { text: "other", hash: "2".repeat(64) } }, deps);
+    expect(f.events).toEqual([{ type: "merged", id: 4, text: "merged", conflicts: 2, mine: "mine", disk: "2".repeat(64), rendered: true }]);
     f.events.length = 0;
     deps.api.mergeTexts = async () => ({ kind: "refused", line: "The merge took too long." });
     await runEffect({ type: "merge", id: 3, base: "one", mine: "mine", disk: { text: "other", hash: "2".repeat(64) } }, deps);
@@ -183,6 +191,15 @@ describe("runEffect", () => {
       expect(f.events, answer.kind).toEqual([]);
     }
   });
+  it("a_merge_answered_after_the_tab_became_read_only_is_not_taken", async () => {
+    // A read-only tab can't keep a merge, and its editor takes no Ctrl+Z (6q-4b decision 7.1): the answer is a failure.
+    let readOnly = false;
+    const { f, deps } = setup();
+    deps.readOnly = () => readOnly;
+    deps.api.mergeTexts = async () => ((readOnly = true), { kind: "merged", text: "merged", conflicts: 1 });
+    await runEffect({ type: "merge", id: 5, base: "one", mine: "mine", disk: { text: "other", hash: "2".repeat(64) } }, deps);
+    expect(f.events).toEqual([{ type: "mergeFailed", id: 5, line: "It became read-only while the merge ran." }]);
+  });
   it("the_merge_sends_lf_texts", async () => {
     // A file read with CRLF endings, and a draft over an older version of it: the bar is up, and the merge is asked for.
     const file: FileState = { phase: "text", text: "one\r\ntwo\r\nthree", encoding: "utf-8", eol: "crlf", hash: H1, readOnly: null };
@@ -198,13 +215,15 @@ describe("runEffect", () => {
     expect(asked.flat().join("")).not.toContain("\r");
     expect(f.events).toEqual([{ type: "mergeFailed", id: 1, line: "x" }]);
   });
-  it("showConflict_goes_to_the_first_conflict", () => {
-    const { deps } = setup();
+  it("showConflict_hands_the_jump_to_the_tab", () => {
+    // The tab knows its view: behind the Rendered view it shows the Source view first (6q-4b decision 7.2).
+    const { f, deps } = setup();
     const went: string[] = [];
     const handle: EditorHandle = { text: () => "", setText() {}, focus() {}, goToLine() {}, toggleWrap() {}, reveal() {}, toConflict: (which) => void went.push(which) };
     deps.editor = () => handle;
     runEffect({ type: "showConflict" }, deps);
-    expect(went).toEqual(["first"]);
+    expect(f.calls).toEqual(["firstConflict"]);
+    expect(went).toEqual([]);
   });
 
   it("an_unsave_that_works_says_unsaved_with_the_new_hash_and_a_conflict_says_refused", async () => {

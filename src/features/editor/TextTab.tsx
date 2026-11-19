@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useImperativeHandle, useRef, useState, type Ref } from "react";
+import { useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState, type Ref } from "react";
 import type { PaneEntry } from "../../generated/PaneEntry";
 import { findCommand } from "../../lib/bindings";
 import type { Os } from "../../lib/keymap";
@@ -101,6 +101,36 @@ export function conflictJump(
   else o.editor?.toConflict(which);
 }
 
+type ConflictJumper = { toConflict(which: "first"): void };
+
+/**
+ * After a merge that left conflicts, the editor goes to the first one. The Rendered view hides the editor, so the tab asks for
+ * its Source view instead, where the merge's line about F7 and Ctrl+Z is true (6q-4b decision 7.2), and the jump waits for it.
+ */
+export function firstConflict(o: { rendered: boolean; editor: ConflictJumper | null; toSource: () => void }): void {
+  if (o.rendered) o.toSource();
+  else o.editor?.toConflict("first");
+}
+
+/**
+ * Whether the keyboard is in the tab's body: on it, where pressing Merge put it, or in the rendered text inside it. Read when the
+ * merge's answer comes, before the Source view hides that text.
+ */
+export function inBodyNow<N>(body: { contains(n: N): boolean } | null | undefined, active: N | null): boolean {
+  return !!body && active !== null && body.contains(active);
+}
+
+/**
+ * The jump that waited, on the first draw after the merge's answer: the Source view it asked for comes in that same draw. A
+ * keyboard that was in the tab's body goes on into the editor, where F7 works; one elsewhere stays where the person put it. A
+ * tab still in Rendered view did not get the switch, and a later switch by the person is not the merge's: nothing moves.
+ */
+export function sourceShown(o: { rendered: boolean; editor: (ConflictJumper & Focusable) | null; inBody: boolean }): void {
+  if (o.rendered) return;
+  if (o.inBody) o.editor?.focus();
+  o.editor?.toConflict("first");
+}
+
 type Outbound = Exclude<LinkTarget, { kind: "anchor" } | { kind: "none" }>;
 type KeyHandler = (e: KeyboardEvent) => void;
 
@@ -147,7 +177,7 @@ export function TextTabView(p: TextTabViewProps) {
   return (
     <div className="text-tab" ref={p.root}>
       {notice !== null && <div className="text-tab__notice">{notice}</div>}
-      {doc.conflict !== null && <ChangedBar name={name} onMerge={p.onMerge} onKeep={p.onKeep} onTake={p.onTake} />}
+      {doc.conflict !== null && <ChangedBar name={name} onMerge={p.readOnly === null ? p.onMerge : undefined} onKeep={p.onKeep} onTake={p.onTake} />}
       <div className="text-tab__body">
         {paged && (
           <div className="text-tab__pane" data-pane="rendered" hidden={!showRendered}>
@@ -207,6 +237,8 @@ type Props = {
   refetch: () => void;
   onLink: (link: Outbound) => void;
   onKey: KeyHandler;
+  /** Shows the tab's Source view: after a merge that left conflicts behind the Rendered view (6q-4b decision 7.2). */
+  onSource: () => void;
 };
 
 /** The file a text tab last had text of. A deleted file keeps showing what it was. */
@@ -220,7 +252,7 @@ function textOf(file: Props["file"]): Extract<FileState, { phase: "text" }> | nu
  * component holds the pieces that live as long as the tab: the cursor shown in the footer, the rendered view's delayed text,
  * and what the pane can call.
  */
-export function TextTab({ entry, file, kind, active, os, onDirty, commands, announce, refetch, onLink, onKey }: Props) {
+export function TextTab({ entry, file, kind, active, os, onDirty, commands, announce, refetch, onLink, onKey, onSource }: Props) {
   const name = splitPath(entry.path).name;
   const editor = useRef<EditorHandle>(null);
   const root = useRef<HTMLDivElement>(null);
@@ -230,7 +262,43 @@ export function TextTab({ entry, file, kind, active, os, onDirty, commands, anno
   readOnlyNow.current = readOnly;
   // Someone is reading here when the keyboard is in this tab's panel: a reload is spoken to them, and to nobody typing elsewhere.
   const reading = useCallback(() => (root.current?.closest('[role="tabpanel"]') ?? root.current)?.contains(document.activeElement) ?? false, []);
-  const { doc, ready, dispatch, save, discard } = useEditorFile(entry.path, file, { announce, reading, refetch, editor, readOnly: () => readOnlyNow.current !== null });
+  const paged = kind === "markdown" || kind === "html";
+  // The Rendered view hides the editor: a jump to a conflict has nothing to move, and a merge's Ctrl+Z nothing to undo.
+  const showRendered = paged && entry.view === "rendered";
+  const hidden = useRef(false);
+  hidden.current = showRendered;
+  const toSource = useRef(onSource);
+  toSource.current = onSource;
+  // A jump to the first conflict that waits for the Source view a merge asked for, with where the keyboard was then. Set before
+  // the switch is asked for.
+  const waiting = useRef<{ inBody: boolean } | null>(null);
+  const toFirstConflict = useCallback(() => {
+    firstConflict({
+      rendered: hidden.current,
+      editor: editor.current,
+      toSource: () => {
+        waiting.current = { inBody: inBodyNow(root.current?.closest(".preview__body"), document.activeElement) };
+        toSource.current();
+      },
+    });
+  }, []);
+  const { doc, ready, dispatch, save, discard } = useEditorFile(entry.path, file, {
+    announce,
+    reading,
+    refetch,
+    editor,
+    readOnly: () => readOnlyNow.current !== null,
+    rendered: () => hidden.current,
+    firstConflict: toFirstConflict,
+  });
+  // The merge's answer and the switch it asked for are set in one tick, so they are drawn together: this runs on that draw,
+  // before the paint, so the Source view never shows a frame at the old place.
+  useLayoutEffect(() => {
+    const w = waiting.current;
+    if (!w) return;
+    waiting.current = null;
+    sourceShown({ rendered: showRendered, editor: editor.current, inBody: w.inBody });
+  }, [showRendered, doc]);
   const hintId = useId();
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
   // A shebang tells the type of a file whose name does not: read from the text the tab opened with.
@@ -241,7 +309,6 @@ export function TextTab({ entry, file, kind, active, os, onDirty, commands, anno
   const appChord = useCallback((e: KeyboardEvent) => findCommand(e, os) !== undefined, [os]);
 
   // The rendered view gets the editor's text 150 ms after the last key, and the file's own text until the document is open.
-  const paged = kind === "markdown" || kind === "html";
   const [rendered, setRendered] = useState(() => lf(text?.text ?? ""));
   const shownOnce = useRef(false);
   useEffect(() => {
@@ -260,9 +327,6 @@ export function TextTab({ entry, file, kind, active, os, onDirty, commands, anno
 
   const latest = useRef({ doc, readOnly });
   latest.current = { doc, readOnly };
-  // The Rendered view hides the editor, so a jump to a conflict has nothing to move.
-  const hidden = useRef(false);
-  hidden.current = paged && entry.view === "rendered";
   const say = useRef(announce);
   say.current = announce;
   useImperativeHandle(
