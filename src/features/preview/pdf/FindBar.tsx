@@ -82,7 +82,16 @@ type Props = {
 /** The find row under the toolbar. It wraps like the editor's: the two checkboxes drop to a second line when one line is too narrow. */
 export function FindBar({ query, status, onQuery, onStep, onClose, field }: Props) {
   return (
-    <div className="pdf__find">
+    <div
+      className="pdf__find"
+      // Esc anywhere in the bar closes it, on its buttons and checkboxes as in the field. A handled Esc has its default prevented,
+      // so the pane's Esc-to-terminal skips it.
+      onKeyDown={(e) => {
+        if (e.key !== "Escape" || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey || e.nativeEvent.isComposing) return;
+        e.preventDefault();
+        onClose();
+      }}
+    >
       <input
         ref={field}
         className="pdf__findfield"
@@ -95,11 +104,10 @@ export function FindBar({ query, status, onQuery, onStep, onClose, field }: Prop
         onChange={(e) => onQuery({ ...query, text: e.target.value })}
         onKeyDown={(e) => {
           const k = fieldKey({ key: e.key, shiftKey: e.shiftKey, isComposing: e.nativeEvent.isComposing });
-          if (!k) return;
-          // A handled Esc has its default prevented, so the pane's Esc-to-terminal skips it.
+          // Esc goes on to the bar, which closes it.
+          if (!k || k === "close") return;
           e.preventDefault();
-          if (k === "close") onClose();
-          else onStep(k === "previous");
+          onStep(k === "previous");
         }}
       />
       <span className="pdf__count">{countText(status, query.text)}</span>

@@ -1,5 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import type { ReactElement } from "react";
+import { describe, expect, it, vi } from "vitest";
+import { elements } from "../../../test/hooks";
 import { FindBar, countText, fieldKey, pdfKey, selectionText, stepText } from "./FindBar";
 import { IDLE, type FindStatus } from "./findText";
 
@@ -104,5 +106,30 @@ describe("FindBar markup", () => {
     expect(html).toMatch(/<span class="pdf__count"[^>]*>3 of 17<\/span>/);
     expect(html).not.toContain("aria-live");
     expect(html).not.toContain("role=\"status\"");
+  });
+});
+
+// On "Match case" or "Next", Esc went to the pane, which took the keyboard to the terminal and left the bar and its tints up.
+describe("FindBar keys", () => {
+  const esc = () => ({ key: "Escape", shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, nativeEvent: { isComposing: false }, preventDefault: vi.fn() });
+  const bar = (onClose: () => void) =>
+    FindBar({ query: { text: "cat", caseSensitive: false, entireWord: false }, status: found(), onQuery: () => {}, onStep: () => {}, onClose, field: null }) as ReactElement<{ onKeyDown?: (e: unknown) => void }>;
+
+  it("findBar_esc_on_a_button_closes_the_bar", () => {
+    const onClose = vi.fn();
+    const e = esc();
+    bar(onClose).props.onKeyDown?.(e);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(e.preventDefault).toHaveBeenCalled();
+  });
+
+  it("findBar_esc_in_the_field_closes_the_bar_once_as_it_bubbles", () => {
+    const onClose = vi.fn();
+    const root = bar(onClose);
+    const field = elements(root).find((el) => el.type === "input")!;
+    const e = esc();
+    field.props.onKeyDown(e);
+    root.props.onKeyDown?.(e);
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

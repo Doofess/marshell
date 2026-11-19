@@ -9,7 +9,8 @@ type Props = {
   /** The file's name, for the names of the tree and the list. */
   name: string;
   view: SidebarView;
-  onView: (v: SidebarView) => void;
+  /** A view chosen; `takeKeyboard` when the control that chose it goes away with the change, so the view moves the keyboard into it. */
+  onView: (v: SidebarView, takeKeyboard?: boolean) => void;
   /** The outline, or null while it loads. An empty one is a PDF with none. */
   outline: OutlineNode[] | null;
   /** The entry that holds the page in view. */
@@ -103,7 +104,7 @@ export function PdfSidebar({ id, name, view, onView, outline, section, expanded,
         ) : outline === null ? null : outline.length === 0 ? (
           <div className="pdf-sidebar__empty">
             <p className="pdf-sidebar__none">This PDF has no outline.</p>
-            <button type="button" className="pdf-sidebar__show" onClick={() => onView("pages")}>
+            <button type="button" className="pdf-sidebar__show" onClick={() => onView("pages", true)}>
               Show pages
             </button>
           </div>

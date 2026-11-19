@@ -1,8 +1,8 @@
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { describe, expect, it } from "vitest";
-import { ancestorsOf, loadOutline, MAX_ENTRIES, sectionAt, treeKey, visibleRows, type OutlineNode, type Row } from "./outline";
+import { ancestorsOf, loadOutline, MAX_ENTRIES, pickSays, sectionAt, treeKey, visibleRows, type OutlineNode, type Row } from "./outline";
 
-type Raw = { title?: unknown; dest?: unknown; url?: unknown; count?: number; items?: Raw[] };
+type Raw = { title?: unknown; dest?: unknown; url?: unknown; unsafeUrl?: unknown; action?: unknown; count?: number; items?: Raw[] };
 
 /** A document with `pages` pages of 100 by 200 whose destinations are `[pageIndex, { name: "XYZ" }, 0, 100, null]`, and this outline. */
 function fakeDoc(outline: unknown, pages = 20, extra: Partial<{ getDestination: (n: string) => Promise<unknown>; log: { live: number; peak: number } }> = {}): PDFDocumentProxy {
@@ -82,6 +82,18 @@ describe("loadOutline", () => {
     expect(out[0]).toMatchObject({ goal: { kind: "web", url: "https://example.com/a" }, page: null });
     expect(out[1]!.goal).toEqual({ kind: "other" });
     expect(out[2]!.goal).toBeNull();
+  });
+
+  // pdf.js gives an entry a named action, or an address it will not open as `unsafeUrl`, instead of a destination.
+  it("loadOutline_reads_an_entry_action_and_an_unsafe_address", async () => {
+    const out = await loadOutline(fakeDoc([{ title: "Last", action: "LastPage" }, { title: "Script", unsafeUrl: "javascript:alert(1)" }, { title: "Nothing" }]));
+    expect(out.map((n) => n.goal)).toEqual([{ kind: "action", action: "LastPage" }, { kind: "other" }, null]);
+  });
+
+  it("pickSays_an_entry_with_no_destination_leads_nowhere", async () => {
+    const [none, some] = await loadOutline(fakeDoc([{ title: "Nothing" }, { title: "Last", action: "LastPage" }]));
+    expect(pickSays(none!)).toBe("This link leads nowhere in the file.");
+    expect(pickSays(some!)).toBeNull();
   });
 
   it("loadOutline_reads_a_failure_or_no_outline_as_empty", async () => {

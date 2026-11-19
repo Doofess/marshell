@@ -36,6 +36,11 @@ export function scrollFor(place: Place, box: PageBox, viewTop: number): number {
   return box.top + place.top * box.height - viewTop;
 }
 
+/** A place is put only once the document of these bytes and this version is laid out, so a jump during a reload waits for the new file. */
+export function placeReady<B>(loaded: { bytes: B; version: number } | null, now: { bytes: B; version: number }, laidOut: boolean): boolean {
+  return laidOut && loaded !== null && loaded.bytes === now.bytes && loaded.version === now.version;
+}
+
 /** A place on a page the file doesn't have becomes the last page's top; a fraction outside 0..1 is pulled in. */
 export function clampPlace(place: Place, pages: number): Place {
   if (place.page > pages) return { page: Math.max(pages, 1), top: 0 };

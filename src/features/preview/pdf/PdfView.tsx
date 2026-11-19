@@ -7,8 +7,8 @@ import { PdfToolbar } from "./PdfToolbar";
 import { usePdfFind } from "./findText";
 import { placeOfDest } from "./dest";
 import { linksOf, PageLinks, type LinkGoal, type PageLink } from "./links";
-import { clampPlace, pageInView, placeAt, placeText, scrollFor } from "./place";
-import { ancestorsOf, loadOutline, sectionAt, type OutlineNode } from "./outline";
+import { clampPlace, pageInView, placeAt, placeReady, placeText, scrollFor } from "./place";
+import { ancestorsOf, loadOutline, pickSays, sectionAt, type OutlineNode } from "./outline";
 import { PdfSidebar } from "./PdfSidebar";
 import { Thumbnails } from "./Thumbnails";
 import { loadPdf, renderPage, renderTextLayer, type TextMapping } from "./pdfjs";
@@ -319,8 +319,7 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
       if (latest.current.place) pending.current = { place: latest.current.place, say: true };
     }
     const next = pending.current;
-    const from = loadedFor.current;
-    if (!next || !doc || !scroller || available === 0 || count === 0 || !from || from.bytes !== bytes || from.version !== version) return;
+    if (!next || !placeReady(loadedFor.current, { bytes, version }, doc !== null && scroller !== null && available > 0 && count > 0)) return;
     pending.current = null;
     keep.current = null;
     // What is said is the page the page field then shows: a place near the end of a page reads as the next one, which fills the view.
@@ -511,8 +510,10 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
   }, [open, over]);
 
   // A pick jumps. Beside the pages the keyboard stays on the entry; lying over them the sidebar closes and the keyboard goes to the pages.
+  // An entry with no destination says so, and the sidebar and the keyboard stay.
   const pick = (node: OutlineNode) => {
-    if (!node.goal) return;
+    const say = pickSays(node);
+    if (say !== null || !node.goal) return void latest.current.announce?.(say ?? "");
     if (over) {
       follow(node.goal, { keepFocus: false });
       hideSidebar(false);
@@ -674,9 +675,10 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
             id={sidebarId}
             name={name}
             view={view}
-            onView={(v) => {
+            onView={(v, takeKeyboard) => {
               setView(v);
               setSidebarPref({ view: v });
+              if (takeKeyboard) setSidebarTick((t) => t + 1);
             }}
             outline={outline}
             section={section}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampPlace, pageInView, placeAt, placeText, samePlace, scrollFor, type PageBox } from "./place";
+import { clampPlace, pageInView, placeAt, placeReady, placeText, samePlace, scrollFor, type PageBox } from "./place";
 
 // Two pages of 200 px with a 12 px gap between them, in client coordinates.
 const pages: PageBox[] = [
@@ -74,5 +74,18 @@ describe("pageInView", () => {
   it("pageInView_above_every_page_is_page_1", () => {
     expect(pageInView(50, pages)).toBe(1);
     expect(pageInView(50, [])).toBe(1);
+  });
+});
+
+// A jump that arrives while the file reloads must not scroll on the old file's page boxes.
+describe("placeReady", () => {
+  const a = new ArrayBuffer(1);
+  const b = new ArrayBuffer(1);
+  it("a_place_waits_for_its_own_file", () => {
+    expect(placeReady({ bytes: a, version: 1 }, { bytes: a, version: 1 }, true)).toBe(true);
+    expect(placeReady({ bytes: a, version: 1 }, { bytes: b, version: 1 }, true)).toBe(false);
+    expect(placeReady({ bytes: a, version: 1 }, { bytes: a, version: 2 }, true)).toBe(false);
+    expect(placeReady(null, { bytes: a, version: 1 }, true)).toBe(false);
+    expect(placeReady({ bytes: a, version: 1 }, { bytes: a, version: 1 }, false)).toBe(false);
   });
 });

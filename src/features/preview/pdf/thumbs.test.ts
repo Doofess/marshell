@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { listKey, nextToDraw } from "./thumbs";
+import { describe, expect, it, vi } from "vitest";
+import { listKey, nextToDraw, thumbButtons } from "./thumbs";
 
 describe("nextToDraw", () => {
   it("nextToDraw_takes_the_wanted_page_nearest_the_current_one", () => {
@@ -47,5 +47,17 @@ describe("listKey", () => {
   it("listKey_ignores_other_keys_and_an_empty_list", () => {
     expect(listKey(2, 10, "a", 3)).toBeNull();
     expect(listKey(0, 0, "ArrowDown", 3)).toBeNull();
+  });
+});
+
+// One query per page made a drawing step on a 1,000-page PDF about a million element matches.
+describe("thumbButtons", () => {
+  it("thumbButtons_reads_the_list_once", () => {
+    const buttons = [{ dataset: { thumb: "1" } }, { dataset: { thumb: "2" } }];
+    const list = { querySelectorAll: vi.fn(() => buttons), querySelector: vi.fn() };
+    const at = thumbButtons(list as unknown as ParentNode);
+    expect([at(1), at(2), at(3)]).toEqual([buttons[0], buttons[1], null]);
+    expect(list.querySelectorAll).toHaveBeenCalledTimes(1);
+    expect(list.querySelector).not.toHaveBeenCalled();
   });
 });

@@ -10,7 +10,7 @@ export const MAX_ENTRIES = 10_000;
 /** How many destinations are resolved at once. */
 const RESOLVING = 8;
 
-type Raw = { title?: unknown; dest?: unknown; url?: unknown; count?: unknown; items?: unknown };
+type Raw = { title?: unknown; dest?: unknown; url?: unknown; unsafeUrl?: unknown; action?: unknown; count?: unknown; items?: unknown };
 
 /** A title as shown: control characters dropped, trimmed, and "Untitled" when nothing is left. */
 function titleOf(raw: unknown): string {
@@ -18,10 +18,16 @@ function titleOf(raw: unknown): string {
   return t === "" ? "Untitled" : t;
 }
 
+/** An entry leads where a page link would: an address, a destination or a named action. pdf.js gives an address it won't open (javascript:, a file) as `unsafeUrl` only. */
 function goalOfItem(item: Raw): LinkGoal | null {
-  if (typeof item.url === "string") return goalOf({ url: item.url });
-  if (typeof item.dest === "string" || Array.isArray(item.dest)) return { kind: "dest", dest: item.dest };
+  if (typeof item.url === "string" || typeof item.dest === "string" || Array.isArray(item.dest) || typeof item.action === "string") return goalOf(item);
+  if (typeof item.unsafeUrl === "string") return { kind: "other" };
   return null;
+}
+
+/** What picking an entry says instead of jumping: one with no destination at all leads nowhere. */
+export function pickSays(node: OutlineNode): string | null {
+  return node.goal ? null : "This link leads nowhere in the file.";
 }
 
 /**

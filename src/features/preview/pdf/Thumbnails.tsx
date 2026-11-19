@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type 
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { selectedProps } from "../../../components/a11y/SelectedMark";
 import { renderPage } from "./pdfjs";
-import { listKey, nextToDraw } from "./thumbs";
+import { listKey, nextToDraw, thumbButtons } from "./thumbs";
 
 /** A thumbnail's width in px. PdfView.css has the same number. */
 const THUMB_W = 160;
@@ -68,7 +68,7 @@ export function Thumbnails({ doc, sizes, current, name, onPick }: Props) {
     const drawn = new Set<number>();
     let running = false;
     let cancelWait: (() => void) | null = null;
-    const plate = (n: number) => button(n)?.querySelector<HTMLElement>(".pdf-thumbs__plate") ?? null;
+    const plate = (b: HTMLElement | null) => b?.querySelector<HTMLElement>(".pdf-thumbs__plate") ?? null;
 
     const step = async () => {
       cancelWait = null;
@@ -77,13 +77,14 @@ export function Thumbnails({ doc, sizes, current, name, onPick }: Props) {
       if (view === 0) return;
       const top = el.scrollTop;
       const wanted = new Set<number>();
+      const at = thumbButtons(el);
       for (let n = 1; n <= sizesRef.current.length; n++) {
-        const b = button(n);
+        const b = at(n);
         if (!b) continue;
         const y = b.offsetTop;
         const bottom = y + b.offsetHeight;
         if (drawn.has(n) && (bottom < top - 3 * view || y > top + 4 * view)) {
-          const c = plate(n)?.querySelector("canvas");
+          const c = plate(b)?.querySelector("canvas");
           if (c) {
             c.width = 0;
             c.height = 0;
@@ -102,7 +103,7 @@ export function Thumbnails({ doc, sizes, current, name, onPick }: Props) {
         const canvas = document.createElement("canvas");
         await renderPage(page, canvas, THUMB_W / size.w, abort.signal);
         if (abort.signal.aborted) return;
-        const p = plate(n);
+        const p = plate(button(n));
         if (p) {
           p.replaceChildren(canvas);
           drawn.add(n);
