@@ -32,3 +32,14 @@ The review of PR #143 found that the waiting jump and the pane's quiet view swit
 | C. The keyboard moved to a link in the rendered text while the merge ran | Pass. `b.md`: Merge clicked and the keyboard put on the rendered "a link" before the answer. The toggle went to Source, the cursor to Ln 3, Col 1, and the keyboard to "b.md, editor". |
 
 The read-only race was not run live; `a_merge_answered_after_the_tab_became_read_only_is_not_taken` covers it. The keyboard-in-the-terminal case (check 3) was not run again; its path changed only from "is the body" to "is inside the body". The app was stopped by PID (23 processes, no agent CLIs), and `~/.claude/settings.json` kept its modified time (11:38:58).
+
+## Second recheck (2026-11-19, 12:23 to 12:26)
+
+The second review asked for two keyboard fixes. "The keyboard is in the body" is now read when the merge's answer comes, before the Source view hides the rendered text, instead of after. Keep mine takes the keyboard when Merge goes from under it because the file became read-only. A fresh scratch home (`lc-6q4b-fix-3`), set up as above, with `r.md` and `a.md`:
+
+| Check | Result |
+| --- | --- |
+| D. The keyboard on Merge when the file becomes read-only | Pass. `r.md` with an edit and line 3 changed on disk, the keyboard on Merge, then the read-only attribute set by PowerShell: the tab read "r.md is read-only on disk.", Merge went, and the keyboard was on "Keep mine". |
+| E. Check A again with the new capture | Pass. `a.md`: Enter on Merge in the Rendered view gave Source, Ln 3, Col 1, the keyboard on "a.md, editor" and "Merged a.md. 1 conflict to resolve. F7 goes to the next conflict, and Ctrl+Z undoes the merge." |
+
+The app was stopped by PID (23 processes, no agent CLIs), `r.md`'s attribute was cleared, and `~/.claude/settings.json` kept its modified time (11:38:58).
