@@ -433,3 +433,29 @@ describe("PR review 6q-6: a change made during a save", () => {
     expect(t.log).toContain("put [7] h2 5");
   });
 });
+
+describe("PR review 6q-6 round 2: a note still being typed", () => {
+  it("is kept in a draft when the tab goes after the timer waited for the typing", async () => {
+    vi.useFakeTimers();
+    const t = rig({ editing: () => true });
+    t.r.dispatch({ type: "edited" });
+    await vi.advanceTimersByTimeAsync(1500);
+    // The timer let the typing go on.
+    expect(t.log).toEqual([]);
+    const done = t.r.unload().then(() => void t.log.push("destroy"));
+    t.dropEditor();
+    await done;
+    await ticks(10);
+    expect(t.log.indexOf("serialize")).toBeLessThan(t.log.indexOf("destroy"));
+    expect(t.log).toContain("put [7] h1 5");
+  });
+  it("is still left to the typing when the window loses focus", async () => {
+    vi.useFakeTimers();
+    const t = rig({ editing: () => true });
+    t.r.dispatch({ type: "edited" });
+    await vi.advanceTimersByTimeAsync(1500);
+    t.r.flush();
+    await ticks(10);
+    expect(t.log).toEqual([]);
+  });
+});

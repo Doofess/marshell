@@ -115,7 +115,8 @@ export function createNotesRunner(first: { hash: string | null; bytes: ArrayBuff
   let takingFrom = 0;
   // Callers waiting for the save, overwrite or undo of a save in flight to be answered.
   let answered: Array<() => void> = [];
-  // A draft whose serializing failed: the tab going, or the window losing focus, tries again.
+  // A draft that is due and wasn't taken: its serializing failed, or a note was still being typed. The tab going takes it
+  // (ending the typing), and so does the window losing focus once nothing is being typed.
   let owed = false;
   // The newest disk read that came during a save, and the file the save started from.
   let held: { hash: string | null; bytes: ArrayBuffer | null } | null = null;
@@ -172,7 +173,10 @@ export function createNotesRunner(first: { hash: string | null; bytes: ArrayBuff
     draftTimer = setTimeout(() => {
       draftTimer = undefined;
       // The note's commit when the typing ends asks again.
-      if (d.editor()?.editing()) return;
+      if (d.editor()?.editing()) {
+        owed = true;
+        return;
+      }
       void takeDraft();
     }, PDF_DRAFT_MS);
   };

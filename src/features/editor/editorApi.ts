@@ -129,7 +129,7 @@ export async function getPdfDraft(path: string): Promise<{ bytes: ArrayBuffer; b
   }
 }
 
-/** What a 413 says when the core gave no body: the PDF with its notes is over the size a draft may have. */
+/** What a 413 says, whoever answered it (the core, or its body limit with its own text): the PDF with its notes is over the size a draft may have. */
 const PDF_DRAFT_TOO_LARGE = "This PDF is too large to keep its unsaved notes.";
 
 /** Keep the PDF's draft. A refusal carries the core's line, which the person is told. */
@@ -145,7 +145,7 @@ export async function putPdfDraft(path: string, bytes: Uint8Array, baseHash: str
     });
     if (res.status === 204) return "kept";
     const line = await lineOf(res);
-    return { refused: res.status === 413 && line === GENERIC_LINE ? PDF_DRAFT_TOO_LARGE : line };
+    return { refused: res.status === 413 ? PDF_DRAFT_TOO_LARGE : line };
   } catch {
     return { refused: GENERIC_LINE };
   }

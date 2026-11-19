@@ -29,8 +29,8 @@ export function keyboardLeft(pageFocused: boolean, active: unknown, inside: (t: 
   return pageFocused && !inside(active);
 }
 
-/** The view a tab opens on: the one last chosen, Pages for a PDF with no outline, and else Outline. */
+/** The view a tab opens on: the one last chosen, but Pages for a PDF with no outline when that was Outline, and else Outline. */
 export function startView(p: SidebarPref, hasOutline: boolean): SidebarView {
-  if (!hasOutline) return "pages";
+  if (!hasOutline) return p.view === "notes" ? "notes" : "pages";
   return p.view ?? "outline";
 }
