@@ -20,3 +20,15 @@
 
 1. **The pane took the keyboard back from the editor after the switch to Source.** In the first run (`conf.md`, before the last fix) the view switched and the cursor went to the conflict, but the keyboard ended on the tab's body. The pane focuses its body whenever the tab's entry changes (`Preview.tsx`, "Focus goes into the scroll body when the tab goes somewhere"), a view switch makes a new entry, and that effect runs after the text tab's own. It would also have pulled the keyboard out of the terminal when the answer came while the person was there. Fixed in `05d596fe`: a view switch the text tab asks for after a merge is quiet (`bodyTakesFocus`), with failing-first tests in `Preview.test.tsx`; a quiet switch that never comes keeps no later move quiet. Checks 2 and 3 are the runs after the fix.
 2. **The browser console showed one error, a 404 for `/favicon.ico`** from the dev server at the first load, before anything was driven. Not related.
+
+## Recheck after the review (2026-11-19, 12:11 to 12:17)
+
+The review of PR #143 found that the waiting jump and the pane's quiet view switch could outlive a switch that never came, and that "the keyboard on the body" missed a keyboard inside the rendered text. The fixes tie the jump to the draw that brings the merge's answer, end a quiet switch with the person's own, and test that the keyboard is inside the body. A merge answered after the file became read-only is now a failure. A fresh scratch home (`lc-6q4b-fix-2`) under `pnpm tauri dev`, onboarding skipped as before, `a.md` and `b.md` (a heading and three paragraphs) opened with `marshell open`, and line 3 changed on disk by PowerShell after an edit in the Source view:
+
+| Check | Result |
+| --- | --- |
+| A. A merge with a conflict in the Rendered view, Enter on Merge | Pass. `a.md`: the toggle went to Source, the cursor to Ln 3, Col 1 (`<<<<<<< mine`), the keyboard to "a.md, editor", and the announcer read "Merged a.md. 1 conflict to resolve. F7 goes to the next conflict, and Ctrl+Z undoes the merge." |
+| B. The person's own toggle after that merge | Pass. With the cursor moved to Ln 12, Rendered and then Source put the keyboard on "a.md, contents" each time, and the cursor stayed at Ln 12. |
+| C. The keyboard moved to a link in the rendered text while the merge ran | Pass. `b.md`: Merge clicked and the keyboard put on the rendered "a link" before the answer. The toggle went to Source, the cursor to Ln 3, Col 1, and the keyboard to "b.md, editor". |
+
+The read-only race was not run live; `a_merge_answered_after_the_tab_became_read_only_is_not_taken` covers it. The keyboard-in-the-terminal case (check 3) was not run again; its path changed only from "is the body" to "is inside the body". The app was stopped by PID (23 processes, no agent CLIs), and `~/.claude/settings.json` kept its modified time (11:38:58).
