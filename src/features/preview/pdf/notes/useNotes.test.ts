@@ -82,7 +82,7 @@ describe("notesEscape", () => {
 });
 
 /** A runner with fakes for the editor and the core, and a log of what reached them in order. */
-function rig(o: { draft?: { bytes: ArrayBuffer; baseHash: string | null; editedMs: number } | null; editing?: () => boolean; save?: (path: string, expect: string | null) => SaveResult; failSerializes?: number } = {}) {
+function rig(o: { draft?: { bytes: ArrayBuffer; baseHash: string | null; editedMs: number } | null; editing?: () => boolean; save?: (path: string, expect: string | null) => SaveResult | Promise<SaveResult>; failSerializes?: number; readOnly?: () => boolean; now?: () => number } = {}) {
   const log: string[] = [];
   let next: ((b: Uint8Array) => void) | null = null;
   let held = false;
@@ -103,7 +103,7 @@ function rig(o: { draft?: { bytes: ArrayBuffer; baseHash: string | null; editedM
   const api = {
     saveFile: async (path: string, bytes: Uint8Array, expect: string | null): Promise<SaveResult> => {
       log.push(`save ${path} ${expect} [${[...bytes]}]`);
-      return o.save?.(path, expect) ?? { kind: "saved", saved: { hash: "h2", snapshot: "s1" } as FileSaved };
+      return (await o.save?.(path, expect)) ?? { kind: "saved", saved: { hash: "h2", snapshot: "s1" } as FileSaved };
     },
     unsaveFile: async (_path: string, snapshot: string): Promise<UnsaveResult> => {
       log.push(`unsave ${snapshot}`);
@@ -118,7 +118,7 @@ function rig(o: { draft?: { bytes: ArrayBuffer; baseHash: string | null; editedM
   };
   const r = createNotesRunner(
     { hash: "h1", bytes: new ArrayBuffer(1) },
-    { path: "C:\\w\\a.pdf", name: "a.pdf", editor: () => editor, load: (bytes, dirty) => void loads.push({ bytes, dirty }), announce: (t) => void said.push(t), openCopy: (p) => void opened.push(p), api, now: () => 5 },
+    { path: "C:\\w\\a.pdf", name: "a.pdf", editor: () => editor, load: (bytes, dirty) => void loads.push({ bytes, dirty }), announce: (t) => void said.push(t), openCopy: (p) => void opened.push(p), api, now: o.now ?? (() => 5), readOnly: o.readOnly },
   );
   return { r, log, loads, said, opened, hold: () => (held = true), release: (b: Uint8Array) => next?.(b) };
 }
@@ -279,5 +279,116 @@ describe("createNotesRunner", () => {
     await t.r.open();
     expect(t.loads).toEqual([]);
     expect(t.r.state().dirty).toBe(false);
+  });
+});
+
+describe("final review 6q-6: Ctrl+S on a read-only file", () => {
+  it("says the file is read-only and offers Save as a copy, and writes nothing", async () => {
+    const t = rig({ readOnly: () => true });
+    t.r.dispatch({ type: "edited" });
+    expect(await t.r.save()).toBe(false);
+    const line = "a.pdf is read-only, so the notes can't be saved into it.";
+    expect(t.r.state()).toMatchObject({ dirty: true, saving: false, refusedSave: true, line });
+    expect(t.said).toEqual([line]);
+    expect(t.log.filter((l) => l.startsWith("save "))).toEqual([]);
+  });
+  it("says nothing for a read-only file with no unsaved notes", async () => {
+    const t = rig({ readOnly: () => true });
+    expect(await t.r.save()).toBe(false);
+    expect(t.said).toEqual([]);
+    expect(t.r.state().line).toBeNull();
+  });
+});
+
+describe("final review 6q-6: a change made while a draft is being taken", () => {
+  const puts = (log: string[]) => log.filter((l) => l.startsWith("put"));
+  it("is in the draft the tab takes when it goes", async () => {
+    vi.useFakeTimers();
+    const t = rig();
+    t.hold();
+    t.r.dispatch({ type: "edited" });
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(t.log).toEqual(["serialize"]);
+    // A second note while the first draft serializes; the tab goes before its own draft is due.
+    t.r.dispatch({ type: "edited" });
+    const done = t.r.unload().then(() => void t.log.push("destroy"));
+    t.release(new Uint8Array([8]));
+    await ticks(10);
+    t.release(new Uint8Array([9]));
+    await done;
+    await ticks(10);
+    expect(t.log.filter((l) => l === "serialize")).toHaveLength(2);
+    expect(t.log.lastIndexOf("serialize")).toBeLessThan(t.log.indexOf("destroy"));
+    expect(puts(t.log).at(-1)).toBe("put [9] h1 5");
+  });
+  it("is in the draft the window's blur sends", async () => {
+    vi.useFakeTimers();
+    const t = rig();
+    t.hold();
+    t.r.dispatch({ type: "edited" });
+    await vi.advanceTimersByTimeAsync(1500);
+    t.r.dispatch({ type: "edited" });
+    t.r.flush();
+    t.release(new Uint8Array([8]));
+    await ticks(10);
+    t.release(new Uint8Array([9]));
+    await ticks(10);
+    expect(puts(t.log).at(-1)).toBe("put [9] h1 5");
+  });
+  it("leaves the draft taken before it stamped with the time of the change it holds", async () => {
+    vi.useFakeTimers();
+    let clock = 5;
+    const t = rig({ now: () => clock });
+    t.hold();
+    t.r.dispatch({ type: "edited" });
+    await vi.advanceTimersByTimeAsync(1500);
+    clock = 7;
+    t.r.dispatch({ type: "edited" });
+    t.release(new Uint8Array([8]));
+    await ticks(10);
+    expect(puts(t.log)[0]).toBe("put [8] h1 5");
+  });
+});
+
+describe("final review 6q-6: a tab that goes while a save is in flight", () => {
+  const later = <T,>() => {
+    let resolve: (v: T) => void = () => {};
+    const promise = new Promise<T>((r) => (resolve = r));
+    return { promise, resolve };
+  };
+  it("keeps its notes in a draft when the save is then refused", async () => {
+    vi.useFakeTimers();
+    const answer = later<SaveResult>();
+    const t = rig({ save: () => answer.promise });
+    t.r.dispatch({ type: "edited" });
+    const saved = t.r.save();
+    await ticks();
+    let gone = false;
+    const done = t.r.unload().then(() => {
+      gone = true;
+      t.log.push("destroy");
+    });
+    await ticks(10);
+    // The editor waits for the answer: the notes may not be in the file.
+    expect(gone).toBe(false);
+    answer.resolve({ kind: "refused", line: "a.pdf is in use." });
+    await done;
+    await ticks(10);
+    expect(await saved).toBe(false);
+    expect(t.log.lastIndexOf("serialize")).toBeLessThan(t.log.indexOf("destroy"));
+    expect(t.log).toContain("put [7] h1 5");
+  });
+  it("keeps its notes in a draft when an undone save is answered after it went", async () => {
+    vi.useFakeTimers();
+    const t = rig();
+    t.r.dispatch({ type: "edited" });
+    await t.r.save();
+    t.log.length = 0;
+    t.r.dispatch({ type: "unsave" });
+    const done = t.r.unload().then(() => void t.log.push("destroy"));
+    await done;
+    await ticks(10);
+    expect(t.log.lastIndexOf("serialize")).toBeLessThan(t.log.indexOf("destroy"));
+    expect(t.log).toContain("put [7] h1 5");
   });
 });

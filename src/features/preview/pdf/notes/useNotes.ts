@@ -3,7 +3,7 @@ import { dropDraft, getPdfDraft, putPdfDraft, saveFile, unsaveFile } from "../..
 import { dirtyNews, type SaveCommands } from "../../../editor/TextTab";
 import { createDraftQueue, createSaver, draftBusy, draftOnceSent } from "../../../editor/useEditorFile";
 import { editorKeysAllowed, type NotesEditor } from "./editor";
-import { copyName, notesReducer, type NotesEffect, type NotesEvent, type NotesState } from "./notesDoc";
+import { copyName, notesReducer, unsavedNotes, type NotesEffect, type NotesEvent, type NotesState } from "./notesDoc";
 
 /**
  * Where the keyboard is now decides whether pdf.js may take the keys: only inside the tab, with the window focused. Called on the
@@ -29,6 +29,7 @@ export const PDF_DRAFT_MS = 1500;
 
 /** What a save over `SAVE_PDF_CAP` says, as a text tab's says its 2 MB. */
 const tooLargeLine = (name: string) => `${name} is over 58 MB, so it can't be saved.`;
+const readOnlyLine = (name: string) => `${name} is read-only, so the notes can't be saved into it.`;
 /** What a serialize that threw says: pdf.js couldn't write the notes into the file's bytes. */
 const unwrittenLine = (name: string) => `The notes couldn't be written into ${name}.`;
 /** What "Save as a copy" says when `(notes)` to `(notes 99)` are all taken beside the file. */
@@ -107,8 +108,13 @@ export function createNotesRunner(first: { hash: string | null; bytes: ArrayBuff
   // The newest draft taken, which the queue sends.
   let taken: Taken | null = null;
   let draftTimer: ReturnType<typeof setTimeout> | undefined;
-  // A draft being serialized: the promise ends once its bytes are taken.
+  // A draft being serialized: the promise ends once its bytes are taken. `edits` counts the changes, and `takingFrom` is the
+  // count the draft being serialized started at, so a change made since is known not to be in it.
   let taking: Promise<void> | null = null;
+  let edits = 0;
+  let takingFrom = 0;
+  // Callers waiting for the save, overwrite or undo of a save in flight to be answered.
+  let answered: Array<() => void> = [];
   // A draft whose serializing failed: the tab going, or the window losing focus, tries again.
   let owed = false;
   // The newest disk read that came during a save, and the file the save started from.
@@ -136,14 +142,20 @@ export function createNotesRunner(first: { hash: string | null; bytes: ArrayBuff
   };
   const takeDraft = (): Promise<void> => {
     stopTimer();
-    if (taking) return taking;
+    if (taking) {
+      // A change made while this draft serializes isn't in it: once it ends, the change is taken too.
+      const from = takingFrom;
+      return taking.then(() => (edits !== from ? takeDraft() : undefined));
+    }
     const editor = d.editor();
     if (!editor || discarded) return Promise.resolve();
+    takingFrom = edits;
+    const at = editedAt;
     const work = editor.save().then(
       (bytes) => {
         taking = null;
         owed = false;
-        taken = { bytes, baseHash: state.base.hash, editedMs: editedAt };
+        taken = { bytes, baseHash: state.base.hash, editedMs: at };
         dispatch({ type: "serialized", bytes, for: "draft" });
       },
       () => {
@@ -253,12 +265,18 @@ export function createNotesRunner(first: { hash: string | null; bytes: ArrayBuff
     if (e.type === "edited") {
       discarded = false;
       editedAt = now();
+      edits++;
     }
     const wasSaving = state.saving;
     const out = notesReducer(state, e, d.name);
     state = out.state;
     if (!wasSaving && state.saving) savedFrom = state.base.hash;
     for (const effect of out.effects) run(effect);
+    if (wasSaving && !state.saving) {
+      const waiting = answered;
+      answered = [];
+      for (const resume of waiting) resume();
+    }
     if (wasSaving && !state.saving && held !== null) {
       // The save is answered: a read from before it is the file it replaced, and old news; a newer one is somebody else's.
       const read = held;
@@ -288,7 +306,14 @@ export function createNotesRunner(first: { hash: string | null; bytes: ArrayBuff
       closed = true;
       saver.cancel();
     },
-    save: () => saver.save(),
+    save() {
+      // The shared saver answers a read-only file with a quiet false; unsaved notes get the line and Save as a copy instead.
+      if (d.readOnly?.() && state.dirty && !state.saving && state.conflict === null) {
+        dispatch({ type: "saveRefused", line: readOnlyLine(d.name) });
+        return Promise.resolve(false);
+      }
+      return saver.save();
+    },
     discard() {
       discarded = true;
       stopTimer();
@@ -300,6 +325,9 @@ export function createNotesRunner(first: { hash: string | null; bytes: ArrayBuff
       void takeDraft().then(() => queue.flush());
     },
     async unload() {
+      // A save, an overwrite or an undo of a save in flight decides whether the notes are in the file: the editor waits for its
+      // answer, which asks for a draft when they aren't.
+      if (state.saving) await new Promise<void>((resume) => answered.push(resume));
       if (draftTimer !== undefined || taking || owed) await takeDraft();
       queue.flush();
     },
@@ -385,17 +413,19 @@ export function useNotes(o: NotesOptions): Notes {
     };
   }, [runner]);
 
-  // The dot, said once the draft has been looked for, as a text tab says it once its document opens.
+  // The dot, said once the draft has been looked for, as a text tab says it once its document opens. It stays while a save
+  // is in flight, so a tab closed then is asked about.
   const saidDirty = useRef<boolean | null>(null);
   const ready = shown !== null;
+  const unsaved = unsavedNotes(state);
   useEffect(() => {
-    const news = dirtyNews(saidDirty.current, ready, state.dirty);
+    const news = dirtyNews(saidDirty.current, ready, unsaved);
     if (news === null) return;
     saidDirty.current = news;
     latest.current.onDirty?.(o.path, news);
-  }, [ready, state.dirty, o.path]);
+  }, [ready, unsaved, o.path]);
 
-  const hidden = o.blocked && !state.dirty;
+  const hidden = o.blocked && !unsaved;
   useImperativeHandle(
     hidden ? null : o.save,
     () => ({
@@ -408,7 +438,7 @@ export function useNotes(o: NotesOptions): Notes {
       },
       canUndoSave: () => runner.state().lastSave !== null && !runner.state().saving,
       discard: () => runner.discard(),
-      dirty: () => runner.state().dirty,
+      dirty: () => unsavedNotes(runner.state()),
       focus: () => latest.current.focus(),
     }),
     [runner, hidden],

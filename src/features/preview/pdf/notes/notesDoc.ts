@@ -218,6 +218,14 @@ export function notesReducer(s: NotesState, e: NotesEvent, name: string): Out {
   }
 }
 
+/**
+ * Whether the tab has notes that may not be in the file: unsaved ones, or ones a save, an overwrite or an undo of a save is
+ * still deciding. The dot and the close question go by this, as a text tab's do, which stay until a save is answered.
+ */
+export function unsavedNotes(s: NotesState): boolean {
+  return s.dirty || s.saving;
+}
+
 /** `{stem} (notes).pdf`, then `(notes 2)` up to `(notes 99)`; null when every one of them is taken. */
 export function copyName(stem: string, taken: (name: string) => boolean): string | null {
   for (let n = 1; n <= 99; n++) {

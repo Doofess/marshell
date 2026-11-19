@@ -19,10 +19,11 @@ import { readFileNotes } from "./notes/fileNotes";
 import { colourName, currentNoteId, noteRows, type NoteRow } from "./notes/noteRows";
 import { NotesList } from "./notes/NotesList";
 import { CommentPopup } from "./notes/CommentPopup";
-import { fromDocument, notesBlocked } from "./notes/blocked";
+import { noEditor as editorless, notesBlocked } from "./notes/blocked";
 import { colorPref, setColorPref } from "./notes/notesPref";
 import { SelectionBar, selectionBarShows } from "./notes/SelectionBar";
 import { NotesBars } from "./notes/NotesBars";
+import { unsavedNotes } from "./notes/notesDoc";
 import { notesEscape, onFocusMove, useNotes } from "./notes/useNotes";
 import type { SaveCommands } from "../../editor/TextTab";
 import { useOpenInPane } from "../../pane/PaneContext";
@@ -235,8 +236,6 @@ export function PdfView({ path, bytes: fileBytes, hash, readOnly, name, onDirty,
       dead = true;
     };
   }, [doc, readOnly, name]);
-  // A reason from the document leaves the pages with no editor at all; read-only keeps it, so unsaved notes stay on screen.
-  const noEditor = reason === undefined || fromDocument(reason, name);
 
   // The notes: what is shown is the file, or its draft, once the draft has been looked for.
   const openInPane = useOpenInPane();
@@ -244,6 +243,8 @@ export function PdfView({ path, bytes: fileBytes, hash, readOnly, name, onDirty,
   const bytes = notesNow.shown?.bytes ?? null;
   const version = notesNow.shown?.version ?? 0;
   const runner = notesNow.runner;
+  // A reason from the document leaves the pages with no editor at all; read-only keeps it only while unsaved notes are on screen.
+  const noEditor = editorless(reason, name, unsavedNotes(notesNow.state));
 
   // The preview body is the scroll area and the root for what is in view.
   useLayoutEffect(() => {

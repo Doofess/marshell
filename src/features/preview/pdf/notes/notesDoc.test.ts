@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FileSaved } from "../../../../generated/FileSaved";
-import { copyName, notesReducer, winAnsiSafe, type NotesEffect, type NotesEvent, type NotesState } from "./notesDoc";
+import { copyName, notesReducer, unsavedNotes, winAnsiSafe, type NotesEffect, type NotesEvent, type NotesState } from "./notesDoc";
 
 const N = "report.pdf";
 const H1 = "1".repeat(64);
@@ -382,5 +382,17 @@ describe("winAnsiSafe", () => {
   it("winAnsiSafe_a_stray_control_character_is_not", () => {
     expect(winAnsiSafe("a\u0001b")).toBe(false);
     expect(winAnsiSafe("a\u008db")).toBe(false);
+  });
+});
+
+describe("final review 6q-6: unsaved while a save is in flight", () => {
+  it("counts the notes unsaved until the save is answered, so the dot stays and closing the tab asks", () => {
+    const sending = run(dirty(), { type: "save" }, { type: "serialized", bytes: bytesOf(1), for: "save" }).state;
+    expect(sending.dirty).toBe(false);
+    expect(unsavedNotes(sending)).toBe(true);
+    const done = run(sending, { type: "saved", saved: fileSaved(), bytes: bytesOf(1) }).state;
+    expect(unsavedNotes(done)).toBe(false);
+    expect(unsavedNotes(doc())).toBe(false);
+    expect(unsavedNotes(dirty())).toBe(true);
   });
 });

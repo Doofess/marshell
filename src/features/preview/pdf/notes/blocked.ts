@@ -26,3 +26,13 @@ export async function notesBlocked(doc: PDFDocumentProxy, readOnly: boolean, nam
 export function fromDocument(reason: string | null, name: string): boolean {
   return reason !== null && reason !== FROM_FILE(name);
 }
+
+/**
+ * Whether the pages go without pdf.js's editor: before the reason is known (`undefined`), for a reason from the document, and for
+ * a read-only file whose notes are all saved, so its own notes can't be changed either. A file that turns read-only while notes
+ * are unsaved keeps the editor, so they stay on screen and Save as a copy can take them.
+ */
+export function noEditor(reason: string | null | undefined, name: string, unsaved: boolean): boolean {
+  if (reason === undefined) return true;
+  return fromDocument(reason, name) || (reason !== null && !unsaved);
+}

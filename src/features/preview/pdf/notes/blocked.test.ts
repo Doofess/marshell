@@ -1,6 +1,6 @@
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { describe, expect, it } from "vitest";
-import { notesBlocked } from "./blocked";
+import { noEditor, notesBlocked } from "./blocked";
 
 const SIGNED = "This PDF is signed, and a note would break its signature.";
 const OWNER = "This PDF's owner doesn't allow notes.";
@@ -34,5 +34,21 @@ describe("notesBlocked", () => {
     expect(await notesBlocked(d, true, "a.pdf")).toBe(SIGNED);
     expect(await notesBlocked(fake({ permissions: [4], xfa: true }), true, "a.pdf")).toBe(OWNER);
     expect(await notesBlocked(fake({ xfa: true }), true, "a.pdf")).toBe(XFA);
+  });
+});
+
+describe("final review 6q-6: a read-only file's notes", () => {
+  const RO = "a.pdf is read-only.";
+  it("makes no editor before the reason is known, for a reason from the document, or for a read-only file with its notes saved", () => {
+    expect(noEditor(undefined, "a.pdf", false)).toBe(true);
+    expect(noEditor(SIGNED, "a.pdf", false)).toBe(true);
+    expect(noEditor(SIGNED, "a.pdf", true)).toBe(true);
+    // Notes are off for a read-only file: its own notes can't be moved, recoloured or deleted either.
+    expect(noEditor(RO, "a.pdf", false)).toBe(true);
+  });
+  it("keeps the editor for a PDF that takes notes, and for a read-only file while unsaved notes are on screen", () => {
+    expect(noEditor(null, "a.pdf", false)).toBe(false);
+    expect(noEditor(null, "a.pdf", true)).toBe(false);
+    expect(noEditor(RO, "a.pdf", true)).toBe(false);
   });
 });
