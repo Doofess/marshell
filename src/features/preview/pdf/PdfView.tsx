@@ -2,6 +2,8 @@ import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, u
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { Place } from "../../pane/paneState";
 import { afterLoadFailure } from "./loadFailure";
+import { FindBar, pdfKey, selectionText, stepText } from "./FindBar";
+import { PdfToolbar } from "./PdfToolbar";
 import { usePdfFind } from "./findText";
 import { clampPlace, placeAt, placeText, scrollFor } from "./place";
 import { loadPdf, renderPage, renderTextLayer, type TextMapping } from "./pdfjs";
@@ -326,9 +328,65 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
     scroller?.focus({ preventScroll: true });
   };
 
-  // Ctrl+= / Ctrl+- / Ctrl+0 work anywhere in the body, which is where focus sits, not only inside the viewer; so the listener is on the body.
+  const [findOpen, setFindOpen] = useState(false);
+  const [focusTick, setFocusTick] = useState(0);
+  const field = useRef<HTMLInputElement>(null);
+  // What had the keyboard when the bar opened; it gets it back on close.
+  const returnTo = useRef<Element | null>(null);
+  // Set by a step: the next result (found, none, or no text) is announced once.
+  const sayNext = useRef(false);
+
+  // Opens the bar, or focuses it when it is open; the field's text is selected, refilled from a selection inside the PDF.
+  const openFind = () => {
+    const sel = window.getSelection();
+    const picked = selectionText({ text: sel?.toString() ?? "", inside: !!sel?.anchorNode && !!root.current?.contains(sel.anchorNode) });
+    if (!findOpen) {
+      returnTo.current = document.activeElement;
+      setFindOpen(true);
+    }
+    const text = picked ?? find.query.text;
+    if (text.trim() && (!findOpen || picked !== null)) find.search({ ...find.query, text });
+    setFocusTick((t) => t + 1);
+  };
+  useLayoutEffect(() => {
+    if (focusTick === 0) return;
+    field.current?.focus();
+    field.current?.select();
+  }, [focusTick]);
+
+  const closeFind = () => {
+    find.close();
+    sayNext.current = false;
+    setFindOpen(false);
+    const back = returnTo.current;
+    returnTo.current = null;
+    if (back instanceof HTMLElement && back.isConnected && back !== field.current) back.focus({ preventScroll: true });
+    else scroller?.focus({ preventScroll: true });
+  };
+  const step = (previous: boolean) => {
+    sayNext.current = true;
+    find.step(previous);
+  };
+  useEffect(() => {
+    if (!sayNext.current) return;
+    const s = find.status;
+    if (s.state !== "found" && s.state !== "notFound" && s.state !== "noText") return;
+    sayNext.current = false;
+    latest.current.announce?.(stepText(s));
+  }, [find.status]);
+
+  // Ctrl+F, F3 and Shift+F3 work anywhere in the body, as Ctrl+= / Ctrl+- / Ctrl+0 do; so the listener is on the body.
   const keys = useRef<(e: globalThis.KeyboardEvent) => void>(() => {});
   keys.current = (e) => {
+    const k = pdfKey(e);
+    if (k === "find" || k === "next" || k === "previous") {
+      // F3 with no search going does what Ctrl+F does; it does not step as well.
+      if (k === "find" || !findOpen || !find.query.text.trim()) openFind();
+      else step(k === "previous");
+      e.preventDefault();
+      return;
+    }
+    // "sidebar" (F4) is wired with the sidebar.
     if (!e.ctrlKey || e.altKey || e.metaKey) return;
     if (e.key === "=" || e.key === "+") setScale(zoomIn(zoom, shownScale));
     else if (e.key === "-") setScale(zoomOut(zoom, shownScale));
@@ -348,41 +406,23 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
   return (
     <div ref={root} className="pdf">
       <div className="pdf__bar" role="toolbar" aria-label="PDF controls">
-        <label className="pdf__pages">
-          Page
-          <input
-            className="pdf__field"
-            inputMode="numeric"
-            autoComplete="off"
-            spellCheck={false}
-            disabled={count === 0}
-            value={draft ?? String(current)}
-            aria-label={`Page, of ${count}`}
-            onFocus={(e) => e.currentTarget.select()}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={() => setDraft(null)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                commit();
-              }
-            }}
-          />
-          <span>of {count}</span>
-        </label>
-        <span className="pdf__spacer" />
-        <button type="button" className="pdf__button" disabled={count === 0} onClick={() => setScale(zoomOut(zoom, shownScale))} title="Zoom out (Ctrl+-)">
-          Zoom out
-        </button>
-        <span className="pdf__percent">
-          {Math.round(shownScale * 100)}%
-        </span>
-        <button type="button" className="pdf__button" disabled={count === 0} onClick={() => setScale(zoomIn(zoom, shownScale))} title="Zoom in (Ctrl+=)">
-          Zoom in
-        </button>
-        <button type="button" className="pdf__button" disabled={count === 0} aria-pressed={zoom.kind === "fit"} onClick={() => setScale({ kind: "fit" })} title="Fit width (Ctrl+0)">
-          Fit width
-        </button>
+        <PdfToolbar
+          page={draft ?? String(current)}
+          count={count}
+          percent={Math.round(shownScale * 100)}
+          fit={zoom.kind === "fit"}
+          findOpen={findOpen}
+          sidebar={null}
+          onPageDraft={setDraft}
+          onPageCommit={commit}
+          onPageCancel={() => setDraft(null)}
+          onZoomOut={() => setScale(zoomOut(zoom, shownScale))}
+          onZoomIn={() => setScale(zoomIn(zoom, shownScale))}
+          onFit={() => setScale({ kind: "fit" })}
+          // The button shows and hides the bar, as its aria-expanded says; Ctrl+F only ever opens it.
+          onFind={() => (findOpen ? closeFind() : openFind())}
+          findRow={findOpen ? <FindBar query={find.query} status={find.status} onQuery={find.search} onStep={step} onClose={closeFind} field={field} /> : null}
+        />
       </div>
       <div className="pdf__pagelist">
         {doc && sizes.map((size, i) => <PdfPage key={i} doc={doc} n={i + 1} name={name} size={size} scale={scaleOf(i)} root={scroller} overlay={renderOverlay?.(i + 1)} onText={find.attach} />)}

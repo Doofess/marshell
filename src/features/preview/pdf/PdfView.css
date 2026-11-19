@@ -12,15 +12,69 @@
   inset-block-start: 0;
   z-index: 2;
   display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  block-size: 28px;
-  padding-inline: var(--space-2);
+  flex-direction: column;
+  min-block-size: 28px;
   border-block-end: 1px solid var(--hairline);
   background: var(--bg-raised);
   color: var(--text-2);
   font-size: var(--text-12);
   white-space: nowrap;
+  /* The toolbar's "Page" word hides when the bar is narrow (the container query below). */
+  container: pdfbar / inline-size;
+}
+.pdf__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  block-size: 28px;
+  padding-inline: var(--space-2);
+}
+@container pdfbar (inline-size < 360px) {
+  .pdf__word {
+    display: none;
+  }
+}
+/* The find row wraps as the editor's panel does: the field grows, and the checkboxes drop to a second line when one line is short. */
+.pdf__find {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-block-start: 1px solid var(--hairline);
+}
+.pdf__findfield {
+  flex: 1 1 12ch;
+  min-inline-size: 0;
+  block-size: 20px;
+  padding-inline: var(--space-1);
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-1);
+}
+.pdf__findfield:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+.pdf__count {
+  min-inline-size: 6ch;
+  white-space: normal;
+  font-variant-numeric: tabular-nums;
+}
+.pdf__check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.pdf__check input {
+  accent-color: var(--accent);
+}
+.pdf__check input:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+.pdf__close {
+  margin-inline-start: auto;
 }
 /* With the "deleted" notice stuck above it, the toolbar sticks just under the notice. */
 .preview__body:has(.preview__notice) .pdf__bar {
@@ -63,6 +117,22 @@
   background: transparent;
   color: var(--text-2);
   font: inherit;
+}
+/* An icon button: 24 by 20, the glyph centred. */
+.pdf__icon,
+.pdf__find .pdf__button,
+.pdf__sidebarbutton {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 24px;
+  padding-inline: 0;
+}
+.pdf__button:active:not(:disabled) {
+  background: var(--fill-strong);
+}
+.pdf__button[aria-expanded="true"] {
+  background: var(--fill-strong);
+  color: var(--text-1);
 }
 .pdf__button:disabled,
 .pdf__field:disabled {
@@ -154,6 +224,26 @@
   background: color-mix(in srgb, var(--accent) 40%, transparent);
   color: transparent;
 }
+/*
+ * Find matches: Marshell's own spans inside a text span (highlight.ts). They stay in the flow of the span they sit in, so the
+ * text layer's placement rules above don't apply to them. The blend is on the text layer: it has z-index and so is a stacking
+ * context, and a blend on the spans alone would not reach the canvas under it. Multiplying keeps black print dark.
+ */
+.textLayer {
+  mix-blend-mode: multiply;
+}
+.textLayer span.pdf__match,
+.textLayer .markedContent span.pdf__match {
+  position: static;
+  z-index: auto;
+  transform: none;
+  font-size: inherit;
+  background: var(--paper-match);
+}
+.textLayer span.pdf__match--current,
+.textLayer .markedContent span.pdf__match--current {
+  background: var(--paper-match-current);
+}
 .textLayer .endOfContent {
   display: block;
   position: absolute;
@@ -179,8 +269,27 @@
     outline-color: HighlightText;
     outline-offset: -4px;
   }
-  .pdf__field {
+  .pdf__field,
+  .pdf__findfield {
     outline: 1px solid ButtonText;
     outline-offset: -1px;
+  }
+  .pdf__button[aria-expanded="true"] {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+  /* The text layer's blend would turn a system colour into something else. */
+  .textLayer {
+    mix-blend-mode: normal;
+  }
+  .textLayer span.pdf__match,
+  .textLayer .markedContent span.pdf__match {
+    background: color-mix(in srgb, Highlight 40%, transparent);
+    forced-color-adjust: none;
+  }
+  .textLayer span.pdf__match--current,
+  .textLayer .markedContent span.pdf__match--current {
+    outline: 2px solid Highlight;
   }
 }

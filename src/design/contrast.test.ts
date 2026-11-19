@@ -67,6 +67,16 @@ describe("conflict tints in the editor", () => {
       });
 });
 
+describe("paper tints in a PDF", () => {
+  // A page is white paper in both themes; the tints are one value, drawn opaque with mix-blend-mode: multiply.
+  for (const name of ["--paper-match", "--paper-match-current"])
+    it(`black print on ${name} over white paper is at least 7:1`, () => {
+      expect(tokens[name], name).toBeDefined();
+      const bg = overlay(tokens[name]!.light, "#ffffff", 1);
+      expect(contrast("#000000", bg), name).toBeGreaterThanOrEqual(7);
+    });
+});
+
 describe("status and brand colours on surfaces", () => {
   const names = ["--error", "--ok", "--caution", "--brand-claude", "--brand-claude-mark", "--brand-codex", "--brand-openai", "--brand-cyan", "--brand-deepseek", "--brand-violet", "--brand-generic", "--tool-shell", "--tool-dev", "--tool-remote"];
   for (const theme of THEMES)
