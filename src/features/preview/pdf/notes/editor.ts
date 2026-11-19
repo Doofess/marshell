@@ -139,11 +139,6 @@ export function layerInView<L extends TextLayerOwner>(current: L | undefined | n
 }
 
 /**
- * The text layer a selection lies in, when it is one of this tab's and the selection doesn't cross pages: only then is it
- * this tab's to highlight. Every PDF tab's editor hears the document's selection changes, and pdf.js empties a selection
- * before it looks for the layer, so a hidden tab must never reach that far.
- */
-/**
  * pdf.js puts a highlight on its undo stack each time a page's layer takes it (`onceAdded`), and a page drawn again (a zoom,
  * a scroll back, a tab shown again) gets new layers: a note already held that comes back is no step and no change. The add
  * and its step run in one go, so the mark lasts until the task ends.
@@ -182,6 +177,11 @@ export function opensComment(editor: unknown, isSelected: boolean | null | undef
   return editor !== null && editor !== undefined && isSelected === true && visibility === undefined;
 }
 
+/**
+ * The text layer a selection lies in, when it is one of this tab's and the selection doesn't cross pages: only then is it
+ * this tab's to highlight. Every PDF tab's editor hears the document's selection changes, and pdf.js empties a selection
+ * before it looks for the layer, so a hidden tab must never reach that far.
+ */
 export function selectionLayer(sel: { isCollapsed: boolean; anchorNode: Node | null; focusNode: Node | null } | null, container: Element): Element | null {
   if (!sel || sel.isCollapsed || !sel.anchorNode || !sel.focusNode) return null;
   const layerOf = (n: Node) => ("closest" in n ? (n as Element) : n.parentElement)?.closest(".textLayer") ?? null;
@@ -220,7 +220,6 @@ export function pdfjsTakesKey(key: string, target: Element | null, tool: NoteToo
   return onPages;
 }
 
-/** The pdf.js layers over one drawn page. */
 /** The file's notes pdf.js's editor takes: highlights and free text to change, and ink, which it alone draws while editing. */
 const TAKEN = new Set(["Highlight", "FreeText", "Ink"]);
 
@@ -237,6 +236,7 @@ export function keepFileInkDrawn(e: { editorType: string; div: { inert: boolean 
   if (e.editorType === "ink" && e.div) e.div.inert = true;
 }
 
+/** The pdf.js layers over one drawn page. */
 export type PageLayers = { editor: { destroy(): void }; draw: { destroy(): void } };
 export type LayerMaker = (pageIndex: number, page: PDFPageProxy, parts: { holder: HTMLElement; text: HTMLElement }, scale: number) => Promise<PageLayers>;
 
