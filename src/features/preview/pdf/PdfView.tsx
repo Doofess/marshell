@@ -12,7 +12,7 @@ import { ancestorsOf, loadOutline, pickSays, sectionAt, type OutlineNode } from 
 import { PdfSidebar } from "./PdfSidebar";
 import { Thumbnails } from "./Thumbnails";
 import { loadPdf, renderPage, renderTextLayer, type TextMapping } from "./pdfjs";
-import { setSidebarPref, sidebarPref, startOpen, startView, type SidebarView } from "./sidebarPref";
+import { keyboardLeft, setSidebarPref, sidebarPref, startOpen, startView, type SidebarView } from "./sidebarPref";
 import { parsePageField, scaleFor, zoomIn, zoomOut, type Zoom } from "./zoom";
 import "./PdfView.css";
 
@@ -140,10 +140,10 @@ function PdfPage({ doc, n, name, size, scale, root, overlay, onText, onFollow }:
   );
 }
 
-/** A PDF as a column of pages: a toolbar, then every page at its final size, drawn as they come into view. */
 /** What the palette can ask of a loaded PDF. */
 export type PdfCommands = { find(): void; outline(): void; pages(): void };
 
+/** A PDF as a column of pages: a toolbar, then every page at its final size, drawn as they come into view. */
 export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocument, renderOverlay, place, placeKey, onJump, placeNow, announce, onWebLink, onHistory, commands }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const [scroller, setScroller] = useState<HTMLElement | null>(null);
@@ -490,7 +490,8 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
   }, [sidebarTick]);
 
   // Lying over the pages, the sidebar closes when a pointer goes down, or the keyboard goes, anywhere outside it and its button.
-  // The keyboard stays where it went.
+  // The keyboard stays where it went. Where it went is read a moment later, once it has landed, so a window losing the focus
+  // (Alt+Tab) isn't taken for the keyboard going: the focus comes back to the sidebar with the window.
   useEffect(() => {
     const side = root.current?.querySelector<HTMLElement>(".pdf-sidebar");
     if (!open || !over || !side) return;
@@ -498,12 +499,17 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
     const down = (e: PointerEvent) => {
       if (outside(e.target)) setOpen(false);
     };
-    const out = (e: FocusEvent) => {
-      if (outside(e.relatedTarget)) setOpen(false);
+    let later = 0;
+    const out = () => {
+      clearTimeout(later);
+      later = window.setTimeout(() => {
+        if (keyboardLeft(document.hasFocus(), document.activeElement, (t) => !outside(t as EventTarget | null))) setOpen(false);
+      }, 0);
     };
     document.addEventListener("pointerdown", down, true);
     side.addEventListener("focusout", out);
     return () => {
+      clearTimeout(later);
       document.removeEventListener("pointerdown", down, true);
       side.removeEventListener("focusout", out);
     };
@@ -686,7 +692,7 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
             onToggle={toggleEntry}
             onPick={pick}
             onLeave={leaveSidebar}
-            pages={doc ? <Thumbnails doc={doc} sizes={sizes} current={current} name={name} onPick={pickPage} focusOnShow={sidebarTick > 0} /> : null}
+            pages={doc ? <Thumbnails doc={doc} sizes={sizes} current={current} name={name} onPick={pickPage} /> : null}
           />
         )}
         <div className="pdf__pagelist">

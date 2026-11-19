@@ -16,7 +16,7 @@ import type { LinkTarget } from "./links";
 import { PdfView, type PdfCommands } from "./pdf/PdfView";
 import { useOpenPageInPane, type OpenInPane } from "../pane/PaneContext";
 import { placeOf, type PaneEntry, type Place, type View } from "../pane/paneState";
-import { samePlace } from "./pdf/place";
+import { alreadyHere, samePlace } from "./pdf/place";
 import { usePreviewFile, type FileState } from "./usePreviewFile";
 import { followWebLink } from "./webLink";
 import { WebLinkBar } from "./WebLinkBar";
@@ -277,7 +277,12 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
   };
   const jump = (to: Place, how: { keepFocus: boolean }) => {
     const here = placeNow();
-    if (here && samePlace(to, here)) return;
+    if (here && samePlace(to, here)) {
+      // Nothing moves; the place in view is said, so the key isn't taken for doing nothing.
+      const say = alreadyHere(to, here, pages?.path === entry.path ? { page: currentPage, count: pages.count } : null);
+      if (say) announce(say);
+      return;
+    }
     leave();
     quietJump.current = how.keepFocus;
     onOpen({ path: entry.path, place: to });

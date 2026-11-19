@@ -1,4 +1,3 @@
-/** The wanted page that isn't drawn yet and lies nearest to `current`; of two equally near, the later. Null when none is left. */
 /** The list's thumbnail buttons by page, read with one query: a query per page made each drawing step quadratic in the page count. */
 export function thumbButtons(list: ParentNode): (n: number) => HTMLElement | null {
   const byPage = new Map<number, HTMLElement>();
@@ -6,6 +5,7 @@ export function thumbButtons(list: ParentNode): (n: number) => HTMLElement | nul
   return (n) => byPage.get(n) ?? null;
 }
 
+/** The wanted page that isn't drawn yet and lies nearest to `current`; of two equally near, the later. Null when none is left. */
 export function nextToDraw(wanted: ReadonlySet<number>, drawn: ReadonlySet<number>, current: number): number | null {
   let best: number | null = null;
   for (const n of wanted) {

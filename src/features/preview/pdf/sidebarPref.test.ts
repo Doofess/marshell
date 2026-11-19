@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { setSidebarPref, sidebarPref, startOpen, startView } from "./sidebarPref";
+import { keyboardLeft, setSidebarPref, sidebarPref, startOpen, startView } from "./sidebarPref";
 
 beforeEach(() => setSidebarPref({ open: false, view: null }));
 
@@ -41,5 +41,20 @@ describe("startView", () => {
   it("startView_does_not_change_the_pref", () => {
     startView({ open: false, view: "outline" }, false);
     expect(sidebarPref().view).toBeNull();
+  });
+});
+
+// Read a moment after the keyboard leaves: a window losing focus (Alt+Tab) leaves the keyboard where it was, in the sidebar.
+describe("keyboardLeft", () => {
+  const row = { in: true };
+  const pages = { in: false };
+  const inside = (t: unknown) => (t as { in?: boolean } | null)?.in === true;
+  it("an_overlying_sidebar_stays_open_when_the_window_loses_focus", () => {
+    expect(keyboardLeft(false, row, inside)).toBe(false);
+  });
+  it("keyboardLeft_is_the_keyboard_on_something_outside_the_sidebar", () => {
+    expect(keyboardLeft(true, pages, inside)).toBe(true);
+    expect(keyboardLeft(true, null, inside)).toBe(true);
+    expect(keyboardLeft(true, row, inside)).toBe(false);
   });
 });

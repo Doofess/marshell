@@ -946,7 +946,6 @@ export function LiveApp() {
   // said so) for an address a page may not hold, with no session on screen, and for the 33rd tab. The keyboard goes into the page,
   // or to the address box of a new blank tab.
   const addressBars = useRef(new Map<string, UrlBarHandle>());
-  // The side pane's tabs that can mark a region (a page, a PDF, an image), by key: "Select region" in the palette starts the shown one's.
   const focusAddressSoon = (key: string) => {
     let frames = 0;
     const attempt = () => {

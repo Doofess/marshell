@@ -53,6 +53,11 @@ export function samePlace(a: Place, b: Place): boolean {
 }
 
 /** What the announcer says after a jump, and after Back or Forward within the same PDF. */
+/** What a jump to the place already in view says instead of moving: the page the Page field shows. Null for a real move, or before the PDF has its page count. */
+export function alreadyHere(to: Place, here: Place | null, shown: { page: number; count: number } | null): string | null {
+  return here && shown && samePlace(to, here) ? placeText(shown.page, shown.count) : null;
+}
+
 export function placeText(page: number, of: number): string {
   return `Page ${page} of ${of}.`;
 }

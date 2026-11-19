@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampPlace, pageInView, placeAt, placeReady, placeText, samePlace, scrollFor, type PageBox } from "./place";
+import { alreadyHere, clampPlace, pageInView, placeAt, placeReady, placeText, samePlace, scrollFor, type PageBox } from "./place";
 
 // Two pages of 200 px with a 12 px gap between them, in client coordinates.
 const pages: PageBox[] = [
@@ -87,5 +87,17 @@ describe("placeReady", () => {
     expect(placeReady({ bytes: a, version: 1 }, { bytes: a, version: 2 }, true)).toBe(false);
     expect(placeReady(null, { bytes: a, version: 1 }, true)).toBe(false);
     expect(placeReady({ bytes: a, version: 1 }, { bytes: a, version: 1 }, false)).toBe(false);
+  });
+});
+
+// A pick that leads where the view already is moves nothing; it says where the view is, so the key isn't taken for doing nothing.
+describe("alreadyHere", () => {
+  it("a_jump_to_the_place_in_view_says_the_page", () => {
+    expect(alreadyHere({ page: 3, top: 0 }, { page: 3, top: 0.002 }, { page: 3, count: 40 })).toBe("Page 3 of 40.");
+  });
+  it("alreadyHere_is_null_for_a_real_move_or_a_pdf_still_loading", () => {
+    expect(alreadyHere({ page: 9, top: 0 }, { page: 3, top: 0 }, { page: 3, count: 40 })).toBeNull();
+    expect(alreadyHere({ page: 3, top: 0 }, null, { page: 3, count: 40 })).toBeNull();
+    expect(alreadyHere({ page: 3, top: 0 }, { page: 3, top: 0 }, null)).toBeNull();
   });
 });

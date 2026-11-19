@@ -1770,10 +1770,10 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
         - **Outline and Pages switch on a filled track,** the look of the Rendered and Source toggle, with text labels.
         - **An outline entry shows its page number at its end,** in the quieter text colour, and its title wraps instead of being cut. The arrow opens and closes an entry, and a click anywhere else on it jumps.
         - **A thumbnail has its page number under it,** and a page not drawn yet is plain white paper of the page's shape.
-        - **A sidebar that lies over the pages** has the raised surface and a shadow, with no dimming behind it. It closes when a click or the keyboard goes anywhere outside it but its own button.
+        - **A sidebar that lies over the pages** has the raised surface and a shadow, with no dimming behind it. It closes when a click or the keyboard goes anywhere outside it but its own button. Switching to another window keeps it open, with the keyboard in it when the window comes back (PR review, 2026-11-19).
         - **The sidebar opens and closes at once,** without motion, because the pages fit their new width.
         - **A change of scale keeps the reading place.** Zoom, and fit width following the sidebar or the pane's width, keep the place at the top of the view where it was.
-        - **A jump, and Back or Forward within the same PDF, are announced:** "Page 12 of 140." The page said is the one the Page field then shows, the last page whose top has passed the upper third of the view, so a place near the end of a page reads as the next page (live check, 2026-11-19).
+        - **A jump, and Back or Forward within the same PDF, are announced:** "Page 12 of 140." A jump to the place already in view moves nothing and says the page all the same (PR review, 2026-11-19). The page said is the one the Page field then shows, the last page whose top has passed the upper third of the view, so a place near the end of a page reads as the next page (live check, 2026-11-19).
         - **The find bar closes back to where the keyboard was** when it opened: the pages, the sidebar or the toolbar. Like the editor's bar, it wraps: Match case and Whole word go to a second row when one row doesn't fit.
         - **A web link's tooltip shows its address.** A link shows a pointer and a faint tint under the pointer, and a focus ring for the keyboard.
         - **The Find and sidebar buttons name their keys** to screen readers (`aria-keyshortcuts` "Control+F" and "F4").

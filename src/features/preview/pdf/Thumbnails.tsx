@@ -15,8 +15,6 @@ type Props = {
   current: number;
   name: string;
   onPick: (page: number) => void;
-  /** Kept for the view's call. The view focuses the page in view itself, and this list has scrolled it into its own view by then, so it is unused. */
-  focusOnShow: boolean;
 };
 
 const idle = (fn: () => void): (() => void) => {

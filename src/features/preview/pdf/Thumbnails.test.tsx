@@ -7,7 +7,7 @@ const sizes = [
   { w: 600, h: 800 },
   { w: 800, h: 600 },
 ];
-const render = (current = 2) => renderToStaticMarkup(<Thumbnails doc={{} as never} sizes={sizes} current={current} name="spec.pdf" onPick={() => {}} focusOnShow={false} />);
+const render = (current = 2) => renderToStaticMarkup(<Thumbnails doc={{} as never} sizes={sizes} current={current} name="spec.pdf" onPick={() => {}} />);
 
 describe("Thumbnails markup", () => {
   it("is_a_list_named_for_the_file", () => {
