@@ -533,8 +533,7 @@ export async function createNotesEditor(
       l10n,
     } as never);
     layers.set(pageIndex, layer);
-    await layer.render({ viewport } as never);
-    return {
+    const made: PageLayers = {
       editor: {
         destroy() {
           if (layers.get(pageIndex) === layer) layers.delete(pageIndex);
@@ -551,6 +550,14 @@ export async function createNotesEditor(
         },
       },
     };
+    try {
+      await layer.render({ viewport } as never);
+    } catch (err) {
+      // A layer that couldn't be drawn leaves nothing on its page: the page shows without notes to edit.
+      drop(made);
+      throw err;
+    }
+    return made;
   });
 
   // Where pdf.js measures a note's size and places free text from the keyboard; it keeps `realScale` as the scale times

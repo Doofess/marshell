@@ -436,3 +436,22 @@ describe("PR review 6q-6 round 3: a refused copy", () => {
     expect(state).toMatchObject({ dirty: true, refusedSave: true, line: "The folder is read-only." });
   });
 });
+
+describe("PR review 6q-6 round 4: an undo of a save that doesn't go through", () => {
+  const afterSaveEdited = () => dirty({ base: { hash: H2, bytes: buf(9) }, lastSave: { snapshot: "snap-1", hash: H2 } });
+  it("asks for a draft of notes changed since the save: one that came due during the undo was left to its answer", () => {
+    for (const answer of [{ type: "unsaveRefused" }, { type: "unsaveFailed", line: "The file is in use." }] as NotesEvent[]) {
+      const { state, effects } = run(afterSaveEdited(), { type: "unsave" }, { type: "serialized", bytes: bytesOf(9), for: "draft" }, answer);
+      expect(state).toMatchObject({ saving: false, dirty: true });
+      expect(effects).toContainEqual({ type: "serialize", then: "draft" });
+    }
+  });
+  it("asks for none when the notes are all in the file", () => {
+    const saved = doc({ base: { hash: H2, bytes: buf(9) }, lastSave: { snapshot: "snap-1", hash: H2 } });
+    for (const answer of [{ type: "unsaveRefused" }, { type: "unsaveFailed", line: "The file is in use." }] as NotesEvent[]) {
+      const { effects } = run(saved, { type: "unsave" }, answer);
+      expect(types(effects)).toEqual(["announce"]);
+    }
+  });
+});
+

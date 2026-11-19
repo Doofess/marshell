@@ -197,10 +197,11 @@ export function notesReducer(s: NotesState, e: NotesEvent, name: string): Out {
         `${name} is back as it was before the save.`,
         DRAFT,
       );
+    // A draft that came due during the undo was left to its answer, so notes changed since the save are asked for again.
     case "unsaveRefused":
-      return said({ ...s, saving: false, lastSave: null, refusedSave: false }, `${name} changed after the save, so the save can't be undone.`);
+      return said({ ...s, saving: false, lastSave: null, refusedSave: false }, `${name} changed after the save, so the save can't be undone.`, ...(s.dirty ? [DRAFT] : []));
     case "unsaveFailed":
-      return said({ ...s, saving: false }, `The save of ${name} couldn't be undone. ${e.line}`);
+      return said({ ...s, saving: false }, `The save of ${name} couldn't be undone. ${e.line}`, ...(s.dirty ? [DRAFT] : []));
     case "disk":
       return disk(s, e.hash, e.bytes, name);
     case "draft":

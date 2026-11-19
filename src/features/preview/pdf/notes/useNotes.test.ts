@@ -82,7 +82,7 @@ describe("notesEscape", () => {
 });
 
 /** A runner with fakes for the editor and the core, and a log of what reached them in order. */
-function rig(o: { draft?: { bytes: ArrayBuffer; baseHash: string | null; editedMs: number } | null; editing?: () => boolean; save?: (path: string, expect: string | null) => SaveResult | Promise<SaveResult>; failSerializes?: number; readOnly?: () => boolean; now?: () => number } = {}) {
+function rig(o: { draft?: { bytes: ArrayBuffer; baseHash: string | null; editedMs: number } | null; editing?: () => boolean; save?: (path: string, expect: string | null) => SaveResult | Promise<SaveResult>; failSerializes?: number; readOnly?: () => boolean; now?: () => number; unsave?: () => Promise<UnsaveResult> } = {}) {
   const log: string[] = [];
   let next: ((b: Uint8Array) => void) | null = null;
   let held = false;
@@ -108,6 +108,7 @@ function rig(o: { draft?: { bytes: ArrayBuffer; baseHash: string | null; editedM
     },
     unsaveFile: async (_path: string, snapshot: string): Promise<UnsaveResult> => {
       log.push(`unsave ${snapshot}`);
+      if (o.unsave) return o.unsave();
       return { kind: "saved", saved: { hash: "h1", snapshot: null } as FileSaved };
     },
     putPdfDraft: async (_path: string, bytes: Uint8Array, base: string | null, at: number) => {
@@ -526,4 +527,33 @@ describe("PR review 6q-6 round 3: a copy that is refused while a save is in flig
     file.resolve({ kind: "saved", saved: { hash: "h2", snapshot: "s1" } as FileSaved });
     expect(await saved).toBe(true);
   });
+});
+
+describe("PR review 6q-6 round 4: a note changed before an undo of a save that is then refused", () => {
+  const later = <T,>() => {
+    let resolve: (v: T) => void = () => {};
+    const promise = new Promise<T>((r) => (resolve = r));
+    return { promise, resolve };
+  };
+  for (const [what, answer] of [
+    ["the file changed", { kind: "conflict" }],
+    ["the file couldn't be written", { kind: "refused", line: "a.pdf is in use." }],
+  ] as Array<[string, UnsaveResult]>) {
+    it(`is kept in a draft though its first draft came due during the undo (${what})`, async () => {
+      vi.useFakeTimers();
+      const undo = later<UnsaveResult>();
+      const t = rig({ unsave: () => undo.promise });
+      t.r.dispatch({ type: "edited" });
+      await t.r.save();
+      t.r.dispatch({ type: "edited" });
+      t.r.dispatch({ type: "unsave" });
+      // The draft comes due while the undo is in flight, and is left to the undo's answer.
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(t.log.filter((l) => l.startsWith("put"))).toEqual([]);
+      undo.resolve(answer);
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(t.r.state()).toMatchObject({ saving: false, dirty: true });
+      expect(t.log.filter((l) => l.startsWith("put"))).toEqual(["put [7] h2 5"]);
+    });
+  }
 });
