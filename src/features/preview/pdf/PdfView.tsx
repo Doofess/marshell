@@ -14,7 +14,9 @@ import { Thumbnails } from "./Thumbnails";
 import { loadPdf, renderPage, renderTextLayer, type TextMapping } from "./pdfjs";
 import { keyboardLeft, setSidebarPref, sidebarPref, startOpen, startView, type SidebarView } from "./sidebarPref";
 import { parsePageField, scaleFor, zoomIn, zoomOut, type Zoom } from "./zoom";
+import { createNotesEditor, editorKeysAllowed, type NotesEditor } from "./notes/editor";
 import "./PdfView.css";
+import "./notes/notes.css";
 
 type Props = {
   bytes: ArrayBuffer;
@@ -73,10 +75,12 @@ type PageProps = {
   onText: (pageIndex: number, m: TextMapping) => () => void;
   /** A click or Enter on one of the page's links. */
   onFollow: (goal: LinkGoal) => void;
+  /** The note editor, once it is ready: the canvas then leaves the notes it can change to it. */
+  notes: NotesEditor | null;
 };
 
 /** One page: a placeholder of its final size until it is near the view, then the canvas and the text over it. */
-function PdfPage({ doc, n, name, size, scale, root, overlay, onText, onFollow }: PageProps) {
+function PdfPage({ doc, n, name, size, scale, root, overlay, onText, onFollow, notes }: PageProps) {
   const holder = useRef<HTMLDivElement>(null);
   const [live, setLive] = useState(false);
   const [links, setLinks] = useState<PageLink[]>([]);
@@ -106,6 +110,7 @@ function PdfPage({ doc, n, name, size, scale, root, overlay, onText, onFollow }:
     }
     const abort = new AbortController();
     let release: (() => void) | null = null;
+    let detach: (() => void) | null = null;
     void (async () => {
       try {
         const page = await doc.getPage(n);
@@ -113,10 +118,11 @@ function PdfPage({ doc, n, name, size, scale, root, overlay, onText, onFollow }:
         const canvas = document.createElement("canvas");
         const text = document.createElement("div");
         text.className = "textLayer";
-        const [, mapping] = await Promise.all([renderPage(page, canvas, scale, abort.signal), renderTextLayer(page, text, scale, abort.signal)]);
+        const [, mapping] = await Promise.all([renderPage(page, canvas, scale, abort.signal, notes !== null), renderTextLayer(page, text, scale, abort.signal)]);
         if (abort.signal.aborted) return;
         el.replaceChildren(canvas, text);
         if (mapping) release = onText(n - 1, mapping);
+        if (notes) detach = notes.attachPage(n, page, { holder: el, text }, scale);
         // The links are read once per drawn page; they are fractions of the page, so a zoom redraws them in place.
         const viewport = page.getViewport({ scale: 1 });
         const annotations = await page.getAnnotations({ intent: "display" });
@@ -128,9 +134,10 @@ function PdfPage({ doc, n, name, size, scale, root, overlay, onText, onFollow }:
     })();
     return () => {
       abort.abort();
+      detach?.();
       release?.();
     };
-  }, [live, doc, n, scale, onText]);
+  }, [live, doc, n, scale, onText, notes]);
 
   return (
     <div className="pdf__page" role="group" aria-label={`${name}, page ${n}`} data-page={n} style={{ inlineSize: size.w * scale, blockSize: size.h * scale }}>
@@ -226,6 +233,50 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
     };
   }, [bytes, version]);
 
+  // The note editor, one per loaded document, over the pages in the body.
+  const [notes, setNotes] = useState<NotesEditor | null>(null);
+  useEffect(() => {
+    if (!doc || !scroller) return;
+    let dead = false;
+    let made: NotesEditor | null = null;
+    void createNotesEditor(doc, { container: scroller, onComment: (req) => req.done(null) }).then(
+      (e) => {
+        if (dead) return e.destroy();
+        made = e;
+        setNotes(e);
+      },
+      () => {},
+    );
+    return () => {
+      dead = true;
+      setNotes(null);
+      made?.destroy();
+    };
+  }, [doc, scroller]);
+
+  // pdf.js takes keys only while the keyboard is in the tab and the window has focus; a focus move is read a tick later.
+  useEffect(() => {
+    if (!notes || !scroller) return;
+    let later = 0;
+    const check = () => {
+      clearTimeout(later);
+      later = window.setTimeout(() => notes.setLive(editorKeysAllowed(document.activeElement, scroller, document.hasFocus())), 0);
+    };
+    check();
+    scroller.addEventListener("focusin", check);
+    scroller.addEventListener("focusout", check);
+    window.addEventListener("focus", check);
+    window.addEventListener("blur", check);
+    return () => {
+      clearTimeout(later);
+      notes.setLive(false);
+      scroller.removeEventListener("focusin", check);
+      scroller.removeEventListener("focusout", check);
+      window.removeEventListener("focus", check);
+      window.removeEventListener("blur", check);
+    };
+  }, [notes, scroller]);
+
   // Gone with the view.
   useEffect(
     () => () => {
@@ -283,6 +334,9 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
   const count = sizes.length;
   const scaleOf = (i: number) => scaleFor(zoom, sizes[i]?.w ?? 0, available);
   const shownScale = scaleOf(current - 1);
+  useEffect(() => {
+    notes?.setPage(current, shownScale);
+  }, [notes, current, shownScale]);
 
   // What is stuck above the pages: the toolbar (with the find bar), and the "deleted" notice when it is there.
   const headHeight = () => (root.current?.querySelector<HTMLElement>(".pdf__bar")?.offsetHeight ?? 0) + (scroller?.querySelector<HTMLElement>(".preview__notice")?.offsetHeight ?? 0);
@@ -697,7 +751,7 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
           />
         )}
         <div className="pdf__pagelist">
-          {doc && sizes.map((size, i) => <PdfPage key={i} doc={doc} n={i + 1} name={name} size={size} scale={scaleOf(i)} root={scroller} overlay={renderOverlay?.(i + 1)} onText={find.attach} onFollow={(g) => follow(g, { keepFocus: false })} />)}
+          {doc && sizes.map((size, i) => <PdfPage key={i} doc={doc} n={i + 1} name={name} size={size} scale={scaleOf(i)} root={scroller} overlay={renderOverlay?.(i + 1)} onText={find.attach} onFollow={(g) => follow(g, { keepFocus: false })} notes={notes} />)}
           {!doc && <p className="preview__message">Loading…</p>}
         </div>
       </div>
