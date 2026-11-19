@@ -1,8 +1,9 @@
 import { Annotation, Compartment, EditorSelection, EditorState, Transaction } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import { EditorView, keymap } from "@codemirror/view";
 import { indentUnit } from "@codemirror/language";
 import { gotoLine } from "@codemirror/search";
 import { useEffect, useImperativeHandle, useMemo, useRef, type Ref } from "react";
+import { conflictKeys, conflictTints, jumpToConflict } from "./conflictTints";
 import { EDITOR_HINT } from "./EditorFooter";
 import { languageFor } from "./fileTypes";
 import { lineMarks, setMarks } from "./lineMarks";
@@ -45,6 +46,8 @@ type Props = {
   appChord?: (e: KeyboardEvent) => boolean;
   /** The id of the footer's hint, which describes the text box. */
   hintId?: string;
+  /** Where a jump to a conflict landed: its place (from 1) and the count, or 0 and 0 when the text has none. */
+  onConflict?: (at: number, of: number) => void;
   ref?: Ref<EditorHandle>;
 };
 
@@ -60,12 +63,12 @@ const never = () => false;
  * effect. The props that later change (name, read-only, wrap, language) reconfigure the view; the text only changes through
  * the person or `setText`.
  */
-export function Editor({ name, path, initial, firstLine, readOnly, wrap, target, onEdit, onCursor, appChord, hintId = EDITOR_HINT, ref }: Props) {
+export function Editor({ name, path, initial, firstLine, readOnly, wrap, target, onEdit, onCursor, appChord, hintId = EDITOR_HINT, onConflict, ref }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   // The callbacks as of the last render, so the view made once never calls an old one.
-  const calls = useRef({ onEdit, onCursor });
-  calls.current = { onEdit, onCursor };
+  const calls = useRef({ onEdit, onCursor, onConflict });
+  calls.current = { onEdit, onCursor, onConflict };
   const language = useMemo(() => languageFor(path, firstLine), [path, firstLine]);
   // What the view was last given, so an unchanged prop does not reconfigure it.
   const given = useRef({ name, readOnly, wrap, language });
@@ -83,6 +86,8 @@ export function Editor({ name, path, initial, firstLine, readOnly, wrap, target,
           // Tab puts in what the file is indented with, so a tab-indented file does not get spaces.
           indentUnit.of(indentOf(initial, language)),
           lineMarks(),
+          conflictTints(),
+          keymap.of(conflictKeys((at, of) => calls.current.onConflict?.(at, of))),
           EditorView.contentAttributes.of({ "aria-describedby": hintId }),
           EditorView.updateListener.of((u) => {
             // A change by the person: not one of setText's.
@@ -167,7 +172,16 @@ export function Editor({ name, path, initial, firstLine, readOnly, wrap, target,
         if (v) toggleWrap(v);
       },
       reveal,
-      toConflict() {},
+      toConflict(which) {
+        const v = view.current;
+        if (!v) return;
+        const r = jumpToConflict(v, which);
+        // "first" follows a merge's answer, which can come while the person is somewhere else: it says nothing (the merge's
+        // own line is being read) and leaves the keyboard where it is. The other two are a command the person just ran.
+        if (which === "first") return;
+        v.focus();
+        calls.current.onConflict?.(r.at, r.of);
+      },
     }),
     [],
   );

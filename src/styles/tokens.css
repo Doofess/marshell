@@ -64,6 +64,11 @@
   --code-token-inserted: light-dark(oklch(47% 0.12 147), oklch(76% 0.17 147));
   --code-token-deleted: light-dark(oklch(50% 0.17 27), oklch(72% 0.16 29));
   --code-token-changed: light-dark(oklch(48% 0.1 100), oklch(86% 0.13 100));
+  /* Conflict tints in the editor: the hues only. Editor.css draws each one translucent over the paper, so a selection shows through,
+     and the contrast test blends them the same way. Mine is a cool blue-green, the disk's a warm amber, the markers a neutral. */
+  --code-conflict-mine: light-dark(oklch(60% 0.11 215), oklch(70% 0.11 215));
+  --code-conflict-disk: light-dark(oklch(68% 0.13 78), oklch(74% 0.13 78));
+  --code-conflict-mark: light-dark(oklch(62% 0.02 80), oklch(72% 0.01 80));
 
   --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Inter Variable", sans-serif;
   /* JetBrains Mono is bundled (fonts.css), so it comes first: the same glyphs on every machine. */

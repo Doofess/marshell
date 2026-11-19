@@ -38,6 +38,35 @@ describe("code colours", () => {
   });
 });
 
+describe("conflict tints in the editor", () => {
+  const css = readFileSync(new URL("../features/editor/Editor.css", import.meta.url), "utf8");
+  // The tints are drawn translucent over the paper, so the selection layer behind the line still shows through.
+  const alphaOf = (kind: string) => {
+    const m = new RegExp(`editor__conflict--${kind}\\s*\\{[^}]*color-mix\\(in oklch, var\\(--code-conflict-\\w+\\) (\\d+)%, transparent\\)`).exec(css);
+    return m ? Number(m[1]) / 100 : undefined;
+  };
+  const tints = [
+    ["--code-conflict-mine", "mine"],
+    ["--code-conflict-disk", "disk"],
+    ["--code-conflict-mark", "mark"],
+  ] as const;
+  it("defines the three tints", () => {
+    for (const [name] of tints) expect(tokens[name], name).toBeDefined();
+  });
+  for (const theme of THEMES)
+    for (const [name, kind] of tints)
+      it(`every code colour is at least 4.5:1 on the ${kind} tint over the paper (${theme})`, () => {
+        const a = alphaOf(kind);
+        expect(a, `alpha of ${kind} in Editor.css`).toBeDefined();
+        const bg = overlay(tokens[name]![theme], tokens["--bg-base"]![theme], a!);
+        const code = [...Object.keys(tokens).filter((n) => n.startsWith("--code-token-")), "--code-foreground"];
+        for (const n of code) {
+          const colour = n === "--code-foreground" ? tokens["--text-1"]![theme] : tokens[n]![theme];
+          expect(contrast(colour, bg), `${n} on ${kind} (${theme})`).toBeGreaterThanOrEqual(4.5);
+        }
+      });
+});
+
 describe("status and brand colours on surfaces", () => {
   const names = ["--error", "--ok", "--caution", "--brand-claude", "--brand-claude-mark", "--brand-codex", "--brand-openai", "--brand-cyan", "--brand-deepseek", "--brand-violet", "--brand-generic", "--tool-shell", "--tool-dev", "--tool-remote"];
   for (const theme of THEMES)

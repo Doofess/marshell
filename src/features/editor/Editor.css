@@ -95,6 +95,20 @@
 .editor .cm-content ::selection {
   background: color-mix(in oklch, var(--accent) 32%, transparent);
 }
+/* Conflict lines. Each tint is translucent, because the selection layer sits behind the line elements and an opaque line
+   background would hide it. The percentages are the ones the contrast test blends (design/contrast.test.ts). */
+.editor .cm-line.editor__conflict--mine {
+  background: color-mix(in oklch, var(--code-conflict-mine) 16%, transparent);
+}
+.editor .cm-line.editor__conflict--disk {
+  background: color-mix(in oklch, var(--code-conflict-disk) 16%, transparent);
+}
+.editor .cm-line.editor__conflict--mark {
+  background: color-mix(in oklch, var(--code-conflict-mark) 24%, transparent);
+}
+.editor .cm-line.editor__conflict--base {
+  background: color-mix(in oklch, var(--code-conflict-mark) 12%, transparent);
+}
 .editor .cm-matchingBracket {
   background: var(--fill-strong);
   font-weight: 600;
@@ -306,6 +320,12 @@
   .editor .editor__mark {
     background: CanvasText;
     forced-color-adjust: none;
+  }
+  .editor .cm-line.editor__conflict {
+    background: transparent;
+    border-inline-start: 3px solid CanvasText;
+    /* The border takes 3px, so the text stays where it was. */
+    padding-inline-start: calc(var(--space-2) - 3px);
   }
   .editor .cm-panels {
     background: Canvas;
