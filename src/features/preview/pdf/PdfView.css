@@ -509,24 +509,21 @@
   .pdf__link:focus-visible {
     outline-color: Highlight;
   }
+  /* A link is ringed, not filled: a fill would hide the print under it, and a system colour can't be mixed thinner. */
   .pdf__link:active {
-    background: color-mix(in srgb, Highlight 25%, transparent);
-    forced-color-adjust: none;
+    outline: 1px solid Highlight;
   }
+  /* As the editor's matches: the system's highlight pair. A solid fill hides the print under the match, so the text layer's own
+     copy of the words shows on it in HighlightText. The current match is ringed inside, as the editor rings its own. */
   .textLayer span.pdf__match,
   .textLayer .markedContent span.pdf__match {
-    background: color-mix(in srgb, Highlight 40%, transparent);
+    background: Highlight;
+    color: HighlightText;
     forced-color-adjust: none;
   }
   .textLayer span.pdf__match--current,
   .textLayer .markedContent span.pdf__match--current {
-    outline: 2px solid Highlight;
-  }
-}
-/* A block of its own, as MainWindow.css does: a nested @media inside the forced-colours block hides it from the outline check. */
-@media (forced-colors: active) and (hover: hover) and (pointer: fine) {
-  .pdf__link:hover {
-    background: color-mix(in srgb, Highlight 25%, transparent);
-    forced-color-adjust: none;
+    outline: 2px solid HighlightText;
+    outline-offset: -2px;
   }
 }
