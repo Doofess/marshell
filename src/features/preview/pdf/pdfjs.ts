@@ -132,7 +132,38 @@ export async function renderTextLayer(page: PDFPageProxy, container: HTMLElement
   } finally {
     signal?.removeEventListener("abort", stop);
   }
-  return signal?.aborted ? null : { divs: layer.textDivs, items: layer.textContentItemsStr };
+  if (signal?.aborted) return null;
+  endOfContent(container);
+  return { divs: layer.textDivs, items: layer.textContentItemsStr };
+}
+
+// The layers being drawn across by a held pointer, and the documents that already clear them.
+const selecting = new Set<HTMLElement>();
+const clearing = new WeakSet<Document>();
+const endSelecting = () => {
+  for (const layer of selecting) layer.classList.remove("selecting");
+  selecting.clear();
+};
+
+/**
+ * Ends a drawn text layer with the block pdf.js's own viewer ends it with (PdfView.css styles it). Between the lines there
+ * is only the layer, so a drag let go in the blank past a line's end landed on the layer itself and the selection ran on
+ * to the page's last lines. While a press made in the layer is held, the block covers the layer under the spans and
+ * takes no selection, so the selection stays where the text last was.
+ */
+function endOfContent(layer: HTMLElement): void {
+  const doc = layer.ownerDocument;
+  const end = doc.createElement("div");
+  end.className = "endOfContent";
+  layer.append(end);
+  layer.addEventListener("mousedown", () => {
+    layer.classList.add("selecting");
+    selecting.add(layer);
+  });
+  if (clearing.has(doc)) return;
+  clearing.add(doc);
+  doc.addEventListener("pointerup", endSelecting, true);
+  doc.defaultView?.addEventListener("blur", endSelecting);
 }
 
 /** What the viewer says when a PDF won't open. */
