@@ -43,3 +43,14 @@ The second review asked for two keyboard fixes. "The keyboard is in the body" is
 | E. Check A again with the new capture | Pass. `a.md`: Enter on Merge in the Rendered view gave Source, Ln 3, Col 1, the keyboard on "a.md, editor" and "Merged a.md. 1 conflict to resolve. F7 goes to the next conflict, and Ctrl+Z undoes the merge." |
 
 The app was stopped by PID (23 processes, no agent CLIs), `r.md`'s attribute was cleared, and `~/.claude/settings.json` kept its modified time (11:38:58).
+
+## Third recheck (2026-11-19, 12:31 to 12:34)
+
+The third review found that check D's fix missed the usual case: with the person in another app, the window's blur cleared the note that Merge had the keyboard. The note is now taken as React detaches the button, from the document's active element, which a window blur leaves in place. A fresh scratch home (`lc-6q4b-fix-4`), set up as above, with `r.md`:
+
+| Check | Result |
+| --- | --- |
+| F. The keyboard on Merge, the window's blur, then the file read-only | Pass. The keyboard on Merge, then the `blur` and `focusout` events a window blur fires dispatched on it (no related target). The attribute was then set by PowerShell. Merge went, the bar kept "Keep mine" and "Take disk", and the keyboard was on "Keep mine". |
+| G. The keyboard in the terminal when Merge goes | Pass. With the attribute cleared, Merge came back. The keyboard was put on Merge, then in the session's terminal, and the attribute set again: Merge went and the keyboard stayed on "Terminal input". |
+
+The window's blur was simulated with those two events; a real switch to another app needs desktop input and was not run. The app was stopped by PID (23 processes, no agent CLIs), `r.md`'s attribute was cleared, and `~/.claude/settings.json` kept its modified time (11:38:58).
