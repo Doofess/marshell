@@ -97,6 +97,12 @@ describe("PreviewPane", () => {
     expect(out).toContain("a.rs was deleted on disk. Ctrl+S saves it again.");
     expect(out).not.toContain("This file was deleted.");
   });
+  it("opens the PDF view on a PDF that was already gone, when its notes are kept in a draft", () => {
+    // A PDF deleted while its tab was unloaded, or while Marshell was closed: the draft holds the file and its notes (live check 6q-6).
+    const out = html({ phase: "deleted" }, { keptPdf: new ArrayBuffer(8), entry: { path: "C:\\docs\\a.pdf", line: null, col: null, view: "rendered" } });
+    expect(out).toContain('data-kind="pdf"');
+    expect(out).not.toContain("This file was deleted.");
+  });
   it("says a file can't be previewed when the core refuses it", () => {
     expect(html({ phase: "error" })).toContain("This file can&#x27;t be previewed.");
   });
