@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Draft } from "../../generated/Draft";
 import { resetEndpoint } from "../../lib/api/client";
-import { dropDraft, getDraft, listDrafts, putDraft, saveFile, unsaveFile } from "./editorApi";
+import { dropDraft, getDraft, listDrafts, mergeTexts, putDraft, saveFile, unsaveFile } from "./editorApi";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -96,6 +96,30 @@ describe("unsaveFile", () => {
     fetchMock.mockReset();
     fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
     expect(await unsaveFile("a.txt", "s1")).toEqual({ kind: "refused", line: expect.any(String) });
+  });
+});
+
+describe("mergeTexts", () => {
+  it("posts the three texts and returns the merged text with its conflict count", async () => {
+    arrange(new Response(JSON.stringify({ text: "m", conflicts: 2 }), { status: 200 }));
+    expect(await mergeTexts("b", "a", "c")).toEqual({ kind: "merged", text: "m", conflicts: 2 });
+    expect(urlOf().pathname).toBe("/v1/files/merge");
+    expect(initOf().method).toBe("POST");
+    expect(JSON.parse(initOf().body as string)).toEqual({ base: "b", mine: "a", disk: "c" });
+  });
+  it("carries the core's line on a 422", async () => {
+    arrange(new Response("The texts differ too much to merge.", { status: 422 }));
+    expect(await mergeTexts("b", "a", "c")).toEqual({ kind: "refused", line: "The texts differ too much to merge." });
+  });
+  it("says a text is over 3 MB on a 413", async () => {
+    arrange(new Response("", { status: 413 }));
+    expect(await mergeTexts("b", "a", "c")).toEqual({ kind: "refused", line: "A text is over 3 MB." });
+  });
+  it("gives a generic line for a network failure", async () => {
+    arrange(new Response("", { status: 200 }));
+    fetchMock.mockReset();
+    fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
+    expect(await mergeTexts("b", "a", "c")).toEqual({ kind: "refused", line: expect.any(String) });
   });
 });
 
