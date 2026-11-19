@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
+import type { Place } from "../../pane/paneState";
 import { afterLoadFailure } from "./loadFailure";
 import { usePdfFind } from "./findText";
+import { clampPlace, placeAt, placeText, scrollFor } from "./place";
 import { loadPdf, renderPage, renderTextLayer, type TextMapping } from "./pdfjs";
 import { parsePageField, scaleFor, zoomIn, zoomOut, type Zoom } from "./zoom";
 import "./PdfView.css";
@@ -18,6 +20,15 @@ type Props = {
   onDocument?: (doc: PDFDocumentProxy | null) => void;
   /** Something laid over a page's box (a region being marked). The page wrapper is positioned and carries data-page. */
   renderOverlay?: (page: number) => ReactNode;
+  /** Where the tab is in the file. The view scrolls there when `placeKey` changes, and at mount, once the document is laid out. */
+  place?: Place | null;
+  placeKey?: unknown;
+  /** Every jump the person asks for (the Page field, and later the outline, the thumbnails and links). Without it the view scrolls itself. */
+  onJump?: (to: Place, how: { keepFocus: boolean }) => void;
+  /** Gets a function that reads the place at the top of the view, under the sticky head. */
+  placeNow?: Ref<() => Place | null>;
+  /** Says a line through the window's announcer. */
+  announce?: (text: string) => void;
 };
 
 type Size = { w: number; h: number };
@@ -97,7 +108,7 @@ function PdfPage({ doc, n, name, size, scale, root, overlay, onText }: PageProps
 }
 
 /** A PDF as a column of pages: a toolbar, then every page at its final size, drawn as they come into view. */
-export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocument, renderOverlay }: Props) {
+export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocument, renderOverlay, place, placeKey, onJump, placeNow, announce }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const [scroller, setScroller] = useState<HTMLElement | null>(null);
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
@@ -111,6 +122,19 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
 
   const cb = useRef({ onPages, onCurrentPage, onDocument });
   cb.current = { onPages, onCurrentPage, onDocument };
+
+  // The place to scroll to, and whether to say so: the one the view mounts with is silent, a later one is announced. It waits for
+  // the document of the current bytes to be laid out, which may be a file still loading.
+  const pending = useRef<{ place: Place; say: boolean } | null>(place ? { place, say: false } : null);
+  const seenKey = useRef(placeKey);
+  // The bytes and version the document on screen was loaded from.
+  const loadedFor = useRef<{ bytes: ArrayBuffer; version: number } | null>(null);
+  // The place read just before a change of scale, to be put back once the pages have their new sizes.
+  const keep = useRef<Place | null>(null);
+  const reading = useRef<() => Place | null>(() => null);
+  const availableNow = useRef(0);
+  const latest = useRef({ place, announce });
+  latest.current = { place, announce };
 
   // The preview body is the scroll area and the root for what is in view.
   useLayoutEffect(() => {
@@ -129,6 +153,7 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
         setSizes(pages.map((v) => ({ w: v.width, h: v.height })));
         const old = docRef.current;
         docRef.current = loaded;
+        loadedFor.current = { bytes, version };
         setDoc(loaded);
         void old?.loadingTask.destroy();
         setError(null);
@@ -165,7 +190,14 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
   // Fit width follows the body.
   useEffect(() => {
     if (!scroller) return;
-    const measure = () => setAvailable(Math.max(0, scroller.clientWidth - SIDE * 2));
+    const measure = () => {
+      const next = Math.max(0, scroller.clientWidth - SIDE * 2);
+      if (next === availableNow.current) return;
+      // The pages are about to take new sizes: the place at the top of the view is read before they do.
+      keep.current = reading.current();
+      availableNow.current = next;
+      setAvailable(next);
+    };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(scroller);
@@ -210,19 +242,63 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
 
   // What is stuck above the pages: the toolbar (with the find bar), and the "deleted" notice when it is there.
   const headHeight = () => (root.current?.querySelector<HTMLElement>(".pdf__bar")?.offsetHeight ?? 0) + (scroller?.querySelector<HTMLElement>(".preview__notice")?.offsetHeight ?? 0);
+  // Where the pages' top is read and put: under the head, one SIDE down.
+  const viewTop = () => (scroller?.getBoundingClientRect().top ?? 0) + headHeight() + SIDE;
 
-  const jump = (n: number) => {
-    const el = pageEls()[n - 1];
+  const readPlace = (): Place | null => {
+    if (!scroller) return null;
+    const boxes = pageEls().map((el) => {
+      const r = el.getBoundingClientRect();
+      return { page: Number(el.dataset.page), top: r.top, height: r.height };
+    });
+    return placeAt(viewTop(), boxes);
+  };
+  reading.current = readPlace;
+  useImperativeHandle(placeNow, () => readPlace);
+
+  // Scrolls so the place is at the top of the view. It joins no history: the jumps that do go through `onJump`.
+  const applyPlace = (p: Place) => {
+    const to = clampPlace(p, count);
+    const el = pageEls()[to.page - 1];
     if (!el || !scroller) return;
-    scroller.scrollTop += el.getBoundingClientRect().top - scroller.getBoundingClientRect().top - headHeight() - SIDE;
-    setCurrent(n);
+    const r = el.getBoundingClientRect();
+    scroller.scrollTop += scrollFor(to, { page: to.page, top: r.top, height: r.height }, viewTop());
+    setCurrent(to.page);
+  };
+
+  // The tab went to a place: scroll there once the document of these bytes is laid out, and say so unless it is the first place.
+  useLayoutEffect(() => {
+    if (seenKey.current !== placeKey) {
+      seenKey.current = placeKey;
+      if (latest.current.place) pending.current = { place: latest.current.place, say: true };
+    }
+    const next = pending.current;
+    const from = loadedFor.current;
+    if (!next || !doc || !scroller || available === 0 || count === 0 || !from || from.bytes !== bytes || from.version !== version) return;
+    pending.current = null;
+    keep.current = null;
+    applyPlace(next.place);
+    if (next.say) latest.current.announce?.(placeText(clampPlace(next.place, count).page, count));
+  }, [placeKey, doc, scroller, available, count, bytes, version]);
+
+  // A change of scale keeps the reading place: the zoom, and the width fit width follows, read it before they change.
+  const scaleKey = zoom.kind === "scale" ? `scale ${zoom.value}` : `fit ${available}`;
+  useLayoutEffect(() => {
+    const was = keep.current;
+    keep.current = null;
+    if (was && !pending.current && count > 0) applyPlace(was);
+  }, [scaleKey]);
+  const setScale = (z: Zoom) => {
+    keep.current = readPlace();
+    setZoom(z);
   };
 
   // Find's scrolls stay in the body: a match goes MATCH_GAP under the head, and to the middle when it is off to a side.
   const find = usePdfFind(doc, {
     page: () => current,
     pages: () => count,
-    showPage: jump,
+    // A step of find is a scroll, not a jump: it joins no history.
+    showPage: (n) => applyPlace({ page: n, top: 0 }),
     isPageVisible: (n) => {
       const el = pageEls()[n - 1];
       if (!el || !scroller) return false;
@@ -242,7 +318,11 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
   const commit = () => {
     const n = draft === null ? null : parsePageField(draft, count);
     setDraft(null);
-    if (n) jump(n);
+    if (n) {
+      const to = { page: n, top: 0 };
+      if (onJump) onJump(to, { keepFocus: false });
+      else applyPlace(to);
+    }
     scroller?.focus({ preventScroll: true });
   };
 
@@ -250,9 +330,9 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
   const keys = useRef<(e: globalThis.KeyboardEvent) => void>(() => {});
   keys.current = (e) => {
     if (!e.ctrlKey || e.altKey || e.metaKey) return;
-    if (e.key === "=" || e.key === "+") setZoom(zoomIn(zoom, shownScale));
-    else if (e.key === "-") setZoom(zoomOut(zoom, shownScale));
-    else if (e.key === "0") setZoom({ kind: "fit" });
+    if (e.key === "=" || e.key === "+") setScale(zoomIn(zoom, shownScale));
+    else if (e.key === "-") setScale(zoomOut(zoom, shownScale));
+    else if (e.key === "0") setScale({ kind: "fit" });
     else return;
     e.preventDefault();
   };
@@ -291,16 +371,16 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
           <span>of {count}</span>
         </label>
         <span className="pdf__spacer" />
-        <button type="button" className="pdf__button" disabled={count === 0} onClick={() => setZoom(zoomOut(zoom, shownScale))} title="Zoom out (Ctrl+-)">
+        <button type="button" className="pdf__button" disabled={count === 0} onClick={() => setScale(zoomOut(zoom, shownScale))} title="Zoom out (Ctrl+-)">
           Zoom out
         </button>
         <span className="pdf__percent">
           {Math.round(shownScale * 100)}%
         </span>
-        <button type="button" className="pdf__button" disabled={count === 0} onClick={() => setZoom(zoomIn(zoom, shownScale))} title="Zoom in (Ctrl+=)">
+        <button type="button" className="pdf__button" disabled={count === 0} onClick={() => setScale(zoomIn(zoom, shownScale))} title="Zoom in (Ctrl+=)">
           Zoom in
         </button>
-        <button type="button" className="pdf__button" disabled={count === 0} aria-pressed={zoom.kind === "fit"} onClick={() => setZoom({ kind: "fit" })} title="Fit width (Ctrl+0)">
+        <button type="button" className="pdf__button" disabled={count === 0} aria-pressed={zoom.kind === "fit"} onClick={() => setScale({ kind: "fit" })} title="Fit width (Ctrl+0)">
           Fit width
         </button>
       </div>

@@ -1,11 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { POLL_MS, afterDeleted, createPoller } from "./usePreviewFile";
+import { POLL_MS, afterDeleted, createPoller, shownFile } from "./usePreviewFile";
 
 describe("afterDeleted", () => {
   it("keeps the last pages of a deleted PDF", () => {
     const bytes = new ArrayBuffer(4);
     const pdf = { phase: "pdf", bytes, version: 2 } as const;
     expect(afterDeleted(pdf)).toEqual({ phase: "deleted", last: pdf });
+  });
+});
+
+describe("shownFile", () => {
+  const pdf = { phase: "pdf", bytes: new ArrayBuffer(4), version: 0 } as const;
+  it("is loading while the state still belongs to the path before", () => {
+    // The render where the tab goes to another file comes before the loader starts on it: B's pages must not show under A's entry.
+    expect(shownFile(pdf, "C:\\p\\b.pdf", "C:\\p\\a.pdf")).toEqual({ phase: "loading" });
+  });
+  it("is the state itself for its own path", () => {
+    expect(shownFile(pdf, "C:\\p\\a.pdf", "C:\\p\\a.pdf")).toBe(pdf);
   });
 });
 

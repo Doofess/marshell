@@ -2038,6 +2038,7 @@ export function LiveApp() {
                   onForward={() => paneSession !== undefined && paneDispatch({ type: "forward", session: paneSession, paneTab: tab.id })}
                   onOpen={(target) => paneSession !== undefined && paneDispatch({ type: "navigate", session: paneSession, paneTab: tab.id, project: paneProjectNow, target })}
                   onView={(v) => paneSession !== undefined && paneDispatch({ type: "setView", session: paneSession, paneTab: tab.id, view: v })}
+                  onPlace={(place) => paneSession !== undefined && paneDispatch({ type: "place", session: paneSession, paneTab: tab.id, place })}
                   onDirty={noteDirty}
                   active={active}
                   onEscape={() => actions.focusTerminal()}

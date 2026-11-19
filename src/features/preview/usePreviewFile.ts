@@ -25,6 +25,17 @@ export function afterDeleted(prev: FileState): FileState {
   return { phase: "deleted" };
 }
 
+const LOADING: FileState = { phase: "loading" };
+
+/**
+ * What the pane shows for `path`, from a state read for `of`. The render where the tab goes to another file comes before the
+ * loader starts on it, so the state is still the last file's then: it shows as loading, and that file's pages or text never
+ * appear under the new entry.
+ */
+export function shownFile(file: FileState, of: string, path: string): FileState {
+  return of === path ? file : LOADING;
+}
+
 /** How often the open file is checked for a change. */
 export const POLL_MS = 1000;
 /** How long the "Updated" note stays. */
@@ -71,6 +82,8 @@ export const imageType = (path: string) => IMAGE_TYPES[path.slice(path.lastIndex
 export function usePreviewFile(path: string, opts: { paused?: boolean } = {}): { file: FileState; updated: boolean; refetch: () => void } {
   const paused = opts.paused === true;
   const [file, setFile] = useState<FileState>({ phase: "loading" });
+  // The path `file` was read for; the effect below moves it with the path.
+  const [fileOf, setFileOf] = useState(path);
   const [updated, setUpdated] = useState(false);
   const loaded = useRef(false);
   const pausedRef = useRef(paused);
@@ -95,6 +108,7 @@ export function usePreviewFile(path: string, opts: { paused?: boolean } = {}): {
     let state: ReloadState = START;
     loaded.current = false;
     setFile({ phase: "loading" });
+    setFileOf(path);
     setUpdated(false);
 
     const kind = kindOf(path);
@@ -194,5 +208,5 @@ export function usePreviewFile(path: string, opts: { paused?: boolean } = {}): {
     return () => URL.revokeObjectURL(url);
   }, [url]);
 
-  return { file, updated, refetch };
+  return { file: shownFile(file, fileOf, path), updated: updated && fileOf === path, refetch };
 }
