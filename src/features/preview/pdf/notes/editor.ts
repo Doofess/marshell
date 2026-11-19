@@ -1,5 +1,6 @@
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 import { editorLib } from "../pdfjs";
+import { winAnsiSafe } from "./notesDoc";
 
 /**
  * pdf.js's note editor, fitted onto the PDF tab's own pages: one UI manager per loaded document, and over each drawn page a
@@ -48,6 +49,37 @@ export type NotesEditor = {
   markSaved(): void;
   destroy(): void;
 };
+
+/** A note as the announcements see it: `ready` once it holds something and isn't being typed, `text` a free text's. */
+export type LiveNote = { id: string; kind: string; page: number; fromFile: boolean; ready: boolean; text: string | null };
+/** What the announcements remember between changes: the notes already told of, the free text already warned about, and how many notes went since. */
+export type NewsState = { known: Set<string>; warned: Set<string>; gone: number };
+
+const BLANK_WARNING = "Edge and Chrome may show this note blank: it has letters outside the Latin alphabet.";
+
+/**
+ * The lines to announce after a change: a highlight or a free text that is new since the last change, a free text whose
+ * letters Edge and Chrome can't show (once per note), and "Note deleted." when notes went. The file's own notes are never
+ * news; `s` is updated.
+ */
+export function noteNews(s: NewsState, notes: Iterable<LiveNote>): string[] {
+  const lines: string[] = [];
+  for (const n of notes) {
+    if (n.fromFile || !n.ready) continue;
+    if (!s.known.has(n.id)) {
+      s.known.add(n.id);
+      if (n.kind === "highlight") lines.push(`Highlighted on page ${n.page}.`);
+      else if (n.kind === "freetext") lines.push(`Free text added on page ${n.page}.`);
+    }
+    if (n.kind === "freetext" && n.text !== null && !s.warned.has(n.id) && !winAnsiSafe(n.text)) {
+      s.warned.add(n.id);
+      lines.push(BLANK_WARNING);
+    }
+  }
+  if (s.gone > 0) lines.push("Note deleted.");
+  s.gone = 0;
+  return lines;
+}
 
 /** pdf.js may take the keys only while the window has focus and the keyboard is inside the tab. */
 export function editorKeysAllowed(active: Element | null, root: Element | null, windowFocused: boolean): boolean {
@@ -165,6 +197,8 @@ type Ui = {
   keydown(e: KeyboardEvent): void;
   highlightSelection(method?: string, comment?: boolean): void;
   addCommands(params: unknown): void;
+  addEditor(e: unknown): void;
+  removeEditor(e: unknown): void;
   undo(): void;
   redo(): void;
   registerEditorTypes(types: unknown[]): void;
@@ -177,10 +211,25 @@ type Ui = {
   destroy(): void;
 };
 type EditorClass = { _editorType: number; updateDefaultParams(type: number, value: unknown): void };
-type Editor = { pageIndex: number; uid: string; div: HTMLElement; comment: { text?: string } | null; editComment(): void };
+type Editor = {
+  id: string;
+  pageIndex: number;
+  uid: string;
+  div: HTMLElement;
+  comment: { text?: string } | null;
+  editComment(): void;
+  readonly editorType: string;
+  annotationElementId?: string | null;
+  editorDiv?: HTMLElement;
+  isEmpty(): boolean;
+  isInEditMode(): boolean;
+};
 
 /** A note editor for `doc`, over pages inside `container` (the tab's scrolling body). */
-export async function createNotesEditor(doc: PDFDocumentProxy, o: { container: HTMLElement; onComment(req: CommentRequest): void }): Promise<NotesEditor> {
+export async function createNotesEditor(
+  doc: PDFDocumentProxy,
+  o: { container: HTMLElement; onComment(req: CommentRequest): void; /** A line to announce: a note made or deleted, or free text that may show blank. */ onNews?(line: string): void },
+): Promise<NotesEditor> {
   const lib = await editorLib();
   const { AnnotationEditorType: Type, AnnotationEditorParamsType: Param } = lib;
   const eventBus = new lib.EventBus();
@@ -192,8 +241,23 @@ export async function createNotesEditor(doc: PDFDocumentProxy, o: { container: H
   let types: readonly EditorClass[] = [];
   let changes = 0;
   const listeners = new Set<() => void>();
+  // Every note pdf.js holds, the file's own and new ones, on drawn pages or not (a dropped page's layer leaves its notes here).
+  const held = new Map<string, Editor>();
+  const news: NewsState = { known: new Set(), warned: new Set(), gone: 0 };
+  // A tab going away says nothing of the notes pdf.js lets go as it is destroyed.
+  let quiet = false;
   const changed = () => {
     changes++;
+    const now = [...held.values()].map((e) => ({
+      id: e.id,
+      kind: e.editorType,
+      page: e.pageIndex + 1,
+      fromFile: !!e.annotationElementId,
+      ready: !e.isEmpty() && !e.isInEditMode(),
+      text: e.editorType === "freetext" ? (e.editorDiv?.innerText ?? null) : null,
+    }));
+    const lines = noteNews(news, now);
+    if (lines.length > 0 && !quiet) o.onNews?.(lines.join(" "));
     for (const cb of listeners) cb();
   };
   const layers = new Map<number, TextLayerOwner>();
@@ -248,6 +312,17 @@ export async function createNotesEditor(doc: PDFDocumentProxy, o: { container: H
     addCommands(params: unknown) {
       super.addCommands(params);
       changed();
+    }
+    // The notes pdf.js holds, mirrored for the announcements; a removal is a deletion only for a note already told of or from the file.
+    addEditor(e: Editor) {
+      super.addEditor(e);
+      held.set(e.id, e);
+      if (e.annotationElementId) news.known.add(e.id);
+    }
+    removeEditor(e: Editor) {
+      super.removeEditor(e);
+      held.delete(e.id);
+      if (news.known.delete(e.id)) news.gone++;
     }
     undo() {
       super.undo();
@@ -423,6 +498,7 @@ export async function createNotesEditor(doc: PDFDocumentProxy, o: { container: H
       changes = 0;
     },
     destroy() {
+      quiet = true;
       listeners.clear();
       ui.destroy();
       void l10n.destroy();

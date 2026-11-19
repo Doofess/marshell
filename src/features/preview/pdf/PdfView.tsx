@@ -286,7 +286,7 @@ export function PdfView({ path, bytes: fileBytes, hash, readOnly, name, onDirty,
     if (!doc || !scroller || noEditor) return;
     let dead = false;
     let made: NotesEditor | null = null;
-    void createNotesEditor(doc, { container: scroller, onComment: (req) => req.done(null) }).then(
+    void createNotesEditor(doc, { container: scroller, onComment: (req) => req.done(null), onNews: (line) => latest.current.announce?.(line) }).then(
       (e) => {
         if (dead) return e.destroy();
         made = e;
@@ -355,12 +355,11 @@ export function PdfView({ path, bytes: fileBytes, hash, readOnly, name, onDirty,
       document.removeEventListener("selectionchange", change);
     };
   }, [notes, scroller, effectiveTool, reason]);
+  // The editor announces the highlight it makes (`onNews`), as it does for the Highlight tool's and find's.
   const highlightBySelection = (comment: boolean) => {
-    const page = selBar?.page;
-    const done = notes?.highlightSelection(comment) ?? false;
+    notes?.highlightSelection(comment);
     setSelBar(null);
     scroller?.focus({ preventScroll: true });
-    if (done && !comment && page) latest.current.announce?.(`Highlighted on page ${page}.`);
   };
   const pickColor = (hex: string) => {
     setColorPref(hex);
@@ -551,8 +550,7 @@ export function PdfView({ path, bytes: fileBytes, hash, readOnly, name, onDirty,
     if (!range || !sel || !notes) return;
     sel.removeAllRanges();
     sel.addRange(range);
-    const page = find.status.page ?? current;
-    if (notes.highlightSelection(comment) && !comment) latest.current.announce?.(`Highlighted on page ${page}.`);
+    notes.highlightSelection(comment);
   };
 
   const commit = () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { drawsFreehand, editorKeysAllowed, HIGHLIGHT_COLORS, layerInView, pageAttacher, pdfjsTakesKey, selectionLayer, type PageLayers } from "./editor";
+import { drawsFreehand, editorKeysAllowed, HIGHLIGHT_COLORS, layerInView, noteNews, pageAttacher, pdfjsTakesKey, selectionLayer, type LiveNote, type NewsState, type PageLayers } from "./editor";
 
 /** A stand-in for a DOM element: `contains` follows the parent chain, `closest` matches by a list of selectors it answers to. */
 type Fake = { parent: Fake | null; matches: string[]; contains(o: unknown): boolean; closest(sel: string): Fake | null };
@@ -222,5 +222,53 @@ describe("pageAttacher", () => {
     expect(pages.attached()).toEqual([1, 4]);
     off();
     expect(pages.attached()).toEqual([1]);
+  });
+});
+
+describe("noteNews", () => {
+  const fresh = (): NewsState => ({ known: new Set(), warned: new Set(), gone: 0 });
+  const note = (id: string, o: Partial<LiveNote> = {}): LiveNote => ({ id, kind: "highlight", page: 1, fromFile: false, ready: true, text: null, ...o });
+
+  it("noteNews_a_new_highlight_says_its_page", () => {
+    const s = fresh();
+    expect(noteNews(s, [note("a", { page: 3 })])).toEqual(["Highlighted on page 3."]);
+    // Told once: the next change with the same note says nothing of it.
+    expect(noteNews(s, [note("a", { page: 3 })])).toEqual([]);
+  });
+
+  it("noteNews_free_text_is_told_once_it_is_typed_and_ended", () => {
+    const s = fresh();
+    // Made, empty or being typed: not a note yet.
+    expect(noteNews(s, [note("f", { kind: "freetext", page: 2, ready: false })])).toEqual([]);
+    expect(noteNews(s, [note("f", { kind: "freetext", page: 2, ready: true, text: "Check" })])).toEqual(["Free text added on page 2."]);
+    // An edit of it later is not news.
+    expect(noteNews(s, [note("f", { kind: "freetext", page: 2, text: "Check this" })])).toEqual([]);
+  });
+
+  it("noteNews_the_file's_own_notes_are_not_news", () => {
+    const s = fresh();
+    expect(noteNews(s, [note("x", { fromFile: true }), note("y", { kind: "freetext", fromFile: true, text: "Привет" })])).toEqual([]);
+  });
+
+  it("noteNews_removals_say_note_deleted_once", () => {
+    const s = fresh();
+    noteNews(s, [note("a"), note("b")]);
+    s.gone = 2;
+    expect(noteNews(s, [])).toEqual(["Note deleted."]);
+    expect(s.gone).toBe(0);
+    expect(noteNews(s, [])).toEqual([]);
+  });
+
+  it("noteNews_free_text_outside_winansi_warns_once", () => {
+    const s = fresh();
+    const warn = "Edge and Chrome may show this note blank: it has letters outside the Latin alphabet.";
+    expect(noteNews(s, [note("f", { kind: "freetext", page: 1, text: "Café" })])).toEqual(["Free text added on page 1."]);
+    expect(noteNews(s, [note("f", { kind: "freetext", page: 1, text: "Café 東京" })])).toEqual([warn]);
+    expect(noteNews(s, [note("f", { kind: "freetext", page: 1, text: "Café 東京 again" })])).toEqual([]);
+    expect(noteNews(fresh(), [note("g", { kind: "freetext", page: 4, text: "東京" })])).toEqual(["Free text added on page 4.", warn]);
+  });
+
+  it("noteNews_other_kinds_are_not_told_as_added", () => {
+    expect(noteNews(fresh(), [note("i", { kind: "ink" })])).toEqual([]);
   });
 });
