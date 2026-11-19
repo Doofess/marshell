@@ -82,13 +82,15 @@ describe("notesEscape", () => {
 });
 
 /** A runner with fakes for the editor and the core, and a log of what reached them in order. */
-function rig(o: { draft?: { bytes: ArrayBuffer; baseHash: string | null; editedMs: number } | null; editing?: () => boolean; save?: (path: string, expect: string | null) => SaveResult } = {}) {
+function rig(o: { draft?: { bytes: ArrayBuffer; baseHash: string | null; editedMs: number } | null; editing?: () => boolean; save?: (path: string, expect: string | null) => SaveResult; failSerializes?: number } = {}) {
   const log: string[] = [];
   let next: ((b: Uint8Array) => void) | null = null;
   let held = false;
+  let failing = o.failSerializes ?? 0;
   const editor = {
     save: () => {
       log.push("serialize");
+      if (failing > 0 && failing--) return Promise.reject(new TypeError("no layer"));
       if (held) return new Promise<Uint8Array>((r) => (next = r));
       return Promise.resolve(new Uint8Array([7]));
     },
@@ -160,6 +162,27 @@ describe("createNotesRunner", () => {
     expect(t.log).toEqual([]);
     await vi.advanceTimersByTimeAsync(1);
     expect(t.log).toEqual(["serialize", "put [7] h1 5"]);
+  });
+
+  it("a draft that failed to serialize is taken again when the tab goes", async () => {
+    vi.useFakeTimers();
+    const t = rig({ failSerializes: 1 });
+    t.r.dispatch({ type: "edited" });
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(t.log).toEqual(["serialize"]);
+    await t.r.unload();
+    await ticks();
+    expect(t.log).toEqual(["serialize", "serialize", "put [7] h1 5"]);
+  });
+
+  it("a draft that failed to serialize is taken again when the window loses focus", async () => {
+    vi.useFakeTimers();
+    const t = rig({ failSerializes: 1 });
+    t.r.dispatch({ type: "edited" });
+    await vi.advanceTimersByTimeAsync(1500);
+    t.r.flush();
+    await ticks(10);
+    expect(t.log).toEqual(["serialize", "serialize", "put [7] h1 5"]);
   });
 
   it("no draft is taken while a note is being typed: its commit is a change of its own", async () => {

@@ -155,6 +155,14 @@ describe("layerInView", () => {
   it("with no page drawn (a hidden tab), a selection elsewhere finds no layer here instead of throwing", () => {
     expect(layerInView(undefined, new Map()).hasTextLayer({} as HTMLElement)).toBe(false);
   });
+
+  it("with no page drawn, pdf.js's end of editing finds no drawing to end instead of throwing", () => {
+    // Every save and draft goes through pdf.js's `endCurrentEditing`, which calls `currentLayer?.endDrawingSession(false)`;
+    // a hidden tab's draft threw there, and its notes were lost when the tab was unloaded (live check 6q-6).
+    const none = layerInView(undefined, new Map()) as { endDrawingSession?: (aborted: boolean) => unknown };
+    expect(() => none.endDrawingSession?.(false)).not.toThrow();
+    expect(none.endDrawingSession?.(true)).toBeNull();
+  });
 });
 
 describe("HIGHLIGHT_COLORS", () => {

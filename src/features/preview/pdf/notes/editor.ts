@@ -127,12 +127,12 @@ const OWN_CONTROLS = ".pdf-comment, .pdf-selbar";
 
 /** What pdf.js asks of a page's layer when it looks for the page a selection is on. */
 type TextLayerOwner = { hasTextLayer(text: HTMLElement): boolean };
-const NO_LAYER: TextLayerOwner = { hasTextLayer: () => false };
+const NO_LAYER: TextLayerOwner & { endDrawingSession(aborted: boolean): null } = { hasTextLayer: () => false, endDrawingSession: () => null };
 
 /**
  * The layer pdf.js should treat as the page in view: that page's, else any drawn page's (the page in view may still be
- * drawing), else, with no page drawn at all (a hidden tab), one that owns no text, so pdf.js's look-up finds nothing
- * instead of throwing.
+ * drawing), else, with no page drawn at all (a hidden tab), one that owns no text and has no drawing to end, so pdf.js's
+ * look-up finds nothing and a save's end of editing passes, instead of throwing.
  */
 export function layerInView<L extends TextLayerOwner>(current: L | undefined | null, drawn: ReadonlyMap<number, L>): L | TextLayerOwner {
   return current ?? drawn.values().next().value ?? NO_LAYER;

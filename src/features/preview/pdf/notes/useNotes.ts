@@ -109,6 +109,8 @@ export function createNotesRunner(first: { hash: string | null; bytes: ArrayBuff
   let draftTimer: ReturnType<typeof setTimeout> | undefined;
   // A draft being serialized: the promise ends once its bytes are taken.
   let taking: Promise<void> | null = null;
+  // A draft whose serializing failed: the tab going, or the window losing focus, tries again.
+  let owed = false;
   // The newest disk read that came during a save, and the file the save started from.
   let held: { hash: string | null; bytes: ArrayBuffer | null } | null = null;
   let savedFrom: string | null = null;
@@ -140,11 +142,13 @@ export function createNotesRunner(first: { hash: string | null; bytes: ArrayBuff
     const work = editor.save().then(
       (bytes) => {
         taking = null;
+        owed = false;
         taken = { bytes, baseHash: state.base.hash, editedMs: editedAt };
         dispatch({ type: "serialized", bytes, for: "draft" });
       },
       () => {
         taking = null;
+        owed = true;
       },
     );
     taking = work;
@@ -233,6 +237,7 @@ export function createNotesRunner(first: { hash: string | null; bytes: ArrayBuff
       }
       case "dropDraft":
         stopTimer();
+        owed = false;
         return queue.drop();
       case "load":
         if (!closed) d.load(effect.bytes, effect.dirty);
@@ -287,14 +292,15 @@ export function createNotesRunner(first: { hash: string | null; bytes: ArrayBuff
     discard() {
       discarded = true;
       stopTimer();
+      owed = false;
       queue.drop();
     },
     flush() {
-      if (draftTimer === undefined || d.editor()?.editing()) return;
+      if ((draftTimer === undefined && !owed) || d.editor()?.editing()) return;
       void takeDraft().then(() => queue.flush());
     },
     async unload() {
-      if (draftTimer !== undefined || taking) await takeDraft();
+      if (draftTimer !== undefined || taking || owed) await takeDraft();
       queue.flush();
     },
   };
