@@ -8,7 +8,7 @@ import type { ReadOnlyReason, StatResult } from "./reload";
 /** The largest file the core serves per kind. Mirrors the core's caps; a bigger file is a 413 there and "too large" here. */
 export const TEXT_CAP = 2 * 1024 * 1024;
 export const IMAGE_CAP = 20 * 1024 * 1024;
-export const PDF_CAP = 50 * 1024 * 1024;
+export const PDF_CAP = 58 * 1024 * 1024;
 
 const session = (tab: string) => `/v1/sessions/${encodeURIComponent(tab)}`;
 

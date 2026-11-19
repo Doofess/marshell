@@ -19,11 +19,12 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 pub const TEXT_CAP: u64 = 2 * 1024 * 1024;
 /// The most bytes `content` serves for an image.
 pub const IMAGE_CAP: u64 = 20 * 1024 * 1024;
-/// The largest PDF `GET /v1/files/content?kind=pdf` serves.
-pub const PDF_CAP: u64 = 50 * 1024 * 1024;
+/// The largest PDF `GET /v1/files/content?kind=pdf` serves: 58 MB, as much as a save of a PDF may write, so a PDF saved
+/// with its notes opens again (the user's choice in 6q-6's PR review; it was 50 MB).
+pub const PDF_CAP: u64 = 58 * 1024 * 1024;
 
-/// The most a save or a draft of a PDF may carry: a PDF at its cap, with notes added.
-pub const SAVE_PDF_CAP: u64 = PDF_CAP + 8 * 1024 * 1024;
+/// The most a save or a draft of a PDF may carry: the largest PDF a tab opens.
+pub const SAVE_PDF_CAP: u64 = PDF_CAP;
 
 /// Whether the path names a PDF, by its extension in any case. It reads the string only.
 pub fn is_pdf(path: &str) -> bool {
@@ -639,6 +640,13 @@ pub async fn list(State(st): State<AppState>, Path(tab): Path<String>) -> Respon
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pdf_saved_with_its_notes_can_be_opened_again() {
+        // PR review of 6q-6: a PDF tab opens 58 MB, as much as a save of a PDF may write.
+        assert_eq!(PDF_CAP, 58 * 1024 * 1024);
+        assert!(SAVE_PDF_CAP <= PDF_CAP);
+    }
 
     #[test]
     fn refuses_unc_device_and_nul_paths_everywhere() {
