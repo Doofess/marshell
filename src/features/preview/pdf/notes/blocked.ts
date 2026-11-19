@@ -11,12 +11,10 @@ export const FROM_FILE = (name: string) => `${name} is read-only.`;
  * break it), the owner's permissions, an XFA form, and a file that is read-only on disk.
  */
 export async function notesBlocked(doc: PDFDocumentProxy, readOnly: boolean, name: string): Promise<string | null> {
-  const fields = await doc.getFieldObjects().catch(() => null);
-  if (fields) {
-    for (const list of fields.values()) {
-      for (const f of list as { type?: string; value?: unknown }[]) if (f.type === "signature" && f.value) return "This PDF is signed, and a note would break its signature.";
-    }
-  }
+  // pdf.js gives every signature field the value null; `getSignatures` lists the fields that hold a signature, so a blank
+  // signature field doesn't count.
+  const signatures = await doc.getSignatures().catch(() => null);
+  if (signatures && signatures.length > 0) return "This PDF is signed, and a note would break its signature.";
   const allowed = await doc.getPermissions().catch(() => null);
   if (allowed && !allowed.has(MODIFY_ANNOTATIONS)) return "This PDF's owner doesn't allow notes.";
   if (doc.isPureXfa) return "This PDF is an XFA form.";
