@@ -326,3 +326,63 @@ describe("createPdfFind", () => {
     expect(spy).toHaveBeenCalledWith(null);
   });
 });
+
+/** A text layer with real text nodes, as the DOM has them: enough for a range to be placed in. */
+type FakeNode = { nodeType: number; textContent: string; childNodes: FakeNode[] };
+const text = (s: string): FakeNode => ({ nodeType: 3, textContent: s, childNodes: [] });
+const el = (...kids: FakeNode[]): FakeNode => ({ nodeType: 1, textContent: kids.map((k) => k.textContent).join(""), childNodes: kids });
+class FakeRange {
+  start: [FakeNode, number] | null = null;
+  end: [FakeNode, number] | null = null;
+  setStart(n: FakeNode, o: number) {
+    this.start = [n, o];
+  }
+  setEnd(n: FakeNode, o: number) {
+    this.end = [n, o];
+  }
+}
+
+describe("currentRange", () => {
+  const setupRange = async (divs: FakeNode[], items: string[], match: [number, number], selected = { pageIdx: 0, matchIdx: 0 }) => {
+    const { f, c } = await setup();
+    c.selected = selected;
+    c.pageMatches = [[match[0]]];
+    c.pageMatchesLength = [[match[1]]];
+    f.attach(0, { divs: divs as unknown as HTMLElement[], items });
+    return f;
+  };
+  const make = () => new FakeRange() as unknown as Range;
+
+  it("currentRange_in_one_span", async () => {
+    const t = text("hello world");
+    const f = await setupRange([el(t)], ["hello world"], [6, 5]);
+    const r = f.currentRange(make) as unknown as FakeRange;
+    expect(r.start).toEqual([t, 6]);
+    expect(r.end).toEqual([t, 11]);
+  });
+  it("currentRange_across_two_spans", async () => {
+    const a = text("hello ");
+    const b = text("world");
+    const f = await setupRange([el(a), el(b)], ["hello ", "world"], [3, 6]);
+    const r = f.currentRange(make) as unknown as FakeRange;
+    expect(r.start).toEqual([a, 3]);
+    expect(r.end).toEqual([b, 3]);
+  });
+  it("currentRange_goes_through_a_tint", async () => {
+    const a = text("he");
+    const m = text("llo");
+    const b = text(" world");
+    const f = await setupRange([el(a, el(m), b)], ["hello world"], [3, 5]);
+    const r = f.currentRange(make) as unknown as FakeRange;
+    expect(r.start).toEqual([m, 1]);
+    expect(r.end).toEqual([b, 3]);
+  });
+  it("currentRange_is_null_when_its_page_is_not_drawn", async () => {
+    const f = await setupRange([el(text("abc"))], ["abc"], [0, 2], { pageIdx: 4, matchIdx: 0 });
+    expect(f.currentRange(make)).toBeNull();
+  });
+  it("currentRange_is_null_with_no_match", async () => {
+    const f = await setupRange([el(text("abc"))], ["abc"], [0, 2], { pageIdx: -1, matchIdx: -1 });
+    expect(f.currentRange(make)).toBeNull();
+  });
+});

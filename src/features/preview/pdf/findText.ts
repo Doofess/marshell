@@ -59,12 +59,38 @@ export type PdfFind = {
   /** Searches as the person types; a blank query clears the search. */
   search(q: FindQuery): void;
   step(previous: boolean): void;
+  /**
+   * The current match's letters on its drawn text layer, as a range (made by `create`, the document's by default); null when
+   * there is no current match or its page isn't drawn.
+   */
+  currentRange(create?: () => Range): Range | null;
   close(): void;
   /** A drawn page's text layer, to be tinted; the function returned lets it go. */
   attach(pageIndex: number, m: TextMapping): () => void;
   onStatus(cb: (s: FindStatus) => void): () => void;
   destroy(): void;
 };
+
+/** The text node of `root` that holds the character at `offset` of its text, and where in it; a position at a node's end belongs to it only for an end. */
+function locate(root: Node, offset: number, forEnd: boolean): [Node, number] | null {
+  let left = offset;
+  let last = null as [Node, number] | null;
+  const walk = (n: Node): [Node, number] | null => {
+    if (n.nodeType === 3) {
+      const len = n.textContent?.length ?? 0;
+      last = [n, len];
+      if (left < len || (forEnd && left <= len)) return [n, left];
+      left -= len;
+      return null;
+    }
+    for (const k of Array.from(n.childNodes)) {
+      const hit = walk(k);
+      if (hit) return hit;
+    }
+    return null;
+  };
+  return walk(root) ?? last;
+}
 
 type ViewerLib = Pick<typeof import("pdfjs-dist/web/pdf_viewer.mjs"), "EventBus" | "PDFFindController">;
 type FindEvent = { state: number; previous: boolean; matchesCount: { current: number; total: number } };
@@ -179,6 +205,21 @@ export async function createPdfFind(view: FindView, lib?: ViewerLib): Promise<Pd
       still = false;
       find(fresh ? "" : "again", query, previous);
     },
+    currentRange(create = () => document.createRange()) {
+      const { pageIdx, matchIdx } = selected();
+      const m = pages.get(pageIdx);
+      const from = controller.pageMatches?.[pageIdx]?.[matchIdx];
+      const length = controller.pageMatchesLength?.[pageIdx]?.[matchIdx];
+      if (!m || from === undefined || length === undefined) return null;
+      const span = matchSpans([from], [length], m.items)[0];
+      const a = span && m.divs[span.begin.div] && locate(m.divs[span.begin.div]!, span.begin.offset, false);
+      const b = span && m.divs[span.end.div] && locate(m.divs[span.end.div]!, span.end.offset, true);
+      if (!a || !b) return null;
+      const r = create();
+      r.setStart(a[0], a[1]);
+      r.setEnd(b[0], b[1]);
+      return r;
+    },
     close: clear,
     attach(i, m) {
       pages.set(i, m);
@@ -208,12 +249,13 @@ export async function createPdfFind(view: FindView, lib?: ViewerLib): Promise<Pd
 export function usePdfFind(
   doc: PDFDocumentProxy | null,
   view: FindView,
-): { status: FindStatus; query: FindQuery; search(q: FindQuery): void; step(previous: boolean): void; close(): void; attach: PdfFind["attach"] } {
+): { status: FindStatus; query: FindQuery; search(q: FindQuery): void; step(previous: boolean): void; currentRange(): Range | null; close(): void; attach: PdfFind["attach"] } {
   const viewRef = useRef(view);
   viewRef.current = view;
   const docRef = useRef(doc);
   docRef.current = doc;
   const engine = useRef<Promise<PdfFind> | null>(null);
+  const ready = useRef<PdfFind | null>(null);
   const attached = useRef(new Map<number, { m: TextMapping; detach: (() => void) | null }>());
   const [status, setStatus] = useState<FindStatus>(IDLE);
   const [query, setQuery] = useState<FindQuery>({ text: "", caseSensitive: false, entireWord: false });
@@ -230,6 +272,7 @@ export function usePdfFind(
       f.onStatus(setStatus);
       f.setDocument(docRef.current);
       for (const [i, a] of attached.current) a.detach = f.attach(i, a.m);
+      ready.current = f;
       return f;
     })();
     return engine.current;
@@ -244,6 +287,7 @@ export function usePdfFind(
     () => () => {
       const e = engine.current;
       engine.current = null;
+      ready.current = null;
       void e?.then((f) => f.destroy());
     },
     [],
@@ -273,5 +317,7 @@ export function usePdfFind(
     };
   }, []);
 
-  return { status, query, search, step, close, attach };
+  const currentRange = useCallback(() => ready.current?.currentRange() ?? null, []);
+
+  return { status, query, search, step, currentRange, close, attach };
 }

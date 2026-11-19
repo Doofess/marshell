@@ -38,7 +38,8 @@
   padding-inline: var(--space-2);
 }
 @container pdfbar (inline-size < 360px) {
-  .pdf__word {
+  .pdf__word,
+  .pdf__percent {
     display: none;
   }
 }
@@ -134,6 +135,12 @@
   place-items: center;
   inline-size: 24px;
   padding-inline: 0;
+}
+/* The find row's Highlight and Comment: words, not icons. */
+.pdf__find .pdf__textbutton {
+  display: inline-block;
+  inline-size: auto;
+  padding-inline: var(--space-2);
 }
 .pdf__button:active:not(:disabled) {
   background: var(--fill-strong);

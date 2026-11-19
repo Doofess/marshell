@@ -109,6 +109,28 @@ describe("FindBar markup", () => {
   });
 });
 
+describe("FindBar note buttons", () => {
+  const render = (status: FindStatus, notesOff = false) =>
+    renderToStaticMarkup(<FindBar query={{ text: "cat", caseSensitive: false, entireWord: false }} status={status} onQuery={() => {}} onStep={() => {}} onNote={() => {}} notesOff={notesOff} onClose={() => {}} field={null} />);
+  const button = (html: string, label: string) => html.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`))?.[0] ?? "";
+  it("has_highlight_and_comment_after_next_with_their_titles", () => {
+    const html = render(found());
+    expect(html.indexOf('aria-label="Next"')).toBeLessThan(html.indexOf('aria-label="Highlight"'));
+    expect(html.indexOf('aria-label="Highlight"')).toBeLessThan(html.indexOf('aria-label="Comment"'));
+    expect(html).toContain('title="Highlight this match"');
+    expect(html).toContain('title="Highlight this match and comment on it"');
+    expect(button(html, "Highlight")).not.toContain("disabled");
+  });
+  it("are_disabled_with_no_current_match", () => {
+    expect(button(render(IDLE), "Highlight")).toContain("disabled");
+    expect(button(render(IDLE), "Comment")).toContain("disabled");
+  });
+  it("are_disabled_with_the_tools_off", () => {
+    expect(button(render(found(), true), "Highlight")).toContain("disabled");
+    expect(button(render(found(), true), "Comment")).toContain("disabled");
+  });
+});
+
 // On "Match case" or "Next", Esc went to the pane, which took the keyboard to the terminal and left the bar and its tints up.
 describe("FindBar keys", () => {
   const esc = () => ({ key: "Escape", shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, nativeEvent: { isComposing: false }, preventDefault: vi.fn() });

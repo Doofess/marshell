@@ -307,6 +307,8 @@ export type NotesOptions = {
   hash: string | null;
   bytes: ArrayBuffer;
   readOnly: boolean;
+  /** The PDF can't take notes (`notesBlocked`). Its save commands are then handed out only while it still holds unsaved notes, so the close question can discard them. */
+  blocked: boolean;
   announce?: (text: string) => void;
   onDirty?: (path: string, dirty: boolean) => void;
   openCopy: (path: string) => void;
@@ -387,8 +389,9 @@ export function useNotes(o: NotesOptions): Notes {
     latest.current.onDirty?.(o.path, news);
   }, [ready, state.dirty, o.path]);
 
+  const hidden = o.blocked && !state.dirty;
   useImperativeHandle(
-    o.save,
+    hidden ? null : o.save,
     () => ({
       save: () => runner.save(),
       undoSave() {
@@ -402,7 +405,7 @@ export function useNotes(o: NotesOptions): Notes {
       dirty: () => runner.state().dirty,
       focus: () => latest.current.focus(),
     }),
-    [runner],
+    [runner, hidden],
   );
 
   return { shown, state, runner, editor };
