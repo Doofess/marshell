@@ -113,10 +113,17 @@ export function firstConflict(o: { rendered: boolean; editor: ConflictJumper | n
 }
 
 /**
+ * Whether the keyboard is in the tab's body: on it, where pressing Merge put it, or in the rendered text inside it. Read when the
+ * merge's answer comes, before the Source view hides that text.
+ */
+export function inBodyNow<N>(body: { contains(n: N): boolean } | null | undefined, active: N | null): boolean {
+  return !!body && active !== null && body.contains(active);
+}
+
+/**
  * The jump that waited, on the first draw after the merge's answer: the Source view it asked for comes in that same draw. A
- * keyboard in the tab's body (on it, where pressing Merge put it, or in the rendered text about to be hidden) goes on into the
- * editor, where F7 works; one elsewhere stays where the person put it. A tab still in Rendered view did not get the switch, and
- * a later switch by the person is not the merge's: nothing moves.
+ * keyboard that was in the tab's body goes on into the editor, where F7 works; one elsewhere stays where the person put it. A
+ * tab still in Rendered view did not get the switch, and a later switch by the person is not the merge's: nothing moves.
  */
 export function sourceShown(o: { rendered: boolean; editor: (ConflictJumper & Focusable) | null; inBody: boolean }): void {
   if (o.rendered) return;
@@ -262,14 +269,15 @@ export function TextTab({ entry, file, kind, active, os, onDirty, commands, anno
   hidden.current = showRendered;
   const toSource = useRef(onSource);
   toSource.current = onSource;
-  // A jump to the first conflict that waits for the Source view a merge asked for. Set before the switch is asked for.
-  const waiting = useRef(false);
+  // A jump to the first conflict that waits for the Source view a merge asked for, with where the keyboard was then. Set before
+  // the switch is asked for.
+  const waiting = useRef<{ inBody: boolean } | null>(null);
   const toFirstConflict = useCallback(() => {
     firstConflict({
       rendered: hidden.current,
       editor: editor.current,
       toSource: () => {
-        waiting.current = true;
+        waiting.current = { inBody: inBodyNow(root.current?.closest(".preview__body"), document.activeElement) };
         toSource.current();
       },
     });
@@ -286,10 +294,10 @@ export function TextTab({ entry, file, kind, active, os, onDirty, commands, anno
   // The merge's answer and the switch it asked for are set in one tick, so they are drawn together: this runs on that draw,
   // before the paint, so the Source view never shows a frame at the old place.
   useLayoutEffect(() => {
-    if (!waiting.current) return;
-    waiting.current = false;
-    const body = root.current?.closest(".preview__body");
-    sourceShown({ rendered: showRendered, editor: editor.current, inBody: !!body && body.contains(document.activeElement) });
+    const w = waiting.current;
+    if (!w) return;
+    waiting.current = null;
+    sourceShown({ rendered: showRendered, editor: editor.current, inBody: w.inBody });
   }, [showRendered, doc]);
   const hintId = useId();
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
