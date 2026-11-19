@@ -57,12 +57,12 @@ import { cliTaskRequest, exitedTasks, runningCount, updateResult, type CliTaskKi
 import { accountLine, UNREACHABLE } from "../accounts/accountsText";
 import { getAccount, getInstall } from "../../lib/api/accounts";
 import { pickFile } from "../../lib/filePicker";
-import { Preview } from "../preview/Preview";
+import { Preview, type PreviewHandle } from "../preview/Preview";
 import type { PdfCommands } from "../preview/pdf/PdfView";
 import { isUnsaved, staleDrafts, withUnsaved } from "../editor/drafts";
 import { dropDraft, listDrafts } from "../editor/editorApi";
 import { SaveDialog, type SaveChoice } from "../editor/SaveDialog";
-import type { TextTabCommands } from "../editor/TextTab";
+import type { SaveCommands, TextTabCommands } from "../editor/TextTab";
 import type { PaneTab } from "../../generated/PaneTab";
 import { PaneContext, PagePaneContext, type OpenPageInPane } from "../pane/PaneContext";
 import { dropCover, modalOnScreen } from "../pane/dropCover";
@@ -689,18 +689,25 @@ export function LiveApp() {
   });
   // Only the script command the header would show is listed.
   const os = endpoint ? osOfPlatform(endpoint.platform) : undefined;
-  // The side pane's text tabs that are loaded, by key: each hands over the commands the palette and the close question call on it.
-  const textTabs = useRef(new Map<string, () => TextTabCommands | null>());
-  // The loaded text tab on screen: the selected tab of the pane shown beside the session. Null when the pane is hidden or covered, or the tab is not an editor yet.
-  const shownText = (): TextTabCommands | null => {
+  // The side pane's preview tabs, by key: each hands over the commands the palette and the close question call on it, a text tab's
+  // editor commands, and what saves the tab (a text tab's editor, or a PDF tab's notes).
+  const textTabs = useRef(new Map<string, Pick<PreviewHandle, "text" | "saving">>());
+  // The preview tab on screen: the selected tab of the pane shown beside the session. Null when the pane is hidden or covered.
+  const shownPreview = (): Pick<PreviewHandle, "text" | "saving"> | null => {
     if (!view.pane.open || mainView !== "sessions" || focusedId == null) return null;
     const shown = tabsOf(view.pane, focusedId);
     const id = shown.active ?? shown.tabs[0]?.id;
-    return id === undefined ? null : (textTabs.current.get(pageKey(focusedId, id))?.() ?? null);
+    return id === undefined ? null : (textTabs.current.get(pageKey(focusedId, id)) ?? null);
   };
+  // The loaded text tab on screen, and what saves the tab on screen. Null when the tab is not an editor, or has nothing that saves, yet.
+  const shownText = (): TextTabCommands | null => shownPreview()?.text() ?? null;
+  const shownSaving = (): SaveCommands | null => shownPreview()?.saving() ?? null;
   const shownTextRef = useRef(shownText);
   shownTextRef.current = shownText;
+  const shownSavingRef = useRef(shownSaving);
+  shownSavingRef.current = shownSaving;
   const textNow = shownText();
+  const savingNow = shownSaving();
   // The side pane's tabs that can mark a region, by key: a preview tab (which also hands over its PDF commands) or a browser tab (which has none).
   const regionTabs = useRef(new Map<string, { selectRegion(): boolean; pdf?(): PdfCommands | null }>());
   // The loaded PDF tab on screen, found like the text tab. Null when the pane is hidden or covered, or the tab is not a PDF that has loaded.
@@ -716,7 +723,8 @@ export function LiveApp() {
   const idle = cannotRun({
     textTab: textNow !== null,
     pdfTab: shownPdf() !== null,
-    undoSave: textNow?.canUndoSave() === true,
+    saveTab: savingNow !== null,
+    undoSave: savingNow?.canUndoSave() === true,
     focused: focusedInfo !== undefined,
     sessions: rows.length,
     waiting: nextWaiting(requests) !== null,
@@ -849,10 +857,10 @@ export function LiveApp() {
     if (ask.from !== null) focusPane(ask.paneTab, ask.from);
   };
   // A tab that was not on screen mounts when it is selected, and its draft is read a moment later: wait for it, up to two seconds.
-  const loadedText = async (key: string): Promise<TextTabCommands | null> => {
-    let text: TextTabCommands | null = null;
+  const loadedText = async (key: string): Promise<SaveCommands | null> => {
+    let text: SaveCommands | null = null;
     for (let i = 0; i < 40; i++) {
-      text = textTabs.current.get(key)?.() ?? null;
+      text = textTabs.current.get(key)?.saving() ?? null;
       if (text?.dirty()) return text;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
@@ -866,7 +874,7 @@ export function LiveApp() {
     const key = pageKey(ask.session, ask.paneTab);
     if (choice === "discard") {
       // Through the tab's own draft queue, so the flush when the tab goes cannot write the draft back.
-      const text = textTabs.current.get(key)?.();
+      const text = textTabs.current.get(key)?.saving();
       if (text) text.discard();
       else void dropDraft(ask.path);
       setUnsaved((u) => withUnsaved(u, ask.path, false, osName));
@@ -1557,12 +1565,13 @@ export function LiveApp() {
           if (!handle?.selectRegion()) announce("This tab has nothing to select a region in.");
           return true;
         }
-        // The text tab's commands run on the shown tab. The palette lists them only while one is loaded; a key can't reach them (they have none).
+        // The text tab's commands run on the shown tab, and Save and Undo save on a PDF tab's notes too. The palette lists them only while
+        // one is loaded; a key can't reach them (they have none).
         case "paneSave":
-          void shownTextRef.current()?.save();
+          void shownSavingRef.current()?.save();
           return true;
         case "paneUndoSave":
-          shownTextRef.current()?.undoSave();
+          shownSavingRef.current()?.undoSave();
           return true;
         case "paneFind":
           shownPdfRef.current()?.find();
@@ -1572,6 +1581,9 @@ export function LiveApp() {
           return true;
         case "panePages":
           shownPdfRef.current()?.pages();
+          return true;
+        case "paneNotes":
+          shownPdfRef.current()?.notes();
           return true;
         case "paneGoToLine":
           shownTextRef.current()?.goToLine();
@@ -1758,7 +1770,7 @@ export function LiveApp() {
     }
     const shortcut = commandShortcut(id);
     // These move the focus (or open a panel that takes it), so they wait for the palette to hand it back first.
-    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "menu" || shortcut?.kind === "paneTab" || shortcut?.kind === "closePaneTab" || shortcut?.kind === "browse" || shortcut?.kind === "newBrowserTab" || shortcut?.kind === "clearBrowserData" || shortcut?.kind === "selectRegion" || shortcut?.kind === "paneSave" || shortcut?.kind === "paneUndoSave" || shortcut?.kind === "paneGoToLine" || shortcut?.kind === "paneFind" || shortcut?.kind === "paneOutline" || shortcut?.kind === "panePages" || shortcut?.kind === "paneWordWrap") return void setTimeout(() => windowCommand(shortcut), 0);
+    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "menu" || shortcut?.kind === "paneTab" || shortcut?.kind === "closePaneTab" || shortcut?.kind === "browse" || shortcut?.kind === "newBrowserTab" || shortcut?.kind === "clearBrowserData" || shortcut?.kind === "selectRegion" || shortcut?.kind === "paneSave" || shortcut?.kind === "paneUndoSave" || shortcut?.kind === "paneGoToLine" || shortcut?.kind === "paneFind" || shortcut?.kind === "paneOutline" || shortcut?.kind === "panePages" || shortcut?.kind === "paneNotes" || shortcut?.kind === "paneWordWrap") return void setTimeout(() => windowCommand(shortcut), 0);
     if (windowCommand(shortcut)) return;
     if (shortcut?.kind === "launcher") setLauncherOpen(true);
     else if (shortcut?.kind === "prompt") jumpPrompt(shortcut.by);
@@ -2069,7 +2081,7 @@ export function LiveApp() {
                     const key = pageKey(paneSession ?? "", tab.id);
                     if (preview) {
                       regionTabs.current.set(key, preview);
-                      textTabs.current.set(key, () => preview.text());
+                      textTabs.current.set(key, preview);
                     }
                     return () => {
                       regionTabs.current.delete(key);

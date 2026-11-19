@@ -22,10 +22,10 @@ afterEach(() => {
 });
 
 describe("the caps", () => {
-  it("mirror the core's: 2 MiB of text and 20 MiB of image", () => {
+  it("mirror the core's: 2 MiB of text, 20 MiB of image and 58 MiB of PDF", () => {
     expect(TEXT_CAP).toBe(2 * 1024 * 1024);
     expect(IMAGE_CAP).toBe(20 * 1024 * 1024);
-    expect(PDF_CAP).toBe(52_428_800);
+    expect(PDF_CAP).toBe(60_817_408);
   });
 });
 

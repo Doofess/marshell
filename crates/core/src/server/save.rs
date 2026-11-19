@@ -124,8 +124,14 @@ fn read_disk(path: &Path) -> io::Result<Disk> {
     };
     let read_only = meta.permissions().readonly();
     let mut bytes = Vec::new();
-    (&mut file).take(files::TEXT_CAP + 1).read_to_end(&mut bytes)?;
-    if bytes.len() as u64 <= files::TEXT_CAP {
+    // A PDF may be as large as a save of one is allowed to make it.
+    let cap = if files::is_pdf(&path.to_string_lossy()) {
+        files::SAVE_PDF_CAP
+    } else {
+        files::TEXT_CAP
+    };
+    (&mut file).take(cap + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 <= cap {
         return Ok(Disk::File(bytes, read_only));
     }
     let mut hasher = Sha256::new();
@@ -258,8 +264,12 @@ fn unsave_checked(path: &Path, save: &Saved, home: &Path) -> Done {
     }
 }
 
-/// PUT /v1/files/content?path=<absolute>&expect=<hash|none>, the body the file's new bytes.
+/// PUT /v1/files/content?path=<absolute>&expect=<hash|none>, the body the file's new bytes. The
+/// route's body limit is the PDF one; only a path ending in `.pdf` may pass `TEXT_CAP`.
 pub async fn save(State(st): State<AppState>, Query(q): Query<SaveQuery>, body: Bytes) -> Response {
+    if body.len() as u64 > files::TEXT_CAP && !files::is_pdf(&q.path) {
+        return StatusCode::PAYLOAD_TOO_LARGE.into_response();
+    }
     let (Some(path), Some(expect)) = (shaped(&q.path), parse_expect(q.expect.as_deref())) else {
         return Done::BadPath.into_response();
     };

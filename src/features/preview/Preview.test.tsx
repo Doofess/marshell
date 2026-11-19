@@ -68,7 +68,7 @@ describe("PreviewPane", () => {
     expect(html({ phase: "binary" })).toContain("This file isn&#x27;t text.");
   });
   it("shows a PDF in the PDF view, not the old placeholder", () => {
-    const out = html({ phase: "pdf", bytes: new ArrayBuffer(8), version: 0 }, { entry: { path: "C:\\docs\\a.pdf", line: null, col: null, view: "rendered" } });
+    const out = html({ phase: "pdf", bytes: new ArrayBuffer(8), version: 0, hash: "", readOnly: null }, { entry: { path: "C:\\docs\\a.pdf", line: null, col: null, view: "rendered" } });
     expect(out).not.toContain("later update");
     expect(out).toContain('data-kind="pdf"');
   });
@@ -95,6 +95,12 @@ describe("PreviewPane", () => {
     const out = html({ phase: "deleted" }, { keptDraft: true });
     expect(out).toContain('class="text-tab"');
     expect(out).toContain("a.rs was deleted on disk. Ctrl+S saves it again.");
+    expect(out).not.toContain("This file was deleted.");
+  });
+  it("opens the PDF view on a PDF that was already gone, when its notes are kept in a draft", () => {
+    // A PDF deleted while its tab was unloaded, or while Marshell was closed: the draft holds the file and its notes (live check 6q-6).
+    const out = html({ phase: "deleted" }, { keptPdf: new ArrayBuffer(8), entry: { path: "C:\\docs\\a.pdf", line: null, col: null, view: "rendered" } });
+    expect(out).toContain('data-kind="pdf"');
     expect(out).not.toContain("This file was deleted.");
   });
   it("says a file can't be previewed when the core refuses it", () => {
@@ -259,7 +265,7 @@ describe("formatSize", () => {
 describe("PreviewPane: select region", () => {
   it("offers the button on an image and on a PDF, not on Markdown", () => {
     const image = html({ phase: "image", url: "blob:x" }, { entry: { path: "C:\\a\\p.png", line: null, col: null, view: "rendered" } });
-    const pdf = html({ phase: "pdf", bytes: new ArrayBuffer(0), version: 1 }, { entry: { path: "C:\\a\\p.pdf", line: null, col: null, view: "rendered" } });
+    const pdf = html({ phase: "pdf", bytes: new ArrayBuffer(0), version: 1, hash: "", readOnly: null }, { entry: { path: "C:\\a\\p.pdf", line: null, col: null, view: "rendered" } });
     const md = html({ phase: "text", text: "# hi", encoding: "utf-8", eol: "lf", hash: "", readOnly: null }, { entry: { path: "C:\\a\\p.md", line: null, col: null, view: "source" } });
     expect(image).toContain("Select region");
     expect(image).toContain('title="Select region (R)"');

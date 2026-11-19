@@ -11,7 +11,15 @@ export type FileState =
   | { phase: "image"; url: string }
   | { phase: "tooLarge"; size: number; limit: number }
   | { phase: "binary" }
-  | { phase: "pdf"; bytes: ArrayBuffer; /** Counts refetches from 0, so the view reloads while keeping its scroll. */ version: number }
+  | {
+      phase: "pdf";
+      bytes: ArrayBuffer;
+      /** Counts refetches from 0, so the view reloads while keeping its scroll. */
+      version: number;
+      /** The SHA-256 of `bytes`: what a save of the PDF's notes expects the file to still be. */
+      hash: string;
+      readOnly: ReadOnlyReason | null;
+    }
   | { phase: "deleted"; /** What was shown before the file went; it stays on screen under the notice. */ last?: Shown }
   | { phase: "error" };
 
@@ -34,6 +42,14 @@ const LOADING: FileState = { phase: "loading" };
  */
 export function shownFile(file: FileState, of: string, path: string): FileState {
   return of === path ? file : LOADING;
+}
+
+/** The state for a file's bytes just read. A PDF keeps its hash and read-only flag as the text does, because a save of its notes needs both. */
+export function contentState(wire: "text" | "image" | "pdf", content: Extract<Content, { kind: "ok" }>, readOnly: ReadOnlyReason | null, version: number, path: string): FileState {
+  if (wire === "pdf") return { phase: "pdf", bytes: content.bytes, version, hash: content.hash, readOnly };
+  if (wire === "image") return { phase: "image", url: URL.createObjectURL(new Blob([content.bytes], { type: imageType(path) })) };
+  const d = decodeFile(content.bytes);
+  return d.kind === "text" ? { phase: "text", text: d.text, encoding: d.encoding, eol: d.eol, hash: content.hash, readOnly } : { phase: "binary" };
 }
 
 /** How often the open file is checked for a change. */
@@ -128,14 +144,7 @@ export function usePreviewFile(path: string, opts: { paused?: boolean } = {}): {
         setFile({ phase: "tooLarge", size: content.size, limit: content.limit });
         return;
       }
-      if (wire === "pdf") {
-        setFile({ phase: "pdf", bytes: content.bytes, version: version++ });
-      } else if (wire === "image") {
-        setFile({ phase: "image", url: URL.createObjectURL(new Blob([content.bytes], { type: imageType(path) })) });
-      } else {
-        const d = decodeFile(content.bytes);
-        setFile(d.kind === "text" ? { phase: "text", text: d.text, encoding: d.encoding, eol: d.eol, hash: content.hash, readOnly } : { phase: "binary" });
-      }
+      setFile(contentState(wire, content, readOnly, version++, path));
       if (loaded.current) {
         setUpdated(true);
         clearTimeout(note);
@@ -151,7 +160,7 @@ export function usePreviewFile(path: string, opts: { paused?: boolean } = {}): {
         const stat = await statFile(path);
         if (cancelled) return;
         // Every stat tells whether the file is read-only now, which a change of attribute alone does not move the size or time for.
-        if (stat.kind === "ok") setFile((f) => (f.phase === "text" && f.readOnly !== stat.readOnly ? { ...f, readOnly: stat.readOnly } : f));
+        if (stat.kind === "ok") setFile((f) => ((f.phase === "text" || f.phase === "pdf") && f.readOnly !== stat.readOnly ? { ...f, readOnly: stat.readOnly } : f));
         const step = next(state, stat, cap);
         state = step.state;
         if (step.action === "refetch") {

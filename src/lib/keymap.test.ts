@@ -294,6 +294,7 @@ describe("the PDF tab's commands", () => {
     expect(commandById("pane-pdf-find")).toMatchObject({ label: "Find in PDF", group: "Window" });
     expect(commandById("pane-pdf-outline")).toMatchObject({ label: "Show PDF outline", group: "Window" });
     expect(commandById("pane-pdf-pages")).toMatchObject({ label: "Show PDF pages", group: "Window" });
-    for (const id of ["pane-pdf-find", "pane-pdf-outline", "pane-pdf-pages"]) expect(commandById(id).binding).toBeUndefined();
+    expect(commandById("pane-pdf-notes")).toMatchObject({ label: "Show PDF notes", group: "Window" });
+    for (const id of ["pane-pdf-find", "pane-pdf-outline", "pane-pdf-pages", "pane-pdf-notes"]) expect(commandById(id).binding).toBeUndefined();
   });
 });

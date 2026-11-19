@@ -241,3 +241,102 @@ async fn a_draft_never_touches_its_file() {
     assert!(!dir.path().join("never-made.txt").exists());
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
 }
+
+const SAVE_PDF_CAP: usize = 58 * 1024 * 1024;
+const H64: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+fn pdf_uri(path: &str, base: &str, edited: u64) -> String {
+    format!("/v1/drafts/pdf?path={}&base={base}&edited={edited}", enc(path))
+}
+
+async fn raw(
+    app: &axum::Router,
+    method: &str,
+    uri: &str,
+    body: Vec<u8>,
+    bearer: bool,
+) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
+    let res = app.clone().oneshot(request(method, uri, body, bearer)).await.unwrap();
+    let (status, headers) = (res.status(), res.headers().clone());
+    let bytes = axum::body::to_bytes(res.into_body(), 64 * 1024 * 1024)
+        .await
+        .unwrap()
+        .to_vec();
+    (status, headers, bytes)
+}
+
+#[tokio::test]
+async fn pdf_drafts_are_refused_without_the_bearer() {
+    let (_home, app) = setup();
+    let path = path_in(std::env::temp_dir().as_path(), "a.pdf");
+    for (method, uri) in [
+        ("GET", format!("/v1/drafts/pdf?path={}", enc(&path))),
+        ("PUT", pdf_uri(&path, "none", 1)),
+    ] {
+        let (status, _, _) = raw(&app, method, &uri, b"%PDF".to_vec(), false).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{method} {uri}");
+    }
+}
+
+#[tokio::test]
+async fn pdf_drafts_round_trip_and_the_one_delete_drops_them() {
+    let (_home, app) = setup();
+    let dir = tempfile::tempdir().unwrap();
+    let a = path_in(dir.path(), "a.PDF");
+    let get = format!("/v1/drafts/pdf?path={}", enc(&a));
+    assert_eq!(raw(&app, "GET", &get, Vec::new(), true).await.0, StatusCode::NO_CONTENT);
+    let (status, _, _) = raw(&app, "PUT", &pdf_uri(&a, H64, 42), b"%PDF-mine".to_vec(), true).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, headers, bytes) = raw(&app, "GET", &get, Vec::new(), true).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(bytes, b"%PDF-mine");
+    assert_eq!(headers[header::CONTENT_TYPE], "application/pdf");
+    assert_eq!(headers["x-base-hash"], H64);
+    assert_eq!(headers["x-edited-ms"], "42");
+    // No base: the header is absent.
+    raw(&app, "PUT", &pdf_uri(&a, "none", 43), b"%PDF-two".to_vec(), true).await;
+    let (_, headers, bytes) = raw(&app, "GET", &get, Vec::new(), true).await;
+    assert_eq!(bytes, b"%PDF-two");
+    assert!(headers.get("x-base-hash").is_none());
+    // It is listed, and the one delete drops it.
+    let (_, body) = call(&app, "GET", "/v1/drafts", &Value::Null, true).await;
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap(),
+        json!({"drafts": [{"path": a, "edited_ms": 43}]})
+    );
+    assert_eq!(
+        call(&app, "DELETE", &one(&a), &Value::Null, true).await.0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(raw(&app, "GET", &get, Vec::new(), true).await.0, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn pdf_drafts_refuse_a_path_not_ending_in_pdf() {
+    let (_home, app) = setup();
+    let dir = tempfile::tempdir().unwrap();
+    for path in [
+        path_in(dir.path(), "a.txt"),
+        path_in(dir.path(), "pdf"),
+        "rel/a.pdf".to_string(),
+    ] {
+        let (status, _, body) = raw(&app, "PUT", &pdf_uri(&path, "none", 1), b"x".to_vec(), true).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");
+        assert_eq!(body, b"That path can't be saved.");
+    }
+    // A malformed base is refused too.
+    let ok = path_in(dir.path(), "a.pdf");
+    let (status, _, _) = raw(&app, "PUT", &pdf_uri(&ok, "xyz", 1), b"x".to_vec(), true).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn pdf_drafts_stop_at_the_save_cap() {
+    let (_home, app) = setup();
+    let dir = tempfile::tempdir().unwrap();
+    let path = path_in(dir.path(), "a.pdf");
+    let (status, _, _) = raw(&app, "PUT", &pdf_uri(&path, "none", 1), vec![0; SAVE_PDF_CAP + 1], true).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    let (status, _, _) = raw(&app, "PUT", &pdf_uri(&path, "none", 1), vec![0; SAVE_PDF_CAP], true).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+}

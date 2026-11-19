@@ -16,7 +16,9 @@ export type RunFacts = {
   textTab: boolean;
   /** The selected tab of the pane on screen is a PDF tab, loaded. */
   pdfTab: boolean;
-  /** That text tab has a save that can be undone now. */
+  /** The selected tab saves: a loaded text tab, or a loaded PDF tab whose note tools aren't off. */
+  saveTab: boolean;
+  /** That tab has a save that can be undone now. */
   undoSave: boolean;
 };
 
@@ -30,8 +32,9 @@ const NEEDS: ReadonlyArray<[Need, readonly string[]]> = [
   ["closed", ["reopen"]],
   ["shellPanel", ["shell-panel"]],
   ["sidebarToggle", ["sidebar"]],
-  ["textTab", ["pane-save", "pane-undo-save", "pane-go-to-line", "pane-word-wrap", "pane-next-conflict", "pane-previous-conflict"]],
-  ["pdfTab", ["pane-pdf-find", "pane-pdf-outline", "pane-pdf-pages"]],
+  ["textTab", ["pane-go-to-line", "pane-word-wrap", "pane-next-conflict", "pane-previous-conflict"]],
+  ["saveTab", ["pane-save", "pane-undo-save"]],
+  ["pdfTab", ["pane-pdf-find", "pane-pdf-outline", "pane-pdf-pages", "pane-pdf-notes"]],
   ["undoSave", ["pane-undo-save"]],
 ];
 

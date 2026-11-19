@@ -156,4 +156,12 @@ describe("closeAsk", () => {
     // A page is never asked about, whatever the set holds.
     expect(closeAsk({ id: "b1", path: "https://a.test/", kind: "web" }, new Set(["https://a.test/"]), "windows")).toBe("close");
   });
+
+  it("closeAsk_asks_for_an_unsaved_pdf", () => {
+    const pdf = { id: "p1", path: "C:\\w\\report.pdf", kind: "pdf" as const };
+    expect(closeAsk(pdf, new Set(["c:/w/Report.pdf"]), "windows")).toBe("ask");
+    expect(closeAsk(pdf, new Set(), "windows")).toBe("close");
+    // An image has nothing to save.
+    expect(closeAsk({ id: "i1", path: "C:\\w\\a.png", kind: "image" }, new Set(["C:\\w\\a.png"]), "windows")).toBe("close");
+  });
 });

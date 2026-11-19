@@ -58,3 +58,11 @@ describe("keyboardLeft", () => {
     expect(keyboardLeft(true, row, inside)).toBe(false);
   });
 });
+
+describe("PR review 6q-6 round 2: the Notes view", () => {
+  it("opens on Notes when it was chosen last, outline or not", () => {
+    expect(startView({ open: false, view: "notes" }, false)).toBe("notes");
+    expect(startView({ open: false, view: "notes" }, true)).toBe("notes");
+    expect(startView({ open: false, view: "outline" }, false)).toBe("pages");
+  });
+});

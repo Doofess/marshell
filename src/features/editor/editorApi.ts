@@ -116,6 +116,41 @@ export async function putDraft(draft: Draft): Promise<boolean> {
   }
 }
 
+/** The PDF draft of the file: its bytes, the hash of the file they grew from (null for no file) and when they were made. Null when there is none or it can't be read. */
+export async function getPdfDraft(path: string): Promise<{ bytes: ArrayBuffer; baseHash: string | null; editedMs: number } | null> {
+  try {
+    const ep = await getEndpoint();
+    const res = await coreFetch(ep, "GET", `/v1/drafts/pdf?path=${encodeURIComponent(path)}`);
+    // 204 is the core's "no draft".
+    if (res.status !== 200) return null;
+    return { bytes: await res.arrayBuffer(), baseHash: res.headers.get("X-Base-Hash"), editedMs: Number(res.headers.get("X-Edited-Ms") ?? 0) };
+  } catch {
+    return null;
+  }
+}
+
+/** What a 413 says, whoever answered it (the core, or its body limit with its own text): the PDF with its notes is over the size a draft may have. */
+const PDF_DRAFT_TOO_LARGE = "This PDF is too large to keep its unsaved notes.";
+
+/** Keep the PDF's draft. A refusal carries the core's line, which the person is told. */
+export async function putPdfDraft(path: string, bytes: Uint8Array, baseHash: string | null, editedMs: number): Promise<"kept" | { refused: string }> {
+  try {
+    const ep = await getEndpoint();
+    const query = `path=${encodeURIComponent(path)}&base=${baseHash ?? "none"}&edited=${editedMs}`;
+    // The body is raw bytes, so this does not go through `coreFetch`, which sends JSON.
+    const res = await fetch(coreUrl(ep, `/v1/drafts/pdf?${query}`), {
+      method: "PUT",
+      headers: { ...bearer(ep), "Content-Type": "application/octet-stream" },
+      body: bytes as BodyInit,
+    });
+    if (res.status === 204) return "kept";
+    const line = await lineOf(res);
+    return { refused: res.status === 413 ? PDF_DRAFT_TOO_LARGE : line };
+  } catch {
+    return { refused: GENERIC_LINE };
+  }
+}
+
 /** Drop the file's draft. A failure leaves the draft, which the core expires. */
 export async function dropDraft(path: string): Promise<void> {
   try {

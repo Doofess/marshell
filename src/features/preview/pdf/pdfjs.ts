@@ -52,9 +52,10 @@ export function canvasScale(pageW1: number, pageH1: number, scale: number, dpr: 
 
 /**
  * Draws a page into the canvas at `scale`: sharp on a dense screen (the canvas has `scale × devicePixelRatio` pixels,
- * fewer when that would pass the canvas limits, and is then stretched), laid out at `scale`.
+ * fewer when that would pass the canvas limits, and is then stretched), laid out at `scale`. With `isEditing` the notes
+ * the editor can change (highlights, free text) are left off the canvas: the editor draws them.
  */
-export async function renderPage(page: PDFPageProxy, canvas: HTMLCanvasElement, scale: number, signal?: AbortSignal): Promise<void> {
+export async function renderPage(page: PDFPageProxy, canvas: HTMLCanvasElement, scale: number, signal?: AbortSignal, isEditing = false): Promise<void> {
   const dpr = window.devicePixelRatio || 1;
   const base = page.getViewport({ scale: 1 });
   const viewport = page.getViewport({ scale: canvasScale(base.width, base.height, scale, dpr) });
@@ -62,7 +63,7 @@ export async function renderPage(page: PDFPageProxy, canvas: HTMLCanvasElement, 
   canvas.height = Math.floor(viewport.height);
   canvas.style.inlineSize = `${(base.width * scale).toFixed(2)}px`;
   canvas.style.blockSize = `${(base.height * scale).toFixed(2)}px`;
-  const task = page.render({ canvas, viewport });
+  const task = page.render({ canvas, viewport, isEditing });
   const stop = () => task.cancel();
   signal?.addEventListener("abort", stop);
   try {
@@ -85,6 +86,24 @@ export function viewerLib(): Promise<typeof import("pdfjs-dist/web/pdf_viewer.mj
     return import("pdfjs-dist/web/pdf_viewer.mjs");
   })();
   return viewer;
+}
+
+/** pdf.js's note editor: the library's editor classes, and the viewer's event bus and built-in English strings. */
+export type EditorLib = Pick<
+  typeof import("pdfjs-dist"),
+  "AnnotationEditorUIManager" | "AnnotationEditorLayer" | "AnnotationLayer" | "DrawLayer" | "AnnotationEditorType" | "AnnotationEditorParamsType" | "PixelsPerInch"
+> &
+  Pick<typeof import("pdfjs-dist/web/pdf_viewer.mjs"), "EventBus" | "GenericL10n">;
+
+/** The note editor's pieces, loaded on first use from the same copies of pdf.js the pages are drawn with. */
+let editing: Promise<EditorLib> | null = null;
+export function editorLib(): Promise<EditorLib> {
+  editing ??= (async () => {
+    const [pdfjs, web] = await Promise.all([lib(), viewerLib()]);
+    const { AnnotationEditorUIManager, AnnotationEditorLayer, AnnotationLayer, DrawLayer, AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch } = pdfjs;
+    return { AnnotationEditorUIManager, AnnotationEditorLayer, AnnotationLayer, DrawLayer, AnnotationEditorType, AnnotationEditorParamsType, PixelsPerInch, EventBus: web.EventBus, GenericL10n: web.GenericL10n };
+  })();
+  return editing;
 }
 
 /**
@@ -113,7 +132,38 @@ export async function renderTextLayer(page: PDFPageProxy, container: HTMLElement
   } finally {
     signal?.removeEventListener("abort", stop);
   }
-  return signal?.aborted ? null : { divs: layer.textDivs, items: layer.textContentItemsStr };
+  if (signal?.aborted) return null;
+  endOfContent(container);
+  return { divs: layer.textDivs, items: layer.textContentItemsStr };
+}
+
+// The layers being drawn across by a held pointer, and the documents that already clear them.
+const selecting = new Set<HTMLElement>();
+const clearing = new WeakSet<Document>();
+const endSelecting = () => {
+  for (const layer of selecting) layer.classList.remove("selecting");
+  selecting.clear();
+};
+
+/**
+ * Ends a drawn text layer with the block pdf.js's own viewer ends it with (PdfView.css styles it). Between the lines there
+ * is only the layer, so a drag let go in the blank past a line's end landed on the layer itself and the selection ran on
+ * to the page's last lines. While a press made in the layer is held, the block covers the layer under the spans and
+ * takes no selection, so the selection stays where the text last was.
+ */
+function endOfContent(layer: HTMLElement): void {
+  const doc = layer.ownerDocument;
+  const end = doc.createElement("div");
+  end.className = "endOfContent";
+  layer.append(end);
+  layer.addEventListener("mousedown", () => {
+    layer.classList.add("selecting");
+    selecting.add(layer);
+  });
+  if (clearing.has(doc)) return;
+  clearing.add(doc);
+  doc.addEventListener("pointerup", endSelecting, true);
+  doc.defaultView?.addEventListener("blur", endSelecting);
 }
 
 /** What the viewer says when a PDF won't open. */

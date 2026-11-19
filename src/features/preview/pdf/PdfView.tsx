@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from "react";
+import { useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type Ref } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { Place } from "../../pane/paneState";
 import { afterLoadFailure } from "./loadFailure";
@@ -14,13 +14,35 @@ import { Thumbnails } from "./Thumbnails";
 import { loadPdf, renderPage, renderTextLayer, type TextMapping } from "./pdfjs";
 import { keyboardLeft, setSidebarPref, sidebarPref, startOpen, startView, type SidebarView } from "./sidebarPref";
 import { parsePageField, scaleFor, zoomIn, zoomOut, type Zoom } from "./zoom";
+import { createNotesEditor, selectionLayer, type CommentRequest, type Note, type NoteTool, type NotesEditor } from "./notes/editor";
+import { readFileNotes } from "./notes/fileNotes";
+import { colourName, currentNoteId, noteRows, type NoteRow } from "./notes/noteRows";
+import { NotesList } from "./notes/NotesList";
+import { CommentPopup } from "./notes/CommentPopup";
+import { noEditor as editorless, notesBlocked } from "./notes/blocked";
+import { colorPref, setColorPref } from "./notes/notesPref";
+import { SelectionBar, selectionBarShows } from "./notes/SelectionBar";
+import { NotesBars } from "./notes/NotesBars";
+import { unsavedNotes } from "./notes/notesDoc";
+import { notesEscape, onFocusMove, useNotes } from "./notes/useNotes";
+import type { SaveCommands } from "../../editor/TextTab";
+import { useOpenInPane } from "../../pane/PaneContext";
 import "./PdfView.css";
+import "./notes/notes.css";
 
 type Props = {
+  /** The file's path. The view is keyed by it: its notes, their draft and their saves belong to this file. */
+  path: string;
+  /** The file's bytes as last read. What is shown comes from the notes (`useNotes`): the file, or the draft its notes were kept in. */
   bytes: ArrayBuffer;
-  /** Counts refetches; a new value reloads the document and keeps the scroll position. */
-  version: number;
+  /** The file's SHA-256 as last read, or null once it is deleted. */
+  hash: string | null;
+  readOnly: boolean;
   name: string;
+  /** The tab's notes gained or lost unsaved changes: the window keeps the dot on the tab strip by it. */
+  onDirty?: (path: string, dirty: boolean) => void;
+  /** Gets the tab's save commands. */
+  save?: Ref<SaveCommands | null>;
   onPages: (count: number) => void;
   /** The page in view, as the person scrolls or jumps. */
   onCurrentPage?: (page: number) => void;
@@ -52,6 +74,10 @@ const SIDE = 12;
 /** The sidebar's width (PdfView.css has the same number), and the body width under which it lies over the pages instead of beside them. */
 const SIDEBAR_W = 200;
 const OVERLAY_BELOW = 560;
+/** The selection bar's size (notes.css has the same numbers), and its gap from the selection, for placing it inside the page. */
+const BAR_W = 240;
+const BAR_H = 28;
+const BAR_GAP = 4;
 
 /** The page in view in this scroller: the last page whose top has passed the upper third of the body. */
 function pageInViewOf(scroller: HTMLElement, pages: readonly HTMLElement[]): number {
@@ -73,10 +99,16 @@ type PageProps = {
   onText: (pageIndex: number, m: TextMapping) => () => void;
   /** A click or Enter on one of the page's links. */
   onFollow: (goal: LinkGoal) => void;
+  /** The note editor, once it is ready: the canvas then leaves the notes it can change to it. */
+  notes: NotesEditor | null;
+  /** The selection bar, when the selection lies on this page: drawn over the page once the page is drawn. */
+  bar: ReactNode;
+  /** The comment popup, when the note being commented on is on this page: drawn over the page once the page is drawn. */
+  popup: ReactNode;
 };
 
 /** One page: a placeholder of its final size until it is near the view, then the canvas and the text over it. */
-function PdfPage({ doc, n, name, size, scale, root, overlay, onText, onFollow }: PageProps) {
+function PdfPage({ doc, n, name, size, scale, root, overlay, onText, onFollow, notes, bar, popup }: PageProps) {
   const holder = useRef<HTMLDivElement>(null);
   const [live, setLive] = useState(false);
   const [links, setLinks] = useState<PageLink[]>([]);
@@ -106,6 +138,7 @@ function PdfPage({ doc, n, name, size, scale, root, overlay, onText, onFollow }:
     }
     const abort = new AbortController();
     let release: (() => void) | null = null;
+    let detach: (() => void) | null = null;
     void (async () => {
       try {
         const page = await doc.getPage(n);
@@ -113,10 +146,11 @@ function PdfPage({ doc, n, name, size, scale, root, overlay, onText, onFollow }:
         const canvas = document.createElement("canvas");
         const text = document.createElement("div");
         text.className = "textLayer";
-        const [, mapping] = await Promise.all([renderPage(page, canvas, scale, abort.signal), renderTextLayer(page, text, scale, abort.signal)]);
+        const [, mapping] = await Promise.all([renderPage(page, canvas, scale, abort.signal, notes !== null), renderTextLayer(page, text, scale, abort.signal)]);
         if (abort.signal.aborted) return;
         el.replaceChildren(canvas, text);
         if (mapping) release = onText(n - 1, mapping);
+        if (notes) detach = notes.attachPage(n, page, { holder: el, text }, scale);
         // The links are read once per drawn page; they are fractions of the page, so a zoom redraws them in place.
         const viewport = page.getViewport({ scale: 1 });
         const annotations = await page.getAnnotations({ intent: "display" });
@@ -128,24 +162,27 @@ function PdfPage({ doc, n, name, size, scale, root, overlay, onText, onFollow }:
     })();
     return () => {
       abort.abort();
+      detach?.();
       release?.();
     };
-  }, [live, doc, n, scale, onText]);
+  }, [live, doc, n, scale, onText, notes]);
 
   return (
     <div className="pdf__page" role="group" aria-label={`${name}, page ${n}`} data-page={n} style={{ inlineSize: size.w * scale, blockSize: size.h * scale }}>
       <div ref={holder} className="pdf__sheet" />
       <PageLinks links={links} onFollow={onFollow} />
       {overlay}
+      {live && bar}
+      {live && popup}
     </div>
   );
 }
 
 /** What the palette can ask of a loaded PDF. */
-export type PdfCommands = { find(): void; outline(): void; pages(): void };
+export type PdfCommands = { find(): void; outline(): void; pages(): void; notes(): void };
 
 /** A PDF as a column of pages: a toolbar, then every page at its final size, drawn as they come into view. */
-export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocument, renderOverlay, place, placeKey, onJump, placeNow, announce, onWebLink, onHistory, commands }: Props) {
+export function PdfView({ path, bytes: fileBytes, hash, readOnly, name, onDirty, save, onPages, onCurrentPage, onDocument, renderOverlay, place, placeKey, onJump, placeNow, announce, onWebLink, onHistory, commands }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const [scroller, setScroller] = useState<HTMLElement | null>(null);
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
@@ -185,6 +222,30 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
   const latest = useRef({ place, announce });
   latest.current = { place, announce };
 
+  // Whether the PDF can take notes, asked of each loaded document and again when the file turns read-only or writable. Undefined until known.
+  const [verdict, setVerdict] = useState<{ doc: PDFDocumentProxy; reason: string | null } | null>(null);
+  const reason = verdict?.doc === doc ? verdict.reason : undefined;
+  useEffect(() => {
+    if (!doc) return;
+    let dead = false;
+    void notesBlocked(doc, readOnly, name).then(
+      (r) => !dead && setVerdict({ doc, reason: r }),
+      () => !dead && setVerdict({ doc, reason: null }),
+    );
+    return () => {
+      dead = true;
+    };
+  }, [doc, readOnly, name]);
+
+  // The notes: what is shown is the file, or its draft, once the draft has been looked for.
+  const openInPane = useOpenInPane();
+  const notesNow = useNotes({ path, name, hash, bytes: fileBytes, readOnly, blocked: !!reason, announce, onDirty, openCopy: (p) => openInPane({ path: p }), save, focus: () => scroller?.focus() });
+  const bytes = notesNow.shown?.bytes ?? null;
+  const version = notesNow.shown?.version ?? 0;
+  const runner = notesNow.runner;
+  // A reason from the document leaves the pages with no editor at all; read-only keeps it only while unsaved notes are on screen.
+  const noEditor = editorless(reason, name, unsavedNotes(notesNow.state));
+
   // The preview body is the scroll area and the root for what is in view.
   useLayoutEffect(() => {
     setScroller(root.current?.closest<HTMLElement>(".preview__body") ?? null);
@@ -192,6 +253,7 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
 
   // Load on the bytes. The document on screen stays until the new one is ready, so a reload keeps its place.
   useEffect(() => {
+    if (bytes === null) return;
     let dead = false;
     let loaded: PDFDocumentProxy | null = null;
     void (async () => {
@@ -226,14 +288,147 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
     };
   }, [bytes, version]);
 
-  // Gone with the view.
+  // The note editor, one per loaded document, over the pages in the body.
+  const [notes, setNotes] = useState<NotesEditor | null>(null);
+  // The comment popup's request, when a note is being commented on. Each request gets its own popup (the id is its key), so a
+  // newer one unmounts the open one, which cancels it.
+  const [comment, setComment] = useState<{ request: CommentRequest; id: number } | null>(null);
+  const commentId = useRef(0);
+  useEffect(() => {
+    if (!doc || !scroller || noEditor) return;
+    let dead = false;
+    let made: NotesEditor | null = null;
+    void createNotesEditor(doc, { container: scroller, onComment: (request) => setComment({ request, id: ++commentId.current }), onNews: (line) => latest.current.announce?.(line) }).then(
+      (e) => {
+        if (dead) return e.destroy();
+        made = e;
+        notesNow.editor.current = e;
+        e.setColor(colorPref());
+        e.onChange(() => runner.dispatch({ type: "edited" }));
+        setNotes(e);
+      },
+      () => {},
+    );
+    return () => {
+      dead = true;
+      setNotes(null);
+      setComment(null);
+      const gone = made;
+      if (!gone) return;
+      // A draft waiting is taken from this editor before it goes; the document waits for that too (below).
+      void runner.unload().then(() => gone.destroy());
+      if (notesNow.editor.current === gone) notesNow.editor.current = null;
+    };
+  }, [doc, scroller, noEditor, runner, notesNow.editor]);
+
+  // The tool the person chose, handed to the editor whenever either changes; with notes blocked it is off, though the choice is kept.
+  const [tool, setTool] = useState<NoteTool>("none");
+  const effectiveTool: NoteTool = reason ? "none" : tool;
+  useEffect(() => {
+    notes?.setTool(effectiveTool);
+  }, [notes, effectiveTool]);
+
+  // The selection bar: after a pointer selection in one page's text ends, never with the Highlight tool on.
+  const [selBar, setSelBar] = useState<{ page: number; style: CSSProperties } | null>(null);
+  const [color, setColor] = useState(colorPref);
+  useEffect(() => {
+    if (!scroller || !selectionBarShows(notes !== null, effectiveTool, reason)) return setSelBar(null);
+    let later = 0;
+    const place = () => {
+      const sel = window.getSelection();
+      const layer = selectionLayer(sel, scroller);
+      const page = layer?.closest<HTMLElement>(".pdf__page");
+      const rects = sel && layer ? sel.getRangeAt(0).getClientRects() : null;
+      if (!layer || !page || !rects || rects.length === 0) return setSelBar(null);
+      const box = page.getBoundingClientRect();
+      const first = rects[0]!;
+      const last = rects[rects.length - 1]!;
+      const left = Math.max(0, Math.min(last.right - box.left, box.width - BAR_W));
+      // Under the selection's last line, or above its first when that would pass the page's bottom.
+      const style: CSSProperties =
+        last.bottom - box.top + BAR_GAP + BAR_H > box.height
+          ? { insetInlineStart: left, insetBlockEnd: box.height - (first.top - box.top) + BAR_GAP }
+          : { insetInlineStart: left, insetBlockStart: last.bottom - box.top + BAR_GAP };
+      setSelBar({ page: Number(page.dataset.page), style });
+    };
+    const up = (e: PointerEvent) => {
+      if (e.target instanceof Element && e.target.closest(".pdf-selbar")) return;
+      clearTimeout(later);
+      later = window.setTimeout(place, 0);
+    };
+    const change = () => {
+      if (!selectionLayer(window.getSelection(), scroller)) setSelBar(null);
+    };
+    document.addEventListener("pointerup", up, true);
+    document.addEventListener("selectionchange", change);
+    return () => {
+      clearTimeout(later);
+      setSelBar(null);
+      document.removeEventListener("pointerup", up, true);
+      document.removeEventListener("selectionchange", change);
+    };
+  }, [notes, scroller, effectiveTool, reason]);
+  // The editor announces the highlight it makes (`onNews`), as it does for the Highlight tool's and find's.
+  const highlightBySelection = (comment: boolean) => {
+    notes?.highlightSelection(comment);
+    setSelBar(null);
+    scroller?.focus({ preventScroll: true });
+  };
+  const pickColor = (hex: string) => {
+    setColorPref(hex);
+    setColor(hex);
+    notes?.setColor(hex);
+  };
+  const bar = (
+    <SelectionBar
+      color={color}
+      onColor={pickColor}
+      onHighlight={() => highlightBySelection(false)}
+      onComment={() => highlightBySelection(true)}
+      onClose={() => {
+        setSelBar(null);
+        scroller?.focus({ preventScroll: true });
+      }}
+      style={selBar?.style}
+    />
+  );
+
+  const popup = comment && (
+    <CommentPopup key={comment.id} request={comment.request} onClose={() => setComment((c) => (c?.id === comment.id ? null : c))} />
+  );
+
+  // pdf.js takes keys only while the keyboard is in the tab and the window has focus; a focus move is read a tick later.
+  useEffect(() => {
+    if (!notes || !scroller) return;
+    let later = 0;
+    const check = () => {
+      clearTimeout(later);
+      later = window.setTimeout(() => onFocusMove(notes, scroller, document.activeElement, document.hasFocus()), 0);
+    };
+    check();
+    scroller.addEventListener("focusin", check);
+    scroller.addEventListener("focusout", check);
+    window.addEventListener("focus", check);
+    window.addEventListener("blur", check);
+    return () => {
+      clearTimeout(later);
+      notes.setLive(false);
+      scroller.removeEventListener("focusin", check);
+      scroller.removeEventListener("focusout", check);
+      window.removeEventListener("focus", check);
+      window.removeEventListener("blur", check);
+    };
+  }, [notes, scroller]);
+
+  // Gone with the view, once a draft waiting has been taken from its notes.
   useEffect(
     () => () => {
       cb.current.onDocument?.(null);
-      void docRef.current?.loadingTask.destroy();
+      const gone = docRef.current;
       docRef.current = null;
+      void runner.unload().then(() => gone?.loadingTask.destroy());
     },
-    [],
+    [runner],
   );
 
   // Fit width follows the body.
@@ -283,6 +478,9 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
   const count = sizes.length;
   const scaleOf = (i: number) => scaleFor(zoom, sizes[i]?.w ?? 0, available);
   const shownScale = scaleOf(current - 1);
+  useEffect(() => {
+    notes?.setPage(current, shownScale);
+  }, [notes, current, shownScale]);
 
   // What is stuck above the pages: the toolbar (with the find bar), and the "deleted" notice when it is there.
   const headHeight = () => (root.current?.querySelector<HTMLElement>(".pdf__bar")?.offsetHeight ?? 0) + (scroller?.querySelector<HTMLElement>(".preview__notice")?.offsetHeight ?? 0);
@@ -361,6 +559,16 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
       if (r.left < s.left || r.right > s.left + scroller.clientWidth) scroller.scrollLeft += r.left + r.width / 2 - (s.left + scroller.clientWidth / 2);
     },
   });
+
+  // Highlight or Comment on find's current match: its letters become the selection, and the editor highlights that.
+  const noteFromFind = (comment: boolean) => {
+    const range = find.currentRange();
+    const sel = window.getSelection();
+    if (!range || !sel || !notes) return;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    notes.highlightSelection(comment);
+  };
 
   const commit = () => {
     const n = draft === null ? null : parsePageField(draft, count);
@@ -488,6 +696,8 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
       panel?.querySelector<HTMLElement>("button") ??
       side?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
     target?.focus({ preventScroll: true });
+    // The palette's Notes command is answered once the keyboard is in a list that is already there.
+    if (panel?.contains(document.activeElement)) wantNotesFocus.current = false;
   }, [sidebarTick]);
 
   // Lying over the pages, the sidebar closes when a pointer goes down, or the keyboard goes, anywhere outside it and its button.
@@ -538,6 +748,75 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
     } else if (onJump) onJump(to, { keepFocus: true });
     else applyPlace(to);
   };
+  // The Notes view's list: read when the view opens, and again after a change of the notes, at most every 500 ms. A PDF with no
+  // editor (blocked by its document) lists the file's notes, every one read-only.
+  const [noteList, setNoteList] = useState<Note[] | null>(null);
+  const notesRef = useRef(notes);
+  notesRef.current = notes;
+  useEffect(() => {
+    if (!doc || !open || view !== "notes" || (!notes && !noEditor)) return;
+    let dead = false;
+    let timer = 0;
+    let last = 0;
+    const read = () => {
+      last = Date.now();
+      const got = notes ? notes.notes() : readFileNotes(doc).then((ns) => ns.map((n) => ({ ...n, editable: false })));
+      got.then(
+        (ns) => {
+          if (!dead) setNoteList(ns);
+        },
+        () => {
+          if (!dead) setNoteList([]);
+        },
+      );
+    };
+    read();
+    const off = notes?.onChange(() => {
+      if (timer) return;
+      timer = window.setTimeout(
+        () => {
+          timer = 0;
+          read();
+        },
+        Math.max(0, 500 - (Date.now() - last)),
+      );
+    });
+    return () => {
+      dead = true;
+      clearTimeout(timer);
+      off?.();
+    };
+  }, [doc, open, view, notes, noEditor]);
+  const rows = noteList ? noteRows(noteList, colourName) : null;
+  // The palette's command puts the keyboard in the list, which may still be read when the view opens: it lands when the list does.
+  const wantNotesFocus = useRef(false);
+  useLayoutEffect(() => {
+    if (!wantNotesFocus.current || rows === null) return;
+    wantNotesFocus.current = false;
+    const panel = root.current?.querySelector<HTMLElement>('.pdf-sidebar [role="tabpanel"]');
+    panel?.querySelector<HTMLElement>('[aria-current="true"]')?.focus({ preventScroll: true });
+    if (!panel?.contains(document.activeElement)) panel?.querySelector<HTMLElement>('[tabindex="0"]')?.focus({ preventScroll: true });
+  }, [rows]);
+  // A note picked jumps to its place, as an outline entry does. An editable one then takes the keyboard on the page, which is
+  // only so where the keyboard goes to the pages anyway (a sidebar beside them keeps it, as for the outline); the page may not
+  // be drawn at once, so it is tried a few times.
+  const pickNote = (row: NoteRow) => {
+    const to: Place = { page: row.page, top: row.top };
+    if (over) {
+      if (onJump) onJump(to, { keepFocus: false });
+      else applyPlace(to);
+      hideSidebar(false);
+      focusPages();
+      if (!row.editable) return;
+      let tries = 0;
+      const attempt = () => {
+        if (notesRef.current?.focusNote(row.id) || ++tries > 15) return;
+        window.setTimeout(attempt, 100);
+      };
+      window.setTimeout(attempt, 0);
+    } else if (onJump) onJump(to, { keepFocus: true });
+    else applyPlace(to);
+  };
   const leaveSidebar = () => {
     if (over) hideSidebar(false);
     focusPages();
@@ -570,11 +849,19 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
     setSidebarPref({ view: v });
     showSidebar();
   };
-  paletteRef.current = { find: openFind, outline: () => showSidebarView("outline"), pages: () => showSidebarView("pages") };
+  paletteRef.current = {
+    find: openFind,
+    outline: () => showSidebarView("outline"),
+    pages: () => showSidebarView("pages"),
+    notes: () => {
+      wantNotesFocus.current = true;
+      showSidebarView("notes");
+    },
+  };
   const loaded = doc !== null && !error;
   useImperativeHandle<PdfCommands | null, PdfCommands | null>(
     commands,
-    () => (loaded ? { find: () => paletteRef.current?.find(), outline: () => paletteRef.current?.outline(), pages: () => paletteRef.current?.pages() } : null),
+    () => (loaded ? { find: () => paletteRef.current?.find(), outline: () => paletteRef.current?.outline(), pages: () => paletteRef.current?.pages(), notes: () => paletteRef.current?.notes() } : null),
     [loaded],
   );
   useLayoutEffect(() => {
@@ -607,6 +894,7 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
   // Ctrl+F, F3 and Shift+F3 work anywhere in the body, as Ctrl+= / Ctrl+- / Ctrl+0 do; so the listener is on the body.
   const keys = useRef<(e: globalThis.KeyboardEvent) => void>(() => {});
   keys.current = (e) => {
+    notesEscape(e, notes);
     const k = pdfKey(e);
     if (k === "find" || k === "next" || k === "previous") {
       // F3 with no search going does what Ctrl+F does; it does not step as well.
@@ -645,6 +933,9 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
           percent={Math.round(shownScale * 100)}
           fit={zoom.kind === "fit"}
           findOpen={findOpen}
+          tool={effectiveTool}
+          blocked={reason ?? null}
+          onTool={setTool}
           sidebar={
             <button
               ref={sidebarButton}
@@ -654,8 +945,8 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
               aria-expanded={open}
               aria-controls={sidebarId}
               aria-keyshortcuts="F4"
-              aria-label="Outline and pages"
-              title="Outline and pages (F4)"
+              aria-label="Outline, pages and notes"
+              title="Outline, pages and notes (F4)"
               onClick={toggleSidebar}
             >
               {/* A panel with its left part filled: the sidebar. Three lines are the app's Menu. */}
@@ -673,7 +964,20 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
           onFit={() => setScale({ kind: "fit" })}
           // The button shows and hides the bar, as its aria-expanded says; Ctrl+F only ever opens it.
           onFind={() => (findOpen ? closeFind() : openFind())}
-          findRow={findOpen ? <FindBar query={find.query} status={find.status} onQuery={find.search} onStep={step} onClose={closeFind} field={field} /> : null}
+          findRow={findOpen ? <FindBar query={find.query} status={find.status} onQuery={find.search} onStep={step} onNote={noteFromFind} notesOff={!notes || !!reason} onClose={closeFind} field={field} /> : null}
+        />
+        <NotesBars
+          name={name}
+          conflict={notesNow.state.conflict === null ? null : notesNow.state.conflict.hash === null ? "deleted" : "changed"}
+          line={notesNow.state.line}
+          undo={notesNow.state.lastSave !== null && !notesNow.state.saving}
+          copy={notesNow.state.refusedSave}
+          toPages={() => scroller?.focus({ preventScroll: true })}
+          onUndo={() => runner.dispatch({ type: "unsave" })}
+          onCopy={() => runner.dispatch({ type: "copy" })}
+          onReload={() => runner.dispatch({ type: "reload" })}
+          onOverwrite={() => runner.dispatch({ type: "overwrite" })}
+          onSave={() => runner.dispatch({ type: "overwrite" })}
         />
       </div>
       <div className="pdf__main">
@@ -694,10 +998,11 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
             onPick={pick}
             onLeave={leaveSidebar}
             pages={doc ? <Thumbnails doc={doc} sizes={sizes} current={current} name={name} onPick={pickPage} /> : null}
+            notes={<NotesList name={name} rows={rows} current={rows ? currentNoteId(rows, current) : null} onPick={pickNote} />}
           />
         )}
         <div className="pdf__pagelist">
-          {doc && sizes.map((size, i) => <PdfPage key={i} doc={doc} n={i + 1} name={name} size={size} scale={scaleOf(i)} root={scroller} overlay={renderOverlay?.(i + 1)} onText={find.attach} onFollow={(g) => follow(g, { keepFocus: false })} />)}
+          {doc && sizes.map((size, i) => <PdfPage key={i} doc={doc} n={i + 1} name={name} size={size} scale={scaleOf(i)} root={scroller} overlay={renderOverlay?.(i + 1)} onText={find.attach} onFollow={(g) => follow(g, { keepFocus: false })} notes={notes} bar={selBar?.page === i + 1 ? bar : null} popup={comment?.request.page === i + 1 ? popup : null} />)}
           {!doc && <p className="preview__message">Loading…</p>}
         </div>
       </div>

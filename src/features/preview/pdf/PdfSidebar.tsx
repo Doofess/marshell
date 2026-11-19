@@ -24,11 +24,14 @@ type Props = {
   onLeave: () => void;
   /** The Pages view's list. */
   pages: ReactNode;
+  /** The Notes view's list. */
+  notes?: ReactNode;
 };
 
 const VIEWS: { view: SidebarView; label: string }[] = [
   { view: "outline", label: "Outline" },
   { view: "pages", label: "Pages" },
+  { view: "notes", label: "Notes" },
 ];
 
 const arrow = (open: boolean) => (
@@ -37,8 +40,8 @@ const arrow = (open: boolean) => (
   </svg>
 );
 
-/** The outline and the pages of a PDF, as two views on one tab list. It is a landmark, not a dialog: the keyboard comes and goes freely. */
-export function PdfSidebar({ id, name, view, onView, outline, section, expanded, onToggle, onPick, onLeave, pages }: Props) {
+/** The outline, the pages and the notes of a PDF, as three views on one tab list. It is a landmark, not a dialog: the keyboard comes and goes freely. */
+export function PdfSidebar({ id, name, view, onView, outline, section, expanded, onToggle, onPick, onLeave, pages, notes }: Props) {
   const uid = useId();
   const tab = (v: SidebarView) => `${uid}-tab-${v}`;
   const panel = `${uid}-panel`;
@@ -82,7 +85,7 @@ export function PdfSidebar({ id, name, view, onView, outline, section, expanded,
     <nav
       id={id}
       className="pdf-sidebar"
-      aria-label="Outline and pages"
+      aria-label="Outline, pages and notes"
       // A click on the sidebar's empty space keeps the keyboard in it, so it isn't taken for the keyboard leaving.
       tabIndex={-1}
       onKeyDown={(e) => {
@@ -101,6 +104,8 @@ export function PdfSidebar({ id, name, view, onView, outline, section, expanded,
       <div className="pdf-sidebar__panel" role="tabpanel" id={panel} aria-labelledby={tab(view)}>
         {view === "pages" ? (
           pages
+        ) : view === "notes" ? (
+          notes
         ) : outline === null ? null : outline.length === 0 ? (
           <div className="pdf-sidebar__empty">
             <p className="pdf-sidebar__none">This PDF has no outline.</p>

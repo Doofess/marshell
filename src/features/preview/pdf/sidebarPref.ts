@@ -3,7 +3,7 @@
  * It is module state: a restart starts closed. It records choices only, so a sidebar that closed after a pick, by Esc or by a
  * click outside it, and a view shown for want of an outline, leave it as it was.
  */
-export type SidebarView = "outline" | "pages";
+export type SidebarView = "outline" | "pages" | "notes";
 export type SidebarPref = { open: boolean; view: SidebarView | null };
 
 let pref: SidebarPref = { open: false, view: null };
@@ -29,8 +29,8 @@ export function keyboardLeft(pageFocused: boolean, active: unknown, inside: (t: 
   return pageFocused && !inside(active);
 }
 
-/** The view a tab opens on: the one last chosen, Pages for a PDF with no outline, and else Outline. */
+/** The view a tab opens on: the one last chosen, but Pages for a PDF with no outline when that was Outline, and else Outline. */
 export function startView(p: SidebarPref, hasOutline: boolean): SidebarView {
-  if (!hasOutline) return "pages";
+  if (!hasOutline) return p.view === "notes" ? "notes" : "pages";
   return p.view ?? "outline";
 }

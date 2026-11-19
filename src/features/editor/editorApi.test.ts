@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Draft } from "../../generated/Draft";
 import { resetEndpoint } from "../../lib/api/client";
-import { dropDraft, getDraft, listDrafts, mergeTexts, putDraft, saveFile, unsaveFile } from "./editorApi";
+import { dropDraft, getDraft, listDrafts, mergeTexts, putDraft, putPdfDraft, saveFile, unsaveFile } from "./editorApi";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -169,5 +169,19 @@ describe("the drafts", () => {
     fetchMock.mockReset();
     fetchMock.mockRejectedValue(new TypeError("Failed to fetch"));
     await expect(dropDraft("C:\\a.txt")).resolves.toBeUndefined();
+  });
+});
+
+describe("PR review 6q-6 round 2: a PDF draft's refusal", () => {
+  it("says the PDF is too large for any 413, whatever text came with it", async () => {
+    arrange(new Response("Failed to buffer the request body: length limit exceeded", { status: 413 }));
+    expect(await putPdfDraft("C:\a.pdf", new Uint8Array([1]), null, 5)).toEqual({ refused: "This PDF is too large to keep its unsaved notes." });
+    arrange(new Response("", { status: 413 }));
+    expect(await putPdfDraft("C:\a.pdf", new Uint8Array([1]), null, 5)).toEqual({ refused: "This PDF is too large to keep its unsaved notes." });
+  });
+  it("passes the core's line on for any other refusal", async () => {
+    const line = "Marshell keeps at most 1 GB of unsaved PDF notes. Save some PDFs first.";
+    arrange(new Response(line, { status: 409 }));
+    expect(await putPdfDraft("C:\a.pdf", new Uint8Array([1]), null, 5)).toEqual({ refused: line });
   });
 });

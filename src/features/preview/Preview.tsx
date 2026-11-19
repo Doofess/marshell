@@ -6,8 +6,8 @@ import { cropImage, cropPdfPage } from "../regions/crop";
 import { placePopover } from "../regions/placement";
 import { RegionComment, type RegionTarget } from "../regions/RegionComment";
 import { RegionLayer } from "../regions/RegionLayer";
-import { getDraft } from "../editor/editorApi";
-import { isSaveKey, TextTab, type TextTabCommands } from "../editor/TextTab";
+import { getDraft, getPdfDraft } from "../editor/editorApi";
+import { isSaveKey, TextTab, type SaveCommands, type TextTabCommands } from "../editor/TextTab";
 import { canMarkRegion, fromDrag, initialRegion, regionLabel, regionStillValid, type Region } from "../regions/region";
 import type { Os } from "../../lib/keymap";
 import { ImageView } from "./ImageView";
@@ -137,6 +137,8 @@ export type PreviewPaneProps = {
   onDirty?: (path: string, dirty: boolean) => void;
   /** Unsaved edits are kept for this file, which was already gone when the tab opened: the editor opens on them. */
   keptDraft?: boolean;
+  /** A PDF draft's bytes, kept for this file, which was already gone when the tab opened: the PDF view opens on them, with its notes. */
+  keptPdf?: ArrayBuffer | null;
   /** The palette's "Select region" starts a region through this. */
   ref?: Ref<PreviewHandle>;
 };
@@ -149,6 +151,8 @@ export type PreviewHandle = {
   text(): TextTabCommands | null;
   /** The PDF tab's commands, or null while the tab is not a PDF that has loaded. */
   pdf(): PdfCommands | null;
+  /** What saves the tab: a text tab's editor, or a PDF tab's notes. Null for anything else. */
+  saving(): SaveCommands | null;
 };
 
 /** What the pane keeps while a region is being marked. */
@@ -178,6 +182,8 @@ type BodyProps = {
   textCommands: Ref<TextTabCommands>;
   /** What a PDF tab hands the pane to call. */
   pdfCommands: Ref<PdfCommands | null>;
+  /** What saves a PDF tab's notes. */
+  pdfSave: Ref<SaveCommands | null>;
   onDirty: (path: string, dirty: boolean) => void;
   onImageSize: (url: string, w: number, h: number) => void;
   onPages: (count: number) => void;
@@ -185,6 +191,7 @@ type BodyProps = {
   onKey: (e: Key) => void;
   region: RegionHooks;
   keptDraft: boolean;
+  keptPdf: ArrayBuffer | null;
   /** Shows a Markdown or HTML tab's Source view, after a merge that left conflicts; it doesn't move the keyboard. */
   onSource: () => void;
   /** Where a PDF shows, from the entry, and what tells it to go there again (it changes when the tab moves, not when the place is recorded). */
@@ -202,7 +209,7 @@ type BodyProps = {
 
 const noDirty = () => {};
 
-function Body({ entry, file, active, os, announce, refetch, textCommands, pdfCommands, onDirty, onImageSize, onPages, onLink, onKey, region, keptDraft, onSource, place, placeKey, onJump, placeNow, onWebLink, onHistory }: BodyProps) {
+function Body({ entry, file, active, os, announce, refetch, textCommands, pdfCommands, pdfSave, onDirty, onImageSize, onPages, onLink, onKey, region, keptDraft, keptPdf, onSource, place, placeKey, onJump, placeNow, onWebLink, onHistory }: BodyProps) {
   const { name } = splitPath(entry.path);
   // A text file, and a deleted one that was text, are the same tab: the editor stays mounted when the file goes and comes back.
   const textTab = (f: Extract<FileState, { phase: "text" | "deleted" }>) => (
@@ -220,38 +227,51 @@ function Body({ entry, file, active, os, announce, refetch, textCommands, pdfCom
     case "binary":
       return <p className="preview__message">This file isn't text.</p>;
     case "pdf":
-      return (
-        <PdfView
-          bytes={file.bytes}
-          version={file.version}
-          name={name}
-          onPages={onPages}
-          onCurrentPage={region.onCurrentPage}
-          onDocument={region.onDocument}
-          renderOverlay={region.overlay}
-          place={place}
-          placeKey={placeKey}
-          onJump={onJump}
-          placeNow={placeNow}
-          commands={pdfCommands}
-          announce={announce}
-          onWebLink={onWebLink}
-          onHistory={onHistory}
-        />
-      );
+      return pdfTab(file, file.hash);
     case "deleted":
       // With something that was shown, the content stays and the notice sits above it (see PreviewPane); this is the plain case.
       // A file that was gone before the tab ever showed it has only its draft: the editor opens on that, so the edits can be read
-      // and saved again.
+      // and saved again. A PDF stays mounted too, with its notes, which can be saved back; a PDF's draft is the whole file with
+      // its notes, so the PDF view opens on it, and its notes say the file is gone.
       if (file.last?.phase === "text" || (file.last === undefined && keptDraft)) return textTab(file);
-      return file.last ? <Body entry={entry} file={file.last} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} pdfCommands={pdfCommands} onDirty={onDirty} onImageSize={onImageSize} onPages={onPages} onLink={onLink} onKey={onKey} region={region} keptDraft={keptDraft} onSource={onSource} place={place} placeKey={placeKey} onJump={onJump} placeNow={placeNow} onWebLink={onWebLink} onHistory={onHistory} /> : <p className="preview__message">This file was deleted.</p>;
+      if (file.last === undefined && keptPdf) return pdfTab({ phase: "pdf", bytes: keptPdf, version: 0, hash: "", readOnly: null }, null);
+      if (file.last?.phase === "pdf") return pdfTab(file.last, null);
+      return file.last ? <Body entry={entry} file={file.last} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} pdfCommands={pdfCommands} pdfSave={pdfSave} onDirty={onDirty} onImageSize={onImageSize} onPages={onPages} onLink={onLink} onKey={onKey} region={region} keptDraft={keptDraft} keptPdf={keptPdf} onSource={onSource} place={place} placeKey={placeKey} onJump={onJump} placeNow={placeNow} onWebLink={onWebLink} onHistory={onHistory} /> : <p className="preview__message">This file was deleted.</p>;
     case "error":
       return <p className="preview__message">This file can't be previewed.</p>;
+  }
+
+  // A PDF and a deleted one that was a PDF are the same tab, as for text: its notes stay when the file goes and comes back.
+  function pdfTab(f: Extract<FileState, { phase: "pdf" }>, hash: string | null) {
+    return (
+      <PdfView
+        key={entry.path}
+        path={entry.path}
+        bytes={f.bytes}
+        hash={hash}
+        readOnly={f.readOnly !== null}
+        onDirty={onDirty}
+        save={pdfSave}
+        name={name}
+        onPages={onPages}
+        onCurrentPage={region.onCurrentPage}
+        onDocument={region.onDocument}
+        renderOverlay={region.overlay}
+        place={place}
+        placeKey={placeKey}
+        onJump={onJump}
+        placeNow={placeNow}
+        commands={pdfCommands}
+        announce={announce}
+        onWebLink={onWebLink}
+        onHistory={onHistory}
+      />
+    );
   }
 }
 
 /** The pane for one file: header, then the scrolling body. Everything it shows comes in as props, so it renders the same on any state. */
-export function PreviewPane({ entry, file, updated, os, canBack, canForward, onBack, onForward, onOpen, onView, onPlace, active, onEscape, announce, refetch, regionTarget, onRegion, onDirty, keptDraft = false, ref }: PreviewPaneProps) {
+export function PreviewPane({ entry, file, updated, os, canBack, canForward, onBack, onForward, onOpen, onView, onPlace, active, onEscape, announce, refetch, regionTarget, onRegion, onDirty, keptDraft = false, keptPdf = null, ref }: PreviewPaneProps) {
   const { name, folder } = splitPath(entry.path);
   const body = useRef<HTMLDivElement>(null);
   // A PDF in the tab hands over, through this, its way to read the place at the top of the view.
@@ -300,6 +320,7 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
   // What a text tab lets the pane call: Ctrl+S saves through it. Null while no text tab is mounted.
   const textCommands = useRef<TextTabCommands>(null);
   const pdfCommands = useRef<PdfCommands | null>(null);
+  const pdfSave = useRef<SaveCommands | null>(null);
   const noteDirty = onDirty ?? noDirty;
   // Focus goes into the scroll body when the tab goes somewhere (a link, Back, Forward, another line), so the arrow keys and
   // Page Up and Down read it at once. Mounting takes no focus, and neither does being selected: a session switch and the tab
@@ -403,6 +424,7 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
     },
     text: () => textCommands.current,
     pdf: () => pdfCommands.current,
+    saving: () => textCommands.current ?? pdfSave.current,
   }));
   const add = async (comment: string) => {
     if (!select) return;
@@ -470,10 +492,11 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
     const inField = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable === true);
     // Escape belongs to the editor while it has the keyboard: it closes the find bar, and Esc then Tab leaves.
     const inEditor = !!t && t.closest?.(".editor") != null;
-    if (isSaveKey(e, os) && textCommands.current) {
+    const saving = textCommands.current ?? pdfSave.current;
+    if (isSaveKey(e, os) && saving) {
       // Always taken, so the webview's own save never opens, whether or not there is anything to save.
       e.preventDefault();
-      void textCommands.current.save();
+      void saving.save();
     } else if ((e.key === "r" || e.key === "R") && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && canMark && !inField) {
       e.preventDefault();
       if (select) endSelect();
@@ -554,7 +577,7 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
             This file was deleted.
           </div>
         )}
-        <Body entry={entry} file={file} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} pdfCommands={pdfCommands} onDirty={noteDirty} onImageSize={(url, w, h) => setSize({ url, w, h })} onPages={(count) => setPages({ path: entry.path, count })} onLink={follow} onKey={keys} region={regionHooks} keptDraft={keptDraft} onSource={() => views.current?.merge()} place={placeOf(entry)} placeKey={moves.current.count} onJump={jump} placeNow={placeNowRef} onWebLink={(url) => follow({ kind: "web", url })} onHistory={(by) => { if (by < 0) { if (canBack) goBack(); } else if (canForward) goForward(); }} />
+        <Body entry={entry} file={file} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} pdfCommands={pdfCommands} pdfSave={pdfSave} onDirty={noteDirty} onImageSize={(url, w, h) => setSize({ url, w, h })} onPages={(count) => setPages({ path: entry.path, count })} onLink={follow} onKey={keys} region={regionHooks} keptDraft={keptDraft} keptPdf={keptPdf} onSource={() => views.current?.merge()} place={placeOf(entry)} placeKey={moves.current.count} onJump={jump} placeNow={placeNowRef} onWebLink={(url) => follow({ kind: "web", url })} onHistory={(by) => { if (by < 0) { if (canBack) goBack(); } else if (canForward) goForward(); }} />
       </div>
       {select?.step === "comment" && body.current
         ? createPortal(
@@ -611,7 +634,7 @@ function RegionPopover({ boxEl, body, region, children }: { boxEl: HTMLElement |
   );
 }
 
-export type PreviewProps = Omit<PreviewPaneProps, "file" | "updated" | "refetch" | "keptDraft">;
+export type PreviewProps = Omit<PreviewPaneProps, "file" | "updated" | "refetch" | "keptDraft" | "keptPdf">;
 
 /**
  * Whether unsaved edits are kept for a file that was already gone when its tab opened. Asked once the file is known to be gone,
@@ -632,9 +655,31 @@ function useKeptDraft(path: string, lost: boolean): boolean {
   return kept === path;
 }
 
+/**
+ * The PDF draft kept for a file that was already gone when its tab opened, as `useKeptDraft` asks for a text one: the PDF view
+ * opens on its bytes, so the notes can be saved back or copied. Asked once the file is known to be gone; the answer stays for the
+ * path.
+ */
+function useKeptPdf(path: string, lost: boolean): ArrayBuffer | null {
+  const [kept, setKept] = useState<{ path: string; bytes: ArrayBuffer } | null>(null);
+  useEffect(() => {
+    if (!lost) return;
+    let on = true;
+    void getPdfDraft(path).then((draft) => {
+      if (on && draft !== null) setKept({ path, bytes: draft.bytes });
+    });
+    return () => {
+      on = false;
+    };
+  }, [path, lost]);
+  return kept?.path === path ? kept.bytes : null;
+}
+
 /** The preview pane for the current entry. It loads the file, keeps it current while it is open, and stops when it closes. */
 export function Preview(props: PreviewProps) {
   const { file, updated, refetch } = usePreviewFile(props.entry.path, { paused: !props.active });
-  const keptDraft = useKeptDraft(props.entry.path, file.phase === "deleted" && file.last === undefined);
-  return <PreviewPane {...props} file={file} updated={updated} refetch={refetch} keptDraft={keptDraft} />;
+  const lost = file.phase === "deleted" && file.last === undefined;
+  const keptDraft = useKeptDraft(props.entry.path, lost);
+  const keptPdf = useKeptPdf(props.entry.path, lost);
+  return <PreviewPane {...props} file={file} updated={updated} refetch={refetch} keptDraft={keptDraft} keptPdf={keptPdf} />;
 }

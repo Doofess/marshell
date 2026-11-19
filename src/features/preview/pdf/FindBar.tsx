@@ -3,6 +3,18 @@ import type { FindQuery, FindStatus } from "./findText";
 
 const NO_TEXT = "This PDF has no text to search. Its pages may be scanned images.";
 
+type Focusable = { isConnected: boolean; focus(o?: FocusOptions): void };
+
+/**
+ * Runs `make` and gives the keyboard back to what had it. pdf.js puts the keyboard on the note it makes; from find's
+ * Highlight it stays on the button, so Next and Highlight go on through the matches (the note is announced).
+ */
+export function keepingFocus(make: () => void, doc: { activeElement: unknown } = document) {
+  const had = doc.activeElement as Focusable | null;
+  make();
+  if (had && had.isConnected && doc.activeElement !== had) had.focus({ preventScroll: true });
+}
+
 /** What the count beside the field reads. It is not a live region: a step is announced through `stepText`. */
 export function countText(s: FindStatus, query: string): string {
   if (query.trim() === "") return "";
@@ -75,12 +87,17 @@ type Props = {
   status: FindStatus;
   onQuery: (q: FindQuery) => void;
   onStep: (previous: boolean) => void;
+  /** Highlights the current match, and asks for its comment when `comment`. */
+  onNote?: (comment: boolean) => void;
+  /** The note tools are off (the PDF can't take notes): the two note buttons are disabled. */
+  notesOff?: boolean;
   onClose: () => void;
   field: Ref<HTMLInputElement>;
 };
 
 /** The find row under the toolbar. It wraps like the editor's: the two checkboxes drop to a second line when one line is too narrow. */
-export function FindBar({ query, status, onQuery, onStep, onClose, field }: Props) {
+export function FindBar({ query, status, onQuery, onStep, onNote, notesOff = false, onClose, field }: Props) {
+  const noNote = status.current < 1 || notesOff || !onNote;
   return (
     <div
       className="pdf__find"
@@ -116,6 +133,12 @@ export function FindBar({ query, status, onQuery, onStep, onClose, field }: Prop
       </button>
       <button type="button" className="pdf__button" aria-label="Next" title="Next match (Enter)" onClick={() => onStep(false)}>
         {chevron("M2.5 4.5 6 8l3.5-3.5")}
+      </button>
+      <button type="button" className="pdf__button pdf__textbutton" aria-label="Highlight" title="Highlight this match" disabled={noNote} onClick={() => keepingFocus(() => onNote?.(false))}>
+        Highlight
+      </button>
+      <button type="button" className="pdf__button pdf__textbutton" aria-label="Comment" title="Highlight this match and comment on it" disabled={noNote} onClick={() => onNote?.(true)}>
+        Comment
       </button>
       <label className="pdf__check">
         <input type="checkbox" checked={query.caseSensitive} onChange={(e) => onQuery({ ...query, caseSensitive: e.target.checked })} />

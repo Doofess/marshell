@@ -83,10 +83,10 @@ export function closeTabOutcome(pane: PaneView, session: string | null | undefin
 }
 
 /**
- * Whether closing this tab asks first: a text tab whose file has unsaved edits does, on every path that closes the one tab (the
- * x button, a middle click, Delete in the strip, "Close tab"). Quitting, closing a session and hiding the pane never ask: the
- * draft keeps the edits.
+ * Whether closing this tab asks first: a text tab whose file has unsaved edits does, and a PDF tab with unsaved notes, on every
+ * path that closes the one tab (the x button, a middle click, Delete in the strip, "Close tab"). Quitting, closing a session and
+ * hiding the pane never ask: the draft keeps the edits.
  */
 export function closeAsk(tab: { id: string; path: string; kind: TabKind }, unsaved: ReadonlySet<string>, os: Os = "windows"): "ask" | "close" {
-  return tab.kind === "text" && isUnsaved(unsaved, tab.path, os) ? "ask" : "close";
+  return (tab.kind === "text" || tab.kind === "pdf") && isUnsaved(unsaved, tab.path, os) ? "ask" : "close";
 }

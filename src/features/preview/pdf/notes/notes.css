@@ -1,0 +1,536 @@
+/*
+ * pdf.js's note editor over a drawn page (notes/editor.ts): the draw layer's highlights between the canvas and the text,
+ * and the editor layer's notes above the text. The class names are pdf.js's, the rules are Marshell's.
+ */
+
+:root {
+  /* pdf.js's editors read these once, when the first one starts: free text's inner padding, a selected note's outline. */
+  --freetext-padding: 2px;
+  --outline-width: 2px;
+}
+
+.pdf__sheet {
+  /* Where pdf.js puts a note's own toolbar under it, and the size of a note's comment mark. */
+  --editor-toolbar-vert-offset: 6px;
+  --comment-button-dim: 18px;
+}
+
+/* The highlights: SVG boxes placed in fractions of the page, multiplied into the paper as a marker would be. */
+.pdf__draw {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.pdf__draw > svg {
+  position: absolute;
+  overflow: visible;
+  forced-color-adjust: none;
+}
+.pdf__draw > svg.highlight {
+  mix-blend-mode: multiply;
+}
+.pdf__draw > svg.highlight:not(.free) {
+  fill-rule: evenodd;
+}
+.pdf__draw > svg.highlightOutline {
+  fill: none;
+  fill-rule: evenodd;
+}
+/* A highlight's shape is kept in a 1 by 1 box of the upright page; on a turned page it turns inside its box. */
+.pdf__draw > svg:is(.highlight, .highlightOutline)[data-main-rotation="90"] :is(mask, use:not(.clip, .mask)) {
+  transform: matrix(0, 1, -1, 0, 1, 0);
+}
+.pdf__draw > svg:is(.highlight, .highlightOutline)[data-main-rotation="180"] :is(mask, use:not(.clip, .mask)) {
+  transform: matrix(-1, 0, 0, -1, 1, 1);
+}
+.pdf__draw > svg:is(.highlight, .highlightOutline)[data-main-rotation="270"] :is(mask, use:not(.clip, .mask)) {
+  transform: matrix(0, -1, 1, 0, 0, 1);
+}
+.pdf__draw > svg.highlightOutline :is(.mainOutline, .secondaryOutline) {
+  stroke: none;
+}
+.pdf__draw > svg.highlightOutline.selected .mainOutline {
+  stroke: var(--accent);
+  stroke-width: var(--outline-width);
+}
+@media (hover: hover) and (pointer: fine) {
+  .pdf__draw > svg.highlightOutline.hovered:not(.selected) .mainOutline {
+    stroke: var(--text-2);
+    stroke-width: 1px;
+  }
+}
+
+/* The editor layer covers the page. With text to select it lets the pointer through, all but its notes. */
+.annotationEditorLayer {
+  position: absolute;
+  inset: 0;
+  font-size: var(--text-12);
+  transform-origin: 0 0;
+}
+.annotationEditorLayer.disabled,
+.annotationEditorLayer .highlightEditor {
+  pointer-events: none;
+}
+.annotationEditorLayer :is(.freeTextEditor, .highlightEditor > .internal, .editToolbar, .annotationCommentButton) {
+  pointer-events: auto;
+}
+/* While text is being selected no note takes the pointer. */
+.annotationEditorLayer.drawing * {
+  pointer-events: none;
+}
+.annotationEditorLayer.freetextEditing {
+  cursor: text;
+}
+.noUserSelect {
+  user-select: none;
+}
+
+/* A note: pdf.js places and sizes it in fractions of the page, and turns it to the page's rotation. */
+.annotationEditorLayer :is(.freeTextEditor, .highlightEditor) {
+  position: absolute;
+  box-sizing: border-box;
+  transform-origin: 0 0;
+}
+.annotationEditorLayer [data-editor-rotation="90"] {
+  transform: rotate(90deg);
+}
+.annotationEditorLayer [data-editor-rotation="180"] {
+  transform: rotate(180deg);
+}
+.annotationEditorLayer [data-editor-rotation="270"] {
+  transform: rotate(270deg);
+}
+.annotationEditorLayer .highlightEditor > .internal {
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+}
+/* A selected note has the keyboard (pdf.js focuses it), so focus is what marks it; free text keeps it while it is typed in. */
+.annotationEditorLayer .highlightEditor:focus-visible,
+.annotationEditorLayer .freeTextEditor:focus-within {
+  outline: var(--outline-width) solid var(--focus, var(--accent));
+}
+.annotationEditorLayer .highlightEditor:focus-visible {
+  outline-offset: 2px;
+}
+
+/* Free text: pdf.js sets its size and colour; the saved PDF draws it in Helvetica, so the screen does too. */
+.annotationEditorLayer .freeTextEditor {
+  padding: calc(var(--freetext-padding) * var(--total-scale-factor));
+  cursor: move;
+}
+.annotationEditorLayer .freeTextEditor .internal {
+  min-inline-size: 1ch;
+  border: 0;
+  background: transparent;
+  font-family: Helvetica, Arial, sans-serif;
+  line-height: 1.35;
+  white-space: nowrap;
+  user-select: none;
+  outline-color: transparent;
+}
+.annotationEditorLayer .freeTextEditor .internal[contenteditable="true"] {
+  cursor: text;
+  user-select: text;
+}
+.annotationEditorLayer .freeTextEditor .internal:empty::before {
+  content: attr(default-content);
+  color: var(--text-3);
+}
+.annotationEditorLayer .freeTextEditor .overlay {
+  display: none;
+  position: absolute;
+  inset: 0;
+}
+.annotationEditorLayer .freeTextEditor .overlay.enabled {
+  display: block;
+}
+
+/* A selected note's own toolbar: delete, colour and comment, on the raised surface with a menu's shadow. */
+.annotationEditorLayer .editToolbar {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  padding: 2px;
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  color: var(--text-2);
+  box-shadow: var(--shadow-menu);
+  cursor: default;
+  transform: none;
+}
+.annotationEditorLayer .editToolbar.hidden {
+  display: none;
+}
+.annotationEditorLayer .editToolbar .buttons {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.annotationEditorLayer .editToolbar .divider {
+  inline-size: 1px;
+  block-size: 14px;
+  background: var(--hairline);
+}
+.annotationEditorLayer .editToolbar .divider:last-child {
+  display: none;
+}
+.annotationEditorLayer .editToolbar button,
+.annotationEditorLayer .annotationCommentButton {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 24px;
+  block-size: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.annotationEditorLayer .editToolbar button:active {
+  background: var(--fill-strong);
+}
+@media (hover: hover) and (pointer: fine) {
+  .annotationEditorLayer .editToolbar button:hover {
+    background: var(--fill);
+    color: var(--text-1);
+  }
+}
+.annotationEditorLayer :is(.editToolbar button, .annotationCommentButton):focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+/* Its icons, 14 px in the text colour: a bin, and a speech bubble for the comment. */
+.annotationEditorLayer :is(.deleteButton, .editToolbar .comment, .annotationCommentButton)::before {
+  content: "";
+  inline-size: 14px;
+  block-size: 14px;
+  background: currentColor;
+  mask: var(--note-icon) center / 14px 14px no-repeat;
+}
+.annotationEditorLayer .deleteButton {
+  --note-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14' fill='none' stroke='black' stroke-width='1.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 3.5h9M5.5 3.5V2h3v1.5M3.5 3.5l.6 8.5h5.8l.6-8.5'/%3E%3C/svg%3E");
+}
+.annotationEditorLayer :is(.editToolbar .comment, .annotationCommentButton) {
+  --note-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14' fill='none' stroke='black' stroke-width='1.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 3a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v5.5a1 1 0 0 1-1 1H6l-3 2.5V9.5H3a1 1 0 0 1-1-1Z'/%3E%3C/svg%3E");
+}
+/* A note with a comment carries a small mark at its corner; pdf.js places it. */
+.annotationEditorLayer .annotationCommentButton {
+  position: absolute;
+  inline-size: var(--comment-button-dim);
+  block-size: var(--comment-button-dim);
+  background: var(--bg-raised);
+  color: var(--text-1);
+  box-shadow: var(--shadow-menu);
+}
+.annotationEditorLayer .annotationCommentButton.hidden {
+  display: none;
+}
+
+/* The colour menu of a selected highlight: its button shows the colour, the list opens under it. */
+.annotationEditorLayer .colorPicker {
+  position: relative;
+}
+.annotationEditorLayer .colorPicker .swatch {
+  inline-size: 14px;
+  block-size: 14px;
+  border-radius: 50%;
+  forced-color-adjust: none;
+}
+.annotationEditorLayer .colorPicker .dropdown {
+  position: absolute;
+  inset-block-start: calc(100% + 4px);
+  inset-inline-start: 0;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-menu);
+}
+.annotationEditorLayer .colorPicker .dropdown.hidden {
+  display: none;
+}
+.annotationEditorLayer .colorPicker .dropdown [aria-selected="true"] {
+  background: var(--fill-strong);
+}
+
+/* Free text's colour: the system's colour input, drawn as one round swatch the size of the toolbar's buttons. */
+.annotationEditorLayer .editToolbar .basicColorPicker {
+  inline-size: 24px;
+  block-size: 24px;
+  padding: 5px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  forced-color-adjust: none;
+}
+.annotationEditorLayer .editToolbar .basicColorPicker::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.annotationEditorLayer .editToolbar .basicColorPicker::-webkit-color-swatch {
+  border: 0;
+  border-radius: 50%;
+}
+.annotationEditorLayer .editToolbar .basicColorPicker:active {
+  background: var(--fill-strong);
+}
+@media (hover: hover) and (pointer: fine) {
+  .annotationEditorLayer .editToolbar .basicColorPicker:hover {
+    background: var(--fill);
+  }
+}
+.annotationEditorLayer .editToolbar .basicColorPicker:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+
+/* The save line: a row of the PDF's sticky head under the toolbar, as the find row is. The changed bar uses the text tab's look. */
+.pdf__saveline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-block-start: 1px solid var(--hairline);
+}
+.pdf__savetext {
+  flex: 1 1 24ch;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+.pdf__bar .pdf__notesbar {
+  border-block-end: 0;
+  border-block-start: 1px solid var(--hairline);
+}
+
+@media (forced-colors: active) {
+  .pdf__draw > svg.highlightOutline.selected .mainOutline {
+    stroke: Highlight;
+  }
+  .annotationEditorLayer .highlightEditor:focus-visible,
+  .annotationEditorLayer .freeTextEditor:focus-within {
+    outline-color: Highlight;
+  }
+  .annotationEditorLayer .editToolbar,
+  .annotationEditorLayer .colorPicker .dropdown,
+  .annotationEditorLayer .annotationCommentButton {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
+  .annotationEditorLayer :is(.deleteButton, .editToolbar .comment, .annotationCommentButton)::before {
+    background: ButtonText;
+  }
+  .annotationEditorLayer .colorPicker .dropdown [aria-selected="true"] {
+    outline: 2px solid Highlight;
+  }
+  .annotationEditorLayer .editToolbar .basicColorPicker:focus-visible {
+    outline-color: Highlight;
+  }
+}
+
+/*
+ * The selection bar: Highlight, the colour menu and Comment, in the page's box under the end of a selection. It lies over the
+ * pages as the sidebar does, on the raised surface with the menu's shadow. Nothing moves or fades.
+ */
+/* The page is always light; the bar, its colour menu and the comment popup are the app's, so they take its scheme back. */
+.pdf-selbar,
+.pdf-comment {
+  color-scheme: var(--app-scheme);
+}
+.pdf-selbar {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  box-sizing: border-box;
+  block-size: 28px;
+  padding: 2px;
+  border-radius: calc(var(--radius) + 2px);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-menu);
+  color: var(--text-1);
+  font-size: var(--text-12);
+  white-space: nowrap;
+}
+.pdf-selbar__button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  block-size: 24px;
+  padding-inline: var(--space-2);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+}
+.pdf-selbar__button:focus-visible,
+.pdf-colors__item:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+.pdf-selbar__button:active,
+.pdf-colors__item:active {
+  background: var(--fill-strong);
+}
+.pdf-selbar__button[aria-expanded="true"] {
+  background: var(--fill-strong);
+}
+@media (hover: hover) and (pointer: fine) {
+  .pdf-selbar__button:hover,
+  .pdf-colors__item:hover {
+    background: var(--hover);
+  }
+}
+
+/* The colour menu: a column of radio items under its button. */
+.pdf-colors {
+  position: relative;
+}
+.pdf-colors__menu {
+  position: absolute;
+  inset-block-start: calc(100% + 4px);
+  inset-inline-start: 0;
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 100%;
+  padding: 2px;
+  border-radius: calc(var(--radius) + 2px);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-menu);
+}
+.pdf-colors__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  block-size: 24px;
+  padding-inline: var(--space-2);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  text-align: start;
+}
+.pdf-colors__item[aria-checked="true"] {
+  background: var(--fill);
+}
+/* The swatch is the PDF's own colour, which is data and not a token (set inline). */
+.pdf-colors__swatch {
+  flex: none;
+  inline-size: 10px;
+  block-size: 10px;
+  border-radius: 50%;
+}
+
+@media (forced-colors: active) {
+  .pdf-selbar,
+  .pdf-colors__menu {
+    outline: 1px solid CanvasText;
+  }
+  .pdf-colors__swatch {
+    forced-color-adjust: none;
+    outline: 1px solid CanvasText;
+  }
+  .pdf-colors__item[aria-checked="true"] {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+  .pdf-selbar__button:focus-visible,
+  .pdf-colors__item:focus-visible {
+    outline-color: CanvasText;
+  }
+  .pdf-colors__item[aria-checked="true"]:focus-visible {
+    outline-color: HighlightText;
+    outline-offset: -4px;
+  }
+}
+
+/*
+ * The comment popup: a note's comment in a textarea, in the page's box beside the note (CommentPopup.tsx places it). It lies over
+ * the pages on the raised surface with the menu's shadow, as the selection bar does. Nothing moves or fades.
+ */
+.pdf-comment {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  inline-size: min(280px, calc(100% - 16px));
+  padding: var(--space-2);
+  border-radius: calc(var(--radius) + 2px);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-menu);
+  color: var(--text-1);
+  font-size: var(--text-12);
+}
+.pdf-comment__field {
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-block-size: 3lh;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius);
+  background: var(--fill);
+  line-height: var(--leading);
+  resize: block;
+}
+.pdf-comment__field:focus-visible,
+.pdf-comment__button:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+.pdf-comment__buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+.pdf-comment__button {
+  block-size: 24px;
+  padding-inline: var(--space-2);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-1);
+  white-space: nowrap;
+}
+/* Delete comment stands apart at the start of the row; Done, the last, is the filled one. */
+.pdf-comment__delete {
+  margin-inline-end: auto;
+  color: var(--text-2);
+}
+.pdf-comment__done {
+  background: var(--fill);
+}
+.pdf-comment__button:active {
+  background: var(--fill-strong);
+}
+@media (hover: hover) and (pointer: fine) {
+  .pdf-comment__button:hover {
+    background: var(--hover);
+  }
+  .pdf-comment__done:hover {
+    background: var(--fill-strong);
+  }
+}
+
+@media (forced-colors: active) {
+  .pdf-comment {
+    outline: 1px solid CanvasText;
+  }
+  .pdf-comment__field {
+    outline: 1px solid CanvasText;
+  }
+  .pdf-comment__field:focus-visible,
+  .pdf-comment__button:focus-visible {
+    outline: 2px solid Highlight;
+  }
+  .pdf-comment__done {
+    outline: 1px solid ButtonText;
+    outline-offset: -1px;
+  }
+}

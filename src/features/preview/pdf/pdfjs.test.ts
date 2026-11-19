@@ -26,7 +26,39 @@ const page = () => {
   const streamTextContent = vi.fn(() => "stream");
   return { page: { streamTextContent, getViewport: () => ({ width: 1, height: 1 }) } as unknown as PDFPageProxy, streamTextContent };
 };
-const container = () => ({ style: { setProperty() {} } }) as unknown as HTMLElement;
+type Listener = (e?: unknown) => void;
+/** A document that keeps its listeners, and a window under it, for the layer's selection marks. */
+const fakeDoc = () => {
+  const on: Record<string, Listener[]> = {};
+  const win: Record<string, Listener[]> = {};
+  const add = (to: Record<string, Listener[]>) => (type: string, fn: Listener) => void (to[type] ??= []).push(fn);
+  return {
+    on,
+    win,
+    addEventListener: add(on),
+    defaultView: { addEventListener: add(win) },
+    createElement: () => ({ className: "" }),
+    fire: (type: string) => on[type]?.forEach((fn) => fn()),
+    blur: () => win.blur?.forEach((fn) => fn()),
+  };
+};
+const docs = [fakeDoc()];
+/** A layer's container: its children, its classes and its listeners. */
+const container = (doc = docs[0]!) => {
+  const children: { className: string }[] = [];
+  const classes = new Set<string>();
+  const on: Record<string, Listener[]> = {};
+  const el = {
+    style: { setProperty() {} },
+    ownerDocument: doc,
+    children,
+    append: (c: { className: string }) => void children.push(c),
+    classList: { add: (c: string) => void classes.add(c), remove: (c: string) => void classes.delete(c), contains: (c: string) => classes.has(c) },
+    addEventListener: (type: string, fn: Listener) => void (on[type] ??= []).push(fn),
+    press: () => on.mousedown?.forEach((fn) => fn()),
+  };
+  return el as unknown as HTMLElement & { children: { className: string }[]; press(): void };
+};
 
 describe("renderTextLayer", () => {
   it("streams the text without normalization and with marked content", async () => {
@@ -40,6 +72,48 @@ describe("renderTextLayer", () => {
     const layer = fake.layers.at(-1)!;
     expect(m).toEqual({ divs: layer.textDivs, items: layer.textContentItemsStr });
     expect(m!.divs).toBe(layer.textDivs);
+  });
+
+  // pdf.js's own viewer ends each text layer with this block. Without it a drag let go in the blank past a line's end
+  // landed on the layer itself, and the selection ran on to the page's last lines: a highlight made from it took
+  // fourteen lines for three (live check 6q-6).
+  it("ends the layer with a block for a drag let go past the text", async () => {
+    const c = container();
+    await renderTextLayer(page().page, c, 1);
+    expect(c.children.map((k) => k.className)).toEqual(["endOfContent"]);
+  });
+
+  it("marks the layer as being selected from a press in it until the pointer comes up", async () => {
+    const doc = fakeDoc();
+    const a = container(doc);
+    const b = container(doc);
+    await renderTextLayer(page().page, a, 1);
+    await renderTextLayer(page().page, b, 1);
+    a.press();
+    expect(a.classList.contains("selecting")).toBe(true);
+    expect(b.classList.contains("selecting")).toBe(false);
+    doc.fire("pointerup");
+    expect(a.classList.contains("selecting")).toBe(false);
+    // One listener per document, not one per page.
+    expect(doc.on.pointerup).toHaveLength(1);
+  });
+
+  it("drops the mark when the window loses focus mid-drag", async () => {
+    const doc = fakeDoc();
+    const a = container(doc);
+    await renderTextLayer(page().page, a, 1);
+    a.press();
+    expect(a.classList.contains("selecting")).toBe(true);
+    doc.blur();
+    expect(a.classList.contains("selecting")).toBe(false);
+  });
+
+  it("adds no block to a layer whose drawing was cancelled", async () => {
+    const abort = new AbortController();
+    abort.abort();
+    const c = container();
+    await renderTextLayer(page().page, c, 1, abort.signal);
+    expect(c.children).toEqual([]);
   });
 
   it("is null when it was cancelled", async () => {

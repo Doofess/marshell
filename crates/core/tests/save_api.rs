@@ -590,3 +590,29 @@ async fn unsave_refuses_a_read_only_file() {
     assert_eq!(text(&body), "The file is read-only or in use by another program.");
     assert_eq!(std::fs::read(&file).unwrap(), b"new");
 }
+
+#[tokio::test]
+async fn a_pdf_save_may_pass_the_text_cap() {
+    let s = setup();
+    let file = s.proj.join("x.PDF");
+    let body = vec![b'p'; 3 * 1024 * 1024];
+    let (status, _) = save(&s, &file, "none", &body).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(std::fs::read(&file).unwrap(), body);
+    // A file that big is replaced under its hash, too.
+    let newer = vec![b'q'; 3 * 1024 * 1024 + 5];
+    let (status, _) = save(&s, &file, &hash_bytes(&body), &newer).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(std::fs::read(&file).unwrap(), newer);
+}
+
+#[tokio::test]
+async fn a_text_save_still_stops_at_the_text_cap() {
+    let s = setup();
+    let file = s.proj.join("x.txt");
+    let (status, _) = save(&s, &file, "none", &vec![b't'; 3 * 1024 * 1024]).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(!file.exists());
+    let (status, _) = save(&s, &file, "none", &vec![b't'; TEXT_CAP]).await;
+    assert_eq!(status, StatusCode::OK);
+}

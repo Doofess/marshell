@@ -15,7 +15,7 @@ describe("PdfSidebar markup", () => {
   it("is_a_landmark_named_for_its_job_and_never_a_dialog_or_menu", () => {
     const html = render();
     expect(html).toContain('<nav id="side"');
-    expect(html).toContain('aria-label="Outline and pages"');
+    expect(html).toContain('aria-label="Outline, pages and notes"');
     expect(html).not.toMatch(/role="(dialog|menu|alertdialog)"|aria-modal/);
   });
 
@@ -26,6 +26,16 @@ describe("PdfSidebar markup", () => {
     expect(html).toMatch(/role="tab"[^>]*aria-selected="true"[^>]*>Outline</);
     expect(html).toMatch(/role="tab"[^>]*aria-selected="false"[^>]*>Pages</);
     expect(render({ view: "pages" })).toMatch(/role="tab"[^>]*aria-selected="true"[^>]*>Pages</);
+  });
+
+  it("shows_three_tabs_and_the_notes_view_when_chosen", () => {
+    const html = render();
+    expect(html.match(/role="tab"/g)).toHaveLength(3);
+    expect(html).toMatch(/role="tab"[^>]*aria-selected="false"[^>]*>Notes</);
+    const notes = render({ view: "notes", notes: <p>the notes</p> });
+    expect(notes).toMatch(/role="tab"[^>]*aria-selected="true"[^>]*>Notes</);
+    expect(notes).toContain("the notes");
+    expect(notes).not.toContain('role="tree"');
   });
 
   it("has_a_tree_with_levels_sets_and_expanded_states", () => {
