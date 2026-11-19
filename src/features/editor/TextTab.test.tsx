@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Draft } from "../../generated/Draft";
 import { start, step, type DocEvent, type DocState } from "./editorDoc";
 import { TextTabView, readOnlyLine, type TextTabViewProps, conflictJump, dirtyNews, firstConflict, inBodyNow, isSaveKey, keyboardTo, sourceShown, wrapAtStart } from "./TextTab";
-import { mergeWent } from "./ChangedBar";
+import { keyboardOnRemoval, mergeWent } from "./ChangedBar";
 
 // The rendered Markdown needs the DOM, which these tests run without: the stand-in shows the text it was given.
 vi.mock("../preview/MarkdownView", () => ({ MarkdownView: ({ text }: { text: string }) => <div data-md="">{text}</div> }));
@@ -310,5 +310,25 @@ describe("mergeWent", () => {
     mergeWent({ hadFocus: true, lost: false, keep: k.button });
     mergeWent({ hadFocus: true, lost: true, keep: null });
     expect(k.calls).toEqual([]);
+  });
+});
+
+describe("keyboardOnRemoval", () => {
+  // Read as React detaches the Merge button, before it leaves the page. A window blur (the person in another app) fires the
+  // button's blur but leaves it the document's active element, so it still counts as having the keyboard.
+  it("the_button_that_had_the_keyboard_when_it_went_says_so_even_with_the_window_in_the_background", () => {
+    const had = { current: false };
+    const button = { name: "Merge" };
+    const cleanup = keyboardOnRemoval(had, () => button)(button);
+    expect(had.current).toBe(false);
+    cleanup?.();
+    expect(had.current).toBe(true);
+  });
+  it("a_keyboard_elsewhere_when_it_went_does_not_count", () => {
+    const had = { current: true };
+    const button = { name: "Merge" };
+    keyboardOnRemoval(had, () => "terminal")(button)?.();
+    expect(had.current).toBe(false);
+    expect(keyboardOnRemoval(had, () => button)(null)).toBeUndefined();
   });
 });

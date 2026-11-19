@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef } from "react";
+import { useId, useLayoutEffect, useMemo, useRef } from "react";
 
 type Props = {
   name: string;
@@ -19,14 +19,29 @@ export function mergeWent(o: { hadFocus: boolean; lost: boolean; keep: { focus()
 }
 
 /**
+ * A ref for the Merge button that notes, as React detaches it and before it leaves the page, whether it had the keyboard. A
+ * window blur (the person in another app) fires the button's blur but leaves it the document's active element, so it still
+ * counts: the file usually becomes read-only while the person is elsewhere.
+ */
+export function keyboardOnRemoval<N>(had: { current: boolean }, active: () => unknown): (node: N | null) => (() => void) | undefined {
+  return (node) => {
+    if (node === null) return undefined;
+    return () => {
+      had.current = active() === node;
+    };
+  };
+}
+
+/**
  * The question when the file changed on disk under unsaved edits. It takes no focus when it appears: the person is typing. The
  * announcer says its line, so the bar is not a live region itself.
  */
 export function ChangedBar({ name, onMerge, onKeep, onTake }: Props) {
   const line = useId();
   const offered = onMerge !== undefined;
-  // Merge had the keyboard last. Its removal fires no blur React sees, so this stays set when the button goes with the keyboard.
+  // Merge had the keyboard when it went.
   const mergeFocused = useRef(false);
+  const mergeRef = useMemo(() => keyboardOnRemoval<HTMLButtonElement>(mergeFocused, () => document.activeElement), []);
   const keep = useRef<HTMLButtonElement>(null);
   useLayoutEffect(() => {
     if (offered) return;
@@ -39,7 +54,7 @@ export function ChangedBar({ name, onMerge, onKeep, onTake }: Props) {
       <p id={line} className="changed-bar__text">{`${name} changed on disk.`}</p>
       <div className="changed-bar__actions">
         {onMerge && (
-          <button type="button" className="changed-bar__button" onClick={onMerge} onFocus={() => (mergeFocused.current = true)} onBlur={() => (mergeFocused.current = false)}>
+          <button ref={mergeRef} type="button" className="changed-bar__button" onClick={onMerge}>
             Merge
           </button>
         )}
