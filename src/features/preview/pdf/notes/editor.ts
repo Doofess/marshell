@@ -39,6 +39,8 @@ export type NotesEditor = {
   highlightSelection(comment: boolean): boolean;
   /** Ends a note being typed, or unselects the selected notes; false when there was neither. */
   escape(): boolean;
+  /** A note is being typed: its text is in pdf.js's box and not yet in the note, so a save now would end the typing. */
+  editing(): boolean;
   modified(): boolean;
   onChange(cb: () => void): () => void;
   /** The loaded bytes with the notes appended as an incremental update. */
@@ -407,6 +409,7 @@ export async function createNotesEditor(doc: PDFDocumentProxy, o: { container: H
       }
       return false;
     },
+    editing: () => ui.getActive()?.isInEditMode?.() === true,
     modified: () => changes > 0,
     onChange(cb) {
       listeners.add(cb);

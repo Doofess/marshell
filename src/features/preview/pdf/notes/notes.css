@@ -275,6 +275,25 @@
   outline-offset: -2px;
 }
 
+/* The save line: a row of the PDF's sticky head under the toolbar, as the find row is. The changed bar uses the text tab's look. */
+.pdf__saveline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-block-start: 1px solid var(--hairline);
+}
+.pdf__savetext {
+  flex: 1 1 24ch;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+.pdf__bar .pdf__notesbar {
+  border-block-end: 0;
+  border-block-start: 1px solid var(--hairline);
+}
+
 @media (forced-colors: active) {
   .pdf__draw > svg.highlightOutline.selected .mainOutline {
     stroke: Highlight;

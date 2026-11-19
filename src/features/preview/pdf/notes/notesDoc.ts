@@ -37,6 +37,8 @@ export type NotesEvent =
   | { type: "unsave" }
   | { type: "unsaved"; hash: string }
   | { type: "unsaveRefused" }
+  /** The core wouldn't write the file back (read-only, in use, unreachable): the save is still there to undo. */
+  | { type: "unsaveFailed"; line: string }
   /** The file as the disk holds it now: `hash` and `bytes` are null for a file that is gone. */
   | { type: "disk"; hash: string | null; bytes: ArrayBuffer | null }
   /** The draft the core kept, when the tab opens. */
@@ -194,6 +196,8 @@ export function notesReducer(s: NotesState, e: NotesEvent, name: string): Out {
       );
     case "unsaveRefused":
       return said({ ...s, saving: false, lastSave: null, refusedSave: false }, `${name} changed after the save, so the save can't be undone.`);
+    case "unsaveFailed":
+      return said({ ...s, saving: false }, `The save of ${name} couldn't be undone. ${e.line}`);
     case "disk":
       return disk(s, e.hash, e.bytes, name);
     case "draft":

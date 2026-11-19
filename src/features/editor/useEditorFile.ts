@@ -18,9 +18,9 @@ export const lf = (text: string) => text.replace(/\r\n|\r/g, "\n");
  * when it goes. A drop cancels a put that has not gone out, and goes out after one that is on the wire, so no put ever lands
  * after the drop that followed it.
  */
-export type DraftQueue = {
+export type DraftQueue<D = Draft> = {
   /** Asks for a draft to be kept; `make` is read when the request is sent. */
-  put(make: () => Draft): void;
+  put(make: () => D): void;
   /** Sends a waiting put now. */
   flush(): void;
   /** Cancels a waiting put and drops the draft. */
@@ -43,16 +43,16 @@ export function draftBusy(path: string, work: Promise<void>): void {
 }
 
 /** The file's draft, asked for once every draft request for the file has been answered. */
-export async function draftOnceSent(path: string, get: (path: string) => Promise<Draft | null>): Promise<Draft | null> {
+export async function draftOnceSent<T>(path: string, get: (path: string) => Promise<T>): Promise<T> {
   await onTheWay.get(fileKey(path));
   return get(path);
 }
 
-export function createDraftQueue(o: { put: (d: Draft) => Promise<boolean>; drop: () => Promise<void>; failed: () => void; busy?: (work: Promise<void>) => void; delay?: number }): DraftQueue {
+export function createDraftQueue<D = Draft>(o: { put: (d: D) => Promise<boolean>; drop: () => Promise<void>; failed: () => void; busy?: (work: Promise<void>) => void; delay?: number }): DraftQueue<D> {
   const delay = o.delay ?? DRAFT_MS;
   let timer: ReturnType<typeof setTimeout> | undefined;
   // The newest put asked for and not yet sent.
-  let wanted: (() => Draft) | null = null;
+  let wanted: (() => D) | null = null;
   // A send is in the chain and has not started; a drop makes it void.
   let queued = false;
   let dropQueued = false;
@@ -118,18 +118,27 @@ export function createDraftQueue(o: { put: (d: Draft) => Promise<boolean>; drop:
  * promise until the document stops saving: `true` when the file is then saved, `false` for a refused, conflicting or too large
  * save, a bar that is up, a read-only file, or a tab that went. The reducer stays pure; `observe` is told each new state.
  */
-export type Saver = {
+export type Saver<S = DocState> = {
   save(): Promise<boolean>;
   /** Tells the saver the state after a step. */
-  observe(s: DocState): void;
+  observe(s: S): void;
   /** Settles every waiting save `false`: the tab went. */
   cancel(): void;
 };
 
-export function createSaver(o: { doc: () => DocState; dispatch: (e: DocEvent) => void; readOnly: () => boolean; /** The document has been opened. Absent: it has. */ open?: () => boolean }): Saver {
+/** What the saver reads of a document's state: a text tab's, or a PDF tab's notes'. */
+type SaveState = { dirty: boolean; saving: boolean; conflict: unknown };
+
+export function createSaver<S extends SaveState = DocState>(o: {
+  doc: () => S;
+  dispatch: (e: { type: "save" }) => void;
+  readOnly: () => boolean;
+  /** The document has been opened. Absent: it has. */
+  open?: () => boolean;
+}): Saver<S> {
   let waiting: Array<(saved: boolean) => void> = [];
-  const answer = (s: DocState) => !s.dirty && s.conflict === null;
-  const settle = (saved: (s: DocState) => boolean, s: DocState) => {
+  const answer = (s: S) => !s.dirty && s.conflict === null;
+  const settle = (saved: (s: S) => boolean, s: S) => {
     const now = waiting;
     waiting = [];
     for (const resolve of now) resolve(saved(s));

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { cannotRun, type RunFacts } from "./runnable";
 
-const ALL: RunFacts = { focused: true, sessions: 2, waiting: true, closed: true, shellPanel: true, sidebarToggle: true, textTab: true, pdfTab: true, undoSave: true };
+const ALL: RunFacts = { focused: true, sessions: 2, waiting: true, closed: true, shellPanel: true, sidebarToggle: true, textTab: true, pdfTab: true, saveTab: true, undoSave: true };
 const sorted = (xs: readonly string[]) => [...xs].sort();
 
 describe("cannotRun", () => {
@@ -19,11 +19,19 @@ describe("cannotRun", () => {
   it("the_six_file_commands_show_only_for_a_text_tab", () => {
     const four = ["pane-save", "pane-undo-save", "pane-go-to-line", "pane-word-wrap", "pane-next-conflict", "pane-previous-conflict"];
     expect(cannotRun(ALL)).toEqual([]);
-    // No text tab on screen: all four go, whether or not an undo would be possible.
-    expect(sorted(cannotRun({ ...ALL, textTab: false }))).toEqual(sorted(four));
-    expect(sorted(cannotRun({ ...ALL, textTab: false, undoSave: false }))).toEqual(sorted(four));
+    // No tab on screen that saves: all six go, whether or not an undo would be possible.
+    expect(sorted(cannotRun({ ...ALL, textTab: false, saveTab: false }))).toEqual(sorted(four));
+    expect(sorted(cannotRun({ ...ALL, textTab: false, saveTab: false, undoSave: false }))).toEqual(sorted(four));
     // A text tab with no save to undo leaves out only the undo.
     expect(cannotRun({ ...ALL, undoSave: false })).toEqual(["pane-undo-save"]);
+  });
+
+  it("the palette lists save for a pdf tab with notes", () => {
+    // A PDF tab whose notes can be saved: Save and Undo save list, the text-only four don't.
+    expect(sorted(cannotRun({ ...ALL, textTab: false }))).toEqual(sorted(["pane-go-to-line", "pane-word-wrap", "pane-next-conflict", "pane-previous-conflict"]));
+    expect(cannotRun({ ...ALL, textTab: false, undoSave: false })).toContain("pane-undo-save");
+    // A PDF whose tools are off saves nothing.
+    expect(sorted(cannotRun({ ...ALL, textTab: false, saveTab: false }))).toEqual(sorted(["pane-save", "pane-undo-save", "pane-go-to-line", "pane-word-wrap", "pane-next-conflict", "pane-previous-conflict"]));
   });
 
   it("the_three_pdf_commands_show_only_for_a_loaded_pdf_tab", () => {
@@ -33,7 +41,7 @@ describe("cannotRun", () => {
   });
 
   it("lists each command once when several facts are missing", () => {
-    const out = cannotRun({ focused: false, sessions: 0, waiting: false, closed: false, shellPanel: false, sidebarToggle: false, textTab: false, pdfTab: false, undoSave: false });
+    const out = cannotRun({ focused: false, sessions: 0, waiting: false, closed: false, shellPanel: false, sidebarToggle: false, textTab: false, pdfTab: false, saveTab: false, undoSave: false });
     expect(new Set(out).size).toBe(out.length);
     expect(out).toContain("move-up");
   });

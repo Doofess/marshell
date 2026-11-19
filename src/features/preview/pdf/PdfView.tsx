@@ -14,15 +14,27 @@ import { Thumbnails } from "./Thumbnails";
 import { loadPdf, renderPage, renderTextLayer, type TextMapping } from "./pdfjs";
 import { keyboardLeft, setSidebarPref, sidebarPref, startOpen, startView, type SidebarView } from "./sidebarPref";
 import { parsePageField, scaleFor, zoomIn, zoomOut, type Zoom } from "./zoom";
-import { createNotesEditor, editorKeysAllowed, type NotesEditor } from "./notes/editor";
+import { createNotesEditor, type NotesEditor } from "./notes/editor";
+import { NotesBars } from "./notes/NotesBars";
+import { notesEscape, onFocusMove, useNotes } from "./notes/useNotes";
+import type { SaveCommands } from "../../editor/TextTab";
+import { useOpenInPane } from "../../pane/PaneContext";
 import "./PdfView.css";
 import "./notes/notes.css";
 
 type Props = {
+  /** The file's path. The view is keyed by it: its notes, their draft and their saves belong to this file. */
+  path: string;
+  /** The file's bytes as last read. What is shown comes from the notes (`useNotes`): the file, or the draft its notes were kept in. */
   bytes: ArrayBuffer;
-  /** Counts refetches; a new value reloads the document and keeps the scroll position. */
-  version: number;
+  /** The file's SHA-256 as last read, or null once it is deleted. */
+  hash: string | null;
+  readOnly: boolean;
   name: string;
+  /** The tab's notes gained or lost unsaved changes: the window keeps the dot on the tab strip by it. */
+  onDirty?: (path: string, dirty: boolean) => void;
+  /** Gets the tab's save commands. */
+  save?: Ref<SaveCommands | null>;
   onPages: (count: number) => void;
   /** The page in view, as the person scrolls or jumps. */
   onCurrentPage?: (page: number) => void;
@@ -152,7 +164,7 @@ function PdfPage({ doc, n, name, size, scale, root, overlay, onText, onFollow, n
 export type PdfCommands = { find(): void; outline(): void; pages(): void };
 
 /** A PDF as a column of pages: a toolbar, then every page at its final size, drawn as they come into view. */
-export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocument, renderOverlay, place, placeKey, onJump, placeNow, announce, onWebLink, onHistory, commands }: Props) {
+export function PdfView({ path, bytes: fileBytes, hash, readOnly, name, onDirty, save, onPages, onCurrentPage, onDocument, renderOverlay, place, placeKey, onJump, placeNow, announce, onWebLink, onHistory, commands }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const [scroller, setScroller] = useState<HTMLElement | null>(null);
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
@@ -192,6 +204,13 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
   const latest = useRef({ place, announce });
   latest.current = { place, announce };
 
+  // The notes: what is shown is the file, or its draft, once the draft has been looked for.
+  const openInPane = useOpenInPane();
+  const notesNow = useNotes({ path, name, hash, bytes: fileBytes, readOnly, announce, onDirty, openCopy: (p) => openInPane({ path: p }), save, focus: () => scroller?.focus() });
+  const bytes = notesNow.shown?.bytes ?? null;
+  const version = notesNow.shown?.version ?? 0;
+  const runner = notesNow.runner;
+
   // The preview body is the scroll area and the root for what is in view.
   useLayoutEffect(() => {
     setScroller(root.current?.closest<HTMLElement>(".preview__body") ?? null);
@@ -199,6 +218,7 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
 
   // Load on the bytes. The document on screen stays until the new one is ready, so a reload keeps its place.
   useEffect(() => {
+    if (bytes === null) return;
     let dead = false;
     let loaded: PDFDocumentProxy | null = null;
     void (async () => {
@@ -243,6 +263,8 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
       (e) => {
         if (dead) return e.destroy();
         made = e;
+        notesNow.editor.current = e;
+        e.onChange(() => runner.dispatch({ type: "edited" }));
         setNotes(e);
       },
       () => {},
@@ -250,9 +272,13 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
     return () => {
       dead = true;
       setNotes(null);
-      made?.destroy();
+      const gone = made;
+      if (!gone) return;
+      // A draft waiting is taken from this editor before it goes; the document waits for that too (below).
+      void runner.unload().then(() => gone.destroy());
+      if (notesNow.editor.current === gone) notesNow.editor.current = null;
     };
-  }, [doc, scroller]);
+  }, [doc, scroller, runner, notesNow.editor]);
 
   // pdf.js takes keys only while the keyboard is in the tab and the window has focus; a focus move is read a tick later.
   useEffect(() => {
@@ -260,7 +286,7 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
     let later = 0;
     const check = () => {
       clearTimeout(later);
-      later = window.setTimeout(() => notes.setLive(editorKeysAllowed(document.activeElement, scroller, document.hasFocus())), 0);
+      later = window.setTimeout(() => onFocusMove(notes, scroller, document.activeElement, document.hasFocus()), 0);
     };
     check();
     scroller.addEventListener("focusin", check);
@@ -277,14 +303,15 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
     };
   }, [notes, scroller]);
 
-  // Gone with the view.
+  // Gone with the view, once a draft waiting has been taken from its notes.
   useEffect(
     () => () => {
       cb.current.onDocument?.(null);
-      void docRef.current?.loadingTask.destroy();
+      const gone = docRef.current;
       docRef.current = null;
+      void runner.unload().then(() => gone?.loadingTask.destroy());
     },
-    [],
+    [runner],
   );
 
   // Fit width follows the body.
@@ -661,6 +688,7 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
   // Ctrl+F, F3 and Shift+F3 work anywhere in the body, as Ctrl+= / Ctrl+- / Ctrl+0 do; so the listener is on the body.
   const keys = useRef<(e: globalThis.KeyboardEvent) => void>(() => {});
   keys.current = (e) => {
+    notesEscape(e, notes);
     const k = pdfKey(e);
     if (k === "find" || k === "next" || k === "previous") {
       // F3 with no search going does what Ctrl+F does; it does not step as well.
@@ -728,6 +756,18 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
           // The button shows and hides the bar, as its aria-expanded says; Ctrl+F only ever opens it.
           onFind={() => (findOpen ? closeFind() : openFind())}
           findRow={findOpen ? <FindBar query={find.query} status={find.status} onQuery={find.search} onStep={step} onClose={closeFind} field={field} /> : null}
+        />
+        <NotesBars
+          name={name}
+          conflict={notesNow.state.conflict === null ? null : notesNow.state.conflict.hash === null ? "deleted" : "changed"}
+          line={notesNow.state.line}
+          undo={notesNow.state.lastSave !== null && !notesNow.state.saving}
+          copy={notesNow.state.refusedSave}
+          onUndo={() => runner.dispatch({ type: "unsave" })}
+          onCopy={() => runner.dispatch({ type: "copy" })}
+          onReload={() => runner.dispatch({ type: "reload" })}
+          onOverwrite={() => runner.dispatch({ type: "overwrite" })}
+          onSave={() => runner.dispatch({ type: "overwrite" })}
         />
       </div>
       <div className="pdf__main">

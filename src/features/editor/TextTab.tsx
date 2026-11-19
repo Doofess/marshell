@@ -18,8 +18,8 @@ import { COLOUR_CAP } from "./tokens";
 import { lf, useEditorFile } from "./useEditorFile";
 import type { Encoding, Eol } from "./textFile";
 
-/** What the pane can ask of a text tab: the palette's commands and the Ctrl+S key. */
-export type TextTabCommands = {
+/** What the pane can ask of a tab that saves its file (a text tab, or a PDF tab with notes): Ctrl+S, the palette and the close question. */
+export type SaveCommands = {
   /** Saves. Resolves when the save has been answered: true when the file is then saved, false when it was refused, conflicted, the bar is up or the file is read-only. True at once with nothing to save. */
   save(): Promise<boolean>;
   /** Undoes the last save. False when there is none to undo. */
@@ -28,15 +28,19 @@ export type TextTabCommands = {
   canUndoSave(): boolean;
   /** Drops the file's draft through the tab's own queue. The tab is about to close; nothing may write the draft back. */
   discard(): void;
+  dirty(): boolean;
+  /** Puts the keyboard back in the tab: where focus goes when a save the close question asked for did not go through. */
+  focus(): void;
+};
+
+/** What the pane can ask of a text tab: the palette's commands and the Ctrl+S key. */
+export type TextTabCommands = SaveCommands & {
   goToLine(): void;
   toggleWrap(): void;
   /** Moves to the next conflict marker in the text; does nothing while the Rendered view hides the editor. */
   nextConflict(): void;
   /** Moves to the previous conflict marker; does nothing while the Rendered view hides the editor. */
   previousConflict(): void;
-  dirty(): boolean;
-  /** Puts the keyboard in the editor: where focus goes back to when a save the close question asked for did not go through. */
-  focus(): void;
 };
 
 /**

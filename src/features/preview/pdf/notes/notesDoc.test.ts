@@ -151,6 +151,12 @@ describe("notesDoc undo", () => {
     expect(state).toMatchObject({ saving: false, lastSave: null, line: "report.pdf changed after the save, so the save can't be undone." });
     expect(announced(effects)).toEqual(["report.pdf changed after the save, so the save can't be undone."]);
   });
+
+  it("notesDoc_unsave_failed_keeps_the_save_to_undo", () => {
+    const { state, effects } = run(afterSave(), { type: "unsave" }, { type: "unsaveFailed", line: "The file is in use." });
+    expect(state).toMatchObject({ saving: false, lastSave: { snapshot: expect.any(String) }, line: "The save of report.pdf couldn't be undone. The file is in use." });
+    expect(announced(effects)).toEqual(["The save of report.pdf couldn't be undone. The file is in use."]);
+  });
 });
 
 describe("notesDoc disk", () => {
