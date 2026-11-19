@@ -190,11 +190,15 @@ type BodyProps = {
   onJump: (to: Place, how: { keepFocus: boolean }) => void;
   /** Where the PDF view hands over its way to read the place at the top of the view. */
   placeNow: Ref<() => Place | null>;
+  /** A web link in a PDF. */
+  onWebLink: (url: string) => void;
+  /** A Back or Forward action link in a PDF. */
+  onHistory: (by: -1 | 1) => void;
 };
 
 const noDirty = () => {};
 
-function Body({ entry, file, active, os, announce, refetch, textCommands, onDirty, onImageSize, onPages, onLink, onKey, region, keptDraft, onSource, place, placeKey, onJump, placeNow }: BodyProps) {
+function Body({ entry, file, active, os, announce, refetch, textCommands, onDirty, onImageSize, onPages, onLink, onKey, region, keptDraft, onSource, place, placeKey, onJump, placeNow, onWebLink, onHistory }: BodyProps) {
   const { name } = splitPath(entry.path);
   // A text file, and a deleted one that was text, are the same tab: the editor stays mounted when the file goes and comes back.
   const textTab = (f: Extract<FileState, { phase: "text" | "deleted" }>) => (
@@ -226,6 +230,8 @@ function Body({ entry, file, active, os, announce, refetch, textCommands, onDirt
           onJump={onJump}
           placeNow={placeNow}
           announce={announce}
+          onWebLink={onWebLink}
+          onHistory={onHistory}
         />
       );
     case "deleted":
@@ -233,7 +239,7 @@ function Body({ entry, file, active, os, announce, refetch, textCommands, onDirt
       // A file that was gone before the tab ever showed it has only its draft: the editor opens on that, so the edits can be read
       // and saved again.
       if (file.last?.phase === "text" || (file.last === undefined && keptDraft)) return textTab(file);
-      return file.last ? <Body entry={entry} file={file.last} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} onDirty={onDirty} onImageSize={onImageSize} onPages={onPages} onLink={onLink} onKey={onKey} region={region} keptDraft={keptDraft} onSource={onSource} place={place} placeKey={placeKey} onJump={onJump} placeNow={placeNow} /> : <p className="preview__message">This file was deleted.</p>;
+      return file.last ? <Body entry={entry} file={file.last} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} onDirty={onDirty} onImageSize={onImageSize} onPages={onPages} onLink={onLink} onKey={onKey} region={region} keptDraft={keptDraft} onSource={onSource} place={place} placeKey={placeKey} onJump={onJump} placeNow={placeNow} onWebLink={onWebLink} onHistory={onHistory} /> : <p className="preview__message">This file was deleted.</p>;
     case "error":
       return <p className="preview__message">This file can't be previewed.</p>;
   }
@@ -536,7 +542,7 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
             This file was deleted.
           </div>
         )}
-        <Body entry={entry} file={file} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} onDirty={noteDirty} onImageSize={(url, w, h) => setSize({ url, w, h })} onPages={(count) => setPages({ path: entry.path, count })} onLink={follow} onKey={keys} region={regionHooks} keptDraft={keptDraft} onSource={() => views.current?.merge()} place={placeOf(entry)} placeKey={moves.current.count} onJump={jump} placeNow={placeNowRef} />
+        <Body entry={entry} file={file} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} onDirty={noteDirty} onImageSize={(url, w, h) => setSize({ url, w, h })} onPages={(count) => setPages({ path: entry.path, count })} onLink={follow} onKey={keys} region={regionHooks} keptDraft={keptDraft} onSource={() => views.current?.merge()} place={placeOf(entry)} placeKey={moves.current.count} onJump={jump} placeNow={placeNowRef} onWebLink={(url) => follow({ kind: "web", url })} onHistory={(by) => { if (by < 0) { if (canBack) goBack(); } else if (canForward) goForward(); }} />
       </div>
       {select?.step === "comment" && body.current
         ? createPortal(

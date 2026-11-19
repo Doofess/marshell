@@ -256,6 +256,36 @@
   top: 0;
 }
 
+/*
+ * The links of a page (links.tsx): their own layer over the page, above the text layer so they can be clicked. The layer takes
+ * no pointer, so text outside a link can still be selected; each link takes it back. The tint is multiplied like the matches,
+ * on the layer: its z-index makes a stacking context, and a blend on the spans alone would not reach the canvas under it.
+ */
+.pdf__links {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+}
+.pdf__link {
+  position: absolute;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.pdf__link:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 0;
+}
+@media (hover: hover) and (pointer: fine) {
+  .pdf__link:hover {
+    background: color-mix(in oklch, var(--accent) 14%, transparent);
+  }
+}
+.pdf__link:active {
+  background: color-mix(in oklch, var(--accent) 22%, transparent);
+}
+
 @media (forced-colors: active) {
   /* Filled, as the side pane's chosen tab is; an outline here took the focus ring's place. `none` keeps the system from
      painting a Canvas backplate behind the label. */
@@ -280,8 +310,16 @@
     forced-color-adjust: none;
   }
   /* The text layer's blend would turn a system colour into something else. */
-  .textLayer {
+  .textLayer,
+  .pdf__links {
     mix-blend-mode: normal;
+  }
+  .pdf__link:focus-visible {
+    outline-color: Highlight;
+  }
+  .pdf__link:active {
+    background: color-mix(in srgb, Highlight 25%, transparent);
+    forced-color-adjust: none;
   }
   .textLayer span.pdf__match,
   .textLayer .markedContent span.pdf__match {
@@ -291,5 +329,12 @@
   .textLayer span.pdf__match--current,
   .textLayer .markedContent span.pdf__match--current {
     outline: 2px solid Highlight;
+  }
+}
+/* A block of its own, as MainWindow.css does: a nested @media inside the forced-colours block hides it from the outline check. */
+@media (forced-colors: active) and (hover: hover) and (pointer: fine) {
+  .pdf__link:hover {
+    background: color-mix(in srgb, Highlight 25%, transparent);
+    forced-color-adjust: none;
   }
 }

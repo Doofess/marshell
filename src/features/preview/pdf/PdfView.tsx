@@ -5,6 +5,8 @@ import { afterLoadFailure } from "./loadFailure";
 import { FindBar, pdfKey, selectionText, stepText } from "./FindBar";
 import { PdfToolbar } from "./PdfToolbar";
 import { usePdfFind } from "./findText";
+import { placeOfDest } from "./dest";
+import { linksOf, PageLinks, type LinkGoal, type PageLink } from "./links";
 import { clampPlace, placeAt, placeText, scrollFor } from "./place";
 import { loadPdf, renderPage, renderTextLayer, type TextMapping } from "./pdfjs";
 import { parsePageField, scaleFor, zoomIn, zoomOut, type Zoom } from "./zoom";
@@ -31,6 +33,10 @@ type Props = {
   placeNow?: Ref<() => Place | null>;
   /** Says a line through the window's announcer. */
   announce?: (text: string) => void;
+  /** A web link on a page: the pane opens it in a browser tab, or asks. */
+  onWebLink?: (url: string) => void;
+  /** A Back or Forward action link: the tab's own history. */
+  onHistory?: (by: -1 | 1) => void;
 };
 
 type Size = { w: number; h: number };
@@ -50,12 +56,15 @@ type PageProps = {
   overlay: ReactNode;
   /** Hands the drawn text layer to find; the function returned lets it go when the page is dropped or redrawn. */
   onText: (pageIndex: number, m: TextMapping) => () => void;
+  /** A click or Enter on one of the page's links. */
+  onFollow: (goal: LinkGoal) => void;
 };
 
 /** One page: a placeholder of its final size until it is near the view, then the canvas and the text over it. */
-function PdfPage({ doc, n, name, size, scale, root, overlay, onText }: PageProps) {
+function PdfPage({ doc, n, name, size, scale, root, overlay, onText, onFollow }: PageProps) {
   const holder = useRef<HTMLDivElement>(null);
   const [live, setLive] = useState(false);
+  const [links, setLinks] = useState<PageLink[]>([]);
 
   // Near the view (one screen out) it is drawn; more than three screens away its canvas is dropped.
   useEffect(() => {
@@ -76,6 +85,7 @@ function PdfPage({ doc, n, name, size, scale, root, overlay, onText }: PageProps
     if (!el) return;
     if (!live) {
       el.replaceChildren();
+      setLinks([]);
       return;
     }
     const abort = new AbortController();
@@ -91,6 +101,11 @@ function PdfPage({ doc, n, name, size, scale, root, overlay, onText }: PageProps
         if (abort.signal.aborted) return;
         el.replaceChildren(canvas, text);
         if (mapping) release = onText(n - 1, mapping);
+        // The links are read once per drawn page; they are fractions of the page, so a zoom redraws them in place.
+        const viewport = page.getViewport({ scale: 1 });
+        const annotations = await page.getAnnotations({ intent: "display" });
+        if (abort.signal.aborted) return;
+        setLinks(linksOf(annotations, { width: viewport.width, height: viewport.height, toView: (r) => [...viewport.convertToViewportPoint(r[0]!, r[1]!), ...viewport.convertToViewportPoint(r[2]!, r[3]!)] as number[] }));
       } catch {
         // A page that fails to draw stays blank; the others go on.
       }
@@ -104,13 +119,14 @@ function PdfPage({ doc, n, name, size, scale, root, overlay, onText }: PageProps
   return (
     <div className="pdf__page" role="group" aria-label={`${name}, page ${n}`} data-page={n} style={{ inlineSize: size.w * scale, blockSize: size.h * scale }}>
       <div ref={holder} className="pdf__sheet" />
+      <PageLinks links={links} onFollow={onFollow} />
       {overlay}
     </div>
   );
 }
 
 /** A PDF as a column of pages: a toolbar, then every page at its final size, drawn as they come into view. */
-export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocument, renderOverlay, place, placeKey, onJump, placeNow, announce }: Props) {
+export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocument, renderOverlay, place, placeKey, onJump, placeNow, announce, onWebLink, onHistory }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const [scroller, setScroller] = useState<HTMLElement | null>(null);
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
@@ -328,6 +344,34 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
     scroller?.focus({ preventScroll: true });
   };
 
+  // Follows a link. A jump goes through `onJump` as the Page field's does, so it joins the tab's history.
+  const follow = (goal: LinkGoal, how: { keepFocus: boolean }) => {
+    const go = (to: Place) => (onJump ? onJump(to, how) : applyPlace(to));
+    switch (goal.kind) {
+      case "dest":
+        void placeOfDest(docRef.current!, goal.dest).then((to) => {
+          if (to) go(to);
+          else latest.current.announce?.("This link leads nowhere in the file.");
+        });
+        return;
+      case "action": {
+        const last = Math.max(count, 1);
+        if (goal.action === "GoBack") onHistory?.(-1);
+        else if (goal.action === "GoForward") onHistory?.(1);
+        else if (goal.action === "NextPage") go({ page: Math.min(current + 1, last), top: 0 });
+        else if (goal.action === "PrevPage") go({ page: Math.max(current - 1, 1), top: 0 });
+        else if (goal.action === "FirstPage") go({ page: 1, top: 0 });
+        else go({ page: last, top: 0 });
+        return;
+      }
+      case "web":
+        onWebLink?.(goal.url);
+        return;
+      case "other":
+        latest.current.announce?.("Only links within the file and web links open here.");
+    }
+  };
+
   const [findOpen, setFindOpen] = useState(false);
   const [focusTick, setFocusTick] = useState(0);
   const field = useRef<HTMLInputElement>(null);
@@ -425,7 +469,7 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
         />
       </div>
       <div className="pdf__pagelist">
-        {doc && sizes.map((size, i) => <PdfPage key={i} doc={doc} n={i + 1} name={name} size={size} scale={scaleOf(i)} root={scroller} overlay={renderOverlay?.(i + 1)} onText={find.attach} />)}
+        {doc && sizes.map((size, i) => <PdfPage key={i} doc={doc} n={i + 1} name={name} size={size} scale={scaleOf(i)} root={scroller} overlay={renderOverlay?.(i + 1)} onText={find.attach} onFollow={(g) => follow(g, { keepFocus: false })} />)}
         {!doc && <p className="preview__message">Loading…</p>}
       </div>
     </div>
