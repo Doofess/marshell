@@ -1582,6 +1582,9 @@ export function LiveApp() {
         case "panePages":
           shownPdfRef.current()?.pages();
           return true;
+        case "paneNotes":
+          shownPdfRef.current()?.notes();
+          return true;
         case "paneGoToLine":
           shownTextRef.current()?.goToLine();
           return true;
@@ -1767,7 +1770,7 @@ export function LiveApp() {
     }
     const shortcut = commandShortcut(id);
     // These move the focus (or open a panel that takes it), so they wait for the palette to hand it back first.
-    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "menu" || shortcut?.kind === "paneTab" || shortcut?.kind === "closePaneTab" || shortcut?.kind === "browse" || shortcut?.kind === "newBrowserTab" || shortcut?.kind === "clearBrowserData" || shortcut?.kind === "selectRegion" || shortcut?.kind === "paneSave" || shortcut?.kind === "paneUndoSave" || shortcut?.kind === "paneGoToLine" || shortcut?.kind === "paneFind" || shortcut?.kind === "paneOutline" || shortcut?.kind === "panePages" || shortcut?.kind === "paneWordWrap") return void setTimeout(() => windowCommand(shortcut), 0);
+    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "menu" || shortcut?.kind === "paneTab" || shortcut?.kind === "closePaneTab" || shortcut?.kind === "browse" || shortcut?.kind === "newBrowserTab" || shortcut?.kind === "clearBrowserData" || shortcut?.kind === "selectRegion" || shortcut?.kind === "paneSave" || shortcut?.kind === "paneUndoSave" || shortcut?.kind === "paneGoToLine" || shortcut?.kind === "paneFind" || shortcut?.kind === "paneOutline" || shortcut?.kind === "panePages" || shortcut?.kind === "paneNotes" || shortcut?.kind === "paneWordWrap") return void setTimeout(() => windowCommand(shortcut), 0);
     if (windowCommand(shortcut)) return;
     if (shortcut?.kind === "launcher") setLauncherOpen(true);
     else if (shortcut?.kind === "prompt") jumpPrompt(shortcut.by);

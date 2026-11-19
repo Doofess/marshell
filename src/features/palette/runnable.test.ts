@@ -34,10 +34,15 @@ describe("cannotRun", () => {
     expect(sorted(cannotRun({ ...ALL, textTab: false, saveTab: false }))).toEqual(sorted(["pane-save", "pane-undo-save", "pane-go-to-line", "pane-word-wrap", "pane-next-conflict", "pane-previous-conflict"]));
   });
 
-  it("the_three_pdf_commands_show_only_for_a_loaded_pdf_tab", () => {
-    const pdf = ["pane-pdf-find", "pane-pdf-outline", "pane-pdf-pages"];
+  it("the_four_pdf_commands_show_only_for_a_loaded_pdf_tab", () => {
+    const pdf = ["pane-pdf-find", "pane-pdf-outline", "pane-pdf-pages", "pane-pdf-notes"];
     expect(sorted(cannotRun({ ...ALL, pdfTab: false }))).toEqual(sorted(pdf));
     expect(cannotRun(ALL)).toEqual([]);
+  });
+
+  it("the palette lists Show PDF notes for a loaded PDF tab", () => {
+    expect(cannotRun({ ...ALL, pdfTab: false })).toContain("pane-pdf-notes");
+    expect(cannotRun(ALL)).not.toContain("pane-pdf-notes");
   });
 
   it("lists each command once when several facts are missing", () => {

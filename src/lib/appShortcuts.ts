@@ -44,6 +44,7 @@ export type SessionShortcut =
   | { kind: "paneFind" }
   | { kind: "paneOutline" }
   | { kind: "panePages" }
+  | { kind: "paneNotes" }
   | { kind: "paneWordWrap" }
   | { kind: "paneNextConflict" }
   | { kind: "panePreviousConflict" }
@@ -133,6 +134,8 @@ export function commandShortcut(id: string): SessionShortcut | null {
       return { kind: "paneOutline" };
     case "pane-pdf-pages":
       return { kind: "panePages" };
+    case "pane-pdf-notes":
+      return { kind: "paneNotes" };
     case "pane-word-wrap":
       return { kind: "paneWordWrap" };
     case "pane-next-conflict":

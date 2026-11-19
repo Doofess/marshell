@@ -34,7 +34,7 @@ const NEEDS: ReadonlyArray<[Need, readonly string[]]> = [
   ["sidebarToggle", ["sidebar"]],
   ["textTab", ["pane-go-to-line", "pane-word-wrap", "pane-next-conflict", "pane-previous-conflict"]],
   ["saveTab", ["pane-save", "pane-undo-save"]],
-  ["pdfTab", ["pane-pdf-find", "pane-pdf-outline", "pane-pdf-pages"]],
+  ["pdfTab", ["pane-pdf-find", "pane-pdf-outline", "pane-pdf-pages", "pane-pdf-notes"]],
   ["undoSave", ["pane-undo-save"]],
 ];
 

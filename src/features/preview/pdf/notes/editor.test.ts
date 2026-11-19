@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { drawsFreehand, editorKeysAllowed, HIGHLIGHT_COLORS, layerInView, noteNews, pageAttacher, pdfjsTakesKey, selectionLayer, type LiveNote, type NewsState, type PageLayers } from "./editor";
+import { drawsFreehand, editorKeysAllowed, HIGHLIGHT_COLORS, layerInView, mergeNotes, noteNews, pageAttacher, pdfjsTakesKey, selectionLayer, type HeldNote, type LiveNote, type NewsState, type Note, type PageLayers } from "./editor";
 
 /** A stand-in for a DOM element: `contains` follows the parent chain, `closest` matches by a list of selectors it answers to. */
 type Fake = { parent: Fake | null; matches: string[]; contains(o: unknown): boolean; closest(sel: string): Fake | null };
@@ -280,5 +280,36 @@ describe("noteNews", () => {
 
   it("noteNews_other_kinds_are_not_told_as_added", () => {
     expect(noteNews(fresh(), [note("i", { kind: "ink" })])).toEqual([]);
+  });
+});
+
+describe("mergeNotes", () => {
+  const fileNote = (o: Partial<Note> = {}): Note => ({ id: "12R", page: 1, kind: "highlight", kindName: "Highlight", color: "#FFFF98", text: "quick", comment: "old", editable: true, top: 0.2, ...o });
+  const heldNote = (o: Partial<HeldNote> = {}): HeldNote => ({ id: "pdfjs_internal_editor_1", fileId: null, page: 1, kind: "highlight", color: "#53FFBC", text: "brown", comment: "", top: 0.5, ready: true, ...o });
+  const none = () => false;
+
+  it("mergeNotes_keeps_the_file_notes_when_nothing_changed", () => {
+    expect(mergeNotes([fileNote()], [], none)).toEqual([fileNote()]);
+  });
+
+  it("mergeNotes_an_edited_comment_and_colour_replace_the_file_note", () => {
+    const out = mergeNotes([fileNote()], [heldNote({ fileId: "12R", comment: "new", color: "#FF4F5F", text: "", top: null })], none);
+    expect(out).toEqual([fileNote({ comment: "new", color: "#FF4F5F" })]);
+  });
+
+  it("mergeNotes_a_deleted_file_note_goes", () => {
+    expect(mergeNotes([fileNote(), fileNote({ id: "13R" })], [], (id) => id === "12R").map((n) => n.id)).toEqual(["13R"]);
+  });
+
+  it("mergeNotes_a_new_highlight_is_added_with_its_place_and_marked_as_made_here", () => {
+    const out = mergeNotes([fileNote()], [heldNote()], none);
+    expect(out).toHaveLength(2);
+    expect(out[1]).toEqual({ id: "pdfjs_internal_editor_1", page: 1, kind: "highlight", kindName: "Highlight", color: "#53FFBC", text: "brown", comment: "", editable: true, top: 0.5, added: true });
+    expect(mergeNotes([], [heldNote({ top: null })], none)[0]!.top).toBe(0);
+  });
+
+  it("mergeNotes_a_free_text_being_typed_is_left_out", () => {
+    expect(mergeNotes([], [heldNote({ kind: "freetext", ready: false })], none)).toEqual([]);
+    expect(mergeNotes([], [heldNote({ kind: "freetext", color: null, text: "Hi" })], none)[0]).toMatchObject({ kind: "freetext", kindName: "Free text", text: "Hi", added: true });
   });
 });

@@ -1,5 +1,6 @@
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 import { editorLib } from "../pdfjs";
+import { readFileNotes } from "./fileNotes";
 import { winAnsiSafe } from "./notesDoc";
 
 /**
@@ -26,6 +27,35 @@ export const HIGHLIGHT_COLORS: readonly { name: ColorName; value: string }[] = [
 /** pdf.js asked for a note's comment: `done(null)` cancels, `done("")` deletes the comment. */
 export type CommentRequest = { page: number; anchor: DOMRect; note: HTMLElement; text: string; done(text: string | null): void };
 
+/** A note in the Notes view. `top` is how far down its page it starts, as a fraction. `added` is set on a note the editor made, not read from the file. */
+export type Note = { id: string; page: number; kind: "highlight" | "freetext" | "other"; kindName: string; color: string | null; text: string; comment: string; editable: boolean; top: number; added?: boolean };
+
+/** A note pdf.js holds, as the list sees it: `fileId` is the file annotation it stands for, `ready` when it holds something and isn't being typed. */
+export type HeldNote = { id: string; fileId: string | null; page: number; kind: "highlight" | "freetext"; color: string | null; text: string; comment: string; top: number | null; ready: boolean };
+
+/**
+ * The file's notes with the editor's changes applied: a held note that stands for a file note replaces it (its colour, comment
+ * and text), a file note that was deleted goes, and a new note that holds something and isn't being typed is added.
+ */
+export function mergeNotes(file: readonly Note[], held: readonly HeldNote[], deleted: (fileId: string) => boolean): Note[] {
+  const edits = new Map<string, HeldNote>();
+  const added: HeldNote[] = [];
+  for (const h of held) {
+    if (h.fileId !== null && file.some((f) => f.id === h.fileId)) edits.set(h.fileId, h);
+    else if (h.ready) added.push(h);
+  }
+  const out: Note[] = [];
+  for (const f of file) {
+    if (deleted(f.id)) continue;
+    const h = edits.get(f.id);
+    out.push(h ? { ...f, color: h.color ?? f.color, comment: h.comment, text: h.text !== "" ? h.text : f.text, top: h.top ?? f.top } : f);
+  }
+  for (const h of added) {
+    out.push({ id: h.id, page: h.page, kind: h.kind, kindName: h.kind === "highlight" ? "Highlight" : "Free text", color: h.color, text: h.text, comment: h.comment, editable: true, top: h.top ?? 0, added: true });
+  }
+  return out;
+}
+
 export type NotesEditor = {
   /** Puts the editor over a drawn page; the function returned takes it off again (the page's notes stay with the editor). */
   attachPage(n: number, page: PDFPageProxy, layers: { holder: HTMLElement; text: HTMLElement }, scale: number): () => void;
@@ -43,6 +73,10 @@ export type NotesEditor = {
   /** A note is being typed: its text is in pdf.js's box and not yet in the note, so a save now would end the typing. */
   editing(): boolean;
   modified(): boolean;
+  /** Every note in the PDF, the file's with the editor's adds, edits and deletions applied. */
+  notes(): Promise<Note[]>;
+  /** Puts the keyboard on an editable note's element; false when the note is gone or its page isn't drawn. */
+  focusNote(id: string): boolean;
   onChange(cb: () => void): () => void;
   /** The loaded bytes with the notes appended as an incremental update. */
   save(): Promise<Uint8Array>;
@@ -205,6 +239,7 @@ type Ui = {
   redo(): void;
   registerEditorTypes(types: unknown[]): void;
   getActive(): { isInEditMode?(): boolean } | null;
+  isDeletedAnnotationElement(annotationElementId: string): boolean;
   unselectAll(): void;
   endCurrentEditing(): void;
   updateMode(mode: number): Promise<void>;
@@ -223,6 +258,7 @@ type Editor = {
   readonly editorType: string;
   annotationElementId?: string | null;
   editorDiv?: HTMLElement;
+  color?: string;
   isEmpty(): boolean;
   isInEditMode(): boolean;
 };
@@ -489,6 +525,36 @@ export async function createNotesEditor(
     },
     editing: () => ui.getActive()?.isInEditMode?.() === true,
     modified: () => changes > 0,
+    async notes() {
+      const file = await readFileNotes(doc);
+      const mine: HeldNote[] = [];
+      for (const e of held.values()) {
+        if (e.editorType !== "highlight" && e.editorType !== "freetext") continue;
+        const kind = e.editorType;
+        const at = parseFloat(e.div.style.top);
+        mine.push({
+          id: e.id,
+          fileId: e.annotationElementId ?? null,
+          page: e.pageIndex + 1,
+          kind,
+          color: kind === "highlight" ? (e.color ?? null) : null,
+          text: (kind === "highlight" ? e.div.getAttribute("aria-label") : e.editorDiv?.innerText)?.trim() ?? "",
+          comment: kind === "highlight" ? (e.comment?.text ?? "") : "",
+          top: e.div.style.top.endsWith("%") && Number.isFinite(at) ? at / 100 : null,
+          ready: !e.isEmpty() && !e.isInEditMode(),
+        });
+      }
+      return mergeNotes(file, mine, (id) => ui.isDeletedAnnotationElement(id));
+    },
+    focusNote(id) {
+      for (const e of held.values()) {
+        if (e.id !== id && e.annotationElementId !== id) continue;
+        if (!e.div.isConnected) return false;
+        e.div.focus({ preventScroll: true });
+        return document.activeElement === e.div;
+      }
+      return false;
+    },
     onChange(cb) {
       listeners.add(cb);
       return () => listeners.delete(cb);

@@ -111,6 +111,7 @@ export const COMMANDS: Command[] = [
   { id: "pane-pdf-find", label: "Find in PDF", group: "Window" },
   { id: "pane-pdf-outline", label: "Show PDF outline", group: "Window" },
   { id: "pane-pdf-pages", label: "Show PDF pages", group: "Window" },
+  { id: "pane-pdf-notes", label: "Show PDF notes", group: "Window" },
   { id: "sidebar", label: "Collapse sidebar to the rail", group: "Window" },
   { id: "group-by-project", label: "Group sessions by project", group: "Window" },
   { id: "shell-panel", label: "Show or focus the shell panel", group: "Window", binding: { code: "KeyS" } },

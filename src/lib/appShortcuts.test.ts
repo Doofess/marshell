@@ -154,6 +154,7 @@ describe("the PDF tab's commands", () => {
     expect(commandShortcut("pane-pdf-find")).toEqual({ kind: "paneFind" });
     expect(commandShortcut("pane-pdf-outline")).toEqual({ kind: "paneOutline" });
     expect(commandShortcut("pane-pdf-pages")).toEqual({ kind: "panePages" });
+    expect(commandShortcut("pane-pdf-notes")).toEqual({ kind: "paneNotes" });
   });
 });
 

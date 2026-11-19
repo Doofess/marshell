@@ -3,7 +3,7 @@
  * It is module state: a restart starts closed. It records choices only, so a sidebar that closed after a pick, by Esc or by a
  * click outside it, and a view shown for want of an outline, leave it as it was.
  */
-export type SidebarView = "outline" | "pages";
+export type SidebarView = "outline" | "pages" | "notes";
 export type SidebarPref = { open: boolean; view: SidebarView | null };
 
 let pref: SidebarPref = { open: false, view: null };

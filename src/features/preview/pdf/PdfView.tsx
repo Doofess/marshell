@@ -14,7 +14,10 @@ import { Thumbnails } from "./Thumbnails";
 import { loadPdf, renderPage, renderTextLayer, type TextMapping } from "./pdfjs";
 import { keyboardLeft, setSidebarPref, sidebarPref, startOpen, startView, type SidebarView } from "./sidebarPref";
 import { parsePageField, scaleFor, zoomIn, zoomOut, type Zoom } from "./zoom";
-import { createNotesEditor, selectionLayer, type CommentRequest, type NoteTool, type NotesEditor } from "./notes/editor";
+import { createNotesEditor, selectionLayer, type CommentRequest, type Note, type NoteTool, type NotesEditor } from "./notes/editor";
+import { readFileNotes } from "./notes/fileNotes";
+import { colourName, currentNoteId, noteRows, type NoteRow } from "./notes/noteRows";
+import { NotesList } from "./notes/NotesList";
 import { CommentPopup } from "./notes/CommentPopup";
 import { fromDocument, notesBlocked } from "./notes/blocked";
 import { colorPref, setColorPref } from "./notes/notesPref";
@@ -175,7 +178,7 @@ function PdfPage({ doc, n, name, size, scale, root, overlay, onText, onFollow, n
 }
 
 /** What the palette can ask of a loaded PDF. */
-export type PdfCommands = { find(): void; outline(): void; pages(): void };
+export type PdfCommands = { find(): void; outline(): void; pages(): void; notes(): void };
 
 /** A PDF as a column of pages: a toolbar, then every page at its final size, drawn as they come into view. */
 export function PdfView({ path, bytes: fileBytes, hash, readOnly, name, onDirty, save, onPages, onCurrentPage, onDocument, renderOverlay, place, placeKey, onJump, placeNow, announce, onWebLink, onHistory, commands }: Props) {
@@ -692,6 +695,8 @@ export function PdfView({ path, bytes: fileBytes, hash, readOnly, name, onDirty,
       panel?.querySelector<HTMLElement>("button") ??
       side?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
     target?.focus({ preventScroll: true });
+    // The palette's Notes command is answered once the keyboard is in a list that is already there.
+    if (panel?.contains(document.activeElement)) wantNotesFocus.current = false;
   }, [sidebarTick]);
 
   // Lying over the pages, the sidebar closes when a pointer goes down, or the keyboard goes, anywhere outside it and its button.
@@ -742,6 +747,75 @@ export function PdfView({ path, bytes: fileBytes, hash, readOnly, name, onDirty,
     } else if (onJump) onJump(to, { keepFocus: true });
     else applyPlace(to);
   };
+  // The Notes view's list: read when the view opens, and again after a change of the notes, at most every 500 ms. A PDF with no
+  // editor (blocked by its document) lists the file's notes, every one read-only.
+  const [noteList, setNoteList] = useState<Note[] | null>(null);
+  const notesRef = useRef(notes);
+  notesRef.current = notes;
+  useEffect(() => {
+    if (!doc || !open || view !== "notes" || (!notes && !noEditor)) return;
+    let dead = false;
+    let timer = 0;
+    let last = 0;
+    const read = () => {
+      last = Date.now();
+      const got = notes ? notes.notes() : readFileNotes(doc).then((ns) => ns.map((n) => ({ ...n, editable: false })));
+      got.then(
+        (ns) => {
+          if (!dead) setNoteList(ns);
+        },
+        () => {
+          if (!dead) setNoteList([]);
+        },
+      );
+    };
+    read();
+    const off = notes?.onChange(() => {
+      if (timer) return;
+      timer = window.setTimeout(
+        () => {
+          timer = 0;
+          read();
+        },
+        Math.max(0, 500 - (Date.now() - last)),
+      );
+    });
+    return () => {
+      dead = true;
+      clearTimeout(timer);
+      off?.();
+    };
+  }, [doc, open, view, notes, noEditor]);
+  const rows = noteList ? noteRows(noteList, colourName) : null;
+  // The palette's command puts the keyboard in the list, which may still be read when the view opens: it lands when the list does.
+  const wantNotesFocus = useRef(false);
+  useLayoutEffect(() => {
+    if (!wantNotesFocus.current || rows === null) return;
+    wantNotesFocus.current = false;
+    const panel = root.current?.querySelector<HTMLElement>('.pdf-sidebar [role="tabpanel"]');
+    panel?.querySelector<HTMLElement>('[aria-current="true"]')?.focus({ preventScroll: true });
+    if (!panel?.contains(document.activeElement)) panel?.querySelector<HTMLElement>('[tabindex="0"]')?.focus({ preventScroll: true });
+  }, [rows]);
+  // A note picked jumps to its place, as an outline entry does. An editable one then takes the keyboard on the page, which is
+  // only so where the keyboard goes to the pages anyway (a sidebar beside them keeps it, as for the outline); the page may not
+  // be drawn at once, so it is tried a few times.
+  const pickNote = (row: NoteRow) => {
+    const to: Place = { page: row.page, top: row.top };
+    if (over) {
+      if (onJump) onJump(to, { keepFocus: false });
+      else applyPlace(to);
+      hideSidebar(false);
+      focusPages();
+      if (!row.editable) return;
+      let tries = 0;
+      const attempt = () => {
+        if (notesRef.current?.focusNote(row.id) || ++tries > 15) return;
+        window.setTimeout(attempt, 100);
+      };
+      window.setTimeout(attempt, 0);
+    } else if (onJump) onJump(to, { keepFocus: true });
+    else applyPlace(to);
+  };
   const leaveSidebar = () => {
     if (over) hideSidebar(false);
     focusPages();
@@ -774,11 +848,19 @@ export function PdfView({ path, bytes: fileBytes, hash, readOnly, name, onDirty,
     setSidebarPref({ view: v });
     showSidebar();
   };
-  paletteRef.current = { find: openFind, outline: () => showSidebarView("outline"), pages: () => showSidebarView("pages") };
+  paletteRef.current = {
+    find: openFind,
+    outline: () => showSidebarView("outline"),
+    pages: () => showSidebarView("pages"),
+    notes: () => {
+      wantNotesFocus.current = true;
+      showSidebarView("notes");
+    },
+  };
   const loaded = doc !== null && !error;
   useImperativeHandle<PdfCommands | null, PdfCommands | null>(
     commands,
-    () => (loaded ? { find: () => paletteRef.current?.find(), outline: () => paletteRef.current?.outline(), pages: () => paletteRef.current?.pages() } : null),
+    () => (loaded ? { find: () => paletteRef.current?.find(), outline: () => paletteRef.current?.outline(), pages: () => paletteRef.current?.pages(), notes: () => paletteRef.current?.notes() } : null),
     [loaded],
   );
   useLayoutEffect(() => {
@@ -862,8 +944,8 @@ export function PdfView({ path, bytes: fileBytes, hash, readOnly, name, onDirty,
               aria-expanded={open}
               aria-controls={sidebarId}
               aria-keyshortcuts="F4"
-              aria-label="Outline and pages"
-              title="Outline and pages (F4)"
+              aria-label="Outline, pages and notes"
+              title="Outline, pages and notes (F4)"
               onClick={toggleSidebar}
             >
               {/* A panel with its left part filled: the sidebar. Three lines are the app's Menu. */}
@@ -914,6 +996,7 @@ export function PdfView({ path, bytes: fileBytes, hash, readOnly, name, onDirty,
             onPick={pick}
             onLeave={leaveSidebar}
             pages={doc ? <Thumbnails doc={doc} sizes={sizes} current={current} name={name} onPick={pickPage} /> : null}
+            notes={<NotesList name={name} rows={rows} current={rows ? currentNoteId(rows, current) : null} onPick={pickNote} />}
           />
         )}
         <div className="pdf__pagelist">
