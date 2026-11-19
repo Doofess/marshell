@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { elements } from "../../../test/hooks";
-import { FindBar, countText, fieldKey, pdfKey, selectionText, stepText } from "./FindBar";
+import { FindBar, countText, fieldKey, keepingFocus, pdfKey, selectionText, stepText } from "./FindBar";
 import { IDLE, type FindStatus } from "./findText";
 
 // A letter's code is its key on a US layout unless the test says where it sits.
@@ -153,5 +153,22 @@ describe("FindBar keys", () => {
     field.props.onKeyDown(e);
     root.props.onKeyDown?.(e);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("live check 6q-6: find's Highlight keeps the keyboard", () => {
+  it("keepingFocus_gives_the_keyboard_back_to_the_button_pressed", () => {
+    // pdf.js puts the keyboard on the note it makes; from find, Next and Highlight go on through the matches.
+    const button = { isConnected: true, focus: vi.fn() };
+    const doc = { activeElement: button as unknown };
+    keepingFocus(() => {
+      doc.activeElement = { note: true };
+    }, doc);
+    expect(button.focus).toHaveBeenCalledWith({ preventScroll: true });
+  });
+  it("keepingFocus_leaves_the_keyboard_where_it_stayed", () => {
+    const button = { isConnected: true, focus: vi.fn() };
+    keepingFocus(() => {}, { activeElement: button });
+    expect(button.focus).not.toHaveBeenCalled();
   });
 });

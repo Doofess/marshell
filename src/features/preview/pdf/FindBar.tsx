@@ -3,6 +3,18 @@ import type { FindQuery, FindStatus } from "./findText";
 
 const NO_TEXT = "This PDF has no text to search. Its pages may be scanned images.";
 
+type Focusable = { isConnected: boolean; focus(o?: FocusOptions): void };
+
+/**
+ * Runs `make` and gives the keyboard back to what had it. pdf.js puts the keyboard on the note it makes; from find's
+ * Highlight it stays on the button, so Next and Highlight go on through the matches (the note is announced).
+ */
+export function keepingFocus(make: () => void, doc: { activeElement: unknown } = document) {
+  const had = doc.activeElement as Focusable | null;
+  make();
+  if (had && had.isConnected && doc.activeElement !== had) had.focus({ preventScroll: true });
+}
+
 /** What the count beside the field reads. It is not a live region: a step is announced through `stepText`. */
 export function countText(s: FindStatus, query: string): string {
   if (query.trim() === "") return "";
@@ -122,7 +134,7 @@ export function FindBar({ query, status, onQuery, onStep, onNote, notesOff = fal
       <button type="button" className="pdf__button" aria-label="Next" title="Next match (Enter)" onClick={() => onStep(false)}>
         {chevron("M2.5 4.5 6 8l3.5-3.5")}
       </button>
-      <button type="button" className="pdf__button pdf__textbutton" aria-label="Highlight" title="Highlight this match" disabled={noNote} onClick={() => onNote?.(false)}>
+      <button type="button" className="pdf__button pdf__textbutton" aria-label="Highlight" title="Highlight this match" disabled={noNote} onClick={() => keepingFocus(() => onNote?.(false))}>
         Highlight
       </button>
       <button type="button" className="pdf__button pdf__textbutton" aria-label="Comment" title="Highlight this match and comment on it" disabled={noNote} onClick={() => onNote?.(true)}>
