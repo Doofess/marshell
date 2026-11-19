@@ -104,24 +104,23 @@ export function conflictJump(
 type ConflictJumper = { toConflict(which: "first"): void };
 
 /**
- * After a merge that left conflicts, the editor goes to the first one. The Rendered view hides the editor, so the tab shows its
- * Source view first, where the merge's line about F7 and Ctrl+Z is true (6q-4b decision 7.2). True when the jump waits for it.
+ * After a merge that left conflicts, the editor goes to the first one. The Rendered view hides the editor, so the tab asks for
+ * its Source view instead, where the merge's line about F7 and Ctrl+Z is true (6q-4b decision 7.2), and the jump waits for it.
  */
-export function firstConflict(o: { rendered: boolean; editor: ConflictJumper | null; toSource: () => void }): boolean {
-  if (!o.rendered) {
-    o.editor?.toConflict("first");
-    return false;
-  }
-  o.toSource();
-  return true;
+export function firstConflict(o: { rendered: boolean; editor: ConflictJumper | null; toSource: () => void }): void {
+  if (o.rendered) o.toSource();
+  else o.editor?.toConflict("first");
 }
 
 /**
- * The jump that waited, once the Source view shows. Merge pressed behind the Rendered view left the keyboard on the tab's body,
- * so it goes on into the editor, where F7 works; anywhere else it stays where the person put it.
+ * The jump that waited, on the first draw after the merge's answer: the Source view it asked for comes in that same draw. A
+ * keyboard in the tab's body (on it, where pressing Merge put it, or in the rendered text about to be hidden) goes on into the
+ * editor, where F7 works; one elsewhere stays where the person put it. A tab still in Rendered view did not get the switch, and
+ * a later switch by the person is not the merge's: nothing moves.
  */
-export function sourceShown(o: { editor: (ConflictJumper & Focusable) | null; onBody: boolean }): void {
-  if (o.onBody) o.editor?.focus();
+export function sourceShown(o: { rendered: boolean; editor: (ConflictJumper & Focusable) | null; inBody: boolean }): void {
+  if (o.rendered) return;
+  if (o.inBody) o.editor?.focus();
   o.editor?.toConflict("first");
 }
 
@@ -263,10 +262,17 @@ export function TextTab({ entry, file, kind, active, os, onDirty, commands, anno
   hidden.current = showRendered;
   const toSource = useRef(onSource);
   toSource.current = onSource;
-  // A jump to the first conflict that waits for the Source view a merge asked for.
+  // A jump to the first conflict that waits for the Source view a merge asked for. Set before the switch is asked for.
   const waiting = useRef(false);
   const toFirstConflict = useCallback(() => {
-    waiting.current = firstConflict({ rendered: hidden.current, editor: editor.current, toSource: () => toSource.current() });
+    firstConflict({
+      rendered: hidden.current,
+      editor: editor.current,
+      toSource: () => {
+        waiting.current = true;
+        toSource.current();
+      },
+    });
   }, []);
   const { doc, ready, dispatch, save, discard } = useEditorFile(entry.path, file, {
     announce,
@@ -277,12 +283,14 @@ export function TextTab({ entry, file, kind, active, os, onDirty, commands, anno
     rendered: () => hidden.current,
     firstConflict: toFirstConflict,
   });
-  // Before the paint, so the Source view never shows a frame at the old place.
+  // The merge's answer and the switch it asked for are set in one tick, so they are drawn together: this runs on that draw,
+  // before the paint, so the Source view never shows a frame at the old place.
   useLayoutEffect(() => {
-    if (showRendered || !waiting.current) return;
+    if (!waiting.current) return;
     waiting.current = false;
-    sourceShown({ editor: editor.current, onBody: document.activeElement !== null && document.activeElement === root.current?.closest(".preview__body") });
-  }, [showRendered]);
+    const body = root.current?.closest(".preview__body");
+    sourceShown({ rendered: showRendered, editor: editor.current, inBody: !!body && body.contains(document.activeElement) });
+  }, [showRendered, doc]);
   const hintId = useId();
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
   // A shebang tells the type of a file whose name does not: read from the text the tab opened with.

@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { PreviewPane, bodyTakesFocus, formatSize, type PreviewPaneProps } from "./Preview";
+import { PreviewPane, bodyTakesFocus, formatSize, quietViews, type PreviewPaneProps } from "./Preview";
 import { followWebLink } from "./webLink";
 import type { FileState } from "./usePreviewFile";
 
@@ -175,6 +175,27 @@ describe("bodyTakesFocus", () => {
   it("a_quiet_switch_that_did_not_happen_does_not_keep_a_later_move_quiet", () => {
     expect(bodyTakesFocus(md("rendered"), { ...md("rendered"), path: "C:\\p\\b.md" }, true)).toBe(true);
     expect(bodyTakesFocus(md("rendered"), md("rendered", 9), true)).toBe(true);
+  });
+});
+
+describe("quietViews", () => {
+  // Which entry change is the Source view a merge asked for (6q-4b decision 7.2), and which is the person's own.
+  it("the_merges_switch_is_quiet_once", () => {
+    const views: string[] = [];
+    const q = quietViews((v) => views.push(v));
+    q.merge();
+    expect(views).toEqual(["source"]);
+    expect(q.take()).toBe(true);
+    expect(q.take()).toBe(false);
+  });
+  it("the_persons_switch_is_never_quiet_and_ends_a_merges_switch_that_never_came", () => {
+    const views: string[] = [];
+    const q = quietViews((v) => views.push(v));
+    q.merge();
+    q.person("rendered");
+    q.person("source");
+    expect(views).toEqual(["source", "rendered", "source"]);
+    expect(q.take()).toBe(false);
   });
 });
 

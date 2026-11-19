@@ -31,6 +31,30 @@ export function bodyTakesFocus(was: PaneEntry, now: PaneEntry, quiet: boolean): 
   return !(quiet && viewOnly);
 }
 
+/**
+ * The tab's view switches: the person's, from the toggle, and the Source view a merge asks for, which is quiet. `take` says
+ * once whether the entry change being handled was the merge's. The person's switch is never quiet and ends a merge's switch
+ * that never came, so a stale one can't keep the person's own quiet.
+ */
+export function quietViews(onView: (view: View) => void) {
+  let quiet = false;
+  return {
+    person(view: View) {
+      quiet = false;
+      onView(view);
+    },
+    merge() {
+      quiet = true;
+      onView("source");
+    },
+    take(): boolean {
+      const was = quiet;
+      quiet = false;
+      return was;
+    },
+  };
+}
+
 /** A size for a sentence: "300 KB", "1.5 MB". */
 export function formatSize(bytes: number): string {
   const one = (v: number) => String(Math.round(v * 10) / 10);
@@ -182,18 +206,15 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
   const activeRef = useRef(active);
   activeRef.current = active;
   const shownEntry = useRef(entry);
-  // The text tab asked for its Source view after a merge; the next entry change says whether it came.
-  const quietView = useRef(false);
-  const toSource = () => {
-    quietView.current = true;
-    onView("source");
-  };
+  const viewNow = useRef(onView);
+  viewNow.current = onView;
+  const views = useRef<ReturnType<typeof quietViews> | null>(null);
+  views.current ??= quietViews((v) => viewNow.current(v));
   useEffect(() => {
     if (shownEntry.current === entry) return;
     const was = shownEntry.current;
     shownEntry.current = entry;
-    const quiet = quietView.current;
-    quietView.current = false;
+    const quiet = views.current?.take() ?? false;
     if (activeRef.current && bodyTakesFocus(was, entry, quiet)) body.current?.focus({ preventScroll: true });
   }, [entry]);
   // "Updated" is spoken only to someone reading in the pane; a person typing in the terminal is not interrupted by it.
@@ -407,7 +428,7 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
             {(["rendered", "source"] as const).map((v) => {
               const label = v === "rendered" ? "Rendered" : "Source";
               return (
-                <button key={v} type="button" className="preview__view" aria-label={label} title={label} aria-pressed={entry.view === v} onClick={() => onView(v)}>
+                <button key={v} type="button" className="preview__view" aria-label={label} title={label} aria-pressed={entry.view === v} onClick={() => views.current?.person(v)}>
                   {VIEW_ICONS[v]}
                 </button>
               );
@@ -429,7 +450,7 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
             This file was deleted.
           </div>
         )}
-        <Body entry={entry} file={file} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} onDirty={noteDirty} onImageSize={(url, w, h) => setSize({ url, w, h })} onPages={(count) => setPages({ path: entry.path, count })} onLink={follow} onKey={keys} region={regionHooks} keptDraft={keptDraft} onSource={toSource} />
+        <Body entry={entry} file={file} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} onDirty={noteDirty} onImageSize={(url, w, h) => setSize({ url, w, h })} onPages={(count) => setPages({ path: entry.path, count })} onLink={follow} onKey={keys} region={regionHooks} keptDraft={keptDraft} onSource={() => views.current?.merge()} />
       </div>
       {select?.step === "comment" && body.current
         ? createPortal(

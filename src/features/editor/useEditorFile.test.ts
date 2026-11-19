@@ -27,6 +27,7 @@ function setup(over: { doc?: () => DocState; put?: (d: Draft) => Promise<boolean
     format: over.format ?? (() => ({ encoding: "utf-8", eol: "lf" })),
     editor: () => null,
     rendered: () => false,
+    readOnly: () => false,
     firstConflict: () => f.calls.push("firstConflict"),
     announce: (t) => f.said.push(t),
     reading: over.reading ?? (() => true),
@@ -189,6 +190,15 @@ describe("runEffect", () => {
       await runEffect({ type: "merge", id: 1, base: "one", mine: "mine", disk: { text: "other", hash: "2".repeat(64) } }, deps);
       expect(f.events, answer.kind).toEqual([]);
     }
+  });
+  it("a_merge_answered_after_the_tab_became_read_only_is_not_taken", async () => {
+    // A read-only tab can't keep a merge, and its editor takes no Ctrl+Z (6q-4b decision 7.1): the answer is a failure.
+    let readOnly = false;
+    const { f, deps } = setup();
+    deps.readOnly = () => readOnly;
+    deps.api.mergeTexts = async () => ((readOnly = true), { kind: "merged", text: "merged", conflicts: 1 });
+    await runEffect({ type: "merge", id: 5, base: "one", mine: "mine", disk: { text: "other", hash: "2".repeat(64) } }, deps);
+    expect(f.events).toEqual([{ type: "mergeFailed", id: 5, line: "It became read-only while the merge ran." }]);
   });
   it("the_merge_sends_lf_texts", async () => {
     // A file read with CRLF endings, and a draft over an older version of it: the bar is up, and the merge is asked for.

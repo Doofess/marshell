@@ -245,22 +245,29 @@ describe("firstConflict", () => {
   };
   it("goes_to_the_first_conflict_while_the_editor_shows", () => {
     const s = spot();
-    expect(firstConflict({ rendered: false, editor: s.editor, toSource: s.toSource })).toBe(false);
+    firstConflict({ rendered: false, editor: s.editor, toSource: s.toSource });
     expect(s.calls).toEqual(["first"]);
   });
   it("shows_the_source_view_first_and_waits_behind_the_rendered_view", () => {
     const s = spot();
-    expect(firstConflict({ rendered: true, editor: s.editor, toSource: s.toSource })).toBe(true);
+    firstConflict({ rendered: true, editor: s.editor, toSource: s.toSource });
     expect(s.calls).toEqual(["source"]);
   });
-  it("once_the_source_view_shows_takes_the_keyboard_on_from_the_tabs_body_only", () => {
+  it("once_the_source_view_shows_takes_the_keyboard_on_from_inside_the_tabs_body_only", () => {
     const s = spot();
-    sourceShown({ editor: s.editor, onBody: true });
+    sourceShown({ rendered: false, editor: s.editor, inBody: true });
     expect(s.calls).toEqual(["focus", "first"]);
     s.calls.length = 0;
-    sourceShown({ editor: s.editor, onBody: false });
+    sourceShown({ rendered: false, editor: s.editor, inBody: false });
     expect(s.calls).toEqual(["first"]);
-    sourceShown({ editor: null, onBody: true });
+    sourceShown({ rendered: false, editor: null, inBody: true });
+  });
+  it("a_switch_that_did_not_come_with_the_answer_moves_nothing", () => {
+    // The Source view comes in the same draw as the merge's answer. A tab still in Rendered view did not get it, and a later
+    // switch by the person is not the merge's: neither the cursor nor the keyboard moves.
+    const s = spot();
+    sourceShown({ rendered: true, editor: s.editor, inBody: true });
+    expect(s.calls).toEqual([]);
   });
 });
 

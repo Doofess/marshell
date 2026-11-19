@@ -164,6 +164,8 @@ export type EffectDeps = {
   editor: () => EditorHandle | null;
   /** The tab shows its Rendered view, which hides the editor. */
   rendered: () => boolean;
+  /** The tab is read-only: it can't keep a merge (6q-4b decision 7.1). */
+  readOnly: () => boolean;
   /** Goes to the first conflict after a merge: the tab knows whether the Source view has to show first. */
   firstConflict: () => void;
   announce: (text: string) => void;
@@ -212,6 +214,8 @@ async function runMerge(effect: Extract<Effect, { type: "merge" }>, d: EffectDep
   // The tab went while the merge ran (closed, or its session put away): an answer taken now would write a draft the person
   // may just have said not to keep, and announce a merge of a tab that is not there.
   if (d.gone()) return;
+  // The file became read-only while the merge ran: the tab can't keep the answer, and its editor takes no Ctrl+Z (6q-4b decision 7.1).
+  if (r.kind === "merged" && d.readOnly()) return d.dispatch({ type: "mergeFailed", id: effect.id, line: "It became read-only while the merge ran." });
   if (r.kind === "merged") d.dispatch({ type: "merged", id: effect.id, text: r.text, conflicts: r.conflicts, mine: effect.mine, disk: effect.disk.hash, rendered: d.rendered() });
   else d.dispatch({ type: "mergeFailed", id: effect.id, line: r.line });
 }
@@ -332,6 +336,7 @@ export function useEditorFile(
     format: () => format.current,
     editor: () => o.editor.current,
     rendered: o.rendered,
+    readOnly: () => readOnly.current(),
     firstConflict: o.firstConflict,
     announce: o.announce,
     reading: o.reading,
