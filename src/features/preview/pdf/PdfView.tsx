@@ -7,7 +7,7 @@ import { PdfToolbar } from "./PdfToolbar";
 import { usePdfFind } from "./findText";
 import { placeOfDest } from "./dest";
 import { linksOf, PageLinks, type LinkGoal, type PageLink } from "./links";
-import { clampPlace, placeAt, placeText, scrollFor } from "./place";
+import { clampPlace, pageInView, placeAt, placeText, scrollFor } from "./place";
 import { ancestorsOf, loadOutline, sectionAt, type OutlineNode } from "./outline";
 import { PdfSidebar } from "./PdfSidebar";
 import { Thumbnails } from "./Thumbnails";
@@ -52,6 +52,12 @@ const SIDE = 12;
 /** The sidebar's width (PdfView.css has the same number), and the body width under which it lies over the pages instead of beside them. */
 const SIDEBAR_W = 200;
 const OVERLAY_BELOW = 560;
+
+/** The page in view in this scroller: the last page whose top has passed the upper third of the body. */
+function pageInViewOf(scroller: HTMLElement, pages: readonly HTMLElement[]): number {
+  const line = scroller.getBoundingClientRect().top + scroller.clientHeight / 3;
+  return pageInView(line, pages.map((el) => ({ page: Number(el.dataset.page), top: el.getBoundingClientRect().top })));
+}
 /** How far under the sticky head a match lands when find brings it into view. */
 const MATCH_GAP = 48;
 
@@ -255,13 +261,7 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
     let frame = 0;
     const update = () => {
       frame = 0;
-      const top = scroller.getBoundingClientRect().top;
-      const line = top + scroller.clientHeight / 3;
-      let page = 1;
-      for (const el of pageEls()) {
-        if (el.getBoundingClientRect().top <= line) page = Number(el.dataset.page);
-        else break;
-      }
+      const page = pageInViewOf(scroller, pageEls());
       setCurrent((c) => (c === page ? c : page));
     };
     const onScroll = () => {
@@ -299,14 +299,17 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
   reading.current = readPlace;
   useImperativeHandle(placeNow, () => readPlace);
 
-  // Scrolls so the place is at the top of the view. It joins no history: the jumps that do go through `onJump`.
-  const applyPlace = (p: Place) => {
+  // Scrolls so the place is at the top of the view, and gives the page in view then (null when it can not scroll yet). It joins no
+  // history: the jumps that do go through `onJump`.
+  const applyPlace = (p: Place): number | null => {
     const to = clampPlace(p, count);
     const el = pageEls()[to.page - 1];
-    if (!el || !scroller) return;
+    if (!el || !scroller) return null;
     const r = el.getBoundingClientRect();
     scroller.scrollTop += scrollFor(to, { page: to.page, top: r.top, height: r.height }, viewTop());
-    setCurrent(to.page);
+    const page = pageInViewOf(scroller, pageEls());
+    setCurrent(page);
+    return page;
   };
 
   // The tab went to a place: scroll there once the document of these bytes is laid out, and say so unless it is the first place.
@@ -320,8 +323,9 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
     if (!next || !doc || !scroller || available === 0 || count === 0 || !from || from.bytes !== bytes || from.version !== version) return;
     pending.current = null;
     keep.current = null;
-    applyPlace(next.place);
-    if (next.say) latest.current.announce?.(placeText(clampPlace(next.place, count).page, count));
+    // What is said is the page the page field then shows: a place near the end of a page reads as the next one, which fills the view.
+    const shown = applyPlace(next.place);
+    if (next.say && shown !== null) latest.current.announce?.(placeText(shown, count));
   }, [placeKey, doc, scroller, available, count, bytes, version]);
 
   // A change of scale keeps the reading place: the zoom, and the width fit width follows, read it before they change.

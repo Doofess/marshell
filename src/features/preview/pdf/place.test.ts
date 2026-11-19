@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampPlace, placeAt, placeText, samePlace, scrollFor, type PageBox } from "./place";
+import { clampPlace, pageInView, placeAt, placeText, samePlace, scrollFor, type PageBox } from "./place";
 
 // Two pages of 200 px with a 12 px gap between them, in client coordinates.
 const pages: PageBox[] = [
@@ -56,5 +56,23 @@ describe("samePlace", () => {
 describe("placeText", () => {
   it("placeText_reads_page_of", () => {
     expect(placeText(3, 12)).toBe("Page 3 of 12.");
+  });
+});
+
+// The page field and what a jump announces both name this page, so they never disagree.
+describe("pageInView", () => {
+  it("pageInView_is_the_last_page_whose_top_has_passed_the_line", () => {
+    expect(pageInView(250, pages)).toBe(1);
+    expect(pageInView(312, pages)).toBe(2);
+    expect(pageInView(400, pages)).toBe(2);
+  });
+  // Back to a place near the end of page 1: page 2 holds the line, as the page field says.
+  it("pageInView_a_sliver_of_a_page_at_the_top_is_not_the_page_in_view", () => {
+    expect(placeAt(296, pages)).toEqual({ page: 1, top: 0.98 });
+    expect(pageInView(296 + 100, pages)).toBe(2);
+  });
+  it("pageInView_above_every_page_is_page_1", () => {
+    expect(pageInView(50, pages)).toBe(1);
+    expect(pageInView(50, [])).toBe(1);
   });
 });

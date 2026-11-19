@@ -6,6 +6,19 @@ export type PageBox = { page: number; top: number; height: number };
 const SAME = 0.005;
 
 /**
+ * The page in view: the last one whose top has passed `line` (the view's upper third), or page 1. The page field shows it, and a jump
+ * announces it, so a place near the end of one page reads as the next page, which fills the view. `pages` run top to bottom.
+ */
+export function pageInView(line: number, pages: readonly { page: number; top: number }[]): number {
+  let page = 1;
+  for (const p of pages) {
+    if (p.top <= line) page = p.page;
+    else break;
+  }
+  return page;
+}
+
+/**
  * The place at the top of the view: the page whose box spans `viewTop` and how far down it is. In the gap between two pages it is the
  * next page's top, above the first page it is that page's top, and past the last page it is that page's end. `pages` run top to bottom.
  */
