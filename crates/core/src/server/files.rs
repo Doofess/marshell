@@ -25,6 +25,8 @@ pub const PDF_CAP: u64 = 58 * 1024 * 1024;
 
 /// The most a save or a draft of a PDF may carry: the largest PDF a tab opens.
 pub const SAVE_PDF_CAP: u64 = PDF_CAP;
+// A PDF saved with its notes must open again.
+const _: () = assert!(SAVE_PDF_CAP <= PDF_CAP);
 
 /// Whether the path names a PDF, by its extension in any case. It reads the string only.
 pub fn is_pdf(path: &str) -> bool {
@@ -645,7 +647,6 @@ mod tests {
     fn a_pdf_saved_with_its_notes_can_be_opened_again() {
         // PR review of 6q-6: a PDF tab opens 58 MB, as much as a save of a PDF may write.
         assert_eq!(PDF_CAP, 58 * 1024 * 1024);
-        assert!(SAVE_PDF_CAP <= PDF_CAP);
     }
 
     #[test]
