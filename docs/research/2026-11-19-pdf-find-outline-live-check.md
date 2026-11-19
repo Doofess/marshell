@@ -35,7 +35,7 @@
 
 ## Recheck after the final review
 
-The recheck ended at 15:28. It used `pnpm tauri build --no-bundle` at `2be66ab9` and then at `6924912d`. Each build ran as `target/release/marshell-app.exe` against the same scratch homes, with the dev app stopped. Afterwards each tree was stopped by PID, and it held no agent CLI.
+The recheck ended at 15:28. It used `pnpm tauri build --no-bundle` at `2be66ab9` and then at `6924912d`. The PR review's fixes were checked the same way at `9d040c10`, ending at 15:45. Each build ran as `target/release/marshell-app.exe` against the same scratch homes, with the dev app stopped. Afterwards each tree was stopped by PID, and it held no agent CLI.
 
 | Check | Result |
 | --- | --- |
@@ -43,6 +43,8 @@ The recheck ended at 15:28. It used `pnpm tauri build --no-bundle` at `2be66ab9`
 | Esc on the find bar's controls | Pass. Esc on "Match case" and on "Next" closed the bar, cleared the tints and put the keyboard on the pages ("outline-links.pdf, contents"). Esc in the field did the same. |
 | "Show pages" with the sidebar over the pages | Pass after finding 5. The test used `scanned-plain.pdf`, which has no outline, with a 309 px body. The keys were F4, Shift+Tab, Left to "Outline", Tab to "Show pages", then Enter. The sidebar stayed over the pages on Pages, with the keyboard on "Page 1". |
 | An outline entry with no destination | Not run live. No fixture has one. The broken entry has a destination the file lacks, which is check 6's path. `pickSays_an_entry_with_no_destination_leads_nowhere` covers it. |
+| The keyboard leaving a sidebar over the pages (`9d040c10`) | Pass. Shift+Tab from the Outline tab closed the sidebar and put the keyboard on "Find". "Show pages" still kept it open. Alt+Tab, the case the change is for, needs a real window switch and was not run. `an_overlying_sidebar_stays_open_when_the_window_loses_focus` covers the rule. |
+| A pick that leads to the place in view (`9d040c10`) | Pass. Picking the same outline entry a second time left the view where it was, with the Page field at 6, and said "Page 6 of 40." |
 
 ## Findings
 
