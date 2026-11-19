@@ -73,3 +73,17 @@
 ## Not checked
 
 - Acrobat (see check 8), Alt+Tab (real input), a real high-contrast theme, and a screen reader (the NVDA pass happens at release sign-off).
+
+## Recheck after the final review
+
+- Date: 2026-11-19, 23:38 to 23:43 local time, in a new check folder (`lc-6q6-3`) with fresh scratch homes. Build `phase-6q-6` at `4e669ed7`. Onboarding skipped every agent's consent, and the session was a plain PowerShell. Driven over CDP with 4 screenshots, and no desktop input.
+- Data: `others.pdf`, written by hand. Its page 1 lists, in `/Annots` order, a Stamp and an Ink (each with an appearance stream), then a yellow Highlight and a FreeText ("After the stamp"). Page 2 has a green Highlight. `ro-notes.pdf` is a copy of it with its read-only attribute set.
+
+| Check | Result |
+| --- | --- |
+| A stamp from another app (review finding 4) | Pass. `others.pdf` opened with 1 ink, 2 highlight and 1 free-text editor and no stamp editor. The stamp drew on the page as its appearance, a red box in a blue frame. The notes after it in `/Annots` all showed, and the console had no error but the dev server's favicon 404. Before the fix, pdf.js's stamp editor threw on the missing structure tree, and the notes after the stamp were never drawn. |
+| Other apps' ink is read-only (decision 7) | Pass. The ink's editor is `inert`. A press at its middle lands on the text layer, and `focus()` leaves the keyboard where it was. The highlights and the free text are not inert. pdf.js draws the file's ink again as a smooth curve; the file's own appearance (straight segments, as the read-only tab shows) is unchanged. |
+| A read-only file (review finding 3) | Pass. `ro-notes.pdf` opened with no editor layer, and every one of its notes drew on the page from the file. |
+| The switched-off tools (review finding 5) | Pass. Highlight and Free text carry `aria-disabled="true"` and the title "Notes can't be added: ro-notes.pdf is read-only.", and Tab from Fit width reaches both. Enter and Space on Highlight leave it unpressed. |
+
+Review findings 1 and 2 are races between a save or a draft in flight and the tab going. Their tests in `useNotes.test.ts` hold the serialization and the save open, which a live check can't time. The check was stopped by PID (23 processes, no agent CLI in the tree), and `~/.claude/settings.json` kept its modified time.
