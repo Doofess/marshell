@@ -142,7 +142,7 @@
   inline-size: auto;
   padding-inline: var(--space-2);
 }
-.pdf__button:active:not(:disabled) {
+.pdf__button:active:not(:disabled, [aria-disabled="true"]) {
   background: var(--fill-strong);
 }
 .pdf__button[aria-expanded="true"] {
@@ -150,6 +150,7 @@
   color: var(--text-1);
 }
 .pdf__button:disabled,
+.pdf__button[aria-disabled="true"],
 .pdf__field:disabled {
   opacity: 0.4;
 }
@@ -158,7 +159,7 @@
   color: var(--text-1);
 }
 @media (hover: hover) and (pointer: fine) {
-  .pdf__button:not(:disabled):not([aria-pressed="true"]):hover {
+  .pdf__button:not(:disabled, [aria-disabled="true"], [aria-pressed="true"]):hover {
     background: var(--hover);
     color: var(--text-1);
   }

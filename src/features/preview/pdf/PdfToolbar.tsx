@@ -37,7 +37,8 @@ const icon = (...d: string[]) => (
 export function PdfToolbar(p: Props) {
   const off = p.count === 0;
   const percentId = useId();
-  const tools = p.count === 0 || p.blocked !== null;
+  // Blocked tools are aria-disabled, not disabled: they keep their place in the tab order and say why they do nothing.
+  const blocked = p.blocked !== null || undefined;
   const toolTitle = (title: string) => (p.blocked !== null ? `Notes can't be added: ${p.blocked}` : title);
   return (
     <>
@@ -77,10 +78,10 @@ export function PdfToolbar(p: Props) {
           {icon("M1.5 7h11", "M4 4.5 1.5 7 4 9.5", "M10 4.5 12.5 7 10 9.5")}
         </button>
         {/* A marker: its tip at the lower left, a stroke of colour under it. */}
-        <button type="button" className="pdf__button pdf__icon" disabled={tools} aria-pressed={p.tool === "highlight"} onClick={() => p.onTool(p.tool === "highlight" ? "none" : "highlight")} aria-label="Highlight" title={toolTitle("Highlight: drag across text")}>
+        <button type="button" className="pdf__button pdf__icon" disabled={off} aria-disabled={blocked} aria-pressed={p.tool === "highlight"} onClick={blocked ? undefined : () => p.onTool(p.tool === "highlight" ? "none" : "highlight")} aria-label="Highlight" title={toolTitle("Highlight: drag across text")}>
           {icon("M8.5 2.5 11.5 5.5 6 11H3.5V8.5Z", "M7 4l3 3", "M2 12.5h10")}
         </button>
-        <button type="button" className="pdf__button pdf__icon" disabled={tools} aria-pressed={p.tool === "freetext"} onClick={() => p.onTool(p.tool === "freetext" ? "none" : "freetext")} aria-label="Free text" title={toolTitle("Free text: click where it goes, or press Enter")}>
+        <button type="button" className="pdf__button pdf__icon" disabled={off} aria-disabled={blocked} aria-pressed={p.tool === "freetext"} onClick={blocked ? undefined : () => p.onTool(p.tool === "freetext" ? "none" : "freetext")} aria-label="Free text" title={toolTitle("Free text: click where it goes, or press Enter")}>
           {icon("M3 3.5V2.5h8v1", "M7 2.5v9", "M5.5 11.5h3")}
         </button>
         <button type="button" className="pdf__button pdf__icon" disabled={off} aria-expanded={p.findOpen} aria-keyshortcuts="Control+F" onClick={p.onFind} aria-label="Find" title="Find (Ctrl+F)">

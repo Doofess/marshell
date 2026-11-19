@@ -68,12 +68,17 @@ describe("PdfToolbar note tools", () => {
     expect(tool(render("highlight", null), "Free text")).toContain('aria-pressed="false"');
     expect(tool(render("freetext", null), "Free text")).toContain('aria-pressed="true"');
   });
-  it("is_disabled_with_the_reason_as_the_title_when_blocked", () => {
+  it("is_aria_disabled_with_the_reason_as_the_title_when_blocked", () => {
     const h = render("none", "a.pdf is read-only.");
     for (const l of ["Highlight", "Free text"]) {
-      expect(tool(h, l)).toContain("disabled");
+      // aria-disabled, not disabled: the tool keeps its place in the tab order and says why it does nothing (PLAN.md's top bar).
+      expect(tool(h, l)).toContain('aria-disabled="true"');
+      expect(tool(h, l)).not.toMatch(/ disabled=""/);
       expect(tool(h, l)).toContain('title="Notes can&#x27;t be added: a.pdf is read-only."');
     }
+  });
+  it("leaves_the_tools_enabled_when_notes_can_be_added", () => {
+    for (const l of ["Highlight", "Free text"]) expect(tool(html, l)).not.toMatch(/disabled/);
   });
   it("keeps_the_percentage_in_the_zoom_buttons_description", () => {
     const id = html.match(/<span class="pdf__percent" id="([^"]+)"/)?.[1];
