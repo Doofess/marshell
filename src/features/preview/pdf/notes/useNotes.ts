@@ -140,14 +140,15 @@ export function createNotesRunner(first: { hash: string | null; bytes: ArrayBuff
     clearTimeout(draftTimer);
     draftTimer = undefined;
   };
-  const takeDraft = (): Promise<void> => {
+  // `kept`: the editor of a tab that is going, which the view has already let go of.
+  const takeDraft = (kept?: ReturnType<NotesRunnerDeps["editor"]>): Promise<void> => {
     stopTimer();
     if (taking) {
       // A change made while this draft serializes isn't in it: once it ends, the change is taken too.
       const from = takingFrom;
-      return taking.then(() => (edits !== from ? takeDraft() : undefined));
+      return taking.then(() => (edits !== from ? takeDraft(kept) : undefined));
     }
-    const editor = d.editor();
+    const editor = kept ?? d.editor();
     if (!editor || discarded) return Promise.resolve();
     takingFrom = edits;
     const at = editedAt;
@@ -180,7 +181,10 @@ export function createNotesRunner(first: { hash: string | null; bytes: ArrayBuff
     const editor = d.editor();
     const failed = () => dispatch({ type: "saveRefused", line: unwrittenLine(d.name) });
     if (!editor) return failed();
-    editor.save().then((bytes) => dispatch({ type: "serialized", bytes, for: then }), failed);
+    // pdf.js takes the notes as `save` is called, after ending the typing in a note: a change counted from here isn't in the bytes.
+    const serializing = editor.save();
+    const from = edits;
+    serializing.then((bytes) => dispatch({ type: "serialized", bytes, for: then, later: edits !== from }), failed);
   };
 
   const runSave = async (bytes: Uint8Array, expect: string | null) => {
@@ -327,8 +331,10 @@ export function createNotesRunner(first: { hash: string | null; bytes: ArrayBuff
     async unload() {
       // A save, an overwrite or an undo of a save in flight decides whether the notes are in the file: the editor waits for its
       // answer, which asks for a draft when they aren't.
+      // The view lets go of the editor as it calls this, so the draft is taken from the editor it had.
+      const editor = d.editor();
       if (state.saving) await new Promise<void>((resume) => answered.push(resume));
-      if (draftTimer !== undefined || taking || owed) await takeDraft();
+      if (draftTimer !== undefined || taking || owed) await takeDraft(editor);
       queue.flush();
     },
   };

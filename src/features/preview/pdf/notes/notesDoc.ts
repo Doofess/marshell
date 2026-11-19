@@ -28,7 +28,8 @@ export type NotesEvent =
   | { type: "edited" }
   | { type: "save" }
   /** The answer to a `serialize` effect: the PDF with the notes in it. */
-  | { type: "serialized"; bytes: Uint8Array; for: "save" | "draft" | "copy" | "overwrite" }
+  // `later`: a change came after pdf.js took the notes, so it isn't in these bytes.
+  | { type: "serialized"; bytes: Uint8Array; for: "save" | "draft" | "copy" | "overwrite"; later?: boolean }
   /** The core wrote the file: `bytes` is what it was given. */
   | { type: "saved"; saved: FileSaved; bytes: Uint8Array }
   /** The core refused a save because the file isn't what the notes rest on. `hash` is null for a file that is gone. */
@@ -92,11 +93,11 @@ function serialized(s: NotesState, e: Extract<NotesEvent, { type: "serialized" }
   switch (e.for) {
     case "save":
       if (!s.saving) return unchanged(s);
-      // What is sent is what the file will hold: a change after this point is not in it, and marks the tab dirty again.
-      return { state: { ...s, dirty: false }, effects: [{ type: "save", bytes: e.bytes, expect: s.base.hash }] };
+      // What is sent is what the file will hold: a change made since pdf.js took the notes is not in it, and keeps the tab dirty.
+      return { state: { ...s, dirty: e.later === true }, effects: [{ type: "save", bytes: e.bytes, expect: s.base.hash }] };
     case "overwrite":
       if (!s.saving || s.conflict === null) return unchanged(s);
-      return { state: { ...s, dirty: false }, effects: [{ type: "save", bytes: e.bytes, expect: s.conflict.hash }] };
+      return { state: { ...s, dirty: e.later === true }, effects: [{ type: "save", bytes: e.bytes, expect: s.conflict.hash }] };
     case "draft":
       // A save in flight decides what the draft is: its answer asks for a new one when the notes still aren't in the file.
       if (s.saving) return unchanged(s);
@@ -213,8 +214,10 @@ export function notesReducer(s: NotesState, e: NotesEvent, name: string): Out {
       if (s.saving || s.conflict === null) return unchanged(s);
       return { state: { ...s, saving: true, refusedSave: false }, effects: [{ type: "serialize", then: "overwrite" }] };
     case "draftRefused":
-      // The notes stay in the tab, unsaved, and the line says why they aren't kept.
-      return said({ ...s, dirty: true }, e.line);
+      // The notes stay in the tab, unsaved, and the line says why they aren't kept. A put answered after the notes were saved
+      // (or reloaded away) has nothing left to keep.
+      if (!s.dirty) return unchanged(s);
+      return said(s, e.line);
   }
 }
 

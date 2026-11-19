@@ -86,6 +86,7 @@ function rig(o: { draft?: { bytes: ArrayBuffer; baseHash: string | null; editedM
   const log: string[] = [];
   let next: ((b: Uint8Array) => void) | null = null;
   let held = false;
+  let present = true;
   let failing = o.failSerializes ?? 0;
   const editor = {
     save: () => {
@@ -118,9 +119,10 @@ function rig(o: { draft?: { bytes: ArrayBuffer; baseHash: string | null; editedM
   };
   const r = createNotesRunner(
     { hash: "h1", bytes: new ArrayBuffer(1) },
-    { path: "C:\\w\\a.pdf", name: "a.pdf", editor: () => editor, load: (bytes, dirty) => void loads.push({ bytes, dirty }), announce: (t) => void said.push(t), openCopy: (p) => void opened.push(p), api, now: o.now ?? (() => 5), readOnly: o.readOnly },
+    { path: "C:\\w\\a.pdf", name: "a.pdf", editor: () => (present ? editor : null), load: (bytes, dirty) => void loads.push({ bytes, dirty }), announce: (t) => void said.push(t), openCopy: (p) => void opened.push(p), api, now: o.now ?? (() => 5), readOnly: o.readOnly },
   );
-  return { r, log, loads, said, opened, hold: () => (held = true), release: (b: Uint8Array) => next?.(b) };
+  // `dropEditor`: the view lets go of the editor right after it calls `unload` (PdfView's cleanup).
+  return { r, log, loads, said, opened, hold: () => (held = true), release: (b: Uint8Array) => next?.(b), dropEditor: () => (present = false) };
 }
 const ticks = async (n = 5) => {
   for (let i = 0; i < n; i++) await Promise.resolve();
@@ -368,6 +370,7 @@ describe("final review 6q-6: a tab that goes while a save is in flight", () => {
       gone = true;
       t.log.push("destroy");
     });
+    t.dropEditor();
     await ticks(10);
     // The editor waits for the answer: the notes may not be in the file.
     expect(gone).toBe(false);
@@ -386,9 +389,47 @@ describe("final review 6q-6: a tab that goes while a save is in flight", () => {
     t.log.length = 0;
     t.r.dispatch({ type: "unsave" });
     const done = t.r.unload().then(() => void t.log.push("destroy"));
+    t.dropEditor();
     await done;
     await ticks(10);
     expect(t.log.lastIndexOf("serialize")).toBeLessThan(t.log.indexOf("destroy"));
     expect(t.log).toContain("put [7] h1 5");
+  });
+});
+
+describe("PR review 6q-6: a change made during a save", () => {
+  it("made while the save serializes, stays unsaved after it and goes on to a draft", async () => {
+    vi.useFakeTimers();
+    const t = rig();
+    t.hold();
+    t.r.dispatch({ type: "edited" });
+    const saved = t.r.save();
+    // pdf.js took the notes when the save began; this change comes after.
+    t.r.dispatch({ type: "edited" });
+    t.release(new Uint8Array([7]));
+    expect(await saved).toBe(false);
+    expect(t.r.state()).toMatchObject({ dirty: true, saving: false, line: "Saved a.pdf." });
+    expect(t.log).not.toContain("markSaved");
+    expect(t.log).not.toContain("drop");
+    await vi.advanceTimersByTimeAsync(1500);
+    t.release(new Uint8Array([8]));
+    await ticks(10);
+    expect(t.log.filter((l) => l.startsWith("put")).at(-1)).toBe("put [8] h2 5");
+  });
+  it("made while the file is written, is kept in a draft when the tab goes before the answer", async () => {
+    vi.useFakeTimers();
+    let answer: (r: SaveResult) => void = () => {};
+    const t = rig({ save: () => new Promise<SaveResult>((r) => (answer = r)) });
+    t.r.dispatch({ type: "edited" });
+    void t.r.save();
+    await ticks();
+    t.r.dispatch({ type: "edited" });
+    const done = t.r.unload().then(() => void t.log.push("destroy"));
+    t.dropEditor();
+    answer({ kind: "saved", saved: { hash: "h2", snapshot: "s1" } as FileSaved });
+    await done;
+    await ticks(10);
+    expect(t.log.lastIndexOf("serialize")).toBeLessThan(t.log.indexOf("destroy"));
+    expect(t.log).toContain("put [7] h2 5");
   });
 });

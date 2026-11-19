@@ -396,3 +396,26 @@ describe("final review 6q-6: unsaved while a save is in flight", () => {
     expect(unsavedNotes(dirty())).toBe(true);
   });
 });
+
+describe("PR review 6q-6: answers that come late", () => {
+  it("a save whose bytes were taken before a later change leaves the notes unsaved once it is written", () => {
+    const sent = run(dirty(), { type: "save" }, { type: "serialized", bytes: bytesOf(1), for: "save", later: true });
+    expect(sent.state).toMatchObject({ dirty: true, saving: true });
+    expect(types(sent.effects)).toEqual(["save"]);
+    const done = run(sent.state, { type: "saved", saved: fileSaved(), bytes: bytesOf(1) });
+    expect(done.state.dirty).toBe(true);
+    expect(types(done.effects)).toContain("serialize");
+    expect(types(done.effects)).not.toContain("markSaved");
+    expect(types(done.effects)).not.toContain("dropDraft");
+  });
+  it("an overwrite whose bytes were taken before a later change leaves the notes unsaved", () => {
+    const bar = dirty({ conflict: { hash: H2, bytes: null } });
+    const sent = run(bar, { type: "overwrite" }, { type: "serialized", bytes: bytesOf(1), for: "overwrite", later: true });
+    expect(sent.state).toMatchObject({ dirty: true, saving: true });
+  });
+  it("a draft refused after the notes were saved leaves the tab saved and says nothing", () => {
+    const out = run(doc(), { type: "draftRefused", line: "Marshell keeps at most 1 GB of unsaved PDF notes. Save some PDFs first." });
+    expect(out.state).toMatchObject({ dirty: false, line: null });
+    expect(out.effects).toEqual([]);
+  });
+});
