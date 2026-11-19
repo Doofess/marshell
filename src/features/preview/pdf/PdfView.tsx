@@ -10,6 +10,7 @@ import { linksOf, PageLinks, type LinkGoal, type PageLink } from "./links";
 import { clampPlace, placeAt, placeText, scrollFor } from "./place";
 import { ancestorsOf, loadOutline, sectionAt, type OutlineNode } from "./outline";
 import { PdfSidebar } from "./PdfSidebar";
+import { Thumbnails } from "./Thumbnails";
 import { loadPdf, renderPage, renderTextLayer, type TextMapping } from "./pdfjs";
 import { setSidebarPref, sidebarPref, startOpen, startView, type SidebarView } from "./sidebarPref";
 import { parsePageField, scaleFor, zoomIn, zoomOut, type Zoom } from "./zoom";
@@ -509,6 +510,17 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
       focusPages();
     } else follow(node.goal, { keepFocus: true });
   };
+  // A thumbnail picked jumps to the top of its page, with the keyboard and the closing as for an outline pick.
+  const pickPage = (n: number) => {
+    const to: Place = { page: n, top: 0 };
+    if (over) {
+      if (onJump) onJump(to, { keepFocus: false });
+      else applyPlace(to);
+      hideSidebar(false);
+      focusPages();
+    } else if (onJump) onJump(to, { keepFocus: true });
+    else applyPlace(to);
+  };
   const leaveSidebar = () => {
     if (over) hideSidebar(false);
     focusPages();
@@ -649,8 +661,7 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
             onToggle={toggleEntry}
             onPick={pick}
             onLeave={leaveSidebar}
-            // Task 8: the thumbnails.
-            pages={null}
+            pages={doc ? <Thumbnails doc={doc} sizes={sizes} current={current} name={name} onPick={pickPage} focusOnShow={sidebarTick > 0} /> : null}
           />
         )}
         <div className="pdf__pagelist">
