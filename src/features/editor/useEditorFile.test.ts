@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Draft } from "../../generated/Draft";
 import { start, step, type DocEvent, type DocState } from "./editorDoc";
+import type { EditorHandle } from "./Editor";
 import type { FileState } from "../preview/usePreviewFile";
 import { DRAFT_MS, createDraftQueue, createSaver, draftBusy, draftOnceSent, formatOf, opening, opensOn, runEffect, type EffectDeps } from "./useEditorFile";
 
@@ -39,6 +40,7 @@ function setup(over: { doc?: () => DocState; put?: (d: Draft) => Promise<boolean
           return { kind: "saved", saved: { size: bytes.length, modified_ms: 1, hash: "h", snapshot: "s" } };
         }),
       unsaveFile: async () => ({ kind: "conflict" }),
+      mergeTexts: async () => ({ kind: "refused", line: "Another merge is still running." }),
     },
   };
   return { f, deps, queue, set: (s: Partial<DocState>) => (cur = { ...cur, ...s }) };
@@ -148,13 +150,50 @@ describe("runEffect", () => {
   it("the_other_effects_go_to_their_owners", async () => {
     const { f, deps } = setup();
     const set: Array<[string, number[]]> = [];
-    deps.editor = () => ({ text: () => "", setText: (t, m) => set.push([t, m]), focus() {}, goToLine() {}, toggleWrap() {}, reveal() {} });
+    deps.editor = () => ({ text: () => "", setText: (t, m) => set.push([t, m]), focus() {}, goToLine() {}, toggleWrap() {}, reveal() {}, toConflict() {} });
     runEffect({ type: "setText", text: "new", marks: [2] }, deps);
     runEffect({ type: "refetch" }, deps);
     runEffect({ type: "announce", text: "hello" }, deps);
     expect(set).toEqual([["new", [2]]]);
     expect(f.calls).toEqual(["refetch"]);
     expect(f.said).toEqual(["hello"]);
+  });
+
+  it("the_merge_effect_calls_the_api_and_dispatches_its_answer", async () => {
+    const { f, deps } = setup();
+    const asked: string[][] = [];
+    deps.api.mergeTexts = async (base, mine, disk) => (asked.push([base, mine, disk]), { kind: "merged", text: "merged", conflicts: 2 });
+    await runEffect({ type: "merge", base: "one", mine: "mine", disk: { text: "other", hash: "2".repeat(64) } }, deps);
+    expect(asked).toEqual([["one", "mine", "other"]]);
+    expect(f.events).toEqual([{ type: "merged", text: "merged", conflicts: 2, mine: "mine", disk: "2".repeat(64) }]);
+    f.events.length = 0;
+    deps.api.mergeTexts = async () => ({ kind: "refused", line: "The merge took too long." });
+    await runEffect({ type: "merge", base: "one", mine: "mine", disk: { text: "other", hash: "2".repeat(64) } }, deps);
+    expect(f.events).toEqual([{ type: "mergeFailed", line: "The merge took too long." }]);
+  });
+
+  it("the_merge_sends_lf_texts", async () => {
+    // A file read with CRLF endings, and a draft over an older version of it: the bar is up, and the merge is asked for.
+    const file: FileState = { phase: "text", text: "one\r\ntwo\r\nthree", encoding: "utf-8", eol: "crlf", hash: H1, readOnly: null };
+    const draft: Draft = { path: "C:\\a.txt", text: "mine\nmore", base_text: "zero\none", base_hash: "9".repeat(64), encoding: "utf-8", eol: "crlf", edited_ms: 1 };
+    const found = await opening("C:\\a.txt", () => file, async () => draft);
+    const opened = step(start, { type: "opened", disk: found.disk, draft: found.draft }, N);
+    const merge = step(opened.state, { type: "merge" }, N);
+    const { f, deps } = setup();
+    const asked: string[][] = [];
+    deps.api.mergeTexts = async (base, mine, disk) => (asked.push([base, mine, disk]), { kind: "refused", line: "x" });
+    for (const effect of merge.effects) await runEffect(effect, deps);
+    expect(asked).toEqual([["zero\none", "mine\nmore", "one\ntwo\nthree"]]);
+    expect(asked.flat().join("")).not.toContain("\r");
+    expect(f.events).toEqual([{ type: "mergeFailed", line: "x" }]);
+  });
+  it("showConflict_goes_to_the_first_conflict", () => {
+    const { deps } = setup();
+    const went: string[] = [];
+    const handle: EditorHandle = { text: () => "", setText() {}, focus() {}, goToLine() {}, toggleWrap() {}, reveal() {}, toConflict: (which) => void went.push(which) };
+    deps.editor = () => handle;
+    runEffect({ type: "showConflict" }, deps);
+    expect(went).toEqual(["first"]);
   });
 
   it("an_unsave_that_works_says_unsaved_with_the_new_hash_and_a_conflict_says_refused", async () => {

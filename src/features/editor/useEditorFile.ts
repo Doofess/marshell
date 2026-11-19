@@ -4,7 +4,7 @@ import { splitPath } from "../preview/kinds";
 import type { FileState } from "../preview/usePreviewFile";
 import type { EditorHandle } from "./Editor";
 import { start, step, type Disk, type DocEvent, type DocState, type Effect } from "./editorDoc";
-import { dropDraft, getDraft, putDraft, saveFile, unsaveFile } from "./editorApi";
+import { dropDraft, getDraft, mergeTexts, putDraft, saveFile, unsaveFile } from "./editorApi";
 import { encodeFile, type Encoding, type Eol } from "./textFile";
 
 /** A draft is written this long after the last key. */
@@ -169,7 +169,7 @@ export type EffectDeps = {
   dispatch: (e: DocEvent) => void;
   drafts: DraftQueue;
   now: () => number;
-  api: { saveFile: typeof saveFile; unsaveFile: typeof unsaveFile };
+  api: { saveFile: typeof saveFile; unsaveFile: typeof unsaveFile; mergeTexts: typeof mergeTexts };
 };
 
 async function runSave(effect: Extract<Effect, { type: "save" }>, d: EffectDeps): Promise<void> {
@@ -201,7 +201,13 @@ async function runUnsave(effect: Extract<Effect, { type: "unsave" }>, d: EffectD
   else d.dispatch({ type: "unsaveFailed", line: r.line });
 }
 
-/** Runs one effect of the reducer. The save and unsave return a promise that settles when their answer has been dispatched. */
+async function runMerge(effect: Extract<Effect, { type: "merge" }>, d: EffectDeps): Promise<void> {
+  const r = await d.api.mergeTexts(effect.base, effect.mine, effect.disk.text);
+  if (r.kind === "merged") d.dispatch({ type: "merged", text: r.text, conflicts: r.conflicts, mine: effect.mine, disk: effect.disk.hash });
+  else d.dispatch({ type: "mergeFailed", line: r.line });
+}
+
+/** Runs one effect of the reducer. The save, unsave and merge return a promise that settles when their answer has been dispatched. */
 export function runEffect(effect: Effect, d: EffectDeps): Promise<void> | void {
   switch (effect.type) {
     case "setText":
@@ -225,6 +231,11 @@ export function runEffect(effect: Effect, d: EffectDeps): Promise<void> | void {
       return runUnsave(effect, d);
     case "refetch":
       d.refetch();
+      return;
+    case "merge":
+      return runMerge(effect, d);
+    case "showConflict":
+      d.editor()?.toConflict("first");
       return;
     case "announce":
       if (effect.reading && !d.reading()) return;
@@ -312,7 +323,7 @@ export function useEditorFile(path: string, file: FileState, o: { announce: (tex
     dispatch,
     drafts: drafts.current,
     now: () => Date.now(),
-    api: { saveFile, unsaveFile },
+    api: { saveFile, unsaveFile, mergeTexts },
   };
 
   const latest = useRef(file);

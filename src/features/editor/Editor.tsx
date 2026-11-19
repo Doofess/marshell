@@ -22,6 +22,8 @@ export type EditorHandle = {
   toggleWrap(): void;
   /** Scrolls a line (1-based) to about a third from the top. */
   reveal(line: number): void;
+  /** Puts the cursor on a conflict: the first, or the next or previous one from the cursor. */
+  toConflict(which: "first" | "next" | "previous"): void;
 };
 
 type Props = {
@@ -165,6 +167,7 @@ export function Editor({ name, path, initial, firstLine, readOnly, wrap, target,
         if (v) toggleWrap(v);
       },
       reveal,
+      toConflict() {},
     }),
     [],
   );
