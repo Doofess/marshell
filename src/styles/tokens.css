@@ -1,5 +1,7 @@
 :root {
   color-scheme: light dark;
+  /* The app's scheme, for controls drawn inside something that forces its own (a PDF page is always light). */
+  --app-scheme: light dark;
 
   /* Surfaces: true black in dark, white and warm greys in light. */
   --bg-base: light-dark(oklch(100% 0 none), oklch(0% 0 none));
@@ -133,7 +135,9 @@
 
 [data-theme="light"] {
   color-scheme: light;
+  --app-scheme: light;
 }
 [data-theme="dark"] {
   color-scheme: dark;
+  --app-scheme: dark;
 }

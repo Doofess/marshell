@@ -71,6 +71,16 @@ describe("pdfjsTakesKey", () => {
     expect(pdfjsTakesKey("Enter", t(scroller), "highlight")).toBe(false);
   });
 
+  it("Marshell's own controls over the pages keep their keys: the comment popup and the selection bar", () => {
+    const list = el(scroller, [".pdf__pagelist"]);
+    const popupButton = el(el(list, [".pdf-comment"]), ["button"]);
+    const barButton = el(el(list, [".pdf-selbar"]), ["button"]);
+    for (const key of ["z", "Z", "y"]) {
+      expect(pdfjsTakesKey(key, t(popupButton), "none")).toBe(false);
+      expect(pdfjsTakesKey(key, t(barButton), "highlight")).toBe(false);
+    }
+  });
+
   it("Enter on a link follows the link", () => {
     expect(pdfjsTakesKey("Enter", t(link), "freetext")).toBe(false);
   });

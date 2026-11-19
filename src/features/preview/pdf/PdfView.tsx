@@ -14,7 +14,8 @@ import { Thumbnails } from "./Thumbnails";
 import { loadPdf, renderPage, renderTextLayer, type TextMapping } from "./pdfjs";
 import { keyboardLeft, setSidebarPref, sidebarPref, startOpen, startView, type SidebarView } from "./sidebarPref";
 import { parsePageField, scaleFor, zoomIn, zoomOut, type Zoom } from "./zoom";
-import { createNotesEditor, selectionLayer, type NoteTool, type NotesEditor } from "./notes/editor";
+import { createNotesEditor, selectionLayer, type CommentRequest, type NoteTool, type NotesEditor } from "./notes/editor";
+import { CommentPopup } from "./notes/CommentPopup";
 import { fromDocument, notesBlocked } from "./notes/blocked";
 import { colorPref, setColorPref } from "./notes/notesPref";
 import { SelectionBar, selectionBarShows } from "./notes/SelectionBar";
@@ -98,10 +99,12 @@ type PageProps = {
   notes: NotesEditor | null;
   /** The selection bar, when the selection lies on this page: drawn over the page once the page is drawn. */
   bar: ReactNode;
+  /** The comment popup, when the note being commented on is on this page: drawn over the page once the page is drawn. */
+  popup: ReactNode;
 };
 
 /** One page: a placeholder of its final size until it is near the view, then the canvas and the text over it. */
-function PdfPage({ doc, n, name, size, scale, root, overlay, onText, onFollow, notes, bar }: PageProps) {
+function PdfPage({ doc, n, name, size, scale, root, overlay, onText, onFollow, notes, bar, popup }: PageProps) {
   const holder = useRef<HTMLDivElement>(null);
   const [live, setLive] = useState(false);
   const [links, setLinks] = useState<PageLink[]>([]);
@@ -166,6 +169,7 @@ function PdfPage({ doc, n, name, size, scale, root, overlay, onText, onFollow, n
       <PageLinks links={links} onFollow={onFollow} />
       {overlay}
       {live && bar}
+      {live && popup}
     </div>
   );
 }
@@ -282,11 +286,15 @@ export function PdfView({ path, bytes: fileBytes, hash, readOnly, name, onDirty,
 
   // The note editor, one per loaded document, over the pages in the body.
   const [notes, setNotes] = useState<NotesEditor | null>(null);
+  // The comment popup's request, when a note is being commented on. Each request gets its own popup (the id is its key), so a
+  // newer one unmounts the open one, which cancels it.
+  const [comment, setComment] = useState<{ request: CommentRequest; id: number } | null>(null);
+  const commentId = useRef(0);
   useEffect(() => {
     if (!doc || !scroller || noEditor) return;
     let dead = false;
     let made: NotesEditor | null = null;
-    void createNotesEditor(doc, { container: scroller, onComment: (req) => req.done(null), onNews: (line) => latest.current.announce?.(line) }).then(
+    void createNotesEditor(doc, { container: scroller, onComment: (request) => setComment({ request, id: ++commentId.current }), onNews: (line) => latest.current.announce?.(line) }).then(
       (e) => {
         if (dead) return e.destroy();
         made = e;
@@ -300,6 +308,7 @@ export function PdfView({ path, bytes: fileBytes, hash, readOnly, name, onDirty,
     return () => {
       dead = true;
       setNotes(null);
+      setComment(null);
       const gone = made;
       if (!gone) return;
       // A draft waiting is taken from this editor before it goes; the document waits for that too (below).
@@ -378,6 +387,10 @@ export function PdfView({ path, bytes: fileBytes, hash, readOnly, name, onDirty,
       }}
       style={selBar?.style}
     />
+  );
+
+  const popup = comment && (
+    <CommentPopup key={comment.id} request={comment.request} onClose={() => setComment((c) => (c?.id === comment.id ? null : c))} />
   );
 
   // pdf.js takes keys only while the keyboard is in the tab and the window has focus; a focus move is read a tick later.
@@ -904,7 +917,7 @@ export function PdfView({ path, bytes: fileBytes, hash, readOnly, name, onDirty,
           />
         )}
         <div className="pdf__pagelist">
-          {doc && sizes.map((size, i) => <PdfPage key={i} doc={doc} n={i + 1} name={name} size={size} scale={scaleOf(i)} root={scroller} overlay={renderOverlay?.(i + 1)} onText={find.attach} onFollow={(g) => follow(g, { keepFocus: false })} notes={notes} bar={selBar?.page === i + 1 ? bar : null} />)}
+          {doc && sizes.map((size, i) => <PdfPage key={i} doc={doc} n={i + 1} name={name} size={size} scale={scaleOf(i)} root={scroller} overlay={renderOverlay?.(i + 1)} onText={find.attach} onFollow={(g) => follow(g, { keepFocus: false })} notes={notes} bar={selBar?.page === i + 1 ? bar : null} popup={comment?.request.page === i + 1 ? popup : null} />)}
           {!doc && <p className="preview__message">Loading…</p>}
         </div>
       </div>

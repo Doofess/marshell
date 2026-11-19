@@ -24,7 +24,7 @@ export const HIGHLIGHT_COLORS: readonly { name: ColorName; value: string }[] = [
 ];
 
 /** pdf.js asked for a note's comment: `done(null)` cancels, `done("")` deletes the comment. */
-export type CommentRequest = { page: number; anchor: DOMRect; text: string; done(text: string | null): void };
+export type CommentRequest = { page: number; anchor: DOMRect; note: HTMLElement; text: string; done(text: string | null): void };
 
 export type NotesEditor = {
   /** Puts the editor over a drawn page; the function returned takes it off again (the page's notes stay with the editor). */
@@ -88,6 +88,8 @@ export function editorKeysAllowed(active: Element | null, root: Element | null, 
 
 const EDITABLE = "input, textarea, select, [contenteditable]";
 const FOLLOWS = "a, button, [role=button], [role=link]";
+/** Marshell's own controls drawn over the pages: their keys are theirs, never pdf.js's undo. */
+const OWN_CONTROLS = ".pdf-comment, .pdf-selbar";
 
 /** What pdf.js asks of a page's layer when it looks for the page a selection is on. */
 type TextLayerOwner = { hasTextLayer(text: HTMLElement): boolean };
@@ -134,7 +136,7 @@ export function drawsFreehand(target: Element | null, text: HTMLElement): boolea
  */
 export function pdfjsTakesKey(key: string, target: Element | null, tool: NoteTool): boolean {
   if (!target || key === "Escape") return false;
-  if (target.closest(EDITABLE)) return false;
+  if (target.closest(EDITABLE) || target.closest(OWN_CONTROLS)) return false;
   if (target.closest(".annotationEditorLayer")) return true;
   const onPages = target.closest(".pdf__pagelist") !== null || target.closest(".preview__body") === target;
   if (["z", "Z", "y"].includes(key)) return onPages;
@@ -268,6 +270,7 @@ export async function createNotesEditor(
       o.onComment({
         page: editor.pageIndex + 1,
         anchor: editor.div.getBoundingClientRect(),
+        note: editor.div,
         text: editor.comment?.text ?? "",
         done(text) {
           if (text === null) return;
