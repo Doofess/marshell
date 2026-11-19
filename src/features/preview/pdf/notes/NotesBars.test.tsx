@@ -1,12 +1,27 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { NotesBars, type NotesBarsProps } from "./NotesBars";
+import { NotesBars, notesButtons, type NotesBarsProps } from "./NotesBars";
 
 const none = () => {};
-const base: NotesBarsProps = { name: "report.pdf", conflict: null, line: null, undo: false, copy: false, onUndo: none, onCopy: none, onReload: none, onOverwrite: none, onSave: none };
+const base: NotesBarsProps = { name: "report.pdf", conflict: null, line: null, undo: false, copy: false, toPages: none, onUndo: none, onCopy: none, onReload: none, onOverwrite: none, onSave: none };
 const html = (p: Partial<NotesBarsProps>) => renderToStaticMarkup(<NotesBars {...base} {...p} />);
 /** The buttons' names, in order. */
 const buttons = (markup: string) => [...markup.matchAll(/<button[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]);
+
+describe("notesButtons", () => {
+  const states: Array<Partial<NotesBarsProps>> = [{ conflict: "changed" }, { conflict: "deleted" }, { line: "Saved report.pdf.", undo: true }, { line: "The file is read-only or in use by another program.", copy: true }, { line: "report.pdf is back as it was before the save." }];
+
+  it("every button puts the keyboard on the pages before it acts: the button may go with its row (live check 6q-6)", () => {
+    const log: string[] = [];
+    const p: NotesBarsProps = { ...base, toPages: () => void log.push("pages"), onUndo: () => void log.push("undo"), onCopy: () => void log.push("copy"), onReload: () => void log.push("reload"), onOverwrite: () => void log.push("overwrite"), onSave: () => void log.push("save") };
+    for (const s of states) for (const b of notesButtons({ ...p, ...s })) b.press();
+    expect(log).toEqual(["pages", "copy", "pages", "reload", "pages", "overwrite", "pages", "copy", "pages", "save", "pages", "undo", "pages", "copy"]);
+  });
+
+  it("are the buttons drawn, in order", () => {
+    for (const s of states) expect(notesButtons({ ...base, ...s }).map((b) => b.label)).toEqual(buttons(html(s)));
+  });
+});
 
 describe("NotesBars", () => {
   it("nothing to say draws nothing", () => {

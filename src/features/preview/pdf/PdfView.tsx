@@ -971,6 +971,7 @@ export function PdfView({ path, bytes: fileBytes, hash, readOnly, name, onDirty,
           line={notesNow.state.line}
           undo={notesNow.state.lastSave !== null && !notesNow.state.saving}
           copy={notesNow.state.refusedSave}
+          toPages={() => scroller?.focus({ preventScroll: true })}
           onUndo={() => runner.dispatch({ type: "unsave" })}
           onCopy={() => runner.dispatch({ type: "copy" })}
           onReload={() => runner.dispatch({ type: "reload" })}
