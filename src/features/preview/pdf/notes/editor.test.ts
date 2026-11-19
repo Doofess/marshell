@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { drawsFreehand, editorKeysAllowed, HIGHLIGHT_COLORS, layerInView, mergeNotes, noteNews, pageAttacher, pdfjsTakesKey, selectionLayer, type HeldNote, type LiveNote, type NewsState, type Note, type PageLayers } from "./editor";
+import { drawsFreehand, editorKeysAllowed, HIGHLIGHT_COLORS, highlightText, layerInView, mergeNotes, noteNews, opensComment, pageAttacher, pdfjsTakesKey, readdGuard, selectionLayer, type HeldNote, type LiveNote, type NewsState, type Note, type PageLayers } from "./editor";
 
 /** A stand-in for a DOM element: `contains` follows the parent chain, `closest` matches by a list of selectors it answers to. */
 type Fake = { parent: Fake | null; matches: string[]; contains(o: unknown): boolean; closest(sel: string): Fake | null };
@@ -311,5 +311,62 @@ describe("mergeNotes", () => {
   it("mergeNotes_a_free_text_being_typed_is_left_out", () => {
     expect(mergeNotes([], [heldNote({ kind: "freetext", ready: false })], none)).toEqual([]);
     expect(mergeNotes([], [heldNote({ kind: "freetext", color: null, text: "Hi" })], none)[0]).toMatchObject({ kind: "freetext", kindName: "Free text", text: "Hi", added: true });
+  });
+});
+
+describe("live check 6q-6: notes coming back to a redrawn page", () => {
+  it("readdGuard_a_note_coming_back_to_a_redrawn_page_adds_no_undo_step", () => {
+    // pdf.js puts a highlight on the undo stack again as its page's new layer takes it (`onceAdded`): a zoom made the tab
+    // unsaved, and Ctrl+Z then took a note away.
+    const g = readdGuard();
+    g.added(true);
+    expect(g.takesCommand()).toBe(true);
+  });
+  it("readdGuard_a_new_note_s_step_counts", () => {
+    const g = readdGuard();
+    g.added(false);
+    expect(g.takesCommand()).toBe(false);
+  });
+  it("readdGuard_takes_one_step_only", () => {
+    const g = readdGuard();
+    g.added(true);
+    g.takesCommand();
+    expect(g.takesCommand()).toBe(false);
+  });
+  it("readdGuard_lasts_only_until_the_redraw_s_task_ends", async () => {
+    // A free text coming back adds no step; a person's next change, in a later task, still counts.
+    const g = readdGuard();
+    g.added(true);
+    await Promise.resolve();
+    expect(g.takesCommand()).toBe(false);
+  });
+});
+
+describe("live check 6q-6: a highlight's text in the Notes view", () => {
+  // pdf.js's own l10n puts "Highlight editor" on the note's element, over the text pdf.js set there.
+  const items = [
+    { str: "Page 1: The ", transform: [1, 0, 0, 1, 72, 720], width: 60, height: 12 },
+    { str: "quick brown fox", transform: [1, 0, 0, 1, 152, 720], width: 96, height: 12 },
+    { str: " jumps", transform: [1, 0, 0, 1, 250, 720], width: 40, height: 12 },
+  ];
+  it("highlightText_is_the_page_text_under_the_highlight_not_its_label", async () => {
+    const e = { pageIndex: 0, serialize: () => ({ quadPoints: Float32Array.of(150, 734, 250, 734, 150, 716, 250, 716) }) };
+    expect(await highlightText(e, async (n) => (n === 1 ? items : []))).toBe("quick brown fox");
+  });
+  it("highlightText_an_unchanged_file_highlight_has_none_and_keeps_the_file_s", async () => {
+    // pdf.js serializes nothing for a file note no one changed; the list keeps the text read from the file.
+    expect(await highlightText({ pageIndex: 0, serialize: () => null }, async () => items)).toBe("");
+  });
+});
+
+describe("live check 6q-6: Show comment", () => {
+  it("opensComment_on_a_press_of_show_comment", () => {
+    expect(opensComment({}, true, undefined)).toBe(true);
+  });
+  it("opensComment_not_for_a_hover_a_drag_or_a_hide", () => {
+    expect(opensComment({}, false, true)).toBe(false);
+    expect(opensComment({}, false, false)).toBe(false);
+    expect(opensComment({}, true, false)).toBe(false);
+    expect(opensComment(null, true, undefined)).toBe(false);
   });
 });

@@ -69,16 +69,24 @@ export function inBoxes(x: number, y: number, boxes: readonly Box[]): boolean {
   return boxes.some((b) => x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3]);
 }
 
-type TextItem = { str?: string; transform?: number[]; width?: number; height?: number };
+export type TextItem = { str?: string; transform?: number[]; width?: number; height?: number };
 
-/** The page's text under the boxes: the items whose box centre lies in one, in reading order, joined and trimmed. */
+/** The page's text under the boxes: the words whose middle lies in one, in reading order, joined and trimmed. */
 export function textUnder(items: readonly TextItem[], boxes: readonly Box[]): string {
   if (boxes.length === 0) return "";
   const picked: string[] = [];
   for (const it of items) {
     const t = it.transform;
-    if (typeof it.str !== "string" || !t || t.length < 6) continue;
-    if (inBoxes(t[4]! + (it.width ?? 0) / 2, t[5]! + (it.height ?? 0) / 2, boxes)) picked.push(it.str);
+    if (typeof it.str !== "string" || it.str === "" || !t || t.length < 6) continue;
+    // A word's middle, placed along the item's own direction from its share of the characters (one item can be a whole line).
+    const scale = Math.hypot(t[0]!, t[1]!);
+    const [dx, dy] = scale > 0 ? [t[0]! / scale, t[1]! / scale] : [1, 0];
+    const width = it.width ?? 0;
+    const up = (it.height ?? 0) / 2;
+    for (const m of it.str.matchAll(/\S+/g)) {
+      const along = ((m.index + m[0].length / 2) / it.str.length) * width;
+      if (inBoxes(t[4]! + dx * along - dy * up, t[5]! + dy * along + dx * up, boxes)) picked.push(m[0]);
+    }
   }
   return picked.join(" ").replace(/\s+/g, " ").trim().slice(0, TEXT_MAX).trim();
 }
@@ -100,6 +108,24 @@ type Annotation = {
 };
 
 const cache = new WeakMap<PDFDocumentProxy, Map<number, Promise<Note[]>>>();
+const texts = new WeakMap<PDFDocumentProxy, Map<number, Promise<TextItem[]>>>();
+
+/** A page's text items, read once per document: what lies under a highlight is looked up in them. */
+export function pageText(doc: PDFDocumentProxy, n: number): Promise<TextItem[]> {
+  let byPage = texts.get(doc);
+  if (!byPage) texts.set(doc, (byPage = new Map()));
+  let read = byPage.get(n);
+  if (!read) {
+    const made = doc
+      .getPage(n)
+      .then((page) => page.getTextContent())
+      .then((c) => ((c as { items?: TextItem[] }).items ?? []));
+    byPage.set(n, made);
+    made.catch(() => byPage!.delete(n));
+    read = made;
+  }
+  return read;
+}
 
 /**
  * Every markup note in the file, in page order, at most `limit`. A highlight's text is the page's text under its quads; a
@@ -127,7 +153,7 @@ async function readAll(doc: PDFDocumentProxy, limit: number): Promise<Note[]> {
     const annotations = ((await page.getAnnotations()) as Annotation[]).filter((a) => typeof a.subtype === "string" && !NOT_NOTES.has(a.subtype));
     if (annotations.length === 0) continue;
     const viewport = page.getViewport({ scale: 1 });
-    const items = annotations.some((a) => a.subtype === "Highlight") ? (((await page.getTextContent()) as { items: TextItem[] }).items ?? []) : [];
+    const items = annotations.some((a) => a.subtype === "Highlight") ? await pageText(doc, n) : [];
     for (const a of annotations) {
       if (out.length >= limit) break;
       const subtype = a.subtype!;

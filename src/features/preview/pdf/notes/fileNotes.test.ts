@@ -39,7 +39,7 @@ describe("fileNotes helpers", () => {
     expect(inBoxes(5, 706, boxes)).toBe(false);
   });
 
-  it("textUnder_keeps_items_whose_centre_is_in_a_quad_in_order_joined_and_trimmed", () => {
+  it("textUnder_keeps_words_whose_middle_is_in_a_quad_in_order_joined_and_trimmed", () => {
     const items = [item("before", 200, 706), item("quick", 12, 702), item("brown", 50, 702), item("after", 12, 600)];
     expect(textUnder(items, quadBoxes(quad))).toBe("quick brown");
     expect(textUnder(items, [])).toBe("");
@@ -99,5 +99,21 @@ describe("readFileNotes", () => {
     const { doc, getTextContent } = fakeDoc([[freeText]]);
     await readFileNotes(doc);
     expect(getTextContent).not.toHaveBeenCalled();
+  });
+});
+
+describe("live check 6q-6: a highlight on a file whose lines are one text item", () => {
+  // text3.pdf has one item per line: a highlight got its whole line when it covered the line's middle, and nothing otherwise.
+  const line = { str: "Page 1: The quick brown fox jumps over the lazy dog.", transform: [12, 0, 0, 12, 72, 720], width: 312, height: 12 };
+  it("textUnder_takes_the_words_under_the_highlight_not_the_whole_line", () => {
+    expect(textUnder([line], [[143, 716, 235, 734]])).toBe("quick brown fox");
+  });
+  it("textUnder_finds_words_away_from_the_line_s_middle", () => {
+    expect(textUnder([line], [[290, 716, 384, 734]])).toBe("the lazy dog.");
+  });
+  it("textUnder_follows_a_rotated_line", () => {
+    // Text running up the page: the words lie along y, and the glyphs stand to the line's left.
+    const up = { str: "abc def", transform: [0, 10, -10, 0, 100, 500], width: 70, height: 10 };
+    expect(textUnder([up], [[90, 540, 100, 575]])).toBe("def");
   });
 });

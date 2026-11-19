@@ -1,6 +1,6 @@
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist";
 import { editorLib } from "../pdfjs";
-import { readFileNotes } from "./fileNotes";
+import { pageText, quadBoxes, readFileNotes, textUnder, type TextItem } from "./fileNotes";
 import { winAnsiSafe } from "./notesDoc";
 
 /**
@@ -143,6 +143,45 @@ export function layerInView<L extends TextLayerOwner>(current: L | undefined | n
  * this tab's to highlight. Every PDF tab's editor hears the document's selection changes, and pdf.js empties a selection
  * before it looks for the layer, so a hidden tab must never reach that far.
  */
+/**
+ * pdf.js puts a highlight on its undo stack each time a page's layer takes it (`onceAdded`), and a page drawn again (a zoom,
+ * a scroll back, a tab shown again) gets new layers: a note already held that comes back is no step and no change. The add
+ * and its step run in one go, so the mark lasts until the task ends.
+ */
+export function readdGuard() {
+  let again = false;
+  return {
+    added(back: boolean) {
+      again = back;
+      if (back)
+        queueMicrotask(() => {
+          again = false;
+        });
+    },
+    /** Whether the step pdf.js adds now is a note coming back to its page, not a person's change. */
+    takesCommand(): boolean {
+      const r = again;
+      again = false;
+      return r;
+    },
+  };
+}
+
+/**
+ * A highlight's text: the page's text under its quads. pdf.js sets the text as the note's label, but its own l10n then names
+ * the note "Highlight editor". A file note no one changed serializes to nothing, and the list keeps the file's text.
+ */
+export async function highlightText(e: { pageIndex: number; serialize(): { quadPoints?: ArrayLike<number> } | null }, items: (page: number) => Promise<readonly TextItem[]>): Promise<string> {
+  const quads = e.serialize()?.quadPoints;
+  if (!quads) return "";
+  return textUnder(await items(e.pageIndex + 1), quadBoxes(quads));
+}
+
+/** pdf.js toggles a note's comment for a press of its Show comment button (opens it), a hover, a drag and a hide: only the press opens Marshell's popup. */
+export function opensComment(editor: unknown, isSelected: boolean | null | undefined, visibility: boolean | undefined): boolean {
+  return editor !== null && editor !== undefined && isSelected === true && visibility === undefined;
+}
+
 export function selectionLayer(sel: { isCollapsed: boolean; anchorNode: Node | null; focusNode: Node | null } | null, container: Element): Element | null {
   if (!sel || sel.isCollapsed || !sel.anchorNode || !sel.focusNode) return null;
   const layerOf = (n: Node) => ("closest" in n ? (n as Element) : n.parentElement)?.closest(".textLayer") ?? null;
@@ -261,6 +300,7 @@ type Editor = {
   color?: string;
   isEmpty(): boolean;
   isInEditMode(): boolean;
+  serialize(): { quadPoints?: ArrayLike<number> } | null;
 };
 
 /** A note editor for `doc`, over pages inside `container` (the tab's scrolling body). */
@@ -281,6 +321,7 @@ export async function createNotesEditor(
   const listeners = new Set<() => void>();
   // Every note pdf.js holds, the file's own and new ones, on drawn pages or not (a dropped page's layer leaves its notes here).
   const held = new Map<string, Editor>();
+  const readd = readdGuard();
   const news: NewsState = { known: new Set(), warned: new Set(), gone: 0 };
   // A tab going away says nothing of the notes pdf.js lets go as it is destroyed.
   let quiet = false;
@@ -300,26 +341,31 @@ export async function createNotesEditor(
   };
   const layers = new Map<number, TextLayerOwner>();
 
-  // pdf.js's comment dialog, as the editor asks for it: Marshell's own popup answers.
+  // pdf.js's comment dialog, as the editor asks for it, and a press of a note's Show comment: Marshell's own popup answers.
+  const askComment = (editor: Editor) => {
+    o.onComment({
+      page: editor.pageIndex + 1,
+      anchor: editor.div.getBoundingClientRect(),
+      note: editor.div,
+      text: editor.comment?.text ?? "",
+      done(text) {
+        if (text === null) return;
+        editor.comment = text as never;
+        changed();
+      },
+    });
+  };
   const commentManager = {
     showDialog(_ui: unknown, editor: Editor) {
-      o.onComment({
-        page: editor.pageIndex + 1,
-        anchor: editor.div.getBoundingClientRect(),
-        note: editor.div,
-        text: editor.comment?.text ?? "",
-        done(text) {
-          if (text === null) return;
-          editor.comment = text as never;
-          changed();
-        },
-      });
+      askComment(editor);
     },
     setSidebarUiManager() {},
     updateComment() {},
     updatePopupColor() {},
     removeComments() {},
-    toggleCommentPopup() {},
+    toggleCommentPopup(editor: Editor | null, isSelected?: boolean, visibility?: boolean) {
+      if (editor && opensComment(editor, isSelected, visibility)) askComment(editor);
+    },
     makeCommentColor: () => null,
     // pdf.js points a note's comment button at it (`ariaControlsElements`) and throws on null.
     dialogElement: document.createElement("div"),
@@ -349,11 +395,13 @@ export async function createNotesEditor(
       super.highlightSelection(method, comment);
     }
     addCommands(params: unknown) {
+      if (readd.takesCommand()) return;
       super.addCommands(params);
       changed();
     }
     // The notes pdf.js holds, mirrored for the announcements; a removal is a deletion only for a note already told of or from the file.
     addEditor(e: Editor) {
+      readd.added(held.has(e.id));
       super.addEditor(e);
       held.set(e.id, e);
       if (e.annotationElementId) news.known.add(e.id);
@@ -538,7 +586,7 @@ export async function createNotesEditor(
           page: e.pageIndex + 1,
           kind,
           color: kind === "highlight" ? (e.color ?? null) : null,
-          text: (kind === "highlight" ? e.div.getAttribute("aria-label") : e.editorDiv?.innerText)?.trim() ?? "",
+          text: kind === "highlight" ? await highlightText(e, (n) => pageText(doc, n)) : (e.editorDiv?.innerText.trim() ?? ""),
           comment: kind === "highlight" ? (e.comment?.text ?? "") : "",
           top: e.div.style.top.endsWith("%") && Number.isFinite(at) ? at / 100 : null,
           ready: !e.isEmpty() && !e.isInEditMode(),
