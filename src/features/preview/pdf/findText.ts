@@ -82,7 +82,7 @@ export async function createPdfFind(view: FindView, lib?: ViewerLib): Promise<Pd
       return view.page();
     },
     set page(n: number) {
-      view.showPage(n);
+      if (!still) view.showPage(n);
     },
     get pagesCount() {
       return view.pages();
@@ -97,6 +97,11 @@ export async function createPdfFind(view: FindView, lib?: ViewerLib): Promise<Pd
   /** The search the bar holds open; null while it is closed or empty. */
   let query: FindQuery | null = null;
   let doc: PDFDocumentProxy | null = null;
+  /**
+   * The search ran again for a new copy of the file: its tints show, but the view stays where the person was reading, and the
+   * next step searches from the page in view again (pdf.js picked its match from there without showing it).
+   */
+  let still = false;
 
   const emit = (s: FindStatus) => {
     status = s;
@@ -119,7 +124,7 @@ export async function createPdfFind(view: FindView, lib?: ViewerLib): Promise<Pd
     const current = sel.pageIdx === i ? sel.matchIdx : -1;
     const mark = paint(m, spans, current);
     // pdf.js scrolls with element.scrollIntoView, which also scrolls clipped ancestors of the pane; the view scrolls instead.
-    if (mark) controller.scrollMatchIntoView({ element: { scrollIntoView: () => view.showMatch(mark) } as unknown as HTMLElement, pageIndex: i, matchIndex: current });
+    if (mark && !still) controller.scrollMatchIntoView({ element: { scrollIntoView: () => view.showMatch(mark) } as unknown as HTMLElement, pageIndex: i, matchIndex: current });
   };
 
   bus.on("updatetextlayermatches", (e: { pageIndex: number }) => {
@@ -146,6 +151,7 @@ export async function createPdfFind(view: FindView, lib?: ViewerLib): Promise<Pd
     });
   const clear = () => {
     query = null;
+    still = false;
     bus.dispatch("findbarclose", { source: null });
     for (const m of pages.values()) unpaint(m);
     emit(IDLE);
@@ -156,15 +162,22 @@ export async function createPdfFind(view: FindView, lib?: ViewerLib): Promise<Pd
       if (next === doc) return;
       doc = next;
       controller.setDocument(next as PDFDocumentProxy);
-      if (next && query) find("", query, false);
+      if (next && query) {
+        still = true;
+        find("", query, false);
+      }
     },
     search(q) {
       if (!q.text.trim()) return clear();
       query = q;
+      still = false;
       find("", q, false);
     },
     step(previous) {
-      if (query) find("again", query, previous);
+      if (!query) return;
+      const fresh = still;
+      still = false;
+      find(fresh ? "" : "again", query, previous);
     },
     close: clear,
     attach(i, m) {

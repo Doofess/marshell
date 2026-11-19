@@ -157,6 +157,56 @@ describe("createPdfFind", () => {
     expect(finds(bus).at(-1)).toEqual(expect.objectContaining({ query: "abc", type: "" }));
   });
 
+  // The file changed on disk with the bar open: the tints come back, and the view stays at the place the person was reading.
+  it("a_search_run_again_for_a_new_document_tints_without_scrolling", async () => {
+    const { v, f, c, bus } = await setup();
+    f.search({ text: "abc", caseSensitive: false, entireWord: false });
+    f.setDocument(doc(3));
+    const m = mapping("abc");
+    f.attach(0, m);
+    c.highlightMatches = true;
+    c.pageMatches[0] = [0];
+    c.pageMatchesLength[0] = [3];
+    c.selected = { pageIdx: 0, matchIdx: 0 };
+    bus.dispatch("updatetextlayermatches", { pageIndex: 0 });
+    expect(tinted(m)).toBe(true);
+    expect(c.scrolled).toEqual([]);
+    expect(v.matches).toEqual([]);
+  });
+
+  // pdf.js also turns to the selected match's page through the link service's `page` (pdf_viewer.mjs, #updatePage).
+  it("a_search_run_again_for_a_new_document_does_not_turn_the_page", async () => {
+    const { v, f, c } = await setup();
+    f.search({ text: "abc", caseSensitive: false, entireWord: false });
+    c.opts.linkService.page = 2;
+    expect(v.shown).toEqual([2]);
+    f.setDocument(doc(3));
+    c.opts.linkService.page = 20;
+    expect(v.shown).toEqual([2]);
+    f.step(false);
+    c.opts.linkService.page = 20;
+    expect(v.shown).toEqual([2, 20]);
+  });
+
+  // pdf.js chose its match from the page in view without showing it, so the first step searches from the view again and shows that one.
+  it("the_first_step_after_a_new_document_searches_from_the_view_and_shows_its_match", async () => {
+    const { f, c, bus } = await setup();
+    f.search({ text: "abc", caseSensitive: false, entireWord: false });
+    f.setDocument(doc(3));
+    f.step(true);
+    expect(finds(bus).at(-1)).toEqual(expect.objectContaining({ type: "", query: "abc", findPrevious: true }));
+    const m = mapping("abc");
+    f.attach(0, m);
+    c.highlightMatches = true;
+    c.pageMatches[0] = [0];
+    c.pageMatchesLength[0] = [3];
+    c.selected = { pageIdx: 0, matchIdx: 0 };
+    bus.dispatch("updatetextlayermatches", { pageIndex: 0 });
+    expect(c.scrolled).toHaveLength(1);
+    f.step(false);
+    expect(finds(bus).at(-1)).toEqual(expect.objectContaining({ type: "again" }));
+  });
+
   it("a new document after the bar closed searches nothing", async () => {
     const { f, bus } = await setup();
     f.search({ text: "abc", caseSensitive: false, entireWord: false });
