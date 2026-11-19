@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { Draft } from "../../generated/Draft";
 import { start, step, type DocEvent, type DocState } from "./editorDoc";
-import { TextTabView, readOnlyLine, type TextTabViewProps, dirtyNews, isSaveKey, keyboardTo, wrapAtStart } from "./TextTab";
+import { TextTabView, readOnlyLine, type TextTabViewProps, conflictJump, dirtyNews, isSaveKey, keyboardTo, wrapAtStart } from "./TextTab";
 
 // The rendered Markdown needs the DOM, which these tests run without: the stand-in shows the text it was given.
 vi.mock("../preview/MarkdownView", () => ({ MarkdownView: ({ text }: { text: string }) => <div data-md="">{text}</div> }));
@@ -35,6 +35,8 @@ const props = (doc: DocState, over: Partial<TextTabViewProps> = {}): TextTabView
   editor: null,
   onEdit: noop,
   onCursor: noop,
+  onMerge: noop,
+  onConflict: noop,
   onKeep: noop,
   onTake: noop,
   onUndo: noop,
@@ -63,6 +65,25 @@ describe("TextTabView", () => {
     // The bar is not a live region and takes no focus.
     expect(out).not.toContain("aria-live");
     expect(out).not.toContain("autofocus");
+  });
+
+  it("the bar offers Merge, Keep mine and Take disk in that order", () => {
+    const draft: Draft = { path: "C:\\p\\a.txt", text: "mine", base_text: "one\ntwo", base_hash: H1, encoding: "utf-8", eol: "lf", edited_ms: 1 };
+    const doc = step(start, { type: "opened", disk: { text: "theirs", hash: H2 }, draft }, N).state;
+    const out = html(doc);
+    const bar = out.slice(out.indexOf("changed-bar"));
+    const buttons = [...bar.matchAll(/<button[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]);
+    expect(buttons.slice(0, 3)).toEqual(["Merge", "Keep mine", "Take disk"]);
+  });
+
+  it("the line under the text shows a merge's result", () => {
+    const draft: Draft = { path: "C:\\p\\a.txt", text: "mine", base_text: "one\ntwo", base_hash: H1, encoding: "utf-8", eol: "lf", edited_ms: 1 };
+    let doc = step(start, { type: "opened", disk: { text: "theirs", hash: H2 }, draft }, N).state;
+    doc = step(doc, { type: "merge" }, N).state;
+    doc = step(doc, { type: "merged", id: 1, text: "<<<<<<< mine\nmine\n=======\ntheirs\n>>>>>>> disk", conflicts: 2, mine: "mine", disk: H2 }, N).state;
+    const out = html(doc);
+    expect(out).toContain("Merged a.txt. 2 conflicts to resolve.");
+    expect(out).not.toMatch(/<button[^>]*>Undo<\/button>/);
   });
 
   it("a_save_shows_saved_with_undo", () => {
@@ -174,6 +195,32 @@ describe("keyboardTo", () => {
     keyboardTo({ rendered: false, editor: null, body: s.body });
     keyboardTo({ rendered: true, editor: null, body: null });
     expect(s.calls).toEqual(["body", "body"]);
+  });
+});
+
+describe("conflictJump", () => {
+  const spot = () => {
+    const jumps: string[] = [];
+    const said: string[] = [];
+    return { jumps, said, editor: { toConflict: (which: string) => jumps.push(which) }, announce: (t: string) => said.push(t) };
+  };
+  it("asks_the_editor_while_it_shows", () => {
+    const s = spot();
+    conflictJump({ rendered: false, editor: s.editor, announce: s.announce }, "next");
+    conflictJump({ rendered: false, editor: s.editor, announce: s.announce }, "previous");
+    expect(s.jumps).toEqual(["next", "previous"]);
+    expect(s.said).toEqual([]);
+  });
+  it("says_where_conflicts_show_behind_the_rendered_view", () => {
+    const s = spot();
+    conflictJump({ rendered: true, editor: s.editor, announce: s.announce }, "next");
+    expect(s.jumps).toEqual([]);
+    expect(s.said).toEqual(["Conflicts show in the Source view."]);
+  });
+  it("does_nothing_with_no_editor_yet", () => {
+    const s = spot();
+    conflictJump({ rendered: false, editor: null, announce: s.announce }, "next");
+    expect(s.said).toEqual([]);
   });
 });
 

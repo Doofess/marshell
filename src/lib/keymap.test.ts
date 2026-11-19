@@ -284,6 +284,8 @@ describe("the text tab's commands", () => {
     expect(commandById("pane-undo-save")).toMatchObject({ label: "Undo last save", group: "Window" });
     expect(commandById("pane-go-to-line")).toMatchObject({ label: "Go to line…", group: "Window" });
     expect(commandById("pane-word-wrap")).toMatchObject({ label: "Word wrap", group: "Window" });
-    for (const id of ["pane-save", "pane-undo-save", "pane-go-to-line", "pane-word-wrap"]) expect(commandById(id).binding).toBeUndefined();
+    expect(commandById("pane-next-conflict")).toMatchObject({ label: "Next conflict", group: "Window" });
+    expect(commandById("pane-previous-conflict")).toMatchObject({ label: "Previous conflict", group: "Window" });
+    for (const id of ["pane-save", "pane-undo-save", "pane-go-to-line", "pane-word-wrap", "pane-next-conflict", "pane-previous-conflict"]) expect(commandById(id).binding).toBeUndefined();
   });
 });

@@ -1,5 +1,6 @@
 import type { Draft } from "../../generated/Draft";
 import { changedLines } from "./changedLines";
+import { countConflicts } from "./conflicts";
 
 /** What the file holds on disk. `hash` is null when there is no file. */
 export type Disk = { text: string; hash: string | null };
@@ -12,6 +13,10 @@ export type Disk = { text: string; hash: string | null };
  * (`hash` null for no file), until the disk has been read again: a read that began before
  * the write can still arrive, and it is not somebody else's change. `held` is the newest read of
  * the disk that came while a save or an undo was in flight: it is taken when that is answered.
+ * `merging` is true while a merge request is out whose answer is wanted, which is only while the bar is up, and `mergeId` is the
+ * number of the last request made: an answer with another number is for a request that was given up. `merge` is the last merge of the open tab: `mine` is the text before it, which
+ * rests on the file `before`, and `merged` is the text after it, which rests on the file `after`. The bar follows whichever of the
+ * two texts the editor holds, so an undo of the merge brings it back and a redo takes it away.
  */
 export type DocState = {
   base: Disk;
@@ -27,6 +32,9 @@ export type DocState = {
   sent: string | null;
   replaced: { hash: string | null } | null;
   held: Extract<DocEvent, { type: "disk" | "gone" }> | null;
+  merging: boolean;
+  mergeId: number;
+  merge: { mine: string; merged: string; before: Disk; after: Disk } | null;
 };
 
 export type DocEvent =
@@ -45,6 +53,10 @@ export type DocEvent =
   | { type: "unsaved"; hash: string }
   | { type: "unsaveRefused" }
   | { type: "unsaveFailed"; line: string }
+  | { type: "merge" }
+  /** The answer to a merge: `mine` and `disk` are the text and the disk hash the request was made from. */
+  | { type: "merged"; id: number; text: string; conflicts: number; mine: string; disk: string | null }
+  | { type: "mergeFailed"; id: number; line: string }
   | { type: "left" };
 
 /** What the caller runs. The draft effects use the state after the step. */
@@ -55,6 +67,8 @@ export type Effect =
   | { type: "save"; expect: string | null }
   | { type: "unsave"; snapshot: string }
   | { type: "refetch" }
+  | { type: "merge"; id: number; base: string; mine: string; disk: Disk }
+  | { type: "showConflict" }
   | { type: "announce"; text: string; /** Only for someone whose keyboard is in the tab. */ reading?: true };
 
 type Out = { state: DocState; effects: Effect[] };
@@ -73,6 +87,9 @@ export const start: DocState = {
   sent: null,
   replaced: null,
   held: null,
+  merging: false,
+  mergeId: 0,
+  merge: null,
 };
 
 /** A file that is not there reads as empty text. */
@@ -110,16 +127,89 @@ function opened(disk: Disk, draft: Draft | null): Out {
   return unchanged({ ...fresh, text: draft.text, base: { text: draft.base_text, hash: draft.base_hash }, conflict: disk, dirty: true });
 }
 
-function edited(s: DocState, text: string): Out {
-  // The status line spoke of the text as it was ("Saved a.txt."), so it goes with the first change.
-  const next = { ...edit(s, text), marks: [], undoOffered: false, line: null };
+/**
+ * The text the editor holds decides which file it rests on, where the last merge is concerned: the text from before the merge
+ * rests on the file as it was loaded (the bar is up), and the merged text on the file as it was merged (the bar is down).
+ */
+function afterMerge(s: DocState, text: string): DocState {
+  const m = s.merge;
+  if (m === null) return s;
+  if (text === m.mine && s.base.hash === m.after.hash) return { ...s, base: m.before, conflict: s.conflict ?? m.after };
+  if (text === m.merged && s.base.hash === m.before.hash && s.conflict !== null) {
+    return { ...s, base: m.after, conflict: s.conflict.hash === m.after.hash ? null : s.conflict };
+  }
+  return s;
+}
+
+const mergingLine = (name: string) => `Merging ${name}…`;
+
+function edited(s: DocState, text: string, name: string): Out {
+  // The status line spoke of the text as it was ("Saved a.txt."), so it goes with the first change. A merge that runs is still
+  // running: its answer will replace what is typed now, so the line keeps saying so.
+  const next = { ...edit(afterMerge(s, text), text), marks: [], undoOffered: false, line: s.merging ? mergingLine(name) : null };
   return { state: next, effects: [draftEffect(next.dirty)] };
 }
 
+/** Asks for a merge of what is there now, under a new number: an answer to an earlier request no longer counts. */
+function asked(s: DocState, disk: Disk, name: string): Out {
+  const id = s.mergeId + 1;
+  return { state: { ...s, merging: true, mergeId: id, line: mergingLine(name) }, effects: [{ type: "merge", id, base: s.base.text, mine: s.text, disk }] };
+}
+
+function merge(s: DocState, name: string): Out {
+  if (s.conflict === null || s.saving || s.merging) return unchanged(s);
+  return asked(s, s.conflict, name);
+}
+
+function mergedLine(name: string, conflicts: number, own: boolean): string {
+  if (own) return `Merged ${name}. No conflicts.`;
+  if (conflicts === 0) return `Merged ${name}. No conflicts. Ctrl+Z undoes the merge.`;
+  const count = conflicts === 1 ? "1 conflict" : `${conflicts} conflicts`;
+  return `Merged ${name}. ${count} to resolve. F7 goes to the next conflict, and Ctrl+Z undoes the merge.`;
+}
+
+/**
+ * A merge is wanted only while the bar is up. However the bar went (it was answered, the file went, the disk came to hold the
+ * text or went back to what was loaded, the person typed the disk's text or redid an earlier merge), the merge that ran is over:
+ * its answer is dropped when it comes, and a bar that comes up later is not merged unasked.
+ */
+function settled(out: Out, name: string): Out {
+  const s = out.state;
+  if (!s.merging || s.conflict !== null) return out;
+  return { state: { ...s, merging: false, line: s.line === mergingLine(name) ? null : s.line }, effects: out.effects };
+}
+
+/** An answer counts only for the request that is out now. */
+const answers = (s: DocState, id: number) => s.merging && id === s.mergeId;
+
+function merged(s: DocState, e: Extract<DocEvent, { type: "merged" }>, name: string): Out {
+  if (!answers(s, e.id) || s.conflict === null) return unchanged(s);
+  // The text or the file moved on: the answer is for something that is no longer there, so the merge runs again on what is.
+  if (e.mine !== s.text || e.disk !== s.conflict.hash) return asked(s, s.conflict, name);
+  const own = e.text === e.mine;
+  const marks = changedLines(lines(e.mine), lines(e.text));
+  const dirty = e.text !== s.conflict.text;
+  const state: DocState = {
+    ...s,
+    text: e.text,
+    base: s.conflict,
+    conflict: null,
+    deleted: false,
+    dirty,
+    marks,
+    merging: false,
+    merge: own ? null : { mine: e.mine, merged: e.text, before: s.base, after: s.conflict },
+  };
+  const more: Effect[] = [{ type: "setText", text: e.text, marks }];
+  if (e.conflicts > 0) more.push({ type: "showConflict" });
+  more.push(draftEffect(dirty));
+  return said(state, mergedLine(name, e.conflicts, own), ...more);
+}
+
 function gone(s: DocState): Out {
-  if (s.deleted && s.base.hash === null && s.conflict === null) return unchanged(s);
+  if (s.deleted && s.base.hash === null && s.conflict === null) return unchanged(s.merge !== null ? { ...s, merge: null } : s);
   const dirty = s.text !== "";
-  const state = { ...s, base: NO_FILE, conflict: null, deleted: true, dirty };
+  const state = { ...s, base: NO_FILE, conflict: null, deleted: true, dirty, merge: null };
   if (dirty) return { state, effects: [{ type: "putDraft" }] };
   return { state, effects: s.dirty ? [{ type: "dropDraft" }] : [] };
 }
@@ -127,7 +217,7 @@ function gone(s: DocState): Out {
 /** Clean: the disk's text goes into the editor. */
 function reload(s: DocState, disk: Disk, announce: string | null): Out {
   const marks = changedLines(lines(s.text), lines(disk.text));
-  const state: DocState = { ...s, text: disk.text, base: disk, conflict: null, deleted: false, dirty: false, marks };
+  const state: DocState = { ...s, text: disk.text, base: disk, conflict: null, deleted: false, dirty: false, marks, merge: null };
   const set: Effect = { type: "setText", text: disk.text, marks };
   if (announce === null) return { state, effects: [set] };
   const count = marks.length === 1 ? "1 line changed." : `${marks.length} lines changed.`;
@@ -151,7 +241,7 @@ function disk(s: DocState, d: Disk, name: string): Out {
   }
   if (d.text === s.text) {
     // The disk already holds what the editor holds.
-    return { state: { ...s, base: d, conflict: null, deleted: false, dirty: false }, effects: s.dirty ? [{ type: "dropDraft" }] : [] };
+    return { state: { ...s, base: d, conflict: null, deleted: false, dirty: false, merge: null }, effects: s.dirty ? [{ type: "dropDraft" }] : [] };
   }
   if (s.dirty) return unchanged({ ...s, conflict: d, deleted: false });
   return reload(s, d, name);
@@ -180,9 +270,13 @@ function saved(s: DocState, hash: string, snapshot: string | null, name: string)
     lastSave: snapshot === null ? null : { snapshot, hash },
     undoOffered: snapshot !== null,
     replaced: s.base.hash === hash ? null : { hash: s.base.hash },
+    merge: null,
   };
+  // A text that still holds conflicts is saved as it is, and the line says how many are left.
+  const left = countConflicts(s.sent);
+  const rest = left === 0 ? "" : left === 1 ? " 1 conflict left." : ` ${left} conflicts left.`;
   // The file is read again at once, so what the pane knows of it (its hash, that it is there) is the saved file.
-  return said(state, `Saved ${name}.`, draftEffect(dirty), { type: "refetch" });
+  return said(state, `Saved ${name}.${rest}`, draftEffect(dirty), { type: "refetch" });
 }
 
 /**
@@ -203,10 +297,10 @@ function afterOwnWrite(s: DocState, hash: string | null): Out | null {
  */
 export function step(s: DocState, e: DocEvent, name: string): Out {
   if ((e.type === "disk" || e.type === "gone") && s.saving) return unchanged({ ...s, held: e });
-  const out = apply(s, e, name);
+  const out = settled(apply(s, e, name), name);
   const held = out.state.held;
   if (held === null || out.state.saving) return out;
-  const next = apply({ ...out.state, held: null }, held, name);
+  const next = settled(apply({ ...out.state, held: null }, held, name), name);
   return { state: next.state, effects: [...out.effects, ...next.effects] };
 }
 
@@ -220,7 +314,7 @@ function apply(s: DocState, e: DocEvent, name: string): Out {
     case "opened":
       return opened(e.disk, e.draft);
     case "edited":
-      return edited(s, e.text);
+      return edited(s, e.text, name);
     case "disk":
       return disk(s, e.disk, name);
     case "gone":
@@ -237,13 +331,13 @@ function apply(s: DocState, e: DocEvent, name: string): Out {
       return said({ ...s, saving: false, sent: null }, `${name} is over 2 MB, so it can't be saved.`);
     case "keepMine": {
       if (s.conflict === null || s.saving) return unchanged(s);
-      const next = edit({ ...s, base: s.conflict, conflict: null }, s.text);
+      const next = edit({ ...s, base: s.conflict, conflict: null, merge: null }, s.text);
       return { state: next, effects: [draftEffect(next.dirty)] };
     }
     case "takeDisk": {
       if (s.conflict === null || s.saving) return unchanged(s);
       const d = s.conflict;
-      const state: DocState = { ...s, text: d.text, base: d, conflict: null, deleted: false, dirty: false, marks: [] };
+      const state: DocState = { ...s, text: d.text, base: d, conflict: null, deleted: false, dirty: false, marks: [], merge: null };
       return { state, effects: [{ type: "setText", text: d.text, marks: [] }, { type: "dropDraft" }] };
     }
     case "unsave":
@@ -262,6 +356,13 @@ function apply(s: DocState, e: DocEvent, name: string): Out {
     case "unsaveFailed":
       // The core would not write the file (read-only, in use): the save is still there to undo.
       return said({ ...s, saving: false }, `The save of ${name} couldn't be undone. ${e.line}`);
+    case "merge":
+      return merge(s, name);
+    case "merged":
+      return merged(s, e, name);
+    case "mergeFailed":
+      if (!answers(s, e.id)) return unchanged(s);
+      return said({ ...s, merging: false }, `${name} couldn't be merged. ${e.line}`);
     case "left":
       return unchanged({ ...s, marks: [], undoOffered: false });
   }

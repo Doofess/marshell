@@ -2,6 +2,8 @@ import type { Draft } from "../../generated/Draft";
 import type { DraftInfo } from "../../generated/DraftInfo";
 import type { DraftList } from "../../generated/DraftList";
 import type { FileConflict } from "../../generated/FileConflict";
+import type { FileMerge } from "../../generated/FileMerge";
+import type { FileMerged } from "../../generated/FileMerged";
 import type { FileSaved } from "../../generated/FileSaved";
 import type { FileUnsave } from "../../generated/FileUnsave";
 import { api, bearer, coreFetch, coreUrl, getEndpoint } from "../../lib/api/client";
@@ -55,6 +57,25 @@ export async function unsaveFile(path: string, snapshot: string): Promise<Unsave
     const res = await coreFetch(ep, "POST", "/v1/files/unsave", body);
     if (res.status === 200) return { kind: "saved", saved: (await res.json()) as FileSaved };
     if (res.status === 409 || res.status === 404) return { kind: "conflict" };
+    return { kind: "refused", line: await lineOf(res) };
+  } catch {
+    return { kind: "refused", line: GENERIC_LINE };
+  }
+}
+
+export type MergeResult = { kind: "merged"; text: string; conflicts: number } | { kind: "refused"; line: string };
+
+/** Merge the person's text and the disk's text, both of which grew from `base`. Each has `\n` line endings. */
+export async function mergeTexts(base: string, mine: string, disk: string): Promise<MergeResult> {
+  try {
+    const ep = await getEndpoint();
+    const body: FileMerge = { base, mine, disk };
+    const res = await coreFetch(ep, "POST", "/v1/files/merge", body);
+    if (res.status === 200) {
+      const merged = (await res.json()) as FileMerged;
+      return { kind: "merged", text: merged.text, conflicts: merged.conflicts };
+    }
+    if (res.status === 413) return { kind: "refused", line: "A text is over 3 MB." };
     return { kind: "refused", line: await lineOf(res) };
   } catch {
     return { kind: "refused", line: GENERIC_LINE };

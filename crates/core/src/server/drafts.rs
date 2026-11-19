@@ -15,7 +15,7 @@ const BAD_PATH: &str = "That path can't be saved.";
 const FULL: &str = "Marshell keeps at most 500 drafts. Save some files first.";
 /// The most bytes a draft's text may take. A draft holds text as UTF-8, and a UTF-16 file at the cap
 /// (two bytes a character on disk) can take three bytes a character here.
-const DRAFT_TEXT_CAP: u64 = files::TEXT_CAP / 2 * 3;
+pub(super) const DRAFT_TEXT_CAP: u64 = files::TEXT_CAP / 2 * 3;
 
 #[derive(Deserialize)]
 pub struct DraftQuery {

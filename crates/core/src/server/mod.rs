@@ -19,6 +19,7 @@ mod guard;
 mod history;
 mod hook;
 mod layout;
+mod merge;
 pub mod opens;
 mod outside;
 mod permissions;
@@ -325,6 +326,8 @@ struct Inner {
     doctor: crate::doctor::DoctorState,
     /// The Doctor runs once when the router starts. Only the app's startup sets it; tests start runs themselves.
     doctor_on_start: bool,
+    /// The one merge of a text tab that may run at a time (`server/merge.rs`).
+    merge_slot: Arc<tokio::sync::Semaphore>,
 }
 
 /// How long a permission request is held when `MARSHELL_PERMISSION_HOLD_SECS` is not set.
@@ -445,6 +448,7 @@ impl AppState {
             elevated_spawner: production_elevated_spawner(),
             doctor: crate::doctor::DoctorState::default(),
             doctor_on_start: false,
+            merge_slot: Arc::new(tokio::sync::Semaphore::new(1)),
         }))
     }
     /// Replaces how a session is started in the elevated helper, so a test needs no UAC prompt or helper. Call it
@@ -1314,6 +1318,10 @@ pub fn router(state: AppState) -> Router {
                 .layer(DefaultBodyLimit::max(files::TEXT_CAP as usize)),
         )
         .route("/v1/files/unsave", post(save::unsave))
+        .route(
+            "/v1/files/merge",
+            post(merge::merge).layer(DefaultBodyLimit::max(24 * 1024 * 1024)),
+        )
         .route("/v1/drafts", get(drafts::list))
         .route(
             "/v1/drafts/one",

@@ -42,6 +42,8 @@ export type SessionShortcut =
   | { kind: "paneUndoSave" }
   | { kind: "paneGoToLine" }
   | { kind: "paneWordWrap" }
+  | { kind: "paneNextConflict" }
+  | { kind: "panePreviousConflict" }
   /** "Browse…": the system's file dialog, to pick a file for the side pane. Has no key of its own. */
   | { kind: "browse" }
   /** Capture a screen region with the system's snipping tool and add the image to the focused session (Ctrl+Shift+X). Windows only for now. */
@@ -124,6 +126,10 @@ export function commandShortcut(id: string): SessionShortcut | null {
       return { kind: "paneGoToLine" };
     case "pane-word-wrap":
       return { kind: "paneWordWrap" };
+    case "pane-next-conflict":
+      return { kind: "paneNextConflict" };
+    case "pane-previous-conflict":
+      return { kind: "panePreviousConflict" };
     case "capture":
       return { kind: "capture" };
     case "next-waiting":

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Draft } from "../../generated/Draft";
+import { changedLines } from "./changedLines";
 import { type DocEvent, type DocState, type Effect, start, step } from "./editorDoc";
 
 const N = "a.txt";
@@ -432,5 +433,186 @@ describe("the status line", () => {
     const saved = run(doc(), { type: "edited", text: "mine" }, { type: "save" }, { type: "saved", hash: H2, snapshot: "snap" }).state;
     expect(saved.line).toBe("Saved a.txt.");
     expect(step(saved, { type: "edited", text: "mine!" }, N).state.line).toBeNull();
+  });
+});
+
+describe("the merge", () => {
+  const B = { text: "one\ntwo", hash: H1 };
+  const M = "mine";
+  const D = { text: "other", hash: H2 };
+  const D2 = { text: "other again", hash: H3 };
+  const MERGED = "a\n<<<<<<< mine\nmine\n=======\nother\n>>>>>>> disk";
+  const lines = (t: string) => t.split("\n");
+  const merged = (over: Partial<Extract<DocEvent, { type: "merged" }>> = {}): DocEvent => ({ type: "merged", id: 1, text: MERGED, conflicts: 1, mine: M, disk: H2, ...over });
+  /** Base B, text M, the bar up with disk D. */
+  const barUp = () => run(start, { type: "opened", disk: D, draft: draftOf() }).state;
+  const merging = () => run(barUp(), { type: "merge" }).state;
+  const done = (over: Partial<Extract<DocEvent, { type: "merged" }>> = {}) => run(merging(), merged(over));
+
+  it("start_is_not_merging", () => {
+    expect(start).toMatchObject({ merging: false, merge: null });
+  });
+  it("merge_asks_for_the_three_texts", () => {
+    const { state, effects } = run(barUp(), { type: "merge" });
+    expect(effects).toEqual([{ type: "merge", id: 1, base: B.text, mine: M, disk: D }]);
+    expect(state).toMatchObject({ merging: true, line: "Merging a.txt…" });
+    expect(types(effects)).not.toContain("announce");
+  });
+  it("merge_does_nothing_without_the_bar_while_saving_or_twice", () => {
+    const quiet = (s: DocState) => expect(step(s, { type: "merge" }, N)).toEqual({ state: s, effects: [] });
+    quiet(run(doc(), { type: "edited", text: M }).state);
+    quiet({ ...barUp(), saving: true });
+    quiet(merging());
+  });
+  it("merged_puts_the_text_in_and_takes_the_disk_as_the_base", () => {
+    const { state, effects } = done({ conflicts: 2 });
+    const line = "Merged a.txt. 2 conflicts to resolve. F7 goes to the next conflict, and Ctrl+Z undoes the merge.";
+    const marks = changedLines(lines(M), lines(MERGED));
+    expect(state).toMatchObject({ text: MERGED, base: D, conflict: null, deleted: false, dirty: true, merging: false, marks, line });
+    expect(state.merge).toEqual({ mine: M, merged: MERGED, before: B, after: D });
+    expect(effects).toEqual([{ type: "setText", text: MERGED, marks }, { type: "showConflict" }, { type: "putDraft" }, { type: "announce", text: line }]);
+  });
+  it("merged_with_one_conflict_and_with_none_say_so", () => {
+    const one = done({ conflicts: 1 });
+    expect(one.state.line).toBe("Merged a.txt. 1 conflict to resolve. F7 goes to the next conflict, and Ctrl+Z undoes the merge.");
+    expect(one.effects[3]).toEqual({ type: "announce", text: one.state.line });
+    const none = done({ text: "one\nmerged", conflicts: 0 });
+    expect(none.state.line).toBe("Merged a.txt. No conflicts. Ctrl+Z undoes the merge.");
+    expect(types(none.effects)).toEqual(["setText", "putDraft", "announce"]);
+    expect(none.effects[2]).toEqual({ type: "announce", text: none.state.line });
+  });
+  it("merged_to_the_disks_own_text_is_clean", () => {
+    const { state, effects } = done({ text: D.text, conflicts: 0 });
+    expect(state).toMatchObject({ text: D.text, base: D, conflict: null, dirty: false, merging: false });
+    expect(types(effects)).toEqual(["setText", "dropDraft", "announce"]);
+  });
+  it("merged_to_the_persons_own_text_remembers_nothing", () => {
+    const { state, effects } = done({ text: M, conflicts: 0 });
+    expect(state).toMatchObject({ text: M, base: D, conflict: null, merge: null, line: "Merged a.txt. No conflicts." });
+    expect(effects.at(-1)).toEqual({ type: "announce", text: "Merged a.txt. No conflicts." });
+  });
+  it("merged_for_an_older_text_runs_again", () => {
+    const { state, effects } = run(merging(), { type: "edited", text: "mine2" }, merged());
+    expect(state).toMatchObject({ text: "mine2", base: B, conflict: D, merging: true, line: "Merging a.txt…" });
+    expect(effects).toEqual([{ type: "merge", id: 2, base: B.text, mine: "mine2", disk: D }]);
+  });
+  it("merged_for_an_older_disk_runs_again", () => {
+    const { state, effects } = run(merging(), { type: "disk", disk: D2 }, merged());
+    expect(state).toMatchObject({ text: M, base: B, conflict: D2, merging: true });
+    expect(effects).toEqual([{ type: "merge", id: 2, base: B.text, mine: M, disk: D2 }]);
+  });
+  it("merged_after_keep_mine_or_take_disk_is_dropped", () => {
+    for (const answer of [{ type: "keepMine" }, { type: "takeDisk" }] as DocEvent[]) {
+      const before = run(merging(), answer).state;
+      const { state, effects } = run(before, merged());
+      expect(effects, answer.type).toEqual([]);
+      expect(state, answer.type).toEqual({ ...before, merging: false });
+    }
+  });
+  it("answering_the_bar_ends_the_merge_so_a_later_bar_is_not_merged_unasked", () => {
+    for (const answer of [{ type: "keepMine" }, { type: "takeDisk" }] as DocEvent[]) {
+      const answered = run(merging(), answer).state;
+      expect(answered, answer.type).toMatchObject({ merging: false, line: null });
+      // The file changes again before the old answer comes: the new bar is the person's to answer.
+      const again = run(answered, { type: "edited", text: M }, { type: "disk", disk: D2 }).state;
+      expect(again.conflict, answer.type).toEqual(D2);
+      for (const late of [merged(), merged({ disk: H3 }), { type: "mergeFailed", id: 1, line: "The merge took too long." }] as DocEvent[]) {
+        expect(step(again, late, N), `${answer.type} ${late.type}`).toEqual({ state: again, effects: [] });
+      }
+    }
+  });
+  it("a_disk_that_comes_to_hold_the_text_ends_the_merge", () => {
+    const same = run(merging(), { type: "disk", disk: { text: M, hash: H3 } }).state;
+    expect(same).toMatchObject({ merging: false, conflict: null, line: null });
+    expect(step(same, merged(), N)).toEqual({ state: same, effects: [] });
+  });
+  it("a_file_deleted_during_a_merge_drops_the_answer", () => {
+    const gone = run(merging(), { type: "gone" }).state;
+    expect(gone).toMatchObject({ merging: false, merge: null, conflict: null, deleted: true, line: null });
+    const { state, effects } = run(gone, merged());
+    expect(effects).toEqual([]);
+    expect(state).toEqual(gone);
+    expect(state.text).toBe(M);
+  });
+  it("an_answer_of_an_earlier_merge_is_dropped_while_a_later_one_runs", () => {
+    // Merge, Keep mine, the file changes again, Merge again: the first request is still out when the second is made.
+    const second = run(merging(), { type: "keepMine" }, { type: "disk", disk: D2 }, { type: "merge" });
+    expect(second.effects.at(-1)).toEqual({ type: "merge", id: 2, base: D.text, mine: M, disk: D2 });
+    for (const late of [merged(), merged({ disk: H3 }), { type: "mergeFailed", id: 1, line: "Another merge is still running." }] as DocEvent[]) {
+      expect(step(second.state, late, N), late.type).toEqual({ state: second.state, effects: [] });
+    }
+    const { state } = run(second.state, merged({ id: 2, disk: H3 }));
+    expect(state).toMatchObject({ text: MERGED, base: D2, conflict: null, merging: false });
+  });
+  it("a_bar_that_goes_any_other_way_ends_the_merge_too", () => {
+    // The file goes back to what the tab loaded.
+    const back = run(merging(), { type: "disk", disk: B }).state;
+    expect(back).toMatchObject({ merging: false, conflict: null, line: null });
+    // It changes again before the old answer comes: nobody asked for a merge of this bar.
+    const again = run(back, { type: "disk", disk: D2 }).state;
+    expect(again.conflict).toEqual(D2);
+    expect(step(again, merged(), N)).toEqual({ state: again, effects: [] });
+    // The person types the disk's own text.
+    expect(run(merging(), { type: "edited", text: D.text }).state).toMatchObject({ merging: false, conflict: null, line: null });
+    // A merge is undone, asked for again, and redone before the answer comes.
+    const redone = run(done().state, { type: "edited", text: M }, { type: "merge" }, { type: "edited", text: MERGED }).state;
+    expect(redone).toMatchObject({ merging: false, conflict: null, base: D, line: null });
+  });
+  it("typing_during_a_merge_keeps_the_line_that_says_it_runs", () => {
+    expect(run(merging(), { type: "edited", text: "mine2" }).state).toMatchObject({ merging: true, line: "Merging a.txt…" });
+  });
+  it("merge_failed_keeps_the_bar_and_says_why", () => {
+    const { state, effects } = run(merging(), { type: "mergeFailed", id: 1, line: "The merge took too long." });
+    const line = "a.txt couldn't be merged. The merge took too long.";
+    expect(state).toMatchObject({ merging: false, conflict: D, text: M, line });
+    expect(effects).toEqual([{ type: "announce", text: line }]);
+  });
+
+  it("undo_of_a_merge_brings_the_bar_back", () => {
+    const { state, effects } = run(done().state, { type: "edited", text: M });
+    expect(state).toMatchObject({ text: M, base: B, conflict: D, dirty: true });
+    expect(state.merge).not.toBeNull();
+    expect(effects).toEqual([{ type: "putDraft" }]);
+    const refused = step(state, { type: "save" }, N);
+    expect(refused.effects).toEqual([{ type: "announce", text: "a.txt changed on disk, so it wasn't saved." }]);
+  });
+  it("redo_of_a_merge_takes_the_bar_away", () => {
+    const back = run(done().state, { type: "edited", text: M }).state;
+    const { state, effects } = run(back, { type: "edited", text: MERGED });
+    expect(state).toMatchObject({ text: MERGED, base: D, conflict: null, dirty: true });
+    expect(effects).toEqual([{ type: "putDraft" }]);
+    expect(step(state, { type: "save" }, N).effects).toEqual([{ type: "save", expect: H2 }]);
+  });
+  it("undo_past_a_merge_after_more_edits", () => {
+    const more = run(done().state, { type: "edited", text: "something else" }).state;
+    expect(more).toMatchObject({ base: D, conflict: null });
+    const { state } = run(more, { type: "edited", text: M });
+    expect(state).toMatchObject({ text: M, base: B, conflict: D, dirty: true });
+  });
+  it("undo_of_a_merge_after_the_file_changed_again", () => {
+    const newer = run(done().state, { type: "disk", disk: D2 }).state;
+    expect(newer.conflict).toEqual(D2);
+    const back = run(newer, { type: "edited", text: M }).state;
+    expect(back).toMatchObject({ base: B, conflict: D2 });
+    const again = run(back, { type: "edited", text: MERGED }).state;
+    expect(again).toMatchObject({ base: D, conflict: D2, dirty: true });
+  });
+  it("undo_after_a_save_brings_nothing_back", () => {
+    const { state } = run(done({ text: "one\nmerged", conflicts: 0 }).state, { type: "save" }, { type: "saved", hash: "4".repeat(64), snapshot: null }, { type: "edited", text: M });
+    expect(state).toMatchObject({ conflict: null, base: { text: "one\nmerged", hash: "4".repeat(64) }, merge: null });
+  });
+  it("keep_mine_and_take_disk_forget_the_merge", () => {
+    for (const answer of [{ type: "keepMine" }, { type: "takeDisk" }] as DocEvent[]) {
+      const back = run(done().state, { type: "edited", text: M }).state;
+      const { state } = run(back, answer, { type: "edited", text: MERGED });
+      expect(state, answer.type).toMatchObject({ conflict: null, base: D, merge: null });
+    }
+  });
+  it("saved_counts_the_conflicts_left", () => {
+    const one = "<<<<<<< mine\na\n=======\nb\n>>>>>>> disk";
+    const saveOf = (text: string) => run(doc(), { type: "edited", text }, { type: "save" }, { type: "saved", hash: H2, snapshot: null }).state.line;
+    expect(saveOf(one)).toBe("Saved a.txt. 1 conflict left.");
+    expect(saveOf(`${one}\nx\n${one}`)).toBe("Saved a.txt. 2 conflicts left.");
+    expect(saveOf("plain")).toBe("Saved a.txt.");
   });
 });

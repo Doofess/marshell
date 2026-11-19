@@ -1559,6 +1559,12 @@ export function LiveApp() {
         case "paneWordWrap":
           shownTextRef.current()?.toggleWrap();
           return true;
+        case "paneNextConflict":
+          shownTextRef.current()?.nextConflict();
+          return true;
+        case "panePreviousConflict":
+          shownTextRef.current()?.previousConflict();
+          return true;
         case "capture":
           void runCaptureRef.current();
           return true;

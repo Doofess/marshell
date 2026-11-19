@@ -40,6 +40,8 @@ const props = (doc: DocState, over: Partial<TextTabViewProps> = {}): TextTabView
   editor: null,
   onEdit: noop,
   onCursor: noop,
+  onMerge: noop,
+  onConflict: noop,
   onKeep: noop,
   onTake: noop,
   onUndo: noop,
@@ -61,7 +63,16 @@ const framed = (label: string, doc: DocState, over: Partial<TextTabViewProps> = 
 const draft: Draft = { path: PATH, text: "Buy oat milk\nCall the bank\nBook the train", base_text: TEXT, base_hash: H1, encoding: "utf-8", eol: "lf", edited_ms: 1 };
 
 export const Clean: StoryObj = framed("A text file open and clean: the editor, and the footer under it", after());
-export const ChangedOnDisk: StoryObj = framed("The file changed on disk while the tab holds unsaved edits: the bar offers Keep mine and Take disk", step(start, { type: "opened", disk: { text: "Buy milk\nCall the bank\nBook the plane", hash: H2 }, draft }, NAME).state);
+export const ChangedOnDisk: StoryObj = framed("The file changed on disk while the tab holds unsaved edits: the bar offers Merge, Keep mine and Take disk", step(start, { type: "opened", disk: { text: "Buy milk\nCall the bank\nBook the plane", hash: H2 }, draft }, NAME).state);
+export const Merged: StoryObj = framed(
+  "After Merge: the text holds one conflict, and the line under it says so",
+  (() => {
+    let s = step(start, { type: "opened", disk: { text: "Buy milk\nCall the bank\nBook the plane", hash: H2 }, draft }, NAME).state;
+    s = step(s, { type: "merge" }, NAME).state;
+    const text = ["Buy oat milk", "Call the bank", "<<<<<<< mine", "Book the train", "=======", "Book the plane", ">>>>>>> disk"].join("\n");
+    return step(s, { type: "merged", id: 1, text, conflicts: 1, mine: draft.text, disk: H2 }, NAME).state;
+  })(),
+);
 export const SavedWithUndo: StoryObj = framed("After Ctrl+S: Saved, with an Undo button under the text", after({ type: "edited", text: "Buy oat milk" }, { type: "save" }, { type: "saved", hash: H2, snapshot: "snap" }));
 export const ReadOnly: StoryObj = framed("A file with the read-only attribute: its line says so", after(), { readOnly: "attribute" });
 // The dialog covers the pane, so the story gives it a frame of its own to sit in.

@@ -144,6 +144,8 @@ describe("the text tab's commands", () => {
     expect(commandShortcut("pane-undo-save")).toEqual({ kind: "paneUndoSave" });
     expect(commandShortcut("pane-go-to-line")).toEqual({ kind: "paneGoToLine" });
     expect(commandShortcut("pane-word-wrap")).toEqual({ kind: "paneWordWrap" });
+    expect(commandShortcut("pane-next-conflict")).toEqual({ kind: "paneNextConflict" });
+    expect(commandShortcut("pane-previous-conflict")).toEqual({ kind: "panePreviousConflict" });
   });
 });
 
