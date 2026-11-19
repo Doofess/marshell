@@ -443,7 +443,7 @@ describe("the merge", () => {
   const D2 = { text: "other again", hash: H3 };
   const MERGED = "a\n<<<<<<< mine\nmine\n=======\nother\n>>>>>>> disk";
   const lines = (t: string) => t.split("\n");
-  const merged = (over: Partial<Extract<DocEvent, { type: "merged" }>> = {}): DocEvent => ({ type: "merged", text: MERGED, conflicts: 1, mine: M, disk: H2, ...over });
+  const merged = (over: Partial<Extract<DocEvent, { type: "merged" }>> = {}): DocEvent => ({ type: "merged", id: 1, text: MERGED, conflicts: 1, mine: M, disk: H2, ...over });
   /** Base B, text M, the bar up with disk D. */
   const barUp = () => run(start, { type: "opened", disk: D, draft: draftOf() }).state;
   const merging = () => run(barUp(), { type: "merge" }).state;
@@ -454,7 +454,7 @@ describe("the merge", () => {
   });
   it("merge_asks_for_the_three_texts", () => {
     const { state, effects } = run(barUp(), { type: "merge" });
-    expect(effects).toEqual([{ type: "merge", base: B.text, mine: M, disk: D }]);
+    expect(effects).toEqual([{ type: "merge", id: 1, base: B.text, mine: M, disk: D }]);
     expect(state).toMatchObject({ merging: true, line: "Merging a.txt…" });
     expect(types(effects)).not.toContain("announce");
   });
@@ -493,13 +493,13 @@ describe("the merge", () => {
   });
   it("merged_for_an_older_text_runs_again", () => {
     const { state, effects } = run(merging(), { type: "edited", text: "mine2" }, merged());
-    expect(state).toMatchObject({ text: "mine2", base: B, conflict: D, merging: true });
-    expect(effects).toEqual([{ type: "merge", base: B.text, mine: "mine2", disk: D }]);
+    expect(state).toMatchObject({ text: "mine2", base: B, conflict: D, merging: true, line: "Merging a.txt…" });
+    expect(effects).toEqual([{ type: "merge", id: 2, base: B.text, mine: "mine2", disk: D }]);
   });
   it("merged_for_an_older_disk_runs_again", () => {
     const { state, effects } = run(merging(), { type: "disk", disk: D2 }, merged());
     expect(state).toMatchObject({ text: M, base: B, conflict: D2, merging: true });
-    expect(effects).toEqual([{ type: "merge", base: B.text, mine: M, disk: D2 }]);
+    expect(effects).toEqual([{ type: "merge", id: 2, base: B.text, mine: M, disk: D2 }]);
   });
   it("merged_after_keep_mine_or_take_disk_is_dropped", () => {
     for (const answer of [{ type: "keepMine" }, { type: "takeDisk" }] as DocEvent[]) {
@@ -516,7 +516,7 @@ describe("the merge", () => {
       // The file changes again before the old answer comes: the new bar is the person's to answer.
       const again = run(answered, { type: "edited", text: M }, { type: "disk", disk: D2 }).state;
       expect(again.conflict, answer.type).toEqual(D2);
-      for (const late of [merged(), merged({ disk: H3 }), { type: "mergeFailed", line: "The merge took too long." }] as DocEvent[]) {
+      for (const late of [merged(), merged({ disk: H3 }), { type: "mergeFailed", id: 1, line: "The merge took too long." }] as DocEvent[]) {
         expect(step(again, late, N), `${answer.type} ${late.type}`).toEqual({ state: again, effects: [] });
       }
     }
@@ -534,8 +534,35 @@ describe("the merge", () => {
     expect(state).toEqual(gone);
     expect(state.text).toBe(M);
   });
+  it("an_answer_of_an_earlier_merge_is_dropped_while_a_later_one_runs", () => {
+    // Merge, Keep mine, the file changes again, Merge again: the first request is still out when the second is made.
+    const second = run(merging(), { type: "keepMine" }, { type: "disk", disk: D2 }, { type: "merge" });
+    expect(second.effects.at(-1)).toEqual({ type: "merge", id: 2, base: D.text, mine: M, disk: D2 });
+    for (const late of [merged(), merged({ disk: H3 }), { type: "mergeFailed", id: 1, line: "Another merge is still running." }] as DocEvent[]) {
+      expect(step(second.state, late, N), late.type).toEqual({ state: second.state, effects: [] });
+    }
+    const { state } = run(second.state, merged({ id: 2, disk: H3 }));
+    expect(state).toMatchObject({ text: MERGED, base: D2, conflict: null, merging: false });
+  });
+  it("a_bar_that_goes_any_other_way_ends_the_merge_too", () => {
+    // The file goes back to what the tab loaded.
+    const back = run(merging(), { type: "disk", disk: B }).state;
+    expect(back).toMatchObject({ merging: false, conflict: null, line: null });
+    // It changes again before the old answer comes: nobody asked for a merge of this bar.
+    const again = run(back, { type: "disk", disk: D2 }).state;
+    expect(again.conflict).toEqual(D2);
+    expect(step(again, merged(), N)).toEqual({ state: again, effects: [] });
+    // The person types the disk's own text.
+    expect(run(merging(), { type: "edited", text: D.text }).state).toMatchObject({ merging: false, conflict: null, line: null });
+    // A merge is undone, asked for again, and redone before the answer comes.
+    const redone = run(done().state, { type: "edited", text: M }, { type: "merge" }, { type: "edited", text: MERGED }).state;
+    expect(redone).toMatchObject({ merging: false, conflict: null, base: D, line: null });
+  });
+  it("typing_during_a_merge_keeps_the_line_that_says_it_runs", () => {
+    expect(run(merging(), { type: "edited", text: "mine2" }).state).toMatchObject({ merging: true, line: "Merging a.txt…" });
+  });
   it("merge_failed_keeps_the_bar_and_says_why", () => {
-    const { state, effects } = run(merging(), { type: "mergeFailed", line: "The merge took too long." });
+    const { state, effects } = run(merging(), { type: "mergeFailed", id: 1, line: "The merge took too long." });
     const line = "a.txt couldn't be merged. The merge took too long.";
     expect(state).toMatchObject({ merging: false, conflict: D, text: M, line });
     expect(effects).toEqual([{ type: "announce", text: line }]);

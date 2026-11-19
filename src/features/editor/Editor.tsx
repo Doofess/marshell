@@ -1,4 +1,5 @@
-import { Annotation, Compartment, EditorSelection, EditorState, Transaction } from "@codemirror/state";
+import { Annotation, Compartment, EditorSelection, EditorState, Transaction, type TransactionSpec } from "@codemirror/state";
+import { isolateHistory } from "@codemirror/commands";
 import { EditorView, keymap } from "@codemirror/view";
 import { indentUnit } from "@codemirror/language";
 import { gotoLine } from "@codemirror/search";
@@ -53,6 +54,28 @@ type Props = {
 
 /** Marks a transaction as `setText`'s, which is not an edit by the person. */
 const FROM_OUTSIDE = Annotation.define<boolean>();
+
+/**
+ * The change that replaces the whole text with one that came from outside the editor (a reload, a merge, Take disk), with the
+ * lines to mark. The cursor stays on its line number, and in its column where the line is long enough.
+ */
+export function outsideText(state: EditorState, text: string, marks: number[]): TransactionSpec {
+  const { doc, selection } = state;
+  const head = selection.main.head;
+  const at = doc.lineAt(head);
+  const column = head - at.from;
+  const next = EditorState.create({ doc: text }).doc;
+  const line = next.line(Math.min(at.number, next.lines));
+  const cursor = Math.min(line.from + column, line.to);
+  return {
+    changes: { from: 0, to: doc.length, insert: text },
+    selection: EditorSelection.cursor(cursor),
+    effects: setMarks.of(marks),
+    // A step of its own: the history would otherwise join it to typing within half a second on either side, and an undo
+    // would then pass the text from before a merge, which is the text that brings the bar back.
+    annotations: [FROM_OUTSIDE.of(true), Transaction.addToHistory.of(true), isolateHistory.of("full")],
+  };
+}
 /** The Shiki language, a compartment of its own so a renamed file is coloured for its new type. */
 const COLOURS = new Compartment();
 
@@ -141,24 +164,11 @@ export function Editor({ name, path, initial, firstLine, readOnly, wrap, target,
       setText(text, marks) {
         const v = view.current;
         if (!v) return;
-        const { doc, selection } = v.state;
-        if (doc.toString() === text) {
+        if (v.state.doc.toString() === text) {
           v.dispatch({ effects: setMarks.of(marks) });
           return;
         }
-        // The cursor stays on its line number, and in its column where the line is long enough.
-        const head = selection.main.head;
-        const at = doc.lineAt(head);
-        const column = head - at.from;
-        const next = EditorState.create({ doc: text }).doc;
-        const line = next.line(Math.min(at.number, next.lines));
-        const cursor = Math.min(line.from + column, line.to);
-        v.dispatch({
-          changes: { from: 0, to: doc.length, insert: text },
-          selection: EditorSelection.cursor(cursor),
-          effects: setMarks.of(marks),
-          annotations: [FROM_OUTSIDE.of(true), Transaction.addToHistory.of(true)],
-        });
+        v.dispatch(outsideText(v.state, text, marks));
       },
       focus: () => view.current?.focus(),
       goToLine() {

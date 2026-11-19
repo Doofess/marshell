@@ -80,7 +80,7 @@ describe("TextTabView", () => {
     const draft: Draft = { path: "C:\\p\\a.txt", text: "mine", base_text: "one\ntwo", base_hash: H1, encoding: "utf-8", eol: "lf", edited_ms: 1 };
     let doc = step(start, { type: "opened", disk: { text: "theirs", hash: H2 }, draft }, N).state;
     doc = step(doc, { type: "merge" }, N).state;
-    doc = step(doc, { type: "merged", text: "<<<<<<< mine\nmine\n=======\ntheirs\n>>>>>>> disk", conflicts: 2, mine: "mine", disk: H2 }, N).state;
+    doc = step(doc, { type: "merged", id: 1, text: "<<<<<<< mine\nmine\n=======\ntheirs\n>>>>>>> disk", conflicts: 2, mine: "mine", disk: H2 }, N).state;
     const out = html(doc);
     expect(out).toContain("Merged a.txt. 2 conflicts to resolve.");
     expect(out).not.toMatch(/<button[^>]*>Undo<\/button>/);

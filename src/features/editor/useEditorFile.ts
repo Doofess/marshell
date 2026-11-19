@@ -169,6 +169,8 @@ export type EffectDeps = {
   dispatch: (e: DocEvent) => void;
   drafts: DraftQueue;
   now: () => number;
+  /** The tab's document is no longer on screen: it was unmounted. */
+  gone: () => boolean;
   api: { saveFile: typeof saveFile; unsaveFile: typeof unsaveFile; mergeTexts: typeof mergeTexts };
 };
 
@@ -203,8 +205,11 @@ async function runUnsave(effect: Extract<Effect, { type: "unsave" }>, d: EffectD
 
 async function runMerge(effect: Extract<Effect, { type: "merge" }>, d: EffectDeps): Promise<void> {
   const r = await d.api.mergeTexts(effect.base, effect.mine, effect.disk.text);
-  if (r.kind === "merged") d.dispatch({ type: "merged", text: r.text, conflicts: r.conflicts, mine: effect.mine, disk: effect.disk.hash });
-  else d.dispatch({ type: "mergeFailed", line: r.line });
+  // The tab went while the merge ran (closed, or its session put away): an answer taken now would write a draft the person
+  // may just have said not to keep, and announce a merge of a tab that is not there.
+  if (d.gone()) return;
+  if (r.kind === "merged") d.dispatch({ type: "merged", id: effect.id, text: r.text, conflicts: r.conflicts, mine: effect.mine, disk: effect.disk.hash });
+  else d.dispatch({ type: "mergeFailed", id: effect.id, line: r.line });
 }
 
 /** Runs one effect of the reducer. The save, unsave and merge return a promise that settles when their answer has been dispatched. */
@@ -311,6 +316,7 @@ export function useEditorFile(path: string, file: FileState, o: { announce: (tex
   readOnly.current = o.readOnly;
   const phase = useRef<"waiting" | "opening" | "open">("waiting");
   saver.current ??= createSaver({ doc: () => docRef.current, dispatch, readOnly: () => readOnly.current(), open: () => phase.current === "open" });
+  const gone = useRef(false);
   deps.current = {
     path,
     name,
@@ -323,12 +329,12 @@ export function useEditorFile(path: string, file: FileState, o: { announce: (tex
     dispatch,
     drafts: drafts.current,
     now: () => Date.now(),
+    gone: () => gone.current,
     api: { saveFile, unsaveFile, mergeTexts },
   };
 
   const latest = useRef(file);
   latest.current = file;
-  const gone = useRef(false);
   useEffect(() => {
     gone.current = false;
     return () => {

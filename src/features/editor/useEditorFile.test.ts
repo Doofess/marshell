@@ -12,7 +12,7 @@ const FAILED = "The unsaved edits to a.txt couldn't be kept as a draft.";
 type Fakes = { puts: Draft[]; calls: string[]; events: DocEvent[]; said: string[]; sent: Array<{ bytes: Uint8Array; expect: string | null }> };
 
 /** Deps whose I/O is all recorded. `put` decides what a draft put answers. */
-function setup(over: { doc?: () => DocState; put?: (d: Draft) => Promise<boolean>; format?: EffectDeps["format"]; save?: EffectDeps["api"]["saveFile"]; reading?: () => boolean } = {}) {
+function setup(over: { doc?: () => DocState; put?: (d: Draft) => Promise<boolean>; format?: EffectDeps["format"]; save?: EffectDeps["api"]["saveFile"]; reading?: () => boolean; gone?: () => boolean } = {}) {
   const f: Fakes = { puts: [], calls: [], events: [], said: [], sent: [] };
   let cur: DocState = { ...start, base: { text: "one", hash: H1 }, text: "one", dirty: true };
   const queue = createDraftQueue({
@@ -32,6 +32,7 @@ function setup(over: { doc?: () => DocState; put?: (d: Draft) => Promise<boolean
     dispatch: (e) => f.events.push(e),
     drafts: queue,
     now: () => 42,
+    gone: over.gone ?? (() => false),
     api: {
       saveFile:
         over.save ??
@@ -163,15 +164,25 @@ describe("runEffect", () => {
     const { f, deps } = setup();
     const asked: string[][] = [];
     deps.api.mergeTexts = async (base, mine, disk) => (asked.push([base, mine, disk]), { kind: "merged", text: "merged", conflicts: 2 });
-    await runEffect({ type: "merge", base: "one", mine: "mine", disk: { text: "other", hash: "2".repeat(64) } }, deps);
+    await runEffect({ type: "merge", id: 3, base: "one", mine: "mine", disk: { text: "other", hash: "2".repeat(64) } }, deps);
     expect(asked).toEqual([["one", "mine", "other"]]);
-    expect(f.events).toEqual([{ type: "merged", text: "merged", conflicts: 2, mine: "mine", disk: "2".repeat(64) }]);
+    expect(f.events).toEqual([{ type: "merged", id: 3, text: "merged", conflicts: 2, mine: "mine", disk: "2".repeat(64) }]);
     f.events.length = 0;
     deps.api.mergeTexts = async () => ({ kind: "refused", line: "The merge took too long." });
-    await runEffect({ type: "merge", base: "one", mine: "mine", disk: { text: "other", hash: "2".repeat(64) } }, deps);
-    expect(f.events).toEqual([{ type: "mergeFailed", line: "The merge took too long." }]);
+    await runEffect({ type: "merge", id: 3, base: "one", mine: "mine", disk: { text: "other", hash: "2".repeat(64) } }, deps);
+    expect(f.events).toEqual([{ type: "mergeFailed", id: 3, line: "The merge took too long." }]);
   });
 
+  it("a_merge_answered_after_the_tab_went_dispatches_nothing", async () => {
+    // The tab was closed with "Don't save" while the merge ran: its answer must not write the draft back.
+    for (const answer of [{ kind: "merged", text: "merged", conflicts: 0 }, { kind: "refused", line: "The merge took too long." }] as const) {
+      let gone = false;
+      const { f, deps } = setup({ gone: () => gone });
+      deps.api.mergeTexts = async () => ((gone = true), answer);
+      await runEffect({ type: "merge", id: 1, base: "one", mine: "mine", disk: { text: "other", hash: "2".repeat(64) } }, deps);
+      expect(f.events, answer.kind).toEqual([]);
+    }
+  });
   it("the_merge_sends_lf_texts", async () => {
     // A file read with CRLF endings, and a draft over an older version of it: the bar is up, and the merge is asked for.
     const file: FileState = { phase: "text", text: "one\r\ntwo\r\nthree", encoding: "utf-8", eol: "crlf", hash: H1, readOnly: null };
@@ -185,7 +196,7 @@ describe("runEffect", () => {
     for (const effect of merge.effects) await runEffect(effect, deps);
     expect(asked).toEqual([["zero\none", "mine\nmore", "one\ntwo\nthree"]]);
     expect(asked.flat().join("")).not.toContain("\r");
-    expect(f.events).toEqual([{ type: "mergeFailed", line: "x" }]);
+    expect(f.events).toEqual([{ type: "mergeFailed", id: 1, line: "x" }]);
   });
   it("showConflict_goes_to_the_first_conflict", () => {
     const { deps } = setup();
