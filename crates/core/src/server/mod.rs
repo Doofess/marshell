@@ -1255,6 +1255,8 @@ pub fn router(state: AppState) -> Router {
         .expose_headers([
             HeaderName::from_static("x-modified-ms"),
             HeaderName::from_static("x-content-hash"),
+            HeaderName::from_static("x-base-hash"),
+            HeaderName::from_static("x-edited-ms"),
         ]);
     Router::new()
         .route("/v1/health", get(health))
@@ -1315,7 +1317,7 @@ pub fn router(state: AppState) -> Router {
             "/v1/files/content",
             get(files::content)
                 .put(save::save)
-                .layer(DefaultBodyLimit::max(files::TEXT_CAP as usize)),
+                .layer(DefaultBodyLimit::max(files::SAVE_PDF_CAP as usize)),
         )
         .route("/v1/files/unsave", post(save::unsave))
         .route(
@@ -1323,6 +1325,12 @@ pub fn router(state: AppState) -> Router {
             post(merge::merge).layer(DefaultBodyLimit::max(24 * 1024 * 1024)),
         )
         .route("/v1/drafts", get(drafts::list))
+        .route(
+            "/v1/drafts/pdf",
+            get(drafts::get_pdf)
+                .put(drafts::put_pdf)
+                .layer(DefaultBodyLimit::max(files::SAVE_PDF_CAP as usize)),
+        )
         .route(
             "/v1/drafts/one",
             get(drafts::get)

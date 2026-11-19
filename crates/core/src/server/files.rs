@@ -21,6 +21,16 @@ pub const TEXT_CAP: u64 = 2 * 1024 * 1024;
 pub const IMAGE_CAP: u64 = 20 * 1024 * 1024;
 /// The largest PDF `GET /v1/files/content?kind=pdf` serves.
 pub const PDF_CAP: u64 = 50 * 1024 * 1024;
+
+/// The most a save or a draft of a PDF may carry: a PDF at its cap, with notes added.
+pub const SAVE_PDF_CAP: u64 = PDF_CAP + 8 * 1024 * 1024;
+
+/// Whether the path names a PDF, by its extension in any case. It reads the string only.
+pub fn is_pdf(path: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .is_some_and(|x| x.eq_ignore_ascii_case("pdf"))
+}
 /// The most candidates one `resolve` call takes.
 pub const MAX_CANDIDATES: usize = 64;
 /// The longest candidate `resolve` takes, in characters.
