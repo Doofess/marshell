@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { afterLoadFailure } from "./loadFailure";
-import { loadPdf, renderPage, renderTextLayer } from "./pdfjs";
+import { usePdfFind } from "./findText";
+import { loadPdf, renderPage, renderTextLayer, type TextMapping } from "./pdfjs";
 import { parsePageField, scaleFor, zoomIn, zoomOut, type Zoom } from "./zoom";
 import "./PdfView.css";
 
@@ -23,6 +24,8 @@ type Size = { w: number; h: number };
 
 /** The width the body keeps free on each side of a page (--space-3). */
 const SIDE = 12;
+/** How far under the sticky head a match lands when find brings it into view. */
+const MATCH_GAP = 48;
 
 type PageProps = {
   doc: PDFDocumentProxy;
@@ -32,10 +35,12 @@ type PageProps = {
   scale: number;
   root: HTMLElement | null;
   overlay: ReactNode;
+  /** Hands the drawn text layer to find; the function returned lets it go when the page is dropped or redrawn. */
+  onText: (pageIndex: number, m: TextMapping) => () => void;
 };
 
 /** One page: a placeholder of its final size until it is near the view, then the canvas and the text over it. */
-function PdfPage({ doc, n, name, size, scale, root, overlay }: PageProps) {
+function PdfPage({ doc, n, name, size, scale, root, overlay, onText }: PageProps) {
   const holder = useRef<HTMLDivElement>(null);
   const [live, setLive] = useState(false);
 
@@ -61,6 +66,7 @@ function PdfPage({ doc, n, name, size, scale, root, overlay }: PageProps) {
       return;
     }
     const abort = new AbortController();
+    let release: (() => void) | null = null;
     void (async () => {
       try {
         const page = await doc.getPage(n);
@@ -68,14 +74,19 @@ function PdfPage({ doc, n, name, size, scale, root, overlay }: PageProps) {
         const canvas = document.createElement("canvas");
         const text = document.createElement("div");
         text.className = "textLayer";
-        await Promise.all([renderPage(page, canvas, scale, abort.signal), renderTextLayer(page, text, scale, abort.signal)]);
-        if (!abort.signal.aborted) el.replaceChildren(canvas, text);
+        const [, mapping] = await Promise.all([renderPage(page, canvas, scale, abort.signal), renderTextLayer(page, text, scale, abort.signal)]);
+        if (abort.signal.aborted) return;
+        el.replaceChildren(canvas, text);
+        if (mapping) release = onText(n - 1, mapping);
       } catch {
         // A page that fails to draw stays blank; the others go on.
       }
     })();
-    return () => abort.abort();
-  }, [live, doc, n, scale]);
+    return () => {
+      abort.abort();
+      release?.();
+    };
+  }, [live, doc, n, scale, onText]);
 
   return (
     <div className="pdf__page" role="group" aria-label={`${name}, page ${n}`} data-page={n} style={{ inlineSize: size.w * scale, blockSize: size.h * scale }}>
@@ -197,14 +208,36 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
   const scaleOf = (i: number) => scaleFor(zoom, sizes[i]?.w ?? 0, available);
   const shownScale = scaleOf(current - 1);
 
+  // What is stuck above the pages: the toolbar (with the find bar), and the "deleted" notice when it is there.
+  const headHeight = () => (root.current?.querySelector<HTMLElement>(".pdf__bar")?.offsetHeight ?? 0) + (scroller?.querySelector<HTMLElement>(".preview__notice")?.offsetHeight ?? 0);
+
   const jump = (n: number) => {
     const el = pageEls()[n - 1];
     if (!el || !scroller) return;
-    // What is stuck above the pages: the toolbar, and the "deleted" notice when it is there.
-    const bar = (root.current?.querySelector<HTMLElement>(".pdf__bar")?.offsetHeight ?? 0) + (scroller.querySelector<HTMLElement>(".preview__notice")?.offsetHeight ?? 0);
-    scroller.scrollTop += el.getBoundingClientRect().top - scroller.getBoundingClientRect().top - bar - SIDE;
+    scroller.scrollTop += el.getBoundingClientRect().top - scroller.getBoundingClientRect().top - headHeight() - SIDE;
     setCurrent(n);
   };
+
+  // Find's scrolls stay in the body: a match goes MATCH_GAP under the head, and to the middle when it is off to a side.
+  const find = usePdfFind(doc, {
+    page: () => current,
+    pages: () => count,
+    showPage: jump,
+    isPageVisible: (n) => {
+      const el = pageEls()[n - 1];
+      if (!el || !scroller) return false;
+      const r = el.getBoundingClientRect();
+      const s = scroller.getBoundingClientRect();
+      return r.bottom > s.top + headHeight() && r.top < s.bottom;
+    },
+    showMatch: (el) => {
+      if (!scroller) return;
+      const r = el.getBoundingClientRect();
+      const s = scroller.getBoundingClientRect();
+      scroller.scrollTop += r.top - (s.top + headHeight() + MATCH_GAP);
+      if (r.left < s.left || r.right > s.left + scroller.clientWidth) scroller.scrollLeft += r.left + r.width / 2 - (s.left + scroller.clientWidth / 2);
+    },
+  });
 
   const commit = () => {
     const n = draft === null ? null : parsePageField(draft, count);
@@ -272,7 +305,7 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
         </button>
       </div>
       <div className="pdf__pagelist">
-        {doc && sizes.map((size, i) => <PdfPage key={i} doc={doc} n={i + 1} name={name} size={size} scale={scaleOf(i)} root={scroller} overlay={renderOverlay?.(i + 1)} />)}
+        {doc && sizes.map((size, i) => <PdfPage key={i} doc={doc} n={i + 1} name={name} size={size} scale={scaleOf(i)} root={scroller} overlay={renderOverlay?.(i + 1)} onText={find.attach} />)}
         {!doc && <p className="preview__message">Loading…</p>}
       </div>
     </div>
