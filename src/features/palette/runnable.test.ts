@@ -16,8 +16,8 @@ describe("cannotRun", () => {
     expect(cannotRun({ ...ALL, sidebarToggle: false })).toEqual(["sidebar"]);
   });
 
-  it("the_four_file_commands_show_only_for_a_text_tab", () => {
-    const four = ["pane-save", "pane-undo-save", "pane-go-to-line", "pane-word-wrap"];
+  it("the_six_file_commands_show_only_for_a_text_tab", () => {
+    const four = ["pane-save", "pane-undo-save", "pane-go-to-line", "pane-word-wrap", "pane-next-conflict", "pane-previous-conflict"];
     expect(cannotRun(ALL)).toEqual([]);
     // No text tab on screen: all four go, whether or not an undo would be possible.
     expect(sorted(cannotRun({ ...ALL, textTab: false }))).toEqual(sorted(four));

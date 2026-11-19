@@ -28,7 +28,7 @@ const NEEDS: ReadonlyArray<[Need, readonly string[]]> = [
   ["closed", ["reopen"]],
   ["shellPanel", ["shell-panel"]],
   ["sidebarToggle", ["sidebar"]],
-  ["textTab", ["pane-save", "pane-undo-save", "pane-go-to-line", "pane-word-wrap"]],
+  ["textTab", ["pane-save", "pane-undo-save", "pane-go-to-line", "pane-word-wrap", "pane-next-conflict", "pane-previous-conflict"]],
   ["undoSave", ["pane-undo-save"]],
 ];
 

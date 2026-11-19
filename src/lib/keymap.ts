@@ -105,6 +105,8 @@ export const COMMANDS: Command[] = [
   { id: "pane-undo-save", label: "Undo last save", group: "Window" },
   { id: "pane-go-to-line", label: "Go to line…", group: "Window" },
   { id: "pane-word-wrap", label: "Word wrap", group: "Window" },
+  { id: "pane-next-conflict", label: "Next conflict", group: "Window" },
+  { id: "pane-previous-conflict", label: "Previous conflict", group: "Window" },
   { id: "sidebar", label: "Collapse sidebar to the rail", group: "Window" },
   { id: "group-by-project", label: "Group sessions by project", group: "Window" },
   { id: "shell-panel", label: "Show or focus the shell panel", group: "Window", binding: { code: "KeyS" } },

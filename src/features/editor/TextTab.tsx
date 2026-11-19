@@ -30,6 +30,10 @@ export type TextTabCommands = {
   discard(): void;
   goToLine(): void;
   toggleWrap(): void;
+  /** Moves to the next conflict marker in the text; does nothing while the Rendered view hides the editor. */
+  nextConflict(): void;
+  /** Moves to the previous conflict marker; does nothing while the Rendered view hides the editor. */
+  previousConflict(): void;
   dirty(): boolean;
   /** Puts the keyboard in the editor: where focus goes back to when a save the close question asked for did not go through. */
   focus(): void;
@@ -85,6 +89,18 @@ export function keyboardTo(o: { rendered: boolean; editor: Focusable | null; bod
   else o.body?.focus();
 }
 
+/**
+ * Next conflict and Previous conflict from the palette. The Rendered view hides the editor, and a command that did nothing
+ * there would look broken, so it says where conflicts show.
+ */
+export function conflictJump(
+  o: { rendered: boolean; editor: { toConflict(which: "next" | "previous"): void } | null; announce: (text: string) => void },
+  which: "next" | "previous",
+): void {
+  if (o.rendered) o.announce("Conflicts show in the Source view.");
+  else o.editor?.toConflict(which);
+}
+
 type Outbound = Exclude<LinkTarget, { kind: "anchor" } | { kind: "none" }>;
 type KeyHandler = (e: KeyboardEvent) => void;
 
@@ -112,6 +128,9 @@ export type TextTabViewProps = {
   onEdit: (text: string) => void;
   onCursor: (line: number, column: number) => void;
   appChord?: (e: KeyboardEvent) => boolean;
+  onMerge: () => void;
+  /** The editor's answer to a jump to a conflict: its place from 1 and the count, or 0 and 0 for none. */
+  onConflict: (at: number, of: number) => void;
   onKeep: () => void;
   onTake: () => void;
   onUndo: () => void;
@@ -128,7 +147,7 @@ export function TextTabView(p: TextTabViewProps) {
   return (
     <div className="text-tab" ref={p.root}>
       {notice !== null && <div className="text-tab__notice">{notice}</div>}
-      {doc.conflict !== null && <ChangedBar name={name} onKeep={p.onKeep} onTake={p.onTake} />}
+      {doc.conflict !== null && <ChangedBar name={name} onMerge={p.onMerge} onKeep={p.onKeep} onTake={p.onTake} />}
       <div className="text-tab__body">
         {paged && (
           <div className="text-tab__pane" data-pane="rendered" hidden={!showRendered}>
@@ -148,6 +167,7 @@ export function TextTabView(p: TextTabViewProps) {
               wrap={p.wrap}
               onEdit={p.onEdit}
               onCursor={p.onCursor}
+              onConflict={p.onConflict}
               appChord={p.appChord}
               hintId={p.hintId}
             />
@@ -240,6 +260,11 @@ export function TextTab({ entry, file, kind, active, os, onDirty, commands, anno
 
   const latest = useRef({ doc, readOnly });
   latest.current = { doc, readOnly };
+  // The Rendered view hides the editor, so a jump to a conflict has nothing to move.
+  const hidden = useRef(false);
+  hidden.current = paged && entry.view === "rendered";
+  const say = useRef(announce);
+  say.current = announce;
   useImperativeHandle(
     commands,
     () => ({
@@ -254,6 +279,8 @@ export function TextTab({ entry, file, kind, active, os, onDirty, commands, anno
       discard,
       goToLine: () => editor.current?.goToLine(),
       toggleWrap: () => editor.current?.toggleWrap(),
+      nextConflict: () => conflictJump({ rendered: hidden.current, editor: editor.current, announce: say.current }, "next"),
+      previousConflict: () => conflictJump({ rendered: hidden.current, editor: editor.current, announce: say.current }, "previous"),
       dirty: () => latest.current.doc.dirty,
       focus: () => editor.current?.focus(),
     }),
@@ -315,6 +342,8 @@ export function TextTab({ entry, file, kind, active, os, onDirty, commands, anno
       onEdit={(t) => dispatch({ type: "edited", text: t })}
       onCursor={(l, c) => setCursor((p) => (p.line === l && p.column === c ? p : { line: l, column: c }))}
       appChord={appChord}
+      onMerge={() => pressed({ type: "merge" })}
+      onConflict={(at, of) => announce(of > 0 ? `Conflict ${at} of ${of}.` : `${name} has no conflicts.`)}
       onKeep={() => pressed({ type: "keepMine" })}
       onTake={() => pressed({ type: "takeDisk" })}
       onUndo={() => pressed({ type: "unsave" })}
