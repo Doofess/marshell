@@ -118,9 +118,11 @@ export function createNotesRunner(first: { hash: string | null; bytes: ArrayBuff
   // A draft that is due and wasn't taken: its serializing failed, or a note was still being typed. The tab going takes it
   // (ending the typing), and so does the window losing focus once nothing is being typed.
   let owed = false;
-  // The newest disk read that came during a save, and the file the save started from.
+  // The newest disk read that came during a save, the file the save started from, and for an Overwrite the changed file it
+  // replaces (`undefined` for a save that isn't one; null is a deleted file).
   let held: { hash: string | null; bytes: ArrayBuffer | null } | null = null;
   let savedFrom: string | null = null;
+  let overwrites: string | null | undefined;
   let refusal = "";
 
   const queue = createDraftQueue<Taken>({
@@ -183,7 +185,8 @@ export function createNotesRunner(first: { hash: string | null; bytes: ArrayBuff
 
   const serializeFor = (then: "save" | "copy" | "overwrite") => {
     const editor = d.editor();
-    const failed = () => dispatch({ type: "saveRefused", line: unwrittenLine(d.name) });
+    // A copy that fails says so and no more: a save of the file itself may be in flight, and has its own answer.
+    const failed = () => dispatch({ type: then === "copy" ? "copyRefused" : "saveRefused", line: unwrittenLine(d.name) });
     if (!editor) return failed();
     // pdf.js takes the notes as `save` is called, after ending the typing in a note: a change counted from here isn't in the bytes.
     const serializing = editor.save();
@@ -213,7 +216,7 @@ export function createNotesRunner(first: { hash: string | null; bytes: ArrayBuff
     const tried = new Set<string>();
     for (;;) {
       const name = copyName(stem, (n) => tried.has(n.toLowerCase()));
-      if (name === null) return dispatch({ type: "saveRefused", line: noCopyNameLine(stem) });
+      if (name === null) return dispatch({ type: "copyRefused", line: noCopyNameLine(stem) });
       const r = await api.saveFile(folder + name, bytes, null);
       switch (r.kind) {
         case "saved":
@@ -224,9 +227,9 @@ export function createNotesRunner(first: { hash: string | null; bytes: ArrayBuff
           tried.add(name.toLowerCase());
           continue;
         case "tooLarge":
-          return dispatch({ type: "saveRefused", line: tooLargeLine(name) });
+          return dispatch({ type: "copyRefused", line: tooLargeLine(name) });
         case "refused":
-          return dispatch({ type: "saveRefused", line: r.line });
+          return dispatch({ type: "copyRefused", line: r.line });
       }
     }
   };
@@ -278,7 +281,10 @@ export function createNotesRunner(first: { hash: string | null; bytes: ArrayBuff
     const wasSaving = state.saving;
     const out = notesReducer(state, e, d.name);
     state = out.state;
-    if (!wasSaving && state.saving) savedFrom = state.base.hash;
+    if (!wasSaving && state.saving) {
+      savedFrom = state.base.hash;
+      overwrites = e.type === "overwrite" ? state.conflict?.hash : undefined;
+    }
     for (const effect of out.effects) run(effect);
     if (wasSaving && !state.saving) {
       const waiting = answered;
@@ -287,9 +293,12 @@ export function createNotesRunner(first: { hash: string | null; bytes: ArrayBuff
     }
     if (wasSaving && !state.saving && held !== null) {
       // The save is answered: a read from before it is the file it replaced, and old news; a newer one is somebody else's.
+      // An Overwrite that was written replaced the changed file, so a read of that one is old news too. One that wasn't
+      // written still has the bar up, and the read brings the bytes Reload shows.
       const read = held;
       held = null;
-      if (read.hash !== savedFrom) return dispatch({ type: "disk", hash: read.hash, bytes: read.bytes });
+      const replaced = e.type === "saved" && overwrites !== undefined && read.hash === overwrites;
+      if (read.hash !== savedFrom && !replaced) return dispatch({ type: "disk", hash: read.hash, bytes: read.bytes });
     }
     d.onState?.(state);
     saver.observe(state);

@@ -46,6 +46,8 @@ export type NotesEvent =
   | { type: "draft"; bytes: ArrayBuffer; baseHash: string | null }
   | { type: "copy" }
   | { type: "copied"; name: string }
+  /** A copy couldn't be saved. A save of the file itself may be in flight, and is answered on its own. */
+  | { type: "copyRefused"; line: string }
   | { type: "reload" }
   | { type: "overwrite" }
   | { type: "draftRefused"; line: string };
@@ -208,6 +210,9 @@ export function notesReducer(s: NotesState, e: NotesEvent, name: string): Out {
       return { state: s, effects: [{ type: "serialize", then: "copy" }] };
     case "copied":
       return said({ ...s, refusedSave: false }, `Saved the notes in ${e.name}.`);
+    case "copyRefused":
+      // Only the line: whether the notes are in the file is the save's to say, and a copy offered goes on being offered.
+      return said(s, e.line);
     case "reload":
       return reload(s);
     case "overwrite":

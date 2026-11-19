@@ -459,3 +459,71 @@ describe("PR review 6q-6 round 2: a note still being typed", () => {
     expect(t.log).toEqual([]);
   });
 });
+
+describe("PR review 6q-6 round 3: a disk read held during an Overwrite", () => {
+  /** A save over h1 meets a file somebody changed to h9; a save that expects h9 (the Overwrite) is answered by `overwrite`. */
+  const changed = (overwrite: SaveResult) => (_path: string, expect: string | null): SaveResult => (expect === "h9" ? overwrite : { kind: "conflict", hash: "h9" });
+  const barUp = async (overwrite: SaveResult) => {
+    const t = rig({ save: changed(overwrite) });
+    t.r.dispatch({ type: "edited" });
+    expect(await t.r.save()).toBe(false);
+    expect(t.r.state().conflict).toEqual({ hash: "h9", bytes: null });
+    t.hold();
+    t.r.dispatch({ type: "overwrite" });
+    // The poll's read of the changed file comes while the overwrite is in flight.
+    t.r.disk("h9", new ArrayBuffer(3));
+    t.release(new Uint8Array([7]));
+    await ticks(10);
+    return t;
+  };
+  it("is old news once the overwrite replaced that file: the tab keeps what it wrote and its Undo", async () => {
+    const t = await barUp({ kind: "saved", saved: { hash: "h2", snapshot: "s1" } as FileSaved });
+    expect(t.r.state()).toMatchObject({ saving: false, dirty: false, conflict: null, base: { hash: "h2" }, lastSave: { snapshot: "s1", hash: "h2" } });
+    expect(t.loads).toEqual([]);
+  });
+  it("still brings the changed file's bytes when the overwrite was refused, so Reload has them", async () => {
+    const t = await barUp({ kind: "refused", line: "a.pdf is in use." });
+    expect(t.r.state()).toMatchObject({ saving: false, dirty: true, base: { hash: "h1" } });
+    expect(t.r.state().conflict?.hash).toBe("h9");
+    expect(t.r.state().conflict?.bytes?.byteLength).toBe(3);
+  });
+});
+
+describe("PR review 6q-6 round 3: a copy that is refused while a save is in flight", () => {
+  const later = <T,>() => {
+    let resolve: (v: T) => void = () => {};
+    const promise = new Promise<T>((r) => (resolve = r));
+    return { promise, resolve };
+  };
+  it("says its line and leaves the save to its own answer", async () => {
+    const copy = later<SaveResult>();
+    const file = later<SaveResult>();
+    const t = rig({ save: (path) => (path.endsWith("(notes).pdf") ? copy.promise : file.promise) });
+    t.r.dispatch({ type: "edited" });
+    t.r.dispatch({ type: "copy" });
+    await ticks();
+    const saved = t.r.save();
+    await ticks();
+    expect(t.log.filter((l) => l.startsWith("save"))).toEqual(["save C:\\w\\a (notes).pdf null [7]", "save C:\\w\\a.pdf h1 [7]"]);
+    copy.resolve({ kind: "refused", line: "The folder is read-only." });
+    await ticks(10);
+    // The save is still being written: nothing is settled, and the refusal's line is said.
+    expect(t.r.state()).toMatchObject({ saving: true, dirty: false, line: "The folder is read-only." });
+    file.resolve({ kind: "saved", saved: { hash: "h2", snapshot: "s1" } as FileSaved });
+    expect(await saved).toBe(true);
+    expect(t.r.state()).toMatchObject({ saving: false, dirty: false, base: { hash: "h2" } });
+    expect(t.log).toContain("markSaved");
+  });
+  it("a copy whose notes couldn't be written leaves the save to its own answer too", async () => {
+    const file = later<SaveResult>();
+    // The first serialize is the copy's, and fails; the second is the save's.
+    const t = rig({ save: () => file.promise, failSerializes: 1 });
+    t.r.dispatch({ type: "edited" });
+    t.r.dispatch({ type: "copy" });
+    const saved = t.r.save();
+    await ticks(10);
+    expect(t.r.state()).toMatchObject({ saving: true, dirty: false, line: "The notes couldn't be written into a.pdf." });
+    file.resolve({ kind: "saved", saved: { hash: "h2", snapshot: "s1" } as FileSaved });
+    expect(await saved).toBe(true);
+  });
+});

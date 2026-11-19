@@ -419,3 +419,20 @@ describe("PR review 6q-6: answers that come late", () => {
     expect(out.effects).toEqual([]);
   });
 });
+
+describe("PR review 6q-6 round 3: a refused copy", () => {
+  it("says why and changes nothing else: the notes a save has since written stay saved", () => {
+    const saved = doc({ lastSave: { snapshot: "snap-1", hash: H1 }, line: "Saved report.pdf." });
+    const { state, effects } = run(saved, { type: "copyRefused", line: "The folder is read-only." });
+    expect(state).toEqual({ ...saved, line: "The folder is read-only." });
+    expect(effects).toEqual([{ type: "announce", text: "The folder is read-only." }]);
+  });
+  it("leaves a save in flight in flight", () => {
+    const { state } = run(dirty(), { type: "save" }, { type: "serialized", bytes: bytesOf(9), for: "save" }, { type: "copyRefused", line: "The folder is read-only." });
+    expect(state).toMatchObject({ saving: true, dirty: false, refusedSave: false, line: "The folder is read-only." });
+  });
+  it("goes on offering the copy after a refused save", () => {
+    const { state } = run(dirty({ refusedSave: true, line: "x" }), { type: "copyRefused", line: "The folder is read-only." });
+    expect(state).toMatchObject({ dirty: true, refusedSave: true, line: "The folder is read-only." });
+  });
+});
