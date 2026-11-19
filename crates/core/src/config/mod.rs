@@ -6,7 +6,6 @@ pub mod guard;
 pub mod hash;
 pub mod jsonc;
 pub mod managed;
-pub mod merge;
 pub mod preview;
 pub mod service;
 pub mod snapshots;

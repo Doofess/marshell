@@ -870,6 +870,28 @@ pub struct FileUnsave {
     pub snapshot: String,
 }
 
+/// POST /v1/files/merge body: three texts of one file, each with `\n` line endings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct FileMerge {
+    /// The text the person's edits started from.
+    pub base: String,
+    /// The person's text.
+    pub mine: String,
+    /// The text the file holds on disk now.
+    pub disk: String,
+}
+
+/// POST /v1/files/merge reply: the disk's changes folded into the person's text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct FileMerged {
+    /// Lines changed on both sides sit between `<<<<<<< mine`, `=======` and `>>>>>>> disk`.
+    pub text: String,
+    /// How many conflicts this merge wrote into the text.
+    pub conflicts: u32,
+}
+
 /// The unsaved edits to one file, kept in Marshell's home.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
