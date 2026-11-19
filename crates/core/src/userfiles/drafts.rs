@@ -229,7 +229,14 @@ impl Drafts {
             base_hash: base_hash.map(str::to_string),
             edited_ms,
         };
-        store::write(&file, &meta).map_err(PutError::Io)
+        if let Err(e) = store::write(&file, &meta) {
+            // A refused draft leaves none: these bytes would sit under the old meta's base, or under no meta the budget sees.
+            let _ = std::fs::remove_file(&pdf);
+            let _ = std::fs::remove_file(&file);
+            let _ = std::fs::remove_file(store::bak_path(&file));
+            return Err(PutError::Io(e));
+        }
+        Ok(())
     }
 
     /// Drops the draft of `path`, text or PDF, and its backup. Nothing to drop is fine.
@@ -379,6 +386,21 @@ mod tests {
             (None, 10, b"%PDF-two".to_vec())
         );
         assert!(drafts.get_pdf(&p("b.pdf")).is_none());
+    }
+
+    #[test]
+    fn pdf_draft_whose_meta_cant_be_written_leaves_nothing_behind() {
+        let home = tempfile::tempdir().unwrap();
+        let drafts = Drafts::new(home.path());
+        // A folder where the meta goes makes its write fail after the bytes are written.
+        let meta = drafts.pdf_file_of(&p("a.pdf"));
+        std::fs::create_dir_all(&meta).unwrap();
+        assert!(matches!(
+            drafts.put_pdf(&p("a.pdf"), Some("abc"), 9, b"%PDF-mine"),
+            Err(PutError::Io(_))
+        ));
+        assert!(!meta.with_extension("pdf").exists());
+        assert!(drafts.get_pdf(&p("a.pdf")).is_none());
     }
 
     #[test]
