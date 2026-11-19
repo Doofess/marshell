@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from "react";
+import { useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import type { Place } from "../../pane/paneState";
 import { afterLoadFailure } from "./loadFailure";
@@ -8,7 +8,10 @@ import { usePdfFind } from "./findText";
 import { placeOfDest } from "./dest";
 import { linksOf, PageLinks, type LinkGoal, type PageLink } from "./links";
 import { clampPlace, placeAt, placeText, scrollFor } from "./place";
+import { ancestorsOf, loadOutline, sectionAt, type OutlineNode } from "./outline";
+import { PdfSidebar } from "./PdfSidebar";
 import { loadPdf, renderPage, renderTextLayer, type TextMapping } from "./pdfjs";
+import { setSidebarPref, sidebarPref, startOpen, startView, type SidebarView } from "./sidebarPref";
 import { parsePageField, scaleFor, zoomIn, zoomOut, type Zoom } from "./zoom";
 import "./PdfView.css";
 
@@ -43,6 +46,9 @@ type Size = { w: number; h: number };
 
 /** The width the body keeps free on each side of a page (--space-3). */
 const SIDE = 12;
+/** The sidebar's width (PdfView.css has the same number), and the body width under which it lies over the pages instead of beside them. */
+const SIDEBAR_W = 200;
+const OVERLAY_BELOW = 560;
 /** How far under the sticky head a match lands when find brings it into view. */
 const MATCH_GAP = 48;
 
@@ -134,9 +140,21 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
   const [sizes, setSizes] = useState<Size[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [zoom, setZoom] = useState<Zoom>({ kind: "fit" });
-  const [available, setAvailable] = useState(0);
+  // The body's width. What the pages may take of it follows: less the sidebar's, while the sidebar sits beside them.
+  const [bodyW, setBodyW] = useState(0);
   const [current, setCurrent] = useState(1);
   const [draft, setDraft] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const [view, setView] = useState<SidebarView>("outline");
+  const [outline, setOutline] = useState<OutlineNode[] | null>(null);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  const [sidebarTick, setSidebarTick] = useState(0);
+  const sidebarId = useId();
+  const sidebarButton = useRef<HTMLButtonElement>(null);
+  // Whether the sidebar lies over the pages: it does while the body is narrower than OVERLAY_BELOW.
+  const over = bodyW > 0 && bodyW < OVERLAY_BELOW;
+  const beside = open && !over;
+  const available = bodyW === 0 ? 0 : Math.max(0, bodyW - SIDE * 2 - (beside ? SIDEBAR_W : 0));
 
   const cb = useRef({ onPages, onCurrentPage, onDocument });
   cb.current = { onPages, onCurrentPage, onDocument };
@@ -150,7 +168,7 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
   // The place read just before a change of scale, to be put back once the pages have their new sizes.
   const keep = useRef<Place | null>(null);
   const reading = useRef<() => Place | null>(() => null);
-  const availableNow = useRef(0);
+  const bodyWNow = useRef(0);
   const latest = useRef({ place, announce });
   latest.current = { place, announce };
 
@@ -209,12 +227,12 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
   useEffect(() => {
     if (!scroller) return;
     const measure = () => {
-      const next = Math.max(0, scroller.clientWidth - SIDE * 2);
-      if (next === availableNow.current) return;
+      const next = scroller.clientWidth;
+      if (next === bodyWNow.current) return;
       // The pages are about to take new sizes: the place at the top of the view is read before they do.
       keep.current = reading.current();
-      availableNow.current = next;
-      setAvailable(next);
+      bodyWNow.current = next;
+      setBodyW(next);
     };
     measure();
     const ro = new ResizeObserver(measure);
@@ -222,7 +240,8 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
     return () => ro.disconnect();
   }, [scroller]);
 
-  const pageEls = useCallback(() => Array.from(root.current?.querySelectorAll<HTMLElement>("[data-page]") ?? []), []);
+  // Only the pages: the sidebar's thumbnails are not pages of the column.
+  const pageEls = useCallback(() => Array.from(root.current?.querySelectorAll<HTMLElement>(".pdf__pagelist [data-page]") ?? []), []);
 
   // The page in view is the last one whose top has passed the upper third of the body.
   useEffect(() => {
@@ -372,6 +391,129 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
     }
   };
 
+  // The sidebar sticks under the head and is as tall as the body below it; PdfView.css reads these two off the root.
+  useLayoutEffect(() => {
+    const el = root.current;
+    if (!scroller || !el || error) return;
+    const bar = el.querySelector<HTMLElement>(".pdf__bar");
+    const sync = () => {
+      el.style.setProperty("--pdf-bar", `${bar?.offsetHeight ?? 0}px`);
+      el.style.setProperty("--pdf-view", `${scroller.clientHeight}px`);
+    };
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(scroller);
+    if (bar) ro.observe(bar);
+    return () => ro.disconnect();
+  }, [scroller, error]);
+
+  // The outline is read once per document. A document that gives none, or fails to, reads as having none.
+  useEffect(() => {
+    if (!doc) return setOutline(null);
+    let dead = false;
+    void loadOutline(doc).then((o) => {
+      if (!dead) setOutline(o);
+    });
+    return () => {
+      dead = true;
+    };
+  }, [doc]);
+
+  // The section that holds the page in view: its parents open so it shows, and nothing is ever collapsed here.
+  const section = outline ? sectionAt(outline, current) : null;
+  useEffect(() => {
+    if (!section) return;
+    const above = ancestorsOf(section);
+    setExpanded((was) => (above.every((id) => was.has(id)) ? was : new Set([...was, ...above])));
+  }, [section, outline]);
+  const toggleEntry = (id: string, next: boolean) =>
+    setExpanded((was) => {
+      const set = new Set(was);
+      if (next) set.add(id);
+      else set.delete(id);
+      return set;
+    });
+
+  const focusPages = () => scroller?.focus({ preventScroll: true });
+  // Opening or closing the sidebar beside the pages changes the width fit width gives them: the place is read before.
+  const setSidebarOpen = (next: boolean) => {
+    if (zoom.kind === "fit" && !over) keep.current = readPlace();
+    setOpen(next);
+  };
+  const showSidebar = () => {
+    setSidebarOpen(true);
+    setSidebarPref({ open: true });
+    setSidebarTick((t) => t + 1);
+  };
+  // `record` is whether the person chose this: a close after a pick, by Esc, or by a click outside records nothing.
+  const hideSidebar = (record: boolean) => {
+    setSidebarOpen(false);
+    if (record) setSidebarPref({ open: false });
+  };
+  const toggleSidebar = () => {
+    if (open) {
+      hideSidebar(true);
+      focusPages();
+    } else showSidebar();
+  };
+
+  // The tab opens as the person last left the sidebar, once the document, its outline and the body's width are known.
+  const started = useRef(false);
+  useEffect(() => {
+    if (started.current || !doc || outline === null || bodyW === 0) return;
+    started.current = true;
+    const pref = sidebarPref();
+    setView(startView(pref, outline.length > 0));
+    if (startOpen(pref, over)) setSidebarOpen(true);
+  }, [doc, outline, bodyW]);
+
+  // Opened by the person, the sidebar takes the keyboard: the section's entry, or else the view's first stop, or else the tab.
+  useLayoutEffect(() => {
+    if (sidebarTick === 0) return;
+    const side = root.current?.querySelector<HTMLElement>(".pdf-sidebar");
+    const panel = side?.querySelector<HTMLElement>('[role="tabpanel"]');
+    const target =
+      panel?.querySelector<HTMLElement>('[aria-current="true"]') ??
+      panel?.querySelector<HTMLElement>('[tabindex="0"]') ??
+      panel?.querySelector<HTMLElement>("button") ??
+      side?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+    target?.focus({ preventScroll: true });
+  }, [sidebarTick]);
+
+  // Lying over the pages, the sidebar closes when a pointer goes down, or the keyboard goes, anywhere outside it and its button.
+  // The keyboard stays where it went.
+  useEffect(() => {
+    const side = root.current?.querySelector<HTMLElement>(".pdf-sidebar");
+    if (!open || !over || !side) return;
+    const outside = (t: EventTarget | null) => !(t instanceof Node) || !(side.contains(t) || sidebarButton.current?.contains(t));
+    const down = (e: PointerEvent) => {
+      if (outside(e.target)) setOpen(false);
+    };
+    const out = (e: FocusEvent) => {
+      if (outside(e.relatedTarget)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", down, true);
+    side.addEventListener("focusout", out);
+    return () => {
+      document.removeEventListener("pointerdown", down, true);
+      side.removeEventListener("focusout", out);
+    };
+  }, [open, over]);
+
+  // A pick jumps. Beside the pages the keyboard stays on the entry; lying over them the sidebar closes and the keyboard goes to the pages.
+  const pick = (node: OutlineNode) => {
+    if (!node.goal) return;
+    if (over) {
+      follow(node.goal, { keepFocus: false });
+      hideSidebar(false);
+      focusPages();
+    } else follow(node.goal, { keepFocus: true });
+  };
+  const leaveSidebar = () => {
+    if (over) hideSidebar(false);
+    focusPages();
+  };
+
   const [findOpen, setFindOpen] = useState(false);
   const [focusTick, setFocusTick] = useState(0);
   const field = useRef<HTMLInputElement>(null);
@@ -430,7 +572,11 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
       e.preventDefault();
       return;
     }
-    // "sidebar" (F4) is wired with the sidebar.
+    if (k === "sidebar") {
+      if (doc) toggleSidebar();
+      e.preventDefault();
+      return;
+    }
     if (!e.ctrlKey || e.altKey || e.metaKey) return;
     if (e.key === "=" || e.key === "+") setScale(zoomIn(zoom, shownScale));
     else if (e.key === "-") setScale(zoomOut(zoom, shownScale));
@@ -448,7 +594,7 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
   if (error) return <p className="preview__message">{error}</p>;
 
   return (
-    <div ref={root} className="pdf">
+    <div ref={root} className="pdf" data-sidebar={open ? (over ? "over" : "beside") : "closed"}>
       <div className="pdf__bar" role="toolbar" aria-label="PDF controls">
         <PdfToolbar
           page={draft ?? String(current)}
@@ -456,7 +602,26 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
           percent={Math.round(shownScale * 100)}
           fit={zoom.kind === "fit"}
           findOpen={findOpen}
-          sidebar={null}
+          sidebar={
+            <button
+              ref={sidebarButton}
+              type="button"
+              className="pdf__button pdf__sidebarbutton"
+              disabled={!doc}
+              aria-expanded={open}
+              aria-controls={sidebarId}
+              aria-keyshortcuts="F4"
+              aria-label="Outline and pages"
+              title="Outline and pages (F4)"
+              onClick={toggleSidebar}
+            >
+              {/* A panel with its left part filled: the sidebar. Three lines are the app's Menu. */}
+              <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="1.5" y="2.5" width="11" height="9" rx="1.5" />
+                <path d="M3 2.5h2v9H3a1.5 1.5 0 0 1-1.5-1.5V4A1.5 1.5 0 0 1 3 2.5Z" fill="currentColor" stroke="none" />
+              </svg>
+            </button>
+          }
           onPageDraft={setDraft}
           onPageCommit={commit}
           onPageCancel={() => setDraft(null)}
@@ -468,9 +633,30 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
           findRow={findOpen ? <FindBar query={find.query} status={find.status} onQuery={find.search} onStep={step} onClose={closeFind} field={field} /> : null}
         />
       </div>
-      <div className="pdf__pagelist">
-        {doc && sizes.map((size, i) => <PdfPage key={i} doc={doc} n={i + 1} name={name} size={size} scale={scaleOf(i)} root={scroller} overlay={renderOverlay?.(i + 1)} onText={find.attach} onFollow={(g) => follow(g, { keepFocus: false })} />)}
-        {!doc && <p className="preview__message">Loading…</p>}
+      <div className="pdf__main">
+        {open && (
+          <PdfSidebar
+            id={sidebarId}
+            name={name}
+            view={view}
+            onView={(v) => {
+              setView(v);
+              setSidebarPref({ view: v });
+            }}
+            outline={outline}
+            section={section}
+            expanded={expanded}
+            onToggle={toggleEntry}
+            onPick={pick}
+            onLeave={leaveSidebar}
+            // Task 8: the thumbnails.
+            pages={null}
+          />
+        )}
+        <div className="pdf__pagelist">
+          {doc && sizes.map((size, i) => <PdfPage key={i} doc={doc} n={i + 1} name={name} size={size} scale={scaleOf(i)} root={scroller} overlay={renderOverlay?.(i + 1)} onText={find.attach} onFollow={(g) => follow(g, { keepFocus: false })} />)}
+          {!doc && <p className="preview__message">Loading…</p>}
+        </div>
       </div>
     </div>
   );
