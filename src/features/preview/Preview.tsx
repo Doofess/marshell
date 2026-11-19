@@ -13,9 +13,10 @@ import type { Os } from "../../lib/keymap";
 import { ImageView } from "./ImageView";
 import { kindOf, splitPath } from "./kinds";
 import type { LinkTarget } from "./links";
-import { PdfView } from "./pdf/PdfView";
+import { PdfView, type PdfCommands } from "./pdf/PdfView";
 import { useOpenPageInPane, type OpenInPane } from "../pane/PaneContext";
-import type { PaneEntry, View } from "../pane/paneState";
+import { placeOf, type PaneEntry, type Place, type View } from "../pane/paneState";
+import { alreadyHere, samePlace } from "./pdf/place";
 import { usePreviewFile, type FileState } from "./usePreviewFile";
 import { followWebLink } from "./webLink";
 import { WebLinkBar } from "./WebLinkBar";
@@ -23,12 +24,33 @@ import "./Preview.css";
 
 /**
  * Whether the body takes the keyboard when the tab's entry changes. It does when the tab goes somewhere, but not for the Source
- * view a merge showed (`quiet`): that answer can come while the person is in the terminal, and the text tab moves a keyboard
- * that was on the body on into the editor itself (6q-4b decision 7.2). A quiet switch that never came keeps nothing quiet.
+ * view a merge showed (`quietView`): that answer can come while the person is in the terminal, and the text tab moves a keyboard
+ * that was on the body on into the editor itself (6q-4b decision 7.2). A quiet switch that never came keeps nothing quiet. Nor
+ * does it for a jump inside the same file that asked to keep the keyboard (`quietJump`): one from a sidebar beside the pages.
  */
-export function bodyTakesFocus(was: PaneEntry, now: PaneEntry, quiet: boolean): boolean {
+export function bodyTakesFocus(was: PaneEntry, now: PaneEntry, quietView: boolean, quietJump: boolean): boolean {
+  if (quietJump && was.path === now.path) return false;
   const viewOnly = was.path === now.path && was.line === now.line && was.col === now.col && was.view !== now.view;
-  return !(quiet && viewOnly);
+  return !(quietView && viewOnly);
+}
+
+/**
+ * Whether Esc goes to the terminal. A control that handled the key has prevented its default (the find bar closing, the sidebar
+ * handing the keyboard back), and the editor keeps Esc for itself.
+ */
+export function escapeLeaves(e: { key: string; defaultPrevented?: boolean; ctrlKey: boolean; altKey: boolean; metaKey: boolean; shiftKey: boolean }, inEditor: boolean): boolean {
+  return e.key === "Escape" && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey && !e.defaultPrevented && !inEditor;
+}
+
+/**
+ * Whether the tab has gone to a place the view must scroll to. A recorded place (`recorded`, what `leave()` saved into the entry
+ * being left) changes only the entry's page and top, so it is not a move; every other change of entry is.
+ */
+export function movedPlace(was: PaneEntry, now: PaneEntry, recorded: Place | null): boolean {
+  if (was === now) return false;
+  const here = placeOf(now);
+  const onlyRecorded = was.path === now.path && was.view === now.view && was.line === now.line && was.col === now.col && recorded !== null && here !== null && samePlace(recorded, here);
+  return !onlyRecorded;
 }
 
 /**
@@ -97,6 +119,8 @@ export type PreviewPaneProps = {
   onOpen: OpenInPane;
   /** The Rendered / Source toggle of a Markdown or HTML file. */
   onView: (view: View) => void;
+  /** The place in a PDF the person is leaving, saved in the entry before Back, Forward or a jump moves off it. */
+  onPlace?: (place: Place) => void;
   /** The tab is the selected one; a kept tab that isn't takes no focus and checks its file no more. */
   active: boolean;
   /** Escape: focus goes back to the session's terminal and the pane stays open. */
@@ -123,6 +147,8 @@ export type PreviewHandle = {
   selectRegion(): boolean;
   /** The text tab's commands, or null while the file is not an editor that has loaded. */
   text(): TextTabCommands | null;
+  /** The PDF tab's commands, or null while the tab is not a PDF that has loaded. */
+  pdf(): PdfCommands | null;
 };
 
 /** What the pane keeps while a region is being marked. */
@@ -136,7 +162,7 @@ type RegionHooks = {
 };
 
 /** The keys the pane answers to; a native event from inside the HTML frame has the same shape as React's. */
-type Key = { key: string; code: string; ctrlKey: boolean; altKey: boolean; metaKey: boolean; shiftKey: boolean; preventDefault: () => void };
+type Key = { key: string; code: string; ctrlKey: boolean; altKey: boolean; metaKey: boolean; shiftKey: boolean; defaultPrevented?: boolean; preventDefault: () => void };
 
 /** A link that goes somewhere outside the document's own scroll: a file, or a web address. */
 type Outbound = Exclude<LinkTarget, { kind: "anchor" } | { kind: "none" }>;
@@ -150,6 +176,8 @@ type BodyProps = {
   refetch: () => void;
   /** What a text tab hands the pane to call. */
   textCommands: Ref<TextTabCommands>;
+  /** What a PDF tab hands the pane to call. */
+  pdfCommands: Ref<PdfCommands | null>;
   onDirty: (path: string, dirty: boolean) => void;
   onImageSize: (url: string, w: number, h: number) => void;
   onPages: (count: number) => void;
@@ -159,11 +187,22 @@ type BodyProps = {
   keptDraft: boolean;
   /** Shows a Markdown or HTML tab's Source view, after a merge that left conflicts; it doesn't move the keyboard. */
   onSource: () => void;
+  /** Where a PDF shows, from the entry, and what tells it to go there again (it changes when the tab moves, not when the place is recorded). */
+  place: Place | null;
+  placeKey: number;
+  /** A jump the person asked for inside a PDF. */
+  onJump: (to: Place, how: { keepFocus: boolean }) => void;
+  /** Where the PDF view hands over its way to read the place at the top of the view. */
+  placeNow: Ref<() => Place | null>;
+  /** A web link in a PDF. */
+  onWebLink: (url: string) => void;
+  /** A Back or Forward action link in a PDF. */
+  onHistory: (by: -1 | 1) => void;
 };
 
 const noDirty = () => {};
 
-function Body({ entry, file, active, os, announce, refetch, textCommands, onDirty, onImageSize, onPages, onLink, onKey, region, keptDraft, onSource }: BodyProps) {
+function Body({ entry, file, active, os, announce, refetch, textCommands, pdfCommands, onDirty, onImageSize, onPages, onLink, onKey, region, keptDraft, onSource, place, placeKey, onJump, placeNow, onWebLink, onHistory }: BodyProps) {
   const { name } = splitPath(entry.path);
   // A text file, and a deleted one that was text, are the same tab: the editor stays mounted when the file goes and comes back.
   const textTab = (f: Extract<FileState, { phase: "text" | "deleted" }>) => (
@@ -181,24 +220,86 @@ function Body({ entry, file, active, os, announce, refetch, textCommands, onDirt
     case "binary":
       return <p className="preview__message">This file isn't text.</p>;
     case "pdf":
-      return <PdfView bytes={file.bytes} version={file.version} name={name} onPages={onPages} onCurrentPage={region.onCurrentPage} onDocument={region.onDocument} renderOverlay={region.overlay} />;
+      return (
+        <PdfView
+          bytes={file.bytes}
+          version={file.version}
+          name={name}
+          onPages={onPages}
+          onCurrentPage={region.onCurrentPage}
+          onDocument={region.onDocument}
+          renderOverlay={region.overlay}
+          place={place}
+          placeKey={placeKey}
+          onJump={onJump}
+          placeNow={placeNow}
+          commands={pdfCommands}
+          announce={announce}
+          onWebLink={onWebLink}
+          onHistory={onHistory}
+        />
+      );
     case "deleted":
       // With something that was shown, the content stays and the notice sits above it (see PreviewPane); this is the plain case.
       // A file that was gone before the tab ever showed it has only its draft: the editor opens on that, so the edits can be read
       // and saved again.
       if (file.last?.phase === "text" || (file.last === undefined && keptDraft)) return textTab(file);
-      return file.last ? <Body entry={entry} file={file.last} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} onDirty={onDirty} onImageSize={onImageSize} onPages={onPages} onLink={onLink} onKey={onKey} region={region} keptDraft={keptDraft} onSource={onSource} /> : <p className="preview__message">This file was deleted.</p>;
+      return file.last ? <Body entry={entry} file={file.last} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} pdfCommands={pdfCommands} onDirty={onDirty} onImageSize={onImageSize} onPages={onPages} onLink={onLink} onKey={onKey} region={region} keptDraft={keptDraft} onSource={onSource} place={place} placeKey={placeKey} onJump={onJump} placeNow={placeNow} onWebLink={onWebLink} onHistory={onHistory} /> : <p className="preview__message">This file was deleted.</p>;
     case "error":
       return <p className="preview__message">This file can't be previewed.</p>;
   }
 }
 
 /** The pane for one file: header, then the scrolling body. Everything it shows comes in as props, so it renders the same on any state. */
-export function PreviewPane({ entry, file, updated, os, canBack, canForward, onBack, onForward, onOpen, onView, active, onEscape, announce, refetch, regionTarget, onRegion, onDirty, keptDraft = false, ref }: PreviewPaneProps) {
+export function PreviewPane({ entry, file, updated, os, canBack, canForward, onBack, onForward, onOpen, onView, onPlace, active, onEscape, announce, refetch, regionTarget, onRegion, onDirty, keptDraft = false, ref }: PreviewPaneProps) {
   const { name, folder } = splitPath(entry.path);
   const body = useRef<HTMLDivElement>(null);
+  // A PDF in the tab hands over, through this, its way to read the place at the top of the view.
+  const placeNowRef = useRef<() => Place | null>(null);
+  const placeNow = () => placeNowRef.current?.() ?? null;
+  // The place `leave()` saved last, so the entry change it causes isn't taken for the tab going somewhere.
+  const recorded = useRef<Place | null>(null);
+  // Counts the times the tab went to a place; the PDF view scrolls there again when it changes.
+  const moves = useRef({ entry, count: 0 });
+  if (moves.current.entry !== entry) {
+    if (movedPlace(moves.current.entry, entry, recorded.current)) moves.current.count += 1;
+    moves.current.entry = entry;
+    recorded.current = null;
+  }
+  // Set by a jump that keeps the keyboard where it is, and read once by the entry change it makes.
+  const quietJump = useRef(false);
+  // Saves the place in view into the entry about to be left, so Back and Forward come back to it.
+  const leave = () => {
+    const here = placeNow();
+    if (!here) return;
+    recorded.current = here;
+    onPlace?.(here);
+  };
+  const jump = (to: Place, how: { keepFocus: boolean }) => {
+    const here = placeNow();
+    if (here && samePlace(to, here)) {
+      // Nothing moves; the place in view is said, so the key isn't taken for doing nothing.
+      const say = alreadyHere(to, here, pages?.path === entry.path ? { page: currentPage, count: pages.count } : null);
+      if (say) announce(say);
+      return;
+    }
+    leave();
+    quietJump.current = how.keepFocus;
+    onOpen({ path: entry.path, place: to });
+  };
+  const goBack = () => {
+    leave();
+    quietJump.current = false;
+    onBack();
+  };
+  const goForward = () => {
+    leave();
+    quietJump.current = false;
+    onForward();
+  };
   // What a text tab lets the pane call: Ctrl+S saves through it. Null while no text tab is mounted.
   const textCommands = useRef<TextTabCommands>(null);
+  const pdfCommands = useRef<PdfCommands | null>(null);
   const noteDirty = onDirty ?? noDirty;
   // Focus goes into the scroll body when the tab goes somewhere (a link, Back, Forward, another line), so the arrow keys and
   // Page Up and Down read it at once. Mounting takes no focus, and neither does being selected: a session switch and the tab
@@ -215,7 +316,9 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
     const was = shownEntry.current;
     shownEntry.current = entry;
     const quiet = views.current?.take() ?? false;
-    if (activeRef.current && bodyTakesFocus(was, entry, quiet)) body.current?.focus({ preventScroll: true });
+    const keepFocus = quietJump.current;
+    quietJump.current = false;
+    if (activeRef.current && bodyTakesFocus(was, entry, quiet, keepFocus)) body.current?.focus({ preventScroll: true });
   }, [entry]);
   // "Updated" is spoken only to someone reading in the pane; a person typing in the terminal is not interrupted by it.
   const [inside, setInside] = useState(false);
@@ -299,6 +402,7 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
       return true;
     },
     text: () => textCommands.current,
+    pdf: () => pdfCommands.current,
   }));
   const add = async (comment: string) => {
     if (!select) return;
@@ -375,15 +479,15 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
       if (select) endSelect();
       else startSelect();
     } else if (e.key === "Escape" && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
-      if (inEditor) return;
+      if (!escapeLeaves(e, inEditor)) return;
       e.preventDefault();
       onEscape();
     } else if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.key === "ArrowLeft") {
       e.preventDefault();
-      if (canBack) onBack();
+      if (canBack) goBack();
     } else if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.key === "ArrowRight") {
       e.preventDefault();
-      if (canForward) onForward();
+      if (canForward) goForward();
     }
   };
 
@@ -406,10 +510,10 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
       }}
     >
       <header className="preview__header">
-        <button type="button" className="preview__button" aria-label="Back" title={`Back (${alt}${os === "mac" ? "←" : "Left"})`} disabled={!canBack} onClick={onBack}>
+        <button type="button" className="preview__button" aria-label="Back" title={`Back (${alt}${os === "mac" ? "←" : "Left"})`} disabled={!canBack} onClick={goBack}>
           {arrow("M7.5 2.5 4 6l3.5 3.5")}
         </button>
-        <button type="button" className="preview__button" aria-label="Forward" title={`Forward (${alt}${os === "mac" ? "→" : "Right"})`} disabled={!canForward} onClick={onForward}>
+        <button type="button" className="preview__button" aria-label="Forward" title={`Forward (${alt}${os === "mac" ? "→" : "Right"})`} disabled={!canForward} onClick={goForward}>
           {arrow("M4.5 2.5 8 6 4.5 9.5")}
         </button>
         <span className="preview__name">{name}</span>
@@ -450,7 +554,7 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
             This file was deleted.
           </div>
         )}
-        <Body entry={entry} file={file} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} onDirty={noteDirty} onImageSize={(url, w, h) => setSize({ url, w, h })} onPages={(count) => setPages({ path: entry.path, count })} onLink={follow} onKey={keys} region={regionHooks} keptDraft={keptDraft} onSource={() => views.current?.merge()} />
+        <Body entry={entry} file={file} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} pdfCommands={pdfCommands} onDirty={noteDirty} onImageSize={(url, w, h) => setSize({ url, w, h })} onPages={(count) => setPages({ path: entry.path, count })} onLink={follow} onKey={keys} region={regionHooks} keptDraft={keptDraft} onSource={() => views.current?.merge()} place={placeOf(entry)} placeKey={moves.current.count} onJump={jump} placeNow={placeNowRef} onWebLink={(url) => follow({ kind: "web", url })} onHistory={(by) => { if (by < 0) { if (canBack) goBack(); } else if (canForward) goForward(); }} />
       </div>
       {select?.step === "comment" && body.current
         ? createPortal(

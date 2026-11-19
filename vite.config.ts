@@ -15,6 +15,16 @@ function filesUnder(dir: string, prefix = ""): string[] {
 }
 
 /**
+ * The type the dev server sends a /pdfjs/ file with. With WebAssembly off, pdf.js loads its JBIG2 and JPEG 2000
+ * decoders from wasm/ as JavaScript, which the webview refuses when it comes as application/octet-stream.
+ */
+function pdfjsType(file: string): string {
+  if (/\.m?js$/.test(file)) return "text/javascript";
+  if (file.endsWith(".wasm")) return "application/wasm";
+  return "application/octet-stream";
+}
+
+/**
  * pdf.js fetches its character maps and standard fonts at run time. They are not part of any bundle, so this serves them
  * from node_modules at /pdfjs/ in dev and writes them under pdfjs/ in the build.
  */
@@ -28,7 +38,7 @@ function pdfjsAssets(): Plugin {
         const [dir] = rel.split("/");
         const file = join(root, rel);
         if (!dir || !PDFJS_DIRS.includes(dir) || rel.includes("..") || !existsSync(file) || !statSync(file).isFile()) return next();
-        res.setHeader("Content-Type", file.endsWith(".wasm") ? "application/wasm" : "application/octet-stream");
+        res.setHeader("Content-Type", pdfjsType(file));
         res.end(readFileSync(file));
       });
     },

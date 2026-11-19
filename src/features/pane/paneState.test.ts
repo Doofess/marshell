@@ -3,6 +3,8 @@ import type { PaneView } from "../../generated/PaneView";
 import {
   type PaneAction,
   activeTab,
+  currentEntry,
+  placeOf,
   isBrowserTab,
   drawnTabs,
   keptTabs,
@@ -491,5 +493,65 @@ describe("openBackground", () => {
     const last = run(EMPTY, open("/a"), bg("/b"), { type: "select", session: "s", paneTab: "t2" }, bg("/c"), close("t2"));
     expect(tabsOf(last, "s").active).toBe("t3");
     expect(tab(last, "t3").unseen).toBe(false);
+  });
+});
+
+describe("a place in a PDF", () => {
+  const at = (paneTab: string, page: number, top: number): PaneAction => ({ type: "place", session: "s", paneTab, place: { page, top } });
+  const cur = (s: PaneView, id = "t1") => currentEntry(tabsOf(s, "s").tabs.find((t) => t.id === id)!);
+
+  it("place records where the current entry is without pushing", () => {
+    const s = run(EMPTY, open("/a.pdf"), at("t1", 3, 0.25));
+    const t = tabsOf(s, "s").tabs[0]!;
+    expect(t.history).toHaveLength(1);
+    expect(cur(s)).toMatchObject({ page: 3, top: 2500 });
+    expect(placeOf(cur(s))).toEqual({ page: 3, top: 0.25 });
+  });
+
+  it("place that changes nothing returns the same state", () => {
+    const s = run(EMPTY, open("/a.pdf"), at("t1", 3, 0.25));
+    expect(paneReducer(s, at("t1", 3, 0.25))).toBe(s);
+    expect(paneReducer(s, at("nope", 3, 0.25))).toBe(s);
+  });
+
+  it("place leaves a browser tab alone", () => {
+    const s = run(EMPTY, { type: "openPage", session: "s", url: "http://localhost:3000/" });
+    expect(paneReducer(s, at("t1", 2, 0.5))).toBe(s);
+  });
+
+  it("navigate with a place pushes an entry with page and top", () => {
+    const s = run(EMPTY, open("/a.pdf"), {
+      type: "navigate",
+      session: "s",
+      paneTab: "t1",
+      project: "p",
+      target: { path: "/b.pdf", place: { page: 4, top: 0.5 } },
+    });
+    expect(tabsOf(s, "s").tabs[0]!.history).toHaveLength(2);
+    expect(cur(s)).toMatchObject({ path: "/b.pdf", page: 4, top: 5000 });
+  });
+
+  it("back after a place and a navigate returns to the recorded place", () => {
+    const s = run(
+      EMPTY,
+      open("/a.pdf"),
+      at("t1", 7, 0.1),
+      { type: "navigate", session: "s", paneTab: "t1", project: "p", target: { path: "/a.pdf", place: { page: 2, top: 0 } } },
+      { type: "back", session: "s", paneTab: "t1" },
+    );
+    expect(placeOf(cur(s))).toEqual({ page: 7, top: 0.1 });
+  });
+
+  it("placeOf of an entry without a page is null", () => {
+    const s = run(EMPTY, open("/a.pdf"));
+    expect(placeOf(cur(s))).toBeNull();
+    expect("page" in cur(s)).toBe(false);
+  });
+
+  it("a place's top is clamped to 0..1 and its page to at least 1", () => {
+    let s = run(EMPTY, open("/a.pdf"), at("t1", 0, 1.5));
+    expect(cur(s)).toMatchObject({ page: 1, top: 10_000 });
+    s = run(s, at("t1", -3, -0.2));
+    expect(cur(s)).toMatchObject({ page: 1, top: 0 });
   });
 });

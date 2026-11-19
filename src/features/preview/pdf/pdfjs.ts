@@ -74,20 +74,46 @@ export async function renderPage(page: PDFPageProxy, canvas: HTMLCanvasElement, 
   }
 }
 
-/** The page's text as transparent, selectable spans over the canvas. */
-export async function renderTextLayer(page: PDFPageProxy, container: HTMLElement, scale: number, signal?: AbortSignal): Promise<void> {
+/**
+ * pdf.js's viewer components (the find controller and its event bus), loaded on first use. `pdf_viewer.mjs` reads the
+ * library from `globalThis.pdfjsLib` as it loads, so that is set first, to the same copy the pages are drawn with.
+ */
+let viewer: Promise<typeof import("pdfjs-dist/web/pdf_viewer.mjs")> | null = null;
+export function viewerLib(): Promise<typeof import("pdfjs-dist/web/pdf_viewer.mjs")> {
+  viewer ??= (async () => {
+    (globalThis as { pdfjsLib?: unknown }).pdfjsLib = await lib();
+    return import("pdfjs-dist/web/pdf_viewer.mjs");
+  })();
+  return viewer;
+}
+
+/**
+ * A drawn text layer's spans and the strings they hold, in content order: what find needs to tint a match on the
+ * letters it was found in. A string can be empty (marked content), and its span then holds no text.
+ */
+export type TextMapping = { divs: HTMLElement[]; items: string[] };
+
+/**
+ * The page's text as transparent, selectable spans over the canvas. It is built as pdf.js's own viewer builds it, with
+ * marked content and without normalization, so a match the find controller reports lands on the same characters here.
+ * Null when it was cancelled.
+ */
+export async function renderTextLayer(page: PDFPageProxy, container: HTMLElement, scale: number, signal?: AbortSignal): Promise<TextMapping | null> {
   const pdfjs = await lib();
   container.style.setProperty("--total-scale-factor", String(scale));
-  const layer = new pdfjs.TextLayer({ textContentSource: page.streamTextContent(), container, viewport: page.getViewport({ scale }) });
+  const textContentSource = page.streamTextContent({ includeMarkedContent: true, disableNormalization: true });
+  const layer = new pdfjs.TextLayer({ textContentSource, container, viewport: page.getViewport({ scale }) });
   const stop = () => layer.cancel();
   signal?.addEventListener("abort", stop);
   try {
     await layer.render();
   } catch (e) {
     if (!cancelled(e)) throw e;
+    return null;
   } finally {
     signal?.removeEventListener("abort", stop);
   }
+  return signal?.aborted ? null : { divs: layer.textDivs, items: layer.textContentItemsStr };
 }
 
 /** What the viewer says when a PDF won't open. */

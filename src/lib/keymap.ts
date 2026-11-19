@@ -107,6 +107,10 @@ export const COMMANDS: Command[] = [
   { id: "pane-word-wrap", label: "Word wrap", group: "Window" },
   { id: "pane-next-conflict", label: "Next conflict", group: "Window" },
   { id: "pane-previous-conflict", label: "Previous conflict", group: "Window" },
+  // A loaded PDF tab: listed only while one is on screen, no key of its own.
+  { id: "pane-pdf-find", label: "Find in PDF", group: "Window" },
+  { id: "pane-pdf-outline", label: "Show PDF outline", group: "Window" },
+  { id: "pane-pdf-pages", label: "Show PDF pages", group: "Window" },
   { id: "sidebar", label: "Collapse sidebar to the rail", group: "Window" },
   { id: "group-by-project", label: "Group sessions by project", group: "Window" },
   { id: "shell-panel", label: "Show or focus the shell panel", group: "Window", binding: { code: "KeyS" } },

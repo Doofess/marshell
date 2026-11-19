@@ -3,8 +3,16 @@
  * body's own paper. A page is always white, as printed; the text layer above it is invisible and only takes the selection.
  */
 .pdf {
+  /* The sidebar's width: PdfView.tsx's SIDEBAR_W is the same number, taken off fit width when it sits beside the pages. */
+  --pdf-sidebar-w: 200px;
+  /* Where the sidebar sticks: just under the head, which is the bar (its height, --pdf-bar, is set by PdfView) and, when it is
+     there, the "deleted" notice. --pdf-view, also set by PdfView, is the visible height of the body. */
+  --pdf-top: var(--pdf-bar, 28px);
   display: grid;
   min-inline-size: 0;
+}
+.preview__body:has(.preview__notice) .pdf {
+  --pdf-top: calc(var(--pdf-bar, 28px) + var(--notice-h));
 }
 
 .pdf__bar {
@@ -12,15 +20,69 @@
   inset-block-start: 0;
   z-index: 2;
   display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  block-size: 28px;
-  padding-inline: var(--space-2);
+  flex-direction: column;
+  min-block-size: 28px;
   border-block-end: 1px solid var(--hairline);
   background: var(--bg-raised);
   color: var(--text-2);
   font-size: var(--text-12);
   white-space: nowrap;
+  /* The toolbar's "Page" word hides when the bar is narrow (the container query below). */
+  container: pdfbar / inline-size;
+}
+.pdf__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  block-size: 28px;
+  padding-inline: var(--space-2);
+}
+@container pdfbar (inline-size < 360px) {
+  .pdf__word {
+    display: none;
+  }
+}
+/* The find row wraps as the editor's panel does: the field grows, and the checkboxes drop to a second line when one line is short. */
+.pdf__find {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-block-start: 1px solid var(--hairline);
+}
+.pdf__findfield {
+  flex: 1 1 12ch;
+  min-inline-size: 0;
+  block-size: 20px;
+  padding-inline: var(--space-1);
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-1);
+}
+.pdf__findfield:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+.pdf__count {
+  min-inline-size: 6ch;
+  white-space: normal;
+  font-variant-numeric: tabular-nums;
+}
+.pdf__check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.pdf__check input {
+  accent-color: var(--accent);
+}
+.pdf__check input:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+.pdf__close {
+  margin-inline-start: auto;
 }
 /* With the "deleted" notice stuck above it, the toolbar sticks just under the notice. */
 .preview__body:has(.preview__notice) .pdf__bar {
@@ -64,6 +126,22 @@
   color: var(--text-2);
   font: inherit;
 }
+/* An icon button: 24 by 20, the glyph centred. */
+.pdf__icon,
+.pdf__find .pdf__button,
+.pdf__sidebarbutton {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 24px;
+  padding-inline: 0;
+}
+.pdf__button:active:not(:disabled) {
+  background: var(--fill-strong);
+}
+.pdf__button[aria-expanded="true"] {
+  background: var(--fill-strong);
+  color: var(--text-1);
+}
 .pdf__button:disabled,
 .pdf__field:disabled {
   opacity: 0.4;
@@ -80,7 +158,22 @@
 }
 
 /* The pages are centred in the column; one wider than the body scrolls sideways with it. */
+.pdf__main {
+  display: grid;
+  min-inline-size: 0;
+}
+/* Beside the pages the sidebar is a column of its own; lying over them it shares the pages' cell and sits above it. */
+.pdf[data-sidebar="beside"] .pdf__main {
+  grid-template-columns: var(--pdf-sidebar-w) auto;
+}
+.pdf[data-sidebar="beside"] .pdf__pagelist {
+  grid-column: 2;
+}
 .pdf__pagelist {
+  grid-row: 1;
+  grid-column: 1;
+  /* The pages' own layers (links, matches) have z-indexes; as a context of its own the pagelist stays under the sidebar. */
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -103,6 +196,156 @@
 }
 .pdf__sheet canvas {
   display: block;
+}
+
+/*
+ * The sidebar: Outline and Pages on a tab list, under the bar. It is sticky, so it stays in view as the body scrolls: its top is
+ * the head's height and it is as tall as the body below the head, so the tab list stays put and only the tree scrolls inside.
+ * Beside the pages it has a hairline edge on its end side; lying over them it also has a menu's shadow. Nothing moves or fades.
+ */
+.pdf-sidebar {
+  position: sticky;
+  inset-block-start: var(--pdf-top);
+  inset-inline-start: 0;
+  /* Under the bar (2), over the pages. */
+  z-index: 1;
+  grid-row: 1;
+  grid-column: 1;
+  align-self: start;
+  justify-self: start;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  inline-size: var(--pdf-sidebar-w);
+  block-size: max(0px, calc(var(--pdf-view, 100%) - var(--pdf-top)));
+  border-inline-end: 1px solid var(--hairline);
+  background: var(--bg-raised);
+  color: var(--text-1);
+  font-size: var(--text-12);
+  white-space: normal;
+}
+.pdf[data-sidebar="over"] .pdf-sidebar {
+  box-shadow: var(--shadow-menu);
+}
+/* Outline and Pages: the filled track of Rendered and Source, with text. */
+.pdf-sidebar__tabs {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  margin: var(--space-2);
+  padding: 2px;
+  border-radius: calc(var(--radius) + 2px);
+  background: var(--fill);
+}
+.pdf-sidebar__tab {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  block-size: 20px;
+  padding-inline: var(--space-2);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+}
+.pdf-sidebar__tab[aria-selected="true"] {
+  background: var(--fill-strong);
+  color: var(--text-1);
+}
+.pdf-sidebar__tab[aria-selected="false"]:active {
+  box-shadow: inset 0 0 0 100vmax var(--selected);
+}
+.pdf-sidebar__panel {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pdf-sidebar__tree {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-block-end: var(--space-2);
+}
+/* A row: the arrow (its own click target), the title (it wraps, never cut), then the page number at the end. Each level indents 12 px. */
+.pdf-sidebar__row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  box-sizing: border-box;
+  min-block-size: 24px;
+  padding-block: 4px;
+  padding-inline: calc(var(--space-2) + var(--depth, 0) * 12px) var(--space-3);
+  line-height: 1.35;
+  cursor: pointer;
+}
+.pdf-sidebar__row[data-dead="true"] {
+  cursor: default;
+}
+.pdf-sidebar__row:active {
+  background: var(--fill);
+}
+.pdf-sidebar__arrow {
+  flex: none;
+  display: grid;
+  place-items: center;
+  inline-size: 16px;
+  block-size: 1.35em;
+  color: var(--text-2);
+}
+.pdf-sidebar__title {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+.pdf-sidebar__page {
+  flex: none;
+  padding-inline-start: var(--space-1);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.pdf-sidebar__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+}
+.pdf-sidebar__none {
+  margin: 0;
+  color: var(--text-2);
+  line-height: 1.4;
+}
+.pdf-sidebar__show {
+  block-size: 20px;
+  padding-inline: var(--space-2);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-1);
+  font: inherit;
+}
+.pdf-sidebar__show:active {
+  background: var(--fill-strong);
+}
+.pdf-sidebar__row:focus-visible,
+.pdf-sidebar__tab:focus-visible,
+.pdf-sidebar__show:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .pdf-sidebar__row:hover {
+    background: var(--hover);
+  }
+  .pdf-sidebar__tab[aria-selected="false"]:hover {
+    background: var(--hover);
+    color: var(--text-1);
+  }
+  .pdf-sidebar__show:hover {
+    background: var(--fill-strong);
+  }
 }
 
 /*
@@ -154,6 +397,26 @@
   background: color-mix(in srgb, var(--accent) 40%, transparent);
   color: transparent;
 }
+/*
+ * Find matches: Marshell's own spans inside a text span (highlight.ts). They stay in the flow of the span they sit in, so the
+ * text layer's placement rules above don't apply to them. The blend is on the text layer: it has z-index and so is a stacking
+ * context, and a blend on the spans alone would not reach the canvas under it. Multiplying keeps black print dark.
+ */
+.textLayer {
+  mix-blend-mode: multiply;
+}
+.textLayer span.pdf__match,
+.textLayer .markedContent span.pdf__match {
+  position: static;
+  z-index: auto;
+  transform: none;
+  font-size: inherit;
+  background: var(--paper-match);
+}
+.textLayer span.pdf__match--current,
+.textLayer .markedContent span.pdf__match--current {
+  background: var(--paper-match-current);
+}
 .textLayer .endOfContent {
   display: block;
   position: absolute;
@@ -164,6 +427,89 @@
 }
 .textLayer.selecting .endOfContent {
   top: 0;
+}
+
+/*
+ * The links of a page (links.tsx): their own layer over the page, above the text layer so they can be clicked. The layer takes
+ * no pointer, so text outside a link can still be selected; each link takes it back. The tint is multiplied like the matches,
+ * on the layer: its z-index makes a stacking context, and a blend on the spans alone would not reach the canvas under it.
+ */
+.pdf__links {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+}
+.pdf__link {
+  position: absolute;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.pdf__link:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 0;
+}
+@media (hover: hover) and (pointer: fine) {
+  .pdf__link:hover {
+    background: color-mix(in oklch, var(--accent) 14%, transparent);
+  }
+}
+.pdf__link:active {
+  background: color-mix(in oklch, var(--accent) 22%, transparent);
+}
+
+/* The Pages view: a list of paper plates in the page shapes, 160 px wide, each over its number. It takes the panel's height under the tab list and scrolls there. */
+.pdf-thumbs {
+  position: relative;
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-block: var(--space-1) var(--space-2);
+}
+.pdf-thumbs__item {
+  display: flex;
+  justify-content: center;
+}
+.pdf-thumbs__button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  box-sizing: border-box;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.pdf-thumbs__button:active {
+  background: var(--fill);
+}
+.pdf-thumbs__plate {
+  display: block;
+  flex: none;
+  background: Canvas;
+  color-scheme: light;
+}
+.pdf-thumbs__plate canvas {
+  display: block;
+}
+.pdf-thumbs__num {
+  text-align: center;
+}
+.pdf-thumbs__button:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .pdf-thumbs__button:hover {
+    background: var(--hover);
+  }
 }
 
 @media (forced-colors: active) {
@@ -179,8 +525,66 @@
     outline-color: HighlightText;
     outline-offset: -4px;
   }
-  .pdf__field {
+  .pdf__field,
+  .pdf__findfield {
     outline: 1px solid ButtonText;
     outline-offset: -1px;
+  }
+  .pdf__button[aria-expanded="true"] {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+  /* The sidebar's chosen tab is filled as the toolbar's pressed buttons are; the section keeps SelectedMark's Highlight bar, and
+     the keyboard's row has its own ring in CanvasText, so the two read apart. */
+  .pdf-sidebar__tab[aria-selected="true"] {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+  .pdf-sidebar__tab[aria-selected="true"]:focus-visible {
+    outline-color: HighlightText;
+    outline-offset: -4px;
+  }
+  .pdf-sidebar .pdf-sidebar__row:focus-visible {
+    outline: 2px solid CanvasText;
+    outline-offset: -2px;
+  }
+  .pdf-sidebar__show {
+    outline: 1px solid ButtonText;
+    outline-offset: -1px;
+  }
+  /* A plate is edged so white paper reads on a dark Canvas; the keyboard's thumbnail has its own ring in CanvasText next to the page in view's Highlight one. */
+  .pdf-thumbs__plate {
+    outline: 1px solid ButtonText;
+  }
+  .pdf-thumbs .pdf-thumbs__button:focus-visible {
+    outline: 2px solid CanvasText;
+    outline-offset: -2px;
+  }
+  /* The text layer's blend would turn a system colour into something else. */
+  .textLayer,
+  .pdf__links {
+    mix-blend-mode: normal;
+  }
+  .pdf__link:focus-visible {
+    outline-color: Highlight;
+  }
+  /* A link is ringed, not filled: a fill would hide the print under it, and a system colour can't be mixed thinner. */
+  .pdf__link:active {
+    outline: 1px solid Highlight;
+  }
+  /* As the editor's matches: the system's highlight pair. A solid fill hides the print under the match, so the text layer's own
+     copy of the words shows on it in HighlightText. The current match is ringed inside, as the editor rings its own. */
+  .textLayer span.pdf__match,
+  .textLayer .markedContent span.pdf__match {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+  .textLayer span.pdf__match--current,
+  .textLayer .markedContent span.pdf__match--current {
+    outline: 2px solid HighlightText;
+    outline-offset: -2px;
   }
 }

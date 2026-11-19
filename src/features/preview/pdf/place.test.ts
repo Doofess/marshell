@@ -1,0 +1,116 @@
+import { describe, expect, it } from "vitest";
+import { alreadyHere, bodyWidthChange, clampPlace, pageInView, placeAt, placeReady, placeText, samePlace, scrollFor, type PageBox } from "./place";
+
+// Two pages of 200 px with a 12 px gap between them, in client coordinates.
+const pages: PageBox[] = [
+  { page: 1, top: 100, height: 200 },
+  { page: 2, top: 312, height: 200 },
+];
+
+describe("placeAt", () => {
+  it("placeAt_inside_a_page", () => {
+    expect(placeAt(150, pages)).toEqual({ page: 1, top: 0.25 });
+    expect(placeAt(412, pages)).toEqual({ page: 2, top: 0.5 });
+    expect(placeAt(100, pages)).toEqual({ page: 1, top: 0 });
+  });
+  it("placeAt_in_the_gap_takes_the_next_page", () => {
+    expect(placeAt(305, pages)).toEqual({ page: 2, top: 0 });
+  });
+  it("placeAt_above_the_first_page", () => {
+    expect(placeAt(40, pages)).toEqual({ page: 1, top: 0 });
+  });
+  it("placeAt_past_the_last_page", () => {
+    expect(placeAt(600, pages)).toEqual({ page: 2, top: 1 });
+    expect(placeAt(512, pages)).toEqual({ page: 2, top: 1 });
+  });
+  it("has no place without pages", () => {
+    expect(placeAt(10, [])).toBeNull();
+  });
+});
+
+describe("scrollFor", () => {
+  it("scrollFor_puts_the_place_at_the_view_top", () => {
+    // Page 2 starts 312 px down; a place half way in is at 412, and the view's top is at 160.
+    expect(scrollFor({ page: 2, top: 0.5 }, pages[1]!, 160)).toBe(252);
+    // A place already at the view's top needs no scroll.
+    expect(scrollFor({ page: 1, top: 0 }, pages[0]!, 100)).toBe(0);
+  });
+});
+
+describe("clampPlace", () => {
+  it("clampPlace_past_the_end_is_the_last_page", () => {
+    expect(clampPlace({ page: 9, top: 0.4 }, 5)).toEqual({ page: 5, top: 0 });
+    expect(clampPlace({ page: 3, top: 0.4 }, 5)).toEqual({ page: 3, top: 0.4 });
+    expect(clampPlace({ page: 0, top: 2 }, 5)).toEqual({ page: 1, top: 1 });
+  });
+});
+
+describe("samePlace", () => {
+  it("samePlace_within_half_a_percent", () => {
+    expect(samePlace({ page: 2, top: 0.3 }, { page: 2, top: 0.304 })).toBe(true);
+    expect(samePlace({ page: 2, top: 0.3 }, { page: 2, top: 0.31 })).toBe(false);
+    expect(samePlace({ page: 2, top: 0.3 }, { page: 3, top: 0.3 })).toBe(false);
+  });
+});
+
+describe("placeText", () => {
+  it("placeText_reads_page_of", () => {
+    expect(placeText(3, 12)).toBe("Page 3 of 12.");
+  });
+});
+
+// The page field and what a jump announces both name this page, so they never disagree.
+describe("pageInView", () => {
+  it("pageInView_is_the_last_page_whose_top_has_passed_the_line", () => {
+    expect(pageInView(250, pages)).toBe(1);
+    expect(pageInView(312, pages)).toBe(2);
+    expect(pageInView(400, pages)).toBe(2);
+  });
+  // Back to a place near the end of page 1: page 2 holds the line, as the page field says.
+  it("pageInView_a_sliver_of_a_page_at_the_top_is_not_the_page_in_view", () => {
+    expect(placeAt(296, pages)).toEqual({ page: 1, top: 0.98 });
+    expect(pageInView(296 + 100, pages)).toBe(2);
+  });
+  it("pageInView_above_every_page_is_page_1", () => {
+    expect(pageInView(50, pages)).toBe(1);
+    expect(pageInView(50, [])).toBe(1);
+  });
+});
+
+// A jump that arrives while the file reloads must not scroll on the old file's page boxes.
+describe("placeReady", () => {
+  const a = new ArrayBuffer(1);
+  const b = new ArrayBuffer(1);
+  it("a_place_waits_for_its_own_file", () => {
+    expect(placeReady({ bytes: a, version: 1 }, { bytes: a, version: 1 }, true)).toBe(true);
+    expect(placeReady({ bytes: a, version: 1 }, { bytes: b, version: 1 }, true)).toBe(false);
+    expect(placeReady({ bytes: a, version: 1 }, { bytes: a, version: 2 }, true)).toBe(false);
+    expect(placeReady(null, { bytes: a, version: 1 }, true)).toBe(false);
+    expect(placeReady({ bytes: a, version: 1 }, { bytes: a, version: 1 }, false)).toBe(false);
+  });
+});
+
+// A pick that leads where the view already is moves nothing; it says where the view is, so the key isn't taken for doing nothing.
+describe("alreadyHere", () => {
+  it("a_jump_to_the_place_in_view_says_the_page", () => {
+    expect(alreadyHere({ page: 3, top: 0 }, { page: 3, top: 0.002 }, { page: 3, count: 40 })).toBe("Page 3 of 40.");
+  });
+  it("alreadyHere_is_null_for_a_real_move_or_a_pdf_still_loading", () => {
+    expect(alreadyHere({ page: 9, top: 0 }, { page: 3, top: 0 }, { page: 3, count: 40 })).toBeNull();
+    expect(alreadyHere({ page: 3, top: 0 }, null, { page: 3, count: 40 })).toBeNull();
+    expect(alreadyHere({ page: 3, top: 0 }, { page: 3, top: 0 }, null)).toBeNull();
+  });
+});
+
+// A kept tab that isn't selected is hidden, and its body measures 0 wide. Laying the pages out for that, and reading the place from
+// a layout with no size, lost the reading place on every tab switch (PR review, 2026-11-19). The browser keeps the scroll offset itself.
+describe("bodyWidthChange", () => {
+  it("a_hidden_tab_keeps_its_width_so_its_place_stays", () => {
+    expect(bodyWidthChange(804, 0)).toBeNull();
+  });
+  it("bodyWidthChange_is_a_new_width_to_lay_out_or_nothing", () => {
+    expect(bodyWidthChange(804, 804)).toBeNull();
+    expect(bodyWidthChange(804, 484)).toBe(484);
+    expect(bodyWidthChange(0, 309)).toBe(309);
+  });
+});

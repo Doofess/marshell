@@ -149,6 +149,14 @@ describe("the text tab's commands", () => {
   });
 });
 
+describe("the PDF tab's commands", () => {
+  it("map_to_their_shortcut_kinds", () => {
+    expect(commandShortcut("pane-pdf-find")).toEqual({ kind: "paneFind" });
+    expect(commandShortcut("pane-pdf-outline")).toEqual({ kind: "paneOutline" });
+    expect(commandShortcut("pane-pdf-pages")).toEqual({ kind: "panePages" });
+  });
+});
+
 describe("select region command", () => {
   it("maps to its shortcut kind", () => {
     expect(commandShortcut("select-region")).toEqual({ kind: "selectRegion" });

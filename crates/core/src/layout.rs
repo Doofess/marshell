@@ -200,6 +200,8 @@ fn path_ok(path: &str) -> bool {
 }
 
 const MAX_TITLE_CHARS: usize = 200;
+/// A place's `top`, in ten-thousandths of the page's height.
+const MAX_PLACE_TOP: u32 = 10_000;
 
 /// A page a browser tab may hold: a blank page or an http(s) address of at most `MAX_PATH_CHARS`.
 fn is_page_address(s: &str) -> bool {
@@ -405,6 +407,20 @@ pub fn validate_pane(p: &PaneView) -> Result<(), String> {
                     }
                     if e.line.is_some() || e.col.is_some() {
                         return Err(format!("{at}: a browser tab has no line or col"));
+                    }
+                    if e.page.is_some() || e.top.is_some() {
+                        return Err(format!("{at}: a browser tab has no page or top"));
+                    }
+                }
+                if e.page == Some(0) {
+                    return Err(format!("{at}: page must be 1 or more, not 0"));
+                }
+                if let Some(top) = e.top {
+                    if e.page.is_none() {
+                        return Err(format!("{at}: top needs page"));
+                    }
+                    if top > MAX_PLACE_TOP {
+                        return Err(format!("{at}: top must be at most {MAX_PLACE_TOP}, not {top}"));
                     }
                 }
             }
@@ -697,6 +713,8 @@ mod tests {
                     path: (*p).into(),
                     line: None,
                     col: None,
+                    page: None,
+                    top: None,
                     view: "rendered".into(),
                 })
                 .collect(),
@@ -704,6 +722,68 @@ mod tests {
             title: None,
             opened_by: None,
             unseen: false,
+        }
+    }
+
+    fn pane_with_place(page: Option<u32>, top: Option<u32>) -> PaneView {
+        let mut t = file_tab("a", &["C:/work/a.pdf"]);
+        t.history[0].page = page;
+        t.history[0].top = top;
+        pane_with("s", session(vec![t]))
+    }
+
+    #[test]
+    fn a_file_entry_keeps_its_place() {
+        let pane = pane_with_place(Some(3), Some(2500));
+        assert_eq!(validate_pane(&pane), Ok(()));
+        let json = serde_json::to_string(&pane).unwrap();
+        let back: PaneView = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, pane);
+        let e = &back.sessions["s"].tabs[0].history[0];
+        assert_eq!((e.page, e.top), (Some(3), Some(2500)));
+        let bare = serde_json::to_string(&pane_with_place(None, None)).unwrap();
+        assert!(!bare.contains("\"page\"") && !bare.contains("\"top\""));
+    }
+
+    #[test]
+    fn an_entry_from_an_older_file_has_no_place() {
+        let e: PaneEntry =
+            serde_json::from_str(r#"{"path":"C:/a.pdf","line":null,"col":null,"view":"rendered"}"#).unwrap();
+        assert_eq!((e.page, e.top), (None, None));
+        let e: PaneEntry = serde_json::from_str(r#"{"path":"C:/a.pdf","view":"rendered"}"#).unwrap();
+        assert_eq!((e.page, e.top), (None, None));
+    }
+
+    #[test]
+    fn a_place_out_of_bounds_is_refused() {
+        assert!(
+            validate_pane(&pane_with_place(Some(0), None))
+                .unwrap_err()
+                .contains("page")
+        );
+        assert!(
+            validate_pane(&pane_with_place(Some(1), Some(10_001)))
+                .unwrap_err()
+                .contains("top")
+        );
+        assert!(
+            validate_pane(&pane_with_place(None, Some(5)))
+                .unwrap_err()
+                .contains("top")
+        );
+        assert_eq!(validate_pane(&pane_with_place(Some(1), Some(10_000))), Ok(()));
+        assert_eq!(validate_pane(&pane_with_place(Some(1), Some(0))), Ok(()));
+    }
+
+    #[test]
+    fn a_browser_tab_has_no_place() {
+        for (page, top) in [(Some(1), None), (Some(1), Some(0))] {
+            let mut t = file_tab("b", &["https://example.com/"]);
+            t.kind = "browser".into();
+            t.history[0].page = page;
+            t.history[0].top = top;
+            let err = validate_pane(&pane_with("s", session(vec![t]))).unwrap_err();
+            assert!(err.contains("page"), "{err}");
         }
     }
 

@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { PreviewPane, bodyTakesFocus, formatSize, quietViews, type PreviewPaneProps } from "./Preview";
+import { PreviewPane, bodyTakesFocus, escapeLeaves, formatSize, movedPlace, quietViews, type PreviewPaneProps } from "./Preview";
 import { followWebLink } from "./webLink";
 import type { FileState } from "./usePreviewFile";
 
@@ -164,17 +164,65 @@ describe("Rendered and Source", () => {
 describe("bodyTakesFocus", () => {
   const md = (view: "rendered" | "source", line: number | null = null) => ({ path: "C:\\p\\a.md", line, col: null, view });
   it("takes_the_keyboard_when_the_tab_goes_somewhere", () => {
-    expect(bodyTakesFocus(md("rendered"), md("source"), false)).toBe(true);
-    expect(bodyTakesFocus(md("source"), md("source", 4), false)).toBe(true);
-    expect(bodyTakesFocus(md("source"), { ...md("source"), path: "C:\\p\\b.md" }, false)).toBe(true);
+    expect(bodyTakesFocus(md("rendered"), md("source"), false, false)).toBe(true);
+    expect(bodyTakesFocus(md("source"), md("source", 4), false, false)).toBe(true);
+    expect(bodyTakesFocus(md("source"), { ...md("source"), path: "C:\\p\\b.md" }, false, false)).toBe(true);
   });
   it("leaves_the_keyboard_for_the_source_view_a_merge_showed", () => {
     // The answer can come while the person is in the terminal; the tab moves the keyboard on from the body itself (6q-4b decision 7.2).
-    expect(bodyTakesFocus(md("rendered"), md("source"), true)).toBe(false);
+    expect(bodyTakesFocus(md("rendered"), md("source"), true, false)).toBe(false);
   });
   it("a_quiet_switch_that_did_not_happen_does_not_keep_a_later_move_quiet", () => {
-    expect(bodyTakesFocus(md("rendered"), { ...md("rendered"), path: "C:\\p\\b.md" }, true)).toBe(true);
-    expect(bodyTakesFocus(md("rendered"), md("rendered", 9), true)).toBe(true);
+    expect(bodyTakesFocus(md("rendered"), { ...md("rendered"), path: "C:\\p\\b.md" }, true, false)).toBe(true);
+    expect(bodyTakesFocus(md("rendered"), md("rendered", 9), true, false)).toBe(true);
+  });
+  // A jump from the sidebar beside the pages keeps the keyboard in the sidebar (6q-5 decision 8).
+  const pdf = (page: number, path = "C:\\p\\a.pdf") => ({ path, line: null, col: null, view: "rendered" as const, page, top: 0 });
+  it("a quiet jump within the file keeps the keyboard where it is", () => {
+    expect(bodyTakesFocus(pdf(1), pdf(7), false, true)).toBe(false);
+    // Another file always takes it.
+    expect(bodyTakesFocus(pdf(1), pdf(7, "C:\\p\\b.pdf"), false, true)).toBe(true);
+  });
+  it("Back to another page of the same file takes the keyboard", () => {
+    expect(bodyTakesFocus(pdf(7), pdf(1), false, false)).toBe(true);
+  });
+});
+
+describe("movedPlace", () => {
+  const at = (page: number, top = 0, path = "C:\\p\\a.pdf") => ({ path, line: null, col: null, view: "rendered" as const, page, top: Math.round(top * 10000) });
+  it("the same entry is no move", () => {
+    const e = at(3);
+    expect(movedPlace(e, e, null)).toBe(false);
+  });
+  it("recording the place being left is no move", () => {
+    // leave() saves the place in view into the entry; the view is already there.
+    expect(movedPlace(at(3), at(5, 0.25), { page: 5, top: 0.25 })).toBe(false);
+  });
+  it("a jump, Back or Forward to another place is a move", () => {
+    expect(movedPlace(at(3), at(12), null)).toBe(true);
+    expect(movedPlace(at(3), at(12), { page: 5, top: 0.25 })).toBe(true);
+  });
+  it("another file is a move even at the recorded place", () => {
+    expect(movedPlace(at(3), at(5, 0.25, "C:\\p\\b.pdf"), { page: 5, top: 0.25 })).toBe(true);
+  });
+});
+
+describe("escapeLeaves", () => {
+  const esc = { key: "Escape", ctrlKey: false, altKey: false, metaKey: false, shiftKey: false };
+  it("escapeLeaves_from_the_pages", () => {
+    expect(escapeLeaves(esc, false)).toBe(true);
+  });
+  it("escapeLeaves_not_when_a_control_took_it", () => {
+    expect(escapeLeaves({ ...esc, defaultPrevented: true }, false)).toBe(false);
+    expect(escapeLeaves({ ...esc, defaultPrevented: false }, false)).toBe(true);
+  });
+  it("escapeLeaves_not_from_the_editor", () => {
+    expect(escapeLeaves(esc, true)).toBe(false);
+  });
+  it("is only for a bare Escape", () => {
+    expect(escapeLeaves({ ...esc, key: "Enter" }, false)).toBe(false);
+    expect(escapeLeaves({ ...esc, shiftKey: true }, false)).toBe(false);
+    expect(escapeLeaves({ ...esc, ctrlKey: true }, false)).toBe(false);
   });
 });
 
