@@ -207,8 +207,10 @@ export function drawsFreehand(target: Element | null, text: HTMLElement): boolea
  * swallow it, and the tab ends a note's editing itself before letting Esc go to the terminal. Text being typed keeps every
  * key.
  */
-export function pdfjsTakesKey(key: string, target: Element | null, tool: NoteTool): boolean {
+export function pdfjsTakesKey(key: string, target: Element | null, tool: NoteTool, own?: Pick<Element, "contains">): boolean {
   if (!target || key === "Escape") return false;
+  // Every tab's pdf.js listens on the window: a key aimed at another tab's pages is never this one's.
+  if (own && !own.contains(target)) return false;
   if (target.closest(EDITABLE) || target.closest(OWN_CONTROLS)) return false;
   if (target.closest(".annotationEditorLayer")) return true;
   const onPages = target.closest(".pdf__pagelist") !== null || target.closest(".preview__body") === target;
@@ -219,6 +221,22 @@ export function pdfjsTakesKey(key: string, target: Element | null, tool: NoteToo
 }
 
 /** The pdf.js layers over one drawn page. */
+/** The file's notes pdf.js's editor takes: highlights and free text to change, and ink, which it alone draws while editing. */
+const TAKEN = new Set(["Highlight", "FreeText", "Ink"]);
+
+/**
+ * Whether the editor is handed one of the file's notes. A stamp stays drawn on the page: pdf.js's stamp editor reads the
+ * structure tree and the stamp's own canvas, which these pages don't make. A locked note (not editable) is drawn there too.
+ */
+export function editorTakes(a: { subtype?: string; isEditable?: boolean }): boolean {
+  return a.isEditable === true && a.subtype !== undefined && TAKEN.has(a.subtype);
+}
+
+/** Leaves the file's ink as it is drawn (decision 7: read-only): no pointer or keyboard reaches its editor, so it can't be moved or deleted. */
+export function keepFileInkDrawn(e: { editorType: string; div: { inert: boolean } | null }): void {
+  if (e.editorType === "ink" && e.div) e.div.inert = true;
+}
+
 export type PageLayers = { editor: { destroy(): void }; draw: { destroy(): void } };
 export type LayerMaker = (pageIndex: number, page: PDFPageProxy, parts: { holder: HTMLElement; text: HTMLElement }, scale: number) => Promise<PageLayers>;
 
@@ -274,6 +292,7 @@ type Ui = {
   addCommands(params: unknown): void;
   addEditor(e: unknown): void;
   removeEditor(e: unknown): void;
+  addToAnnotationStorage(e: unknown): void;
   undo(): void;
   redo(): void;
   registerEditorTypes(types: unknown[]): void;
@@ -380,7 +399,7 @@ export async function createNotesEditor(
   class Manager extends (lib.AnnotationEditorUIManager as unknown as new (...a: unknown[]) => Ui) {
     keydown(e: KeyboardEvent) {
       if (e.key === "Shift") this.isShiftKeyDown = true;
-      if (live && pdfjsTakesKey(e.key, e.target instanceof Element ? e.target : null, tool)) super.keydown(e);
+      if (live && pdfjsTakesKey(e.key, e.target instanceof Element ? e.target : null, tool, o.container)) super.keydown(e);
     }
     // Notes aren't copied, cut, pasted or dropped: pdf.js would take every copy and paste in the window while editing.
     copy() {}
@@ -405,6 +424,11 @@ export async function createNotesEditor(
       super.addEditor(e);
       held.set(e.id, e);
       if (e.annotationElementId) news.known.add(e.id);
+    }
+    // Called once a note's element is on the page.
+    addToAnnotationStorage(e: Editor) {
+      super.addToAnnotationStorage(e);
+      keepFileInkDrawn(e);
     }
     removeEditor(e: Editor) {
       super.removeEditor(e);
@@ -460,7 +484,7 @@ export async function createNotesEditor(
       ["--scale-round-y", "1px"],
     ] as const)
       holder.style.setProperty(k, v);
-    const annotations = (await page.getAnnotations({ intent: "display" })).filter((a: { isEditable?: boolean }) => a.isEditable);
+    const annotations = (await page.getAnnotations({ intent: "display" })).filter(editorTakes);
     const host = document.createElement("div");
     host.className = "pdf__draw";
     const draw = new lib.DrawLayer({ pageIndex });

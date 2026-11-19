@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { drawsFreehand, editorKeysAllowed, HIGHLIGHT_COLORS, highlightText, layerInView, mergeNotes, noteNews, opensComment, pageAttacher, pdfjsTakesKey, readdGuard, selectionLayer, type HeldNote, type LiveNote, type NewsState, type Note, type PageLayers } from "./editor";
+import { drawsFreehand, editorKeysAllowed, editorTakes, HIGHLIGHT_COLORS, highlightText, keepFileInkDrawn, layerInView, mergeNotes, noteNews, opensComment, pageAttacher, pdfjsTakesKey, readdGuard, selectionLayer, type HeldNote, type LiveNote, type NewsState, type Note, type PageLayers } from "./editor";
 
 /** A stand-in for a DOM element: `contains` follows the parent chain, `closest` matches by a list of selectors it answers to. */
 type Fake = { parent: Fake | null; matches: string[]; contains(o: unknown): boolean; closest(sel: string): Fake | null };
@@ -87,6 +87,15 @@ describe("pdfjsTakesKey", () => {
 
   it("Delete, the arrows and Ctrl+A on the pages but off a note stay the page's", () => {
     for (const key of ["Delete", "ArrowDown", "a"]) expect(pdfjsTakesKey(key, t(scroller), "freetext")).toBe(false);
+  });
+
+  it("final review 6q-6: a key aimed at another tab's pages never reaches this tab's pdf.js", () => {
+    const other = el(null, [".preview__body"]);
+    const otherNote = el(el(el(other, [".pdf__pagelist"]), [".annotationEditorLayer"]), [".freeTextEditor"]);
+    const own = scroller as unknown as Element;
+    for (const key of ["z", "y", "Delete"]) expect(pdfjsTakesKey(key, t(otherNote), "none", own)).toBe(false);
+    expect(pdfjsTakesKey("Enter", t(other), "freetext", own)).toBe(false);
+    expect(pdfjsTakesKey("z", t(note), "none", own)).toBe(true);
   });
 
   it("Ctrl+Z and Ctrl+Y on the pages undo and redo, so a deleted note can come back", () => {
@@ -376,5 +385,28 @@ describe("live check 6q-6: Show comment", () => {
     expect(opensComment({}, false, false)).toBe(false);
     expect(opensComment({}, true, false)).toBe(false);
     expect(opensComment(null, true, undefined)).toBe(false);
+  });
+});
+
+describe("final review 6q-6: other apps' stamps and ink stay as they are", () => {
+  it("hands pdf.js's editor the file's highlights, free text and ink, and leaves a stamp drawn on the page", () => {
+    const a = (subtype: string, isEditable = true) => ({ subtype, isEditable });
+    expect(editorTakes(a("Highlight"))).toBe(true);
+    expect(editorTakes(a("FreeText"))).toBe(true);
+    expect(editorTakes(a("Ink"))).toBe(true);
+    // pdf.js's stamp editor needs the structure tree and the stamp's own canvas, which these pages don't make.
+    expect(editorTakes(a("Stamp"))).toBe(false);
+    // A locked note is drawn on the page by pdf.js itself.
+    expect(editorTakes(a("Highlight", false))).toBe(false);
+  });
+  it("puts the file's ink out of reach of the pointer and the keyboard, so it stays read-only", () => {
+    const ink = { editorType: "ink", div: { inert: false } };
+    const highlight = { editorType: "highlight", div: { inert: false } };
+    const freetext = { editorType: "freetext", div: { inert: false } };
+    for (const e of [ink, highlight, freetext]) keepFileInkDrawn(e);
+    expect(ink.div.inert).toBe(true);
+    expect(highlight.div.inert).toBe(false);
+    expect(freetext.div.inert).toBe(false);
+    expect(() => keepFileInkDrawn({ editorType: "ink", div: null })).not.toThrow();
   });
 });
