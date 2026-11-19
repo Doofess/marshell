@@ -6,8 +6,8 @@ import { FindBar, pdfKey, selectionText, stepText } from "./FindBar";
 import { PdfToolbar } from "./PdfToolbar";
 import { usePdfFind } from "./findText";
 import { placeOfDest } from "./dest";
-import { linksOf, PageLinks, type LinkGoal, type PageLink } from "./links";
-import { clampPlace, pageInView, placeAt, placeReady, placeText, scrollFor } from "./place";
+import { handKeyboardOn, linksOf, PageLinks, type LinkGoal, type PageLink } from "./links";
+import { bodyWidthChange, clampPlace, pageInView, placeAt, placeReady, placeText, scrollFor } from "./place";
 import { ancestorsOf, loadOutline, pickSays, sectionAt, type OutlineNode } from "./outline";
 import { PdfSidebar } from "./PdfSidebar";
 import { Thumbnails } from "./Thumbnails";
@@ -99,6 +99,7 @@ function PdfPage({ doc, n, name, size, scale, root, overlay, onText, onFollow }:
     const el = holder.current;
     if (!el) return;
     if (!live) {
+      handKeyboardOn(el.parentElement, document.activeElement, root);
       el.replaceChildren();
       setLinks([]);
       return;
@@ -239,8 +240,8 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
   useEffect(() => {
     if (!scroller) return;
     const measure = () => {
-      const next = scroller.clientWidth;
-      if (next === bodyWNow.current) return;
+      const next = bodyWidthChange(bodyWNow.current, scroller.clientWidth);
+      if (next === null) return;
       // The pages are about to take new sizes: the place at the top of the view is read before they do.
       keep.current = reading.current();
       bodyWNow.current = next;

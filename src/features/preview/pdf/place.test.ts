@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { alreadyHere, clampPlace, pageInView, placeAt, placeReady, placeText, samePlace, scrollFor, type PageBox } from "./place";
+import { alreadyHere, bodyWidthChange, clampPlace, pageInView, placeAt, placeReady, placeText, samePlace, scrollFor, type PageBox } from "./place";
 
 // Two pages of 200 px with a 12 px gap between them, in client coordinates.
 const pages: PageBox[] = [
@@ -99,5 +99,18 @@ describe("alreadyHere", () => {
     expect(alreadyHere({ page: 9, top: 0 }, { page: 3, top: 0 }, { page: 3, count: 40 })).toBeNull();
     expect(alreadyHere({ page: 3, top: 0 }, null, { page: 3, count: 40 })).toBeNull();
     expect(alreadyHere({ page: 3, top: 0 }, { page: 3, top: 0 }, null)).toBeNull();
+  });
+});
+
+// A kept tab that isn't selected is hidden, and its body measures 0 wide. Laying the pages out for that, and reading the place from
+// a layout with no size, lost the reading place on every tab switch (PR review, 2026-11-19). The browser keeps the scroll offset itself.
+describe("bodyWidthChange", () => {
+  it("a_hidden_tab_keeps_its_width_so_its_place_stays", () => {
+    expect(bodyWidthChange(804, 0)).toBeNull();
+  });
+  it("bodyWidthChange_is_a_new_width_to_lay_out_or_nothing", () => {
+    expect(bodyWidthChange(804, 804)).toBeNull();
+    expect(bodyWidthChange(804, 484)).toBe(484);
+    expect(bodyWidthChange(0, 309)).toBe(309);
   });
 });

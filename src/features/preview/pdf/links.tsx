@@ -45,6 +45,11 @@ export function labelOf(goal: LinkGoal): string {
   }
 }
 
+/** A page's links that go while one has the keyboard hand it to the pages first: else it falls to nothing, and Tab and Esc start outside the pane. */
+export function handKeyboardOn(page: { contains(n: never): boolean } | null, active: unknown, pages: { focus(o?: FocusOptions): void } | null): void {
+  if (page && active && page.contains(active as never)) pages?.focus({ preventScroll: true });
+}
+
 /** The links among a page's annotations, with their boxes as fractions of the page. `toView` maps a PDF rectangle to the view's. */
 export function linksOf(annotations: readonly unknown[], view: { width: number; height: number; toView(rect: readonly number[]): number[] }): PageLink[] {
   const out: PageLink[] = [];

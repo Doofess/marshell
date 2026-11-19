@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { goalOf, linksOf, PageLinks, type PageLink } from "./links";
+import { goalOf, handKeyboardOn, linksOf, PageLinks, type PageLink } from "./links";
 
 describe("goalOf", () => {
   it("goalOf_http_and_https_are_web", () => {
@@ -104,5 +104,23 @@ describe("PageLinks", () => {
   it("PageLinks_are_placed_by_physical_left_and_top", () => {
     expect(html).toMatch(/left:10%;top:20%;width:30%;height:5%/);
     expect(html).not.toContain("inset-inline-start");
+  });
+});
+
+// A page more than three screens away is dropped with its links. One that had the keyboard took it with it, to nothing: the next
+// Tab started outside the pane and Esc went to the window (PR review, 2026-11-19).
+describe("handKeyboardOn", () => {
+  const link = { id: "link" };
+  const page = { contains: (n: unknown) => n === link };
+  it("a_dropped_page_hands_the_keyboard_on_its_link_to_the_pages", () => {
+    const pages = { focus: vi.fn() };
+    handKeyboardOn(page, link, pages);
+    expect(pages.focus).toHaveBeenCalledWith({ preventScroll: true });
+  });
+  it("handKeyboardOn_leaves_the_keyboard_that_is_elsewhere", () => {
+    const pages = { focus: vi.fn() };
+    handKeyboardOn(page, { id: "toolbar" }, pages);
+    handKeyboardOn(null, link, pages);
+    expect(pages.focus).not.toHaveBeenCalled();
   });
 });

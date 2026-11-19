@@ -36,6 +36,14 @@ export function scrollFor(place: Place, box: PageBox, viewTop: number): number {
   return box.top + place.top * box.height - viewTop;
 }
 
+/**
+ * The body width the pages are laid out for next, or null for no change. A hidden tab (a kept tab not selected) measures 0 wide:
+ * its pages keep their layout, and the browser keeps its scroll offset, so it comes back at the place it was left.
+ */
+export function bodyWidthChange(prev: number, next: number): number | null {
+  return next > 0 && next !== prev ? next : null;
+}
+
 /** A place is put only once the document of these bytes and this version is laid out, so a jump during a reload waits for the new file. */
 export function placeReady<B>(loaded: { bytes: B; version: number } | null, now: { bytes: B; version: number }, laidOut: boolean): boolean {
   return laidOut && loaded !== null && loaded.bytes === now.bytes && loaded.version === now.version;
