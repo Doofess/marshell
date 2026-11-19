@@ -35,7 +35,7 @@
 
 ## Recheck after the final review
 
-The recheck ended at 15:28. It used `pnpm tauri build --no-bundle` at `2be66ab9` and then at `6924912d`. The PR review's fixes were checked the same way at `9d040c10`, ending at 15:45. Each build ran as `target/release/marshell-app.exe` against the same scratch homes, with the dev app stopped. Afterwards each tree was stopped by PID, and it held no agent CLI.
+The recheck ended at 15:28. It used `pnpm tauri build --no-bundle` at `2be66ab9` and then at `6924912d`. The PR review's fixes were checked the same way at `9d040c10`, and its second round's at `2b8bea55`, ending at 15:57 (the first round's at 15:45). Each build ran as `target/release/marshell-app.exe` against the same scratch homes, with the dev app stopped. Afterwards each tree was stopped by PID, and it held no agent CLI.
 
 | Check | Result |
 | --- | --- |
@@ -45,6 +45,8 @@ The recheck ended at 15:28. It used `pnpm tauri build --no-bundle` at `2be66ab9`
 | An outline entry with no destination | Not run live. No fixture has one. The broken entry has a destination the file lacks, which is check 6's path. `pickSays_an_entry_with_no_destination_leads_nowhere` covers it. |
 | The keyboard leaving a sidebar over the pages (`9d040c10`) | Pass. Shift+Tab from the Outline tab closed the sidebar and put the keyboard on "Find". "Show pages" still kept it open. Alt+Tab, the case the change is for, needs a real window switch and was not run. `an_overlying_sidebar_stays_open_when_the_window_loses_focus` covers the rule. |
 | A pick that leads to the place in view (`9d040c10`) | Pass. Picking the same outline entry a second time left the view where it was, with the Page field at 6, and said "Page 6 of 40." |
+| A tab switch keeps the reading place (`2b8bea55`) | Pass after finding 7. `outline-links.pdf` at page 12 (scrollTop 4260), then the `scanned-plain.pdf` tab, then back: page 12 at 4260. |
+| A dropped page's focused link (`2b8bea55`) | Pass after finding 8. With the keyboard on a page 1 link, 14 Page Downs dropped page 1's links and the keyboard went to the pages ("outline-links.pdf, contents"), which went on to page 23; Tab then went to the PDF toolbar's sidebar button. |
 
 ## Findings
 
@@ -66,4 +68,6 @@ The recheck ended at 15:28. It used `pnpm tauri build --no-bundle` at `2be66ab9`
    - The test `show_pages_moves_the_keyboard_to_the_pages_tab_before_the_button_goes` in `PdfSidebar.interaction.test.tsx` failed first.
    - Rechecked in the release build at `6924912d`.
 6. **Outside this slice: Esc on the pages does nothing when the selected session has ended.** In the recheck the selected session, "PowerShell 7", had ended last time, and the window's only terminal was the shell panel's. The pane's Esc asks for the selected session's terminal, so the keyboard stayed on the pages and nothing was said. Check 7 passed with a live Claude Code session selected. Not fixed; a lead for a later slice.
-7. **A note on the emulation.** Emulated forced colours switch the media query and the system colours, but not the author's fills. The sidebar kept its `--bg-raised` in the screenshots, with the same computed colour with the emulation on and off. The sidebar keeps `forced-color-adjust: auto`, so a real high-contrast theme paints it Canvas. This wasn't checked in a real theme; that waits for the release sign-off pass in `docs/a11y/`.
+7. **A tab switch lost the reading place.** Seen in the PR's second review and confirmed in the release build at `c3792783`: switching from page 12 to another tab and back showed page 6. A kept tab that isn't selected is hidden, so its body measured 0 wide; the view laid the pages out for that and read the place from a layout with no size. The browser keeps a hidden element's scroll offset itself (a test box kept 700 px through `hidden`). Fixed in `2b8bea55`: `bodyWidthChange` treats a zero width as no change. `a_hidden_tab_keeps_its_width_so_its_place_stays` in `place.test.ts` failed first.
+8. **A dropped page took a focused link's keyboard with it.** Seen in the PR's second review and confirmed in the release build: with the keyboard on a page 1 link, Page Down until page 1 was dropped left the keyboard on `<body>`, and Esc then went to the window. Fixed in `2b8bea55`: `handKeyboardOn` moves it to the pages first. `a_dropped_page_hands_the_keyboard_on_its_link_to_the_pages` in `links.test.tsx` failed first.
+9. **A note on the emulation.** Emulated forced colours switch the media query and the system colours, but not the author's fills. The sidebar kept its `--bg-raised` in the screenshots, with the same computed colour with the emulation on and off. The sidebar keeps `forced-color-adjust: auto`, so a real high-contrast theme paints it Canvas. This wasn't checked in a real theme; that waits for the release sign-off pass in `docs/a11y/`.
