@@ -104,7 +104,16 @@ export function PdfSidebar({ id, name, view, onView, outline, section, expanded,
         ) : outline === null ? null : outline.length === 0 ? (
           <div className="pdf-sidebar__empty">
             <p className="pdf-sidebar__none">This PDF has no outline.</p>
-            <button type="button" className="pdf-sidebar__show" onClick={() => onView("pages", true)}>
+            <button
+              type="button"
+              className="pdf-sidebar__show"
+              onClick={() => {
+                // The keyboard moves to the Pages tab before this button goes: a focused element removed fires focusout with
+                // nowhere to go, which over the pages reads as the keyboard leaving and closes the sidebar.
+                document.getElementById(tab("pages"))?.focus();
+                onView("pages", true);
+              }}
+            >
               Show pages
             </button>
           </div>
