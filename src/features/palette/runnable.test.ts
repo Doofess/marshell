@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { cannotRun, type RunFacts } from "./runnable";
 
-const ALL: RunFacts = { focused: true, sessions: 2, waiting: true, closed: true, shellPanel: true, sidebarToggle: true, textTab: true, undoSave: true };
+const ALL: RunFacts = { focused: true, sessions: 2, waiting: true, closed: true, shellPanel: true, sidebarToggle: true, textTab: true, pdfTab: true, undoSave: true };
 const sorted = (xs: readonly string[]) => [...xs].sort();
 
 describe("cannotRun", () => {
@@ -26,8 +26,14 @@ describe("cannotRun", () => {
     expect(cannotRun({ ...ALL, undoSave: false })).toEqual(["pane-undo-save"]);
   });
 
+  it("the_three_pdf_commands_show_only_for_a_loaded_pdf_tab", () => {
+    const pdf = ["pane-pdf-find", "pane-pdf-outline", "pane-pdf-pages"];
+    expect(sorted(cannotRun({ ...ALL, pdfTab: false }))).toEqual(sorted(pdf));
+    expect(cannotRun(ALL)).toEqual([]);
+  });
+
   it("lists each command once when several facts are missing", () => {
-    const out = cannotRun({ focused: false, sessions: 0, waiting: false, closed: false, shellPanel: false, sidebarToggle: false, textTab: false, undoSave: false });
+    const out = cannotRun({ focused: false, sessions: 0, waiting: false, closed: false, shellPanel: false, sidebarToggle: false, textTab: false, pdfTab: false, undoSave: false });
     expect(new Set(out).size).toBe(out.length);
     expect(out).toContain("move-up");
   });

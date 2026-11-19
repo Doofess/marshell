@@ -41,6 +41,9 @@ export type SessionShortcut =
   | { kind: "paneSave" }
   | { kind: "paneUndoSave" }
   | { kind: "paneGoToLine" }
+  | { kind: "paneFind" }
+  | { kind: "paneOutline" }
+  | { kind: "panePages" }
   | { kind: "paneWordWrap" }
   | { kind: "paneNextConflict" }
   | { kind: "panePreviousConflict" }
@@ -124,6 +127,12 @@ export function commandShortcut(id: string): SessionShortcut | null {
       return { kind: "paneUndoSave" };
     case "pane-go-to-line":
       return { kind: "paneGoToLine" };
+    case "pane-pdf-find":
+      return { kind: "paneFind" };
+    case "pane-pdf-outline":
+      return { kind: "paneOutline" };
+    case "pane-pdf-pages":
+      return { kind: "panePages" };
     case "pane-word-wrap":
       return { kind: "paneWordWrap" };
     case "pane-next-conflict":

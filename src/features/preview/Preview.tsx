@@ -13,7 +13,7 @@ import type { Os } from "../../lib/keymap";
 import { ImageView } from "./ImageView";
 import { kindOf, splitPath } from "./kinds";
 import type { LinkTarget } from "./links";
-import { PdfView } from "./pdf/PdfView";
+import { PdfView, type PdfCommands } from "./pdf/PdfView";
 import { useOpenPageInPane, type OpenInPane } from "../pane/PaneContext";
 import { placeOf, type PaneEntry, type Place, type View } from "../pane/paneState";
 import { samePlace } from "./pdf/place";
@@ -147,6 +147,8 @@ export type PreviewHandle = {
   selectRegion(): boolean;
   /** The text tab's commands, or null while the file is not an editor that has loaded. */
   text(): TextTabCommands | null;
+  /** The PDF tab's commands, or null while the tab is not a PDF that has loaded. */
+  pdf(): PdfCommands | null;
 };
 
 /** What the pane keeps while a region is being marked. */
@@ -174,6 +176,8 @@ type BodyProps = {
   refetch: () => void;
   /** What a text tab hands the pane to call. */
   textCommands: Ref<TextTabCommands>;
+  /** What a PDF tab hands the pane to call. */
+  pdfCommands: Ref<PdfCommands | null>;
   onDirty: (path: string, dirty: boolean) => void;
   onImageSize: (url: string, w: number, h: number) => void;
   onPages: (count: number) => void;
@@ -198,7 +202,7 @@ type BodyProps = {
 
 const noDirty = () => {};
 
-function Body({ entry, file, active, os, announce, refetch, textCommands, onDirty, onImageSize, onPages, onLink, onKey, region, keptDraft, onSource, place, placeKey, onJump, placeNow, onWebLink, onHistory }: BodyProps) {
+function Body({ entry, file, active, os, announce, refetch, textCommands, pdfCommands, onDirty, onImageSize, onPages, onLink, onKey, region, keptDraft, onSource, place, placeKey, onJump, placeNow, onWebLink, onHistory }: BodyProps) {
   const { name } = splitPath(entry.path);
   // A text file, and a deleted one that was text, are the same tab: the editor stays mounted when the file goes and comes back.
   const textTab = (f: Extract<FileState, { phase: "text" | "deleted" }>) => (
@@ -229,6 +233,7 @@ function Body({ entry, file, active, os, announce, refetch, textCommands, onDirt
           placeKey={placeKey}
           onJump={onJump}
           placeNow={placeNow}
+          commands={pdfCommands}
           announce={announce}
           onWebLink={onWebLink}
           onHistory={onHistory}
@@ -239,7 +244,7 @@ function Body({ entry, file, active, os, announce, refetch, textCommands, onDirt
       // A file that was gone before the tab ever showed it has only its draft: the editor opens on that, so the edits can be read
       // and saved again.
       if (file.last?.phase === "text" || (file.last === undefined && keptDraft)) return textTab(file);
-      return file.last ? <Body entry={entry} file={file.last} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} onDirty={onDirty} onImageSize={onImageSize} onPages={onPages} onLink={onLink} onKey={onKey} region={region} keptDraft={keptDraft} onSource={onSource} place={place} placeKey={placeKey} onJump={onJump} placeNow={placeNow} onWebLink={onWebLink} onHistory={onHistory} /> : <p className="preview__message">This file was deleted.</p>;
+      return file.last ? <Body entry={entry} file={file.last} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} pdfCommands={pdfCommands} onDirty={onDirty} onImageSize={onImageSize} onPages={onPages} onLink={onLink} onKey={onKey} region={region} keptDraft={keptDraft} onSource={onSource} place={place} placeKey={placeKey} onJump={onJump} placeNow={placeNow} onWebLink={onWebLink} onHistory={onHistory} /> : <p className="preview__message">This file was deleted.</p>;
     case "error":
       return <p className="preview__message">This file can't be previewed.</p>;
   }
@@ -289,6 +294,7 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
   };
   // What a text tab lets the pane call: Ctrl+S saves through it. Null while no text tab is mounted.
   const textCommands = useRef<TextTabCommands>(null);
+  const pdfCommands = useRef<PdfCommands | null>(null);
   const noteDirty = onDirty ?? noDirty;
   // Focus goes into the scroll body when the tab goes somewhere (a link, Back, Forward, another line), so the arrow keys and
   // Page Up and Down read it at once. Mounting takes no focus, and neither does being selected: a session switch and the tab
@@ -391,6 +397,7 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
       return true;
     },
     text: () => textCommands.current,
+    pdf: () => pdfCommands.current,
   }));
   const add = async (comment: string) => {
     if (!select) return;
@@ -542,7 +549,7 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
             This file was deleted.
           </div>
         )}
-        <Body entry={entry} file={file} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} onDirty={noteDirty} onImageSize={(url, w, h) => setSize({ url, w, h })} onPages={(count) => setPages({ path: entry.path, count })} onLink={follow} onKey={keys} region={regionHooks} keptDraft={keptDraft} onSource={() => views.current?.merge()} place={placeOf(entry)} placeKey={moves.current.count} onJump={jump} placeNow={placeNowRef} onWebLink={(url) => follow({ kind: "web", url })} onHistory={(by) => { if (by < 0) { if (canBack) goBack(); } else if (canForward) goForward(); }} />
+        <Body entry={entry} file={file} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} pdfCommands={pdfCommands} onDirty={noteDirty} onImageSize={(url, w, h) => setSize({ url, w, h })} onPages={(count) => setPages({ path: entry.path, count })} onLink={follow} onKey={keys} region={regionHooks} keptDraft={keptDraft} onSource={() => views.current?.merge()} place={placeOf(entry)} placeKey={moves.current.count} onJump={jump} placeNow={placeNowRef} onWebLink={(url) => follow({ kind: "web", url })} onHistory={(by) => { if (by < 0) { if (canBack) goBack(); } else if (canForward) goForward(); }} />
       </div>
       {select?.step === "comment" && body.current
         ? createPortal(

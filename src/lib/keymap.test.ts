@@ -289,3 +289,11 @@ describe("the text tab's commands", () => {
     for (const id of ["pane-save", "pane-undo-save", "pane-go-to-line", "pane-word-wrap", "pane-next-conflict", "pane-previous-conflict"]) expect(commandById(id).binding).toBeUndefined();
   });
 });
+describe("the PDF tab's commands", () => {
+  it("are_in_the_window_group_with_the_plans_names_and_no_key", () => {
+    expect(commandById("pane-pdf-find")).toMatchObject({ label: "Find in PDF", group: "Window" });
+    expect(commandById("pane-pdf-outline")).toMatchObject({ label: "Show PDF outline", group: "Window" });
+    expect(commandById("pane-pdf-pages")).toMatchObject({ label: "Show PDF pages", group: "Window" });
+    for (const id of ["pane-pdf-find", "pane-pdf-outline", "pane-pdf-pages"]) expect(commandById(id).binding).toBeUndefined();
+  });
+});

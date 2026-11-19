@@ -58,6 +58,7 @@ import { accountLine, UNREACHABLE } from "../accounts/accountsText";
 import { getAccount, getInstall } from "../../lib/api/accounts";
 import { pickFile } from "../../lib/filePicker";
 import { Preview } from "../preview/Preview";
+import type { PdfCommands } from "../preview/pdf/PdfView";
 import { isUnsaved, staleDrafts, withUnsaved } from "../editor/drafts";
 import { dropDraft, listDrafts } from "../editor/editorApi";
 import { SaveDialog, type SaveChoice } from "../editor/SaveDialog";
@@ -700,9 +701,21 @@ export function LiveApp() {
   const shownTextRef = useRef(shownText);
   shownTextRef.current = shownText;
   const textNow = shownText();
+  // The side pane's tabs that can mark a region, by key: a preview tab (which also hands over its PDF commands) or a browser tab (which has none).
+  const regionTabs = useRef(new Map<string, { selectRegion(): boolean; pdf?(): PdfCommands | null }>());
+  // The loaded PDF tab on screen, found like the text tab. Null when the pane is hidden or covered, or the tab is not a PDF that has loaded.
+  const shownPdf = (): PdfCommands | null => {
+    if (!view.pane.open || mainView !== "sessions" || focusedId == null) return null;
+    const shown = tabsOf(view.pane, focusedId);
+    const id = shown.active ?? shown.tabs[0]?.id;
+    return id === undefined ? null : (regionTabs.current.get(pageKey(focusedId, id))?.pdf?.() ?? null);
+  };
+  const shownPdfRef = useRef(shownPdf);
+  shownPdfRef.current = shownPdf;
   // A command that would do nothing now (Close with no session in focus, Reopen with nothing closed) is left out too.
   const idle = cannotRun({
     textTab: textNow !== null,
+    pdfTab: shownPdf() !== null,
     undoSave: textNow?.canUndoSave() === true,
     focused: focusedInfo !== undefined,
     sessions: rows.length,
@@ -934,7 +947,6 @@ export function LiveApp() {
   // or to the address box of a new blank tab.
   const addressBars = useRef(new Map<string, UrlBarHandle>());
   // The side pane's tabs that can mark a region (a page, a PDF, an image), by key: "Select region" in the palette starts the shown one's.
-  const regionTabs = useRef(new Map<string, { selectRegion(): boolean }>());
   const focusAddressSoon = (key: string) => {
     let frames = 0;
     const attempt = () => {
@@ -1553,6 +1565,15 @@ export function LiveApp() {
         case "paneUndoSave":
           shownTextRef.current()?.undoSave();
           return true;
+        case "paneFind":
+          shownPdfRef.current()?.find();
+          return true;
+        case "paneOutline":
+          shownPdfRef.current()?.outline();
+          return true;
+        case "panePages":
+          shownPdfRef.current()?.pages();
+          return true;
         case "paneGoToLine":
           shownTextRef.current()?.goToLine();
           return true;
@@ -1738,7 +1759,7 @@ export function LiveApp() {
     }
     const shortcut = commandShortcut(id);
     // These move the focus (or open a panel that takes it), so they wait for the palette to hand it back first.
-    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "menu" || shortcut?.kind === "paneTab" || shortcut?.kind === "closePaneTab" || shortcut?.kind === "browse" || shortcut?.kind === "newBrowserTab" || shortcut?.kind === "clearBrowserData" || shortcut?.kind === "selectRegion" || shortcut?.kind === "paneSave" || shortcut?.kind === "paneUndoSave" || shortcut?.kind === "paneGoToLine" || shortcut?.kind === "paneWordWrap") return void setTimeout(() => windowCommand(shortcut), 0);
+    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "menu" || shortcut?.kind === "paneTab" || shortcut?.kind === "closePaneTab" || shortcut?.kind === "browse" || shortcut?.kind === "newBrowserTab" || shortcut?.kind === "clearBrowserData" || shortcut?.kind === "selectRegion" || shortcut?.kind === "paneSave" || shortcut?.kind === "paneUndoSave" || shortcut?.kind === "paneGoToLine" || shortcut?.kind === "paneFind" || shortcut?.kind === "paneOutline" || shortcut?.kind === "panePages" || shortcut?.kind === "paneWordWrap") return void setTimeout(() => windowCommand(shortcut), 0);
     if (windowCommand(shortcut)) return;
     if (shortcut?.kind === "launcher") setLauncherOpen(true);
     else if (shortcut?.kind === "prompt") jumpPrompt(shortcut.by);

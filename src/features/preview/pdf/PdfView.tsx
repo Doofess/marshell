@@ -35,6 +35,8 @@ type Props = {
   onJump?: (to: Place, how: { keepFocus: boolean }) => void;
   /** Gets a function that reads the place at the top of the view, under the sticky head. */
   placeNow?: Ref<() => Place | null>;
+  /** Gets the palette's commands for this PDF: null until the document has loaded, and again after an error. */
+  commands?: Ref<PdfCommands | null>;
   /** Says a line through the window's announcer. */
   announce?: (text: string) => void;
   /** A web link on a page: the pane opens it in a browser tab, or asks. */
@@ -133,7 +135,10 @@ function PdfPage({ doc, n, name, size, scale, root, overlay, onText, onFollow }:
 }
 
 /** A PDF as a column of pages: a toolbar, then every page at its final size, drawn as they come into view. */
-export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocument, renderOverlay, place, placeKey, onJump, placeNow, announce, onWebLink, onHistory }: Props) {
+/** What the palette can ask of a loaded PDF. */
+export type PdfCommands = { find(): void; outline(): void; pages(): void };
+
+export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocument, renderOverlay, place, placeKey, onJump, placeNow, announce, onWebLink, onHistory, commands }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const [scroller, setScroller] = useState<HTMLElement | null>(null);
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
@@ -546,6 +551,20 @@ export function PdfView({ bytes, version, name, onPages, onCurrentPage, onDocume
     if (text.trim() && (!findOpen || picked !== null)) find.search({ ...find.query, text });
     setFocusTick((t) => t + 1);
   };
+  // The handle calls through a ref, so it always runs this render's closures; it exists only once the document has loaded.
+  const paletteRef = useRef<PdfCommands | null>(null);
+  const showSidebarView = (v: SidebarView) => {
+    setView(v);
+    setSidebarPref({ view: v });
+    showSidebar();
+  };
+  paletteRef.current = { find: openFind, outline: () => showSidebarView("outline"), pages: () => showSidebarView("pages") };
+  const loaded = doc !== null && !error;
+  useImperativeHandle<PdfCommands | null, PdfCommands | null>(
+    commands,
+    () => (loaded ? { find: () => paletteRef.current?.find(), outline: () => paletteRef.current?.outline(), pages: () => paletteRef.current?.pages() } : null),
+    [loaded],
+  );
   useLayoutEffect(() => {
     if (focusTick === 0) return;
     field.current?.focus();
