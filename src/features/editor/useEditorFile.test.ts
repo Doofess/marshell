@@ -26,6 +26,8 @@ function setup(over: { doc?: () => DocState; put?: (d: Draft) => Promise<boolean
     doc: over.doc ?? (() => cur),
     format: over.format ?? (() => ({ encoding: "utf-8", eol: "lf" })),
     editor: () => null,
+    rendered: () => false,
+    firstConflict: () => f.calls.push("firstConflict"),
     announce: (t) => f.said.push(t),
     reading: over.reading ?? (() => true),
     refetch: () => f.calls.push("refetch"),
@@ -166,7 +168,12 @@ describe("runEffect", () => {
     deps.api.mergeTexts = async (base, mine, disk) => (asked.push([base, mine, disk]), { kind: "merged", text: "merged", conflicts: 2 });
     await runEffect({ type: "merge", id: 3, base: "one", mine: "mine", disk: { text: "other", hash: "2".repeat(64) } }, deps);
     expect(asked).toEqual([["one", "mine", "other"]]);
-    expect(f.events).toEqual([{ type: "merged", id: 3, text: "merged", conflicts: 2, mine: "mine", disk: "2".repeat(64) }]);
+    expect(f.events).toEqual([{ type: "merged", id: 3, text: "merged", conflicts: 2, mine: "mine", disk: "2".repeat(64), rendered: false }]);
+    f.events.length = 0;
+    // The answer says which view the tab shows when it comes, not when Merge was pressed.
+    deps.rendered = () => true;
+    await runEffect({ type: "merge", id: 4, base: "one", mine: "mine", disk: { text: "other", hash: "2".repeat(64) } }, deps);
+    expect(f.events).toEqual([{ type: "merged", id: 4, text: "merged", conflicts: 2, mine: "mine", disk: "2".repeat(64), rendered: true }]);
     f.events.length = 0;
     deps.api.mergeTexts = async () => ({ kind: "refused", line: "The merge took too long." });
     await runEffect({ type: "merge", id: 3, base: "one", mine: "mine", disk: { text: "other", hash: "2".repeat(64) } }, deps);
@@ -198,13 +205,15 @@ describe("runEffect", () => {
     expect(asked.flat().join("")).not.toContain("\r");
     expect(f.events).toEqual([{ type: "mergeFailed", id: 1, line: "x" }]);
   });
-  it("showConflict_goes_to_the_first_conflict", () => {
-    const { deps } = setup();
+  it("showConflict_hands_the_jump_to_the_tab", () => {
+    // The tab knows its view: behind the Rendered view it shows the Source view first (6q-4b decision 7.2).
+    const { f, deps } = setup();
     const went: string[] = [];
     const handle: EditorHandle = { text: () => "", setText() {}, focus() {}, goToLine() {}, toggleWrap() {}, reveal() {}, toConflict: (which) => void went.push(which) };
     deps.editor = () => handle;
     runEffect({ type: "showConflict" }, deps);
-    expect(went).toEqual(["first"]);
+    expect(f.calls).toEqual(["firstConflict"]);
+    expect(went).toEqual([]);
   });
 
   it("an_unsave_that_works_says_unsaved_with_the_new_hash_and_a_conflict_says_refused", async () => {

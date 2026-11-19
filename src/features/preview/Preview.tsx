@@ -21,6 +21,16 @@ import { followWebLink } from "./webLink";
 import { WebLinkBar } from "./WebLinkBar";
 import "./Preview.css";
 
+/**
+ * Whether the body takes the keyboard when the tab's entry changes. It does when the tab goes somewhere, but not for the Source
+ * view a merge showed (`quiet`): that answer can come while the person is in the terminal, and the text tab moves a keyboard
+ * that was on the body on into the editor itself (6q-4b decision 7.2). A quiet switch that never came keeps nothing quiet.
+ */
+export function bodyTakesFocus(was: PaneEntry, now: PaneEntry, quiet: boolean): boolean {
+  const viewOnly = was.path === now.path && was.line === now.line && was.col === now.col && was.view !== now.view;
+  return !(quiet && viewOnly);
+}
+
 /** A size for a sentence: "300 KB", "1.5 MB". */
 export function formatSize(bytes: number): string {
   const one = (v: number) => String(Math.round(v * 10) / 10);
@@ -123,15 +133,17 @@ type BodyProps = {
   onKey: (e: Key) => void;
   region: RegionHooks;
   keptDraft: boolean;
+  /** Shows a Markdown or HTML tab's Source view, after a merge that left conflicts; it doesn't move the keyboard. */
+  onSource: () => void;
 };
 
 const noDirty = () => {};
 
-function Body({ entry, file, active, os, announce, refetch, textCommands, onDirty, onImageSize, onPages, onLink, onKey, region, keptDraft }: BodyProps) {
+function Body({ entry, file, active, os, announce, refetch, textCommands, onDirty, onImageSize, onPages, onLink, onKey, region, keptDraft, onSource }: BodyProps) {
   const { name } = splitPath(entry.path);
   // A text file, and a deleted one that was text, are the same tab: the editor stays mounted when the file goes and comes back.
   const textTab = (f: Extract<FileState, { phase: "text" | "deleted" }>) => (
-    <TextTab key={entry.path} entry={entry} file={f} kind={kindOf(entry.path)} active={active} os={os} onDirty={onDirty} commands={textCommands} announce={announce} refetch={refetch} onLink={onLink} onKey={onKey} />
+    <TextTab key={entry.path} entry={entry} file={f} kind={kindOf(entry.path)} active={active} os={os} onDirty={onDirty} commands={textCommands} announce={announce} refetch={refetch} onLink={onLink} onKey={onKey} onSource={onSource} />
   );
   switch (file.phase) {
     case "loading":
@@ -151,7 +163,7 @@ function Body({ entry, file, active, os, announce, refetch, textCommands, onDirt
       // A file that was gone before the tab ever showed it has only its draft: the editor opens on that, so the edits can be read
       // and saved again.
       if (file.last?.phase === "text" || (file.last === undefined && keptDraft)) return textTab(file);
-      return file.last ? <Body entry={entry} file={file.last} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} onDirty={onDirty} onImageSize={onImageSize} onPages={onPages} onLink={onLink} onKey={onKey} region={region} keptDraft={keptDraft} /> : <p className="preview__message">This file was deleted.</p>;
+      return file.last ? <Body entry={entry} file={file.last} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} onDirty={onDirty} onImageSize={onImageSize} onPages={onPages} onLink={onLink} onKey={onKey} region={region} keptDraft={keptDraft} onSource={onSource} /> : <p className="preview__message">This file was deleted.</p>;
     case "error":
       return <p className="preview__message">This file can't be previewed.</p>;
   }
@@ -170,10 +182,19 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
   const activeRef = useRef(active);
   activeRef.current = active;
   const shownEntry = useRef(entry);
+  // The text tab asked for its Source view after a merge; the next entry change says whether it came.
+  const quietView = useRef(false);
+  const toSource = () => {
+    quietView.current = true;
+    onView("source");
+  };
   useEffect(() => {
     if (shownEntry.current === entry) return;
+    const was = shownEntry.current;
     shownEntry.current = entry;
-    if (activeRef.current) body.current?.focus({ preventScroll: true });
+    const quiet = quietView.current;
+    quietView.current = false;
+    if (activeRef.current && bodyTakesFocus(was, entry, quiet)) body.current?.focus({ preventScroll: true });
   }, [entry]);
   // "Updated" is spoken only to someone reading in the pane; a person typing in the terminal is not interrupted by it.
   const [inside, setInside] = useState(false);
@@ -408,7 +429,7 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
             This file was deleted.
           </div>
         )}
-        <Body entry={entry} file={file} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} onDirty={noteDirty} onImageSize={(url, w, h) => setSize({ url, w, h })} onPages={(count) => setPages({ path: entry.path, count })} onLink={follow} onKey={keys} region={regionHooks} keptDraft={keptDraft} />
+        <Body entry={entry} file={file} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} onDirty={noteDirty} onImageSize={(url, w, h) => setSize({ url, w, h })} onPages={(count) => setPages({ path: entry.path, count })} onLink={follow} onKey={keys} region={regionHooks} keptDraft={keptDraft} onSource={toSource} />
       </div>
       {select?.step === "comment" && body.current
         ? createPortal(

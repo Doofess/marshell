@@ -2,8 +2,8 @@ import { useId } from "react";
 
 type Props = {
   name: string;
-  /** Merges the disk's version into the person's text. */
-  onMerge: () => void;
+  /** Merges the disk's version into the person's text. Absent in a read-only tab, which can't keep the merge (6q-4b decision 7.1). */
+  onMerge?: () => void;
   /** Keeps the person's text; the disk's version is what the next save replaces. */
   onKeep: () => void;
   /** Takes the disk's version and drops the person's edits. */
@@ -20,9 +20,11 @@ export function ChangedBar({ name, onMerge, onKeep, onTake }: Props) {
     <div className="changed-bar" role="group" aria-labelledby={line}>
       <p id={line} className="changed-bar__text">{`${name} changed on disk.`}</p>
       <div className="changed-bar__actions">
-        <button type="button" className="changed-bar__button" onClick={onMerge}>
-          Merge
-        </button>
+        {onMerge && (
+          <button type="button" className="changed-bar__button" onClick={onMerge}>
+            Merge
+          </button>
+        )}
         <button type="button" className="changed-bar__button" onClick={onKeep}>
           Keep mine
         </button>

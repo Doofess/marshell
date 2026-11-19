@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { PreviewPane, formatSize, type PreviewPaneProps } from "./Preview";
+import { PreviewPane, bodyTakesFocus, formatSize, type PreviewPaneProps } from "./Preview";
 import { followWebLink } from "./webLink";
 import type { FileState } from "./usePreviewFile";
 
@@ -158,6 +158,23 @@ describe("Rendered and Source", () => {
     expect(out).toContain("Content-Security-Policy");
     // The policy comes before the file's own markup.
     expect(out.indexOf("Content-Security-Policy")).toBeLessThan(out.indexOf("&lt;h1&gt;"));
+  });
+});
+
+describe("bodyTakesFocus", () => {
+  const md = (view: "rendered" | "source", line: number | null = null) => ({ path: "C:\\p\\a.md", line, col: null, view });
+  it("takes_the_keyboard_when_the_tab_goes_somewhere", () => {
+    expect(bodyTakesFocus(md("rendered"), md("source"), false)).toBe(true);
+    expect(bodyTakesFocus(md("source"), md("source", 4), false)).toBe(true);
+    expect(bodyTakesFocus(md("source"), { ...md("source"), path: "C:\\p\\b.md" }, false)).toBe(true);
+  });
+  it("leaves_the_keyboard_for_the_source_view_a_merge_showed", () => {
+    // The answer can come while the person is in the terminal; the tab moves the keyboard on from the body itself (6q-4b decision 7.2).
+    expect(bodyTakesFocus(md("rendered"), md("source"), true)).toBe(false);
+  });
+  it("a_quiet_switch_that_did_not_happen_does_not_keep_a_later_move_quiet", () => {
+    expect(bodyTakesFocus(md("rendered"), { ...md("rendered"), path: "C:\\p\\b.md" }, true)).toBe(true);
+    expect(bodyTakesFocus(md("rendered"), md("rendered", 9), true)).toBe(true);
   });
 });
 

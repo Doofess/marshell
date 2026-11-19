@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { Draft } from "../../generated/Draft";
 import { start, step, type DocEvent, type DocState } from "./editorDoc";
-import { TextTabView, readOnlyLine, type TextTabViewProps, conflictJump, dirtyNews, isSaveKey, keyboardTo, wrapAtStart } from "./TextTab";
+import { TextTabView, readOnlyLine, type TextTabViewProps, conflictJump, dirtyNews, firstConflict, isSaveKey, keyboardTo, sourceShown, wrapAtStart } from "./TextTab";
 
 // The rendered Markdown needs the DOM, which these tests run without: the stand-in shows the text it was given.
 vi.mock("../preview/MarkdownView", () => ({ MarkdownView: ({ text }: { text: string }) => <div data-md="">{text}</div> }));
@@ -76,11 +76,24 @@ describe("TextTabView", () => {
     expect(buttons.slice(0, 3)).toEqual(["Merge", "Keep mine", "Take disk"]);
   });
 
+  it("a read-only tab's bar offers Keep mine and Take disk but no Merge", () => {
+    // A read-only tab can't keep the merged text, and the editor there takes no Ctrl+Z (6q-4b decision 7.1).
+    const draft: Draft = { path: "C:\\p\\a.txt", text: "mine", base_text: "one\ntwo", base_hash: H1, encoding: "utf-8", eol: "lf", edited_ms: 1 };
+    const doc = step(start, { type: "opened", disk: { text: "theirs", hash: H2 }, draft }, N).state;
+    for (const readOnly of ["own", "managed", "attribute"] as const) {
+      const out = html(doc, { readOnly });
+      const bar = out.slice(out.indexOf("changed-bar"));
+      const buttons = [...bar.matchAll(/<button[^>]*>([^<]*)<\/button>/g)].map((m) => m[1]);
+      expect(buttons.slice(0, 2), readOnly).toEqual(["Keep mine", "Take disk"]);
+      expect(out, readOnly).not.toContain(">Merge<");
+    }
+  });
+
   it("the line under the text shows a merge's result", () => {
     const draft: Draft = { path: "C:\\p\\a.txt", text: "mine", base_text: "one\ntwo", base_hash: H1, encoding: "utf-8", eol: "lf", edited_ms: 1 };
     let doc = step(start, { type: "opened", disk: { text: "theirs", hash: H2 }, draft }, N).state;
     doc = step(doc, { type: "merge" }, N).state;
-    doc = step(doc, { type: "merged", id: 1, text: "<<<<<<< mine\nmine\n=======\ntheirs\n>>>>>>> disk", conflicts: 2, mine: "mine", disk: H2 }, N).state;
+    doc = step(doc, { type: "merged", id: 1, text: "<<<<<<< mine\nmine\n=======\ntheirs\n>>>>>>> disk", conflicts: 2, mine: "mine", disk: H2, rendered: false }, N).state;
     const out = html(doc);
     expect(out).toContain("Merged a.txt. 2 conflicts to resolve.");
     expect(out).not.toMatch(/<button[^>]*>Undo<\/button>/);
@@ -221,6 +234,33 @@ describe("conflictJump", () => {
     const s = spot();
     conflictJump({ rendered: false, editor: null, announce: s.announce }, "next");
     expect(s.said).toEqual([]);
+  });
+});
+
+describe("firstConflict", () => {
+  // After a merge that left conflicts (6q-4b decision 7.2).
+  const spot = () => {
+    const calls: string[] = [];
+    return { calls, editor: { toConflict: (which: string) => calls.push(which), focus: () => calls.push("focus") }, toSource: () => calls.push("source") };
+  };
+  it("goes_to_the_first_conflict_while_the_editor_shows", () => {
+    const s = spot();
+    expect(firstConflict({ rendered: false, editor: s.editor, toSource: s.toSource })).toBe(false);
+    expect(s.calls).toEqual(["first"]);
+  });
+  it("shows_the_source_view_first_and_waits_behind_the_rendered_view", () => {
+    const s = spot();
+    expect(firstConflict({ rendered: true, editor: s.editor, toSource: s.toSource })).toBe(true);
+    expect(s.calls).toEqual(["source"]);
+  });
+  it("once_the_source_view_shows_takes_the_keyboard_on_from_the_tabs_body_only", () => {
+    const s = spot();
+    sourceShown({ editor: s.editor, onBody: true });
+    expect(s.calls).toEqual(["focus", "first"]);
+    s.calls.length = 0;
+    sourceShown({ editor: s.editor, onBody: false });
+    expect(s.calls).toEqual(["first"]);
+    sourceShown({ editor: null, onBody: true });
   });
 });
 
