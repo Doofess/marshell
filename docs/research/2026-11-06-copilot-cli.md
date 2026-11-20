@@ -348,6 +348,31 @@ Evidence tags: [help] = text printed by `copilot ... --help`/`help <topic>`; [do
 
 ---
 
+### What 6n2's first task saw (2026-11-20)
+
+Copilot CLI 1.0.106, the winget exe on Windows and `@github/copilot@1.0.106` from npm in Ubuntu (WSL 2, Node 22.23.5 from a checked tarball). Every home was a scratch folder: `%TEMP%\copilot-6n2-t1` on Windows (`COPILOT_HOME`, `COPILOT_CACHE_HOME`, `USERPROFILE`, `HOME`) and `/tmp/copilot-6n2-t1` in the distro (`HOME`, `COPILOT_HOME`, npm prefix and cache). The model was `fake-openai.mjs`. The real `~/.copilot` kept its modified times, and the distro user's home got no `.copilot`.
+
+- **Event logs (`session-state/<id>/events.jsonl`).** Recorded with `copilot -p` on Windows and in the distro, and one interactive run in the distro. The scrubbed logs are in `crates/core/tests/fixtures/copilot/transcripts/1.0.106/`. The text of Copilot's own system prompt (32,088 characters in each `system.message`) is cut in the fixtures, and nothing else is.
+  - Every line is `{type, data, id, timestamp, parentId}`. Types seen: `session.start`, `session.resume`, `session.model_change`, `session.usage_record`, `session.shutdown`, `instruction.update`, `system.message`, `user.message`, `assistant.turn_start`, `assistant.message`, `assistant.turn_end`, `tool.execution_start`, `tool.execution_complete`, `hook.start`, `hook.end`.
+  - `session.start` holds `sessionId`, `copilotVersion`, `startTime` (ISO), `selectedModel`, `producer` and `context`. `context` is `{cwd}` outside a repository and `{cwd, gitRoot, branch, headCommit}` inside one.
+  - `producer` is `"copilot-agent"` for `-p` and for an interactive run alike, and `assistant.turn_start` says `agentMode: "interactive"` in both. An interactive run adds a `session.model_change` with `source: "startup"` (two samples). `workspace.yaml` beside the log says `client_name: github/cli` in both. Nothing in the log is a dependable sign of a headless run.
+  - `user.message` holds `content` (what was typed) and `transformedContent` (the same with a `<current_datetime>` line in front). `assistant.message` holds `content` and `toolRequests` (`toolCallId`, `name`, `arguments`, `toolTitle`, `intentionSummary`).
+  - `tool.execution_start` holds `toolCallId`, `toolName` and `arguments`. `tool.execution_complete` holds the same `toolCallId`, `success`, `result.content`, sometimes `result.detailedContent` (a diff for `edit`), and `error: {message, code}` when `success` is false. A shell command that exits 3 still has `success: true`, with `shellExecution.exitCode: 3`.
+  - Tool names: `powershell` on Windows and `bash` in the distro, `create`, `edit` (`path`, `old_str`, `new_str`), `view`, `ask_user`.
+  - `--resume=<id>` appends to the same file: a `session.resume` event, then the new turn. `session.shutdown` is written at the end of each run, so a resumed log holds two.
+  - With hooks installed the log also holds a `hook.start` and `hook.end` pair per hook, with the hook's input.
+- **`settings.json`.** Copilot loads the file with a `//` comment, with a trailing comma and with a UTF-8 byte-order mark (`copilot config theme` printed the value each time). When Copilot changes a setting itself (`copilot config model <value>`), it writes the whole file again: comments, the trailing comma and the byte-order mark are gone, CRLF becomes LF, the key order stays and the new key goes last. A run that changes no setting doesn't write the file. Whether a running interactive Copilot later writes over an edit made meanwhile was not checked.
+- **The six keys.** `copilot help config` lists all six: `model`, `defaultPermissionMode` (`manual`, `assisted`, `allow-all`), `autoUpdate`, `autoUpdatesChannel` (stable or prerelease), `theme` (`default`, `github`, `dim`, `high-contrast`, `colorblind`) and `includeCoAuthoredBy`.
+- **`config.json`.** It starts with two `//` lines. On this PC, and in both scratch homes, it holds no account: nobody is signed in. The shape of `lastLoggedInUser` is still known only from the strings in `runtime.node`.
+- **The question dialog.** `ask_user` is offered to the model only in an interactive run. When it is called, `preToolUse` fires with `toolName: "ask_user"`, then `notification` with `notification_type: "elicitation_dialog"` and `title` and `message` both "Information requested". After the answer, `postToolUse` fires with the same `toolName` and `toolResult.textResultForLlm: "User responded: yes"`. The three bodies are in `crates/core/tests/fixtures/copilot/hooks/1.0.106/`. The fake model's new word `ASK <question>` raises it.
+- **WSL.** A hand-written `<COPILOT_HOME>/hooks/marshell.json` whose `exec` is a Windows exe by its `/mnt/c/...` path works: the exe ran for `sessionStart`, `userPromptSubmitted`, `preToolUse`, `postToolUse`, `notification`, `agentStop` and `sessionEnd`, and got its arguments and the body on stdin.
+  - The bodies are the ones Windows gets, with Linux paths: `cwd` is `/tmp/...` and `transcriptPath` is `/tmp/.../session-state/<id>/events.jsonl`.
+  - The exe's own working folder is the UNC form, `\\wsl.localhost\Ubuntu\tmp\...`. A variable reaches it only when `WSLENV` names it: `MARSHELL_TAB_ID` did, `WSL_DISTRO_NAME` and `COPILOT_HOME` did not.
+  - The status line command runs too (the quoted `/mnt/c/...` exe with arguments), with the usual body; its `transcript_path` is the session's folder.
+  - A first interactive run asks for folder trust even with the folder listed under `trustedFolders` in `settings.json`.
+  - The distro can't reach Windows loopback, so the fake model ran inside the distro. The distro's `/tmp` is a tmpfs: it is emptied when the distro stops.
+- **Seen by the way.** On Windows, the `task` tool offered the agents in the real profile's `.claude\agents` although `USERPROFILE` and `HOME` named the scratch home. Copilot finds the real profile some other way, for reading at least. It wrote nothing there.
+
 ### Q1. Settings files
 
 #### Location
@@ -514,13 +539,15 @@ Source: `help-config.txt` ([help config]) and the table in `docs\cli-config-dir-
 ---
 
 ### UNVERIFIED list
-1. Comment/format preservation when the CLI rewrites settings.json.
+1. ~~Comment/format preservation when the CLI rewrites settings.json.~~ It keeps neither (6n2's first task).
 2. Whether mcp-config.json accepts comments (JSONC).
 3. Windows Credential Manager target name for the token.
 4. Whether account API calls work without a session.
 5. BYOK end to end: fake loopback server, required endpoints, other GitHub calls, first-run/trust prompts.
 6. providers.json vs `COPILOT_PROVIDER_*` precedence (docs and runtime string differ).
-7. Node requirement for the npm install; Linux install script layout; WSL home sharing.
+7. Node requirement for the npm install; Linux install script layout. ~~WSL home sharing.~~ A distro has its own `~/.copilot` (6n2's first task).
 8. Automatic session retention inside runtime.node.
 9. Default of `SKILL_CHAR_BUDGET`.
 10. Any on-disk "update available" record besides a newer pkg dir.
+11. The shape of `lastLoggedInUser` and `loggedInUsers` in a signed-in `config.json`.
+12. Whether a running interactive Copilot writes over a settings edit made while it runs.

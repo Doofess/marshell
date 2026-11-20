@@ -150,7 +150,7 @@ This task runs in the main thread, not through a worker. Copilot runs headless f
     - `curated("copilot")` gives the six keys in decision 3's order, and `control` gives `model` and `theme` Text, `defaultPermissionMode` the choice `manual`, `assisted`, `allow-all`, `autoUpdatesChannel` the choice `stable`, `prerelease`, and `autoUpdate` and `includeCoAuthoredBy` Switch.
     - `mask_qwen`'s walk becomes `fn mask_leaves(value: &mut Value, container: &dyn Fn(&[String], &str) -> bool)`, where `container(path, key)` says whether everything under `key` at `path` is hidden. `mask_qwen` keeps its own predicate unchanged. A new `mask_copilot` passes Copilot's: a key named `env` or `headers` in any case, `credentials` under `sandbox`, a key under `telemetry` whose lower-cased name holds `headers`, and it hides the string at the top-level key `proxyUrl`. Both hide a string leaf whose own key passes `is_secret_key`, and never a number or boolean.
     - `parse_masked` and `view` use `mask_copilot` for `"copilot"`, the `NotPlainJson` lock is skipped for it as for Qwen, and `editable` includes it. No managed file is read for it (decision 10).
-    - `text_problem("copilot", text)`: one leading BOM is taken off (unless Task 1 showed Copilot refuses one, in which case a BOM is a problem on line 1), then `jsonc::parse_problem` must find none and `read_value` must give an object; an empty text is line 1.
+    - `text_problem("copilot", text)`: one leading BOM is taken off (Task 1: Copilot loads a file with one), then `jsonc::parse_problem` must find none and `read_value` must give an object; an empty text is line 1.
   - `crates/core/src/server/agents.rs`: the "doesn't change Copilot CLI's settings yet" refusal goes, and `raw_op` checks Copilot's text with `text_problem`.
 - Test: `settings_view.rs` inline, `crates/core/tests/agents_api.rs`
 
@@ -208,17 +208,20 @@ This task runs in the main thread, not through a worker. Copilot runs headless f
 - Test: `transcript.rs` inline, on Task 1's fixtures
 
 **Interfaces:**
-- Consumes: Task 1's fixtures.
+- Consumes: Task 1's fixtures in `crates/core/tests/fixtures/copilot/transcripts/1.0.106/`, named by session id `00000000-0000-4000-8000-000000000NNN.jsonl`: `001` hello, then a resume with "hello again"; `026` `powershell` (exit 0); `047` `create`; `068` `edit`; `089` `view`; `110` `powershell` with `shellExecution.exitCode` 3 and `success` true; `131` `view` with `success` false and `error.message` "Path does not exist"; `152` hello inside a repository (`context.branch` "work-branch"); `167` `bash` in a WSL distro, with `hook.start` and `hook.end` events; `206` `ask_user` in an interactive WSL run. The field names are in the research note, "What 6n2's first task saw".
 - Produces:
   - `pub fn parse(text: &str, session_id: &str) -> Conversation` in `agents::copilot::transcript`.
-  - `pub fn meta(text: &str) -> Option<CopilotMeta>`, where `CopilotMeta { id: String, started_ms: u64, cwd: String, branch: Option<String>, version: Option<String>, client: Client }`, from the first `session.start` event. Task 6b uses it.
+  - `pub fn meta(text: &str) -> Option<CopilotMeta>`, where `CopilotMeta { id: String, started_ms: u64, cwd: String, branch: Option<String>, version: Option<String>, client: Client }`, from the first `session.start` event (`sessionId`, `startTime` as ISO text, `context.cwd`, `context.branch`, `copilotVersion`). `client` is always `Client::Terminal` (decision 15). Task 6b uses it.
 
 - [ ] **Step 1: Write the failing tests.**
   - `a_text_reply_is_one_turn`
   - `each_tool_becomes_a_card` (shell, write, edit and read, with edit and write giving `EditedFile`)
   - `a_failed_tool_is_an_error_card` (`tool.execution_complete` with `success: false`)
   - `the_title_is_the_first_prompt`
-  - `a_compaction_event_is_a_compacted_item`
+  - `a_compaction_event_is_a_compacted_item` (a hand-written `session.compaction_complete` event with `success: true`; none was recorded, the name is from Copilot's `session-events.schema.json`)
+  - `a_shell_command_that_exits_non_zero_is_an_error_card` (`110`: `success` true, `shellExecution.exitCode` 3)
+  - `a_question_is_a_card_with_its_answer` (`206`)
+  - `hook_and_bookkeeping_events_add_nothing` (`167`: `hook.start`, `hook.end`, `session.usage_record`, `session.shutdown`, `system.message`, `instruction.update`)
   - `a_resumed_session_reads_on_as_one_conversation`
   - `an_unknown_event_type_is_skipped_and_the_turns_around_it_stay`
   - `a_truncated_last_line_is_ignored`
@@ -259,7 +262,7 @@ This task runs in the main thread, not through a worker. Copilot runs headless f
   - `history_api.rs`: `get_conversation_reads_a_copilot_session`, and `a_copilot_row_from_6n1_with_no_copy_shows_as_history_shows_any_uncopied_row`.
   - `historyState.test.ts`: the copy names Copilot CLI.
 - [ ] **Step 2: Run.** `cargo test -p marshell-core -j 4 copilot` and `pnpm test src/features/history`. Expected: FAIL.
-- [ ] **Step 3: Implement.** Client: `Marshell` when the copy is linked to a tab by hooks. Otherwise what Task 1 found tells headless from interactive (`Headless` or `Terminal`), or `Terminal` when nothing does.
+- [ ] **Step 3: Implement.** Client: `Marshell` when the copy is linked to a tab by hooks, otherwise `Terminal` (decision 15: the log doesn't tell a headless run).
 - [ ] **Step 4: Run.** `cargo test --workspace -j 4`, then `pnpm test`. Expected: PASS.
 - [ ] **Step 5: Commit.** `cargo fmt --all`, then `feat(history): Copilot CLI conversations show in History, and those run outside Marshell are imported`
 
@@ -291,9 +294,9 @@ Changed at Task 1's gate if Step 5 there showed the hooks can't reach the bridge
 - [ ] **Step 4: Run.** `cargo test --workspace -j 4`, `pnpm test`. Expected: PASS.
 - [ ] **Step 5: Commit.** `cargo fmt --all`, then `feat(wsl): Copilot CLI's hooks are set up inside a WSL distro, and the launcher offers it there`
 
-### Task 8: A `COPILOT_HOME` outside the profile (the config guard)
+### Task 8: A CLI home outside the profile (the config guard)
 
-Worker effort: high. `guard.rs` is safety-critical; the change is the one decision 12 describes and nothing else.
+Worker effort: high. `guard.rs` is safety-critical; the change is the one decision 12 describes and nothing else. At Task 1's gate the user gave all four home variables the same rule.
 
 **Files:**
 - Modify: `crates/core/src/config/guard.rs`
@@ -301,7 +304,7 @@ Worker effort: high. `guard.rs` is safety-critical; the change is the one decisi
 
 **Interfaces:**
 - Produces:
-  - `pub fn moved_agent_homes(env: &dyn Fn(&str) -> Option<String>) -> Vec<PathBuf>`: Copilot's folder when `COPILOT_HOME` is set, not blank, absolute, free of `..` and not a drive root (`projects::is_root` of its canonical form, as `for_home` checks a project); otherwise empty. If Task 1's gate widened decision 12, the other three variables are read the same way here.
+  - `pub fn moved_agent_homes(env: &dyn Fn(&str) -> Option<String>) -> Vec<PathBuf>`: one folder for each of `COPILOT_HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `QWEN_HOME` that is set, not blank, absolute, free of `..` and not a drive root (`projects::is_root` of its canonical form, as `for_home` checks a project). Each value is read the way that CLI's own code reads it (`copilot::home`, the Claude arm of `skill::skill_path`, `codex::hooks`' home, `qwen::home` with its `~`), so the guard opens exactly the folder the adapter writes to; a `~` form that lands inside the profile adds nothing new. A variable that fails the rule adds nothing, and the others still count.
   - `Guard::for_home` adds `moved_agent_homes(&|k| std::env::var(k).ok())` to `allowed`. `Guard::check`'s order is unchanged: Marshell's own home, then the denied folders and managed names, then `allowed`.
 
 - [ ] **Step 1: Write the failing tests.**
@@ -309,11 +312,13 @@ Worker effort: high. `guard.rs` is safety-critical; the change is the one decisi
   - `a_folder_beside_the_copilot_home_stays_closed`: `D:\work\other\x.json` and `D:\work\copilot-home-2\x.json` are `OutsideAllowed`.
   - `moved_agent_homes_refuses_a_root_a_relative_path_a_dot_dot_and_a_blank`: `D:\`, `copilot-home`, `D:\a\..\b` and `"  "` each give nothing.
   - `a_copilot_home_inside_marshells_home_is_still_marshells_own`, `a_copilot_home_under_a_denied_folder_is_still_managed`, `a_managed_file_name_in_the_copilot_home_is_still_refused` (`managed-settings.json`).
+  - `each_cli_home_variable_opens_its_own_folder`: with the four variables naming `D:\w\cp`, `D:\w\cl`, `D:\w\cx` and `D:\w\qw`, `moved_agent_homes` gives those four, and a guard built with them admits `D:\w\cl\settings.json`, `D:\w\cx\hooks.json` and `D:\w\qw\settings.json`.
+  - `a_bad_home_variable_does_not_close_the_others`: `CODEX_HOME` as `D:\` and `QWEN_HOME` as `D:\w\qw` give only Qwen's folder.
   - `agents_api.rs`: `copilot_hooks_plan_applies_in_a_home_outside_the_profile`, with the service's guard built from `Guard::new` and that folder.
 - [ ] **Step 2: Run.** `cargo test -p marshell-core -j 4 guard`. Expected: FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run.** `cargo test -p marshell-core -j 4`. Expected: PASS.
-- [ ] **Step 5: Commit.** `cargo fmt --all`, then `feat(config): a COPILOT_HOME outside the user profile is open to Copilot CLI's files`
+- [ ] **Step 5: Commit.** `cargo fmt --all`, then `feat(config): a CLI home that its variable puts outside the user profile is open to that CLI's files`
 
 ### Task 9: 6n1's deferred minors
 
