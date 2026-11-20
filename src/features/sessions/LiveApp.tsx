@@ -79,7 +79,7 @@ import { browser, pageKey } from "../browser/browserApi";
 import type { UrlBarHandle } from "../browser/UrlBar";
 import { useBrowserPages } from "../browser/useBrowserPages";
 import { askedFrom, focusPane } from "../pane/focusPane";
-import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, PANE_BESIDE_SESSION, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome } from "../pane/paneCommands";
+import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, PANE_BESIDE_SESSION, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, receiptWithPaneHidden, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome } from "../pane/paneCommands";
 import { activeTab, currentEntry, isBrowserTab, openRefused, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
 import { takeOpens } from "../pane/opens";
 import { newsReducer } from "../pane/paneNews";
@@ -1069,11 +1069,17 @@ export function LiveApp() {
     paneRun({ kind: "preview" });
   };
   // Esc or Ctrl+Shift+Tab in a pane tab: to the terminal, and in a window where the pane covers the terminal the pane goes too.
-  const toTerminalFromPane = () => {
+  const paneKeys = () => shortcutLabel(commandById("preview").binding!, os ?? "windows");
+  // Returns whether it hid the pane. `say: false` is for a caller with a line of its own to say with the hide (the cursor's receipt).
+  const toTerminalFromPane = (say = true): boolean => {
     const covers = document.querySelector('[data-pane="cover"]') !== null;
-    if (leavePaneOutcome(covers) === "focus" || !viewRef.current.pane.open) return actions.focusTerminal();
+    if (leavePaneOutcome(covers) === "focus" || !viewRef.current.pane.open) {
+      actions.focusTerminal();
+      return false;
+    }
     paneRun({ kind: "preview" });
-    announce(paneHiddenText(shortcutLabel(commandById("preview").binding!, os ?? "windows")));
+    if (say) announce(paneHiddenText(paneKeys()));
+    return true;
   };
   const paneRunRef = useRef(paneRun);
   paneRunRef.current = paneRun;
@@ -1494,11 +1500,13 @@ export function LiveApp() {
       document.removeEventListener("focusout", inside);
     };
   }, []);
+  // A "select-pane" that hid the covering pane: the receipt that follows it says so too (the announcer holds one notice).
+  const hidByNav = useRef(false);
   const applyNav = (effect: NavEffect) => {
     switch (effect.type) {
       case "select-pane":
         // The key was pressed inside the side pane: leaving it may hide it. A session picked in the sidebar goes straight to its terminal.
-        if (document.activeElement?.closest("[data-nav-side]") != null) toTerminalFromPane();
+        if (document.activeElement?.closest("[data-nav-side]") != null) hidByNav.current = toTerminalFromPane(false);
         else actions.focusTerminal();
         return;
       case "select-side":
@@ -1529,10 +1537,13 @@ export function LiveApp() {
         if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
         document.querySelector<HTMLElement>(".window__main")?.focus();
         return;
-      case "announce":
+      case "announce": {
         // The cursor's receipt speaks for a switch it causes, so the focus-moved line is not said as well.
-        announce(effect.text, true);
+        const hid = hidByNav.current;
+        hidByNav.current = false;
+        announce(hid ? receiptWithPaneHidden(effect.text, paneKeys()) : effect.text, true);
         return;
+      }
     }
   };
   // A rolled Ctrl+Shift+Tab, Tab a few ms before Shift, must not run Ctrl+Tab: each real Ctrl+Tab waits for Tab's release or 50 ms

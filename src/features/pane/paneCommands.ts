@@ -77,6 +77,11 @@ export function leavePaneOutcome(covers: boolean): "hide" | "focus" {
 }
 /** Said when leaving a tab hid the pane: the key that did it doesn't name the pane, so the line does, with the keys that bring it back. */
 export const paneHiddenText = (keys: string) => `The side pane is hidden. ${keys} shows it.`;
+/**
+ * The same hide caused by a navigation key (Ctrl+Shift+Tab), which has a receipt of its own ("Selected session 2, api"). The
+ * announcer holds one notice, so the two are one line: said apart, the receipt would replace the hide before anyone heard it.
+ */
+export const receiptWithPaneHidden = (receipt: string, keys: string) => `${receipt}. ${paneHiddenText(keys)}`;
 
 /**
  * What the recent files of the session on screen are kept under: its repository's root (the row's `projectKey`), not the row's

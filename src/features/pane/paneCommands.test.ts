@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PaneView } from "../../generated/PaneView";
-import { closeAsk, closeTabOutcome, leavePaneOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneBody, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome, PAGE_REFUSED, TAB_LIMIT } from "./paneCommands";
+import { closeAsk, closeTabOutcome, leavePaneOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneBody, paneHiddenText, paneTabFocus, receiptWithPaneHidden, paneTabOutcome, projectKeyOf, toggleOutcome, PAGE_REFUSED, TAB_LIMIT } from "./paneCommands";
 import { paneReducer, recentFor } from "./paneState";
 
 const EMPTY: PaneView = { open: false, width: null, sessions: {}, recent: [] };
@@ -177,4 +177,8 @@ describe("leavePaneOutcome", () => {
 
 it("says the pane is hidden and which keys show it", () => {
   expect(paneHiddenText("Ctrl+Shift+Q")).toBe("The side pane is hidden. Ctrl+Shift+Q shows it.");
+});
+
+it("says the hidden line after the cursor's receipt, in one notice, so neither replaces the other", () => {
+  expect(receiptWithPaneHidden("Selected session 2, api", "Ctrl+Shift+Q")).toBe("Selected session 2, api. The side pane is hidden. Ctrl+Shift+Q shows it.");
 });
