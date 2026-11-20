@@ -20,6 +20,11 @@ use serde::Deserialize;
 /// note that comes later reaches no agent. 350 ms leaves the rest for the connect and the response.
 pub const CONTEXT_BUDGET: std::time::Duration = std::time::Duration::from_millis(350);
 
+/// How long a Copilot `sessionEnd` the person asked for waits before the row reads Ended. `/clear` sends one for the old
+/// session and a status line naming the new one follows about 0.2 s later; 500 ms covers that with room, and is well
+/// under the 2 s the bridge gives a `sessionEnd`.
+pub const COPILOT_END_HOLD: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// The note when it is ready in time to reach the agent, else None. The header chip shows what this returns, so it
 /// never claims a note the bridge had already given up on.
 fn note_in_budget(
@@ -128,6 +133,7 @@ pub async fn post(
     // A WSL tab's processes are Linux ones the foreground watcher can't read: its hooks say which agent runs there. The
     // mark comes first, so the check below sees it and an event of another agent in that tab is dropped.
     let mut left_wsl = false;
+    let mut on_wsl = false;
     // Each agent names its session and its start and end in its own way.
     let (session_id, session_ends, session_starts) = if agent == "copilot" {
         (
@@ -147,6 +153,7 @@ pub async fn post(
         && let Some(tab) = tab.as_deref()
         && in_wsl(&st, tab).await
     {
+        on_wsl = true;
         if session_ends {
             // The agent is gone from the row: nothing is left to fold into a status, even when no earlier hook marked it.
             // A row launched as an agent (History's Resume opens `claude --resume ...; exec bash -l`) outlives the agent
@@ -236,7 +243,14 @@ pub async fn post(
                 return;
             }
             if !left_wsl {
-                fold_live_with(&st, &agent, role, tab, &json, at_ms, held).await;
+                if agent == "copilot" && role == HookRole::Event && !on_wsl && copilot::is_requested_end(&json) {
+                    // `/clear` ends the old session before anything names the new one, so the end waits: a status
+                    // line or an event that links the tab to a newer session meanwhile drops it. The answer to the
+                    // hook doesn't wait.
+                    hold_copilot_end(&st, tab, &json, at_ms);
+                } else {
+                    fold_live_with(&st, &agent, role, tab, &json, at_ms, held).await;
+                }
             }
             if (role == HookRole::Event || session == CopilotSession::Newer) && st.registry().is_open(tab) {
                 record_history(&st, &agent, tab, &json, at_ms).await;
@@ -315,6 +329,21 @@ async fn copilot_session(st: &AppState, role: HookRole, tab: &str, body: &serde_
         _ if role == HookRole::Statusline => CopilotSession::Newer,
         _ => CopilotSession::Current,
     }
+}
+
+/// Folds a Copilot `sessionEnd` the person asked for after `copilot_end_hold`, in a detached task. The task asks
+/// `copilot_session` again with the same body: when the tab has been linked to a newer session meanwhile the end is
+/// dropped, else it folds as it would have at once. Nothing is held across the wait. A late newer link between the
+/// second check and the fold is a window of microseconds whose worst case is the row reading Ended for as long as
+/// the status line takes to arrive, which is what it did before the hold.
+fn hold_copilot_end(st: &AppState, tab: &str, body: &serde_json::Value, at_ms: u64) {
+    let (st, tab, body) = (st.clone(), tab.to_string(), body.clone());
+    tokio::spawn(async move {
+        tokio::time::sleep(st.copilot_end_hold()).await;
+        if copilot_session(&st, HookRole::Event, &tab, &body).await != CopilotSession::Stale {
+            fold_live_with(&st, "copilot", HookRole::Event, &tab, &body, at_ms, false).await;
+        }
+    });
 }
 
 /// Whether the tab's shell runs in a WSL distro. The first answer for a profile without `-d` asks `wsl.exe` for the default

@@ -168,6 +168,12 @@ pub fn ends_session(body: &Value) -> bool {
     body.get("hook_event_name").and_then(Value::as_str) == Some("sessionEnd")
 }
 
+/// The hook is an end the person asked for (`sessionEnd` with reason `user_exit`): `/exit`, and `/clear` for the old
+/// session, which goes on under a new id in the same process.
+pub fn is_requested_end(body: &Value) -> bool {
+    ends_session(body) && body.get("reason").and_then(Value::as_str) == Some("user_exit")
+}
+
 /// The hook is the start of a session (`sessionStart`), a resumed one included.
 pub fn starts_session(body: &Value) -> bool {
     body.get("hook_event_name").and_then(Value::as_str) == Some("sessionStart")

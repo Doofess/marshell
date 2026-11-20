@@ -63,6 +63,15 @@ pub fn hooks_file(bridge: &Bridge, want: &HookPlanRequest) -> String {
             hooks.insert(event.to_string(), json!([entry_of(bridge, event, role, timeout)]));
         }
     }
+    hooks_text(hooks)
+}
+
+/// The text `hooks_file` writes with no entries; what `is_marshells` compares an entry-less file with.
+fn empty_hooks_text() -> String {
+    hooks_text(serde_json::Map::new())
+}
+
+fn hooks_text(hooks: serde_json::Map<String, Value>) -> String {
     let mut text =
         serde_json::to_string_pretty(&json!({ "version": 1, "hooks": hooks })).expect("a JSON value always serializes");
     text.push('\n');
@@ -108,13 +117,25 @@ fn entries_of(file: &Value) -> impl Iterator<Item = (&str, &Value)> {
         .flat_map(|(event, entries)| entries.iter().map(move |entry| (event, entry)))
 }
 
-/// The file is Marshell's: it has a `hooks` object, and every event holds only entries Marshell wrote.
-fn is_marshells(file: &Value) -> bool {
-    file.get("hooks").and_then(Value::as_object).is_some_and(|hooks| {
-        hooks
-            .values()
-            .all(|entries| entries.as_array().is_some_and(|e| e.iter().all(is_ours)))
-    })
+/// The file is Marshell's: it has a `hooks` object, and every event holds only entries Marshell wrote. A file with no
+/// entry at all (every list empty, or no list) proves nothing by its entries, and deleting or overwriting it is a
+/// write to a file someone else may have made: it is Marshell's only when its text is the one `hooks_file` writes with
+/// the status off (line endings aside).
+fn is_marshells(file: &Value, text: &str) -> bool {
+    let Some(hooks) = file.get("hooks").and_then(Value::as_object) else {
+        return false;
+    };
+    let ours = hooks
+        .values()
+        .all(|entries| entries.as_array().is_some_and(|e| e.iter().all(is_ours)));
+    if !ours {
+        return false;
+    }
+    entries_of(file).next().is_some() || unix_lines(text) == unix_lines(&empty_hooks_text())
+}
+
+fn unix_lines(text: &str) -> String {
+    text.replace("\r\n", "\n")
 }
 
 /// The hooks file's text when it is there and Marshell's. A file that doesn't parse, or isn't Marshell's, is an error.
@@ -123,7 +144,7 @@ fn marshells_hooks<'a>(files: &Files<'a>) -> Result<Option<&'a str>, PlanError> 
     let Ok(file) = read_value(text) else {
         return Err(does_not_parse(files.hooks_path, text));
     };
-    if !is_marshells(&file) {
+    if !is_marshells(&file, text) {
         return Err(PlanError::NotMarshells {
             path: files.hooks_path.to_path_buf(),
         });
@@ -846,6 +867,55 @@ mod tests {
                 path.display()
             )
         );
+    }
+
+    /// What `hooks_file` writes with the status off: no entries.
+    fn own_empty_text() -> String {
+        hooks_file(&bridge(), &HookPlanRequest { status: false, ..BOTH })
+    }
+
+    #[test]
+    fn an_empty_hooks_file_someone_else_wrote_is_not_marshells() {
+        let path = hooks_path(&copilot_home());
+        let own = own_empty_text();
+        let with_a_key = own.replace("\"hooks\": {}", "\"hooks\": {},\n  \"mine\": true");
+        assert_ne!(with_a_key, own);
+        for text in [
+            r#"{"hooks":{}}"#,
+            r#"{"version":1,"hooks":{"sessionStart":[]}}"#,
+            with_a_key.as_str(),
+        ] {
+            let state = State {
+                hooks: Some(text.to_string()),
+                ..State::default()
+            };
+            let want = || PlanError::NotMarshells { path: path.clone() };
+            assert_eq!(try_install(&state, &bridge(), &BOTH), Err(want()), "{text}");
+            assert_eq!(
+                try_install(&state, &bridge(), &HookPlanRequest { status: false, ..BOTH }),
+                Err(want()),
+                "{text}"
+            );
+            assert_eq!(
+                with_files(&state, |files| remove_plan(files, None)).err(),
+                Some(want()),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn marshells_own_empty_file_still_is() {
+        let own = own_empty_text();
+        // A file kept by an editor that saved it with Windows line endings is still the same file.
+        for text in [own.clone(), own.replace('\n', "\r\n")] {
+            assert!(is_marshells(&value(&text), &text), "{text:?}");
+            let state = State {
+                hooks: Some(text.clone()),
+                ..State::default()
+            };
+            assert!(try_install(&state, &bridge(), &BOTH).is_ok(), "{text:?}");
+        }
     }
 
     #[test]

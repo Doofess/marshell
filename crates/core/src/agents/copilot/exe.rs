@@ -11,6 +11,11 @@ const NAMES: [&str; 2] = ["copilot.exe", "copilot.cmd"];
 /// Where winget puts it, under `%LOCALAPPDATA%`.
 const WINGET_DIR: &str = "GitHubCopilotCLI";
 
+/// What the Agents section and the launcher say when `resolve` answers `Rejected`: the PATH holds only VS Code's launcher.
+/// The frontend shows this text as the core sends it.
+pub const SHIM_ONLY_NOTE: &str =
+    "Only VS Code's Copilot launcher is on PATH. Install Copilot CLI itself to use it here.";
+
 /// True when some segment of `path` is VS Code's `copilot-shim` folder. Case and slash direction don't matter.
 pub fn in_shim_folder(path: &Path) -> bool {
     path.to_string_lossy()
@@ -93,6 +98,14 @@ mod tests {
             Err(Missing::Rejected {
                 path: shim.join("copilot.exe")
             })
+        );
+    }
+
+    #[test]
+    fn the_shim_only_note_is_the_exact_sentence() {
+        assert_eq!(
+            SHIM_ONLY_NOTE,
+            "Only VS Code's Copilot launcher is on PATH. Install Copilot CLI itself to use it here."
         );
     }
 

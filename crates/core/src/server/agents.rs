@@ -844,6 +844,7 @@ pub(crate) fn setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
         agent: AGENT.to_string(),
         admin_unavailable: None,
         found: exe.is_some(),
+        not_found_note: None,
         version,
         exe_path: exe.map(|p| p.to_string_lossy().into_owned()),
         settings_path: settings_path.to_string_lossy().into_owned(),
@@ -918,6 +919,7 @@ pub(crate) fn codex_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
         agent: CODEX.to_string(),
         admin_unavailable: crate::agents::codex::admin_unavailable(version.as_deref()),
         found: exe.is_some(),
+        not_found_note: None,
         version,
         exe_path: exe.map(|p| p.to_string_lossy().into_owned()),
         settings_path: hooks_path.to_string_lossy().into_owned(),
@@ -988,6 +990,7 @@ pub(crate) fn agy_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
         agent: ANTIGRAVITY.to_string(),
         admin_unavailable: None,
         found: exe.is_some(),
+        not_found_note: None,
         version,
         exe_path: exe.map(|p| p.to_string_lossy().into_owned()),
         settings_path: settings_file.to_string_lossy().into_owned(),
@@ -1072,6 +1075,7 @@ pub(crate) fn qwen_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
         agent: QWEN.to_string(),
         admin_unavailable: None,
         found: exe.is_some(),
+        not_found_note: None,
         version,
         exe_path: exe.map(|p| p.to_string_lossy().into_owned()),
         settings_path: settings_path.to_string_lossy().into_owned(),
@@ -1142,6 +1146,13 @@ pub(crate) fn copilot_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
     let (hooks_path, settings_path) = (copilot_hooks::hooks_path(&dir), copilot_hooks::settings_path(&dir));
     let exe = st.agent_exe_of(COPILOT);
     let version = st.agent_version(COPILOT, exe.as_deref());
+    // A PATH that holds only VS Code's launcher reads as not installed, and says why.
+    let not_found_note = (exe.is_none()
+        && matches!(
+            st.agent_finder(&[]).copilot_exe(),
+            Err(crate::agents::identify::Missing::Rejected { .. })
+        ))
+    .then(|| crate::agents::copilot::exe::SHIM_ONLY_NOTE.to_string());
 
     // A file that can't be read as text reads as holding nothing, and the setup says so for the settings.
     let hooks_text = std::fs::read_to_string(&hooks_path).ok();
@@ -1157,6 +1168,7 @@ pub(crate) fn copilot_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
         agent: COPILOT.to_string(),
         admin_unavailable: None,
         found: exe.is_some(),
+        not_found_note,
         version,
         exe_path: exe.map(|p| p.to_string_lossy().into_owned()),
         settings_path: settings_path.to_string_lossy().into_owned(),

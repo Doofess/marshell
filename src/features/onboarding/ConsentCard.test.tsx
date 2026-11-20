@@ -59,6 +59,13 @@ describe("ConsentCard", () => {
     expect(card(copilot, { ...on, approve: false, status: false, statusline: false })).not.toContain(note);
     expect(card(CONSENT.claude, { ...on, statusline: false })).not.toContain(note);
   });
+  it("Copilot's card has no approve-needs-status line", () => {
+    const line = "Approve from anywhere needs live status to know when a request is answered.";
+    const copilot = { ...CONSENT.claude, detection: { ...CONSENT.claude.detection, cli: "copilot" as const } };
+    expect(renderToStaticMarkup(<ConsentCard scenario={copilot} on={on} />)).not.toContain(line);
+    // Claude Code's approve switch works, so its card still says what it needs.
+    expect(renderToStaticMarkup(<ConsentCard scenario={CONSENT.claude} on={on} />)).toContain(line);
+  });
   it("has a switch for each capability and explains an unavailable one", () => {
     const h = renderToStaticMarkup(<ConsentCard scenario={CONSENT.codex} on={on} />);
     expect(h.match(/role="switch"/g)).toHaveLength(4);

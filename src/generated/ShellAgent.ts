@@ -8,4 +8,8 @@ export type ShellAgent = { id: string,
 /**
  * None when the shell can start the agent.
  */
-problem: ShellAgentProblem | null, };
+problem: ShellAgentProblem | null, 
+/**
+ * More about `problem`, as a sentence to show, when Marshell has one.
+ */
+note?: string, };

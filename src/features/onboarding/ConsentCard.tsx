@@ -93,7 +93,7 @@ export function ConsentCard({
               </li>
             )}
           </ul>
-          {offer.includes("approve") && offer.includes("status") && <p className="consent__meta">Approve from anywhere needs live status to know when a request is answered.</p>}
+          {offer.includes("approve") && offer.includes("status") && CAPABILITIES[d.cli].approve.available && <p className="consent__meta">Approve from anywhere needs live status to know when a request is answered.</p>}
           {offer.includes("skill") && (d.skill === "unavailable" ? d.skillProblem !== undefined && <p className="consent__meta" dir="auto">{d.skillProblem}</p> : <p className="consent__meta">Teaches {name} the marshell command: list, send, new and focus.</p>)}
           {d.cli === "antigravity" && offer.includes("approve") && <p className="consent__meta">Cards for risky commands in Bypass. In other modes Antigravity asks in its terminal.</p>}
           {statuslinePreset && <p className="consent__meta">{`Your ${name} status line is a preset, so Marshell leaves it as it is. Rows show context % once per turn.`}</p>}

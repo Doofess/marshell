@@ -1074,6 +1074,10 @@ pub struct ShellAgent {
     pub id: String,
     /// None when the shell can start the agent.
     pub problem: Option<ShellAgentProblem>,
+    /// More about `problem`, as a sentence to show, when Marshell has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub note: Option<String>,
 }
 
 /// GET /v1/profiles/{id}/agents body: the agents a shell profile can start.

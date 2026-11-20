@@ -131,7 +131,7 @@ export function AgentsSectionView({
           {codex && (codex.found || (distros?.length ?? 0) > 0 || leftover(codex)) && <AgentList setup={codex} agent="codex" liveStatus={codexLiveStatus} error={codexLiveStatusError} on={on} skill={skills?.codex} distros={distros} />}
           {antigravity && (antigravity.found || (distros?.length ?? 0) > 0 || leftover(antigravity)) && <AgentList setup={antigravity} agent="antigravity" liveStatus={antigravityLiveStatus} error={antigravityLiveStatusError} on={on} skill={skills?.antigravity} distros={distros} />}
           {qwen && (qwen.found || (distros?.length ?? 0) > 0 || leftover(qwen)) && <AgentList setup={qwen} agent="qwen" liveStatus={qwenLiveStatus} error={qwenLiveStatusError} on={on} skill={skills?.qwen} distros={distros} />}
-          {copilot && (copilot.found || (distros?.length ?? 0) > 0 || leftover(copilot)) && <AgentList setup={copilot} agent="copilot" liveStatus={copilotLiveStatus} error={copilotLiveStatusError} on={on} skill={skills?.copilot} distros={distros} />}
+          {copilot && (copilot.found || (distros?.length ?? 0) > 0 || leftover(copilot) || copilot.not_found_note !== undefined) && <AgentList setup={copilot} agent="copilot" liveStatus={copilotLiveStatus} error={copilotLiveStatusError} on={on} skill={skills?.copilot} distros={distros} />}
           {own}
         </>
       )}
@@ -176,6 +176,12 @@ function AgentList({ setup, agent, liveStatus, error, on, skill, distros }: { se
       <p className={orphaned ? "agents-dialog__warning" : "agents-dialog__line"} dir="auto">
         {setupLine(setup)}
       </p>
+      {/* Why the CLI wasn't found, when the core knows more than that it isn't on PATH. Its own sentence, shown as sent. */}
+      {!setup.found && setup.not_found_note !== undefined && (
+        <p className="agents-dialog__line" dir="auto">
+          {setup.not_found_note}
+        </p>
+      )}
       {agent === "codex" && setup.found && setup.trust && <TrustLine trust={setup.trust} />}
       {skill && setup.found && <SkillRow agent={agent} setup={setup} flow={skill.flow} on={skill.on} />}
       {/* Antigravity's hooks and its status line live in two files; both are named. */}

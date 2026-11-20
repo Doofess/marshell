@@ -46,6 +46,30 @@ describe("offerFor", () => {
     expect(missingLine("Command Prompt", [{ label: "Amp", problem: "path_has_space" }])).toBe("Not in Command Prompt: Amp (its path has a space, which Command Prompt can't start)");
     expect(missingLine("Ubuntu", [])).toBeNull();
   });
+  it("the_note_is_shown_for_the_agent_that_carries_one", () => {
+    const note = "Only VS Code's Copilot launcher is on PATH. Install Copilot CLI itself to use it here.";
+    const asked: ShellAgents = {
+      profile_id: "pwsh",
+      reached: true,
+      agents: [
+        { id: "claude", problem: null },
+        { id: "codex", problem: "not_installed" },
+        { id: "antigravity", problem: null },
+        { id: "copilot", problem: "not_installed", note },
+      ],
+    };
+    const offer = offerFor(programs, asked, "pwsh");
+    expect(offer.state).toBe("ready");
+    if (offer.state !== "ready") return;
+    expect(offer.missing).toEqual([
+      { label: "Codex", problem: "not_installed" },
+      { label: "GitHub Copilot", problem: "not_installed", note },
+    ]);
+    // The agent keeps its place in the list and its reason; its sentence follows the list, once.
+    expect(missingLine("PowerShell", offer.missing)).toBe(`Not in PowerShell: Codex (not installed), GitHub Copilot (not installed). ${note}`);
+    // Without a note the line reads as it always did.
+    expect(missingLine("PowerShell", [{ label: "Codex", problem: "not_installed" }])).toBe("Not in PowerShell: Codex (not installed)");
+  });
   it("an_answer_for_another_shell_never_fills_this_one", () => {
     expect(offerFor(programs, answer("pwsh", { claude: null }), "ubuntu")).toEqual({ state: "checking" });
   });

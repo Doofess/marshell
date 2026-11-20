@@ -2186,6 +2186,22 @@ fn copilot_state(version: Option<&str>) -> AppState {
     state(Some(KNOWN))
         .with_copilot_home(tempfile::tempdir().unwrap().keep())
         .with_copilot_version(version.map(str::to_string))
+        .with_copilot_end_hold(std::time::Duration::from_millis(200))
+}
+
+/// Polls until the tab's row reads `want`, for at most 5 s, and answers whether it did. The hold a Copilot end waits is
+/// short in tests, but a slow machine must not fail them.
+async fn wait_for_live(st: &AppState, tab: &str, want: LiveState) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if row(st, tab).live.is_some_and(|live| live.state == want) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
 }
 
 /// A row that runs Copilot in `cwd`, with no process: enough for a hook to name an open tab.
@@ -2308,6 +2324,8 @@ async fn copilot_events_fold_into_the_tabs_live_status() {
     post_copilot(&app, &tab, "agentStop", "agentStop").await;
     let done = row(&st, &tab);
     post_copilot(&app, &tab, "sessionEnd-clear", "sessionEnd").await;
+    // The end the person asked for waits out the hold, then the row reads Ended.
+    assert!(wait_for_live(&st, &tab, LiveState::Ended).await);
     let ended = row(&st, &tab).live.unwrap();
     // `/clear`'s status line with the new id: the row runs again.
     post_copilot_as(&app, "statusline", Some(&tab), &copilot_statusline_body("idle")).await;
@@ -2366,6 +2384,67 @@ async fn a_late_session_end_from_clear_is_ignored() {
 }
 
 #[tokio::test]
+async fn a_clear_never_shows_ended() {
+    // A long hold, so a slow machine still posts the status line inside it.
+    let hold = std::time::Duration::from_millis(1000);
+    let st = copilot_state(Some(COPILOT)).with_copilot_end_hold(hold);
+    let app = router(st.clone());
+    let p = project();
+    let tab = reserve_copilot(&st, &p.repo);
+
+    post_copilot(&app, &tab, "sessionStart", "sessionStart").await;
+    post_copilot(&app, &tab, "userPromptSubmitted", "userPromptSubmitted").await;
+    assert_eq!(copilot_linked(&st, &tab).as_deref(), Some(COPILOT_A));
+
+    // `/clear`: A's `sessionEnd` comes first, the status line naming B within the hold.
+    let started = std::time::Instant::now();
+    let (code, _) = post_copilot(&app, &tab, "sessionEnd-clear", "sessionEnd").await;
+    let right_after = row(&st, &tab).live.unwrap().state;
+    // The answer doesn't wait for the hold: the bridge gives a `sessionEnd` 2 s.
+    let answered_in = started.elapsed();
+    post_copilot_as(
+        &app,
+        "statusline",
+        Some(&tab),
+        &copilot_statusline_of("idle", COPILOT_B),
+    )
+    .await;
+
+    // Never Ended, from the end until well after the hold has passed.
+    let mut seen = vec![right_after];
+    while started.elapsed() < hold + std::time::Duration::from_millis(500) {
+        seen.push(row(&st, &tab).live.unwrap().state);
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let linked = copilot_linked(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(code, StatusCode::NO_CONTENT);
+    assert!(answered_in < hold, "the answer waited for the hold: {answered_in:?}");
+    assert!(!seen.contains(&LiveState::Ended), "{seen:?}");
+    assert_eq!(linked.as_deref(), Some(COPILOT_B));
+}
+
+#[tokio::test]
+async fn an_exit_shows_ended_after_the_hold() {
+    let st = copilot_state(Some(COPILOT)).with_copilot_end_hold(std::time::Duration::from_millis(1000));
+    let app = router(st.clone());
+    let p = project();
+    let tab = reserve_copilot(&st, &p.repo);
+
+    post_copilot(&app, &tab, "sessionStart", "sessionStart").await;
+    // `/exit` ends the session the tab is linked to.
+    let mut end = copilot_hook_body("sessionEnd", "sessionEnd");
+    end["sessionId"] = COPILOT_A.into();
+    let (code, _) = post_copilot_as(&app, "event", Some(&tab), &end).await;
+    let at_once = row(&st, &tab).live.unwrap().state;
+    let ended = wait_for_live(&st, &tab, LiveState::Ended).await;
+    stop(&st, &tab);
+    assert_eq!(code, StatusCode::NO_CONTENT);
+    assert_ne!(at_once, LiveState::Ended);
+    assert!(ended, "the row never read Ended");
+}
+
+#[tokio::test]
 async fn a_copilot_tab_follows_its_session_after_clear() {
     let st = copilot_state(Some(COPILOT));
     let app = router(st.clone());
@@ -2374,6 +2453,7 @@ async fn a_copilot_tab_follows_its_session_after_clear() {
 
     post_copilot(&app, &tab, "sessionStart", "sessionStart").await;
     post_copilot(&app, &tab, "sessionEnd-clear", "sessionEnd").await;
+    assert!(wait_for_live(&st, &tab, LiveState::Ended).await);
     let ended = row(&st, &tab).live.unwrap();
     assert_eq!(copilot_linked(&st, &tab).as_deref(), Some(COPILOT_A));
 

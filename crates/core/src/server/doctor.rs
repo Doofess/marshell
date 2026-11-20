@@ -1261,6 +1261,7 @@ pub(in crate::server) mod tests {
             agent: agent.into(),
             admin_unavailable: None,
             found: true,
+            not_found_note: None,
             version: None,
             exe_path: None,
             settings_path: "Z:/none/settings.json".into(),

@@ -456,6 +456,17 @@ describe("AgentsSectionView: Copilot CLI", () => {
     expect(on).toContain("Hooks on in C:/h/.copilot/hooks/marshell.json.");
     expect(on).not.toContain(">Set up</button>");
   });
+  it("Copilot's section says when only VS Code's launcher is on PATH", () => {
+    const sentence = "Only VS Code's Copilot launcher is on PATH. Install Copilot CLI itself to use it here.";
+    // The text is the core's: whatever it sends is shown, as a line of the section.
+    const h = section(withCopilot({ ...COPILOT_SETUP, found: false, not_found_note: sentence }));
+    expect(h.replaceAll("&#x27;", "'")).toContain(`<p class="agents-dialog__line" dir="auto">${sentence}</p>`);
+    expect(h).toContain("Copilot CLI was not found on this computer.");
+    expect(h).not.toContain(">Set up</button>");
+    // A found Copilot, and one that is simply missing, carry no such line.
+    expect(withCopilot(COPILOT_SETUP).replaceAll("&#x27;", "'")).not.toContain("launcher is on PATH");
+    expect(withCopilot({ ...COPILOT_SETUP, found: false })).not.toContain('aria-label="Copilot CLI"');
+  });
   it("Copilot's skill row offers Install the marshell skill", () => {
     const h = section(withCopilot(COPILOT_SETUP, { kind: "list" }, true));
     expect(h).toContain('data-agent-skill="copilot"');

@@ -1047,6 +1047,63 @@ fn copilot_env() -> CopilotEnv {
     }
 }
 
+/// Copilot's setup with its PATH folders pinned to `dirs` and no winget folder; nothing is run.
+async fn copilot_setup_on(dirs: Vec<PathBuf>) -> Value {
+    let dir = tempfile::tempdir().unwrap();
+    let root = canonical(dir.path());
+    let home = root.join("home");
+    let project = root.join("project");
+    let user_home = project.join("user");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&user_home).unwrap();
+    record(&home, &project, 1).unwrap();
+    let st = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec!["http://tauri.localhost".into()],
+        home,
+        Vec::new(),
+    )
+    .with_claude_settings(project.join("settings.json"))
+    .with_copilot_home(user_home)
+    .with_copilot_version(Some("1.0.106".into()))
+    .with_copilot_search(dirs, None);
+    let (status, setup) = get(&router(st), "/v1/agents/copilot/setup").await;
+    assert_eq!(status, StatusCode::OK, "{setup}");
+    setup
+}
+
+/// A folder under `root` holding an empty `file`, which is never run.
+fn folder_with(root: &std::path::Path, segments: &[&str], file: &str) -> PathBuf {
+    let dir = segments.iter().fold(root.to_path_buf(), |dir, s| dir.join(s));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(file), "").unwrap();
+    dir
+}
+
+#[tokio::test]
+async fn copilot_setup_names_a_shim_only_path() {
+    let root = tempfile::tempdir().unwrap();
+    let shim = folder_with(root.path(), &["VS Code", "bin", "copilot-shim"], "copilot.exe");
+    let real = folder_with(root.path(), &["npm"], "copilot.cmd");
+    let empty = root.path().join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+
+    let only_shim = copilot_setup_on(vec![shim.clone()]).await;
+    assert_eq!(only_shim["found"], false, "{only_shim}");
+    assert_eq!(
+        only_shim["not_found_note"],
+        "Only VS Code's Copilot launcher is on PATH. Install Copilot CLI itself to use it here."
+    );
+    // Nothing on PATH says no more than that, and a real install has nothing to explain.
+    let nothing = copilot_setup_on(vec![empty]).await;
+    assert_eq!(nothing["found"], false, "{nothing}");
+    assert!(nothing.get("not_found_note").is_none(), "{nothing}");
+    let found = copilot_setup_on(vec![shim, real]).await;
+    assert_eq!(found["found"], true, "{found}");
+    assert!(found.get("not_found_note").is_none(), "{found}");
+}
+
 /// The person's own settings: a BOM, CRLF, a comment, a theme and a status line command with another key.
 const COPILOT_OWN_LINE: &str = "\u{feff}{\r\n  // mine\r\n  \"theme\": \"dark\",\r\n  \"statusLine\": {\"type\": \"command\", \"command\": \"my-line\", \"padding\": 2}\r\n}\r\n";
 

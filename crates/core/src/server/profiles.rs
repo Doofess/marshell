@@ -79,6 +79,20 @@ async fn windows_agents(st: &AppState, profile: &Profile) -> Result<Vec<ShellAge
     let catalog = tokio::task::spawn_blocking(move || catalog::build_for(&asker, &env, false))
         .await
         .map_err(failed)?;
+    // Copilot not found on a PATH that holds VS Code's launcher: say so, as the launch would. Only asked when it matters,
+    // and off the async workers (it reads the disk).
+    let copilot_missing = catalog.agents.iter().any(|a| a.id == "copilot" && !a.found);
+    let shim_only = copilot_missing && {
+        let (finder, env) = (st.clone(), profile.env.clone());
+        tokio::task::spawn_blocking(move || {
+            matches!(
+                finder.agent_finder(&env).copilot_exe(),
+                Err(crate::agents::identify::Missing::Rejected { .. })
+            )
+        })
+        .await
+        .map_err(failed)?
+    };
     let mut agents = Vec::with_capacity(catalog.agents.len());
     for agent in catalog.agents {
         let problem = if !agent.found {
@@ -93,7 +107,13 @@ async fn windows_agents(st: &AppState, profile: &Profile) -> Result<Vec<ShellAge
         } else {
             None
         };
-        agents.push(ShellAgent { id: agent.id, problem });
+        let note = (shim_only && agent.id == "copilot" && problem == Some(ShellAgentProblem::NotInstalled))
+            .then(|| crate::agents::copilot::exe::SHIM_ONLY_NOTE.to_string());
+        agents.push(ShellAgent {
+            id: agent.id,
+            problem,
+            note,
+        });
     }
     Ok(agents)
 }
@@ -120,7 +140,11 @@ async fn wsl_agents(st: &AppState, profile: &Profile) -> Result<(bool, Vec<Shell
                 Some(word) if found.contains(&word) => None,
                 Some(_) => Some(ShellAgentProblem::NotInstalled),
             };
-            ShellAgent { id, problem }
+            ShellAgent {
+                id,
+                problem,
+                note: None,
+            }
         })
         .collect();
     Ok((true, agents))
@@ -255,6 +279,43 @@ mod tests {
         // Command Prompt reads the same PATH, and `claude` is a plain word there.
         let cmd = shell_agents(state().with_agent_path(only_claude), "cmd").await;
         assert_eq!(problem_of(&cmd, "claude"), None);
+    }
+
+    fn only_the_vs_code_shim(command: &str) -> Option<PathBuf> {
+        (command == "copilot").then(|| PathBuf::from(r"C:\Program Files\VS Code\bin\copilot-shim\copilot.exe"))
+    }
+
+    fn note_of(list: &ShellAgents, id: &str) -> Option<String> {
+        list.agents.iter().find(|a| a.id == id).unwrap().note.clone()
+    }
+
+    #[tokio::test]
+    async fn copilot_with_only_the_shim_carries_the_note() {
+        let sentence = "Only VS Code's Copilot launcher is on PATH. Install Copilot CLI itself to use it here.";
+        for shell in ["pwsh", "cmd"] {
+            let list = shell_agents(state().with_agent_path(only_the_vs_code_shim), shell).await;
+            assert_eq!(
+                problem_of(&list, "copilot"),
+                Some(ShellAgentProblem::NotInstalled),
+                "{shell}"
+            );
+            assert_eq!(note_of(&list, "copilot").as_deref(), Some(sentence), "{shell}");
+            // Only Copilot has anything more to say.
+            assert_eq!(note_of(&list, "claude"), None, "{shell}");
+        }
+        // Nothing of Copilot on PATH says no more than that it isn't installed.
+        let list = shell_agents(state().with_agent_path(only_claude), "pwsh").await;
+        assert_eq!(note_of(&list, "copilot"), None);
+        // A real install has no problem and so no note.
+        let list = shell_agents(state().with_agent_path(a_spaced_copilot), "pwsh").await;
+        assert_eq!(note_of(&list, "copilot"), None);
+        // A WSL shell has its own PATH: the Windows PATH's shim is no business of it.
+        let st = state()
+            .with_agent_path(only_the_vs_code_shim)
+            .with_distro_which(|_, _| Some(vec!["claude".into()]));
+        let list = shell_agents(st, "ubuntu").await;
+        assert_eq!(problem_of(&list, "copilot"), Some(ShellAgentProblem::NotInstalled));
+        assert_eq!(note_of(&list, "copilot"), None);
     }
 
     #[tokio::test]
