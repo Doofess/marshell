@@ -11,7 +11,7 @@ describe("MainWindow.css", () => {
   it("makes the top bar one 40 px row", () => {
     expect(rule(".window__bar")).toContain("block-size: 40px");
   });
-  it("sizes the window controls 46 by 40", () => {
+  it("makes a window button 46 px wide", () => {
     const r = rule(".window__control");
     expect(r).toContain("inline-size: 46px");
   });

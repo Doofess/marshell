@@ -54,6 +54,30 @@ export function stripSync(read: () => StripRead, send: (shown: boolean, paint: S
   return sync;
 }
 
+/**
+ * The listeners for the keyboard coming to and leaving the three buttons. A move from one button to the next fires `focusout` and
+ * then `focusin`; a read between the two finds the keyboard on no button and would show the strip over the next button's ring for
+ * a moment. So the leaving half waits a turn (`defer` returns its cancel), and the arriving half reads at once.
+ */
+export function focusWatch(sync: () => void, defer: (run: () => void) => () => void): { onIn(): void; onOut(): void; stop(): void } {
+  let cancel: (() => void) | null = null;
+  const stop = () => {
+    cancel?.();
+    cancel = null;
+  };
+  return {
+    onIn: () => sync(),
+    onOut: () => {
+      stop();
+      cancel = defer(() => {
+        cancel = null;
+        sync();
+      });
+    },
+    stop,
+  };
+}
+
 /** Keeps the strip's pictures and visibility equal to the page's, now and on every change that can alter them. Returns the stop function. */
 export function watchWindowStrip(controls: HTMLElement, doc: Document = document): () => void {
   const view = doc.defaultView;
@@ -78,8 +102,12 @@ export function watchWindowStrip(controls: HTMLElement, doc: Document = document
   const attributes = new MutationObserver(onChange);
   attributes.observe(doc.documentElement, { attributes: true });
   const unsubscribeCover = subscribeCover(onChange);
-  controls.addEventListener("focusin", onChange);
-  controls.addEventListener("focusout", onChange);
+  const focus = focusWatch(sync, (run) => {
+    const timer = view.setTimeout(run, 0);
+    return () => view.clearTimeout(timer);
+  });
+  controls.addEventListener("focusin", focus.onIn);
+  controls.addEventListener("focusout", focus.onOut);
   // A query for the current scale fires once, when the scale leaves it; the next one is made for the new scale.
   let scale: MediaQueryList | null = null;
   const onScale = () => {
@@ -96,8 +124,9 @@ export function watchWindowStrip(controls: HTMLElement, doc: Document = document
     scale?.removeEventListener("change", onScale);
     attributes.disconnect();
     unsubscribeCover();
-    controls.removeEventListener("focusin", onChange);
-    controls.removeEventListener("focusout", onChange);
+    controls.removeEventListener("focusin", focus.onIn);
+    controls.removeEventListener("focusout", focus.onOut);
+    focus.stop();
     invoke<void>("set_window_strip", { shown: false, paint: null }).catch(() => {});
   };
 }

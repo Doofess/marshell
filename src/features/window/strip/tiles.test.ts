@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GLYPHS, canvasSurface, paintStrip, tileLayout, type StripLooks, type Surface } from "./tiles";
+import { GLYPHS, canvasSurface, paintStrip, readLooks, tileLayout, type StripLooks, type Surface } from "./tiles";
 
 const looks: StripLooks = {
   bar: "bar",
@@ -81,11 +81,30 @@ describe("tiles", () => {
     expect(origin(1.5, 0)).toEqual(["setTransform", 1.5, 0, 0, 1.5, 27, 22]);
     expect(origin(1.5, 6)).toEqual(["setTransform", 1.5, 0, 0, 1.5, 27, 22]);
     expect(origin(2, 0)).toEqual(["setTransform", 2, 0, 0, 2, 36, 29]);
-    expect(origin(1.25, 0)).toEqual(["setTransform", 1.25, 0, 0, 1.25, 22, 18]);
-    // Picture 2 is Maximize's rest picture: its icon starts 92.5 device pixels before the right edge, which rounds to 92.
-    expect(origin(1.25, 2)).toEqual(["setTransform", 1.25, 0, 0, 1.25, 23, 18]);
-    // The rows above a one-row hairline are 69 at 1.75, so the 17.5-row icon starts 25.75 rows down.
-    expect(origin(1.75, 0)).toEqual(["setTransform", 1.75, 0, 0, 1.75, 31, 26]);
+  });
+
+  it("gives the glyph a whole-pixel box at a fractional scale and fits the drawing to it, as the page fits its icon", () => {
+    const box = (dpr: number, picture: number) => {
+      const log: Call[][] = [];
+      paintStrip(tileLayout(dpr), looks, maker(log));
+      return log[picture]!.filter((c) => c[0] === "rect" || c[0] === "setTransform");
+    };
+    // At 1.25 the icon is 12.5 device pixels. Each of its edges goes to a whole pixel on its own, so Minimize's box, which starts
+    // on a whole pixel, is 13 wide; 18.25 rows down to 30.75 becomes 18 to 31, 13 tall.
+    expect(box(1.25, 0)).toEqual([
+      ["rect", 22, 18, 13, 13],
+      ["setTransform", 1.3, 0, 0, 1.3, 22, 18],
+    ]);
+    // Picture 2 is Maximize's rest picture: its icon runs from 92.5 to 80 device pixels before the right edge, 92 to 80, 12 wide.
+    expect(box(1.25, 2)).toEqual([
+      ["rect", 23, 18, 12, 13],
+      ["setTransform", 1.2, 0, 0, 1.3, 23, 18],
+    ]);
+    // At 1.75 the icon is 17.5: 18 wide for Minimize, and 25.75 rows down to 43.25 becomes 26 to 43, 17 tall.
+    expect(box(1.75, 0)).toEqual([
+      ["rect", 31, 26, 18, 17],
+      ["setTransform", 1.8, 0, 0, 1.7, 31, 26],
+    ]);
   });
 
   it("asks for an ordinary canvas, which draws a thin stroke as the page draws its icon", () => {
@@ -120,5 +139,53 @@ describe("tiles", () => {
     expect(paintStrip(tileLayout(1), { ...looks, bar: "bad" }, maker())).toBeNull();
     expect(paintStrip(tileLayout(1), { ...looks, hover: { bg: "x", fg: "bad" } }, maker())).toBeNull();
     expect(paintStrip(tileLayout(1), looks, () => null)).toBeNull();
+  });
+});
+
+describe("readLooks", () => {
+  /** Hand-written elements: each knows its computed style, and the bar's end finds a probe by its selector. */
+  function page(live: { bg: string; fg: string }) {
+    const styles = new Map<object, object>();
+    const el = (style: object) => {
+      const e = {};
+      styles.set(e, style);
+      return e;
+    };
+    const liveButton = el({ backgroundColor: live.bg, color: live.fg });
+    const rest = el({ backgroundColor: "rest-bg", color: "rest-fg" });
+    const hover = el({ backgroundColor: "hover-bg", color: "hover-fg" });
+    const closeHover = el({ backgroundColor: "close-bg", color: "close-fg" });
+    const bar = el({ backgroundColor: "bar", borderBlockEndColor: "line" });
+    const probes: Record<string, object> = {
+      '.window__control[data-look="rest"]': rest,
+      '.window__control[data-look="hover"]:not(.window__control--close)': hover,
+      '.window__control--close[data-look="hover"]': closeHover,
+    };
+    const asked: string[] = [];
+    const controls = {
+      ownerDocument: { defaultView: { getComputedStyle: (e: object) => styles.get(e) } },
+      closest: (s: string) => (s === ".window__bar" ? bar : null),
+      querySelector: () => liveButton,
+      parentElement: {
+        querySelector: (s: string) => {
+          asked.push(s);
+          return probes[s] ?? null;
+        },
+        // The order of the probes in the page is nobody's promise: nothing is read by it.
+        querySelectorAll: () => [liveButton, liveButton, liveButton],
+      },
+    };
+    return { controls: controls as unknown as HTMLElement, asked, probes };
+  }
+
+  it("reads the rest look from a probe, so a pointer resting on the page's own button doesn't turn every picture grey", () => {
+    const { controls } = page({ bg: "hover-bg", fg: "hover-fg" });
+    expect(readLooks(controls)).toEqual({ bar: "bar", hairline: "line", rest: { bg: "rest-bg", fg: "rest-fg" }, hover: { bg: "hover-bg", fg: "hover-fg" }, closeHover: { bg: "close-bg", fg: "close-fg" } });
+  });
+
+  it("gives nothing when a probe is missing", () => {
+    const { controls, probes } = page({ bg: "rest-bg", fg: "rest-fg" });
+    delete probes['.window__control[data-look="rest"]'];
+    expect(readLooks(controls)).toBeNull();
   });
 });

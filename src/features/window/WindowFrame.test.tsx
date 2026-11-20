@@ -22,10 +22,12 @@ describe("MainWindow: window frame", () => {
     const inside = html({ windowControls: controls }).match(/<div class="window__controls">(.*?)<\/div>/)?.[1] ?? "";
     expect(inside.match(/<button/g)).toHaveLength(3);
   });
-  it("keeps two hidden probes beside the controls, out of the tab order", () => {
+  it("keeps three hidden probes beside the controls, out of the tab order: the rest look and the two hover looks", () => {
     const h = html({ windowControls: controls });
     const probes = h.match(/<div hidden="">(.*?)<\/div>/)?.[1] ?? "";
-    expect(probes.match(/<button[^>]*>/g)).toHaveLength(2);
+    expect(probes.match(/<button[^>]*>/g)).toHaveLength(3);
+    expect(probes.match(/tabindex="-1"/g)).toHaveLength(3);
+    expect(probes).toContain('data-look="rest"');
     expect(probes).toContain('tabindex="-1"');
     expect(probes).toContain('data-look="hover"');
     expect(probes).toContain("window__control--close");

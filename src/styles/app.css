@@ -80,7 +80,8 @@
 
 .perf-overlay {
   position: fixed;
-  inset-block-start: var(--space-2);
+  /* Below the 40 px top bar: its right end holds the window buttons, and on Windows a native strip that lies over the page. */
+  inset-block-start: calc(40px + var(--space-2));
   inset-inline-end: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius);

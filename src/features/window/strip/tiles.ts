@@ -70,15 +70,21 @@ function paintOne(layout: TileLayout, slot: 0 | 1 | 2, glyph: string, bar: strin
   ctx.fillRect(0, 0, width, height - rule);
   if (!setColour(ctx, "strokeStyle", look.fg)) return null;
   // The glyph is centred in the button, which fills the rows above the hairline, as the page's own button centres its icon.
-  // The page then paints the icon's box on whole device pixels (14.5 down becomes 15 at a scale of 1), so the origin is
-  // rounded the same way: across from the bar's right end, as the edges are, and down within the rows above the hairline.
-  const x = Math.round(((slot - 3) * BUTTON_W + (BUTTON_W - GLYPH) / 2) * dpr) + (layout.edges[3] ?? 0) - left;
-  const y = Math.round((height - rule - GLYPH * dpr) / 2);
+  // The page then gives the icon a box of whole device pixels, each edge rounded on its own (14.5 down becomes 15 at a scale
+  // of 1; a 12.5-pixel icon becomes 12 or 13), and fits the drawing to that box. Across is measured from the bar's right end,
+  // as the edges are, and down within the rows above the hairline. Measured at a scale of 1 only (live check, C2).
+  const size = GLYPH * dpr;
+  const across = ((slot - 3) * BUTTON_W + (BUTTON_W - GLYPH) / 2) * dpr;
+  const down = (height - rule - size) / 2;
+  const x = Math.round(across) + (layout.edges[3] ?? 0) - left;
+  const y = Math.round(down);
+  const w = Math.round(across + size) - Math.round(across);
+  const h = Math.round(down + size) - y;
   // The page cuts an icon to its own box, which takes the ends off Close's two strokes.
   ctx.beginPath();
-  ctx.rect(x, y, GLYPH * dpr, GLYPH * dpr);
+  ctx.rect(x, y, w, h);
   ctx.clip();
-  ctx.setTransform(dpr, 0, 0, dpr, x, y);
+  ctx.setTransform(w / GLYPH, 0, 0, h / GLYPH, x, y);
   ctx.lineWidth = 1;
   ctx.stroke(surface.path(glyph));
   return Array.from(ctx.getImageData(0, 0, width, height).data);
@@ -100,23 +106,24 @@ export function paintStrip(layout: TileLayout, looks: StripLooks, make: (width: 
 
 /**
  * The looks as the page's own elements have them now, or null when an element is missing. Computed styles give the tokens' `oklch()`
- * as written, which a canvas understands; in forced colours they already hold the system's colours. The hover look comes from the
- * two hidden probe buttons, which take the hover rules by their `data-look` attribute, so the pointer need not be on a button.
+ * as written, which a canvas understands; in forced colours they already hold the system's colours. Every look comes from a
+ * hidden probe button, found by its `data-look` attribute: the two hover probes take the hover rules by it, so the pointer need
+ * not be on a button, and the rest probe is never under the pointer, as the page's own buttons are whenever the strip is hidden.
  */
 export function readLooks(controls: HTMLElement): StripLooks | null {
   const view = controls.ownerDocument.defaultView;
   const bar = controls.closest<HTMLElement>(".window__bar");
-  const minimize = controls.querySelector<HTMLElement>(".window__control");
-  const probes = controls.parentElement?.querySelectorAll<HTMLElement>('[data-look="hover"]');
-  const hover = probes?.[0];
-  const closeHover = probes?.[1];
-  if (!view || !bar || !minimize || !hover || !closeHover) return null;
+  const probe = (selector: string) => controls.parentElement?.querySelector<HTMLElement>(selector);
+  const rest = probe('.window__control[data-look="rest"]');
+  const hover = probe('.window__control[data-look="hover"]:not(.window__control--close)');
+  const closeHover = probe('.window__control--close[data-look="hover"]');
+  if (!view || !bar || !rest || !hover || !closeHover) return null;
   const look = (el: HTMLElement): Look => {
     const style = view.getComputedStyle(el);
     return { bg: style.backgroundColor, fg: style.color };
   };
   const barStyle = view.getComputedStyle(bar);
-  return { bar: barStyle.backgroundColor, hairline: barStyle.borderBlockEndColor, rest: look(minimize), hover: look(hover), closeHover: look(closeHover) };
+  return { bar: barStyle.backgroundColor, hairline: barStyle.borderBlockEndColor, rest: look(rest), hover: look(hover), closeHover: look(closeHover) };
 }
 
 /** Makes canvases of the page's document. A canvas with no 2D context gives null. */

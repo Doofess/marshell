@@ -467,9 +467,10 @@ export function MainWindow({
               </button>
             </div>
           )}
-          {/* Not shown and out of the tab order: the strip reads the hover colours from these, so the pointer need not be on a button. */}
+          {/* Not shown and out of the tab order: the strip reads its colours from these, so the pointer's place doesn't change them. */}
           {os === "windows" && (
             <div hidden>
+              <button type="button" tabIndex={-1} className="window__control" data-look="rest" />
               <button type="button" tabIndex={-1} className="window__control" data-look="hover" />
               <button type="button" tabIndex={-1} className="window__control window__control--close" data-look="hover" />
             </div>

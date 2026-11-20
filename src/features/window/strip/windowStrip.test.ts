@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { StripPaint } from "./tiles";
-import { stripShown, stripSync, type StripRead } from "./windowStrip";
+import { focusWatch, stripShown, stripSync, type StripRead } from "./windowStrip";
 
 const settle = () => new Promise<void>((done) => setTimeout(done, 0));
 const PAINT = (n: number) => ({ height: n }) as unknown as StripPaint;
@@ -106,5 +106,54 @@ describe("stripSync", () => {
       [true, PAINT(1)],
       [true, PAINT(2)],
     ]);
+  });
+});
+
+describe("focusWatch", () => {
+  /** A hand-run "later": the test decides when the turn ends. */
+  function later() {
+    const waiting: (() => void)[] = [];
+    const defer = (run: () => void) => {
+      waiting.push(run);
+      return () => void waiting.splice(waiting.indexOf(run), 1);
+    };
+    const flush = () => {
+      for (const run of waiting.splice(0)) run();
+    };
+    return { defer, flush, waiting };
+  }
+
+  it("doesn't read the page between a button losing the keyboard and the next one getting it", () => {
+    const sync = vi.fn();
+    const { defer, flush } = later();
+    const watch = focusWatch(sync, defer);
+    // Tab from Minimize to Maximize: `focusout`, then `focusin`. A read between the two finds the keyboard on no button.
+    watch.onOut();
+    expect(sync).not.toHaveBeenCalled();
+    watch.onIn();
+    expect(sync).toHaveBeenCalledTimes(1);
+    flush();
+    expect(sync).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads once the keyboard has left the buttons for good", () => {
+    const sync = vi.fn();
+    const { defer, flush } = later();
+    const watch = focusWatch(sync, defer);
+    watch.onOut();
+    flush();
+    expect(sync).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps one read waiting however many times focus leaves, and none after it stops", () => {
+    const sync = vi.fn();
+    const { defer, flush, waiting } = later();
+    const watch = focusWatch(sync, defer);
+    watch.onOut();
+    watch.onOut();
+    expect(waiting).toHaveLength(1);
+    watch.stop();
+    flush();
+    expect(sync).not.toHaveBeenCalled();
   });
 });

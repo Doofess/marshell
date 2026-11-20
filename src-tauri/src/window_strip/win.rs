@@ -346,16 +346,17 @@ fn on_pointer(hwnd: HWND, input: Input, over: Option<Button>, non_client: bool) 
     }
     match input {
         Input::Down => {
-            // SAFETY: the strip's own window takes the mouse; the lock is released.
-            unsafe { SetCapture(hwnd) };
             let parent = parent_of(hwnd);
             // SAFETY: a query, then bringing the parent window forward; the lock is released. The strip itself never
-            // takes the keyboard (`MA_NOACTIVATE`).
+            // takes the keyboard (`MA_NOACTIVATE`). This comes before the capture, so a window coming forward can't
+            // take a capture the press depends on.
             unsafe {
                 if !parent.is_null() && GetForegroundWindow() != parent {
                     SetForegroundWindow(parent);
                 }
             }
+            // SAFETY: the strip's own window takes the mouse; the lock is released.
+            unsafe { SetCapture(hwnd) };
         }
         Input::Up => {
             // SAFETY: gives the mouse back; the `WM_CAPTURECHANGED` it sends finds the lock free.
@@ -376,7 +377,8 @@ fn on_pointer(hwnd: HWND, input: Input, over: Option<Button>, non_client: bool) 
 fn under_pointer(hwnd: HWND) -> Option<Option<Button>> {
     let mut at = POINT { x: 0, y: 0 };
     // SAFETY: reads the pointer's place into a local, asks which window is there, and turns the point into the strip's
-    // own coordinates; none of the three sends the strip a message it locks for.
+    // own coordinates. `WindowFromPoint` sends the strip a `WM_NCHITTEST`, whose handler takes the lock: this must be
+    // called with the lock free, as it is by its one caller.
     unsafe {
         if GetCursorPos(&mut at) == 0 || WindowFromPoint(at) != hwnd {
             return None;
