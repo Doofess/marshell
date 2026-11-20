@@ -19,6 +19,18 @@ describe("MainWindow: window frame", () => {
     expect(html({ windowControls: controls })).toContain('aria-label="Minimize"');
     expect(html({ os: "mac", windowControls: controls })).not.toContain('aria-label="Minimize"');
     expect(html({ os: "linux", windowControls: controls })).not.toContain('aria-label="Close"');
+    const inside = html({ windowControls: controls }).match(/<div class="window__controls">(.*?)<\/div>/)?.[1] ?? "";
+    expect(inside.match(/<button/g)).toHaveLength(3);
+  });
+  it("keeps two hidden probes beside the controls, out of the tab order", () => {
+    const h = html({ windowControls: controls });
+    const probes = h.match(/<div hidden="">(.*?)<\/div>/)?.[1] ?? "";
+    expect(probes.match(/<button[^>]*>/g)).toHaveLength(2);
+    expect(probes).toContain('tabindex="-1"');
+    expect(probes).toContain('data-look="hover"');
+    expect(probes).toContain("window__control--close");
+    expect(h.indexOf('<div hidden="">')).toBeGreaterThan(h.indexOf('class="window__controls"'));
+    expect(html({ os: "mac", windowControls: controls })).not.toContain("data-look");
   });
   it("names the middle button Restore while maximized", () => {
     const h = html({ windowControls: { ...controls, maximized: true } });
