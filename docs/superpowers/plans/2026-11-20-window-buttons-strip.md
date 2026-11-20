@@ -148,6 +148,7 @@ What the window is (each line is a decision; the spike's `strip_spike.rs` shows 
 - Mouse: `WM_MOUSEMOVE` is `Move(hit)` and arms `TrackMouseEvent(TME_LEAVE)`; `WM_MOUSELEAVE` and `WM_CAPTURECHANGED` are `Leave`; `WM_LBUTTONDOWN` and `WM_LBUTTONDBLCLK` are `Down` with `SetCapture`; `WM_LBUTTONUP` releases the capture and is `Up(hit)`, `Up(None)` outside the strip. `Outcome.redraw` invalidates the window.
 - `WM_MOUSEACTIVATE` answers `MA_NOACTIVATE`. On `Down`, if `GetForegroundWindow()` isn't the parent, `SetForegroundWindow(parent)`.
 - An action is posted to the strip as a `WM_APP` message and carried out when it arrives, not inside the mouse message: Minimize is `window.minimize()`, Maximize is `unmaximize()` when `is_maximized()` and `maximize()` otherwise, Close is `window.close()` (it raises `CloseRequested`, so the tray choice runs as for the page's button). `window` is `crate::main_window(app)`.
+- Threads: `set_window_strip` stays a plain (non-async) command, which Tauri runs on the main thread, the one that owns the window. `install`, `on_resized` and the window's procedure run there too, so nothing here crosses threads.
 - State (the window's handle, the BGRA pictures, the `Pointer`) is behind one lock. **Never hold the lock across `SetWindowPos`, `ShowWindow`, `UpdateWindow`, `SetCapture` or a `tauri::Window` call:** they send messages to this window's own procedure, which takes the lock again.
 
 - [ ] **Step 1: Write the failing tests** in `win.rs`:
