@@ -779,25 +779,125 @@ impl History {
     /// hasn't read yet. Takes the index only for each write, so requests and hooks never wait on it long.
     /// Stops early when a flush has started.
     pub fn backfill(self: Arc<Self>) -> tokio::task::JoinHandle<()> {
+        tokio::task::spawn_blocking(move || self.index_stale())
+    }
+
+    /// The body of `backfill`, on the caller's thread.
+    fn index_stale(&self) {
+        let stale = match self.index.lock().unwrap().as_ref().map(Index::stale) {
+            Some(Ok(stale)) => stale,
+            Some(Err(err)) => {
+                tracing::warn!("history backfill could not list sessions: {err:#}");
+                return;
+            }
+            None => return,
+        };
+        if !stale.is_empty() {
+            tracing::info!("history backfill: indexing {} conversation(s)", stale.len());
+        }
+        for meta in stale {
+            if self.hurry.load(Ordering::SeqCst) {
+                break;
+            }
+            self.reindex(&meta);
+        }
+    }
+
+    /// The start-up work, on one blocking thread: `copy_uncopied`, then what `backfill` does.
+    pub fn catch_up(self: Arc<Self>, running_distros: fn() -> Vec<String>) -> tokio::task::JoinHandle<()> {
         tokio::task::spawn_blocking(move || {
-            let stale = match self.index.lock().unwrap().as_ref().map(Index::stale) {
-                Some(Ok(stale)) => stale,
-                Some(Err(err)) => {
-                    tracing::warn!("history backfill could not list sessions: {err:#}");
-                    return;
-                }
-                None => return,
-            };
-            if !stale.is_empty() {
-                tracing::info!("history backfill: indexing {} conversation(s)", stale.len());
+            let copied = self.copy_uncopied(&running_distros);
+            if copied > 0 {
+                tracing::info!("history start-up: copied {copied} conversation(s) that had no copy");
             }
-            for meta in stale {
-                if self.hurry.load(Ordering::SeqCst) {
-                    break;
-                }
-                self.reindex(&meta);
-            }
+            self.index_stale();
         })
+    }
+
+    /// The conversation's sidecar, read now, when it still waits for a copy: it ran in a tab, its transcript is
+    /// one Marshell reads for its CLI, it has no archive file, and its copy was not deleted after it last ran
+    /// (a copy the user deleted stays deleted, unless the conversation ran in a tab again after the delete).
+    /// Makes no file call on the transcript path, and holds no lock.
+    fn waiting(&self, agent: &str, session_id: &str) -> Option<SessionMeta> {
+        let meta = archive::read_meta(&self.home, agent, session_id).ok().flatten()?;
+        if meta.tab_id.is_empty()
+            || !sidecar_allowed_in(agent, &meta.transcript_path, session_id, meta.distro.as_deref())
+            || super::parse_for(agent, "", session_id).is_none()
+        {
+            return None;
+        }
+        let (archive, _) = archive::archive_paths(&self.home, agent, session_id);
+        if archive.exists() {
+            return None;
+        }
+        match archive::deleted_at(&self.home, agent, session_id) {
+            Some(deleted_ms) if deleted_ms >= meta.updated_ms => None,
+            _ => Some(meta),
+        }
+    }
+
+    /// Copies every conversation that ran in a Marshell tab and has no copy, when its transcript is still there.
+    /// `running_distros` lists the WSL distros that run now; it is asked at most once, and only when a conversation
+    /// from a distro is waiting, and before any file call on that conversation's transcript path (a call on a
+    /// stopped distro's share starts the distro). Returns how many copies were made. Blocking.
+    pub fn copy_uncopied(&self, running_distros: &dyn Fn() -> Vec<String>) -> usize {
+        if !self.is_on() {
+            return 0;
+        }
+        let listed: Vec<(String, String)> = archive::read_all_meta(&self.home)
+            .into_iter()
+            .filter(|meta| !meta.tab_id.is_empty())
+            .map(|meta| (meta.agent, meta.session_id))
+            .collect();
+        let mut running: Option<Vec<String>> = None;
+        let mut copied = 0;
+        for (agent, id) in listed {
+            if self.is_hurrying() {
+                break;
+            }
+            // Read again, not taken from the list: a hook that linked the conversation to another tab while the
+            // pass ran must not be overwritten with the older record.
+            let Some(meta) = self.waiting(&agent, &id) else {
+                continue;
+            };
+            if let Some(distro) = &meta.distro {
+                let running = running.get_or_insert_with(running_distros);
+                if !running.iter().any(|name| name.eq_ignore_ascii_case(distro)) {
+                    continue;
+                }
+            }
+            let path = Path::new(&meta.transcript_path);
+            let source = if path.is_file() {
+                path.to_path_buf()
+            } else if agent == "codex" {
+                let mut zst = path.as_os_str().to_owned();
+                zst.push(".zst");
+                let zst = PathBuf::from(zst);
+                if !zst.is_file() {
+                    continue;
+                }
+                zst
+            } else {
+                continue;
+            };
+            let bytes = match archive::read_source(&source) {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    tracing::warn!("could not read transcript {id} for its copy: {err:#}");
+                    continue;
+                }
+            };
+            // A quit that began during the read finds nothing registered and doesn't wait: write nothing after it.
+            if self.is_hurrying() {
+                break;
+            }
+            match self.import_bytes(&meta, &bytes) {
+                Ok(true) => copied += 1,
+                Ok(false) => {}
+                Err(err) => tracing::warn!("could not copy transcript {id}: {err:#}"),
+            }
+        }
+        copied
     }
 
     /// True when no copy is running or waiting.
@@ -1983,5 +2083,274 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    // The start-up pass.
+
+    const CLAUDE_CHAT: &str = include_str!("../../tests/fixtures/claude/transcripts/2.1.309/basic.jsonl");
+
+    /// `(agent, session id, fixture text)` of the four CLIs whose tab conversations are copied.
+    const PASS_CLIS: [(&str, &str, &str); 4] = [
+        ("claude", ID, CLAUDE_CHAT),
+        ("codex", TAB_CLIS[0].1, CODEX_TUI),
+        ("qwen", TAB_CLIS[1].1, QWEN_CHAT),
+        ("copilot", TAB_CLIS[2].1, COPILOT_LOG),
+    ];
+
+    /// Notes `agent`'s session start in tab `t1` (so a row and a sidecar exist and no copy does) and writes the
+    /// transcript it names, from `text`, under `dir`.
+    fn linked(history: &History, agent: &str, dir: &Path, id: &str, text: &str) -> PathBuf {
+        let start = match agent {
+            "claude" => body(START, dir, id),
+            "codex" => codex_body(CODEX_START, dir, id),
+            "qwen" => qwen_body(QWEN_START, dir, id),
+            "copilot" => copilot_body(dir, id, "sessionStart"),
+            other => panic!("no start for {other}"),
+        };
+        assert_eq!(history.note_event(agent, "t1", None, &start, 1000, None), None);
+        let path = PathBuf::from(start["transcript_path"].as_str().unwrap());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, text).unwrap();
+        path
+    }
+
+    fn no_distro_waits() -> Vec<String> {
+        panic!("no distro is waiting")
+    }
+
+    fn archive_file(home: &Path, agent: &str, id: &str) -> PathBuf {
+        crate::history::archive::archive_paths(home, agent, id).0
+    }
+
+    #[test]
+    fn the_start_up_pass_copies_a_tab_conversation_that_has_no_copy() {
+        for (agent, id, text) in PASS_CLIS {
+            let (home, src) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+            let history = History::open(home.path());
+            linked(&history, agent, src.path(), id, text);
+            assert!(!archive_file(home.path(), agent, id).exists(), "{agent}");
+            assert_eq!(history.copy_uncopied(&no_distro_waits), 1, "{agent}");
+            assert_eq!(
+                crate::history::archive::read_archive(home.path(), agent, id)
+                    .unwrap()
+                    .unwrap(),
+                text,
+                "{agent}: the copy differs from its source"
+            );
+            assert!(
+                history.entry(agent, id).unwrap().unwrap().turns > 0,
+                "{agent}: no turns"
+            );
+        }
+    }
+
+    #[test]
+    fn it_skips_a_conversation_that_has_its_copy() {
+        let (home, src) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let history = History::open(home.path());
+        linked(&history, "codex", src.path(), PASS_CLIS[1].1, CODEX_TUI);
+        assert_eq!(history.copy_uncopied(&no_distro_waits), 1);
+        let archive = archive_file(home.path(), "codex", PASS_CLIS[1].1);
+        let before = std::fs::metadata(&archive).unwrap().modified().unwrap();
+        assert_eq!(history.copy_uncopied(&no_distro_waits), 0);
+        assert_eq!(std::fs::metadata(&archive).unwrap().modified().unwrap(), before);
+    }
+
+    #[test]
+    fn it_skips_a_conversation_no_tab_ran() {
+        let (home, src) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let history = History::open(home.path());
+        // Written with no sidecar before it: `write_meta` keeps a stored tab when a writer with none comes after.
+        let path = src.path().join(format!("{ID}.jsonl"));
+        std::fs::write(&path, CLAUDE_CHAT).unwrap();
+        let meta = SessionMeta {
+            agent: "claude".into(),
+            session_id: ID.into(),
+            tab_id: String::new(),
+            cwd: src.path().to_string_lossy().into_owned(),
+            transcript_path: path.to_string_lossy().into_owned(),
+            started_ms: 1000,
+            updated_ms: 1000,
+            previous_in_tab: None,
+            recordings: vec![],
+            client: Default::default(),
+            preset: None,
+            distro: None,
+        };
+        crate::history::archive::write_meta(home.path(), &meta).unwrap();
+        history.index.lock().unwrap().as_ref().unwrap().upsert(&meta).unwrap();
+        assert_eq!(history.copy_uncopied(&no_distro_waits), 0);
+        assert!(!archive_file(home.path(), "claude", ID).exists());
+    }
+
+    #[test]
+    fn it_skips_antigravity() {
+        let home = tempfile::tempdir().unwrap();
+        let history = agy_history(home.path(), "C:/work/app");
+        let body = agy_body(AGY_PRE, "PreInvocation", home.path(), ID);
+        history.note_event("antigravity", "t1", None, &body, 1000, None);
+        let path = PathBuf::from(body["transcriptPath"].as_str().unwrap());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "{}\n").unwrap();
+        assert!(
+            crate::history::archive::read_meta(home.path(), "antigravity", ID)
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(history.waiting("antigravity", ID), None);
+        assert_eq!(history.copy_uncopied(&no_distro_waits), 0);
+        assert!(!archive_file(home.path(), "antigravity", ID).exists());
+    }
+
+    #[test]
+    fn it_skips_a_transcript_that_is_gone() {
+        let (home, src) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let history = History::open(home.path());
+        let id = PASS_CLIS[2].1;
+        let path = linked(&history, "qwen", src.path(), id, QWEN_CHAT);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(history.copy_uncopied(&no_distro_waits), 0);
+        assert_eq!(history.entry("qwen", id).unwrap().unwrap().turns, 0);
+        assert!(!archive_file(home.path(), "qwen", id).exists());
+    }
+
+    #[test]
+    fn the_record_is_read_again_before_the_copy() {
+        let (home, src) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let history = History::open(home.path());
+        let id = PASS_CLIS[1].1;
+        let body = codex_body(CODEX_START, src.path(), id);
+        linked(&history, "codex", src.path(), id, CODEX_TUI);
+        // Another tab goes on with the conversation after the pass listed it.
+        history.note_event("codex", "t2", None, &body, 2000, None);
+        let moved = history.waiting("codex", id).unwrap();
+        assert_eq!((moved.tab_id.as_str(), moved.updated_ms), ("t2", 2000));
+        assert_eq!(history.copy_uncopied(&no_distro_waits), 1);
+        let stored = crate::history::archive::read_meta(home.path(), "codex", id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.tab_id, "t2");
+        assert_eq!(history.get("codex", id).unwrap().unwrap().tab_id, "t2");
+    }
+
+    /// A conversation recorded as run in WSL distro `distro`, whose transcript is a local file (a share can't
+    /// exist in a test, and the pass must not touch one).
+    fn linked_in_distro(history: &History, dir: &Path, id: &str, distro: &str) {
+        let path = linked(history, "claude", dir, id, CLAUDE_CHAT);
+        let meta = SessionMeta {
+            distro: Some(distro.into()),
+            ..history.get("claude", id).unwrap().unwrap()
+        };
+        assert_eq!(meta.transcript_path, path.to_string_lossy());
+        crate::history::archive::write_meta(history.home(), &meta).unwrap();
+    }
+
+    #[test]
+    fn it_copies_a_distro_conversation_only_while_its_distro_runs() {
+        let (home, src) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let history = History::open(home.path());
+        linked_in_distro(&history, src.path(), ID, "Ubuntu");
+        assert_eq!(history.copy_uncopied(&Vec::new), 0);
+        assert!(!archive_file(home.path(), "claude", ID).exists());
+        assert_eq!(history.copy_uncopied(&|| vec!["ubuntu".to_string()]), 1);
+        assert!(archive_file(home.path(), "claude", ID).exists());
+    }
+
+    #[test]
+    fn it_asks_for_the_running_distros_once() {
+        const B: &str = "00000000-0000-4000-8000-000000000002";
+        const C: &str = "00000000-0000-4000-8000-000000000003";
+        let (home, src) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let history = History::open(home.path());
+        linked_in_distro(&history, src.path(), ID, "Ubuntu");
+        linked_in_distro(&history, src.path(), B, "Debian");
+        linked(&history, "claude", src.path(), C, CLAUDE_CHAT);
+        let asked = std::cell::Cell::new(0);
+        let copied = history.copy_uncopied(&|| {
+            asked.set(asked.get() + 1);
+            vec!["Ubuntu".to_string()]
+        });
+        assert_eq!((copied, asked.get()), (2, 1));
+    }
+
+    #[test]
+    fn it_reads_a_codex_rollout_that_was_compressed_where_it_lay() {
+        let (home, src) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let history = History::open(home.path());
+        let id = PASS_CLIS[1].1;
+        let path = linked(&history, "codex", src.path(), id, CODEX_TUI);
+        std::fs::remove_file(&path).unwrap();
+        let mut zst = path.into_os_string();
+        zst.push(".zst");
+        std::fs::write(&zst, zstd::encode_all(CODEX_TUI.as_bytes(), 3).unwrap()).unwrap();
+        assert_eq!(history.copy_uncopied(&no_distro_waits), 1);
+        assert_eq!(
+            crate::history::archive::read_archive(home.path(), "codex", id)
+                .unwrap()
+                .unwrap(),
+            CODEX_TUI
+        );
+    }
+
+    #[test]
+    fn it_stops_when_a_flush_has_started() {
+        let (home, src) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let history = History::open(home.path());
+        linked(&history, "claude", src.path(), ID, CLAUDE_CHAT);
+        history.flush(Duration::ZERO);
+        assert_eq!(history.copy_uncopied(&no_distro_waits), 0);
+        assert!(!archive_file(home.path(), "claude", ID).exists());
+    }
+
+    #[test]
+    fn a_deleted_copy_is_not_brought_back() {
+        let (home, src) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let history = History::open(home.path());
+        linked(&history, "claude", src.path(), ID, CLAUDE_CHAT);
+        let old = history.get("claude", ID).unwrap().unwrap();
+        assert_eq!(history.copy_uncopied(&no_distro_waits), 1);
+        history.delete_copy("claude", ID).unwrap();
+        assert_eq!(history.copy_uncopied(&no_distro_waits), 0);
+        assert!(!archive_file(home.path(), "claude", ID).exists());
+        // A delete whose sidecar removal failed leaves the old record behind.
+        crate::history::archive::write_meta(home.path(), &old).unwrap();
+        assert_eq!(history.copy_uncopied(&no_distro_waits), 0);
+        assert!(!archive_file(home.path(), "claude", ID).exists());
+    }
+
+    #[test]
+    fn a_conversation_run_again_after_its_delete_is_copied() {
+        let (home, src) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let history = History::open(home.path());
+        linked(&history, "claude", src.path(), ID, CLAUDE_CHAT);
+        let old = history.get("claude", ID).unwrap().unwrap();
+        assert_eq!(history.copy_uncopied(&no_distro_waits), 1);
+        history.delete_copy("claude", ID).unwrap();
+        let deleted_at = crate::history::archive::deleted_at(home.path(), "claude", ID).unwrap();
+        let again = SessionMeta {
+            updated_ms: deleted_at + 1000,
+            ..old
+        };
+        crate::history::archive::write_meta(home.path(), &again).unwrap();
+        assert_eq!(history.copy_uncopied(&no_distro_waits), 1);
+        assert!(archive_file(home.path(), "claude", ID).exists());
+    }
+
+    #[tokio::test]
+    async fn catch_up_copies_and_then_indexes() {
+        const B: &str = "00000000-0000-4000-8000-000000000002";
+        let (home, src) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        {
+            // An archive the index hasn't read, as after an upgrade.
+            let history = History::open(home.path());
+            let meta = stopped(&history, src.path(), B, TOOLS, 2000);
+            crate::history::archive::copy_transcript(home.path(), &meta).unwrap();
+        }
+        let history = Arc::new(History::open(home.path()));
+        linked(&history, "claude", src.path(), ID, CLAUDE_CHAT);
+        history.clone().catch_up(Vec::new).await.unwrap();
+        for id in [ID, B] {
+            assert!(history.entry("claude", id).unwrap().unwrap().turns > 0, "{id}");
+        }
     }
 }

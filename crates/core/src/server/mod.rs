@@ -1642,9 +1642,9 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
             tracing::error!("core server stopped: {e}");
         }
     });
-    // The server is listening: index the conversations archived before search existed, one at a time off the
-    // async threads. Dropping the handle lets it run on its own.
-    drop(state.history().backfill());
+    // The server is listening: index the conversations archived before search existed, and copy the tab
+    // conversations that have none, one at a time off the async threads. Dropping the handle lets it run on its own.
+    drop(state.history().catch_up(state.0.running_distros));
     if let Some(roots) = cfg.import {
         state.start_importer(roots);
     }
