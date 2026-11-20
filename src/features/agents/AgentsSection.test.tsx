@@ -455,11 +455,11 @@ describe("AgentsSectionView: Copilot CLI", () => {
     expect(on).toContain("Hooks on in C:/h/.copilot/hooks/marshell.json.");
     expect(on).not.toContain(">Set up</button>");
   });
-  it("Copilot's skill row says the skill isn't available for Copilot CLI yet", () => {
+  it("Copilot's skill row offers Install the marshell skill", () => {
     const h = section(withCopilot(COPILOT_SETUP, { kind: "list" }, true));
     expect(h).toContain('data-agent-skill="copilot"');
-    expect(h).toContain("Marshell has no skill for Copilot CLI yet.");
-    expect(h).not.toContain("Install the marshell skill</button>");
+    expect(h).toContain("Install the marshell skill</button>");
+    expect(h).not.toContain("Marshell has no skill for Copilot CLI yet.");
   });
   it("the Hooks off panel is titled for Copilot CLI", () => {
     expect(withCopilot({ ...COPILOT_SETUP, hooks: "installed" }, { kind: "off", agent: "copilot", removal: null, busy: false })).toContain("Turn Copilot CLI hooks off");

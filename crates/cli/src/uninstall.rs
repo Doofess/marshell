@@ -1465,6 +1465,32 @@ mod tests {
     }
 
     #[test]
+    fn uninstall_removes_copilots_skill() {
+        let f = installed(ORIGINAL);
+        let path = put_skill(&f, "copilot", marshell_core::agents::skill::SKILL_TEXT.as_bytes());
+        let (code, out) = run_with(&f, "", true);
+        assert_eq!(code, 0, "{out}");
+        assert!(out.contains(&*path.to_string_lossy()), "{out}");
+        assert!(!path.exists() && !path.parent().unwrap().exists(), "{out}");
+    }
+
+    #[test]
+    fn an_edited_copilot_skill_is_left() {
+        let f = installed(ORIGINAL);
+        let path = put_skill(&f, "copilot", b"mine");
+        let (code, out) = run_with(&f, "", true);
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"mine");
+        assert!(
+            out.contains(&format!(
+                "Left {}: it was edited after Marshell installed it.",
+                path.display()
+            )),
+            "{out}"
+        );
+    }
+
+    #[test]
     fn uninstall_leaves_an_edited_skill() {
         let f = installed(ORIGINAL);
         let path = put_skill(&f, "codex", b"mine");

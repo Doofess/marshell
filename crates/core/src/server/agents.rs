@@ -312,11 +312,17 @@ impl AppState {
     /// Where `agent`'s `marshell` skill file goes. A skill home named by a test replaces the user's home and the
     /// process environment; otherwise it is the user's home, with `CLAUDE_CONFIG_DIR` from the environment.
     fn skill_file(&self, agent: &str) -> Result<PathBuf, Fail> {
-        // Qwen Code's skill follows its own home (`QWEN_HOME`), which a test names with `with_qwen_home`.
+        // Qwen Code's and Copilot CLI's skills follow their own homes (`QWEN_HOME`, `COPILOT_HOME`), which a test names
+        // with `with_qwen_home` and `with_copilot_home`.
         let path = match &self.0.skill_home {
             _ if agent == QWEN && self.0.qwen_home.is_some() => {
                 skill::skill_path(agent, &|_| None, self.0.qwen_home.as_deref().unwrap_or(Path::new("")))
             }
+            _ if agent == COPILOT && self.0.copilot_home.is_some() => skill::skill_path(
+                agent,
+                &|_| None,
+                self.0.copilot_home.as_deref().unwrap_or(Path::new("")),
+            ),
             Some(home) => skill::skill_path(agent, &|_| None, home),
             None => {
                 let home = super::files::home_dir().ok_or_else(|| failed("the user's home folder is not known"))?;
@@ -1118,7 +1124,7 @@ pub(crate) fn qwen_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
 }
 
 /// Copilot CLI's setup: its `settings.json` and Marshell's `hooks/marshell.json`, read and never written here. There
-/// is no approve switch (decision 12) and no skill until slice 6n2.
+/// is no approve switch (decision 12).
 pub(crate) fn copilot_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
     let home = &st.0.home;
     let dir = st.copilot_user_home()?;
@@ -1134,6 +1140,7 @@ pub(crate) fn copilot_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
         Err(e) => (None, Some(e.to_string())),
     };
     let chain_text = std::fs::read_to_string(paths::statusline_chain(home, COPILOT)).ok();
+    let (skill, skill_path, skill_problem) = st.skill_of(COPILOT)?;
 
     let mut setup = AgentSetup {
         agent: COPILOT.to_string(),
@@ -1155,9 +1162,9 @@ pub(crate) fn copilot_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
         trust: None,
         bridge_path: paths::bridge_exe(home).to_string_lossy().into_owned(),
         snapshots_dir: paths::snapshots_dir(home).to_string_lossy().into_owned(),
-        skill: SkillInstall::Unavailable,
-        skill_path: String::new(),
-        skill_problem: Some("Marshell has no skill for Copilot CLI yet.".to_string()),
+        skill,
+        skill_path,
+        skill_problem,
     };
     match (&settings_text, unreadable) {
         (_, Some(message)) => {
@@ -1883,7 +1890,7 @@ pub async fn plan(
         };
         // The skill file is the Windows home's. A distro's skill is not planned here, so a request for one inside a
         // distro gets the hooks only.
-        if want.skill && distro.is_none() && !matches!(adapter, Adapter::Copilot) {
+        if want.skill && distro.is_none() {
             // A skill Marshell can't touch is left out: it must not block the hooks.
             let path = st.skill_file(&agent)?;
             if let Ok(bytes) = st.skill_bytes(&path) {

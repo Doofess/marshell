@@ -16,11 +16,12 @@ pub const PREVIOUS: &[&str] = &[
 ];
 
 /// Every agent with a skill: its id and the CLI's name, as a plan's title says it.
-pub const AGENTS: [(&str, &str); 4] = [
+pub const AGENTS: [(&str, &str); 5] = [
     ("claude", "Claude Code"),
     ("codex", "Codex"),
     ("antigravity", "Antigravity CLI"),
     ("qwen", "Qwen Code"),
+    ("copilot", "Copilot CLI"),
 ];
 
 /// The CLI's name for `agent`'s id.
@@ -39,6 +40,7 @@ pub fn skill_path(agent: &str, env: &dyn Fn(&str) -> Option<String>, user_home: 
         "codex" => user_home.join(".agents"),
         "antigravity" => user_home.join(".gemini").join("config"),
         "qwen" => crate::agents::qwen::home(env, user_home),
+        "copilot" => crate::agents::copilot::home(env, user_home),
         _ => return None,
     };
     Some(root.join("skills").join("marshell").join("SKILL.md"))
@@ -140,12 +142,18 @@ mod tests {
             p("qwen", &|k| (k == "QWEN_HOME").then(|| "~/q".to_string())),
             Some(tail("/h/q"))
         );
+        assert_eq!(p("copilot", &no_env), Some(tail("/h/.copilot")));
+        assert_eq!(
+            p("copilot", &|k| (k == "COPILOT_HOME").then(|| "/c".to_string())),
+            Some(tail("/c"))
+        );
         assert_eq!(p("grok", &no_env), None);
     }
 
     #[test]
     fn every_agent_in_the_table_has_a_skill_path_and_a_name() {
         assert!(AGENTS.contains(&("qwen", "Qwen Code")));
+        assert!(AGENTS.contains(&("copilot", "Copilot CLI")));
         for (id, name) in AGENTS {
             assert!(skill_path(id, &no_env, Path::new("/h")).is_some(), "{id}");
             assert_eq!(cli_name(id), Some(name));

@@ -1060,6 +1060,56 @@ async fn install_copilot(e: &CopilotEnv) -> Value {
 }
 
 #[tokio::test]
+async fn copilot_skill_plan_creates_the_file_under_the_copilot_home() {
+    let e = copilot_env();
+    let path = e
+        .settings
+        .parent()
+        .unwrap()
+        .join("skills")
+        .join("marshell")
+        .join("SKILL.md");
+    let (status, preview) = post(&e.app, "/v1/agents/copilot/skill/plan", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["can_apply"], true, "{preview}");
+    assert!(!path.exists(), "planning must not write the skill");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        marshell_core::agents::skill::SKILL_TEXT
+    );
+    let (_, setup) = get(&e.app, "/v1/agents/copilot/setup").await;
+    assert_eq!(setup["skill"], "installed");
+    assert_eq!(setup["skill_path"], path.to_string_lossy().as_ref());
+}
+
+#[tokio::test]
+async fn copilot_hooks_plan_with_skill_includes_it() {
+    let e = copilot_env();
+    let path = e
+        .settings
+        .parent()
+        .unwrap()
+        .join("skills")
+        .join("marshell")
+        .join("SKILL.md");
+    let mut want = WANT();
+    want["skill"] = json!(true);
+    let (status, preview) = post(&e.app, "/v1/agents/copilot/hooks/plan", want).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["can_apply"], true, "{preview}");
+    assert!(!path.exists(), "planning must not write the skill");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        marshell_core::agents::skill::SKILL_TEXT
+    );
+    assert!(e.hooks.exists());
+}
+
+#[tokio::test]
 async fn copilot_setup_reports_none_then_installed_after_apply() {
     let e = copilot_env();
     let (status, setup) = get(&e.app, "/v1/agents/copilot/setup").await;
