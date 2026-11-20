@@ -66,9 +66,15 @@ function paintOne(layout: TileLayout, slot: 0 | 1 | 2, glyph: string, bar: strin
   if (!setColour(ctx, "fillStyle", look.bg)) return null;
   ctx.fillRect(0, 0, width, height - rule);
   if (!setColour(ctx, "strokeStyle", look.fg)) return null;
-  // The glyph is placed in CSS pixels and centred in the rows above the hairline, as the page's own button centres it.
-  ctx.setTransform(dpr, 0, 0, dpr, -left, 0);
-  ctx.translate(slot * BUTTON_W + (BUTTON_W - GLYPH) / 2, (BAR_H - 1 - GLYPH) / 2);
+  // The glyph is centred in the rows above the hairline, as the page's own button centres its icon. The page then paints the
+  // icon's box on whole device pixels (14.5 CSS pixels down becomes 15 at a scale of 1), so the origin is rounded the same way.
+  const x = Math.round((slot * BUTTON_W + (BUTTON_W - GLYPH) / 2) * dpr) - left;
+  const y = Math.round(((BAR_H - 1 - GLYPH) / 2) * dpr);
+  // The page cuts an icon to its own box, which takes the ends off Close's two strokes.
+  ctx.beginPath();
+  ctx.rect(x, y, GLYPH * dpr, GLYPH * dpr);
+  ctx.clip();
+  ctx.setTransform(dpr, 0, 0, dpr, x, y);
   ctx.lineWidth = 1;
   ctx.stroke(surface.path(glyph));
   return Array.from(ctx.getImageData(0, 0, width, height).data);
@@ -115,7 +121,9 @@ export function canvasSurface(doc: Document): (width: number, height: number) =>
     const canvas = doc.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    // An ordinary canvas, read once: one made for frequent reads is drawn by another rasteriser, which gives a thin diagonal
+    // stroke other pixels than the page's own icon has (live check, finding 3).
+    const ctx = canvas.getContext("2d");
     return ctx ? { ctx, path: (d) => new Path2D(d) } : null;
   };
 }

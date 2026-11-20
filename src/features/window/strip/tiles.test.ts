@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GLYPHS, paintStrip, tileLayout, type StripLooks, type Surface } from "./tiles";
+import { GLYPHS, canvasSurface, paintStrip, tileLayout, type StripLooks, type Surface } from "./tiles";
 
 const looks: StripLooks = {
   bar: "bar",
@@ -29,8 +29,10 @@ function fake(log: Call[][], width: number, height: number): Surface {
     },
     lineWidth: 0,
     fillRect: (...a: number[]) => log[log.length - 1]?.push(["fillRect", ...a, fill]),
+    beginPath: () => {},
+    rect: (...a: number[]) => log[log.length - 1]?.push(["rect", ...a]),
+    clip: () => log[log.length - 1]?.push(["clip"]),
     setTransform: (...a: number[]) => log[log.length - 1]?.push(["setTransform", ...a]),
-    translate: (...a: number[]) => log[log.length - 1]?.push(["translate", ...a]),
     stroke: (p: { d: string }) => log[log.length - 1]?.push(["stroke", p.d, stroke]),
     getImageData: () => ({ data: new Uint8ClampedArray(width * height * 4) }),
   };
@@ -59,10 +61,32 @@ describe("tiles", () => {
       ["fillRect", 0, 0, 46, 40, "bar"],
       ["fillRect", 0, 39, 46, 1, "line"],
       ["fillRect", 0, 0, 46, 39, "close-bg"],
-      ["setTransform", 1, 0, 0, 1, -92, 0],
-      ["translate", 110, 14.5],
+      // 14.5 CSS pixels down, on the whole pixel the page's own icon is painted on, and cut to the icon's box as the page cuts it.
+      ["rect", 18, 15, 10, 10],
+      ["clip"],
+      ["setTransform", 1, 0, 0, 1, 18, 15],
       ["stroke", GLYPHS.close, "close-fg"],
     ]);
+  });
+
+  it("puts the glyph on whole device pixels, as the page paints its icon", () => {
+    const origin = (dpr: number, picture: number) => {
+      const log: Call[][] = [];
+      paintStrip(tileLayout(dpr), looks, maker(log));
+      return log[picture]!.find((c) => c[0] === "setTransform");
+    };
+    // Pictures 0 and 6 are Minimize's and Close's rest pictures.
+    expect(origin(1.5, 0)).toEqual(["setTransform", 1.5, 0, 0, 1.5, 27, 22]);
+    expect(origin(1.5, 6)).toEqual(["setTransform", 1.5, 0, 0, 1.5, 27, 22]);
+    expect(origin(2, 0)).toEqual(["setTransform", 2, 0, 0, 2, 36, 29]);
+    expect(origin(1.25, 0)).toEqual(["setTransform", 1.25, 0, 0, 1.25, 23, 18]);
+  });
+
+  it("asks for an ordinary canvas, which draws a thin stroke as the page draws its icon", () => {
+    const asked: unknown[][] = [];
+    const doc = { createElement: () => ({ width: 0, height: 0, getContext: (...a: unknown[]) => (asked.push(a), {}) }) } as unknown as Document;
+    expect(canvasSurface(doc)(46, 40)).not.toBeNull();
+    expect(asked).toEqual([["2d"]]);
   });
 
   it("gives every picture its own width at a fractional scale", () => {
