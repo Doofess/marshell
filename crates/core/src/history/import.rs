@@ -7,7 +7,7 @@
 //! The source folders are only ever read, and links in them are not followed.
 
 use super::recorder::History;
-use super::{SessionMeta, archive, valid_session_id};
+use super::{SessionMeta, archive, sidecar_allowed, valid_session_id};
 use crate::agents::codex::rollout;
 use crate::agents::common::rfc3339_ms;
 use crate::agents::copilot;
@@ -848,6 +848,10 @@ fn codex_meta(path: &Path, text: &str, md: &std::fs::Metadata) -> Prepared {
         return Prepared::Skip(CODEX);
     };
     if !meta.listed || !valid_session_id(&meta.id) {
+        return Prepared::Skip(CODEX);
+    }
+    // A rollout is copied only when its name is for the id its first line gives.
+    if !sidecar_allowed(CODEX, &path.to_string_lossy(), &meta.id) {
         return Prepared::Skip(CODEX);
     }
     let started_ms = if meta.started_ms == 0 {
@@ -1751,6 +1755,28 @@ mod tests {
             .unwrap();
         assert_eq!(state.files.len(), 2);
         assert!(state.files.values().any(|c| c.session_id.is_empty()));
+    }
+
+    #[test]
+    fn a_rollout_named_for_another_session_is_not_imported() {
+        let rig = rig();
+        let dir = rig.codex.path().join("2026").join("10").join("21");
+        std::fs::create_dir_all(&dir).unwrap();
+        // Its first line names `cdx-9`, its name says `other`.
+        std::fs::write(
+            dir.join("rollout-2026-10-21T09-00-00-other.jsonl"),
+            codex_lines("cdx-9", "codex-tui", "user", "2026-10-21T09:00:00.000Z"),
+        )
+        .unwrap();
+        let importer = rig.start(true, FAST);
+        wait_idle(&importer, 1);
+        assert!(rig.archived("codex", "cdx-9").is_none());
+        // A rightly named rollout written after it is still copied.
+        write_codex(&rig, CODEX_A, "user", "2026-10-21T09:10:00.000Z", false);
+        wait_for("the second rollout to be archived", || {
+            rig.archived("codex", CODEX_A).is_some()
+        });
+        assert!(rig.archived("codex", "cdx-9").is_none());
     }
 
     #[test]

@@ -1172,7 +1172,8 @@ mod tests {
         assert!(drive.transcript_path.starts_with(r"C:\Users\me\.claude"));
 
         // Codex and Antigravity bodies go the same way (their own rules still apply).
-        let rollout = "/home/u/.codex/sessions/2026/10/31/rollout-2026-10-31T10-00-00-abc.jsonl";
+        let rollout =
+            "/home/u/.codex/sessions/2026/10/31/rollout-2026-10-31T10-00-00-00000000-0000-4000-8000-000000000003.jsonl";
         let mut codex = wsl_body("00000000-0000-4000-8000-000000000003", rollout, "/home/u/proj");
         codex["hook_event_name"] = json!("SessionStart");
         // It is linked, and asks for no copy (the importer copies rollouts).
@@ -1183,7 +1184,7 @@ mod tests {
         let row = history.latest_for_tab_of("t3", "codex").unwrap();
         assert_eq!(
             row.transcript_path,
-            r"\\wsl.localhost\Ubuntu\home\u\.codex\sessions\2026\10\31\rollout-2026-10-31T10-00-00-abc.jsonl"
+            r"\\wsl.localhost\Ubuntu\home\u\.codex\sessions\2026\10\31\rollout-2026-10-31T10-00-00-00000000-0000-4000-8000-000000000003.jsonl"
         );
     }
 
