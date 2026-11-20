@@ -360,4 +360,37 @@ describe("CompanyView", () => {
       expect(h).not.toContain("may undo this change");
     });
   });
+
+  describe("Copilot CLI", () => {
+    const cpInstall = (over: Partial<AgentInstall> = {}) => install({ agent: "copilot", version: "1.0.106", update_command: "copilot update", ...over });
+    const cpKeys = ["model", "defaultPermissionMode", "autoUpdate", "autoUpdatesChannel", "theme", "includeCoAuthoredBy"];
+    const cview = (over: Partial<AgentSettingsView> = {}) =>
+      view({ agent: "copilot", path: "C:/u/.copilot/settings.json", curated: cpKeys.map((key) => ({ key, value: null, scope: "user" }) as SettingValue), hash: "h", text: "{}", ...over });
+    const c = (over: Partial<Parameters<typeof CompanyView>[0]> = {}) => render({ agent: "copilot", name: "Copilot CLI", install: cpInstall(), view: cview(), ...over });
+    it("Copilot's tab lists its six settings with help", () => {
+      const h = c();
+      for (const help of [
+        "The model a new Copilot CLI session starts with, by the name /model shows.",
+        "The permission mode a Copilot CLI session starts in. A mode picked in Marshell&#x27;s launcher wins.",
+        "Copilot CLI downloads a newer version by itself and starts it the next time it runs.",
+        "Which releases Copilot CLI updates to.",
+        "Copilot CLI&#x27;s colour theme, by name, such as github.",
+        "Copilot CLI adds a Co-authored-by line to the commits it makes.",
+      ])
+        expect(h).toContain(help);
+    });
+    it("Copilot's raw view is editable for a file with comments", () => {
+      const h = c({ mode: "raw", view: cview({ text: '{\n  // note\n  "theme": "github",\n}', raw_lock: null }) });
+      expect(h).toMatch(/<textarea[^>]*data-focus="raw"/);
+      expect(h).not.toMatch(/<textarea[^>]*readOnly/);
+    });
+    it("Copilot's Update runs copilot update", () => {
+      expect(c()).toContain("Update Copilot CLI");
+      const h = c({ install: cpInstall({ update_command: null, install: { kind: "unknown" } }) });
+      expect(h).not.toContain("Update Copilot CLI");
+      expect(h).toContain("<code>copilot update</code>");
+      expect(h).toContain("<code>npm install -g @github/copilot@latest</code>");
+      expect(c({ running: 2 })).toContain("Copilot CLI is running in 2 tabs. The update may fail while they run.");
+    });
+  });
 });

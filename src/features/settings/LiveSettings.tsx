@@ -40,7 +40,7 @@ export function SettingsPanels({ section, mounted, render }: { section: Settings
 }
 
 const NONE: ReadonlySet<CompanyAgent> = new Set();
-const ZERO: Record<CompanyAgent, number> = { claude: 0, codex: 0, antigravity: 0, qwen: 0 };
+const ZERO: Record<CompanyAgent, number> = { claude: 0, codex: 0, antigravity: 0, qwen: 0, copilot: 0 };
 const noop = () => {};
 
 type Props = {
@@ -67,7 +67,7 @@ type Props = {
   /** How many tabs are running each CLI. */
   running?: Record<CompanyAgent, number>;
   /** "Sign in to …" and "Update …" open a tab; the window closes Settings and selects it. */
-  onSignIn?: (agent: "claude" | "codex") => void;
+  onSignIn?: (agent: "claude" | "codex" | "copilot") => void;
   onUpdate?: (agent: CompanyAgent) => void;
   /** `focusTerminal` is true when the element that had the focus before the page opened can't take it back. */
   onClose: (focusTerminal: boolean) => void;
@@ -180,6 +180,7 @@ export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, 
       case "codex":
       case "antigravity":
       case "qwen":
+      case "copilot":
         return endpoint && <CompanySection endpoint={endpoint} agent={id} name={COMPANY_NAMES[id]} running={running[id]} onUpdate={onUpdate} refresh={companyRefresh[id]} announce={announce} />;
       case "advanced":
         return endpoint && <AdvancedSection endpoint={endpoint} announce={announce} />;

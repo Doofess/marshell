@@ -20,6 +20,19 @@ describe("AccountsView", () => {
     expect(h).not.toContain("Sign in to Antigravity");
     expect(h).toContain("<h3");
   });
+  it("Copilot gets a Sign in button though its status is never known", () => {
+    const h = view([{ agent: "copilot", status: st("copilot", "no_command") }]);
+    expect(h).toContain("Copilot CLI");
+    expect(h).toContain("Sign in to Copilot CLI");
+    expect(h).toMatch(/<button type="button" class="accounts__btn">Sign in to Copilot CLI<\/button>/);
+  });
+  it("Antigravity and Qwen still get none", () => {
+    const h = view([
+      { agent: "antigravity", status: st("antigravity", "no_command") },
+      { agent: "qwen", status: st("qwen", "no_command") },
+    ]);
+    expect(h).not.toContain("Sign in to");
+  });
   it("offers no Sign in when signed in", () => {
     const h = view([{ agent: "claude", status: st("claude", "signed_in") }]);
     expect(h).not.toContain("Sign in to");

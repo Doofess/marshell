@@ -3,11 +3,14 @@ import type { AccountStatus } from "../../generated/AccountStatus";
 import type { Endpoint } from "../../generated/Endpoint";
 import { getAccount } from "../../lib/api/accounts";
 import type { CompanyAgent } from "../settings/settingsSections";
-import { accountExtraLine, accountLine, CHECKED, CHECKING, NONE_FOUND, UNREACHABLE } from "./accountsText";
+import { accountExtraLines, accountLine, CHECKED, CHECKING, NONE_FOUND, UNREACHABLE } from "./accountsText";
 import "./AccountsSection.css";
 
-const ORDER: CompanyAgent[] = ["claude", "codex", "antigravity", "qwen"];
-const NAME: Record<CompanyAgent, string> = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity", qwen: "Qwen Code" };
+const ORDER: CompanyAgent[] = ["claude", "codex", "antigravity", "qwen", "copilot"];
+const NAME: Record<CompanyAgent, string> = { claude: "Claude Code", codex: "Codex", antigravity: "Antigravity", qwen: "Qwen Code", copilot: "Copilot CLI" };
+
+/** The CLIs a Sign in button opens a tab for. */
+export type SignInAgent = "claude" | "codex" | "copilot";
 
 export type AccountRow = { agent: CompanyAgent; status: AccountStatus | "checking" | "failed" };
 
@@ -18,7 +21,7 @@ function lineOf(row: AccountRow, now: number): string {
 }
 
 /** Settings → Accounts, pure: one card per found CLI, then Check again. */
-export function AccountsView({ rows, now, onSignIn, onCheckAgain }: { rows: AccountRow[]; now: number; onSignIn(agent: "claude" | "codex"): void; onCheckAgain(): void }) {
+export function AccountsView({ rows, now, onSignIn, onCheckAgain }: { rows: AccountRow[]; now: number; onSignIn(agent: SignInAgent): void; onCheckAgain(): void }) {
   if (rows.length === 0) return <p className="accounts__empty">{NONE_FOUND}</p>;
   const busy = rows.some((r) => r.status === "checking");
   return (
@@ -30,9 +33,9 @@ export function AccountsView({ rows, now, onSignIn, onCheckAgain }: { rows: Acco
             <li key={r.agent} className="accounts__row">
               <h3 className="accounts__name">{NAME[r.agent]}</h3>
               <p className="accounts__line">{lineOf(r, now)}</p>
-              {typeof r.status === "object" && accountExtraLine(r.status) && <p className="accounts__line">{accountExtraLine(r.status)}</p>}
-              {needs && (r.agent === "claude" || r.agent === "codex") && (
-                <button type="button" className="accounts__btn" onClick={() => onSignIn(r.agent as "claude" | "codex")}>
+              {typeof r.status === "object" && accountExtraLines(r.status).map((line) => <p key={line} className="accounts__line">{line}</p>)}
+              {(needs ? r.agent === "claude" || r.agent === "codex" : r.agent === "copilot" && typeof r.status === "object" && r.status.sign_in === "no_command") && (
+                <button type="button" className="accounts__btn" onClick={() => onSignIn(r.agent as SignInAgent)}>
                   Sign in to {NAME[r.agent]}
                 </button>
               )}
@@ -49,7 +52,7 @@ export function AccountsView({ rows, now, onSignIn, onCheckAgain }: { rows: Acco
   );
 }
 
-export function AccountsSection({ endpoint, found, onSignIn, refresh, announce }: { endpoint: Endpoint; found: ReadonlySet<CompanyAgent>; onSignIn(agent: "claude" | "codex"): void; refresh: number; announce(text: string): void }) {
+export function AccountsSection({ endpoint, found, onSignIn, refresh, announce }: { endpoint: Endpoint; found: ReadonlySet<CompanyAgent>; onSignIn(agent: SignInAgent): void; refresh: number; announce(text: string): void }) {
   const agents = ORDER.filter((a) => found.has(a));
   const key = agents.join(",");
   const [rows, setRows] = useState<AccountRow[]>(() => agents.map((agent) => ({ agent, status: "checking" })));
