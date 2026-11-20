@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adminKey, adminKeyClaimed, chipLetter, focusFellOut, listNavKeys, listToClose, nameKey, nameKeyClaimed, openFolder, openList, stepActive } from "./launcherKeys";
+import { adminKey, adminKeyClaimed, chipLetter, escapeStep, focusFellOut, listNavKeys, listToClose, nameKey, nameKeyClaimed, openFolder, openList, stepActive } from "./launcherKeys";
 
 describe("launcherKeys: which keys move the highlighted option", () => {
   it("in the folder field only Up and Down do: Left and Right move the caret, so a typo can be fixed", () => {
@@ -115,5 +115,13 @@ describe("launcherKeys: leaving a list closes it", () => {
     expect(listToClose({ folderOpen: false, shellsOpen: true, agentsOpen: false })).toBe("shells");
     expect(listToClose({ folderOpen: false, shellsOpen: false, agentsOpen: true })).toBe("agents");
     expect(listToClose({ folderOpen: false, shellsOpen: false, agentsOpen: false })).toBeNull();
+  });
+});
+
+describe("launcherKeys: Esc and a press on the dimmed window", () => {
+  it("go back from the confirm view, close an open list first, and else close the launcher", () => {
+    expect(escapeStep({ confirm: true, open: null })).toBe("back");
+    expect(escapeStep({ confirm: false, open: "agents" })).toBe("agents");
+    expect(escapeStep({ confirm: false, open: null })).toBe("close");
   });
 });

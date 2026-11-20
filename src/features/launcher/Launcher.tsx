@@ -33,7 +33,7 @@ import {
 } from "./launchChoice";
 import { effectiveAgent, missingLine, type ShellOffer } from "./shellAgents";
 import { effectiveMode, nextOffered, offeredMode } from "../modes/sessionModes";
-import { adminKeyClaimed, chipLetter, nameKeyClaimed, focusFellOut, listNavKeys, listToClose, stepActive } from "./launcherKeys";
+import { adminKeyClaimed, chipLetter, escapeStep, nameKeyClaimed, focusFellOut, listNavKeys, listToClose, stepActive, type OpenList } from "./launcherKeys";
 import "./Launcher.css";
 import "../sessions/CloseBar.css";
 
@@ -256,26 +256,35 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
   useCoverPage();
   usePopupFocus(sheet, () => sheet.current?.querySelector<HTMLElement>(".launcher__prompt") ?? (sheet.current ? tabbableIn(sheet.current)[0] : null));
 
+  const closeList = (open: OpenList) => {
+    if (open === "folder") onQuery?.(null);
+    else if (open === "shells") onShells?.(false);
+    else onAgents?.(false);
+  };
+  const escape = () => {
+    const step = escapeStep({ confirm: confirm !== undefined, open: listToClose({ folderOpen, shellsOpen, agentsOpen }) });
+    if (step === "back") back();
+    else if (step === "close") onClose?.();
+    else closeList(step);
+  };
+
   const onSheetKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      escape();
+      return;
+    }
     if (confirm) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        back();
-      } else if (e.key === "Enter" && !e.shiftKey && (e.target as HTMLElement).closest("button") === null) {
+      if (e.key === "Enter" && !e.shiftKey && (e.target as HTMLElement).closest("button") === null) {
         e.preventDefault();
         create();
       }
       return;
     }
     const open = listToClose({ folderOpen, shellsOpen, agentsOpen });
-    const closeOpen = () => {
-      if (open === "folder") onQuery?.(null);
-      else if (open === "shells") onShells?.(false);
-      else if (open === "agents") onAgents?.(false);
-    };
     if (nameKeyClaimed(e, os)) {
       e.preventDefault();
-      closeOpen();
+      if (open !== null) closeList(open);
       nameField.current?.focus();
       return;
     }
@@ -285,12 +294,6 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
       return;
     }
     const listOpen = folderOpen || shellsOpen || agentsOpen;
-    if (e.key === "Escape") {
-      e.preventDefault();
-      if (open !== null) closeOpen();
-      else onClose?.();
-      return;
-    }
     if (folderOpen && browseKey(e)) {
       e.preventDefault();
       onBrowse?.();
@@ -328,7 +331,14 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
 
   return (
     <div className="launcher" data-open={folderOpen || shellsOpen || agentsOpen || undefined}>
-      <div className="launcher__backdrop" />
+      {/* A press on the dimmed window is Esc, as in the palette; preventDefault keeps the focus off the page body meanwhile. */}
+      <div
+        className="launcher__backdrop"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          escape();
+        }}
+      />
       <div
         ref={sheet}
         className="launcher__sheet"
@@ -336,6 +346,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
         aria-modal="true"
         aria-label={confirm ? CONFIRM_TITLE : "Start a session"}
         aria-describedby={id("desc")}
+        tabIndex={-1}
         data-agent={program?.kind}
         data-manual={!agentRun || undefined}
         onKeyDown={onSheetKey}

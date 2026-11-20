@@ -231,6 +231,10 @@ describe("initialFocus", () => {
   it("is the Start button for a shell profile, which has no prompt, so Enter still starts (not the program chip, which opens a list)", () => {
     expect(initialFocus(root([".launcher__chip", ".launcher__start"]))).toEqual(el(".launcher__start"));
   });
+  it("is the sheet itself while the lists load (no prompt yet, Start disabled), so Esc reaches the launcher and not the window behind", () => {
+    const loading = { querySelector: (s: string) => (s === ".launcher__start" ? ({ name: s, disabled: true } as unknown as HTMLElement) : s === ".launcher__sheet" ? el(s) : null) };
+    expect(initialFocus(loading)).toEqual(el(".launcher__sheet"));
+  });
 });
 
 describe("refocus", () => {

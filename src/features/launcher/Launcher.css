@@ -443,6 +443,10 @@
  * forced colors can draw it: the High Contrast block makes it a 2px Highlight outline. After the hover rules, so a hovered
  * control still shows its focus.
  */
+/* The sheet holds the focus only while the lists load, before the prompt or Start takes it: a ring round the whole sheet would flash. */
+.launcher__sheet:focus-visible {
+  outline-color: transparent;
+}
 .launcher__chip:focus-visible,
 .launcher__back:focus-visible {
   outline-color: transparent;

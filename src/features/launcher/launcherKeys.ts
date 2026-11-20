@@ -50,6 +50,11 @@ export function listToClose({ folderOpen, shellsOpen, agentsOpen }: { folderOpen
   return folderOpen ? "folder" : shellsOpen ? "shells" : agentsOpen ? "agents" : null;
 }
 
+/** What Esc does, and a press on the dimmed window around the sheet: the confirm view goes back, an open list closes, else the launcher closes. */
+export function escapeStep({ confirm, open }: { confirm: boolean; open: OpenList | null }): "back" | OpenList | "close" {
+  return confirm ? "back" : (open ?? "close");
+}
+
 /** The letter a focused chip picks by. A held Alt, Ctrl or Meta makes the key a shortcut (Alt+N, Alt+A), never a pick; Shift is a capital. */
 export function chipLetter(e: { key: string; altKey: boolean; ctrlKey: boolean; metaKey: boolean }): string | null {
   return e.altKey || e.ctrlKey || e.metaKey ? null : e.key;
