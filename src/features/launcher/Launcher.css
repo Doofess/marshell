@@ -443,6 +443,11 @@
  * forced colors can draw it: the High Contrast block makes it a 2px Highlight outline. After the hover rules, so a hovered
  * control still shows its focus.
  */
+/* The sheet holds the focus only while the lists load, before the prompt or Start takes it: a ring round the whole sheet would flash.
+ * Forced colors draws it anyway, with Highlight, as every focus there: no colour cue stands in for the ring in that mode. */
+.launcher__sheet:focus-visible {
+  outline-color: transparent;
+}
 .launcher__chip:focus-visible,
 .launcher__back:focus-visible {
   outline-color: transparent;
@@ -539,7 +544,8 @@
   .launcher__input:focus-visible,
   .launcher__task-input:focus-visible,
   .launcher__name-input:focus-visible,
-  .launcher__line:focus-within {
+  .launcher__line:focus-within,
+  .launcher__sheet:focus-visible {
     outline: 2px solid Highlight;
   }
   .launcher__chip:focus-visible .launcher__box[data-checked] {

@@ -259,9 +259,14 @@ export function progressText(phase: "creating" | "starting", program: string): s
   return phase === "creating" ? "Creating the worktree…" : `Starting ${program}…`;
 }
 
-/** What takes focus when the launcher opens: the prompt, where Enter starts. Just the shell has no prompt, so the Start button (a chip would open its list). */
+/**
+ * What takes focus when the launcher opens: the prompt, where Enter starts. Just the shell has no prompt, so the Start button (a chip
+ * would open its list). The launcher opens before its lists load, with neither a prompt nor an enabled Start; then the sheet itself
+ * holds the focus, so Esc and Tab reach the launcher and not the window behind, until one of the two is there.
+ */
 export function initialFocus(root: { querySelector(selector: string): HTMLElement | null }): HTMLElement | null {
-  return root.querySelector(".launcher__prompt") ?? root.querySelector(".launcher__start");
+  const start = root.querySelector(".launcher__start") as (HTMLElement & { disabled?: boolean }) | null;
+  return root.querySelector(".launcher__prompt") ?? (start && start.disabled !== true ? start : null) ?? root.querySelector(".launcher__sheet");
 }
 
 /**
