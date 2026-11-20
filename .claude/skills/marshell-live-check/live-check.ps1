@@ -31,6 +31,13 @@ Nothing here deletes a folder. With -CodexAuth, start copies ~/.codex/auth.json 
        COPILOT_MODEL, COPILOT_OFFLINE) and COPILOT_CACHE_HOME=<Scratch>\copilot-cache, and writes
        <Scratch>\home\.copilot\settings.json with auto-update and the taskbar helper off, so Copilot CLI starts with
        no sign-in (slice 6n1 decision 6). stop ends it by its recorded PID.
+       With -CodexHomeWide, start makes no cx folder and sets CODEX_HOME=<Scratch> itself, the folder that holds the
+       scratch USERPROFILE (home) and the scratch MARSHELL_HOME (mh), to show the config guard refusing a home that
+       wide (slice 6s decision 6). <Scratch> must then be outside the real user profile, for example C:\lc-6s-wide:
+       the guard always allows the real profile, so under %TEMP% nothing would be refused.
+restart: starts `pnpm tauri dev` again on a scratch that start used and stop has stopped, with the homes pids.json
+       records. It creates and copies nothing (no sign-in copy, no fake model), logs to dev2.out.log and
+       dev2.err.log, and records the new root PID.
 
 .EXAMPLE
 pwsh -NoProfile -File live-check.ps1 start -Scratch C:\Users\me\AppData\Local\Temp\lc-5b-1
@@ -38,7 +45,7 @@ pwsh -NoProfile -File live-check.ps1 tree  -Scratch C:\Users\me\AppData\Local\Te
 pwsh -NoProfile -File live-check.ps1 stop  -Scratch C:\Users\me\AppData\Local\Temp\lc-5b-1 -AlsoStop 1234
 #>
 param(
-    [Parameter(Mandatory, Position = 0)][ValidateSet('start', 'tree', 'stop')][string]$Mode,
+    [Parameter(Mandatory, Position = 0)][ValidateSet('start', 'tree', 'stop', 'restart')][string]$Mode,
     [Parameter(Mandatory)][string]$Scratch,
     [int[]]$AlsoStop = @(),
     # start only: a folder whose cc and cx subfolders are copied into the scratch CLAUDE_CONFIG_DIR and CODEX_HOME.
@@ -49,6 +56,9 @@ param(
     # start only: a new, short literal folder (at most 60 characters) to use as CODEX_HOME instead of <Scratch>\cx.
     # Codex 0.163 can't start its app-server under a longer one ("path must be shorter than SUN_LEN").
     [string]$CodexHome,
+    # start only: CODEX_HOME is <Scratch> itself, a folder that holds the scratch profile and the scratch Marshell home.
+    # <Scratch> must be outside the real user profile.
+    [switch]$CodexHomeWide,
     # start only: copies ~/.gemini/oauth_creds.json and google_accounts.json (and nothing else) into the scratch
     # USERPROFILE's .gemini, so a real agy can sign in; stop deletes the two copies.
     [switch]$AgyAuth,
@@ -87,6 +97,16 @@ foreach ($real in @("$HOME\.marshell", "$HOME\.claude", "$HOME\.codex", "$HOME\.
     }
 }
 if ((Split-Path $Scratch -Leaf) -ieq '.marshell') { throw 'Never name the scratch folder .marshell.' }
+if ($CodexHomeWide) {
+    if ($Mode -ne 'start') { throw '-CodexHomeWide is for start only.' }
+    if ($CodexHome -or $CodexAuth -or $Seed) { throw '-CodexHomeWide makes CODEX_HOME the scratch folder itself; it does not go with -CodexHome, -CodexAuth or -Seed.' }
+    # The config guard always allows the real profile (dirs::home_dir, not USERPROFILE), so a wide home inside it
+    # is written like any other profile file and no refusal shows.
+    $realHome = [System.IO.Path]::GetFullPath($HOME).TrimEnd('\')
+    if ($Scratch -ieq $realHome -or $Scratch.StartsWith("$realHome\", 'OrdinalIgnoreCase')) {
+        throw "-CodexHomeWide needs a scratch folder outside the user profile ($realHome), such as C:\lc-6s-wide: $Scratch"
+    }
+}
 $PidsFile = Join-Path $Scratch 'pids.json'
 
 function Get-Tree([int]$RootPid) {
@@ -173,6 +193,37 @@ function Stop-FakeModels($rec) {
     Stop-FakeModel $rec.copilotFake 'Copilot'
 }
 
+# Sets the homes the app and its tabs read and starts `pnpm tauri dev`. Returns the root PID and its creation time.
+# Write-Host here, not Write-Output: output would become part of the return value.
+function Start-DevApp([string]$RepoPath, $Homes, [string]$LogName) {
+    $env:MARSHELL_HOME = $Homes.marshellHome
+    $env:CLAUDE_CONFIG_DIR = $Homes.claudeConfigDir
+    $env:CODEX_HOME = $Homes.codexHome
+    $env:MARSHELL_CLAUDE_SETTINGS = $Homes.claudeSettings
+    $env:COPILOT_HOME = $Homes.copilotHome
+    # Cargo and rustup find their homes through USERPROFILE too; keep the real ones for the build.
+    if (-not $env:CARGO_HOME) { $env:CARGO_HOME = Join-Path $HOME '.cargo' }
+    if (-not $env:RUSTUP_HOME) { $env:RUSTUP_HOME = Join-Path $HOME '.rustup' }
+    $env:USERPROFILE = $Homes.agyHome
+    $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$Port"
+    # NO_COLOR here is the calling tool's own environment, not the person's: tabs would inherit it and CLIs would
+    # drop colour (Qwen's /theme refuses to change). The app never sets it, so a real user's NO_COLOR still
+    # reaches their tabs; only the live check's copy is cleared.
+    # A tool running inside Windows Terminal passes WT_SESSION and WT_PROFILE_ID on, and a CLI in a tab then takes
+    # the tab for Windows Terminal (Copilot CLI offered to set it up). Issue #100 tracks the app's own fix.
+    foreach ($name in 'NO_COLOR', 'WT_SESSION', 'WT_PROFILE_ID') {
+        if (Test-Path "Env:$name") {
+            Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+            Write-Host "$name cleared"
+        }
+    }
+    $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/d', '/c', 'pnpm tauri dev' -WorkingDirectory $RepoPath `
+        -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $Scratch "$LogName.out.log") `
+        -RedirectStandardError (Join-Path $Scratch "$LogName.err.log")
+    $created = (Get-CimInstance Win32_Process -Filter "ProcessId = $($proc.Id)" -Property CreationDate).CreationDate
+    [pscustomobject]@{ Id = $proc.Id; Created = $created.ToUniversalTime().ToString('o') }
+}
+
 function Show-Tree($tree) {
     $tree | ForEach-Object { '{0}{1}  pid {2}  parent {3}' -f ('  ' * $_.Depth), $_.Name, $_.PID, $_.Parent } | Write-Output
 }
@@ -185,7 +236,10 @@ switch ($Mode) {
         if (-not (Test-Path -LiteralPath $Scratch)) { New-Item -ItemType Directory -Path $Scratch | Out-Null }
         $mh = New-Item -ItemType Directory -Path (Join-Path $Scratch 'mh')
         $cc = New-Item -ItemType Directory -Path (Join-Path $Scratch 'cc')
-        if ($CodexHome) {
+        if ($CodexHomeWide) {
+            # No cx folder: CODEX_HOME, the record and the printed line all name the scratch folder itself.
+            $cx = Get-Item -LiteralPath $Scratch
+        } elseif ($CodexHome) {
             if ((Test-Path -LiteralPath $CodexHome) -and (Get-ChildItem -LiteralPath $CodexHome -Force | Select-Object -First 1)) {
                 throw "CodexHome is not empty: $CodexHome. Use a new literal path."
             }
@@ -256,36 +310,12 @@ switch ($Mode) {
         Set-Content -LiteralPath $settings -Value '{}' -Encoding utf8NoBOM
         $repo = (Resolve-Path -LiteralPath $Repo).Path
         if (-not (Test-Path -LiteralPath (Join-Path $repo 'src-tauri\tauri.conf.json'))) { throw "Not a Marshell checkout: $repo" }
-        $env:MARSHELL_HOME = $mh.FullName
-        $env:CLAUDE_CONFIG_DIR = $cc.FullName
-        $env:CODEX_HOME = $cx.FullName
-        $env:MARSHELL_CLAUDE_SETTINGS = $settings
-        # Cargo and rustup find their homes through USERPROFILE too; keep the real ones for the build.
-        if (-not $env:CARGO_HOME) { $env:CARGO_HOME = Join-Path $HOME '.cargo' }
-        if (-not $env:RUSTUP_HOME) { $env:RUSTUP_HOME = Join-Path $HOME '.rustup' }
-        $env:USERPROFILE = $agyHome
-        $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$Port"
-        # NO_COLOR here is the calling tool's own environment, not the person's: tabs would inherit it and CLIs would
-        # drop colour (Qwen's /theme refuses to change). The app never sets it, so a real user's NO_COLOR still
-        # reaches their tabs; only the live check's copy is cleared.
-        if (Test-Path Env:NO_COLOR) {
-            Remove-Item Env:NO_COLOR -ErrorAction SilentlyContinue
-            Write-Output 'NO_COLOR cleared'
-        }
-        # A tool running inside Windows Terminal passes WT_SESSION and WT_PROFILE_ID on, and a CLI in a tab then takes
-        # the tab for Windows Terminal (Copilot CLI offered to set it up). Issue #100 tracks the app's own fix.
-        foreach ($wt in 'WT_SESSION', 'WT_PROFILE_ID') {
-            if (Test-Path "Env:$wt") {
-                Remove-Item "Env:$wt" -ErrorAction SilentlyContinue
-                Write-Output "$wt cleared"
-            }
-        }
-        $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/d', '/c', 'pnpm tauri dev' -WorkingDirectory $repo `
-            -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $Scratch 'dev.out.log') `
-            -RedirectStandardError (Join-Path $Scratch 'dev.err.log')
-        $created = (Get-CimInstance Win32_Process -Filter "ProcessId = $($proc.Id)" -Property CreationDate).CreationDate
+        $proc = Start-DevApp $repo ([pscustomobject]@{
+                marshellHome = $mh.FullName; claudeConfigDir = $cc.FullName; codexHome = $cx.FullName
+                claudeSettings = $settings; agyHome = $agyHome; copilotHome = $copilotDir
+            }) 'dev'
         [ordered]@{
-            root = $proc.Id; name = 'cmd.exe'; created = $created.ToUniversalTime().ToString('o')
+            root = $proc.Id; name = 'cmd.exe'; created = $proc.Created
             repo = $repo; marshellHome = $mh.FullName; claudeConfigDir = $cc.FullName; codexHome = $cx.FullName; codexAuth = [bool]$CodexAuth; agyAuth = [bool]$AgyAuth; agyHome = $agyHome; qwenFake = $fakeRec; copilotFake = $copilotFakeRec; copilotHome = $copilotDir; claudeSettings = $settings; cdp = "http://127.0.0.1:$Port"
         } | ConvertTo-Json | Set-Content -LiteralPath $PidsFile -Encoding utf8NoBOM
         Write-Output "Started pnpm tauri dev in $repo, root PID $($proc.Id)."
@@ -298,6 +328,30 @@ switch ($Mode) {
         if ($fakeRec) { Write-Output "Fake model for Qwen: pid $($fakeRec.pid), http://127.0.0.1:$QwenPort/v1, log $Scratch\qwen-fake.jsonl" }
         if ($copilotFakeRec) { Write-Output "Fake model for Copilot: pid $($copilotFakeRec.pid), http://127.0.0.1:$CopilotPort/v1, log $Scratch\copilot-fake.jsonl" }
         Write-Output "Logs: $Scratch\dev.out.log, $Scratch\dev.err.log. CDP: http://127.0.0.1:$Port/json/version"
+    }
+    'restart' {
+        if (-not (Test-Path -LiteralPath $PidsFile)) { throw "No $PidsFile; restart needs a scratch folder that start used." }
+        $rec = Get-Content -LiteralPath $PidsFile -Raw | ConvertFrom-Json
+        $p = Get-CimInstance Win32_Process -Filter "ProcessId = $($rec.root)" -Property Name, CreationDate
+        $recorded = ([datetime]$rec.created).ToUniversalTime()
+        if ($p -and $p.Name -eq $rec.name -and [math]::Abs(($p.CreationDate.ToUniversalTime() - $recorded).TotalMilliseconds) -le 1) {
+            throw "The app this scratch recorded still runs (root PID $($rec.root)). Stop it first."
+        }
+        foreach ($need in 'repo', 'marshellHome', 'claudeConfigDir', 'codexHome', 'claudeSettings', 'agyHome', 'copilotHome') {
+            if (-not $rec.$need -or -not (Test-Path -LiteralPath $rec.$need)) { throw "pids.json names no $need that exists; start a new scratch instead." }
+        }
+        $proc = Start-DevApp $rec.repo $rec 'dev2'
+        # stop already deleted the sign-in copies and ended the fake models; this run has neither.
+        $rec.root = $proc.Id
+        $rec.created = $proc.Created
+        $rec.codexAuth = $false
+        $rec.agyAuth = $false
+        $rec.qwenFake = $null
+        $rec.copilotFake = $null
+        $rec.cdp = "http://127.0.0.1:$Port"
+        $rec | ConvertTo-Json | Set-Content -LiteralPath $PidsFile -Encoding utf8NoBOM
+        Write-Output "Started pnpm tauri dev again in $($rec.repo), root PID $($proc.Id), on the homes $PidsFile records."
+        Write-Output "Logs: $Scratch\dev2.out.log, $Scratch\dev2.err.log. CDP: http://127.0.0.1:$Port/json/version"
     }
     'tree' {
         $rec = Read-Record
