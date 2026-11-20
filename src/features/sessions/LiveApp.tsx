@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import type { ComponentProps } from "react";
+import { flushSync } from "react-dom";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -114,6 +115,7 @@ import { reviewApi } from "../tasks/reviewRun";
 import { jumpWords } from "../terminal/promptMarks";
 import { terminalFocusProps } from "../terminal/terminalFocus";
 import { resolveTerminalFont } from "../terminal/terminalFont";
+import { sameCell, type RowCell } from "../terminal/rowCell";
 import { TerminalView, type TerminalThemeProp } from "../terminal/TerminalView";
 import { appScheme, resolveTerminalTheme } from "../terminal/terminalTheme";
 import type { Notice } from "../window/announce";
@@ -177,16 +179,26 @@ function SessionResumeBar({ endpoint, info, profileName, ...props }: Omit<Compon
 /** What the announcer calls a pane tab: a browser tab's title, a file tab's name. */
 const paneTabName = (tab: PaneTab, titles: ReadonlyMap<string, string>): string => (isBrowserTab(tab) ? (titles.get(tab.id) ?? "page") : lastSegment(currentEntry(tab).path));
 
-/** The size of the element, kept up to date with a ResizeObserver. Starts at the window's size. */
+/**
+ * The size of the element, kept up to date with a ResizeObserver. Starts at the window's size.
+ * The observer hears a new size after that frame's layout and before its paint, so the measure is applied there and then
+ * (`flushSync`): everything computed from the size is drawn in the frame the window changed, not one frame behind it.
+ */
 function useElementSize() {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: window.innerWidth, height: window.innerHeight });
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const measure = () => setSize({ width: el.clientWidth, height: el.clientHeight });
-    measure();
-    const observer = new ResizeObserver(measure);
+    let last = { width: el.clientWidth, height: el.clientHeight };
+    // Inside a layout effect React refuses a `flushSync`, and has no need of one: this update is applied before the paint anyway.
+    setSize(last);
+    const observer = new ResizeObserver(() => {
+      const next = { width: el.clientWidth, height: el.clientHeight };
+      if (next.width === last.width && next.height === last.height) return;
+      last = next;
+      flushSync(() => setSize(next));
+    });
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
@@ -1328,9 +1340,13 @@ export function LiveApp() {
   useEffect(() => {
     if (handed && endpoint) setAdopted({ endpoint, tabId: handed });
   }, [handed, endpoint]);
+  // One row of the shell's terminal, once a fit has measured it: the sidebar makes the panel as tall as whole rows from it.
+  const [shellCell, setShellCell] = useState<RowCell | null>(null);
+  // A new shell (after "Open as a session") measures the same row again: the state keeps its identity, so nothing is drawn twice.
+  const reportShellCell = useCallback((cell: RowCell) => setShellCell((was) => (sameCell(was, cell) ? was : cell)), []);
   const shellTerminal = useMemo(
-    () => (panelTab && endpoint ? <TerminalView key={panelTab.tabId} endpoint={endpoint} tabId={panelTab.tabId} autoFocus={false} theme={themeFor(undefined)} font={terminalFont} onImagePaste={(image) => void addImage(panelTab.tabId, image)} /> : null),
-    [endpoint, panelTab, themeFor, terminalFont],
+    () => (panelTab && endpoint ? <TerminalView key={panelTab.tabId} endpoint={endpoint} tabId={panelTab.tabId} autoFocus={false} theme={themeFor(undefined)} font={terminalFont} onImagePaste={(image) => void addImage(panelTab.tabId, image)} onCell={reportShellCell} /> : null),
+    [endpoint, panelTab, themeFor, terminalFont, reportShellCell],
   );
 
   // The app's shortcuts work from anywhere, the terminal included; the terminal lets these keys through (TerminalView).
@@ -2170,7 +2186,7 @@ export function LiveApp() {
             next.focus?.focus();
           }}
           menuOpen={menu !== null}
-          shell={{ terminal: shellTerminal, cwd: panelTab?.folder, hidden: view.shell_hidden, failed: shellFailed, onRetry: retryShell, openDisabled: !panelTab, forceOpen: shellForced, onToggle: toggleShell, onOpenAsSession: () => void openAsSession() }}
+          shell={{ terminal: shellTerminal, cell: shellCell, cwd: panelTab?.folder, hidden: view.shell_hidden, failed: shellFailed, onRetry: retryShell, openDisabled: !panelTab, forceOpen: shellForced, onToggle: toggleShell, onOpenAsSession: () => void openAsSession() }}
           composer={false}
           statusBar={false}
           renderTerminal={renderTerminal}

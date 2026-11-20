@@ -177,6 +177,13 @@ describe("Sidebar: the shell panel", () => {
     expect(h).toContain(`--shell-h:${expected}px`);
     expect(h).toContain(`block-size:${expected}px`);
   });
+  it("is as tall as whole terminal rows once its terminal has measured one", () => {
+    const cell = { height: 17, pad: 8 };
+    // 30% of 880 is a body of 264 px: 15 rows of 17 px and 8 px of padding are 263.
+    expect(withShell({ shell: { cwd: "my-app", cell } })).toContain(`--shell-h:${32 + 263}px`);
+    expect(withShell()).toContain(`--shell-h:${32 + 264}px`);
+    expect(withShell({ shell: { cwd: "my-app", cell: null } })).toContain(`--shell-h:${32 + 264}px`);
+  });
   it("collapses to its header by itself when the list would be squeezed", () => {
     // Twelve waiting requests take the lane's 40% share, which leaves an open panel too little room for the list.
     const many = Array.from({ length: 12 }, (_, i) => ({ ...SCENARIO_REQUESTS[0]!, id: `r${i}`, waitingMs: 1000 + i }));

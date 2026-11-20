@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SHELL, shellLayout } from "./shellLayout";
+import { SHELL, shellLayout, wholeRows } from "./shellLayout";
 
 describe("shellLayout: how tall the shell panel is", () => {
   it("is a 32 px header over a body of 30% of the sidebar, never under 120 or over 280", () => {
@@ -57,5 +57,41 @@ describe("shellLayout: how tall the shell panel is", () => {
       expect(l.height).toBeGreaterThanOrEqual(prev);
       prev = l.height;
     }
+  });
+});
+
+const CELL = { height: 17, pad: 8 };
+
+describe("wholeRows", () => {
+  it("cuts a body down to the rows that fit", () => {
+    expect(wholeRows(180, CELL)).toBe(178);
+    expect(wholeRows(280, CELL)).toBe(280);
+    expect(wholeRows(120, CELL)).toBe(110);
+  });
+  it("rounds a fractional row up to a whole pixel, and never loses a row that fits exactly", () => {
+    expect(wholeRows(150, { height: 17.6, pad: 8 })).toBe(149);
+    expect(wholeRows(184, { height: 17.6, pad: 8 })).toBe(184);
+  });
+  it("leaves the body alone without a measured row, or when not one row fits", () => {
+    expect(wholeRows(180.4, null)).toBe(180);
+    expect(wholeRows(180, { height: 0, pad: 8 })).toBe(180);
+    expect(wholeRows(20, CELL)).toBe(20);
+  });
+  it("never asks for more than the body it was given", () => {
+    for (let body = 60; body <= 280; body++) {
+      for (const cell of [CELL, { height: 17.6, pad: 16 }, { height: 22.5, pad: 0 }]) expect(wholeRows(body, cell), `${body} ${cell.height}`).toBeLessThanOrEqual(body);
+    }
+  });
+});
+
+describe("shellLayout with a measured row", () => {
+  it("opens to whole rows", () => {
+    expect(shellLayout(600, 0, false, 56, false, CELL)).toEqual({ height: 210, collapsed: false, auto: false });
+  });
+  it("is as before without one", () => {
+    expect(shellLayout(600, 0)).toEqual({ height: 212, collapsed: false, auto: false });
+  });
+  it("opens a forced panel to whole rows too", () => {
+    expect(shellLayout(230, 0, false, 56, true, CELL)).toEqual({ height: 125, collapsed: false, auto: false });
   });
 });

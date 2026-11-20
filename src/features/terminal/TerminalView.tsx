@@ -27,6 +27,7 @@ import { FitHoldContext, fitHold } from "./fitHold";
 import { registerTerminal } from "./terminals";
 import { loadRenderer, type RendererKind } from "./renderer";
 import { privateRedraw, reportMissingRedraw, syncRedraw } from "./syncRedraw";
+import { rowCell, sameCell, type RowCell } from "./rowCell";
 import { topAnchoredFit } from "./topAnchor";
 import { trackColorSchemeMode } from "./colorSchemeMode";
 import { BUNDLED_FONT, fontStack } from "./terminalFont";
@@ -75,6 +76,8 @@ type Props = {
   font?: { family: string; size: number; wtFamily?: string };
   /** Hears an image-only paste (Ctrl+Shift+V with an image on the clipboard). Any other paste goes to the terminal as before. */
   onImagePaste?: (image: Blob) => void;
+  /** Hears how tall one row is, with the terminal's own padding, after a fit and only when it changed. The shell panel sizes itself in whole rows from it. */
+  onCell?: (cell: RowCell) => void;
 };
 
 const BUNDLED = { family: BUNDLED_FONT, size: 13 };
@@ -93,8 +96,13 @@ function loadFont(family: string, size: number, wtFamily?: string): Promise<void
   return Promise.race([load, timeout]).catch(() => {});
 }
 
+const verticalPadding = (el: Element): number => {
+  const style = getComputedStyle(el);
+  return (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
+};
+
 /** One session's terminal. */
-export function TerminalView({ endpoint, tabId, elevated = false, placeholder, onOutput, onSize, autoFocus = true, focusBlocked = false, focusToken = 0, visible = true, paused = false, onBlockedInput, promptJump, onPromptJump, theme = FOLLOW_APP, font = BUNDLED, onImagePaste }: Props) {
+export function TerminalView({ endpoint, tabId, elevated = false, placeholder, onOutput, onSize, autoFocus = true, focusBlocked = false, focusToken = 0, visible = true, paused = false, onBlockedInput, promptJump, onPromptJump, theme = FOLLOW_APP, font = BUNDLED, onImagePaste, onCell }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const meter = useMemo(() => new LatencyMeter(), []);
   const [renderer, setRenderer] = useState<RendererKind>("dom");
@@ -121,10 +129,27 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
   const fitRef = useRef<{ fit(): void } | null>(null);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
+  const cellRef = useRef(onCell);
+  cellRef.current = onCell;
+  const lastCell = useRef<RowCell | null>(null);
+  // The row a fit left: the screen xterm sized, over its rows, beside the padding the fit addon takes off the host's height.
+  const reportCell = () => {
+    const report = cellRef.current;
+    const term = termRef.current;
+    const el = host.current;
+    const screen = term?.element?.querySelector(".xterm-screen");
+    if (!report || !term?.element || !el || !screen) return;
+    const cell = rowCell(screen.getBoundingClientRect().height, term.rows, verticalPadding(term.element) + verticalPadding(el), window.devicePixelRatio);
+    if (!cell || sameCell(cell, lastCell.current)) return;
+    lastCell.current = cell;
+    report(cell);
+  };
   // A hidden host measures near empty, and fitting to it would resize the program to 10x4 (#65); showing the tab refits.
   const fitIfShown = () => {
     const el = host.current;
-    if (el && shouldFit(visibleRef.current, el.clientWidth, el.clientHeight)) fitRef.current?.fit();
+    if (!el || !shouldFit(visibleRef.current, el.clientWidth, el.clientHeight)) return;
+    fitRef.current?.fit();
+    reportCell();
   };
   // Whether this terminal has told the core its size; a terminal made hidden waits until it is shown.
   const sizeSentRef = useRef(false);

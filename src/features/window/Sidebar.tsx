@@ -15,6 +15,7 @@ import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNo
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
 import type { ShellName } from "../terminal/scriptedShell";
 import { shellLayout } from "./shellLayout";
+import type { RowCell } from "../terminal/rowCell";
 import { ShellPanel } from "./ShellPanel";
 import { MenuIcon } from "./MenuIcon";
 import "./Sidebar.css";
@@ -24,8 +25,11 @@ export const ROW_HEIGHT = 56;
 
 export type SidebarFooter = { planPct?: number; fiveHourPct?: number; doctorIssues?: number };
 
-/** The plain shell under the list. Left out, the sidebar is just the lane, the list and the footer. */
-export type SidebarShell = { shellName?: ShellName; cwd?: string; collapsed?: boolean; os?: Os; terminal?: ReactNode; failed?: boolean; onRetry?: () => void; openDisabled?: boolean; forceOpen?: boolean; onToggle?: () => void; onOpenAsSession?: () => void };
+/**
+ * The plain shell under the list. Left out, the sidebar is just the lane, the list and the footer.
+ * `cell` is the shell terminal's measured row, once it has one: the open panel is then as tall as whole rows.
+ */
+export type SidebarShell = { shellName?: ShellName; cwd?: string; collapsed?: boolean; os?: Os; terminal?: ReactNode; cell?: RowCell | null; failed?: boolean; onRetry?: () => void; openDisabled?: boolean; forceOpen?: boolean; onToggle?: () => void; onOpenAsSession?: () => void };
 
 /**
  * The expanded sidebar: the needs-you lane, the session list, an optional plain shell, and a 40 px footer with plan use
@@ -251,7 +255,7 @@ export function Sidebar({
     />
   );
   const lane = laneLayout(pending(requests).length, height, nextWaiting(requests)?.kind === "card");
-  const panel = shell ? shellLayout(height, lane.height, shell.collapsed, ROW_HEIGHT, shell.forceOpen) : null;
+  const panel = shell ? shellLayout(height, lane.height, shell.collapsed, ROW_HEIGHT, shell.forceOpen, shell.cell ?? null) : null;
   const style = { inlineSize: width, ...(panel ? { "--shell-h": `${panel.height}px` } : {}), ...(footer || onOpenMenu ? {} : { "--footer-h": "0px" }) } as CSSProperties;
   return (
     <aside ref={root} className="sidebar" style={style} data-shell={panel ? "" : undefined} aria-label="Sessions and approvals">
