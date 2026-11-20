@@ -46,7 +46,9 @@ const maker = (log: Call[][] = []) => (w: number, h: number) => {
 describe("tiles", () => {
   it("lays the buttons out in whole device pixels", () => {
     expect(tileLayout(1)).toMatchObject({ height: 40, hairline: 1, edges: [0, 46, 92, 138] });
-    expect(tileLayout(1.25)).toMatchObject({ height: 50, hairline: 1, edges: [0, 58, 115, 173] });
+    // 138 CSS pixels are 172.5 device pixels: the page's buttons end at the window's right edge, so each edge is rounded from there.
+    expect(tileLayout(1.25)).toMatchObject({ height: 50, hairline: 1, edges: [0, 57, 115, 172] });
+    expect(tileLayout(1.75)).toMatchObject({ height: 70, hairline: 1, edges: [0, 80, 161, 241] });
     expect(tileLayout(1.5)).toMatchObject({ height: 60, hairline: 1, edges: [0, 69, 138, 207] });
     expect(tileLayout(2)).toMatchObject({ height: 80, hairline: 2, edges: [0, 92, 184, 276] });
   });
@@ -79,7 +81,11 @@ describe("tiles", () => {
     expect(origin(1.5, 0)).toEqual(["setTransform", 1.5, 0, 0, 1.5, 27, 22]);
     expect(origin(1.5, 6)).toEqual(["setTransform", 1.5, 0, 0, 1.5, 27, 22]);
     expect(origin(2, 0)).toEqual(["setTransform", 2, 0, 0, 2, 36, 29]);
-    expect(origin(1.25, 0)).toEqual(["setTransform", 1.25, 0, 0, 1.25, 23, 18]);
+    expect(origin(1.25, 0)).toEqual(["setTransform", 1.25, 0, 0, 1.25, 22, 18]);
+    // Picture 2 is Maximize's rest picture: its icon starts 92.5 device pixels before the right edge, which rounds to 92.
+    expect(origin(1.25, 2)).toEqual(["setTransform", 1.25, 0, 0, 1.25, 23, 18]);
+    // The rows above a one-row hairline are 69 at 1.75, so the 17.5-row icon starts 25.75 rows down.
+    expect(origin(1.75, 0)).toEqual(["setTransform", 1.75, 0, 0, 1.75, 31, 26]);
   });
 
   it("asks for an ordinary canvas, which draws a thin stroke as the page draws its icon", () => {
@@ -94,7 +100,7 @@ describe("tiles", () => {
     expect(paint).not.toBeNull();
     const p = paint!;
     expect(p.height).toBe(50);
-    expect([p.minimize.width, p.maximize.width, p.restore.width, p.close.width]).toEqual([58, 57, 57, 58]);
+    expect([p.minimize.width, p.maximize.width, p.restore.width, p.close.width]).toEqual([57, 58, 58, 57]);
     for (const b of [p.minimize, p.maximize, p.restore, p.close]) {
       expect(b.rest).toHaveLength(b.width * 50 * 4);
       expect(b.hover).toHaveLength(b.width * 50 * 4);

@@ -19,11 +19,14 @@ export const GLYPHS = {
 export type TileLayout = { dpr: number; height: number; hairline: number; edges: [number, number, number, number] };
 
 /**
- * Edges are rounded from the scale, not each width, so the three pictures add up to the strip's width at a fractional scale
- * (at 1.25 they are 58, 57 and 58 wide, not three equal ones that would leave a gap or overlap).
+ * Edges are rounded from the scale, not each width, so the three pictures add up to the strip's width at a fractional scale.
+ * Each is measured from the bar's right end and rounded there, because that is where the page's own buttons end: a window is a
+ * whole number of device pixels wide, and the page rounds each edge to a device pixel (a half goes right). At 1.25 the buttons
+ * are 57, 58 and 57 wide. This is reasoned from how the page lays out; only a scale of 1 was measured (live check, C2).
  */
 export function tileLayout(dpr: number): TileLayout {
-  const edge = (i: number) => Math.round(i * BUTTON_W * dpr);
+  const fromEnd = (i: number) => Math.round((i - 3) * BUTTON_W * dpr);
+  const edge = (i: number) => fromEnd(i) - fromEnd(0);
   return { dpr, height: Math.round(BAR_H * dpr), hairline: Math.max(1, Math.floor(dpr)), edges: [edge(0), edge(1), edge(2), edge(3)] };
 }
 
@@ -66,10 +69,11 @@ function paintOne(layout: TileLayout, slot: 0 | 1 | 2, glyph: string, bar: strin
   if (!setColour(ctx, "fillStyle", look.bg)) return null;
   ctx.fillRect(0, 0, width, height - rule);
   if (!setColour(ctx, "strokeStyle", look.fg)) return null;
-  // The glyph is centred in the rows above the hairline, as the page's own button centres its icon. The page then paints the
-  // icon's box on whole device pixels (14.5 CSS pixels down becomes 15 at a scale of 1), so the origin is rounded the same way.
-  const x = Math.round((slot * BUTTON_W + (BUTTON_W - GLYPH) / 2) * dpr) - left;
-  const y = Math.round(((BAR_H - 1 - GLYPH) / 2) * dpr);
+  // The glyph is centred in the button, which fills the rows above the hairline, as the page's own button centres its icon.
+  // The page then paints the icon's box on whole device pixels (14.5 down becomes 15 at a scale of 1), so the origin is
+  // rounded the same way: across from the bar's right end, as the edges are, and down within the rows above the hairline.
+  const x = Math.round(((slot - 3) * BUTTON_W + (BUTTON_W - GLYPH) / 2) * dpr) + (layout.edges[3] ?? 0) - left;
+  const y = Math.round((height - rule - GLYPH * dpr) / 2);
   // The page cuts an icon to its own box, which takes the ends off Close's two strokes.
   ctx.beginPath();
   ctx.rect(x, y, GLYPH * dpr, GLYPH * dpr);
