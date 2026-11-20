@@ -187,10 +187,11 @@ impl History {
     /// Validates the body, updates the index and sidecar when it is a session start, stop or end or a session not
     /// yet seen in this tab, and says whether a copy should follow. `recording` is the file name of the tab's
     /// recording; the sidecar lists it once, also when the event would not otherwise write the sidecar (a restart
-    /// in the same tab starts a new file). A Codex session is linked by the first event that names it, whatever
-    /// the event (a quit with no prompt sends only `SessionEnd`), and never asks for a copy: the importer copies
-    /// the rollout. An Antigravity conversation is linked the same way, for Resume only: its folder is the tab's
-    /// and its `lastUserInput` is never read. `distro` is the WSL distro the tab's shell runs in: the Linux paths its
+    /// in the same tab starts a new file). A Codex, Qwen Code or Copilot CLI session is linked by the first event
+    /// that names it, whatever the event (a quit with no prompt sends only `SessionEnd`). The events that ask for a
+    /// copy, a turn's end or the session's, are those `copy_event` lists for the agent; the answer is Some(meta) for
+    /// them and None for every other event. An Antigravity conversation is linked the same way, for Resume only
+    /// (`copy_event` says no for it): its folder is the tab's and its `lastUserInput` is never read. `distro` is the WSL distro the tab's shell runs in: the Linux paths its
     /// agent reports (`transcript_path`, `cwd`) are read as Windows paths under that distro's share before anything
     /// checks, stores or copies them, and a path that won't translate records nothing. Blocking: call inside
     /// spawn_blocking.
@@ -205,7 +206,7 @@ impl History {
     ) -> Option<SessionMeta> {
         // Codex's, Antigravity's, Qwen Code's and Copilot CLI's sessions are linked by the first event that names them,
         // whatever it is. A Qwen body is Claude-shaped, so it reads like Codex's; so does Copilot's `copilot::link_body`.
-        let (codex, antigravity) = match agent {
+        let (by_first_event, antigravity) = match agent {
             "claude" => (false, false),
             "codex" | "qwen" | "copilot" => (true, false),
             "antigravity" => (true, true),
@@ -235,7 +236,7 @@ impl History {
             )
         };
         let (transcript_path, cwd) = (as_windows(distro, transcript_path)?, as_windows(distro, &cwd)?);
-        let allowed = if codex {
+        let allowed = if by_first_event {
             sidecar_allowed_in(agent, &transcript_path, session_id, distro)
         } else {
             transcript_allowed(&transcript_path, session_id, distro)
@@ -244,7 +245,7 @@ impl History {
             return None;
         }
         let mut state = self.marks.lock().unwrap();
-        if event == "UserPromptSubmit" && !codex {
+        if event == "UserPromptSubmit" && !by_first_event {
             state.prompted.insert(session_id.to_string());
         }
         let guard = self.index.lock().unwrap();
@@ -258,7 +259,10 @@ impl History {
             }
         };
         // An imported rollout has a row with no tab: the link keeps its start.
-        let imported = row.as_ref().filter(|row| codex && row.tab_id.is_empty()).cloned();
+        let imported = row
+            .as_ref()
+            .filter(|row| by_first_event && row.tab_id.is_empty())
+            .cloned();
         let known = row.filter(|row| row.tab_id == tab_id);
         let is_new = known.is_none();
         let (started_ms, previous_in_tab) = match known {
@@ -304,11 +308,11 @@ impl History {
             preset: self
                 .registry
                 .as_ref()
-                .filter(|_| !codex)
+                .filter(|_| !by_first_event)
                 .and_then(|registry| registry.preset_of_tab(tab_id)),
             distro: distro.map(str::to_string),
         };
-        let ends_turn = !codex && matches!(event, "Stop" | "StopFailure" | "SessionEnd");
+        let ends_turn = super::copy_event(agent, event);
         // An event of an agy conversation or a Qwen chat the tab went back to makes it the tab's latest again (the
         // latest is the row with the newest `updated_ms`); events of the tab's current one write nothing.
         let returned = (antigravity || matches!(agent, "qwen" | "copilot"))
@@ -318,7 +322,7 @@ impl History {
                 .ok()
                 .flatten()
                 .is_some_and(|latest| latest.session_id != session_id);
-        if is_new || returned || ends_turn || (!codex && event == "SessionStart") {
+        if is_new || returned || ends_turn || (!by_first_event && event == "SessionStart") {
             if let Err(err) = index.upsert(&meta) {
                 tracing::warn!("history index write failed: {err:#}");
             }
@@ -1176,16 +1180,22 @@ mod tests {
             "/home/u/.codex/sessions/2026/10/31/rollout-2026-10-31T10-00-00-00000000-0000-4000-8000-000000000003.jsonl";
         let mut codex = wsl_body("00000000-0000-4000-8000-000000000003", rollout, "/home/u/proj");
         codex["hook_event_name"] = json!("SessionStart");
-        // It is linked, and asks for no copy (the importer copies rollouts).
+        // A start is linked and asks for no copy.
         assert_eq!(
             history.note_event("codex", "t3", None, &codex, 3000, Some("Ubuntu")),
             None
         );
+        let unc_rollout = r"\\wsl.localhost\Ubuntu\home\u\.codex\sessions\2026\10\31\rollout-2026-10-31T10-00-00-00000000-0000-4000-8000-000000000003.jsonl";
         let row = history.latest_for_tab_of("t3", "codex").unwrap();
-        assert_eq!(
-            row.transcript_path,
-            r"\\wsl.localhost\Ubuntu\home\u\.codex\sessions\2026\10\31\rollout-2026-10-31T10-00-00-00000000-0000-4000-8000-000000000003.jsonl"
-        );
+        assert_eq!(row.transcript_path, unc_rollout);
+        // A turn end asks for a copy that reads the share path, in the distro the tab runs in (the decision 11 check
+        // for Codex in a WSL tab). `note_event` makes no file call, so the distro's name is safe here.
+        codex["hook_event_name"] = json!("Stop");
+        let stop = history
+            .note_event("codex", "t3", None, &codex, 3500, Some("Ubuntu"))
+            .expect("a Codex Stop in a WSL tab asks for a copy");
+        assert_eq!(stop.transcript_path, unc_rollout);
+        assert_eq!(stop.distro.as_deref(), Some("Ubuntu"));
     }
 
     #[test]
@@ -1320,17 +1330,22 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let history = History::open(home.path());
         let body = codex_body(CODEX_END, home.path(), ID);
-        assert_eq!(history.note_event("codex", "t1", None, &body, 5000, None), None);
+        // The session end is a copy event, so it asks for the copy and names the tab and the rollout.
+        let meta = history
+            .note_event("codex", "t1", None, &body, 5000, None)
+            .expect("a Codex session end asks for a copy");
+        assert_eq!(meta.tab_id, "t1");
+        assert_eq!(meta.transcript_path, body["transcript_path"].as_str().unwrap());
         let row = history.get("codex", ID).unwrap().unwrap();
         assert_eq!((row.tab_id.as_str(), row.client), ("t1", Client::Marshell));
-        let meta = crate::history::archive::read_meta(home.path(), "codex", ID)
+        let stored = crate::history::archive::read_meta(home.path(), "codex", ID)
             .unwrap()
             .unwrap();
-        assert_eq!(meta.tab_id, "t1");
+        assert_eq!(stored.tab_id, "t1");
     }
 
     #[test]
-    fn a_later_codex_event_does_not_rewrite_the_link() {
+    fn a_codex_turn_end_moves_the_row_and_keeps_its_start() {
         let home = tempfile::tempdir().unwrap();
         let history = History::open(home.path());
         history.note_event(
@@ -1341,18 +1356,24 @@ mod tests {
             1000,
             None,
         );
-        let (_, side) = crate::history::archive::archive_paths(home.path(), "codex", ID);
-        let before_bytes = std::fs::read(&side).unwrap();
-        let before_time = std::fs::metadata(&side).unwrap().modified().unwrap();
-        std::thread::sleep(Duration::from_millis(20));
-        assert_eq!(
-            history.note_event("codex", "t1", None, &codex_body(CODEX_END, home.path(), ID), 9000, None),
-            None
+        let before = history.get("codex", ID).unwrap().unwrap();
+        assert_eq!((before.started_ms, before.updated_ms), (1000, 1000));
+        assert!(
+            history
+                .note_event("codex", "t1", None, &codex_body(CODEX_END, home.path(), ID), 9000, None)
+                .is_some()
         );
-        assert_eq!(std::fs::read(&side).unwrap(), before_bytes);
-        assert_eq!(std::fs::metadata(&side).unwrap().modified().unwrap(), before_time);
         let row = history.get("codex", ID).unwrap().unwrap();
-        assert_eq!((row.started_ms, row.updated_ms), (1000, 1000));
+        assert_eq!((row.started_ms, row.updated_ms), (1000, 9000));
+        assert_eq!(row.previous_in_tab, before.previous_in_tab);
+        // An event that is not a copy event writes nothing and asks for nothing.
+        let (_, side) = crate::history::archive::archive_paths(home.path(), "codex", ID);
+        let bytes = std::fs::read(&side).unwrap();
+        let mut tool = codex_body(CODEX_START, home.path(), ID);
+        tool["hook_event_name"] = json!("PostToolUse");
+        assert_eq!(history.note_event("codex", "t1", None, &tool, 9500, None), None);
+        assert_eq!(std::fs::read(&side).unwrap(), bytes);
+        assert_eq!(history.get("codex", ID).unwrap().unwrap().updated_ms, 9000);
     }
 
     const AGY_PRE: &str = include_str!("../../tests/fixtures/antigravity/hooks/1.4.7/PreInvocation.json");
@@ -1465,12 +1486,12 @@ mod tests {
     fn qwen_is_linked_by_its_first_event() {
         let home = tempfile::tempdir().unwrap();
         let history = History::open(home.path());
-        // `Stop` is not a start, and Qwen has no importer: the first event that names the session links it, and no
-        // copy is asked for.
+        // `Stop` is not a start: the first event that names the session links it, and a turn end asks for a copy.
         let body = qwen_body(QWEN_STOP, home.path(), ID);
-        assert_eq!(
-            history.note_event("qwen", "t1", Some("t1-1000.cast"), &body, 1000, None),
-            None
+        assert!(
+            history
+                .note_event("qwen", "t1", Some("t1-1000.cast"), &body, 1000, None)
+                .is_some()
         );
         let row = history.get("qwen", ID).unwrap().unwrap();
         assert_eq!((row.tab_id.as_str(), row.client), ("t1", Client::Marshell));
@@ -1483,7 +1504,7 @@ mod tests {
             .unwrap();
         assert_eq!((meta.agent.as_str(), meta.tab_id.as_str()), ("qwen", "t1"));
         assert_eq!(meta.recordings.len(), 1);
-        // Later events of the same session in the tab change nothing, and never ask for a copy.
+        // Later events of the same session in the tab that are not copy events change nothing and ask for no copy.
         let later = qwen_body(QWEN_START, home.path(), ID);
         assert_eq!(history.note_event("qwen", "t1", None, &later, 2000, None), None);
         assert_eq!(history.get("qwen", ID).unwrap().unwrap().updated_ms, 1000);
@@ -1534,11 +1555,12 @@ mod tests {
         const B: &str = "00000000-0000-4000-8000-000000000002";
         let home = tempfile::tempdir().unwrap();
         let history = History::open(home.path());
-        // Whatever the first event is, it links the session; Copilot has no importer yet, so no copy is asked for.
+        // Whatever the first event is, it links the session; an `agentStop` is a turn end, so it asks for a copy.
         let body = copilot_body(home.path(), ID, "agentStop");
-        assert_eq!(
-            history.note_event("copilot", "t1", Some("t1-1000.cast"), &body, 1000, None),
-            None
+        assert!(
+            history
+                .note_event("copilot", "t1", Some("t1-1000.cast"), &body, 1000, None)
+                .is_some()
         );
         let row = history.get("copilot", ID).unwrap().unwrap();
         assert_eq!((row.tab_id.as_str(), row.client), ("t1", Client::Marshell));
@@ -1551,10 +1573,10 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!((meta.agent.as_str(), meta.tab_id.as_str()), ("copilot", "t1"));
-        // Later events of the same session write nothing and ask for no copy.
+        // The session's end asks for a copy too, and moves the row.
         let later = copilot_body(home.path(), ID, "sessionEnd");
-        assert_eq!(history.note_event("copilot", "t1", None, &later, 2000, None), None);
-        assert_eq!(history.get("copilot", ID).unwrap().unwrap().updated_ms, 1000);
+        assert!(history.note_event("copilot", "t1", None, &later, 2000, None).is_some());
+        assert_eq!(history.get("copilot", ID).unwrap().unwrap().updated_ms, 2000);
         // A session the tab goes on under (`/clear`) is its latest, and the tab going back makes the first one so again.
         history.note_event(
             "copilot",
@@ -1584,6 +1606,178 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    /// The hook body `agent`'s CLI posts for `event` in tab `t1`, for a session whose transcript is under `dir`.
+    fn turn_body(agent: &str, event: &str, dir: &Path, id: &str) -> Value {
+        let mut body = match agent {
+            "claude" => body(STOP, dir, id),
+            "codex" => codex_body(CODEX_END, dir, id),
+            "qwen" => qwen_body(QWEN_STOP, dir, id),
+            "copilot" => copilot_body(dir, id, event),
+            "antigravity" => agy_body(AGY_PRE, event, dir, id),
+            other => panic!("no body for {other}"),
+        };
+        if agent != "antigravity" {
+            body["hook_event_name"] = json!(event);
+        }
+        body
+    }
+
+    #[test]
+    fn each_cli_asks_for_a_copy_at_its_own_turn_and_session_ends() {
+        let table: &[(&str, &str, bool)] = &[
+            ("claude", "Stop", true),
+            ("claude", "StopFailure", true),
+            ("claude", "SessionEnd", true),
+            ("codex", "Stop", true),
+            ("codex", "Interrupt", true),
+            ("codex", "SessionEnd", true),
+            ("codex", "SessionStart", false),
+            ("codex", "UserPromptSubmit", false),
+            ("codex", "PostToolUse", false),
+            ("codex", "StopFailure", false),
+            ("qwen", "Stop", true),
+            ("qwen", "StopFailure", true),
+            ("qwen", "SessionEnd", true),
+            ("qwen", "SessionStart", false),
+            ("qwen", "Notification", false),
+            ("copilot", "agentStop", true),
+            ("copilot", "errorOccurred", true),
+            ("copilot", "sessionEnd", true),
+            ("copilot", "sessionStart", false),
+            ("copilot", "postToolUse", false),
+            ("copilot", "statusLine", false),
+            ("copilot", "Stop", false),
+            ("antigravity", "Stop", false),
+            ("antigravity", "PostInvocation", false),
+            ("other", "Stop", false),
+            // The table itself, without a body.
+            ("claude", "SessionStart", false),
+            ("qwen", "agentStop", false),
+            ("copilot", "StopFailure", false),
+            ("codex", "agentStop", false),
+        ];
+        for &(agent, event, expected) in table {
+            assert_eq!(
+                crate::history::copy_event(agent, event),
+                expected,
+                "copy_event {agent} {event}"
+            );
+        }
+        for &(agent, event, expected) in table.iter().filter(|(agent, ..)| *agent != "other") {
+            let home = tempfile::tempdir().unwrap();
+            // A registry that knows tab t1, for Antigravity's folder.
+            let history = agy_history(home.path(), "C:/work/app");
+            let at = turn_body(agent, event, home.path(), ID);
+            let asked = history.note_event(agent, "t1", None, &at, 1000, None).is_some();
+            assert_eq!(asked, expected, "note_event {agent} {event}");
+        }
+    }
+
+    // Each CLI's own transcript, as its fixture has it: Codex's rollout, Qwen Code's chat, Copilot CLI's event log.
+    const CODEX_TUI: &str = include_str!("../../tests/fixtures/codex/tui.jsonl");
+    const QWEN_CHAT: &str =
+        include_str!("../../tests/fixtures/qwen/transcripts/0.26.5/00000000-0000-4000-8000-000000000002.jsonl");
+    const COPILOT_LOG: &str =
+        include_str!("../../tests/fixtures/copilot/transcripts/1.0.106/00000000-0000-4000-8000-000000000001.jsonl");
+
+    /// `(agent, session id, fixture text, turn-end event)` for each CLI whose tab conversations are copied.
+    const TAB_CLIS: [(&str, &str, &str, &str); 3] = [
+        ("codex", "00000000-0000-4000-8000-0000000000c1", CODEX_TUI, "Stop"),
+        ("qwen", "00000000-0000-4000-8000-000000000002", QWEN_CHAT, "Stop"),
+        (
+            "copilot",
+            "00000000-0000-4000-8000-000000000001",
+            COPILOT_LOG,
+            "agentStop",
+        ),
+    ];
+
+    /// The turn-end body of `agent`'s session `id`, with `text` written where the body names its transcript.
+    fn written_turn_end(agent: &str, event: &str, src: &Path, id: &str, text: &str) -> (Value, PathBuf) {
+        let body = turn_body(agent, event, src, id);
+        let path = PathBuf::from(body["transcript_path"].as_str().unwrap());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, text).unwrap();
+        (body, path)
+    }
+
+    #[tokio::test]
+    async fn a_tab_copy_fills_the_row_for_codex_qwen_and_copilot() {
+        for (agent, id, text, event) in TAB_CLIS {
+            let (home, src) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+            let history = Arc::new(History::open(home.path()));
+            history.set_settle(Duration::from_millis(10));
+            let (body, _) = written_turn_end(agent, event, src.path(), id, text);
+            let meta = history
+                .note_event(agent, "t1", Some("t1-1000.cast"), &body, 1000, None)
+                .unwrap_or_else(|| panic!("{agent} {event} asks for a copy"));
+            schedule_copy(history.clone(), meta);
+            idle(&history).await;
+
+            let (archive, _) = crate::history::archive::archive_paths(home.path(), agent, id);
+            assert!(archive.exists(), "{agent}: no archive file");
+            assert_eq!(
+                crate::history::archive::read_archive(home.path(), agent, id)
+                    .unwrap()
+                    .unwrap(),
+                text,
+                "{agent}: the copy differs from its source"
+            );
+            let entry = history.entry(agent, id).unwrap().unwrap();
+            assert!(!entry.title.is_empty(), "{agent}: no title");
+            assert!(entry.turns > 0, "{agent}: no turns");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_second_turn_end_replaces_the_copy() {
+        for (agent, id, text, event) in TAB_CLIS {
+            let (home, src) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+            let history = Arc::new(History::open(home.path()));
+            history.set_settle(Duration::from_millis(10));
+            let (body, path) = written_turn_end(agent, event, src.path(), id, text);
+            schedule_copy(
+                history.clone(),
+                history.note_event(agent, "t1", None, &body, 1000, None).unwrap(),
+            );
+            idle(&history).await;
+
+            // The CLI writes more after the first copy was taken; the next turn end copies the whole file again.
+            let grown = format!("{text}{}\n", text.lines().last().unwrap());
+            std::fs::write(&path, &grown).unwrap();
+            schedule_copy(
+                history.clone(),
+                history.note_event(agent, "t1", None, &body, 2000, None).unwrap(),
+            );
+            idle(&history).await;
+            assert_eq!(
+                crate::history::archive::read_archive(home.path(), agent, id)
+                    .unwrap()
+                    .unwrap(),
+                grown,
+                "{agent}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_wsl_tab_copy_keeps_its_distro() {
+        // The share can't exist in a test, and `copy_transcript` reads the path as it is: a local file stands in.
+        let (home, src) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (_, id, text, event) = TAB_CLIS[2];
+        let (body, _) = written_turn_end("copilot", event, src.path(), id, text);
+        // The row the hook left (linked by its first event), whatever that event asks for.
+        let history = History::open(home.path());
+        history.note_event("copilot", "t1", None, &body, 1000, None);
+        let mut meta = history.get("copilot", id).unwrap().unwrap();
+        meta.distro = Some("Ubuntu".into());
+        crate::history::archive::copy_transcript(home.path(), &meta).unwrap();
+        let stored = crate::history::archive::read_meta(home.path(), "copilot", id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.distro.as_deref(), Some("Ubuntu"));
     }
 
     #[test]

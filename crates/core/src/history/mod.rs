@@ -196,6 +196,17 @@ fn copilot_transcript_allowed(path: &str, session_id: &str, distro: Option<&str>
     parts.iter().all(|part| *part != "..") && parts.ends_with(&["session-state", session_id, "events.jsonl"])
 }
 
+/// True when `event` is one after which `agent`'s conversation is copied: a turn's end or the session's. This is the
+/// one table of each CLI's event names for that; a Copilot status line, Antigravity and any other agent never ask.
+pub fn copy_event(agent: &str, event: &str) -> bool {
+    match agent {
+        "claude" | "qwen" => matches!(event, "Stop" | "StopFailure" | "SessionEnd"),
+        "codex" => matches!(event, "Stop" | "Interrupt" | "SessionEnd"),
+        "copilot" => matches!(event, "agentStop" | "errorOccurred" | "sessionEnd"),
+        _ => false,
+    }
+}
+
 /// Reads the conversation in `text`, the decoded transcript of `agent`'s session. None for an agent whose
 /// transcripts Marshell doesn't read.
 pub fn parse_for(agent: &str, text: &str, session_id: &str) -> Option<marshell_protocol::history::Conversation> {

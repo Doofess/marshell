@@ -43,7 +43,7 @@ fn state_in(
 ) -> AppState {
     common::tie_children_to_test();
     let user_home = home.join("user");
-    AppState::new(
+    let st = AppState::new(
         TOKEN.into(),
         PORT,
         vec!["http://tauri.localhost".into()],
@@ -56,7 +56,10 @@ fn state_in(
     // No test here finds a program on this machine's PATH: CI has no Grok.
     .with_tab_path(|| None)
     .with_claude_version(version.map(str::to_string))
-    .with_claude_compact_paths(user_home, Vec::new())
+    .with_claude_compact_paths(user_home, Vec::new());
+    // The copy a turn end asks for waits 1.5 s by default; no test here needs that.
+    st.history().set_settle(std::time::Duration::from_millis(10));
+    st
 }
 
 fn app() -> axum::Router {
@@ -978,11 +981,15 @@ async fn claude_keeps_its_hooks_while_it_is_in_the_foreground_and_before_any_sig
 
 // ---- Agents inside WSL: a hook names the agent the tab runs ----
 
-/// A WSL profile that starts the sleeper: only `-d Ubuntu` in its argv makes it a tab of that distro, as `wsl.exe -d Ubuntu`
-/// would be. No test starts a real `wsl.exe`.
+/// The distro the WSL tabs of these tests name. No distro by this name exists on any PC: a copy of a WSL tab's
+/// conversation reads `\\wsl.localhost\<distro>\...`, and a file call on a stopped distro's share starts the distro.
+const DISTRO: &str = "NoSuchDistro6s";
+
+/// A WSL profile that starts the sleeper: only `-d <DISTRO>` in its argv makes it a tab of that distro, as
+/// `wsl.exe -d <DISTRO>` would be. No test starts a real `wsl.exe`.
 fn wsl_profile() -> marshell_protocol::api::Profile {
     let mut command = sleeper_profile().command;
-    command.extend(["-d".to_string(), "Ubuntu".to_string()]);
+    command.extend(["-d".to_string(), DISTRO.to_string()]);
     marshell_protocol::api::Profile {
         id: "wsl-ubuntu".into(),
         name: "Ubuntu".into(),
@@ -1028,7 +1035,7 @@ async fn a_wsl_tab_takes_the_agent_from_its_hooks() {
     let st = wsl_state();
     let app = router(st.clone());
     let tab = start_shell(&app, "wsl-ubuntu").await;
-    assert_eq!(st.wsl_distro_of_tab(&tab).as_deref(), Some("Ubuntu"));
+    assert_eq!(st.wsl_distro_of_tab(&tab).as_deref(), Some(DISTRO));
     assert_eq!(foreground_agent(&st, &tab), None);
     assert_eq!(
         post_fixture(&app, "event", &tab, "UserPromptSubmit").await,
@@ -1072,10 +1079,10 @@ async fn a_wsl_tabs_history_row_reads_its_linux_paths_under_the_distro() {
     let row = row.expect("the WSL tab's session is in the history");
     assert_eq!(
         row.transcript_path,
-        format!(r"\\wsl.localhost\Ubuntu\home\u\.claude\projects\-home-u-proj\{id}.jsonl")
+        format!(r"\\wsl.localhost\{DISTRO}\home\u\.claude\projects\-home-u-proj\{id}.jsonl")
     );
-    assert_eq!(row.cwd, r"\\wsl.localhost\Ubuntu\home\u\proj");
-    assert_eq!(stored.unwrap().distro.as_deref(), Some("Ubuntu"));
+    assert_eq!(row.cwd, format!(r"\\wsl.localhost\{DISTRO}\home\u\proj"));
+    assert_eq!(stored.unwrap().distro.as_deref(), Some(DISTRO));
 }
 
 #[tokio::test]
@@ -1103,7 +1110,7 @@ async fn a_wsl_tab_without_a_version_gets_the_wsl_note() {
     assert_eq!(info.live, None);
     assert_eq!(
         info.status_note.as_deref(),
-        Some("Can't read Claude Code's version in Ubuntu")
+        Some(format!("Can't read Claude Code's version in {DISTRO}").as_str())
     );
 }
 
@@ -1164,7 +1171,7 @@ async fn session_end_ends_a_wsl_tab_launched_as_an_agent() {
         .as_str()
         .unwrap()
         .to_string();
-    assert_eq!(st.wsl_distro_of_tab(&tab).as_deref(), Some("Ubuntu"));
+    assert_eq!(st.wsl_distro_of_tab(&tab).as_deref(), Some(DISTRO));
     post_fixture(&app, "event", &tab, "SessionStart").await;
     assert_eq!(row(&st, &tab).live.unwrap().state, LiveState::Idle);
     assert_eq!(
@@ -1648,7 +1655,7 @@ fn wsl_reporter(folder: &str) -> marshell_protocol::api::Profile {
             "folder".into(),
             folder.into(),
             "-d".into(),
-            "Ubuntu".into(),
+            DISTRO.into(),
         ],
         family: marshell_protocol::api::ShellFamily::Wsl,
         ..sleeper_profile()
@@ -1658,7 +1665,7 @@ fn wsl_reporter(folder: &str) -> marshell_protocol::api::Profile {
 /// A WSL tab whose shell reports `folder`, once it has.
 async fn wsl_tab_reporting(st: &AppState, app: &axum::Router, folder: &str) -> String {
     let tab = start_shell(app, "wsl-reporter").await;
-    assert_eq!(st.wsl_distro_of_tab(&tab).as_deref(), Some("Ubuntu"));
+    assert_eq!(st.wsl_distro_of_tab(&tab).as_deref(), Some(DISTRO));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while st.session(&tab).and_then(|s| s.current_cwd()).is_none() {
         assert!(
@@ -2680,6 +2687,145 @@ async fn copilot_status_off_says_so() {
     assert_eq!(info.status_note.as_deref(), Some("Live status is off for Copilot CLI"));
 }
 
+// ---- A turn end in a tab copies the conversation, for every CLI that has a transcript ----
+
+/// A row that runs Codex in `cwd`, with no process: enough for a hook to name an open tab.
+fn reserve_codex(st: &AppState, cwd: &std::path::Path) -> String {
+    st.registry().reserve(
+        "codex-tab",
+        marshell_core::registry::Relaunch {
+            elevated: false,
+            profile_id: "none".into(),
+            agent: Some("codex".into()),
+            cwd: cwd.to_string_lossy().into_owned(),
+            mode: None,
+            name: "Codex".into(),
+            preset: None,
+        },
+    );
+    "codex-tab".into()
+}
+
+/// Waits up to 5 s for the archive copy of `agent`'s session `id`, then for History to list it with turns.
+async fn listed_turns_after_copy(st: &AppState, agent: &str, id: &str) -> u32 {
+    let archive = marshell_core::history::archive::archive_paths(st.home(), agent, id).0;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let turns = st
+            .history()
+            .entry(agent, id)
+            .ok()
+            .flatten()
+            .map_or(0, |entry| entry.turns);
+        if archive.exists() && turns > 0 {
+            return turns;
+        }
+        if std::time::Instant::now() >= deadline {
+            return turns;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+}
+
+/// Writes `fixture` (a path under `tests/fixtures/`) to `to`, making its folder.
+fn write_transcript(fixture: &str, to: &std::path::Path) {
+    let text = std::fs::read_to_string(format!("{}/tests/fixtures/{fixture}", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+    std::fs::write(to, text).unwrap();
+}
+
+#[tokio::test]
+async fn a_turn_end_posted_to_the_hook_route_copies_the_tab_conversation() {
+    // No importer runs in a test state: this is the import switch off.
+    let scratch = tempfile::tempdir().unwrap();
+    let cwd = scratch.path().join("proj");
+    std::fs::create_dir_all(&cwd).unwrap();
+    let cwd_text = cwd.to_string_lossy().into_owned();
+
+    // Codex: a rollout named for its session; the Stop names it.
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let tab = reserve_codex(&st, &cwd);
+    let id = "00000000-0000-4000-8000-0000000000c1";
+    let rollout = scratch
+        .path()
+        .join("codex")
+        .join("sessions")
+        .join(format!("rollout-2026-10-20T09-00-00-{id}.jsonl"));
+    write_transcript("codex/tui.jsonl", &rollout);
+    let text = std::fs::read_to_string(format!(
+        "{}/tests/fixtures/codex/hooks/0.163.0/Stop.json",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    let mut body: serde_json::Value = serde_json::from_str(&text).unwrap();
+    body["session_id"] = id.into();
+    body["transcript_path"] = rollout.to_string_lossy().into_owned().into();
+    body["cwd"] = cwd_text.clone().into();
+    let code = status(
+        &app,
+        hook(
+            Some("event"),
+            Some("codex"),
+            Some(&tab),
+            serde_json::to_vec(&body).unwrap(),
+        ),
+    )
+    .await;
+    assert_eq!(code, StatusCode::NO_CONTENT);
+    let turns = listed_turns_after_copy(&st, "codex", id).await;
+    stop(&st, &tab);
+    assert!(turns > 0, "codex: the Stop copied nothing");
+
+    // Qwen Code: a chat under `projects/<folder>/chats`.
+    let st = qwen_state(Some(QWEN));
+    let app = router(st.clone());
+    let tab = reserve_qwen(&st, &cwd);
+    let id = "00000000-0000-4000-8000-000000000002";
+    let chat = scratch
+        .path()
+        .join("qwen")
+        .join("projects")
+        .join("c--work-app")
+        .join("chats")
+        .join(format!("{id}.jsonl"));
+    write_transcript(&format!("qwen/transcripts/{QWEN}/{id}.jsonl"), &chat);
+    let mut body = qwen_fixture("hooks", "Stop");
+    body["session_id"] = id.into();
+    body["transcript_path"] = chat.to_string_lossy().into_owned().into();
+    body["cwd"] = cwd_text.clone().into();
+    let (code, _) = post_qwen_as(&app, "event", Some(&tab), &body).await;
+    assert_eq!(code, StatusCode::NO_CONTENT);
+    let turns = listed_turns_after_copy(&st, "qwen", id).await;
+    stop(&st, &tab);
+    assert!(turns > 0, "qwen: the Stop copied nothing");
+
+    // Copilot CLI: the event log under the state's Copilot home, which the `agentStop` names.
+    let user_home = scratch.path().join("copilot-user");
+    let st = state(Some(KNOWN))
+        .with_copilot_home(user_home.clone())
+        .with_copilot_version(Some(COPILOT.into()));
+    let app = router(st.clone());
+    let tab = reserve_copilot(&st, &cwd);
+    let id = COPILOT_A;
+    let log = user_home
+        .join(".copilot")
+        .join("session-state")
+        .join(id)
+        .join("events.jsonl");
+    write_transcript(&format!("copilot/transcripts/{COPILOT}/{id}.jsonl"), &log);
+    let mut body = copilot_hook_body("agentStop", "agentStop");
+    body["sessionId"] = id.into();
+    // An `agentStop` carries the path of the log it comes from; the recorded one is another machine's.
+    body["transcriptPath"] = log.to_string_lossy().into_owned().into();
+    body["cwd"] = cwd_text.into();
+    let (code, _) = post_copilot_as(&app, "event", Some(&tab), &body).await;
+    assert_eq!(code, StatusCode::NO_CONTENT);
+    let turns = listed_turns_after_copy(&st, "copilot", id).await;
+    stop(&st, &tab);
+    assert!(turns > 0, "copilot: the agentStop copied nothing");
+}
+
 // ---- Copilot CLI inside WSL: a hook names the agent the tab runs, and its transcript is the distro's ----
 
 /// A state with a WSL tab whose distro's `copilot` is a recorded version (pinned, so no `wsl.exe` runs).
@@ -2694,7 +2840,7 @@ async fn a_copilot_hook_from_a_wsl_tab_marks_the_tab() {
     let st = wsl_copilot_state();
     let app = router(st.clone());
     let tab = start_shell(&app, "wsl-ubuntu").await;
-    assert_eq!(st.wsl_distro_of_tab(&tab).as_deref(), Some("Ubuntu"));
+    assert_eq!(st.wsl_distro_of_tab(&tab).as_deref(), Some(DISTRO));
     assert_eq!(foreground_agent(&st, &tab), None);
     let (code, _) = post_copilot(&app, &tab, "userPromptSubmitted", "userPromptSubmitted").await;
     assert_eq!(code, StatusCode::NO_CONTENT);
@@ -2742,10 +2888,10 @@ async fn a_wsl_copilot_session_links_its_distro_transcript() {
     let row = row.expect("the WSL tab's Copilot session is in the history");
     assert_eq!(
         row.transcript_path,
-        format!(r"\\wsl.localhost\Ubuntu\home\u\.copilot\session-state\{COPILOT_A}\events.jsonl")
+        format!(r"\\wsl.localhost\{DISTRO}\home\u\.copilot\session-state\{COPILOT_A}\events.jsonl")
     );
-    assert_eq!(row.cwd, r"\\wsl.localhost\Ubuntu\home\u\proj");
-    assert_eq!(stored.unwrap().distro.as_deref(), Some("Ubuntu"));
+    assert_eq!(row.cwd, format!(r"\\wsl.localhost\{DISTRO}\home\u\proj"));
+    assert_eq!(stored.unwrap().distro.as_deref(), Some(DISTRO));
 }
 
 #[tokio::test]

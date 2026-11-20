@@ -1779,6 +1779,39 @@ mod tests {
         assert!(rig.archived("codex", "cdx-9").is_none());
     }
 
+    // `#[tokio::test]`: the hook copy runs on the blocking pool; the `Rig`'s sleeping `wait_for` is fine because of that.
+    #[tokio::test]
+    async fn a_tab_conversation_copied_by_its_hook_and_by_the_importer_stays_the_tabs() {
+        let rig = rig();
+        rig.history.set_settle(Duration::from_millis(10));
+        let path = write_codex(&rig, CODEX_A, "user", "2026-10-21T09:00:00.000Z", false);
+        let source = std::fs::read_to_string(&path).unwrap();
+        // The hook path links the session to tab t1 at a turn end and asks for its copy.
+        let hook = json!({
+            "hook_event_name": "Stop", "session_id": CODEX_A, "cwd": "C:/work/demo",
+            "transcript_path": path.to_string_lossy(),
+        });
+        let meta = rig
+            .history
+            .note_event("codex", "t1", Some("t1-1000.cast"), &hook, 1000, None)
+            .expect("a Codex Stop asks for a copy");
+        crate::history::recorder::schedule_copy(rig.history.clone(), meta);
+        wait_for("the hook copy", || {
+            rig.history.is_idle() && rig.archived("codex", CODEX_A).is_some()
+        });
+
+        // The importer, with the switch on, scans the same rollout and copies it again.
+        let importer = rig.start(true, FAST);
+        wait_idle(&importer, 1);
+        wait_for("the import's copy to end", || rig.history.is_idle());
+        let side = rig.sidecar("codex", CODEX_A).unwrap();
+        assert_eq!((side.tab_id.as_str(), side.client), ("t1", Client::Marshell));
+        assert_eq!(rig.archived("codex", CODEX_A).as_deref(), Some(source.as_str()));
+        let listed = rig.history.list(&HistoryQuery::default()).unwrap();
+        assert_eq!(listed.iter().filter(|e| e.session_id == CODEX_A).count(), 1);
+        assert_eq!(listed.len(), 1);
+    }
+
     #[test]
     fn a_marshell_session_seen_by_the_importer_stays_marshell() {
         let rig = rig();
