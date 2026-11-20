@@ -115,7 +115,6 @@ import { reviewApi } from "../tasks/reviewRun";
 import { jumpWords } from "../terminal/promptMarks";
 import { terminalFocusProps } from "../terminal/terminalFocus";
 import { resolveTerminalFont } from "../terminal/terminalFont";
-import { sameCell, type RowCell } from "../terminal/rowCell";
 import { TerminalView, type TerminalThemeProp } from "../terminal/TerminalView";
 import { appScheme, resolveTerminalTheme } from "../terminal/terminalTheme";
 import type { Notice } from "../window/announce";
@@ -1353,13 +1352,9 @@ export function LiveApp() {
   useEffect(() => {
     if (handed && endpoint) setAdopted({ endpoint, tabId: handed });
   }, [handed, endpoint]);
-  // One row of the shell's terminal, once a fit has measured it: the sidebar makes the panel as tall as whole rows from it.
-  const [shellCell, setShellCell] = useState<RowCell | null>(null);
-  // A new shell (after "Open as a session") measures the same row again: the state keeps its identity, so nothing is drawn twice.
-  const reportShellCell = useCallback((cell: RowCell) => setShellCell((was) => (sameCell(was, cell) ? was : cell)), []);
   const shellTerminal = useMemo(
-    () => (panelTab && endpoint ? <TerminalView key={panelTab.tabId} endpoint={endpoint} tabId={panelTab.tabId} autoFocus={false} theme={themeFor(undefined)} font={terminalFont} onImagePaste={(image) => void addImage(panelTab.tabId, image)} onCell={reportShellCell} /> : null),
-    [endpoint, panelTab, themeFor, terminalFont, reportShellCell],
+    () => (panelTab && endpoint ? <TerminalView key={panelTab.tabId} endpoint={endpoint} tabId={panelTab.tabId} autoFocus={false} theme={themeFor(undefined)} font={terminalFont} onImagePaste={(image) => void addImage(panelTab.tabId, image)} /> : null),
+    [endpoint, panelTab, themeFor, terminalFont],
   );
 
   // The app's shortcuts work from anywhere, the terminal included; the terminal lets these keys through (TerminalView).
@@ -2207,7 +2202,7 @@ export function LiveApp() {
             next.focus?.focus();
           }}
           menuOpen={menu !== null}
-          shell={{ terminal: shellTerminal, cell: shellCell, cwd: panelTab?.folder, hidden: view.shell_hidden, failed: shellFailed, onRetry: retryShell, openDisabled: !panelTab, forceOpen: shellForced, onToggle: toggleShell, onOpenAsSession: () => void openAsSession() }}
+          shell={{ terminal: shellTerminal, cwd: panelTab?.folder, hidden: view.shell_hidden, failed: shellFailed, onRetry: retryShell, openDisabled: !panelTab, forceOpen: shellForced, onToggle: toggleShell, onOpenAsSession: () => void openAsSession() }}
           composer={false}
           statusBar={false}
           renderTerminal={renderTerminal}

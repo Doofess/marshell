@@ -15,7 +15,6 @@ import { APPROVALS } from "../approval/fixtures";
 import type { ApprovalRequest } from "../approval/types";
 import { pendingSessionCount } from "../lane/laneLayout";
 import type { RowModel } from "../sidebar/types";
-import type { RowCell } from "../terminal/rowCell";
 import { ScriptedTerminal } from "../terminal/ScriptedTerminal";
 import { SHELL_SIZE, shellSession } from "../terminal/scriptedShell";
 import type { TerminalThemeSetting } from "../terminal/terminalTheme";
@@ -57,7 +56,7 @@ const widestMode = (...modes: Array<SidebarMode | null>): SidebarMode => modes.r
 
 export type WindowLayout = "default" | "focus" | "rail";
 /** What makes the sidebar's shell panel live (see `MainWindowProps.shell`). */
-export type ShellOptions = { terminal?: ReactNode; cell?: RowCell | null; cwd?: string; hidden?: boolean; failed?: boolean; onRetry?: () => void; openDisabled?: boolean; forceOpen?: boolean; onToggle?: () => void; onOpenAsSession?: () => void };
+export type ShellOptions = { terminal?: ReactNode; cwd?: string; hidden?: boolean; failed?: boolean; onRetry?: () => void; openDisabled?: boolean; forceOpen?: boolean; onToggle?: () => void; onOpenAsSession?: () => void };
 
 export type MainWindowProps = {
   width: number;
@@ -469,7 +468,7 @@ export function MainWindow({
 
       <div ref={bodyRef} className="window__body">
         <div className="window__side" data-moving={sideMotion.moving || undefined}>
-        {shownMode === "expanded" && <Sidebar rows={rows} requests={requests} renderCard={renderCard} onJumpRequest={onJumpRequest} readScreen={readScreen} onPeekClose={onPeekClose} height={height - BAR} width={expandedW} selectedId={selected?.id} visibleIds={visibleIds} os={os} footer={footer ?? undefined} onOpenDoctor={onOpenDoctor} onOpenMenu={onOpenMenu} menuOpen={menuOpen} shell={shell ? { cwd: shellOptions.cwd ?? selected?.project, shellName: shellNameFor(os), collapsed: shellCollapsed || shellOptions.hidden === true, os, terminal: shellOptions.terminal, cell: shellOptions.cell, failed: shellOptions.failed, onRetry: shellOptions.onRetry, openDisabled: shellOptions.openDisabled, forceOpen: shellOptions.forceOpen, onToggle: shellOptions.onToggle, onOpenAsSession: shellOptions.onOpenAsSession } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} onSelect={onSelect} onReview={onReview} onSetup={onSetup} menuItems={menuItems} onMenuRun={onMenuRun} grouped={grouped} />}
+        {shownMode === "expanded" && <Sidebar rows={rows} requests={requests} renderCard={renderCard} onJumpRequest={onJumpRequest} readScreen={readScreen} onPeekClose={onPeekClose} height={height - BAR} width={expandedW} selectedId={selected?.id} visibleIds={visibleIds} os={os} footer={footer ?? undefined} onOpenDoctor={onOpenDoctor} onOpenMenu={onOpenMenu} menuOpen={menuOpen} shell={shell ? { cwd: shellOptions.cwd ?? selected?.project, shellName: shellNameFor(os), collapsed: shellCollapsed || shellOptions.hidden === true, os, terminal: shellOptions.terminal, failed: shellOptions.failed, onRetry: shellOptions.onRetry, openDisabled: shellOptions.openDisabled, forceOpen: shellOptions.forceOpen, onToggle: shellOptions.onToggle, onOpenAsSession: shellOptions.onOpenAsSession } : undefined} renamingId={renamingId} onRename={onRename} onRenameCancel={onRenameCancel} onReorder={onReorder} onSelect={onSelect} onReview={onReview} onSetup={onSetup} menuItems={menuItems} onMenuRun={onMenuRun} grouped={grouped} />}
         {shownMode === "rail" && <Rail rows={rows} needsYou={waiting} selectedId={selected?.id} visibleIds={visibleIds} os={os} onSelect={onSelect} onOpenMenu={onOpenMenu} menuOpen={menuOpen} />}
         </div>
         {mode === "expanded" && (
