@@ -431,11 +431,20 @@ async fn record_history(st: &AppState, agent: &str, tab: &str, body: &serde_json
     // without `-d` runs `wsl.exe`, so it sits in the blocking task).
     let meta = tokio::task::spawn_blocking(move || {
         let distro = asker.wsl_distro_of_tab(&tab);
-        let body = match (&copilot_dir, &distro) {
-            (None, _) => body,
-            // A WSL tab's transcript is the body's own Linux path, which the note reads under the distro's share.
-            (Some(_), Some(_)) => copilot::link_body_in_distro(&body)?,
-            (Some(dir), None) => copilot::link_body(&body, dir)?,
+        let body = match &copilot_dir {
+            None => body,
+            Some(dir) => {
+                // An end names no transcript: the path this tab's own record of the session holds is the one to copy.
+                // Another tab's record of the same id is never used.
+                let known = copilot::session_id_of(&body)
+                    .and_then(|id| noter.get("copilot", id).ok().flatten())
+                    .filter(|meta| meta.tab_id == tab)
+                    .map(|meta| meta.transcript_path);
+                // A WSL tab's transcript is the body's own Linux path or the stored one (already the distro's share
+                // form), never one built from the Windows home.
+                let home = distro.is_none().then_some(dir.as_path());
+                copilot::link_body_known(&body, home, known.as_deref())?
+            }
         };
         noter.note_event(&agent, &tab, recording.as_deref(), &body, at_ms, distro.as_deref())
     })

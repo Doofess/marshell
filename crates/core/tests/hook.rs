@@ -2894,6 +2894,101 @@ async fn a_wsl_copilot_session_links_its_distro_transcript() {
     assert_eq!(stored.unwrap().distro.as_deref(), Some(DISTRO));
 }
 
+/// The recorded Copilot end `name` as an end of session `id`, with `event` as its event name and no transcript path.
+fn copilot_end_of(id: &str, event: &str) -> serde_json::Value {
+    let mut body = copilot_hook_body("sessionEnd", event);
+    body["sessionId"] = id.into();
+    body["hook_event_name"] = event.into();
+    body
+}
+
+#[tokio::test]
+async fn a_copilot_session_end_keeps_the_path_its_agent_stop_named() {
+    let st = copilot_state(Some(COPILOT));
+    let app = router(st.clone());
+    let p = project();
+    let tab = reserve_copilot(&st, &p.repo);
+    // The CLI's own COPILOT_HOME is not Marshell's: its `agentStop` names a path under another folder.
+    let elsewhere = tempfile::tempdir().unwrap();
+    let named = elsewhere
+        .path()
+        .join("session-state")
+        .join(COPILOT_A)
+        .join("events.jsonl")
+        .to_string_lossy()
+        .into_owned();
+    let mut stop_body = copilot_hook_body("agentStop", "agentStop");
+    stop_body["transcriptPath"] = named.clone().into();
+    assert_eq!(
+        post_copilot_as(&app, "event", Some(&tab), &stop_body).await.0,
+        StatusCode::NO_CONTENT
+    );
+    let first = st.history().latest_for_tab_of(&tab, "copilot").unwrap();
+    assert_eq!(first.transcript_path, named);
+
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let end = copilot_end_of(COPILOT_A, "sessionEnd");
+    assert!(end.get("transcriptPath").is_none());
+    assert_eq!(
+        post_copilot_as(&app, "event", Some(&tab), &end).await.0,
+        StatusCode::NO_CONTENT
+    );
+    let second = st.history().latest_for_tab_of(&tab, "copilot").unwrap();
+    stop(&st, &tab);
+    assert_eq!(second.session_id, COPILOT_A);
+    assert_eq!(second.transcript_path, named);
+    assert!(
+        second.updated_ms > first.updated_ms,
+        "{} !> {}",
+        second.updated_ms,
+        first.updated_ms
+    );
+}
+
+#[tokio::test]
+async fn a_wsl_copilot_session_end_is_noted_from_its_linked_path() {
+    let linked_path = format!(r"\\wsl.localhost\{DISTRO}\home\u\.copilot\session-state\{COPILOT_A}\events.jsonl");
+    for event in ["sessionEnd", "errorOccurred"] {
+        let st = wsl_copilot_state();
+        let app = router(st.clone());
+        let tab = start_shell(&app, "wsl-ubuntu").await;
+        let mut body = copilot_hook_body("agentStop", "agentStop");
+        body["transcriptPath"] = format!("/home/u/.copilot/session-state/{COPILOT_A}/events.jsonl").into();
+        body["cwd"] = "/home/u/proj".into();
+        post_copilot_as(&app, "event", Some(&tab), &body).await;
+        let first = st.history().latest_for_tab_of(&tab, "copilot").unwrap();
+        assert_eq!(first.transcript_path, linked_path, "{event}");
+
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        let mut end = copilot_end_of(COPILOT_A, event);
+        end["cwd"] = "/home/u/proj".into();
+        let (code, _) = post_copilot_as(&app, "event", Some(&tab), &end).await;
+        let second = st.history().latest_for_tab_of(&tab, "copilot");
+        stop(&st, &tab);
+        assert_eq!(code, StatusCode::NO_CONTENT, "{event}");
+        let second = second.unwrap_or_else(|| panic!("{event}: the row is gone"));
+        assert_eq!(second.transcript_path, linked_path, "{event}");
+        assert!(second.updated_ms > first.updated_ms, "{event}");
+    }
+}
+
+/// A guard test: it passes without the lookup too. An end of a session the tab never linked has no path to note.
+#[tokio::test]
+async fn a_wsl_copilot_end_of_a_session_the_tab_never_linked_notes_nothing() {
+    let st = wsl_copilot_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    let mut end = copilot_end_of(COPILOT_A, "sessionEnd");
+    end["cwd"] = "/home/u/proj".into();
+    let (code, _) = post_copilot_as(&app, "event", Some(&tab), &end).await;
+    let linked = copilot_linked(&st, &tab);
+    let stored = marshell_core::history::archive::read_meta(st.home(), "copilot", COPILOT_A).unwrap();
+    stop(&st, &tab);
+    assert_eq!(code, StatusCode::NO_CONTENT);
+    assert_eq!(linked, None);
+    assert!(stored.is_none());
+}
+
 #[tokio::test]
 async fn a_wsl_copilot_hook_without_a_transcript_path_builds_none_from_the_windows_home() {
     let st = wsl_copilot_state();
