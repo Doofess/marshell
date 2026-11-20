@@ -32,8 +32,16 @@ fn state(version: Option<&str>) -> AppState {
 }
 
 fn state_with(version: Option<&str>, profiles: Vec<marshell_protocol::api::Profile>) -> AppState {
+    state_in(tempfile::tempdir().unwrap().keep(), version, profiles)
+}
+
+/// A state whose Marshell home is `home`, for a test that puts something there before the core opens it.
+fn state_in(
+    home: std::path::PathBuf,
+    version: Option<&str>,
+    profiles: Vec<marshell_protocol::api::Profile>,
+) -> AppState {
     common::tie_children_to_test();
-    let home = tempfile::tempdir().unwrap().keep();
     let user_home = home.join("user");
     AppState::new(
         TOKEN.into(),
@@ -2422,6 +2430,45 @@ async fn a_clear_never_shows_ended() {
     assert!(answered_in < hold, "the answer waited for the hold: {answered_in:?}");
     assert!(!seen.contains(&LiveState::Ended), "{seen:?}");
     assert_eq!(linked.as_deref(), Some(COPILOT_B));
+}
+
+/// With history off nothing links a tab to a session, and with a busy index the link can land after the hold. What the
+/// hooks themselves named for the tab still tells a `/clear` from an `/exit`.
+#[tokio::test]
+async fn a_clear_never_shows_ended_with_history_off() {
+    let hold = std::time::Duration::from_millis(1000);
+    let home = tempfile::tempdir().unwrap().keep();
+    // A directory where the index file belongs: the index can't open, so history is off for this run.
+    std::fs::create_dir_all(home.join("history").join("index.sqlite")).unwrap();
+    let st = state_in(home, Some(KNOWN), vec![sleeper_profile()])
+        .with_copilot_home(tempfile::tempdir().unwrap().keep())
+        .with_copilot_version(Some(COPILOT.to_string()))
+        .with_copilot_end_hold(hold);
+    let app = router(st.clone());
+    let p = project();
+    let tab = reserve_copilot(&st, &p.repo);
+
+    post_copilot(&app, &tab, "sessionStart", "sessionStart").await;
+    post_copilot(&app, &tab, "userPromptSubmitted", "userPromptSubmitted").await;
+    assert_eq!(copilot_linked(&st, &tab), None, "history is off, so nothing is linked");
+
+    let started = std::time::Instant::now();
+    post_copilot(&app, &tab, "sessionEnd-clear", "sessionEnd").await;
+    post_copilot_as(
+        &app,
+        "statusline",
+        Some(&tab),
+        &copilot_statusline_of("idle", COPILOT_B),
+    )
+    .await;
+
+    let mut seen = Vec::new();
+    while started.elapsed() < hold + std::time::Duration::from_millis(500) {
+        seen.push(row(&st, &tab).live.unwrap().state);
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    stop(&st, &tab);
+    assert!(!seen.contains(&LiveState::Ended), "{seen:?}");
 }
 
 #[tokio::test]

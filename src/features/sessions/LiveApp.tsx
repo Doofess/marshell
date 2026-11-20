@@ -55,7 +55,7 @@ import { LiveSettings } from "../settings/LiveSettings";
 import { closesSettings, isTextEntry, freshSettingsStart, paletteSection } from "../settings/settingsRouting";
 import { COMPANY_NAMES, type CompanyAgent, type SettingsSection } from "../settings/settingsSections";
 import { cliTaskRequest, exitedTasks, runningCount, updateResult, type CliTaskKind, type PendingTask } from "../settings/cliTasks";
-import { accountLine, UNREACHABLE } from "../accounts/accountsText";
+import { signInResult, UNREACHABLE } from "../accounts/accountsText";
 import { getAccount, getInstall } from "../../lib/api/accounts";
 import { pickFile } from "../../lib/filePicker";
 import { Preview, type PreviewHandle } from "../preview/Preview";
@@ -1922,7 +1922,7 @@ export function LiveApp() {
     const name = COMPANY_NAMES[task.agent];
     if (task.kind === "sign_in") {
       try {
-        announce(`${name}: ${accountLine(await getAccount(ep, task.agent), name, Date.now())}`);
+        announce(signInResult(await getAccount(ep, task.agent), name, Date.now()));
       } catch {
         announce(`${name}: ${UNREACHABLE}`);
       }

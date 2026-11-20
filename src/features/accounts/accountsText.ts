@@ -48,3 +48,12 @@ export function accountLine(s: AccountStatus, name: string, now: number): string
     }
   }
 }
+
+/**
+ * What is announced when a sign-in tab ends. A CLI with no status command has a line that already names it, and what is
+ * known about its account follows; the others get their name before the line.
+ */
+export function signInResult(s: AccountStatus, name: string, now: number): string {
+  const line = accountLine(s, name, now);
+  return s.sign_in === "no_command" ? [line, ...accountExtraLines(s)].join(" ") : `${name}: ${line}`;
+}

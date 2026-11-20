@@ -304,8 +304,9 @@ enum CopilotSession {
     Stale,
 }
 
-/// Compares the session `body` names with the tab's latest linked Copilot session. The index is a file, so it is read
-/// off the async workers. With history off, or no session linked yet, nothing is stale.
+/// Compares the session `body` names with the session the tab named last and with its latest linked Copilot session.
+/// The index is a file, so it is read off the async workers. A tab that has named no other session, with history off or
+/// no session linked yet, has nothing stale.
 async fn copilot_session(st: &AppState, role: HookRole, tab: &str, body: &serde_json::Value) -> CopilotSession {
     let text = |key: &str| body.get(key).and_then(serde_json::Value::as_str);
     let (named, ending) = match role {
@@ -316,6 +317,15 @@ async fn copilot_session(st: &AppState, role: HookRole, tab: &str, body: &serde_
     let Some(named) = named.map(str::to_string) else {
         return CopilotSession::Current;
     };
+    // What the tab itself named last settles a late end before the index is asked: the index can be off for the run,
+    // and a link to the newer session can still be waiting for its lock.
+    if ending {
+        if st.copilot_session_of(tab).is_some_and(|last| last != named) {
+            return CopilotSession::Stale;
+        }
+    } else {
+        st.note_copilot_session(tab, &named);
+    }
     let (history, tab) = (st.history(), tab.to_string());
     let latest = tokio::task::spawn_blocking(move || history.latest_for_tab_of(&tab, "copilot"))
         .await
@@ -332,8 +342,8 @@ async fn copilot_session(st: &AppState, role: HookRole, tab: &str, body: &serde_
 }
 
 /// Folds a Copilot `sessionEnd` the person asked for after `copilot_end_hold`, in a detached task. The task asks
-/// `copilot_session` again with the same body: when the tab has been linked to a newer session meanwhile the end is
-/// dropped, else it folds as it would have at once. Nothing is held across the wait. A late newer link between the
+/// `copilot_session` again with the same body: when the tab has named or been linked to a newer session meanwhile the
+/// end is dropped, else it folds as it would have at once. Nothing is held across the wait. A late newer link between the
 /// second check and the fold is a window of microseconds whose worst case is the row reading Ended for as long as
 /// the status line takes to arrive, which is what it did before the hold.
 fn hold_copilot_end(st: &AppState, tab: &str, body: &serde_json::Value, at_ms: u64) {

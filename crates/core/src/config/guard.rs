@@ -121,8 +121,15 @@ impl Guard {
 /// guard opens the folder the adapter writes to and no other. A `~` form of `QWEN_HOME` is read against the user's home,
 /// and with no known home it stays relative and adds nothing. On Windows the folder must be on a drive of the PC: a
 /// network share adds nothing, and neither does a WSL distro's share, whose agent folders have their own rule
-/// (`with_distro_homes`).
+/// (`with_distro_homes`). That holds for the path as it is written and for where it really is, so a drive letter
+/// mapped to a share and a link that leads into one add nothing either.
 pub fn moved_agent_homes(env: &dyn Fn(&str) -> Option<String>) -> Vec<PathBuf> {
+    moved_agent_homes_as(env, &canonical)
+}
+
+/// `moved_agent_homes`, with the lookup of where a folder really is passed in, so a test can stand in for a mapped
+/// drive or a link.
+fn moved_agent_homes_as(env: &dyn Fn(&str) -> Option<String>, resolve: &dyn Fn(&Path) -> PathBuf) -> Vec<PathBuf> {
     use crate::agents::{codex, copilot, qwen, skill};
     let user_home = dirs::home_dir().unwrap_or_default();
     let set = |name: &str| env(name).is_some_and(|v| !v.trim().is_empty());
@@ -146,10 +153,12 @@ pub fn moved_agent_homes(env: &dyn Fn(&str) -> Option<String>) -> Vec<PathBuf> {
         .into_iter()
         .flatten()
         .filter(|folder| {
+            let real = resolve(folder);
             folder.is_absolute()
                 && on_a_drive(folder)
+                && on_a_drive(&real)
                 && !folder.components().any(|c| c == Component::ParentDir)
-                && !crate::projects::is_root(&canonical(folder))
+                && !crate::projects::is_root(&real)
         })
         .collect()
 }
@@ -760,5 +769,31 @@ mod tests {
                 assert!(moved_agent_homes(&vars(&given)).is_empty(), "{name}={value}");
             }
         }
+    }
+
+    /// A drive letter can stand for a share (a mapped drive), and a link on a drive can lead into one: the rule is about
+    /// where the folder really is.
+    #[cfg(windows)]
+    #[test]
+    fn a_home_that_really_is_on_a_share_adds_nothing() {
+        let really = |path: &Path| match path.to_str() {
+            Some(r"Z:\copilot") => PathBuf::from(r"\\server\share\copilot"),
+            Some(r"D:\link") => PathBuf::from(r"\\wsl.localhost\Ubuntu\home\u"),
+            _ => path.to_path_buf(),
+        };
+        for value in [r"Z:\copilot", r"D:\link"] {
+            for name in ["COPILOT_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "QWEN_HOME"] {
+                let given = [(name, value)];
+                assert!(
+                    moved_agent_homes_as(&vars(&given), &really).is_empty(),
+                    "{name}={value}"
+                );
+            }
+        }
+        // A folder that really is where it says still counts.
+        assert_eq!(
+            moved_agent_homes_as(&vars(&[("COPILOT_HOME", r"D:\w\cp")]), &really),
+            vec![PathBuf::from(r"D:\w\cp")]
+        );
     }
 }
