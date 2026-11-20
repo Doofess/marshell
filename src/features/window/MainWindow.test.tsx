@@ -579,6 +579,15 @@ describe("MainWindow: one terminal", () => {
     expect(h).toContain("px 1px 400px");
     expect(html({ pane: stand, paneShown: true })).toMatch(/aria-valuenow="\d+"/);
   });
+  it("the divider beside a settled pane can be reached and moved: one element, in the tab order, not still", () => {
+    const h = html({ pane: <aside className="preview-stand-in" />, paneShown: true, paneWidth: 400 });
+    const dividers = h.match(/<div class="pane__divider"[^>]*>/g) ?? [];
+    expect(dividers).toHaveLength(1);
+    expect(dividers[0]).toContain('role="separator"');
+    expect(dividers[0]).toContain('tabindex="0"');
+    expect(dividers[0]).not.toContain("data-still");
+    expect(dividers[0]).not.toContain("aria-hidden");
+  });
   it("a cover pane has no divider", () => {
     const h = html({ pane: <aside className="preview-stand-in" />, paneShown: true, width: 700 });
     expect(h).toContain('data-pane="cover"');

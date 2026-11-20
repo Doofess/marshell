@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { draggedWidth, paneGeometry, paneMotionKey } from "./paneLayout";
+import { dividerState, draggedWidth, paneGeometry, paneMotionKey } from "./paneLayout";
 
 describe("paneGeometry", () => {
   it("a hidden pane leaves the room to the terminal", () => {
@@ -48,5 +48,19 @@ describe("paneMotionKey", () => {
   it("showing, hiding and covering each change the key", () => {
     const keys = new Set([paneMotionKey("hidden", "rail"), paneMotionKey("beside", "rail"), paneMotionKey("cover", "rail")]);
     expect(keys.size).toBe(3);
+  });
+});
+
+describe("dividerState", () => {
+  it("can be reached and moved beside a settled pane", () => {
+    expect(dividerState("beside", false)).toEqual({ live: true, still: false });
+  });
+  it("stays reachable, and doesn't move, while the layout moves around a pane that stays beside", () => {
+    expect(dividerState("beside", true)).toEqual({ live: true, still: true });
+  });
+  it("is a line nobody can reach while the pane hides or covers", () => {
+    expect(dividerState("hidden", true)).toEqual({ live: false, still: true });
+    expect(dividerState("cover", false)).toEqual({ live: false, still: true });
+    expect(dividerState("cover", true)).toEqual({ live: false, still: true });
   });
 });

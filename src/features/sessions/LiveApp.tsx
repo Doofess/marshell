@@ -2147,6 +2147,7 @@ export function LiveApp() {
           paneNews={paneNews.size > 0}
           paneWidth={view.pane.width}
           onPaneWidth={(w) => paneDispatch({ type: "width", width: w })}
+          onDividerGone={() => focusPane()}
           terminalMinWidth={terminalMinWidth}
           mainView={
             mainView === "history" && endpoint && os ? (
