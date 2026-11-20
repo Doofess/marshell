@@ -396,7 +396,9 @@ fn track(hwnd: HWND, non_client: bool) {
 /// moves the strip from under a pointer that stays where it was, and no leave message is promised for that (live check,
 /// finding 9). The next move over the strip asks for its leave again.
 fn settle(hwnd: HWND) {
-    if state().pointer.idle() || under_pointer(hwnd).is_some() {
+    // Read under the lock and let go of it: `under_pointer` asks the strip's own procedure, which takes the lock.
+    let idle = state().pointer.idle();
+    if idle || under_pointer(hwnd).is_some() {
         return;
     }
     let redraw = {

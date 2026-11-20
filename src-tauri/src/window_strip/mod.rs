@@ -89,15 +89,26 @@ pub struct Wanted {
 }
 
 impl Wanted {
-    /// Takes a request and returns the pictures to show, or `None` to hide the strip. A refused set changes nothing, so
-    /// the last good one stays; `paint: None` keeps the pictures it has.
+    /// Takes a request and returns the pictures to show, or `None` to hide the strip. A refused set is an error and
+    /// leaves the last good one; a request to hide is kept even then. `paint: None` keeps the pictures it has.
     pub fn apply(&mut self, shown: bool, paint: Option<Paint>) -> Result<Option<&Paint>, String> {
         if let Some(paint) = paint {
-            paint.check()?;
+            if let Err(refused) = paint.check() {
+                // The page hides the strip when something covers it; that part of a request is never lost.
+                if !shown {
+                    self.shown = false;
+                }
+                return Err(refused);
+            }
             self.paint = Some(paint);
         }
         self.shown = shown;
-        Ok(if self.shown { self.paint.as_ref() } else { None })
+        Ok(self.showing())
+    }
+
+    /// The pictures the strip shows now, or `None` while it is hidden or has none.
+    pub fn showing(&self) -> Option<&Paint> {
+        if self.shown { self.paint.as_ref() } else { None }
     }
 }
 
@@ -115,13 +126,17 @@ pub fn set_window_strip(window: tauri::Window, shown: bool, paint: Option<Paint>
         return Err("only the main window has a strip".to_string());
     }
     let mut wanted = WANTED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let result = wanted.apply(shown, paint)?;
-    // `WANTED` is read only here, never by the window's procedure, so holding it across the call cannot deadlock.
+    // A refused set of pictures is reported after the strip is brought in line with what is still wanted: hidden, if the
+    // request said so.
+    let refused = wanted.apply(shown, paint).err();
     #[cfg(windows)]
-    win::show(result);
-    #[cfg(not(windows))]
-    let _ = result;
-    Ok(())
+    {
+        if refused.is_none() || !shown {
+            // `WANTED` is read only here, never by the window's procedure, so holding it across the call cannot deadlock.
+            win::show(wanted.showing());
+        }
+    }
+    refused.map_or(Ok(()), Err)
 }
 
 #[cfg(test)]
@@ -195,6 +210,24 @@ mod tests {
         assert!(wanted.apply(true, Some(good.clone())).is_ok());
         assert!(wanted.apply(true, Some(bad)).is_err());
         assert_eq!(wanted.apply(true, None), Ok(Some(&good)));
+    }
+
+    #[test]
+    fn a_hide_is_kept_when_the_pictures_sent_with_it_are_refused() {
+        let good = paint(40, [46, 46, 46]);
+        let mut bad = good.clone();
+        bad.close.rest.pop();
+        let mut wanted = Wanted::default();
+        assert!(wanted.apply(true, Some(good.clone())).is_ok());
+        // The page covers itself and sends new pictures in one request: the pictures are refused, the hide is not.
+        assert!(wanted.apply(false, Some(bad.clone())).is_err());
+        assert_eq!(wanted.showing(), None);
+        // A refused set sent with "show" still changes nothing: a hidden strip stays hidden, a shown one stays shown.
+        assert!(wanted.apply(true, Some(bad.clone())).is_err());
+        assert_eq!(wanted.showing(), None);
+        assert_eq!(wanted.apply(true, None), Ok(Some(&good)));
+        assert!(wanted.apply(true, Some(bad)).is_err());
+        assert_eq!(wanted.showing(), Some(&good));
     }
 
     #[test]
