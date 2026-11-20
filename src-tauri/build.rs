@@ -25,6 +25,7 @@ const COMMANDS: &[&str] = &[
     "notification_link",
     "set_notification_link",
     "set_window_background",
+    "set_window_theme",
     "browser_open",
     "browser_show",
     "browser_place",

@@ -6,6 +6,7 @@ import { settings as settingsApi } from "../../lib/api/settings";
 import { applyRootState, DEFAULT_APPEARANCE, rootState } from "./rootState";
 import { SettingsReadError, SettingsSync } from "./settingsSync";
 import { watchWindowBackground } from "./windowBackground";
+import { watchWindowTheme } from "./windowTheme";
 
 type AppearanceContext = {
   appearance: Appearance;
@@ -70,6 +71,8 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
 
   // The native window's background follows the theme too. Declared after the effect above, so the first read sees the root's state.
   useEffect(() => watchWindowBackground(), []);
+  // And so does the window's own theme, which WebView2 draws its right-click menu in.
+  useEffect(() => watchWindowTheme(), []);
 
   const save = useCallback(async (next: Appearance) => {
     setAppearance(next);
