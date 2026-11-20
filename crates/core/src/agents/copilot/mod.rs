@@ -119,20 +119,34 @@ pub fn new_session_id() -> String {
 /// `<copilot_home>/session-state/<id>/events.jsonl`; a status line's own `transcript_path` is the session's folder, not
 /// the file, so it is never used. None without a valid id.
 pub fn link_body(body: &Value, copilot_home: &Path) -> Option<Value> {
+    linked(body, Some(copilot_home))
+}
+
+/// `link_body`, where `copilot_home` is None when the transcript must come from the body itself: its `transcriptPath`,
+/// or the `events.jsonl` in the session folder a status line names.
+fn linked(body: &Value, copilot_home: Option<&Path>) -> Option<Value> {
     let text = |key: &str| body.get(key).and_then(Value::as_str);
-    let id = text("sessionId").or_else(|| text("session_id"))?;
+    let id = session_id_of(body)?;
     // The id goes into a path and a command line.
     if !crate::history::valid_session_id(id) {
         return None;
     }
-    let transcript = match text("transcriptPath") {
-        Some(path) => path.to_string(),
-        None => copilot_home
+    let transcript = match (text("transcriptPath"), copilot_home) {
+        (Some(path), _) => path.to_string(),
+        (None, Some(home)) => home
             .join("session-state")
             .join(id)
             .join("events.jsonl")
             .to_string_lossy()
             .into_owned(),
+        // A status line names the session's folder: the log is the file in it.
+        (None, None) => {
+            let folder = text("transcript_path")?.trim_end_matches('/');
+            if folder.rsplit('/').next() != Some(id) {
+                return None;
+            }
+            format!("{folder}/events.jsonl")
+        }
     };
     Some(json!({
         // A status line has no event name; any name links the session.
@@ -141,6 +155,30 @@ pub fn link_body(body: &Value, copilot_home: &Path) -> Option<Value> {
         "transcript_path": transcript,
         "cwd": body.get("cwd").cloned().unwrap_or(Value::Null),
     }))
+}
+
+/// The session a hook or status line body names: `sessionId` in a hook's, `session_id` in a status line's.
+pub fn session_id_of(body: &Value) -> Option<&str> {
+    let text = |key: &str| body.get(key).and_then(Value::as_str);
+    text("sessionId").or_else(|| text("session_id"))
+}
+
+/// The hook is the end of a session (`sessionEnd`).
+pub fn ends_session(body: &Value) -> bool {
+    body.get("hook_event_name").and_then(Value::as_str) == Some("sessionEnd")
+}
+
+/// The hook is the start of a session (`sessionStart`), a resumed one included.
+pub fn starts_session(body: &Value) -> bool {
+    body.get("hook_event_name").and_then(Value::as_str) == Some("sessionStart")
+}
+
+/// `link_body` for a tab in a WSL distro: the body's own `transcriptPath` (a Linux path, which the recorder reads under the
+/// distro's share), or the log in the session folder its status line names, and nothing built from the Windows Copilot
+/// home. Only `agentStop` carries a `transcriptPath`, so the status line is what links a session before its first reply
+/// ends. None when the body names neither.
+pub fn link_body_in_distro(body: &Value) -> Option<Value> {
+    linked(body, None)
 }
 
 #[cfg(test)]
@@ -186,6 +224,56 @@ mod tests {
         assert_eq!(
             link_body(&with_path, home).unwrap()["transcript_path"],
             "D:\\c\\session-state\\x\\events.jsonl"
+        );
+    }
+
+    #[test]
+    fn a_hooks_session_id_and_event_come_from_its_own_keys() {
+        let start = json!({"sessionId": ID, "hook_event_name": "sessionStart"});
+        let end = json!({"sessionId": ID, "hook_event_name": "sessionEnd"});
+        assert_eq!(session_id_of(&start), Some(ID));
+        // A status line names it in snake case.
+        assert_eq!(session_id_of(&json!({"session_id": ID})), Some(ID));
+        assert_eq!(session_id_of(&json!({"cwd": "/x"})), None);
+        assert_eq!(session_id_of(&json!({"sessionId": 7})), None);
+        assert!(ends_session(&end) && !ends_session(&start));
+        assert!(starts_session(&start) && !starts_session(&end));
+        assert!(!ends_session(&json!({"sessionId": ID})));
+        assert!(!ends_session(&json!({"hook_event_name": "SessionEnd"})));
+    }
+
+    #[test]
+    fn a_distro_body_links_by_its_own_transcript_path_only() {
+        let path = format!("/home/u/.copilot/session-state/{ID}/events.jsonl");
+        let body = json!({"sessionId": ID, "cwd": "/home/u/p", "hook_event_name": "agentStop", "transcriptPath": path});
+        assert_eq!(
+            link_body_in_distro(&body).unwrap(),
+            json!({"hook_event_name": "agentStop", "session_id": ID, "transcript_path": path, "cwd": "/home/u/p"})
+        );
+        // No transcript of its own: nothing is built from a Windows home.
+        assert_eq!(
+            link_body_in_distro(&json!({"sessionId": ID, "cwd": "/home/u/p", "hook_event_name": "sessionStart"})),
+            None
+        );
+        // A status line names the session's folder, and the log is the file in it.
+        for folder in [
+            format!("/home/u/.copilot/session-state/{ID}"),
+            format!("/home/u/.copilot/session-state/{ID}/"),
+        ] {
+            let line = json!({"session_id": ID, "cwd": "/home/u/p", "transcript_path": folder});
+            assert_eq!(
+                link_body_in_distro(&line).unwrap(),
+                json!({"hook_event_name": "statusLine", "session_id": ID, "transcript_path": path, "cwd": "/home/u/p"})
+            );
+        }
+        // A folder that is not this session's is not used.
+        let other =
+            json!({"session_id": ID, "cwd": "/home/u/p", "transcript_path": "/home/u/.copilot/session-state/other"});
+        assert_eq!(link_body_in_distro(&other), None);
+        // The id must be a plain one.
+        assert_eq!(
+            link_body_in_distro(&json!({"sessionId": "../x", "cwd": "/p", "transcriptPath": path})),
+            None
         );
     }
 

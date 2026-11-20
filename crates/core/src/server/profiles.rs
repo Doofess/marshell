@@ -201,22 +201,32 @@ mod tests {
 
     #[tokio::test]
     async fn a_wsl_shell_offers_the_driven_clis_its_path_has() {
-        // The pinned function runs on a blocking thread: a probe that gets Copilot fails the request.
+        // The pinned function runs on a blocking thread: a probe that misses a word fails the request.
         let st = state().with_distro_which(|distro, words| {
             assert_eq!(distro, "Ubuntu");
-            assert!(!words.iter().any(|w| w == "copilot"), "copilot was probed: {words:?}");
-            Some(vec!["claude".into(), "qwen".into()])
+            assert!(
+                words.iter().any(|w| w == "copilot"),
+                "copilot was not probed: {words:?}"
+            );
+            Some(vec!["claude".into(), "qwen".into(), "copilot".into()])
         });
         let list = shell_agents(st, "ubuntu").await;
         assert!(list.reached);
         assert_eq!(list.profile_id, "ubuntu");
         assert_eq!(problem_of(&list, "claude"), None);
         assert_eq!(problem_of(&list, "qwen"), None);
+        assert_eq!(problem_of(&list, "copilot"), None);
         assert_eq!(problem_of(&list, "codex"), Some(ShellAgentProblem::NotInstalled));
         assert_eq!(problem_of(&list, "antigravity"), Some(ShellAgentProblem::NotInstalled));
-        assert_eq!(problem_of(&list, "copilot"), Some(ShellAgentProblem::NotDrivenHere));
         let ids: Vec<&str> = list.agents.iter().map(|a| a.id.as_str()).collect();
         assert_eq!(&ids[..5], ["claude", "codex", "antigravity", "qwen", "copilot"]);
+    }
+
+    #[tokio::test]
+    async fn copilot_in_a_distro_whose_path_lacks_it_is_not_installed() {
+        let st = state().with_distro_which(|_, _| Some(vec!["claude".into()]));
+        let list = shell_agents(st, "ubuntu").await;
+        assert_eq!(problem_of(&list, "copilot"), Some(ShellAgentProblem::NotInstalled));
     }
 
     #[tokio::test]

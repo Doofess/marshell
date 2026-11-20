@@ -346,14 +346,17 @@ pub fn run(
         let settings_text = read_text(&copilot_settings_file)?;
         let chain = paths::statusline_chain(home, "copilot");
         let chain_text = read_text(&chain)?;
-        copilot_hooks::remove_plan(&copilot_hooks::Files {
-            hooks_path: &copilot_hooks_file,
-            hooks_text: hooks_text.as_deref(),
-            settings_path: &copilot_settings_file,
-            settings_text: settings_text.as_deref(),
-            chain_path: &chain,
-            chain_text: chain_text.as_deref(),
-        })
+        copilot_hooks::remove_plan(
+            &copilot_hooks::Files {
+                hooks_path: &copilot_hooks_file,
+                hooks_text: hooks_text.as_deref(),
+                settings_path: &copilot_settings_file,
+                settings_text: settings_text.as_deref(),
+                chain_path: Some(&chain),
+                chain_text: chain_text.as_deref(),
+            },
+            None,
+        )
         .map(|plan| (hooks_text, plan))
         .map_err(|e| e.to_string())
     });
@@ -1091,7 +1094,7 @@ mod tests {
                 hooks_text: None,
                 settings_path: &settings,
                 settings_text: Some(original),
-                chain_path: &chain,
+                chain_path: Some(&chain),
                 chain_text: None,
             },
             &Bridge::local(&f.home),

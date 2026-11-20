@@ -227,7 +227,7 @@ pub(super) async fn resolve_with(
                 .zip(command.as_deref())
                 .map(|(id, c)| (id, Program::of_command(c)));
             // A new Copilot CLI conversation gets an id Marshell picked, so the tab can be linked to it at once. A WSL
-            // distro's Copilot is 6n2's.
+            // distro's Copilot is linked by its hooks and status line, as the other CLIs there are.
             let session_id = (agent == Some("copilot") && resume.is_none() && p.family != ShellFamily::Wsl)
                 .then(crate::agents::copilot::new_session_id);
             let command = spec

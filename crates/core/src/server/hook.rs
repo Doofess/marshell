@@ -128,12 +128,26 @@ pub async fn post(
     // A WSL tab's processes are Linux ones the foreground watcher can't read: its hooks say which agent runs there. The
     // mark comes first, so the check below sees it and an event of another agent in that tab is dropped.
     let mut left_wsl = false;
-    let session_id = json.get("session_id").and_then(serde_json::Value::as_str);
-    if matches!(agent.as_str(), "claude" | "codex" | "antigravity" | "qwen")
+    // Each agent names its session and its start and end in its own way.
+    let (session_id, session_ends, session_starts) = if agent == "copilot" {
+        (
+            copilot::session_id_of(&json),
+            copilot::ends_session(&json),
+            copilot::starts_session(&json),
+        )
+    } else {
+        let event = json.get("hook_event_name").and_then(serde_json::Value::as_str);
+        (
+            json.get("session_id").and_then(serde_json::Value::as_str),
+            event == Some("SessionEnd"),
+            event == Some("SessionStart"),
+        )
+    };
+    if matches!(agent.as_str(), "claude" | "codex" | "antigravity" | "qwen" | "copilot")
         && let Some(tab) = tab.as_deref()
         && in_wsl(&st, tab).await
     {
-        if json.get("hook_event_name").and_then(serde_json::Value::as_str) == Some("SessionEnd") {
+        if session_ends {
             // The agent is gone from the row: nothing is left to fold into a status, even when no earlier hook marked it.
             // A row launched as an agent (History's Resume opens `claude --resume ...; exec bash -l`) outlives the agent
             // and has no mark to clear: it folds the SessionEnd as a Windows tab does, and shows Ended.
@@ -142,7 +156,7 @@ pub async fn post(
             left_wsl = cleared || !launched;
         } else if matches!(role, HookRole::Event | HookRole::Permission | HookRole::Statusline) {
             // A SessionStart runs the session again, even an ended one resumed under its own id.
-            if json.get("hook_event_name").and_then(serde_json::Value::as_str) == Some("SessionStart") {
+            if session_starts {
                 st.registry().forget_ended_session(tab);
             }
             st.registry().mark_hook_agent(tab, &agent, session_id);
@@ -359,18 +373,14 @@ async fn references_for(
 async fn record_history(st: &AppState, agent: &str, tab: &str, body: &serde_json::Value, at_ms: u64) {
     let history = st.history();
     // Copilot's bodies are camelCase and a status line's are snake_case: the recorder reads the one shape `link_body` makes.
-    let linked;
-    let body = if agent == "copilot" {
-        let Some(dir) = st.copilot_dir() else { return };
-        match copilot::link_body(body, &dir) {
-            Some(made) => {
-                linked = made;
-                &linked
-            }
+    // A Windows tab derives the transcript from the Copilot home, so that home is looked up here, and a WSL tab never uses it.
+    let copilot_dir = if agent == "copilot" {
+        match st.copilot_dir() {
+            Some(dir) => Some(dir),
             None => return,
         }
     } else {
-        body
+        None
     };
     let recording = st
         .session(tab)
@@ -382,6 +392,12 @@ async fn record_history(st: &AppState, agent: &str, tab: &str, body: &serde_json
     // without `-d` runs `wsl.exe`, so it sits in the blocking task).
     let meta = tokio::task::spawn_blocking(move || {
         let distro = asker.wsl_distro_of_tab(&tab);
+        let body = match (&copilot_dir, &distro) {
+            (None, _) => body,
+            // A WSL tab's transcript is the body's own Linux path, which the note reads under the distro's share.
+            (Some(_), Some(_)) => copilot::link_body_in_distro(&body)?,
+            (Some(dir), None) => copilot::link_body(&body, dir)?,
+        };
         noter.note_event(&agent, &tab, recording.as_deref(), &body, at_ms, distro.as_deref())
     })
     .await

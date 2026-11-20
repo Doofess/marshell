@@ -161,14 +161,6 @@ impl Adapter {
     }
 }
 
-/// Copilot CLI inside a WSL distro is not set up from here yet (slice 6n2).
-fn copilot_in_wsl() -> Fail {
-    (
-        StatusCode::UNPROCESSABLE_ENTITY,
-        "Marshell doesn't set up Copilot CLI inside a WSL distro yet.".to_string(),
-    )
-}
-
 /// A plan the adapter refuses is a 422 that names the file and says nothing will change.
 fn refused(err: &hooks::PlanError) -> Fail {
     let message = match err {
@@ -182,7 +174,7 @@ fn refused(err: &hooks::PlanError) -> Fail {
             path.display()
         ),
         hooks::PlanError::BridgePath { .. } => format!("{err}."),
-        hooks::PlanError::NotMarshells { .. } => err.to_string(),
+        hooks::PlanError::NotMarshells { .. } | hooks::PlanError::UnknownAgent { .. } => err.to_string(),
     };
     (StatusCode::UNPROCESSABLE_ENTITY, message)
 }
@@ -227,7 +219,7 @@ struct QwenInputs {
 struct CopilotInputs {
     hooks_path: PathBuf,
     settings_path: PathBuf,
-    chain_path: PathBuf,
+    chain_path: Option<PathBuf>,
     hooks_text: Option<String>,
     settings_text: Option<String>,
     chain_text: Option<String>,
@@ -240,7 +232,7 @@ impl CopilotInputs {
             hooks_text: self.hooks_text.as_deref(),
             settings_path: &self.settings_path,
             settings_text: self.settings_text.as_deref(),
-            chain_path: &self.chain_path,
+            chain_path: self.chain_path.as_deref(),
             chain_text: self.chain_text.as_deref(),
         }
     }
@@ -517,7 +509,25 @@ impl AppState {
                 let text = read_text(&path).map_err(|e| refused(&e))?;
                 qwen_hooks::install_plan(&path, &home, text.as_deref(), None, None, &bridge, want)
             }
-            Adapter::Copilot => return Err(copilot_in_wsl()),
+            // The distro's own `~/.copilot`, with no chain file: a `COPILOT_HOME` set inside the distro is not followed.
+            Adapter::Copilot => {
+                let dir = home.join(".copilot");
+                let (hooks_path, settings_path) = (copilot_hooks::hooks_path(&dir), copilot_hooks::settings_path(&dir));
+                let hooks_text = read_text(&hooks_path).map_err(|e| refused(&e))?;
+                let settings_text = read_text(&settings_path).map_err(|e| refused(&e))?;
+                copilot_hooks::install_plan(
+                    &copilot_hooks::Files {
+                        hooks_path: &hooks_path,
+                        hooks_text: hooks_text.as_deref(),
+                        settings_path: &settings_path,
+                        settings_text: settings_text.as_deref(),
+                        chain_path: None,
+                        chain_text: None,
+                    },
+                    &bridge,
+                    want,
+                )
+            }
         }
         .map_err(|e| refused(&e))
     }
@@ -530,7 +540,7 @@ impl AppState {
             Adapter::Codex => CODEX,
             Adapter::Antigravity => ANTIGRAVITY,
             Adapter::Qwen => QWEN,
-            Adapter::Copilot => return Err(copilot_in_wsl()),
+            Adapter::Copilot => COPILOT,
         };
         // The same plan `marshell uninstall` makes (`agents::distro`), so the dialog and the CLI never differ.
         let (changes, statusline_left) =
@@ -580,7 +590,7 @@ impl AppState {
         Ok(CopilotInputs {
             hooks_path,
             settings_path,
-            chain_path,
+            chain_path: Some(chain_path),
             hooks_text,
             settings_text,
             chain_text,
@@ -716,10 +726,11 @@ impl AppState {
             return pinned.clone();
         }
         let exe = agent_command(agent)?;
-        let parse: fn(&str) -> Option<String> = if agent == AGENT {
-            claude::parse_version
-        } else {
-            parse_any_version
+        // Claude Code's and Copilot CLI's first lines hold more than the number.
+        let parse: fn(&str) -> Option<String> = match agent {
+            AGENT => claude::parse_version,
+            COPILOT => crate::agents::copilot::parse_version,
+            _ => parse_any_version,
         };
         let key = (distro.to_lowercase(), agent.to_string());
         let known = self.0.wsl_versions.lock().unwrap().get(&key).cloned();
@@ -1188,7 +1199,7 @@ pub(crate) fn copilot_setup_of(st: &AppState) -> Result<AgentSetup, Fail> {
             hooks_text: hooks_text.as_deref(),
             settings_path: &settings_path,
             settings_text: settings_text.as_deref(),
-            chain_path: &chain_path,
+            chain_path: Some(&chain_path),
             chain_text: chain_text.as_deref(),
         },
         &Bridge::local(home),
@@ -2017,7 +2028,7 @@ pub async fn remove_plan(
         }
         (Adapter::Copilot, None) => {
             let inputs = st.copilot_inputs()?;
-            let plan = copilot_hooks::remove_plan(&inputs.files()).map_err(|e| refused(&e))?;
+            let plan = copilot_hooks::remove_plan(&inputs.files(), None).map_err(|e| refused(&e))?;
             Ok(RemovePreview {
                 preview: st.0.config.preview(plan.changes),
                 statusline_left: plan.statusline_left,

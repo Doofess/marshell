@@ -23,6 +23,11 @@ describe("offerFor", () => {
       expect(effectiveAgent({ agent: "claude" }, offer)).toBeNull();
     }
   });
+  it("Copilot is offered for a distro that has it", () => {
+    const offer = offerFor(programs, answer("ubuntu", { claude: "not_installed", codex: "not_installed", antigravity: "not_installed", copilot: null }), "ubuntu");
+    expect(offer.state === "ready" && offer.offered.map((p) => p.id)).toEqual(["copilot"]);
+    expect(offer.state === "ready" && offer.missing.map((m) => m.label)).not.toContain("GitHub Copilot");
+  });
   it("a_preset_follows_its_agent", () => {
     const both = offerFor(programs, answer("ps", { claude: null, codex: "not_installed", antigravity: "not_installed", copilot: "not_installed" }), "ps");
     expect(both.state === "ready" && both.offered.map((p) => p.id)).toEqual(["claude", "preset:deepseek"]);
@@ -30,14 +35,14 @@ describe("offerFor", () => {
     expect(neither.state === "ready" && neither.offered.map((p) => p.id)).toEqual(["codex", "antigravity", "copilot"]);
   });
   it("missing_agents_keep_catalog_order_and_exact_reasons", () => {
-    const offer = offerFor(programs, answer("ubuntu", { claude: null, codex: null, antigravity: "not_installed", copilot: "not_driven_here" }), "ubuntu");
+    const offer = offerFor(programs, answer("ubuntu", { claude: null, codex: null, antigravity: "not_installed", copilot: "not_installed" }), "ubuntu");
     expect(offer.state).toBe("ready");
     if (offer.state !== "ready") return;
     expect(offer.missing).toEqual([
       { label: "Antigravity", problem: "not_installed" },
-      { label: "GitHub Copilot", problem: "not_driven_here" },
+      { label: "GitHub Copilot", problem: "not_installed" },
     ]);
-    expect(missingLine("Ubuntu", offer.missing)).toBe("Not in Ubuntu: Antigravity (not installed), GitHub Copilot (Marshell runs it in WSL later)");
+    expect(missingLine("Ubuntu", offer.missing)).toBe("Not in Ubuntu: Antigravity (not installed), GitHub Copilot (not installed)");
     expect(missingLine("Command Prompt", [{ label: "Amp", problem: "path_has_space" }])).toBe("Not in Command Prompt: Amp (its path has a space, which Command Prompt can't start)");
     expect(missingLine("Ubuntu", [])).toBeNull();
   });

@@ -8,10 +8,10 @@ use marshell_protocol::config::ChangeSet;
 
 use crate::agents::antigravity::hooks as agy;
 use crate::agents::common::PlanError;
-use crate::agents::{claude, codex, qwen};
+use crate::agents::{claude, codex, copilot, qwen};
 
 /// The agents with hooks in a distro, in the order they are planned.
-const AGENTS: [&str; 4] = ["claude", "codex", "antigravity", "qwen"];
+const AGENTS: [&str; 5] = ["claude", "codex", "antigravity", "qwen", "copilot"];
 
 /// A file's text, `None` when it is not there. Any other failure is reported against the file.
 fn read_text(path: &Path) -> Result<Option<String>, PlanError> {
@@ -59,16 +59,38 @@ pub(crate) fn remove_plan_of(
             )?;
             Ok((changes, false))
         }
-        _ => {
+        "qwen" => {
             let path = home.join(".qwen").join("settings.json");
             let text = read_text(&path)?;
             let plan = qwen::hooks::remove_plan(&path, home, text.as_deref(), None, None, Some(distro))?;
             Ok((plan.changes, plan.statusline_left))
         }
+        // Copilot's own `~/.copilot` in the distro: a `COPILOT_HOME` set inside it is not followed.
+        "copilot" => {
+            let dir = home.join(".copilot");
+            let (hooks_path, settings_path) = (copilot::hooks::hooks_path(&dir), copilot::hooks::settings_path(&dir));
+            let hooks_text = read_text(&hooks_path)?;
+            let settings_text = read_text(&settings_path)?;
+            let plan = copilot::hooks::remove_plan(
+                &copilot::hooks::Files {
+                    hooks_path: &hooks_path,
+                    hooks_text: hooks_text.as_deref(),
+                    settings_path: &settings_path,
+                    settings_text: settings_text.as_deref(),
+                    chain_path: None,
+                    chain_text: None,
+                },
+                Some(distro),
+            )?;
+            Ok((plan.changes, plan.statusline_left))
+        }
+        other => Err(PlanError::UnknownAgent {
+            agent: other.to_string(),
+        }),
     }
 }
 
-/// One entry per agent (`claude`, `codex`, `antigravity`, `qwen`): the plan to remove its hooks from the distro whose
+/// One entry per agent (`claude`, `codex`, `antigravity`, `qwen`, `copilot`): the plan to remove its hooks from the distro whose
 /// home is `home`. `Ok(None)` means there is nothing of Marshell's to remove. A file that is refused or does not parse
 /// is that agent's `Err`, so one bad file never hides the other agents' plans.
 pub fn remove_plans(
@@ -112,7 +134,7 @@ mod tests {
     }
 
     #[test]
-    fn a_home_with_hooks_for_every_agent_has_four_plans() {
+    fn a_home_with_hooks_for_every_agent_has_five_plans() {
         let dir = fake_home();
         let home = dir.path();
         let grouped = |agent| json!({"hooks": {"Stop": [{"hooks": [entry(agent)]}]}});
@@ -120,12 +142,16 @@ mod tests {
         write(&home.join(".codex/hooks.json"), grouped("codex"));
         write(&home.join(".qwen/settings.json"), grouped("qwen"));
         write(
+            &home.join(".copilot/hooks/marshell.json"),
+            json!({"version": 1, "hooks": {"sessionEnd": [entry("copilot")]}}),
+        );
+        write(
             &agy::hooks_path(home),
             json!({"marshell": {"Stop": [entry("antigravity")]}}),
         );
         let plans = remove_plans("Ubuntu", home, &home.join("marshell"));
         let names: Vec<_> = plans.iter().map(|(name, _)| *name).collect();
-        assert_eq!(names, ["claude", "codex", "antigravity", "qwen"]);
+        assert_eq!(names, ["claude", "codex", "antigravity", "qwen", "copilot"]);
         for (name, plan) in plans {
             assert!(matches!(plan, Ok(Some(_))), "{name}: {plan:?}");
         }
@@ -135,10 +161,46 @@ mod tests {
     fn an_empty_home_has_nothing_to_remove() {
         let dir = fake_home();
         let plans = remove_plans("Ubuntu", dir.path(), &dir.path().join("marshell"));
-        assert_eq!(plans.len(), 4);
+        assert_eq!(plans.len(), 5);
         for (name, plan) in plans {
             assert!(matches!(plan, Ok(None)), "{name}: {plan:?}");
         }
+    }
+
+    #[test]
+    fn copilots_plan_deletes_its_hooks_file_and_takes_its_line_out_of_the_distros_settings() {
+        let dir = fake_home();
+        let home = dir.path();
+        let line = "'/mnt/c/Users/x/.marshell/bin/marshell-hook.exe' statusline --agent copilot --tag mshl1 --no-chain";
+        write(
+            &home.join(".copilot/hooks/marshell.json"),
+            json!({"version": 1, "hooks": {"sessionEnd": [entry("copilot")]}}),
+        );
+        write(
+            &home.join(".copilot/settings.json"),
+            json!({"model": "m", "statusLine": {"type": "command", "command": line}}),
+        );
+        let (changes, left) = remove_plan_of("copilot", home, &home.join("marshell"), "Ubuntu").unwrap();
+        assert!(!left);
+        let paths: Vec<_> = changes
+            .edits
+            .iter()
+            .map(|e| Path::new(&e.path).strip_prefix(home).unwrap().to_path_buf())
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                Path::new(".copilot/hooks/marshell.json"),
+                Path::new(".copilot/settings.json")
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unknown_agent_is_an_error() {
+        let dir = fake_home();
+        let err = remove_plan_of("grok", dir.path(), &dir.path().join("marshell"), "Ubuntu");
+        assert!(err.is_err(), "{err:?}");
     }
 
     #[test]

@@ -335,6 +335,8 @@ pub enum PlanError {
     },
     /// A file Marshell would own whole holds hooks it didn't write (or isn't shaped like its own), so it stays.
     NotMarshells { path: PathBuf },
+    /// An agent Marshell has no distro removal plan for.
+    UnknownAgent { agent: String },
 }
 
 impl fmt::Display for PlanError {
@@ -365,6 +367,9 @@ impl fmt::Display for PlanError {
                     "{} holds hooks Marshell didn't write, so Marshell leaves it as it is.",
                     path.display()
                 )
+            }
+            PlanError::UnknownAgent { agent } => {
+                write!(f, "Marshell has no plan for {agent} inside a WSL distro.")
             }
         }
     }

@@ -3440,6 +3440,7 @@ fn distro_app(root: &std::path::Path, reachable: bool) -> (axum::Router, PathBuf
     .with_codex_hooks(project.join("codex-hooks.json"))
     .with_agy_home(project.join("agy-home"))
     .with_qwen_home(project.join("qwen-windows-home"))
+    .with_copilot_home(project.join("copilot-windows-home"))
     .with_agent_path(|_| None)
     .with_distro_target(target);
     (router(st), wsl_home, settings)
@@ -3683,6 +3684,88 @@ async fn qwen_distro_remove_restores_the_file() {
 }
 
 #[tokio::test]
+async fn copilot_distro_setup_writes_the_linux_bridge_path() {
+    let e = distro_env(true);
+    let (status, preview) = post(&e.app, "/v1/agents/copilot/hooks/plan", distro_want("Ubuntu")).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["can_apply"], true, "{preview}");
+    let copilot = e.wsl_home.join(".copilot");
+    let (hooks, settings) = (
+        copilot.join("hooks").join("marshell.json"),
+        copilot.join("settings.json"),
+    );
+    // Only the distro's two files: no chain file, no skill, none of the Windows ones.
+    let mut got = preview_paths(&preview);
+    got.sort();
+    let mut want = vec![hooks.clone(), settings.clone()];
+    want.sort();
+    got.dedup();
+    assert_eq!(got, want, "{preview}");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+
+    // Every hook runs the bridge by its Linux path.
+    let file: Value = serde_json::from_str(&std::fs::read_to_string(&hooks).unwrap()).unwrap();
+    let events = file["hooks"].as_object().unwrap();
+    assert_eq!(events.len(), 9, "{file}");
+    for (event, entries) in events {
+        assert_eq!(entries[0]["exec"], LINUX_BRIDGE, "{event}");
+        assert!(entries[0]["args"].to_string().contains("--agent"), "{event}");
+    }
+    // The status line holds the bridge's Linux path and no chain: it runs with `--no-chain`.
+    let written: Value = serde_json::from_str(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+    assert_eq!(
+        written["statusLine"]["command"],
+        format!("'{LINUX_BRIDGE}' statusline --agent copilot --tag mshl1 --no-chain"),
+        "{written}"
+    );
+    let root = canonical(e._dir.path());
+    assert!(
+        !root.join("home").join("agents").join("copilot").exists(),
+        "no chain file"
+    );
+    assert!(!copilot.join("skills").exists());
+    // The Windows Copilot home (pinned elsewhere) is not the distro's, and is left alone.
+    assert!(!root.join("project").join("copilot-windows-home").exists());
+    assert!(!e.settings.exists(), "the Windows settings file is not the distro's");
+}
+
+#[tokio::test]
+async fn copilot_distro_remove_restores_the_files() {
+    let e = distro_env(true);
+    let theirs = "\u{feff}{\r\n  // mine\r\n  \"theme\": \"dark\"\r\n}\r\n";
+    let copilot = e.wsl_home.join(".copilot");
+    let (hooks, settings) = (
+        copilot.join("hooks").join("marshell.json"),
+        copilot.join("settings.json"),
+    );
+    std::fs::create_dir_all(&copilot).unwrap();
+    std::fs::write(&settings, theirs).unwrap();
+
+    let (_, preview) = post(&e.app, "/v1/agents/copilot/hooks/plan", distro_want("Ubuntu")).await;
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    let written = std::fs::read_to_string(&settings).unwrap();
+    assert!(
+        written.contains(LINUX_BRIDGE) && written.contains("// mine"),
+        "{written}"
+    );
+    assert!(hooks.exists());
+
+    let (status, removal) = post(&e.app, "/v1/agents/copilot/hooks/remove-plan?distro=Ubuntu", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{removal}");
+    let mut got = preview_paths(&removal["preview"]);
+    got.sort();
+    let mut want = vec![hooks.clone(), settings.clone()];
+    want.sort();
+    assert_eq!(got, want, "{removal}");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&removal["preview"])).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert_eq!(std::fs::read_to_string(&settings).unwrap(), theirs);
+    assert!(!hooks.exists());
+}
+
+#[tokio::test]
 async fn a_codex_plan_in_a_distro_sends_the_person_to_trust_the_hooks_there() {
     let e = distro_env(true);
     let (_, preview) = post(&e.app, "/v1/agents/codex/hooks/plan", distro_want("Ubuntu")).await;
@@ -3698,7 +3781,7 @@ async fn a_codex_plan_in_a_distro_sends_the_person_to_trust_the_hooks_there() {
 #[tokio::test]
 async fn an_unreachable_distro_gets_the_422_copy() {
     let e = distro_env(false);
-    for agent in ["claude", "codex", "antigravity", "qwen"] {
+    for agent in ["claude", "codex", "antigravity", "qwen", "copilot"] {
         let (status, bytes) = post_raw(&e.app, &format!("/v1/agents/{agent}/hooks/plan"), distro_want("Ubuntu")).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{agent}");
         assert_eq!(

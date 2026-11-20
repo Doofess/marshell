@@ -161,10 +161,10 @@ fn qwen_transcript_allowed(path: &str, session_id: &str, distro: Option<&str>) -
 }
 
 /// True when `path` is absolute, local, free of `..`, and ends in Copilot CLI's event log for this session:
-/// `session-state/<id>/events.jsonl`, with `/` or `\` between the parts. The id is a UUID. Any `distro` is refused:
-/// Copilot in WSL is 6n2. Makes no filesystem call.
+/// `session-state/<id>/events.jsonl`, with `/` or `\` between the parts. The id is a UUID. A path under the `distro`'s
+/// share counts as local. Makes no filesystem call.
 fn copilot_transcript_allowed(path: &str, session_id: &str, distro: Option<&str>) -> bool {
-    if distro.is_some() || !is_uuid(session_id) || !readable_place(path, None) {
+    if !is_uuid(session_id) || !readable_place(path, distro) {
         return false;
     }
     let parts: Vec<&str> = path.split(['/', '\\']).collect();
@@ -428,16 +428,33 @@ mod tests {
             &format!(r"D:\cp\session-state\{ID}\events.jsonl"),
             ID
         ));
-        // WSL is 6n2: no distro is admitted.
+        // A distro's path is refused when no distro is named.
         let share = format!(r"\\wsl.localhost\Ubuntu\home\u\.copilot\session-state\{ID}\events.jsonl");
-        assert!(!sidecar_allowed_in("copilot", &share, ID, Some("Ubuntu")));
         assert!(!sidecar_allowed_in("copilot", &share, ID, None));
-        assert!(!sidecar_allowed_in(
-            "copilot",
-            &copilot_path('/', ID),
-            ID,
-            Some("Ubuntu")
-        ));
+    }
+
+    #[test]
+    fn a_copilot_transcript_under_the_tabs_distro_share_is_allowed() {
+        for share in [
+            format!(r"\\wsl.localhost\Ubuntu\home\u\.copilot\session-state\{ID}\events.jsonl"),
+            format!(r"\\wsl$\ubuntu\home\u\.copilot\session-state\{ID}\events.jsonl"),
+            format!("//wsl.localhost/Ubuntu/home/u/.copilot/session-state/{ID}/events.jsonl"),
+        ] {
+            assert!(sidecar_allowed_in("copilot", &share, ID, Some("Ubuntu")), "{share}");
+        }
+        // Another distro's share, a network share, and a path that is not the session's log stay refused.
+        for share in [
+            format!(r"\\wsl.localhost\Debian\home\u\.copilot\session-state\{ID}\events.jsonl"),
+            format!(r"\server\share\home\u\.copilot\session-state\{ID}\events.jsonl"),
+            format!(r"\\wsl.localhost\Ubuntu\home\u\.copilot\session-state\{ID}\other.jsonl"),
+            format!(r"\\wsl.localhost\Ubuntu\home\u\.copilot\session-state\{ID}\..\..\events.jsonl"),
+            format!(r"\\wsl.localhost\Ubuntu\home\u\.copilot\state\{ID}\events.jsonl"),
+        ] {
+            assert!(!sidecar_allowed_in("copilot", &share, ID, Some("Ubuntu")), "{share}");
+        }
+        // The id must still be a UUID.
+        let odd = r"\\wsl.localhost\Ubuntu\home\u\.copilot\session-state\abc\events.jsonl";
+        assert!(!sidecar_allowed_in("copilot", odd, "abc", Some("Ubuntu")));
     }
 
     #[test]

@@ -123,7 +123,7 @@ describe("Launcher: what the shell offers", () => {
     offered: LAUNCH_AGENTS.slice(0, 2),
     missing: [
       { label: "Antigravity", problem: "not_installed" },
-      { label: "GitHub Copilot", problem: "not_driven_here" },
+      { label: "GitHub Copilot", problem: "not_installed" },
     ],
   };
   const ubuntu: LaunchShell[] = [{ id: "ubuntu", label: "Ubuntu", kind: "wsl", family: "wsl" }];
@@ -136,7 +136,7 @@ describe("Launcher: what the shell offers", () => {
   });
   it("the_missing_line_sits_under_the_agent_list_outside_the_listbox", () => {
     const h = on({ agentsOpen: true }, { offer: ready });
-    const line = "Not in Ubuntu: Antigravity (not installed), GitHub Copilot (Marshell runs it in WSL later)";
+    const line = "Not in Ubuntu: Antigravity (not installed), GitHub Copilot (not installed)";
     expect(h).toContain(line);
     const list = /<div[^>]*role="listbox"[^>]*>(.*)/.exec(h)![1]!;
     const listEnd = h.indexOf("</div></div></div>", h.indexOf('role="listbox"'));
@@ -187,7 +187,7 @@ describe("Launcher: what the shell offers", () => {
     };
     expect(describedBy(on({}, { offer: { state: "unreached" } }), "Agent: none")).toEqual(["Marshell couldn&#x27;t reach Ubuntu, so only the shell is offered."]);
     expect(describedBy(on({ agentsOpen: true }, { offer: ready }), "Agent: Claude")).toEqual([
-      "Not in Ubuntu: Antigravity (not installed), GitHub Copilot (Marshell runs it in WSL later)",
+      "Not in Ubuntu: Antigravity (not installed), GitHub Copilot (not installed)",
     ]);
     const cmd: LaunchShell[] = [{ id: "cmd", label: "Command Prompt", kind: "cmd", family: "cmd" }];
     const h = renderToStaticMarkup(<Launcher shells={cmd} view={view({ choice: { ...DEFAULT_CHOICE, shell: "cmd" } })} />);

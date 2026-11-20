@@ -2552,3 +2552,85 @@ async fn copilot_status_off_says_so() {
     assert_eq!(info.live, None);
     assert_eq!(info.status_note.as_deref(), Some("Live status is off for Copilot CLI"));
 }
+
+// ---- Copilot CLI inside WSL: a hook names the agent the tab runs, and its transcript is the distro's ----
+
+/// A state with a WSL tab whose distro's `copilot` is a recorded version (pinned, so no `wsl.exe` runs).
+fn wsl_copilot_state() -> AppState {
+    state_with(Some(KNOWN), vec![sleeper_profile(), wsl_profile()])
+        .with_wsl_version(Some(COPILOT.into()))
+        .with_copilot_home(tempfile::tempdir().unwrap().keep())
+}
+
+#[tokio::test]
+async fn a_copilot_hook_from_a_wsl_tab_marks_the_tab() {
+    let st = wsl_copilot_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    assert_eq!(st.wsl_distro_of_tab(&tab).as_deref(), Some("Ubuntu"));
+    assert_eq!(foreground_agent(&st, &tab), None);
+    let (code, _) = post_copilot(&app, &tab, "userPromptSubmitted", "userPromptSubmitted").await;
+    assert_eq!(code, StatusCode::NO_CONTENT);
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    let foreground = info.foreground.unwrap();
+    assert_eq!(
+        (foreground.program.as_str(), foreground.agent.as_deref()),
+        ("copilot", Some("copilot"))
+    );
+    assert_eq!(info.live.unwrap().state, LiveState::Working);
+}
+
+#[tokio::test]
+async fn a_copilot_session_end_from_a_wsl_tab_clears_the_mark() {
+    let st = wsl_copilot_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    post_copilot(&app, &tab, "userPromptSubmitted", "userPromptSubmitted").await;
+    assert_eq!(foreground_agent(&st, &tab).as_deref(), Some("copilot"));
+    let (code, _) = post_copilot(&app, &tab, "sessionEnd", "sessionEnd").await;
+    assert_eq!(code, StatusCode::NO_CONTENT);
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    // The row is a plain shell again, with no status left behind.
+    assert_eq!(info.foreground, None);
+    assert_eq!(info.live, None);
+}
+
+#[tokio::test]
+async fn a_wsl_copilot_session_links_its_distro_transcript() {
+    let st = wsl_copilot_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    // The body's own Linux paths, as the hook in the distro reports them.
+    let mut body = copilot_hook_body("agentStop", "agentStop");
+    body["transcriptPath"] = format!("/home/u/.copilot/session-state/{COPILOT_A}/events.jsonl").into();
+    body["cwd"] = "/home/u/proj".into();
+    let (code, _) = post_copilot_as(&app, "event", Some(&tab), &body).await;
+    let row = st.history().latest_for_tab_of(&tab, "copilot");
+    let stored = marshell_core::history::archive::read_meta(st.home(), "copilot", COPILOT_A).unwrap();
+    stop(&st, &tab);
+
+    assert_eq!(code, StatusCode::NO_CONTENT);
+    let row = row.expect("the WSL tab's Copilot session is in the history");
+    assert_eq!(
+        row.transcript_path,
+        format!(r"\\wsl.localhost\Ubuntu\home\u\.copilot\session-state\{COPILOT_A}\events.jsonl")
+    );
+    assert_eq!(row.cwd, r"\\wsl.localhost\Ubuntu\home\u\proj");
+    assert_eq!(stored.unwrap().distro.as_deref(), Some("Ubuntu"));
+}
+
+#[tokio::test]
+async fn a_wsl_copilot_hook_without_a_transcript_path_builds_none_from_the_windows_home() {
+    let st = wsl_copilot_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    // `sessionStart` names no transcript: a Windows tab derives one from the Copilot home, a WSL tab must not.
+    let mut body = copilot_hook_body("sessionStart", "sessionStart");
+    body["cwd"] = "/home/u/proj".into();
+    post_copilot_as(&app, "event", Some(&tab), &body).await;
+    let linked = copilot_linked(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(linked, None);
+}
