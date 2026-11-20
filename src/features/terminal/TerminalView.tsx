@@ -31,6 +31,7 @@ import { topAnchoredFit } from "./topAnchor";
 import { trackColorSchemeMode } from "./colorSchemeMode";
 import { BUNDLED_FONT, fontStack } from "./terminalFont";
 import { appHighContrast, appScheme, resolveTerminalTheme, type TerminalThemeInput } from "./terminalTheme";
+import { useScreenScale } from "./useScreenScale";
 
 /** The terminal theme settings, without the app's scheme, which the terminal reads itself. */
 export type TerminalThemeProp = Omit<TerminalThemeInput, "app">;
@@ -390,6 +391,19 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
       fitRef.current = null;
     };
   }, [endpoint, tabId, meter, fontReady]);
+
+  // A changed display scale (the window moved to another screen, or the system's scale changed) changes how tall a row is and
+  // leaves the host's size alone, so no resize says so. Fit again a frame later, once xterm has measured its new cell.
+  const scale = useScreenScale();
+  const fittedScale = useRef(scale);
+  useEffect(() => {
+    if (fittedScale.current === scale) return;
+    fittedScale.current = scale;
+    const frame = requestAnimationFrame(() => {
+      if (!hold.held()) fitIfShown();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [scale]);
 
   // A changed font applies to the running terminal once it has loaded, then the grid is re-fitted to the new cell size.
   useEffect(() => {

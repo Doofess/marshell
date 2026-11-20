@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PaneView } from "../../generated/PaneView";
-import { closeAsk, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneBody, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome, PAGE_REFUSED, TAB_LIMIT } from "./paneCommands";
+import { closeAsk, closeTabOutcome, leavePaneOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneBody, paneHiddenText, paneTabFocus, receiptWithPaneHidden, paneTabOutcome, projectKeyOf, toggleOutcome, PAGE_REFUSED, TAB_LIMIT } from "./paneCommands";
 import { paneReducer, recentFor } from "./paneState";
 
 const EMPTY: PaneView = { open: false, width: null, sessions: {}, recent: [] };
@@ -164,4 +164,21 @@ describe("closeAsk", () => {
     // An image has nothing to save.
     expect(closeAsk({ id: "i1", path: "C:\\w\\a.png", kind: "image" }, new Set(["C:\\w\\a.png"]), "windows")).toBe("close");
   });
+});
+
+describe("leavePaneOutcome", () => {
+  it("hides a pane that covers the terminal", () => {
+    expect(leavePaneOutcome(true)).toBe("hide");
+  });
+  it("only moves the keyboard when the terminal shows beside the pane", () => {
+    expect(leavePaneOutcome(false)).toBe("focus");
+  });
+});
+
+it("says the pane is hidden and which keys show it", () => {
+  expect(paneHiddenText("Ctrl+Shift+Q")).toBe("The side pane is hidden. Ctrl+Shift+Q shows it.");
+});
+
+it("says the hidden line after the cursor's receipt, in one notice, so neither replaces the other", () => {
+  expect(receiptWithPaneHidden("Selected session 2, api", "Ctrl+Shift+Q")).toBe("Selected session 2, api. The side pane is hidden. Ctrl+Shift+Q shows it.");
 });

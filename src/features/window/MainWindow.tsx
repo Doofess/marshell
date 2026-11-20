@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { type MenuItem } from "../../components/ContextMenu/ContextMenu";
 import type { PortMenuRequest } from "../ports/PortChips";
 import { PortMenu } from "../ports/PortMenu";
@@ -37,7 +37,7 @@ import { windowTitle } from "./windowTitle";
 import { Sidebar, type SidebarFooter } from "./Sidebar";
 import { shellNameFor } from "./ShellPanel";
 import { LayoutContext, mainRoom, type Layout } from "./paneColumn";
-import { PANE, draggedWidth, paneGeometry, paneMotionKey } from "./paneLayout";
+import { PANE, dividerLeft, dividerState, draggedWidth, paneGeometry, paneMotionKey } from "./paneLayout";
 import { useLayoutMotion } from "./motion";
 import { usePaneHold } from "./paneHold";
 import { FitHoldContext } from "../terminal/fitHold";
@@ -174,6 +174,8 @@ export type MainWindowProps = {
   /** The saved width in pixels, or null for half the room. The window holds no width of its own. */
   paneWidth?: number | null;
   onPaneWidth?: (width: number | null) => void;
+  /** The divider had the keyboard and is going, because the window got so narrow that the pane covers the terminal: somewhere else takes the keyboard. */
+  onDividerGone?: () => void;
   /** The width of 80 terminal columns: the pane stops there, down to its own minimum. */
   terminalMinWidth?: number;
   /**
@@ -259,6 +261,7 @@ export function MainWindow({
   paneNews = false,
   paneWidth = null,
   onPaneWidth,
+  onDividerGone,
   terminalMinWidth = 0,
   mainView,
 }: MainWindowProps) {
@@ -369,7 +372,19 @@ export function MainWindow({
   // During its own motion the pane keeps its settled width and its track cuts it; otherwise it is as wide as its track.
   const paneBodyWidth = paneMotion.moving ? (drawnPane?.width ?? paneP) : paneP;
   const threeTracks = paneMotion.moving || geometry.mode === "beside";
-  const dividerLive = geometry.mode === "beside" && !paneMotion.moving;
+  const divider = dividerState(geometry.mode, paneMotion.moving);
+  // The divider is one element through a motion, so focus on it stays. When it stops being reachable because the window got so
+  // narrow that the pane covers the terminal, the keyboard is handed on (to the pane), not left on a line that is going away.
+  const dividerFocused = useRef(false);
+  const dividerWasLive = useRef(divider.live);
+  const dividerGone = useRef(onDividerGone);
+  dividerGone.current = onDividerGone;
+  useLayoutEffect(() => {
+    const left = dividerLeft({ was: dividerWasLive.current, live: divider.live, focused: dividerFocused.current, covers: paneCovers });
+    dividerWasLive.current = divider.live;
+    dividerFocused.current = left.focused;
+    if (left.handOn) dividerGone.current?.();
+  }, [divider.live, paneCovers]);
   const dividerWidth = paneMotion.moving ? (paneP > 0 && paneP < roomNow ? 1 : 0) : 1;
   // Settled, the terminal's track is the pixel width it has always had; while anything moves it takes what the others leave.
   const paneColumns = threeTracks ? `${layoutMoving ? "minmax(0, 1fr)" : `${geometry.terminal}px`} ${dividerWidth}px ${paneP}px` : undefined;
@@ -500,26 +515,23 @@ export function MainWindow({
 
           {viewing && mainView}
 
-          {threeTracks &&
-            (dividerLive ? (
-              <div
-                className="pane__divider"
-                role="separator"
-                aria-orientation="vertical"
-                aria-label="Resize the side pane"
-                aria-valuemin={PANE.min}
-                aria-valuemax={geometry.max}
-                aria-valuenow={geometry.pane}
-                tabIndex={0}
-                onPointerDown={(e) => e.button === 0 && e.currentTarget.setPointerCapture(e.pointerId)}
-                onPointerMove={dragPane}
-                onKeyDown={nudgePane}
-                onDoubleClick={() => onPaneWidth?.(null)}
-              />
-            ) : (
-              // While the pane moves the divider holds its track as a line nobody can reach.
-              <div className="pane__divider" data-still="" aria-hidden="true" />
-            ))}
+          {/* One element in every state (dividerState), so a divider that has focus keeps it while the layout moves. Still, it only
+              holds its track: no drag, no key. Not live (the pane is hiding or covering), it is a line nobody can reach. */}
+          {threeTracks && (
+            <div
+              className="pane__divider"
+              data-still={divider.still ? "" : undefined}
+              {...(divider.live
+                ? { role: "separator", "aria-orientation": "vertical" as const, "aria-label": "Resize the side pane", "aria-valuemin": PANE.min, "aria-valuemax": geometry.max, "aria-valuenow": geometry.pane, tabIndex: 0 }
+                : { "aria-hidden": true })}
+              onFocus={() => (dividerFocused.current = true)}
+              onBlur={() => (dividerFocused.current = false)}
+              onPointerDown={(e) => !divider.still && e.button === 0 && e.currentTarget.setPointerCapture(e.pointerId)}
+              onPointerMove={divider.still ? undefined : dragPane}
+              onKeyDown={divider.still ? undefined : nudgePane}
+              onDoubleClick={() => !divider.still && onPaneWidth?.(null)}
+            />
+          )}
           {/* The slot cuts the pane to its track while it moves; the body keeps the pane's settled width, pinned to the end edge. */}
           {paneDrawn && (
             <div className="window__pane" data-moving={paneMotion.moving || undefined}>

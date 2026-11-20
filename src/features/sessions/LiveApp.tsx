@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore } from "react";
 import type { ComponentProps } from "react";
+import { flushSync } from "react-dom";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -44,7 +45,7 @@ import { findCommand } from "../../lib/bindings";
 import { cancelsCloseBar, commandShortcut, sessionShortcut, type SessionShortcut } from "../../lib/appShortcuts";
 import { nextWaiting } from "../lane/laneLayout";
 import { focusPendingCard } from "../approval/focusPendingCard";
-import { MOVED_COMMANDS, osOfPlatform } from "../../lib/keymap";
+import { commandById, MOVED_COMMANDS, osOfPlatform, shortcutLabel } from "../../lib/keymap";
 import { paletteSessions } from "../palette/sessions";
 import { LiveHistory } from "../history/LiveHistory";
 import { LiveDoctor } from "../doctor/LiveDoctor";
@@ -78,7 +79,7 @@ import { browser, pageKey } from "../browser/browserApi";
 import type { UrlBarHandle } from "../browser/UrlBar";
 import { useBrowserPages } from "../browser/useBrowserPages";
 import { askedFrom, focusPane } from "../pane/focusPane";
-import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, PANE_BESIDE_SESSION, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome } from "../pane/paneCommands";
+import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, PANE_BESIDE_SESSION, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, receiptWithPaneHidden, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome } from "../pane/paneCommands";
 import { activeTab, currentEntry, isBrowserTab, openRefused, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
 import { takeOpens } from "../pane/opens";
 import { newsReducer } from "../pane/paneNews";
@@ -177,16 +178,26 @@ function SessionResumeBar({ endpoint, info, profileName, ...props }: Omit<Compon
 /** What the announcer calls a pane tab: a browser tab's title, a file tab's name. */
 const paneTabName = (tab: PaneTab, titles: ReadonlyMap<string, string>): string => (isBrowserTab(tab) ? (titles.get(tab.id) ?? "page") : lastSegment(currentEntry(tab).path));
 
-/** The size of the element, kept up to date with a ResizeObserver. Starts at the window's size. */
+/**
+ * The size of the element, kept up to date with a ResizeObserver. Starts at the window's size.
+ * The observer hears a new size after that frame's layout and before its paint, so the measure is applied there and then
+ * (`flushSync`): everything computed from the size is drawn in the frame the window changed, not one frame behind it.
+ */
 function useElementSize() {
   const ref = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: window.innerWidth, height: window.innerHeight });
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const measure = () => setSize({ width: el.clientWidth, height: el.clientHeight });
-    measure();
-    const observer = new ResizeObserver(measure);
+    let last = { width: el.clientWidth, height: el.clientHeight };
+    // Inside a layout effect React refuses a `flushSync`, and has no need of one: this update is applied before the paint anyway.
+    setSize(last);
+    const observer = new ResizeObserver(() => {
+      const next = { width: el.clientWidth, height: el.clientHeight };
+      if (next.width === last.width && next.height === last.height) return;
+      last = next;
+      flushSync(() => setSize(next));
+    });
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
@@ -1056,6 +1067,19 @@ export function LiveApp() {
     if (paneToggleOutcome(stateRef.current.focusedId, mainViewRef.current !== "sessions") === "blocked") return announce(PANE_BESIDE_SESSION);
     paneRun({ kind: "preview" });
   };
+  // Esc or Ctrl+Shift+Tab in a pane tab: to the terminal, and in a window where the pane covers the terminal the pane goes too.
+  const paneKeys = () => shortcutLabel(commandById("preview").binding!, os ?? "windows");
+  // Returns whether it hid the pane. `say: false` is for a caller with a line of its own to say with the hide (the cursor's receipt).
+  const toTerminalFromPane = (say = true): boolean => {
+    const covers = document.querySelector('[data-pane="cover"]') !== null;
+    if (leavePaneOutcome(covers) === "focus" || !viewRef.current.pane.open) {
+      actions.focusTerminal();
+      return false;
+    }
+    paneRun({ kind: "preview" });
+    if (say) announce(paneHiddenText(paneKeys()));
+    return true;
+  };
   const paneRunRef = useRef(paneRun);
   paneRunRef.current = paneRun;
   // The + menu: where it opened and the button that opened it.
@@ -1471,10 +1495,14 @@ export function LiveApp() {
       document.removeEventListener("focusout", inside);
     };
   }, []);
+  // A "select-pane" that hid the covering pane: the receipt that follows it says so too (the announcer holds one notice).
+  const hidByNav = useRef(false);
   const applyNav = (effect: NavEffect) => {
     switch (effect.type) {
       case "select-pane":
-        actions.focusTerminal();
+        // The key was pressed inside the side pane: leaving it may hide it. A session picked in the sidebar goes straight to its terminal.
+        if (document.activeElement?.closest("[data-nav-side]") != null) hidByNav.current = toTerminalFromPane(false);
+        else actions.focusTerminal();
         return;
       case "select-side":
         focusPane();
@@ -1504,10 +1532,13 @@ export function LiveApp() {
         if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
         document.querySelector<HTMLElement>(".window__main")?.focus();
         return;
-      case "announce":
+      case "announce": {
         // The cursor's receipt speaks for a switch it causes, so the focus-moved line is not said as well.
-        announce(effect.text, true);
+        const hid = hidByNav.current;
+        hidByNav.current = false;
+        announce(hid ? receiptWithPaneHidden(effect.text, paneKeys()) : effect.text, true);
         return;
+      }
     }
   };
   // A rolled Ctrl+Shift+Tab, Tab a few ms before Shift, must not run Ctrl+Tab: each real Ctrl+Tab waits for Tab's release or 50 ms
@@ -1526,7 +1557,7 @@ export function LiveApp() {
   });
   const sendNav = nav.send;
   // The app's shortcuts from a page, and the keyboard between the two (S12; 6q-0 decision 9).
-  useBrowserKeys({ os, focusTerminal: () => actions.focusTerminal() });
+  useBrowserKeys({ os, focusTerminal: () => toTerminalFromPane() });
   // The pages themselves: which are loaded (the page on screen is the newest), their events, popups and theme.
   const shownPane = tabsOf(view.pane, focusedId);
   const shownTab = shownPane.tabs.find((t) => t.id === (shownPane.active ?? shownPane.tabs[0]?.id));
@@ -2045,7 +2076,7 @@ export function LiveApp() {
                   onOpenOutside={(url) => {
                     if (isPageUrl(url) && url !== BLANK) void openUrl(url).catch(() => {});
                   }}
-                  onEscape={() => actions.focusTerminal()}
+                  onEscape={toTerminalFromPane}
                   announce={announce}
                   regionTarget={deliveryFor(focusedRow ?? null)}
                   onRegion={addRegion}
@@ -2075,7 +2106,7 @@ export function LiveApp() {
                   onPlace={(place) => paneSession !== undefined && paneDispatch({ type: "place", session: paneSession, paneTab: tab.id, place })}
                   onDirty={noteDirty}
                   active={active}
-                  onEscape={() => actions.focusTerminal()}
+                  onEscape={toTerminalFromPane}
                   announce={announce}
                   regionTarget={deliveryFor(focusedRow ?? null)}
                   onRegion={addRegion}
@@ -2124,6 +2155,7 @@ export function LiveApp() {
           paneNews={paneNews.size > 0}
           paneWidth={view.pane.width}
           onPaneWidth={(w) => paneDispatch({ type: "width", width: w })}
+          onDividerGone={() => focusPane()}
           terminalMinWidth={terminalMinWidth}
           mainView={
             mainView === "history" && endpoint && os ? (

@@ -50,6 +50,27 @@ export function paneMotionKey(mode: PaneMode, sidebar: string): string {
   return mode === "beside" ? `beside/${sidebar}` : mode;
 }
 
+/**
+ * What the pane's divider is. Beside the terminal it can always be reached with the keyboard (`live`), so focus on it survives a
+ * layout motion; while anything moves it is `still`, and neither a drag nor a key moves it. With the pane hidden or covering the
+ * terminal there is nothing to divide: what is left of it during that motion is a line nobody can reach.
+ */
+export function dividerState(mode: PaneMode, moving: boolean): { live: boolean; still: boolean } {
+  const live = mode === "beside";
+  return { live, still: moving || !live };
+}
+
+/**
+ * What becomes of the keyboard when the divider stops being reachable (`was` live, now not). A divider that had focus hands it on
+ * only when the pane now covers the terminal; when the pane hides, the keyboard is the hide's to place. Either way the focus it
+ * held is forgotten: the divider can be taken out with its focus and no blur is heard, and a flag left set would move the
+ * keyboard into the pane at some later narrowing.
+ */
+export function dividerLeft(s: { was: boolean; live: boolean; focused: boolean; covers: boolean }): { focused: boolean; handOn: boolean } {
+  if (!s.was || s.live) return { focused: s.focused, handOn: false };
+  return { focused: false, handOn: s.focused && s.covers };
+}
+
 /** The width to save when the divider is dragged to `fromEnd` px from the main area's end edge, or nudged. */
 export function draggedWidth(i: { room: number; terminalMin: number; fromEnd: number }): number {
   const max = widest(whole(i.room), i.terminalMin);
