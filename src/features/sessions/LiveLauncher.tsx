@@ -209,8 +209,6 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
     if (target) at.querySelector<HTMLElement>(target === "prompt" ? ".launcher__prompt" : ".launcher__start")?.focus();
     // No pick, but the focused control went (a shell's answer took the prompt, or Start was still disabled at the opening).
     else if (looked && (document.activeElement === null || document.activeElement === document.body)) lostFocus(at)?.focus();
-    // The sheet held the focus while the lists loaded: the prompt or Start is there now.
-    else if (looked && document.activeElement === at.querySelector(".launcher__sheet")) initialFocus(at)?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- focusState is rebuilt every render; its three fields are the dependencies.
   }, [focusState.picks, focusState.prompt, focusState.ready]);
 

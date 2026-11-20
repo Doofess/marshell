@@ -33,7 +33,7 @@ import {
 } from "./launchChoice";
 import { effectiveAgent, missingLine, type ShellOffer } from "./shellAgents";
 import { effectiveMode, nextOffered, offeredMode } from "../modes/sessionModes";
-import { adminKeyClaimed, chipLetter, escapeStep, nameKeyClaimed, focusFellOut, listNavKeys, listToClose, stepActive, type OpenList } from "./launcherKeys";
+import { adminKeyClaimed, backdropPress, chipLetter, escapeStep, nameKeyClaimed, focusFellOut, listNavKeys, listToClose, sheetHandoff, sheetRefocus, stepActive, type OpenList } from "./launcherKeys";
 import "./Launcher.css";
 import "../sessions/CloseBar.css";
 
@@ -256,6 +256,14 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
   useCoverPage();
   usePopupFocus(sheet, () => sheet.current?.querySelector<HTMLElement>(".launcher__prompt") ?? (sheet.current ? tabbableIn(sheet.current)[0] : null));
 
+  // The prompt line, as drawn below: an agent that takes a first prompt, outside Command Prompt and the confirm view.
+  const promptShown = !confirm && agentRun && !cmdShell && !program?.noFirst;
+  useEffect(() => {
+    const at = sheet.current;
+    const to = sheetHandoff({ onSheet: at !== null && document.activeElement === at, prompt: promptShown, canStart });
+    if (to) at?.querySelector<HTMLElement>(to === "prompt" ? ".launcher__prompt" : ".launcher__start")?.focus();
+  }, [promptShown, canStart]);
+
   const closeList = (open: OpenList) => {
     if (open === "folder") onQuery?.(null);
     else if (open === "shells") onShells?.(false);
@@ -331,13 +339,10 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
 
   return (
     <div className="launcher" data-open={folderOpen || shellsOpen || agentsOpen || undefined}>
-      {/* A press on the dimmed window is Esc, as in the palette; preventDefault keeps the focus off the page body meanwhile. */}
+      {/* A press on the dimmed window is Esc, as in the palette. */}
       <div
         className="launcher__backdrop"
-        onMouseDown={(e) => {
-          e.preventDefault();
-          escape();
-        }}
+        onMouseDown={(e) => backdropPress(e, escape)}
       />
       <div
         ref={sheet}
@@ -347,6 +352,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
         aria-label={confirm ? CONFIRM_TITLE : "Start a session"}
         aria-describedby={id("desc")}
         tabIndex={-1}
+        onFocus={(e) => sheetRefocus(e.target, e.currentTarget, e.relatedTarget as HTMLElement | null)?.focus()}
         data-agent={program?.kind}
         data-manual={!agentRun || undefined}
         onKeyDown={onSheetKey}

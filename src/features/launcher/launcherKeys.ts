@@ -55,6 +55,30 @@ export function escapeStep({ confirm, open }: { confirm: boolean; open: OpenList
   return confirm ? "back" : (open ?? "close");
 }
 
+/** A press on the dimmed window around the sheet: Esc, for the main button only. preventDefault keeps the focus off the page body meanwhile. */
+export function backdropPress(e: { button: number; preventDefault: () => void }, escape: () => void) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  escape();
+}
+
+/**
+ * The sheet holds the focus while nothing in it can (the lists still loading, Start disabled): once the prompt is there, or Start is
+ * enabled, the focus moves on to it, so typing and Enter work. A sheet that doesn't hold the focus moves nothing.
+ */
+export function sheetHandoff({ onSheet, prompt, canStart }: { onSheet: boolean; prompt: boolean; canStart: boolean }): "prompt" | "start" | null {
+  if (!onSheet) return null;
+  return prompt ? "prompt" : canStart ? "start" : null;
+}
+
+/**
+ * The sheet can hold the focus, so a press on a blank spot in it moves the focus there from the control it was on, and typing would
+ * go nowhere. The control the focus left, inside the sheet, gets it back; focus that came from outside (the opening) stays.
+ */
+export function sheetRefocus<T>(target: unknown, sheet: { contains(n: unknown): boolean }, related: T | null): T | null {
+  return target === sheet && related !== null && related !== sheet && sheet.contains(related) ? related : null;
+}
+
 /** The letter a focused chip picks by. A held Alt, Ctrl or Meta makes the key a shortcut (Alt+N, Alt+A), never a pick; Shift is a capital. */
 export function chipLetter(e: { key: string; altKey: boolean; ctrlKey: boolean; metaKey: boolean }): string | null {
   return e.altKey || e.ctrlKey || e.metaKey ? null : e.key;

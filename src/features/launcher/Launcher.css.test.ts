@@ -111,6 +111,9 @@ describe("Launcher.css", () => {
   it("hides the sheet's ring while it holds the focus for the loading lists, and never removes it (forced colors repaints it)", () => {
     expect(rule(".launcher__sheet:focus-visible")).toMatch(/outline-color:\s*transparent/);
     expect(rule(".launcher__sheet:focus-visible")).not.toMatch(/outline:\s*none/);
+    // In forced colors it is drawn, as every focused thing in the launcher is.
+    const forcedRules = pairs(forced);
+    expect(forcedRules.some((r) => r.sels.includes(".launcher__sheet:focus-visible") && /outline:\s*2px solid Highlight/.test(r.body))).toBe(true);
   });
   it("forced_colors_draws_focus_with_highlight", () => {
     const rules = pairs(forced);

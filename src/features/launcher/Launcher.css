@@ -543,7 +543,8 @@
   .launcher__input:focus-visible,
   .launcher__task-input:focus-visible,
   .launcher__name-input:focus-visible,
-  .launcher__line:focus-within {
+  .launcher__line:focus-within,
+  .launcher__sheet:focus-visible {
     outline: 2px solid Highlight;
   }
   .launcher__chip:focus-visible .launcher__box[data-checked] {

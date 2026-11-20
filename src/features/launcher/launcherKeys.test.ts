@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adminKey, adminKeyClaimed, chipLetter, escapeStep, focusFellOut, listNavKeys, listToClose, nameKey, nameKeyClaimed, openFolder, openList, stepActive } from "./launcherKeys";
+import { adminKey, adminKeyClaimed, backdropPress, chipLetter, escapeStep, focusFellOut, listNavKeys, listToClose, nameKey, nameKeyClaimed, openFolder, openList, sheetHandoff, sheetRefocus, stepActive } from "./launcherKeys";
 
 describe("launcherKeys: which keys move the highlighted option", () => {
   it("in the folder field only Up and Down do: Left and Right move the caret, so a typo can be fixed", () => {
@@ -123,5 +123,38 @@ describe("launcherKeys: Esc and a press on the dimmed window", () => {
     expect(escapeStep({ confirm: true, open: null })).toBe("back");
     expect(escapeStep({ confirm: false, open: "agents" })).toBe("agents");
     expect(escapeStep({ confirm: false, open: null })).toBe("close");
+  });
+});
+
+describe("launcherKeys: a press on the dimmed window", () => {
+  it("is Esc for the main button only; a right or middle press closes nothing", () => {
+    let escaped = 0;
+    let prevented = 0;
+    const press = (button: number) => backdropPress({ button, preventDefault: () => prevented++ }, () => escaped++);
+    press(2);
+    press(1);
+    expect(escaped).toBe(0);
+    press(0);
+    expect(escaped).toBe(1);
+    expect(prevented).toBe(1);
+  });
+});
+
+describe("launcherKeys: the sheet holding the focus", () => {
+  it("hands it to the prompt, else to an enabled Start, once one is there; Start enabled later (a path check, a bypass ack) counts too", () => {
+    expect(sheetHandoff({ onSheet: true, prompt: false, canStart: false })).toBeNull();
+    expect(sheetHandoff({ onSheet: true, prompt: true, canStart: false })).toBe("prompt");
+    expect(sheetHandoff({ onSheet: true, prompt: false, canStart: true })).toBe("start");
+    expect(sheetHandoff({ onSheet: false, prompt: true, canStart: true })).toBeNull();
+  });
+  it("sends a press on a blank spot back to the control it left (typing would otherwise go nowhere), never focus from outside", () => {
+    const prompt = { name: "prompt" };
+    const sheet = { contains: (n: unknown) => n === prompt || n === sheet };
+    expect(sheetRefocus(sheet, sheet, prompt)).toBe(prompt);
+    // From the window behind, at the opening: the sheet keeps it while the lists load.
+    expect(sheetRefocus(sheet, sheet, { name: "terminal" })).toBeNull();
+    expect(sheetRefocus(sheet, sheet, null)).toBeNull();
+    // Focus that landed on a control is no business of this.
+    expect(sheetRefocus(prompt, sheet, null)).toBeNull();
   });
 });
