@@ -42,6 +42,7 @@ import { useLayoutMotion } from "./motion";
 import { usePaneHold } from "./paneHold";
 import { FitHoldContext } from "../terminal/fitHold";
 import { GLYPHS } from "./strip/tiles";
+import { watchWindowStrip } from "./strip/windowStrip";
 import { sidebarToggleFor } from "./viewState";
 import "./MainWindow.css";
 
@@ -334,6 +335,9 @@ export function MainWindow({
   };
   // The side pane's divider reports the pane's width in pixels and holds none of its own; the saved width comes in as `paneWidth`.
   const mainRef = useRef<HTMLElement>(null);
+  const controlsRef = useRef<HTMLDivElement>(null);
+  // The strip over the window buttons keeps its pictures equal to these buttons' looks.
+  useEffect(() => (os === "windows" && controlsRef.current ? watchWindowStrip(controlsRef.current) : undefined), [os]);
   const viewing = mainView !== undefined && mainView !== null && mainView !== false;
   // What the pane is asked to be (the toggle answers to this at once), and whether a hide holds it shown while its page freezes.
   const paneWanted = paneShown && !viewing && !empty;
@@ -451,7 +455,7 @@ export function MainWindow({
             <SidePaneIcon open={paneWanted} />
           </button>
           {os === "windows" && (
-            <div className="window__controls">
+            <div className="window__controls" ref={controlsRef}>
               <button type="button" className="window__control" aria-label="Minimize" onClick={windowControls?.onMinimize}>
                 {icon(GLYPHS.minimize)}
               </button>
