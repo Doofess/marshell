@@ -3818,3 +3818,65 @@ async fn plan_is_refused_without_the_bearer() {
     }
     assert!(!e.wsl_home.join(".claude").exists());
 }
+
+#[test]
+fn copilot_hooks_plan_applies_in_a_home_outside_the_profile() {
+    use marshell_core::agents::common::Bridge;
+    use marshell_core::agents::copilot::hooks as copilot_hooks;
+    use marshell_core::config::guard::{Guard, moved_agent_homes};
+    use marshell_core::config::service::ConfigService;
+    use marshell_protocol::agents::HookPlanRequest;
+    use marshell_protocol::config::{ApplyRequest, ExpectedHash};
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = canonical(dir.path());
+    let home = root.join("marshell-home");
+    // A folder that `COPILOT_HOME` names, outside everything else the guard allows.
+    let copilot = root.join("elsewhere").join("copilot-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let named = copilot.to_string_lossy().into_owned();
+    let env = move |k: &str| (k == "COPILOT_HOME").then(|| named.clone());
+    let guard = Guard::new(moved_agent_homes(&env), vec![], home.clone());
+    let service = ConfigService::with_guard(home.clone(), guard);
+
+    let (hooks, settings) = (
+        copilot_hooks::hooks_path(&copilot),
+        copilot_hooks::settings_path(&copilot),
+    );
+    let want = HookPlanRequest {
+        status: true,
+        statusline: true,
+        approve: false,
+        skill: false,
+        distro: None,
+    };
+    let plan = copilot_hooks::install_plan(
+        &copilot_hooks::Files {
+            hooks_path: &hooks,
+            hooks_text: None,
+            settings_path: &settings,
+            settings_text: None,
+            chain_path: None,
+            chain_text: None,
+        },
+        &Bridge::local(&home),
+        &want,
+    )
+    .unwrap();
+    let preview = service.preview(plan);
+    assert!(preview.can_apply, "{preview:?}");
+    let request = ApplyRequest {
+        changeset_id: preview.changeset_id.clone(),
+        expected_hashes: preview
+            .files
+            .iter()
+            .map(|f| ExpectedHash {
+                path: f.path.clone(),
+                hash: f.before_hash.clone(),
+            })
+            .collect(),
+    };
+    service.apply(&request, 1).unwrap();
+    assert!(hooks.is_file(), "{}", hooks.display());
+    assert!(settings.is_file(), "{}", settings.display());
+}

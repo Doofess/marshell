@@ -52,6 +52,7 @@ impl Guard {
     /// Allowed: the user's home (`dirs::home_dir`), every folder in `projects.json` and `<home>/agents`.
     /// A drive root in `projects.json` is skipped, also when it is spelt `C:\x\..` or reached through
     /// a link: it would open the whole drive.
+    /// Also allowed: the folder each CLI's home variable names (`moved_agent_homes`).
     /// Denied: `denied_for_os()`. The project list is read once, here.
     pub fn for_home(home: &Path) -> Self {
         let mut allowed: Vec<PathBuf> = dirs::home_dir().into_iter().collect();
@@ -62,6 +63,7 @@ impl Guard {
                 .filter(|p| !crate::projects::is_root(&canonical(p))),
         );
         allowed.push(home.join("agents"));
+        allowed.extend(moved_agent_homes(&|k| std::env::var(k).ok()));
         Self::new(allowed, denied_for_os(), home.to_path_buf())
     }
 
@@ -110,6 +112,63 @@ impl Guard {
         } else {
             Err(Refusal::OutsideAllowed)
         }
+    }
+}
+
+/// The folder each of `COPILOT_HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `QWEN_HOME` names, for a CLI whose home its
+/// variable moves. A variable adds its folder only when it is set, not blank, absolute, free of `..` and not a drive
+/// root; one that fails adds nothing and the others still count. The value is read by the CLI's own adapter code, so the
+/// guard opens the folder the adapter writes to and no other. A `~` form of `QWEN_HOME` is read against the user's home,
+/// and with no known home it stays relative and adds nothing. On Windows the folder must be on a drive of the PC: a
+/// network share adds nothing, and neither does a WSL distro's share, whose agent folders have their own rule
+/// (`with_distro_homes`).
+pub fn moved_agent_homes(env: &dyn Fn(&str) -> Option<String>) -> Vec<PathBuf> {
+    use crate::agents::{codex, copilot, qwen, skill};
+    let user_home = dirs::home_dir().unwrap_or_default();
+    let set = |name: &str| env(name).is_some_and(|v| !v.trim().is_empty());
+    let candidates = [
+        set("COPILOT_HOME").then(|| copilot::home(env, &user_home)),
+        set("CLAUDE_CONFIG_DIR")
+            .then(|| skill::skill_path("claude", env, &user_home))
+            .flatten()
+            // `<dir>/skills/marshell/SKILL.md`: three levels up is the folder itself.
+            .and_then(|file| file.ancestors().nth(3).map(Path::to_path_buf)),
+        set("CODEX_HOME")
+            .then(|| {
+                codex::hooks::hooks_path(env, &user_home)
+                    .parent()
+                    .map(Path::to_path_buf)
+            })
+            .flatten(),
+        set("QWEN_HOME").then(|| qwen::home(env, &user_home)),
+    ];
+    candidates
+        .into_iter()
+        .flatten()
+        .filter(|folder| {
+            folder.is_absolute()
+                && on_a_drive(folder)
+                && !folder.components().any(|c| c == Component::ParentDir)
+                && !crate::projects::is_root(&canonical(folder))
+        })
+        .collect()
+}
+
+/// True on Windows for a path that starts with a drive letter (`D:\x`): not a share (`\\server\share\x`, a WSL
+/// distro's `\\wsl.localhost\<distro>\x`) and not a verbatim spelling (`\\?\D:\x`). Other systems spell no share in a
+/// path, so there every path counts.
+fn on_a_drive(path: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        matches!(
+            path.components().next(),
+            Some(Component::Prefix(prefix)) if matches!(prefix.kind(), std::path::Prefix::Disk(_))
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        true
     }
 }
 
@@ -572,5 +631,134 @@ mod tests {
         assert_eq!(guard.check(settings), Err(Refusal::Managed));
         let codex = Path::new(r"C:\ProgramData\OpenAI\Codex\requirements.toml");
         assert_eq!(guard.check(codex), Err(Refusal::Managed));
+    }
+
+    // ---- a CLI home that its variable moves outside the profile ----
+
+    /// An environment of just these variables.
+    fn vars<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |k: &str| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string())
+    }
+
+    /// A guard that allows only what `moved_agent_homes` gives for these variables, with Marshell's home at
+    /// `D:\m\home` and `D:\org` denied.
+    #[cfg(windows)]
+    fn moved_guard(pairs: &[(&str, &str)]) -> Guard {
+        Guard::new(
+            moved_agent_homes(&vars(pairs)),
+            vec![PathBuf::from(r"D:\org")],
+            PathBuf::from(r"D:\m\home"),
+        )
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_copilot_home_outside_the_profile_is_admitted() {
+        let home = r"D:\work\copilot-home";
+        let guard = moved_guard(&[("COPILOT_HOME", home)]);
+        for file in [r"settings.json", r"hooks\marshell.json", r"skills\marshell\SKILL.md"] {
+            let path = PathBuf::from(format!(r"{home}\{file}"));
+            assert!(guard.check(&path).is_ok(), "{file}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_beside_the_copilot_home_stays_closed() {
+        let guard = moved_guard(&[("COPILOT_HOME", r"D:\work\copilot-home")]);
+        for path in [r"D:\work\other\x.json", r"D:\work\copilot-home-2\x.json"] {
+            assert_eq!(guard.check(Path::new(path)), Err(Refusal::OutsideAllowed), "{path}");
+        }
+    }
+
+    #[test]
+    fn moved_agent_homes_refuses_a_root_a_relative_path_a_dot_dot_and_a_blank() {
+        for value in [r"D:\", "copilot-home", r"D:\a\..\b", "  ", ""] {
+            for name in ["COPILOT_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "QWEN_HOME"] {
+                let given = [(name, value)];
+                assert!(moved_agent_homes(&vars(&given)).is_empty(), "{name}={value:?}");
+            }
+        }
+        assert!(moved_agent_homes(&|_| None).is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_copilot_home_inside_marshells_home_is_still_marshells_own() {
+        let guard = moved_guard(&[("COPILOT_HOME", r"D:\m\home\cp")]);
+        let path = Path::new(r"D:\m\home\cp\settings.json");
+        assert_eq!(guard.check(path), Err(Refusal::MarshellOwn));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_copilot_home_under_a_denied_folder_is_still_managed() {
+        let guard = moved_guard(&[("COPILOT_HOME", r"D:\org\cp")]);
+        let path = Path::new(r"D:\org\cp\settings.json");
+        assert_eq!(guard.check(path), Err(Refusal::Managed));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_managed_file_name_in_the_copilot_home_is_still_refused() {
+        let guard = moved_guard(&[("COPILOT_HOME", r"D:\work\copilot-home")]);
+        let path = Path::new(r"D:\work\copilot-home\managed-settings.json");
+        assert_eq!(guard.check(path), Err(Refusal::Managed));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn each_cli_home_variable_opens_its_own_folder() {
+        let given = [
+            ("COPILOT_HOME", r"D:\w\cp"),
+            ("CLAUDE_CONFIG_DIR", r"D:\w\cl"),
+            ("CODEX_HOME", r"D:\w\cx"),
+            ("QWEN_HOME", r"D:\w\qw"),
+        ];
+        let homes = moved_agent_homes(&vars(&given));
+        let expected: Vec<PathBuf> = [r"D:\w\cp", r"D:\w\cl", r"D:\w\cx", r"D:\w\qw"]
+            .map(PathBuf::from)
+            .to_vec();
+        assert_eq!(homes, expected);
+        let guard = moved_guard(&given);
+        for path in [
+            r"D:\w\cl\settings.json",
+            r"D:\w\cx\hooks.json",
+            r"D:\w\qw\settings.json",
+        ] {
+            assert!(guard.check(Path::new(path)).is_ok(), "{path}");
+        }
+        assert_eq!(
+            guard.check(Path::new(r"D:\w\other\settings.json")),
+            Err(Refusal::OutsideAllowed)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_bad_home_variable_does_not_close_the_others() {
+        let given = [("CODEX_HOME", r"D:\"), ("QWEN_HOME", r"D:\w\qw")];
+        assert_eq!(moved_agent_homes(&vars(&given)), vec![PathBuf::from(r"D:\w\qw")]);
+    }
+
+    /// A home on a network share or in a WSL distro is not opened this way: a distro's agent folders have their own
+    /// rule (`with_distro_homes`), and a share is not the PC's own disk.
+    #[cfg(windows)]
+    #[test]
+    fn a_home_on_a_share_or_in_a_distro_adds_nothing() {
+        for value in [
+            r"\\server\share\copilot-home",
+            r"\\wsl.localhost\Ubuntu\home\u\.copilot",
+            r"\\wsl$\Ubuntu\home\u",
+            r"\\?\UNC\server\share\copilot-home",
+            "//server/share/copilot-home",
+            // A verbatim spelling is not how a person sets a home either.
+            r"\\?\D:\w\cp",
+        ] {
+            for name in ["COPILOT_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "QWEN_HOME"] {
+                let given = [(name, value), ("QWEN_RUNTIME_DIR", r"D:\w\rt")];
+                assert!(moved_agent_homes(&vars(&given)).is_empty(), "{name}={value}");
+            }
+        }
     }
 }
