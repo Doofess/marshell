@@ -37,7 +37,7 @@ import { windowTitle } from "./windowTitle";
 import { Sidebar, type SidebarFooter } from "./Sidebar";
 import { shellNameFor } from "./ShellPanel";
 import { LayoutContext, mainRoom, type Layout } from "./paneColumn";
-import { PANE, dividerState, draggedWidth, paneGeometry, paneMotionKey } from "./paneLayout";
+import { PANE, dividerLeft, dividerState, draggedWidth, paneGeometry, paneMotionKey } from "./paneLayout";
 import { useLayoutMotion } from "./motion";
 import { usePaneHold } from "./paneHold";
 import { FitHoldContext } from "../terminal/fitHold";
@@ -380,11 +380,10 @@ export function MainWindow({
   const dividerGone = useRef(onDividerGone);
   dividerGone.current = onDividerGone;
   useLayoutEffect(() => {
-    const was = dividerWasLive.current;
+    const left = dividerLeft({ was: dividerWasLive.current, live: divider.live, focused: dividerFocused.current, covers: paneCovers });
     dividerWasLive.current = divider.live;
-    if (!was || divider.live || !dividerFocused.current || !paneCovers) return;
-    dividerFocused.current = false;
-    dividerGone.current?.();
+    dividerFocused.current = left.focused;
+    if (left.handOn) dividerGone.current?.();
   }, [divider.live, paneCovers]);
   const dividerWidth = paneMotion.moving ? (paneP > 0 && paneP < roomNow ? 1 : 0) : 1;
   // Settled, the terminal's track is the pixel width it has always had; while anything moves it takes what the others leave.

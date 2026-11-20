@@ -2,6 +2,12 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **What was built (2026-11-20), where it differs from this plan:**
+> - **Whole rows are out.** Task 2's `wholeRows` and `rowCell` were built and then removed (`f0731344`): on a drag the user found the row-at-a-time steps worse than the smooth resize, and decision 1 is reversed in `docs/PLAN.md` §9. The shell panel is 30% of the sidebar by the pixel, as before the slice. Task 2's same-frame measure (`flushSync` in `useElementSize`) stays. Review Focus lines 1 to 3 no longer apply.
+> - **Task 5 did not run.** `windowsPty` measured no better (M3), so it was not set.
+> - **The live check added three fixes:** a terminal fits again when the display scale changes (`e9672156`), Ctrl+Shift+Tab's hide of a covering pane is said in one notice with its receipt (`45049b37`), and, from the final review, a divider that goes forgets the focus it held (`dividerLeft`).
+> - The results are in `docs/research/2026-11-20-resize-polish-live-check.md`.
+
 **Goal:** Finish what the resize fixes left: the shell panel resizes in whole rows in the window's own frame, a pane that covers the terminal never leaves the keyboard in it, the divider keeps the keyboard, and a spike says whether the window buttons can stop trailing.
 
 **Architecture:** The app's webview is always drawn a frame or more late after a resize (S12 finding 23), so the slice removes the lag the app adds itself (the window's measure reaching React a frame late) and, for the window buttons, tries a native child of fixed size that Windows moves with the frame. The spike is a gate judged by the user's eye; its code stays on a branch that is never merged. Everything else is frontend, each change with a pure function that carries its test.

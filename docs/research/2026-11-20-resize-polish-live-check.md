@@ -89,6 +89,18 @@ During the hand session the user resumed session 2 and started Claude Code in se
 6. **The launcher once opened with the keyboard still in the terminal behind it.** Seen on the second run while the window had been restored behind every other window without being activated. On the third run the launcher took the keyboard within 200 ms in a plain window, at 1000 px with the pane hidden, and at 1000 px with the pane covering, and Esc gave it back where it was. Not reproduced, not fixed.
 7. **Editing files under the running app can leave the dev server with a broken module.** After a worker rewrote `Sidebar.tsx`, a reload showed a blank page ("does not provide an export named 'Sidebar'") until the files were touched again. A dev-server matter, not the app's.
 
+## After the final review
+
+The review found finding 8 and asked for two checks the note didn't have. A fourth start of the app (11:08 to 11:14) on the final build with finding 8's fix, one PowerShell session, `notes.txt` in a text tab, and reduced motion emulated.
+
+| Check | Result |
+| --- | --- |
+| Finding 8's path: reduced motion, the divider focused, Ctrl+Shift+Q (the pane hides and the keyboard goes to the terminal), Ctrl+Shift+Q again, the keyboard put in the shell panel, the window narrowed from 1300 to 1000 px | Pass. The pane covers and `document.activeElement` is still the shell panel's textarea. Not run on the build before the fix; `dividerLeft`'s test is what failed first. |
+| C7's hand-off under reduced motion: the divider focused, the window narrowed from 1300 to 1000 px | Pass. `document.activeElement` is the text tab's editor, inside `[data-nav-side]`. |
+| C1's refit on the final build: an emulated 125% and back, the pane hidden, 1200 by 780 | Pass. The main terminal went from 42 rows to 40 and back to 42. The shell panel kept 11 rows, which fit at both scales (187 px and 194 px of rows in a 203 px body). Nothing was cut. |
+
+8. **A divider that went with its focus kept a flag saying it was focused.** The flag is set and cleared by the divider's focus and blur, and a divider taken out of the page fires no blur: with reduced motion that happens the moment the pane hides. At a later narrowing to a covering pane the flag read "focused" and the keyboard was moved into the pane, out of wherever the person was typing. Found by the review, not by the check. Fixed: when the divider stops being reachable the flag is cleared whether or not the keyboard is handed on (`dividerLeft` in `paneLayout.test.ts`, failing first).
+
 ## Not fixed
 
 - The sidebar's bottom bar shifts for a frame on bottom-edge drags, by WebView2's late frame.
@@ -96,3 +108,4 @@ During the hand session the user resumed session 2 and started Claude Code in se
 - The window buttons trail the right edge. S13 ended go for a native strip, which is its own slice.
 - The shell panel can show up to 16 px of a part row under its last line (decision 1, reversed).
 - Findings 4, 5 and 6.
+- A window resized with a dialog open (Settings, Agents) was not checked; C6 used the palette. The measure reaches every overlay the same way.

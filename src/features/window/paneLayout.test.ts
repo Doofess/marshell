@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dividerState, draggedWidth, paneGeometry, paneMotionKey } from "./paneLayout";
+import { dividerLeft, dividerState, draggedWidth, paneGeometry, paneMotionKey } from "./paneLayout";
 
 describe("paneGeometry", () => {
   it("a hidden pane leaves the room to the terminal", () => {
@@ -62,5 +62,23 @@ describe("dividerState", () => {
     expect(dividerState("hidden", true)).toEqual({ live: false, still: true });
     expect(dividerState("cover", false)).toEqual({ live: false, still: true });
     expect(dividerState("cover", true)).toEqual({ live: false, still: true });
+  });
+});
+
+describe("dividerLeft", () => {
+  it("hands the keyboard on when a focused divider goes because the pane covers", () => {
+    expect(dividerLeft({ was: true, live: false, focused: true, covers: true })).toEqual({ focused: false, handOn: true });
+  });
+  it("forgets a focus it held when the pane hides, and hands nothing on", () => {
+    // The divider is taken out with its focus and no blur is heard; a flag left set would move the keyboard at a later narrowing.
+    expect(dividerLeft({ was: true, live: false, focused: true, covers: false })).toEqual({ focused: false, handOn: false });
+  });
+  it("hands nothing on from a divider that wasn't focused", () => {
+    expect(dividerLeft({ was: true, live: false, focused: false, covers: true })).toEqual({ focused: false, handOn: false });
+  });
+  it("leaves a divider that stays, or was never there, as it is", () => {
+    expect(dividerLeft({ was: true, live: true, focused: true, covers: false })).toEqual({ focused: true, handOn: false });
+    expect(dividerLeft({ was: false, live: false, focused: false, covers: true })).toEqual({ focused: false, handOn: false });
+    expect(dividerLeft({ was: false, live: true, focused: true, covers: false })).toEqual({ focused: true, handOn: false });
   });
 });
