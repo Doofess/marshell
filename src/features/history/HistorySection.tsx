@@ -8,7 +8,7 @@ import { StorageSection } from "./StorageSection";
 import "../notifications/NotificationsSection.css";
 
 export const HISTORY_IMPORT_LABEL = "Copy conversations run outside Marshell";
-export const HISTORY_IMPORT_HINT = "Marshell reads the conversation folders of Claude Code, Codex, Qwen Code and Copilot CLI and keeps its own copy of each conversation. It never changes their files.";
+export const HISTORY_IMPORT_HINT = "Marshell reads the conversation folders of Claude Code, Codex, Qwen Code and Copilot CLI and keeps its own copy of each conversation. It never changes their files. Conversations run in a Marshell tab are kept whether this is on or off.";
 
 /** Settings → History: the one switch for copying conversations run outside Marshell. `on` is null until the setting has been read, and no switch shows then (an unread value is never shown as off). */
 export function HistorySettingsView({ on, error, sync, announce, onChange }: { on: boolean | null; error: string | null; sync?: SettingsSync; announce?: (text: string) => void; onChange: (on: boolean) => void }) {

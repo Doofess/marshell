@@ -16,7 +16,7 @@ describe("HistorySettingsView", () => {
   it("has the switch and the hint, word for word", () => {
     const h = view(true);
     expect(h).toContain('<span class="switch__text">Copy conversations run outside Marshell</span>');
-    expect(h).toContain("Marshell reads the conversation folders of Claude Code, Codex, Qwen Code and Copilot CLI and keeps its own copy of each conversation. It never changes their files.");
+    expect(h).toContain("Marshell reads the conversation folders of Claude Code, Codex, Qwen Code and Copilot CLI and keeps its own copy of each conversation. It never changes their files. Conversations run in a Marshell tab are kept whether this is on or off.");
   });
   it("shows the switch checked or not from the setting", () => {
     expect(view(true)).toMatch(/<input[^>]*role="switch"[^>]*checked=""/);
