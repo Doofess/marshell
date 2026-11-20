@@ -7,6 +7,8 @@ import { AGENT_IDS } from "./agents";
 const read = (p: string) => readFileSync(new URL(p, import.meta.url), "utf8");
 const colors = read("./agent-colors.css");
 const tokens = parseTokens(read("../../styles/tokens.css"), ":root");
+/** The tokens as High contrast draws them: its own surfaces over the rest. */
+const highContrast = { ...tokens, ...parseTokens(read("../../styles/appearance.css").replace(/\/\*[\s\S]*?\*\//g, ""), ':root[data-contrast="more"]') };
 const THEMES = ["dark", "light"] as const;
 const SURFACES = ["--bg-base", "--bg-raised", "--bg-overlay"] as const;
 
@@ -52,6 +54,11 @@ describe("the app accent follows the vendor", () => {
       for (const s of SURFACES)
         it(`${id}: its focus ring and active-pane bar hold 3:1 on ${s} (${theme})`, () => {
           expect(contrast(tokens[focusToken(id)]![theme], tokens[s]![theme])).toBeGreaterThanOrEqual(3);
+        });
+      for (const s of SURFACES)
+        it(`${id}: its focus ring and active-pane bar hold 3:1 on ${s} in high contrast (${theme})`, () => {
+          expect(highContrast[s]![theme]).toBeDefined();
+          expect(contrast(highContrast[focusToken(id)]![theme], highContrast[s]![theme])).toBeGreaterThanOrEqual(3);
         });
     }
 });

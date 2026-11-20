@@ -7,10 +7,11 @@ import { FontPicker } from "../terminal/FontPicker";
 import { fontChoiceOf, fontStack, resolveTerminalFont } from "../terminal/terminalFont";
 import { appScheme, resolveTerminalTheme, type Scheme } from "../terminal/terminalTheme";
 import { addImported, removeImported } from "./appearanceEdits";
-import { useAppearance } from "./AppearanceProvider";
+import { CONTRAST_QUERY, useAppearance } from "./AppearanceProvider";
 import { blurAccent, commitAccent, draftsOf, pickPreset, refill, type Draft, type Drafts, type Field } from "./drafts";
 import { importThemeFile, MAX_THEME_FILE } from "./import/importTheme";
 import { schemesInFiles } from "./import/windowsTerminal";
+import { contrastMoreOf } from "./rootState";
 import { terminalThemeOf, wtFont } from "./terminalSettings";
 import "../settings/Settings.css";
 import "./AppearanceSections.css";
@@ -22,6 +23,8 @@ export type AppearanceViewState = {
   appearance: Appearance;
   /** The scheme the app shows now, for the terminal preview. */
   app: Scheme;
+  /** Whether High contrast is on, which gives the terminals true black or pure white. */
+  highContrast: boolean;
   wtFiles: FoundFile[] | null;
   error: { at: ErrorPlace; text: string } | null;
   accent: Draft;
@@ -175,7 +178,7 @@ export function AppearanceView({ state, handlers }: { state: AppearanceViewState
 export function TerminalView({ state, handlers }: { state: AppearanceViewState; handlers: AppearanceHandlers }) {
   const { appearance: a, error } = state;
   const ids = { themeHelp: useId(), size: useId(), sizeWhy: useId(), file: useId() };
-  const preview = resolveTerminalTheme({ ...terminalThemeOf(a, null), app: state.app }).theme;
+  const preview = resolveTerminalTheme({ ...terminalThemeOf(a, null), app: state.app, highContrast: state.highContrast }).theme;
   const font = resolveTerminalFont(a.terminal_font, wtFont(state.wtFiles ?? []));
   const { themes: found, note: skippedNote } = useMemo(() => schemesInFiles((state.wtFiles ?? []).map((f) => f.text)), [state.wtFiles]);
   const have = new Set(a.imported_themes.map((t) => t.id));
@@ -399,7 +402,7 @@ function useAppearanceSection(announce: ((text: string) => void) | undefined, on
     onClose,
   };
 
-  const state: AppearanceViewState = { appearance, app: appearance.theme === "follow-system" ? appScheme() : appearance.theme, wtFiles, error: error && at ? { at, text: error } : null, accent, size, importError };
+  const state: AppearanceViewState = { appearance, app: appearance.theme === "follow-system" ? appScheme() : appearance.theme, highContrast: contrastMoreOf(appearance.contrast, matchMedia(CONTRAST_QUERY).matches), wtFiles, error: error && at ? { at, text: error } : null, accent, size, importError };
   return { state, handlers };
 }
 

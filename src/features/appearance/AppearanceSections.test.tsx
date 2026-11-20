@@ -7,7 +7,7 @@ import { DEFAULT_APPEARANCE } from "./rootState";
 
 const noop = () => {};
 const handlers: AppearanceHandlers = { save: noop, onAccentText: noop, commitAccent: noop, blurAccent: noop, pickAccent: noop, pickFont: noop, onSizeText: noop, commitSize: noop, importFile: noop };
-const STATE: AppearanceViewState = { appearance: DEFAULT_APPEARANCE, app: "dark", wtFiles: [], error: null, accent: { text: "", reason: null }, size: { text: "13", reason: null }, importError: null };
+const STATE: AppearanceViewState = { appearance: DEFAULT_APPEARANCE, app: "dark", highContrast: false, wtFiles: [], error: null, accent: { text: "", reason: null }, size: { text: "13", reason: null }, importError: null };
 const appearanceHtml = (over: Partial<AppearanceViewState> = {}) => renderToStaticMarkup(<AppearanceView state={{ ...STATE, ...over }} handlers={handlers} />);
 const terminalHtml = (over: Partial<AppearanceViewState> = {}) => renderToStaticMarkup(<TerminalView state={{ ...STATE, ...over }} handlers={handlers} />);
 
@@ -65,6 +65,13 @@ describe("AppearanceView (the Appearance section)", () => {
 });
 
 describe("TerminalView (the Terminal section)", () => {
+  it("previews the terminal on true black or pure white with High contrast on, as the terminals draw it", () => {
+    expect(terminalHtml({ app: "dark", highContrast: true })).toContain("background:#000000");
+    expect(terminalHtml({ app: "light", highContrast: true })).toContain("background:#ffffff");
+    expect(terminalHtml({ app: "dark" })).not.toContain("background:#000000");
+    expect(terminalHtml({ app: "light" })).not.toContain("background:#ffffff");
+  });
+
   it("draws no dialog, page, h1, heading above its first field, Close button or live region", () => noShell(terminalHtml()));
 
   it("holds the terminal theme, font, size and imports, and nothing of the app", () => {

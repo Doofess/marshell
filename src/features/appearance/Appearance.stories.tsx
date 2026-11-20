@@ -11,6 +11,7 @@ const handlers: AppearanceHandlers = { save: noop, onAccentText: noop, commitAcc
 const state = (over: Partial<AppearanceViewState> = {}): AppearanceViewState => ({
   appearance: DEFAULT_APPEARANCE,
   app: "dark",
+  highContrast: false,
   wtFiles: [],
   error: null,
   accent: { text: "", reason: null },

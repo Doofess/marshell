@@ -25,7 +25,7 @@ export function useAppearance(): AppearanceContext {
   return useContext(Ctx);
 }
 
-const CONTRAST_QUERY = "(prefers-contrast: more)";
+export const CONTRAST_QUERY = "(prefers-contrast: more)";
 
 /** Loads the Appearance settings once and keeps the root element's theme, accent, contrast and text size in step with them. */
 export function AppearanceProvider({ children }: { children: ReactNode }) {

@@ -96,7 +96,8 @@ import type { HookInstall } from "../../generated/HookInstall";
 import type { AgentCatalog } from "../../generated/AgentCatalog";
 import { catalogApi } from "../../lib/api/catalog";
 import { offeredModes } from "../modes/sessionModes";
-import { useAppearance } from "../appearance/AppearanceProvider";
+import { CONTRAST_QUERY, useAppearance } from "../appearance/AppearanceProvider";
+import { contrastMoreOf } from "../appearance/rootState";
 import { listen } from "@tauri-apps/api/event";
 import { needsYouCount } from "../attention/attention";
 import { useAttention } from "../attention/useAttention";
@@ -115,7 +116,7 @@ import { jumpWords } from "../terminal/promptMarks";
 import { terminalFocusProps } from "../terminal/terminalFocus";
 import { resolveTerminalFont } from "../terminal/terminalFont";
 import { TerminalView, type TerminalThemeProp } from "../terminal/TerminalView";
-import { appHighContrast, appScheme, resolveTerminalTheme } from "../terminal/terminalTheme";
+import { appScheme, resolveTerminalTheme } from "../terminal/terminalTheme";
 import type { Notice } from "../window/announce";
 import { sidebarMode } from "../window/layout";
 import { MainWindow } from "../window/MainWindow";
@@ -1995,7 +1996,9 @@ export function LiveApp() {
   const paneActive = paneTabs.active ?? paneTabs.tabs[0]?.id ?? null;
   const paneTitles = tabTitles(paneTabs.tabs);
   const paneProjectNow = focusedRow?.projectKey ?? "";
-  const paneTheme = paneTabs.tabs.length > 0 ? resolveTerminalTheme({ ...themeFor(overrideOf(focusedId ?? "")), app: appScheme(), highContrast: appHighContrast() }).theme : undefined;
+  // From the setting, not the root's attribute: the root gets it in an effect, after the render that the change causes.
+  const paneHighContrast = paneTabs.tabs.length > 0 && contrastMoreOf(appearance.contrast, matchMedia(CONTRAST_QUERY).matches);
+  const paneTheme = paneTabs.tabs.length > 0 ? resolveTerminalTheme({ ...themeFor(overrideOf(focusedId ?? "")), app: appScheme(), highContrast: paneHighContrast }).theme : undefined;
   const paneRecent = recentFor(view.pane, paneProjectNow, paneSession ?? "");
   const openFromPane = () => {
     setFilesOnly(true);
