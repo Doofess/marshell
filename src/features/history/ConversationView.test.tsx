@@ -365,6 +365,20 @@ describe("ConversationView resume confirm and Fork", () => {
     expect(html(codex, { editor: "delete" })).toContain("Delete Marshell&#x27;s copy of “Fix the invoice rounding”? Codex&#x27;s own file is not touched.");
     for (const editor of [undefined, "rename", "delete"] as const) expect(html(codex, editor ? { editor } : {})).not.toContain("Claude Code");
   });
+  it("hides Fork for a Copilot CLI conversation", () => {
+    expect(html(conv([], { agent: "copilot" }))).not.toContain(">Fork<");
+    expect(html(conv([], { agent: "copilot" }))).toContain(">Resume<");
+  });
+  it("names Copilot CLI, not Claude Code, in a Copilot CLI conversation's notices and editors", () => {
+    const copilot = conv([], { agent: "copilot", limited: true, version: "1.0.200" });
+    expect(html(copilot)).toContain(
+      "Status limited: Copilot CLI 1.0.200 saved this conversation, and Marshell hasn&#x27;t been tested with that version. Some parts may be missing.",
+    );
+    expect(html({ ...copilot, version: undefined })).toContain("Status limited: this conversation has no Copilot CLI version, so some parts may be missing.");
+    expect(html(copilot, { editor: "rename" })).toContain("Leave empty to use the first prompt.");
+    expect(html(copilot, { editor: "delete" })).toContain("Copilot CLI&#x27;s own file is not touched.");
+    for (const editor of [undefined, "rename", "delete"] as const) expect(html(copilot, editor ? { editor } : {})).not.toContain("Claude Code");
+  });
   it("names Qwen Code, not Claude Code, in a Qwen Code conversation's notices and editors", () => {
     const qwen = conv([], { agent: "qwen", limited: true, version: "0.26.5" });
     expect(html(qwen)).toContain(

@@ -58,6 +58,22 @@ describe("editDiff", () => {
     expect([p.added, p.removed]).toEqual([2, 2]);
   });
 
+  it("uses the hunks of a card that holds a whole patch, as Copilot CLI's and Qwen Code's edits do", () => {
+    // Copilot CLI 1.0.106's recorded shape: a blank line, git's headers with the full path, one hunk, a last blank context line.
+    const copilot = ["", "diff --git a/C:/p/notes.txt b/C:/p/notes.txt", "index 0000000..0000000 100644", "--- a/C:/p/notes.txt", "+++ b/C:/p/notes.txt", "@@ -1,2 +1,2 @@", "-marshell", "+marshell edited", " ", ""].join("\n");
+    const qwen = ["Index: notes.txt", "=".repeat(67), "--- notes.txt\tCurrent", "+++ notes.txt\tProposed", "@@ -1,2 +1,2 @@", "-marshell", "+marshell edited", " ", ""].join("\n");
+    for (const detail of [copilot, qwen]) {
+      const p = parseUnifiedDiff(editDiff("notes.txt", card({ path: "notes.txt", detail })));
+      expect(p.files).toEqual(["notes.txt"]);
+      expect([p.added, p.removed]).toEqual([1, 1]);
+    }
+  });
+
+  it("keeps a line that starts with @@ but is no hunk header as a line", () => {
+    const p = parseUnifiedDiff(editDiff("a.rs", card({ path: "a.rs", detail: " @@ fn main\n-old\n+new" })));
+    expect([p.added, p.removed]).toEqual([1, 1]);
+  });
+
   it("marks every line of a created file as added", () => {
     const p = parseUnifiedDiff(editDiff("n.md", card({ path: "n.md", created: true, detail: "a\n\n-b" })));
     expect([p.added, p.removed]).toEqual([3, 0]);

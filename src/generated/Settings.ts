@@ -27,7 +27,7 @@ status_off: Array<string>,
  */
 notifications: NotifySettings, 
 /**
- * Whether Marshell keeps its own copy of the conversations Claude Code, Codex and Qwen Code ran outside it.
+ * Whether Marshell keeps its own copy of the conversations Claude Code, Codex, Qwen Code and Copilot CLI ran outside it.
  */
 history_import: boolean, 
 /**

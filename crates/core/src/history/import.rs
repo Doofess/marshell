@@ -1,7 +1,7 @@
-//! Copies the conversations Claude Code, Codex CLI and Qwen Code ran outside Marshell into the history archive.
+//! Copies the conversations Claude Code, Codex CLI, Qwen Code and Copilot CLI ran outside Marshell into the history archive.
 //!
 //! The importer owns one thread. It scans `<claude root>/<folder>/<uuid>.jsonl`,
-//! `<codex root>/YYYY/MM/DD/rollout-*.jsonl[.zst]` and `<qwen root>/<slug>/chats/<uuid>.jsonl`, watches the roots with `notify`, and rescans on a timer.
+//! `<codex root>/YYYY/MM/DD/rollout-*.jsonl[.zst]` and `<qwen root>/<slug>/chats/<uuid>.jsonl` and `<copilot root>/<uuid>/events.jsonl`, watches the roots with `notify`, and rescans on a timer.
 //! A file is copied once its size differs from the size last copied and has stayed the same for `settle`;
 //! the size, not the modification time, is the signal. Files are copied one at a time, newest first.
 //! The source folders are only ever read, and links in them are not followed.
@@ -10,6 +10,7 @@ use super::recorder::History;
 use super::{SessionMeta, archive, valid_session_id};
 use crate::agents::codex::rollout;
 use crate::agents::common::rfc3339_ms;
+use crate::agents::copilot;
 use crate::agents::qwen;
 use crate::{paths, store};
 use marshell_protocol::history::{Client, ImportStatus};
@@ -26,6 +27,7 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 const CLAUDE: &str = "claude";
 const CODEX: &str = "codex";
 const QWEN: &str = "qwen";
+const COPILOT: &str = "copilot";
 
 /// How much of a file's start is read to learn when it began.
 const HEAD_BYTES: u64 = 64 * 1024;
@@ -36,11 +38,13 @@ pub struct ImportRoots {
     pub claude: Option<PathBuf>,
     pub codex: Option<PathBuf>,
     pub qwen: Option<PathBuf>,
+    pub copilot: Option<PathBuf>,
 }
 
 /// Claude Code's `projects` folder is `$CLAUDE_CONFIG_DIR/projects`, else `<home>/.claude/projects`; Codex's
 /// `sessions` folder is `$CODEX_HOME/sessions`, else `<home>/.codex/sessions`; Qwen Code's `projects` folder is
-/// `$QWEN_RUNTIME_DIR/projects` when that is set and not blank (a leading `~` is the home), else `<Qwen home>/projects` (`agents::qwen::home`).
+/// `$QWEN_RUNTIME_DIR/projects` when that is set and not blank (a leading `~` is the home), else `<Qwen home>/projects` (`agents::qwen::home`);
+/// Copilot CLI's `session-state` folder is `<Copilot home>/session-state` (`agents::copilot::home`, which follows `COPILOT_HOME`).
 pub fn import_roots(env: impl Fn(&str) -> Option<String>, user_home: &Path) -> ImportRoots {
     let from = |var: &str, default: &str, leaf: &str| {
         match env(var).map(PathBuf::from).filter(|p| !p.as_os_str().is_empty()) {
@@ -62,6 +66,7 @@ pub fn import_roots(env: impl Fn(&str) -> Option<String>, user_home: &Path) -> I
                 )
                 .join("projects"),
         ),
+        copilot: Some(crate::agents::copilot::home(&env, user_home).join("session-state")),
     }
 }
 
@@ -263,6 +268,7 @@ enum Kind {
     Claude,
     Codex,
     Qwen,
+    Copilot,
 }
 
 impl Kind {
@@ -271,6 +277,7 @@ impl Kind {
             Kind::Claude => CLAUDE,
             Kind::Codex => CODEX,
             Kind::Qwen => QWEN,
+            Kind::Copilot => COPILOT,
         }
     }
 }
@@ -341,11 +348,12 @@ impl Worker {
         }
     }
 
-    fn roots(&self) -> [(Kind, Option<&Path>); 3] {
+    fn roots(&self) -> [(Kind, Option<&Path>); 4] {
         [
             (Kind::Claude, self.roots.claude.as_deref()),
             (Kind::Codex, self.roots.codex.as_deref()),
             (Kind::Qwen, self.roots.qwen.as_deref()),
+            (Kind::Copilot, self.roots.copilot.as_deref()),
         ]
     }
 
@@ -619,6 +627,9 @@ fn qwen_file(name: &str) -> bool {
     name.strip_suffix(".jsonl").is_some_and(is_uuid)
 }
 
+/// Copilot CLI's event log: the one file of a session folder that is copied.
+const COPILOT_LOG: &str = "events.jsonl";
+
 fn digits(name: &str, len: usize) -> bool {
     name.len() == len && name.bytes().all(|b| b.is_ascii_digit())
 }
@@ -647,6 +658,13 @@ fn candidates(kind: Kind, root: &Path) -> Vec<PathBuf> {
                 for chats in plain_dirs(&project, |n| n == "chats") {
                     found.extend(plain_files(&chats, qwen_file));
                 }
+            }
+        }
+        Kind::Copilot => {
+            // One folder per session, named by its UUID; only its event log is a candidate, never the other files
+            // (`workspace.yaml`, `checkpoints/`) and never a log any deeper.
+            for session in plain_dirs(root, is_uuid) {
+                found.extend(plain_files(&session, |n| n == COPILOT_LOG));
             }
         }
     }
@@ -696,6 +714,7 @@ fn classify(roots: &ImportRoots, path: &Path) -> Option<Kind> {
             (Kind::Claude, [_, file]) => claude_file(file),
             (Kind::Codex, [y, m, d, file]) => digits(y, 4) && digits(m, 2) && digits(d, 2) && codex_file(file),
             (Kind::Qwen, [_, chats, file]) => chats == "chats" && qwen_file(file),
+            (Kind::Copilot, [session, file]) => is_uuid(session) && file == COPILOT_LOG,
             _ => false,
         };
         let Some(root) = root else {
@@ -715,6 +734,8 @@ fn classify(roots: &ImportRoots, path: &Path) -> Option<Kind> {
         Some(Kind::Codex)
     } else if shaped(&roots.qwen, Kind::Qwen) {
         Some(Kind::Qwen)
+    } else if shaped(&roots.copilot, Kind::Copilot) {
+        Some(Kind::Copilot)
     } else {
         None
     }
@@ -760,6 +781,7 @@ fn prepare(kind: Kind, path: &Path, text: &str, md: &std::fs::Metadata) -> Prepa
         Kind::Claude => claude_meta(path, text, md),
         Kind::Codex => codex_meta(path, text, md),
         Kind::Qwen => qwen_meta(path, text, md),
+        Kind::Copilot => copilot_meta(path, text, md),
     }
 }
 
@@ -887,6 +909,44 @@ fn qwen_meta(path: &Path, text: &str, md: &std::fs::Metadata) -> Prepared {
     }))
 }
 
+/// A Copilot event log is copied only when its folder's name is a UUID that its `session.start` event's `sessionId`
+/// repeats. Nothing in a log tells a headless run from an interactive one, so the client is `Terminal`; a session the
+/// hooks linked to a tab keeps its tab and its client (`Marshell`) when the copy is written.
+fn copilot_meta(path: &Path, text: &str, md: &std::fs::Metadata) -> Prepared {
+    let Some(name) = path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .filter(|id| is_uuid(id) && valid_session_id(id))
+    else {
+        return Prepared::Skip(COPILOT);
+    };
+    let Some(meta) = copilot::transcript::meta(text).filter(|meta| meta.id == name) else {
+        return Prepared::Skip(COPILOT);
+    };
+    let started_ms = if meta.started_ms == 0 {
+        modified_ms(md)
+    } else {
+        meta.started_ms
+    };
+    // The last line may be half written; the last one that parses gives the time.
+    let updated_ms = text.lines().rev().find_map(line_time).unwrap_or(started_ms);
+    Prepared::Copy(Box::new(SessionMeta {
+        agent: COPILOT.into(),
+        session_id: meta.id,
+        tab_id: String::new(),
+        cwd: meta.cwd,
+        transcript_path: path.to_string_lossy().into_owned(),
+        started_ms,
+        updated_ms: updated_ms.max(started_ms),
+        previous_in_tab: None,
+        recordings: Vec::new(),
+        client: meta.client,
+        preset: None,
+        distro: None,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -915,6 +975,17 @@ mod tests {
     const QWEN_CHAT_D: &str =
         include_str!("../../tests/fixtures/qwen/transcripts/0.26.5/00000000-0000-4000-8000-000000000059.jsonl");
 
+    /// Real event logs from Copilot CLI 1.0.106 (scrubbed); each file is named by the sessionId inside it.
+    const COPILOT_A: &str = "00000000-0000-4000-8000-000000000001";
+    const COPILOT_B: &str = "00000000-0000-4000-8000-000000000026";
+    const COPILOT_C: &str = "00000000-0000-4000-8000-000000000047";
+    const COPILOT_LOG_A: &str =
+        include_str!("../../tests/fixtures/copilot/transcripts/1.0.106/00000000-0000-4000-8000-000000000001.jsonl");
+    const COPILOT_LOG_B: &str =
+        include_str!("../../tests/fixtures/copilot/transcripts/1.0.106/00000000-0000-4000-8000-000000000026.jsonl");
+    const COPILOT_LOG_C: &str =
+        include_str!("../../tests/fixtures/copilot/transcripts/1.0.106/00000000-0000-4000-8000-000000000047.jsonl");
+
     const FAST: Timing = Timing {
         settle: Duration::from_millis(100),
         rescan: Duration::from_millis(300),
@@ -925,6 +996,7 @@ mod tests {
         claude: tempfile::TempDir,
         codex: tempfile::TempDir,
         qwen: tempfile::TempDir,
+        copilot: tempfile::TempDir,
         history: Arc<History>,
     }
 
@@ -934,11 +1006,14 @@ mod tests {
         assert!(history.is_on());
         let qwen = tempfile::tempdir().unwrap();
         std::fs::create_dir(qwen.path().join("projects")).unwrap();
+        let copilot = tempfile::tempdir().unwrap();
+        std::fs::create_dir(copilot.path().join("session-state")).unwrap();
         Rig {
             home,
             claude: tempfile::tempdir().unwrap(),
             codex: tempfile::tempdir().unwrap(),
             qwen,
+            copilot,
             history,
         }
     }
@@ -949,6 +1024,7 @@ mod tests {
                 claude: Some(self.claude.path().to_path_buf()),
                 codex: Some(self.codex.path().to_path_buf()),
                 qwen: Some(self.qwen_root()),
+                copilot: Some(self.copilot_root()),
             }
         }
 
@@ -991,6 +1067,16 @@ mod tests {
         /// The importer's Qwen root, a `projects` folder (the hook path only trusts a transcript under one).
         fn qwen_root(&self) -> PathBuf {
             self.qwen.path().join("projects")
+        }
+
+        /// Where Copilot CLI keeps a session's event log: `<copilot home>/session-state/<id>/events.jsonl`.
+        fn copilot_path(&self, id: &str) -> PathBuf {
+            self.copilot_root().join(id).join("events.jsonl")
+        }
+
+        /// The importer's Copilot root, the `session-state` folder under a stand-in for Copilot's home.
+        fn copilot_root(&self) -> PathBuf {
+            self.copilot.path().join("session-state")
         }
     }
 
@@ -1298,6 +1384,232 @@ mod tests {
             rig.archived("qwen", QWEN_A) == Some(text.clone())
         });
         assert!(rig.history.get("qwen", QWEN_A).unwrap().is_some());
+    }
+
+    fn write_copilot(rig: &Rig, id: &str, text: &str) -> PathBuf {
+        let path = rig.copilot_path(id);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, text).unwrap();
+        path
+    }
+
+    #[test]
+    fn copilot_root_follows_copilot_home() {
+        let home = Path::new("home");
+        let root = |pairs: &'static [(&'static str, &'static str)]| {
+            import_roots(
+                move |k| pairs.iter().find(|(name, _)| *name == k).map(|(_, v)| (*v).to_string()),
+                home,
+            )
+            .copilot
+        };
+        assert_eq!(root(&[]), Some(home.join(".copilot").join("session-state")));
+        assert_eq!(
+            root(&[("COPILOT_HOME", "cp")]),
+            Some(Path::new("cp").join("session-state"))
+        );
+        for blank in ["", "  "] {
+            let roots = import_roots(|k| (k == "COPILOT_HOME").then(|| blank.to_string()), home);
+            assert_eq!(
+                roots.copilot,
+                Some(home.join(".copilot").join("session-state")),
+                "{blank:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_copilot_event_log_is_copied_once_settled() {
+        let rig = rig();
+        // The first scan of a first run takes files as it finds them, so it takes another log first; after that
+        // the importer waits for a file to stop growing.
+        write_copilot(&rig, COPILOT_B, COPILOT_LOG_B);
+        let importer = rig.start(
+            true,
+            Timing {
+                settle: Duration::from_millis(400),
+                rescan: Duration::from_millis(100),
+            },
+        );
+        wait_for("the first log", || rig.archived("copilot", COPILOT_B).is_some());
+        let bytes = COPILOT_LOG_A.as_bytes();
+        let path = rig.copilot_path(COPILOT_A);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // The other files of a session folder are never copied.
+        std::fs::write(path.with_file_name("workspace.yaml"), "id: x\n").unwrap();
+        // Growing faster than it settles, each write cutting a line in two: no copy yet.
+        let steps = 8;
+        for step in 1..steps {
+            std::fs::write(&path, &bytes[..bytes.len() * step / steps - 7]).unwrap();
+            std::thread::sleep(Duration::from_millis(50));
+            assert!(
+                rig.archived("copilot", COPILOT_A).is_none(),
+                "copied while still growing"
+            );
+        }
+        std::fs::write(&path, bytes).unwrap();
+        wait_for("the copy of the settled log", || {
+            rig.archived("copilot", COPILOT_A).as_deref() == Some(COPILOT_LOG_A)
+        });
+        wait_idle(&importer, 1);
+        let meta = rig.sidecar("copilot", COPILOT_A).unwrap();
+        assert_eq!(meta.agent, "copilot");
+        assert_eq!(meta.client, Client::Terminal, "nothing in a log tells a headless run");
+        assert_eq!(meta.tab_id, "");
+        assert_eq!(meta.started_ms, rfc3339_ms("2026-11-20T16:32:58.081Z").unwrap());
+        assert!(meta.updated_ms > meta.started_ms);
+        assert!(meta.cwd.contains("copilot-6n2-t1"), "{}", meta.cwd);
+        assert_eq!(meta.transcript_path, path.to_string_lossy());
+        let row = rig.history.get("copilot", COPILOT_A).unwrap().unwrap();
+        assert_eq!((row.tab_id.as_str(), row.client), ("", Client::Terminal));
+        let state: StateDoc = store::read(&rig.home.path().join("history").join("import.json"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(state.files.len(), 2, "{:?}", state.files.keys().collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_session_folder_with_another_name_or_without_an_event_log_is_not_copied() {
+        let rig = rig();
+        write_copilot(&rig, COPILOT_A, COPILOT_LOG_A);
+        // A folder that is no UUID, holding a log whose session id is a good one.
+        write_copilot(&rig, "not-a-uuid", COPILOT_LOG_B);
+        // A UUID folder holding only Copilot's other files, and a log one level too deep.
+        let bare = rig.copilot_root().join(COPILOT_B);
+        std::fs::create_dir_all(&bare).unwrap();
+        std::fs::write(bare.join("workspace.yaml"), "id: x\n").unwrap();
+        let deep = rig.copilot_root().join(COPILOT_C).join("checkpoints");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("events.jsonl"), COPILOT_LOG_C).unwrap();
+        // A log directly under the root, and a log with another name in a session folder.
+        std::fs::write(rig.copilot_root().join("events.jsonl"), COPILOT_LOG_B).unwrap();
+        std::fs::write(
+            rig.copilot_path(COPILOT_A).with_file_name("events.jsonl.bak"),
+            COPILOT_LOG_B,
+        )
+        .unwrap();
+        let importer = rig.start(true, FAST);
+        wait_idle(&importer, 1);
+        std::thread::sleep(FAST.rescan * 2);
+        assert_eq!(rig.archived("copilot", COPILOT_A).as_deref(), Some(COPILOT_LOG_A));
+        for id in [COPILOT_B, COPILOT_C] {
+            assert!(rig.archived("copilot", id).is_none(), "{id}");
+            assert!(rig.history.get("copilot", id).unwrap().is_none(), "{id}");
+        }
+        let state: StateDoc = store::read(&rig.home.path().join("history").join("import.json"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(state.files.len(), 1, "{:?}", state.files.keys().collect::<Vec<_>>());
+        assert_eq!(importer.status().total, 1);
+    }
+
+    #[test]
+    fn a_copilot_log_whose_session_id_differs_from_its_folder_is_not_copied() {
+        let rig = rig();
+        write_copilot(&rig, COPILOT_A, COPILOT_LOG_A);
+        // A UUID folder whose log names another session.
+        let other = "00000000-0000-4000-8000-0000000000aa";
+        write_copilot(&rig, other, COPILOT_LOG_B);
+        let importer = rig.start(true, FAST);
+        // The log and the one whose events disagree with its folder are the only candidates.
+        wait_idle(&importer, 2);
+        std::thread::sleep(FAST.rescan * 2);
+        assert_eq!(rig.archived("copilot", COPILOT_A).as_deref(), Some(COPILOT_LOG_A));
+        for id in [other, COPILOT_B] {
+            assert!(rig.archived("copilot", id).is_none(), "{id}");
+            assert!(rig.history.get("copilot", id).unwrap().is_none(), "{id}");
+        }
+        let state: StateDoc = store::read(&rig.home.path().join("history").join("import.json"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(state.files.len(), 2, "{:?}", state.files.keys().collect::<Vec<_>>());
+        assert!(state.files.values().any(|c| c.session_id.is_empty()));
+    }
+
+    #[test]
+    fn a_copilot_session_linked_by_hooks_keeps_its_tab_when_imported() {
+        for note_first in [true, false] {
+            let rig = rig();
+            let path = write_copilot(&rig, COPILOT_A, COPILOT_LOG_A);
+            let hook = crate::agents::copilot::link_body(
+                &json!({"sessionId": COPILOT_A, "cwd": "C:/work/demo", "hook_event_name": "sessionStart"}),
+                rig.copilot.path(),
+            )
+            .unwrap();
+            assert_eq!(hook["transcript_path"], path.to_string_lossy().as_ref());
+            let note = || {
+                assert!(
+                    rig.history
+                        .note_event("copilot", "t1", None, &hook, 1000, None)
+                        .is_none()
+                );
+            };
+            if note_first {
+                note();
+            }
+            let importer = rig.start(true, FAST);
+            wait_for("the import", || rig.archived("copilot", COPILOT_A).is_some());
+            wait_idle(&importer, 1);
+            if !note_first {
+                note();
+            }
+            let meta = rig.sidecar("copilot", COPILOT_A).unwrap();
+            assert_eq!(
+                (meta.tab_id.as_str(), meta.client),
+                ("t1", Client::Marshell),
+                "{note_first}"
+            );
+            let row = rig.history.get("copilot", COPILOT_A).unwrap().unwrap();
+            assert_eq!(
+                (row.tab_id.as_str(), row.client),
+                ("t1", Client::Marshell),
+                "{note_first}"
+            );
+            // One row in History, with its tab and the id to resume by.
+            let listed = rig.history.list(&HistoryQuery::default()).unwrap();
+            assert_eq!(listed.len(), 1, "{listed:?}");
+            assert_eq!(
+                (
+                    listed[0].agent.as_str(),
+                    listed[0].session_id.as_str(),
+                    listed[0].tab_id.as_str()
+                ),
+                ("copilot", COPILOT_A, "t1")
+            );
+            assert_eq!(listed[0].client, Client::Marshell);
+        }
+    }
+
+    #[test]
+    fn a_deleted_copilot_copy_stays_deleted_until_the_log_grows() {
+        let rig = rig();
+        let path = write_copilot(&rig, COPILOT_A, COPILOT_LOG_A);
+        let importer = rig.start(true, FAST);
+        wait_idle(&importer, 1);
+        assert!(rig.archived("copilot", COPILOT_A).is_some());
+        rig.history.delete_copy("copilot", COPILOT_A).unwrap();
+        assert!(rig.archived("copilot", COPILOT_A).is_none());
+        std::thread::sleep(FAST.rescan * 4);
+        assert!(rig.archived("copilot", COPILOT_A).is_none());
+        assert!(rig.history.get("copilot", COPILOT_A).unwrap().is_none());
+        // The session goes on: one more event, and it is copied again.
+        let mut text = COPILOT_LOG_A.to_string();
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(
+            &json!({
+                "type": "user.message", "data": { "content": "and again" },
+                "id": "00000000-0000-4000-8000-0000000000f1", "timestamp": "2026-11-20T16:40:00.000Z",
+            })
+            .to_string(),
+        );
+        text.push('\n');
+        std::fs::write(&path, &text).unwrap();
+        wait_for("the copy after growth", || {
+            rig.archived("copilot", COPILOT_A) == Some(text.clone())
+        });
+        assert!(rig.history.get("copilot", COPILOT_A).unwrap().is_some());
     }
 
     #[test]
@@ -1674,6 +1986,7 @@ mod tests {
             claude: Some(missing.clone()),
             codex: None,
             qwen: None,
+            copilot: None,
         };
         let importer = Importer::start_with(rig.history.clone(), roots, true, FAST);
         std::thread::sleep(FAST.rescan * 2);
