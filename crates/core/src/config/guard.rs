@@ -1,9 +1,10 @@
 //! Which paths the config service may write. Only the user's home folder, a project folder,
 //! `<marshell home>/agents` and the agent folders of a WSL distro whose home was looked up are open.
 //! Managed and organization paths are always refused, and so is the rest of the Marshell home.
-//! Elevation is never run.
+//! The folder a CLI's home variable names is open too, unless it holds the user profile or Marshell's home: such a
+//! variable opens nothing, and the refusal names it. Elevation is never run.
 
-use crate::projects::{canonical, is_inside};
+use crate::projects::{canonical, is_inside, same_path};
 use std::path::{Component, Path, PathBuf};
 
 /// File names an organization uses to manage a CLI. They are refused wherever they are.
@@ -37,6 +38,9 @@ pub struct Guard {
     distro_homes: Vec<(String, String)>,
     denied: Vec<PathBuf>,
     marshell_home: PathBuf,
+    /// The home variables refused for naming a folder that holds the profile or Marshell's home. They open nothing;
+    /// they are kept so a refusal can name the variable (`wide_home_of`).
+    wide: Vec<WideHome>,
 }
 
 impl Guard {
@@ -46,13 +50,15 @@ impl Guard {
             distro_homes: Vec::new(),
             denied: denied.iter().map(|p| canonical(p)).collect(),
             marshell_home: canonical(&marshell_home),
+            wide: Vec::new(),
         }
     }
 
     /// Allowed: the user's home (`dirs::home_dir`), every folder in `projects.json` and `<home>/agents`.
     /// A drive root in `projects.json` is skipped, also when it is spelt `C:\x\..` or reached through
     /// a link: it would open the whole drive.
-    /// Also allowed: the folder each CLI's home variable names (`moved_agent_homes`).
+    /// Also allowed: the folder each CLI's home variable names (`agent_homes`), except a folder that holds the user
+    /// profile or Marshell's home: it opens nothing, and a refusal under it names the variable (`wide_home_of`).
     /// Denied: `denied_for_os()`. The project list is read once, here.
     pub fn for_home(home: &Path) -> Self {
         let mut allowed: Vec<PathBuf> = dirs::home_dir().into_iter().collect();
@@ -63,8 +69,33 @@ impl Guard {
                 .filter(|p| !crate::projects::is_root(&canonical(p))),
         );
         allowed.push(home.join("agents"));
-        allowed.extend(moved_agent_homes(&|k| std::env::var(k).ok()));
-        Self::new(allowed, denied_for_os(), home.to_path_buf())
+        let homes = agent_homes(&|k| std::env::var(k).ok(), home);
+        allowed.extend(homes.open);
+        Self::new(allowed, denied_for_os(), home.to_path_buf()).with_wide_homes(homes.wide)
+    }
+
+    /// Records the home variables the guard refused for being wide, so `wide_home_of` can name them. They open nothing.
+    pub fn with_wide_homes(mut self, wide: Vec<WideHome>) -> Self {
+        self.wide = wide;
+        self
+    }
+
+    /// The refused home variable whose folder `path` is in, if any. None for a path inside an allowed folder (as
+    /// `check` tests it, on the path as written), so a path the guard opens never blames a variable. Otherwise the
+    /// first wide home that holds the path by its text, or by where the path really is, so a file that doesn't exist
+    /// yet under a link to the wide folder is still found.
+    pub fn wide_home_of(&self, path: &Path) -> Option<&WideHome> {
+        let text = path.to_string_lossy();
+        if self.allowed.iter().any(|a| is_inside(&text, &a.to_string_lossy())) {
+            return None;
+        }
+        let resolved = resolve(path).ok();
+        self.wide.iter().find(|wide| {
+            text_inside(path, &wide.folder)
+                || resolved
+                    .as_ref()
+                    .is_some_and(|r| is_inside(&r.to_string_lossy(), &wide.folder.to_string_lossy()))
+        })
     }
 
     /// Also opens `.claude`, `.codex`, `.gemini`, `.qwen` and `.copilot` in each of these distro homes, and nothing else in the distro.
@@ -115,14 +146,31 @@ impl Guard {
     }
 }
 
+/// What the folder of a refused home variable holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Holds {
+    Profile,
+    MarshellHome,
+}
+
+/// A home variable that opens nothing because its folder holds the user profile or Marshell's home.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WideHome {
+    pub variable: &'static str,
+    /// The folder as the variable spells it (after the CLI adapter's own reading, so Qwen Code's `~` is expanded).
+    pub folder: PathBuf,
+    pub holds: Holds,
+}
+
+/// The folders the home variables open, and the variables refused for being wide.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct AgentHomes {
+    pub open: Vec<PathBuf>,
+    pub wide: Vec<WideHome>,
+}
+
 /// The folder each of `COPILOT_HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `QWEN_HOME` names, for a CLI whose home its
-/// variable moves. A variable adds its folder only when it is set, not blank, absolute, free of `..` and not a drive
-/// root; one that fails adds nothing and the others still count. The value is read by the CLI's own adapter code, so the
-/// guard opens the folder the adapter writes to and no other. A `~` form of `QWEN_HOME` is read against the user's home,
-/// and with no known home it stays relative and adds nothing. On Windows the folder must be on a drive of the PC: a
-/// network share adds nothing, and neither does a WSL distro's share, whose agent folders have their own rule
-/// (`with_distro_homes`). That holds for the path as it is written and for where it really is, so a drive letter
-/// mapped to a share and a link that leads into one add nothing either.
+/// variable moves, as `agent_homes` gives them, with no Marshell home to protect. See `agent_homes` for the rule.
 pub fn moved_agent_homes(env: &dyn Fn(&str) -> Option<String>) -> Vec<PathBuf> {
     moved_agent_homes_as(env, &canonical)
 }
@@ -130,37 +178,163 @@ pub fn moved_agent_homes(env: &dyn Fn(&str) -> Option<String>) -> Vec<PathBuf> {
 /// `moved_agent_homes`, with the lookup of where a folder really is passed in, so a test can stand in for a mapped
 /// drive or a link.
 fn moved_agent_homes_as(env: &dyn Fn(&str) -> Option<String>, resolve: &dyn Fn(&Path) -> PathBuf) -> Vec<PathBuf> {
+    agent_homes_as(env, resolve, &profiles_of(env), None).open
+}
+
+/// The folder each of `COPILOT_HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `QWEN_HOME` names, for a CLI whose home its
+/// variable moves. A variable counts only when it is set, not blank, absolute and free of `..`; one that fails adds
+/// nothing and the others still count. The value is read by the CLI's own adapter code, so the guard opens the folder
+/// the adapter writes to and no other. A `~` form of `QWEN_HOME` is read against the user's home, and with no known
+/// home it stays relative and adds nothing. On Windows the folder must be on a drive of the PC: a network share adds
+/// nothing, and neither does a WSL distro's share, whose agent folders have their own rule (`with_distro_homes`). That
+/// holds for the path as it is written and for where it really is, so a drive letter mapped to a share and a link that
+/// leads into one add nothing either.
+///
+/// A folder that holds the user profile (both spellings: `dirs::home_dir` and `USERPROFILE`, or `HOME` elsewhere) or
+/// Marshell's home opens nothing and is recorded in `wide`, so a refusal can name the variable. The profile itself
+/// and the folders inside it are not wide: the guard opens the profile anyway. A drive root adds nothing, and is
+/// recorded only when it holds the profile or Marshell's home.
+pub fn agent_homes(env: &dyn Fn(&str) -> Option<String>, marshell_home: &Path) -> AgentHomes {
+    agent_homes_as(env, &canonical, &profiles_of(env), Some(marshell_home))
+}
+
+/// Both spellings of the user profile, each once: where the OS says it is, and what the CLI adapters read.
+fn profiles_of(env: &dyn Fn(&str) -> Option<String>) -> Vec<PathBuf> {
+    let named = env(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from);
+    let mut profiles: Vec<PathBuf> = Vec::new();
+    for profile in dirs::home_dir().into_iter().chain(named) {
+        let text = profile.to_string_lossy();
+        if !profiles.iter().any(|p| same_path(&p.to_string_lossy(), &text)) {
+            profiles.push(profile);
+        }
+    }
+    profiles
+}
+
+/// `agent_homes`, with the lookup of where a folder really is and the profiles passed in, so a test can stand in for a
+/// mapped drive, a link or a profile on another drive.
+fn agent_homes_as(
+    env: &dyn Fn(&str) -> Option<String>,
+    resolve: &dyn Fn(&Path) -> PathBuf,
+    profiles: &[PathBuf],
+    marshell_home: Option<&Path>,
+) -> AgentHomes {
     use crate::agents::{codex, copilot, qwen, skill};
     let user_home = dirs::home_dir().unwrap_or_default();
     let set = |name: &str| env(name).is_some_and(|v| !v.trim().is_empty());
     let candidates = [
-        set("COPILOT_HOME").then(|| copilot::home(env, &user_home)),
-        set("CLAUDE_CONFIG_DIR")
-            .then(|| skill::skill_path("claude", env, &user_home))
-            .flatten()
-            // `<dir>/skills/marshell/SKILL.md`: three levels up is the folder itself.
-            .and_then(|file| file.ancestors().nth(3).map(Path::to_path_buf)),
-        set("CODEX_HOME")
-            .then(|| {
-                codex::hooks::hooks_path(env, &user_home)
-                    .parent()
-                    .map(Path::to_path_buf)
-            })
-            .flatten(),
-        set("QWEN_HOME").then(|| qwen::home(env, &user_home)),
+        (
+            "COPILOT_HOME",
+            set("COPILOT_HOME").then(|| copilot::home(env, &user_home)),
+        ),
+        (
+            "CLAUDE_CONFIG_DIR",
+            set("CLAUDE_CONFIG_DIR")
+                .then(|| skill::skill_path("claude", env, &user_home))
+                .flatten()
+                // `<dir>/skills/marshell/SKILL.md`: three levels up is the folder itself.
+                .and_then(|file| file.ancestors().nth(3).map(Path::to_path_buf)),
+        ),
+        (
+            "CODEX_HOME",
+            set("CODEX_HOME")
+                .then(|| {
+                    codex::hooks::hooks_path(env, &user_home)
+                        .parent()
+                        .map(Path::to_path_buf)
+                })
+                .flatten(),
+        ),
+        ("QWEN_HOME", set("QWEN_HOME").then(|| qwen::home(env, &user_home))),
     ];
-    candidates
-        .into_iter()
-        .flatten()
-        .filter(|folder| {
-            let real = resolve(folder);
-            folder.is_absolute()
-                && on_a_drive(folder)
-                && on_a_drive(&real)
-                && !folder.components().any(|c| c == Component::ParentDir)
-                && !crate::projects::is_root(&real)
-        })
-        .collect()
+    let mut homes = AgentHomes::default();
+    for (variable, folder) in candidates {
+        let Some(folder) = folder else { continue };
+        let real = resolve(&folder);
+        let usable = folder.is_absolute()
+            && on_a_drive(&folder)
+            && on_a_drive(&real)
+            && !folder.components().any(|c| c == Component::ParentDir);
+        if !usable {
+            continue;
+        }
+        // 1. The profile itself adds nothing and stays open: the guard opens the whole profile whatever a variable says.
+        let is_profile = profiles.iter().any(|p| is_folder(&folder, resolve, p));
+        let holds = if is_profile {
+            None
+        } else if profiles.iter().any(|p| holds_folder(&folder, resolve, p)) {
+            // 2.
+            Some(Holds::Profile)
+        } else if marshell_home.is_some_and(|m| holds_folder(&folder, resolve, m)) {
+            // 3.
+            Some(Holds::MarshellHome)
+        } else {
+            None
+        };
+        match holds {
+            Some(holds) => homes.wide.push(WideHome {
+                variable,
+                folder,
+                holds,
+            }),
+            // 4. A drive root adds nothing.
+            None if crate::projects::is_root(&real) => {}
+            None => homes.open.push(folder),
+        }
+    }
+    homes
+}
+
+/// The path text with `.` and `..` folded and every separator spelt `\` on Windows, without touching the disk.
+fn tidy_text(path: &Path) -> String {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::CurDir => {}
+            other => out.push(other),
+        }
+    }
+    out.to_string_lossy().into_owned()
+}
+
+/// Whether `path` is `folder` or in it by the text of the two alone, which `projects::is_inside` is when neither side is
+/// on the disk: trailing separators are dropped, case is folded on Windows, and what follows the folder's text is a
+/// separator (`task-2` is not in `task`). Nothing is resolved, so it holds for a folder that is a link or is gone.
+fn text_inside(path: &Path, folder: &Path) -> bool {
+    let fold = |text: String| if cfg!(windows) { text.to_ascii_lowercase() } else { text };
+    let (path, folder) = (fold(tidy_text(path)), fold(tidy_text(folder)));
+    if same_path(&path, &folder) {
+        return true;
+    }
+    path.strip_prefix(folder.trim_end_matches(['/', '\\']))
+        .is_some_and(|rest| rest.starts_with(['/', '\\']))
+}
+
+/// Whether `folder` is the folder `other`: the same text, or the same text once `folder` is resolved, or each is
+/// inside the other (`is_inside` resolves a side that exists, and a folder can be a link to another).
+fn is_folder(folder: &Path, resolve: &dyn Fn(&Path) -> PathBuf, other: &Path) -> bool {
+    let (folder_text, other_text) = (folder.to_string_lossy(), other.to_string_lossy());
+    same_path(&folder_text, &other_text)
+        || same_path(&resolve(folder).to_string_lossy(), &other_text)
+        || (is_inside(&folder_text, &other_text) && is_inside(&other_text, &folder_text))
+}
+
+/// Whether `folder` holds `other` from above: it is not `other` and `other` is in it, by the text of the two, by where
+/// they are on disk, or by where `folder` really is (a link).
+fn holds_folder(folder: &Path, resolve: &dyn Fn(&Path) -> PathBuf, other: &Path) -> bool {
+    if is_folder(folder, resolve, other) {
+        return false;
+    }
+    let other_text = other.to_string_lossy();
+    text_inside(other, folder)
+        || is_inside(&other_text, &folder.to_string_lossy())
+        || is_inside(&other_text, &resolve(folder).to_string_lossy())
 }
 
 /// True on Windows for a path that starts with a drive letter (`D:\x`): not a share (`\\server\share\x`, a WSL
@@ -795,5 +969,221 @@ mod tests {
             moved_agent_homes_as(&vars(&[("COPILOT_HOME", r"D:\w\cp")]), &really),
             vec![PathBuf::from(r"D:\w\cp")]
         );
+    }
+
+    // ---- a home variable that names a folder holding the profile or Marshell's home (slice 6s) ----
+
+    const HOME_VARIABLES: [&str; 4] = ["COPILOT_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "QWEN_HOME"];
+
+    /// `agent_homes_as` with nothing resolved (a folder is where its text says) and Marshell's home at `D:\m\home`.
+    #[cfg(windows)]
+    fn homes_of(pairs: &[(&str, &str)], profiles: &[&str]) -> AgentHomes {
+        let profiles: Vec<PathBuf> = profiles.iter().map(PathBuf::from).collect();
+        agent_homes_as(
+            &vars(pairs),
+            &|p| p.to_path_buf(),
+            &profiles,
+            Some(Path::new(r"D:\m\home")),
+        )
+    }
+
+    #[cfg(windows)]
+    fn wide(variable: &'static str, folder: &str, holds: Holds) -> WideHome {
+        WideHome {
+            variable,
+            folder: PathBuf::from(folder),
+            holds,
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_home_variable_that_holds_the_profile_opens_nothing() {
+        for name in HOME_VARIABLES {
+            let homes = homes_of(&[(name, r"D:\u")], &[r"D:\u\me"]);
+            assert!(homes.open.is_empty(), "{name}");
+            assert_eq!(homes.wide, vec![wide(name, r"D:\u", Holds::Profile)], "{name}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_profile_itself_and_a_folder_in_it_stay_open() {
+        let given = [("CODEX_HOME", r"D:\u\me"), ("COPILOT_HOME", r"D:\u\me\.copilot")];
+        let homes = homes_of(&given, &[r"D:\u\me"]);
+        assert_eq!(
+            homes.open,
+            vec![PathBuf::from(r"D:\u\me\.copilot"), PathBuf::from(r"D:\u\me")]
+        );
+        assert!(homes.wide.is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_home_variable_that_holds_marshells_home_opens_nothing() {
+        let homes = homes_of(&[("CODEX_HOME", r"D:\m")], &[r"D:\u\me"]);
+        assert!(homes.open.is_empty());
+        assert_eq!(homes.wide, vec![wide("CODEX_HOME", r"D:\m", Holds::MarshellHome)]);
+        // Marshell's home and a folder in it are not wide: `check` calls them Marshell's own.
+        for folder in [r"D:\m\home", r"D:\m\home\x"] {
+            let homes = homes_of(&[("CODEX_HOME", folder)], &[r"D:\u\me"]);
+            assert!(homes.wide.is_empty(), "{folder}");
+            assert_eq!(homes.open, vec![PathBuf::from(folder)], "{folder}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_that_holds_both_names_the_profile() {
+        let homes = agent_homes_as(
+            &vars(&[("CODEX_HOME", r"D:\w")]),
+            &|p| p.to_path_buf(),
+            &[PathBuf::from(r"D:\w\me")],
+            Some(Path::new(r"D:\w\mh")),
+        );
+        assert!(homes.open.is_empty());
+        assert_eq!(homes.wide, vec![wide("CODEX_HOME", r"D:\w", Holds::Profile)]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn case_and_a_trailing_separator_do_not_hide_a_wide_home() {
+        for value in [r"d:\U\", r"d:\U", r"D:\u\", r"D:/u/"] {
+            let homes = homes_of(&[("CODEX_HOME", value)], &[r"D:\u\me"]);
+            assert!(homes.open.is_empty(), "{value}");
+            assert_eq!(homes.wide.len(), 1, "{value}");
+            assert_eq!(homes.wide[0].holds, Holds::Profile, "{value}");
+            assert_eq!(homes.wide[0].variable, "CODEX_HOME", "{value}");
+        }
+        // The profile spelt in another case is still the profile, so it stays open.
+        let homes = homes_of(&[("CODEX_HOME", r"d:\U\ME\")], &[r"D:\u\me"]);
+        assert!(homes.wide.is_empty());
+        assert_eq!(homes.open.len(), 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_link_to_a_wide_folder_opens_nothing() {
+        let really = |path: &Path| match path.to_str() {
+            Some(r"D:\link") => PathBuf::from(r"D:\u"),
+            _ => path.to_path_buf(),
+        };
+        let profiles = [PathBuf::from(r"D:\u\me")];
+        let homes = agent_homes_as(
+            &vars(&[("CODEX_HOME", r"D:\link")]),
+            &really,
+            &profiles,
+            Some(Path::new(r"D:\m\home")),
+        );
+        assert!(homes.open.is_empty());
+        assert_eq!(homes.wide, vec![wide("CODEX_HOME", r"D:\link", Holds::Profile)]);
+    }
+
+    #[test]
+    fn a_profile_that_is_a_link_is_still_held_by_its_parent() {
+        let dir = tempfile::tempdir().unwrap();
+        let tmp = canonical(dir.path());
+        fs::create_dir_all(tmp.join("real").join("me")).unwrap();
+        fs::create_dir_all(tmp.join("Users")).unwrap();
+        if let Err(e) = link_dir(&tmp.join("Users").join("me"), &tmp.join("real").join("me")) {
+            eprintln!("skipped: cannot create a symlink here: {e}");
+            return;
+        }
+        let profiles = [tmp.join("Users").join("me")];
+        let mh = tmp.join("mh");
+        for folder in [tmp.join("Users"), tmp.join("real")] {
+            let given = [("CODEX_HOME", folder.to_string_lossy().into_owned())];
+            let env = |k: &str| given.iter().find(|(n, _)| *n == k).map(|(_, v)| v.clone());
+            let homes = agent_homes_as(&env, &canonical, &profiles, Some(&mh));
+            assert!(homes.open.is_empty(), "{}", folder.display());
+            assert_eq!(homes.wide.len(), 1, "{}", folder.display());
+            assert_eq!(homes.wide[0].holds, Holds::Profile, "{}", folder.display());
+        }
+    }
+
+    #[test]
+    fn a_file_under_a_link_to_a_wide_folder_names_the_variable() {
+        let dir = tempfile::tempdir().unwrap();
+        let tmp = canonical(dir.path());
+        fs::create_dir_all(tmp.join("u").join("me")).unwrap();
+        if let Err(e) = link_dir(&tmp.join("link"), &tmp.join("u")) {
+            eprintln!("skipped: cannot create a symlink here: {e}");
+            return;
+        }
+        let profiles = [tmp.join("u").join("me")];
+        let mh = tmp.join("mh");
+        let value = tmp.join("link").to_string_lossy().into_owned();
+        let env = |k: &str| (k == "CODEX_HOME").then(|| value.clone());
+        let homes = agent_homes_as(&env, &canonical, &profiles, Some(&mh));
+        assert!(homes.open.is_empty());
+        assert_eq!(homes.wide.len(), 1);
+        let guard = Guard::new(homes.open, vec![], mh).with_wide_homes(homes.wide);
+        let file = tmp.join("link").join("hooks.json");
+        assert!(!file.exists());
+        assert_eq!(guard.wide_home_of(&file).map(|w| w.variable), Some("CODEX_HOME"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_drive_root_that_holds_the_profile_is_named() {
+        let homes = homes_of(&[("CODEX_HOME", r"D:\")], &[r"D:\u\me"]);
+        assert!(homes.open.is_empty());
+        assert_eq!(homes.wide, vec![wide("CODEX_HOME", r"D:\", Holds::Profile)]);
+        // A root that holds neither is dropped without a record, as before.
+        let homes = homes_of(&[("CODEX_HOME", r"E:\")], &[r"D:\u\me"]);
+        assert_eq!(homes, AgentHomes::default());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_path_in_an_allowed_folder_never_names_a_wide_home() {
+        let guard = Guard::new(vec![PathBuf::from(r"D:\u\me")], vec![], PathBuf::from(r"D:\m\home"))
+            .with_wide_homes(vec![wide("CODEX_HOME", r"D:\u", Holds::Profile)]);
+        assert_eq!(guard.wide_home_of(Path::new(r"D:\u\me\x.json")), None);
+        assert!(guard.wide_home_of(Path::new(r"D:\u\x.json")).is_some());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_second_spelling_of_the_profile_counts() {
+        let homes = homes_of(&[("CODEX_HOME", r"E:\scratch")], &[r"D:\u\me", r"E:\scratch\home"]);
+        assert!(homes.open.is_empty());
+        assert_eq!(homes.wide, vec![wide("CODEX_HOME", r"E:\scratch", Holds::Profile)]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_wide_home_does_not_close_the_others() {
+        let given = [("CODEX_HOME", r"D:\u"), ("QWEN_HOME", r"D:\w\qw")];
+        let homes = homes_of(&given, &[r"D:\u\me"]);
+        assert_eq!(homes.open, vec![PathBuf::from(r"D:\w\qw")]);
+        assert_eq!(homes.wide, vec![wide("CODEX_HOME", r"D:\u", Holds::Profile)]);
+    }
+
+    #[test]
+    fn qwens_tilde_is_the_profile_and_stays_open() {
+        let Some(profile) = dirs::home_dir() else {
+            return;
+        };
+        let mh = tempfile::tempdir().unwrap();
+        let homes = agent_homes_as(
+            &vars(&[("QWEN_HOME", "~")]),
+            &canonical,
+            std::slice::from_ref(&profile),
+            Some(mh.path()),
+        );
+        assert!(homes.wide.is_empty());
+        assert_eq!(homes.open, vec![profile]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_write_under_a_wide_home_is_refused_and_names_it() {
+        let homes = homes_of(&[("CODEX_HOME", r"D:\u")], &[r"D:\u\me"]);
+        let guard = Guard::new(homes.open, vec![], PathBuf::from(r"D:\m\home")).with_wide_homes(homes.wide);
+        let file = Path::new(r"D:\u\hooks.json");
+        assert_eq!(guard.check(file), Err(Refusal::OutsideAllowed));
+        assert_eq!(guard.wide_home_of(file).map(|w| w.variable), Some("CODEX_HOME"));
+        assert_eq!(guard.wide_home_of(Path::new(r"D:\elsewhere\x.json")), None);
     }
 }

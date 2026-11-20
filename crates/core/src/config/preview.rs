@@ -2,7 +2,7 @@
 //! anything. A file that is refused (managed, read-only, unparseable, changed since the user looked) is
 //! never described as about to change: its preview has an empty diff.
 
-use crate::config::guard::{Guard, Refusal};
+use crate::config::guard::{Guard, Holds, Refusal, WideHome};
 use crate::config::hash::hash_bytes;
 use crate::config::jsonc::{EditError, JsonOp, apply_ops};
 use crate::config::snapshots::Snapshots;
@@ -165,7 +165,10 @@ fn locate(guard: &Guard, path: &std::path::Path) -> Result<PathBuf, Refused> {
         ),
         Refusal::OutsideAllowed => (
             RefuseReason::OutsideAllowed,
-            "The path is outside the home folder and the project folders.".to_string(),
+            match guard.wide_home_of(path) {
+                Some(wide) => wide_home_detail(wide),
+                None => "The path is outside the home folder and the project folders.".to_string(),
+            },
         ),
         Refusal::MarshellOwn => (
             RefuseReason::MarshellOwn,
@@ -176,6 +179,20 @@ fn locate(guard: &Guard, path: &std::path::Path) -> Result<PathBuf, Refused> {
         Ok(target) => Ok(target),
         Err(e) => refuse(RefuseReason::Unreadable, format!("Could not follow the link: {e}")),
     }
+}
+
+/// What a refusal says for a path under a home variable that the guard refused for naming a wide folder.
+fn wide_home_detail(wide: &WideHome) -> String {
+    let what = match wide.holds {
+        Holds::Profile => "your user profile",
+        Holds::MarshellHome => "Marshell's own folder",
+    };
+    format!(
+        "{} names {}, a folder that holds {}.",
+        wide.variable,
+        wide.folder.display(),
+        what
+    )
 }
 
 /// Why a preview would refuse `path` before it reads it (the detail it shows), or None when the path is open.
@@ -349,6 +366,7 @@ fn edited(result: Result<String, EditError>) -> Result<Bytes, Refused> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::guard::{Holds, WideHome};
     use crate::projects::canonical;
     use std::path::Path;
 
@@ -721,5 +739,62 @@ mod tests {
         assert_eq!(reason(set_toml(&["model", "x"], "1")), Some(RefuseReason::BadPointer));
         std::fs::write(&path, b"model = \n").unwrap();
         assert_eq!(reason(set_toml(&["a"], "1")), Some(RefuseReason::DoesNotParse));
+    }
+
+    // ---- a home variable refused for being wide names itself (slice 6s) ----
+
+    /// A guard that allows nothing and has `CODEX_HOME` refused for naming `<root>/u`, a folder that holds `holds`.
+    fn wide_guard(root: &Path, holds: Holds) -> Guard {
+        Guard::new(vec![], vec![], root.join("mh")).with_wide_homes(vec![WideHome {
+            variable: "CODEX_HOME",
+            folder: root.join("u"),
+            holds,
+        }])
+    }
+
+    /// The reason and detail of the one file `path` that a write of it would plan, which the guard refuses.
+    fn refusal_of(guard: &Guard, root: &Path, path: &Path) -> (RefuseReason, String) {
+        let snapshots = Snapshots::new(&root.join("home"));
+        let files = plan(&changeset(vec![edit(path, set("/a", "1"), None)]), guard, &snapshots);
+        match &files[0].status {
+            FileStatus::Refused { reason, detail } => (*reason, detail.clone()),
+            other => panic!("not refused: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_write_under_a_wide_home_says_which_variable() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = canonical(dir.path());
+        let guard = wide_guard(&root, Holds::Profile);
+        let got = refusal_of(&guard, &root, &root.join("u").join("hooks.json"));
+        let want = format!(
+            "CODEX_HOME names {}, a folder that holds your user profile.",
+            root.join("u").display()
+        );
+        assert_eq!(got, (RefuseReason::OutsideAllowed, want));
+    }
+
+    #[test]
+    fn a_write_under_a_wide_home_says_which_variable_or_marshells_own_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = canonical(dir.path());
+        let guard = wide_guard(&root, Holds::MarshellHome);
+        let got = refusal_of(&guard, &root, &root.join("u").join("hooks.json"));
+        let want = format!(
+            "CODEX_HOME names {}, a folder that holds Marshell's own folder.",
+            root.join("u").display()
+        );
+        assert_eq!(got, (RefuseReason::OutsideAllowed, want));
+    }
+
+    #[test]
+    fn another_refused_path_keeps_the_general_sentence() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = canonical(dir.path());
+        let guard = wide_guard(&root, Holds::Profile);
+        let got = refusal_of(&guard, &root, &root.join("elsewhere").join("x.json"));
+        let want = "The path is outside the home folder and the project folders.".to_string();
+        assert_eq!(got, (RefuseReason::OutsideAllowed, want));
     }
 }
