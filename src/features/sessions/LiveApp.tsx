@@ -70,6 +70,7 @@ import { dropCover, modalOnScreen } from "../pane/dropCover";
 import { EmptyPane } from "../pane/EmptyPane";
 import { KeptTabs } from "../pane/KeptTabs";
 import { useBrowserKeys } from "../browser/useBrowserKeys";
+import { useCoverPage } from "../browser/pageCover";
 import { useFocusedPage } from "../browser/pageStore";
 import { BrowserTab } from "../browser/BrowserTab";
 import { ClearDataDialog } from "../browser/ClearDataDialog";
@@ -360,6 +361,8 @@ export function LiveApp() {
   // a failed read shows none.
   const [onboardingShown, setOnboardingShown] = useState<OnboardingShown>("unknown");
   const onboarding = onboardingShown === "showing";
+  // Onboarding lies over the whole window, the bar and its buttons included, so whatever is drawn above the page steps aside.
+  useCoverPage(onboarding && endpoint !== null);
   useEffect(() => {
     if (!endpoint || !sync) return;
     let live = true;
