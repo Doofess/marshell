@@ -41,6 +41,8 @@ import { PANE, dividerLeft, dividerState, draggedWidth, paneGeometry, paneMotion
 import { useLayoutMotion } from "./motion";
 import { usePaneHold } from "./paneHold";
 import { FitHoldContext } from "../terminal/fitHold";
+import { GLYPHS } from "./strip/tiles";
+import { watchWindowStrip } from "./strip/windowStrip";
 import { sidebarToggleFor } from "./viewState";
 import "./MainWindow.css";
 
@@ -333,6 +335,9 @@ export function MainWindow({
   };
   // The side pane's divider reports the pane's width in pixels and holds none of its own; the saved width comes in as `paneWidth`.
   const mainRef = useRef<HTMLElement>(null);
+  const controlsRef = useRef<HTMLDivElement>(null);
+  // The strip over the window buttons keeps its pictures equal to these buttons' looks.
+  useEffect(() => (os === "windows" && controlsRef.current ? watchWindowStrip(controlsRef.current) : undefined), [os]);
   const viewing = mainView !== undefined && mainView !== null && mainView !== false;
   // What the pane is asked to be (the toggle answers to this at once), and whether a hide holds it shown while its page freezes.
   const paneWanted = paneShown && !viewing && !empty;
@@ -450,16 +455,24 @@ export function MainWindow({
             <SidePaneIcon open={paneWanted} />
           </button>
           {os === "windows" && (
-            <div className="window__controls">
+            <div className="window__controls" ref={controlsRef}>
               <button type="button" className="window__control" aria-label="Minimize" onClick={windowControls?.onMinimize}>
-                {icon("M0 5h10")}
+                {icon(GLYPHS.minimize)}
               </button>
               <button type="button" className="window__control" aria-label={windowControls?.maximized ? "Restore" : "Maximize"} onClick={windowControls?.onToggleMaximize}>
-                {icon(windowControls?.maximized ? "M2.5 2.5v-2h7v7h-2M0.5 2.5h7v7h-7z" : "M0.5 0.5h9v9h-9z")}
+                {icon(windowControls?.maximized ? GLYPHS.restore : GLYPHS.maximize)}
               </button>
               <button type="button" className="window__control window__control--close" aria-label="Close" onClick={windowControls?.onClose}>
-                {icon("M0 0l10 10M10 0L0 10")}
+                {icon(GLYPHS.close)}
               </button>
+            </div>
+          )}
+          {/* Not shown and out of the tab order: the strip reads its colours from these, so the pointer's place doesn't change them. */}
+          {os === "windows" && (
+            <div hidden>
+              <button type="button" tabIndex={-1} className="window__control" data-look="rest" />
+              <button type="button" tabIndex={-1} className="window__control" data-look="hover" />
+              <button type="button" tabIndex={-1} className="window__control window__control--close" data-look="hover" />
             </div>
           )}
         </div>

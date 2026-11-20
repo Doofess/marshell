@@ -11,10 +11,19 @@ describe("MainWindow.css", () => {
   it("makes the top bar one 40 px row", () => {
     expect(rule(".window__bar")).toContain("block-size: 40px");
   });
-  it("sizes the window controls 46 by 40", () => {
+  it("makes a window button 46 px wide", () => {
     const r = rule(".window__control");
     expect(r).toContain("inline-size: 46px");
-    expect(r).toContain("block-size: 40px");
+  });
+  it("a window button has no height of its own", () => {
+    expect(rule(".window__control")).not.toContain("block-size");
+    expect(rule(".window__controls")).toContain("align-self: stretch");
+    expect(rule(".window__bar-end")).toContain("align-self: stretch");
+  });
+  it("the probes take the hover rules", () => {
+    // The probe comes first: windowFrame.css.test.ts looks for `.window__control--close:hover {` right before the declarations.
+    expect(css).toMatch(/\.window__control\[data-look="hover"\],\s+\.window__control:hover \{/);
+    expect(css).toMatch(/\.window__control--close\[data-look="hover"\],\s+\.window__control--close:hover \{/);
   });
   it("draws the preview divider as a hairline with an 8 px hit area, a focus ring and a press colour", () => {
     expect(rule(".pane__divider")).toContain("--hit: 8px");

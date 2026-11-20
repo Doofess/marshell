@@ -64,4 +64,4 @@ Every count comes from a run in this session. A section with nothing to say says
 1. Wait for CI: `gh pr checks <n> --watch`, in the background.
 2. A failure in `a_status_line_update_does_not_cancel_the_held_done` is the known hook timing flake. It gets one rerun (`gh run rerun <run id> --failed`), and the PR summary names it. Any other failure, or a second failure of that test, is a real failure: fix it on the branch.
 3. When CI is green, merge (`gh pr merge <n> --merge`, the repo's style), then fast-forward the main checkout: `git -C C:/dev/Airport pull --ff-only`.
-4. Clean up after the merge. Delete the slice's ledger directory under `.superpowers/sdd/`. Remove the Codex and worker worktrees under `C:/dev/codex-wt/` and their branches. Literal paths only; `git branch -D` and folder deletes are confirmed with the user.
+4. Clean up after the merge. Delete the slice's ledger directory under `.superpowers/sdd/`. Remove any worker worktrees the slice made, and their branches. Literal paths only; `git branch -D` and folder deletes are confirmed with the user.

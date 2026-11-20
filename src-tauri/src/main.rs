@@ -13,6 +13,7 @@ mod notify;
 mod toast;
 mod tray;
 mod window_bg;
+mod window_strip;
 mod window_theme;
 
 use marshell_core::server::CoreConfig;
@@ -333,6 +334,8 @@ fn main() {
                 && window.label() == "main"
             {
                 browser::on_resized(window, *size);
+                #[cfg(windows)]
+                window_strip::on_resized(window, *size);
             }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event
                 && window.label() == "main"
@@ -354,6 +357,8 @@ fn main() {
             if let Some(w) = app.get_webview_window("main") {
                 disable_browser_shortcuts(&w);
             }
+            #[cfg(windows)]
+            window_strip::install(app.handle());
             app.manage(capture::CaptureState::default());
             let home = marshell_core::paths::home_dir()?;
             app.manage(HomeDir(home.clone()));
@@ -437,6 +442,7 @@ fn main() {
             link::set_notification_link,
             window_bg::set_window_background,
             window_theme::set_window_theme,
+            window_strip::set_window_strip,
             browser::browser_open,
             browser::browser_show,
             browser::browser_place,

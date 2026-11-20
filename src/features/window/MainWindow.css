@@ -58,15 +58,17 @@
 .window__bar-end {
   display: flex;
   align-items: center;
+  /* As tall as the bar's content box, so the buttons below can stretch to it instead of carrying a height that the hairline would clip. */
+  align-self: stretch;
 }
 .window__controls {
   display: flex;
+  align-self: stretch;
 }
 .window__control {
   display: grid;
   place-items: center;
   inline-size: 46px;
-  block-size: 40px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -224,10 +226,12 @@
   background: var(--selected);
 }
 @media (hover: hover) and (pointer: fine) {
+  .window__control[data-look="hover"],
   .window__control:hover {
     background: var(--hover);
     color: var(--text-1);
   }
+  .window__control--close[data-look="hover"],
   .window__control--close:hover {
     background: var(--error);
     color: var(--bg-base);
