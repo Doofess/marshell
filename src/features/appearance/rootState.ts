@@ -18,6 +18,11 @@ export type RootState = {
   style: Record<"--accent" | "--accent-ink", string | null>;
 };
 
+/** Whether High contrast is on: by the setting, or by the system asking for more contrast while the setting follows it. */
+export function contrastMoreOf(contrast: Appearance["contrast"], prefersContrastMore: boolean): boolean {
+  return contrast === "on" || (contrast === "follow-system" && prefersContrastMore);
+}
+
 /** The attributes and inline properties the root element carries for these settings. `null` removes one. */
 export function rootState(a: Appearance, sys: { prefersContrastMore: boolean }): RootState {
   let accent: string | null = a.accent;
@@ -28,7 +33,7 @@ export function rootState(a: Appearance, sys: { prefersContrastMore: boolean }):
     if (check.ok) style = { "--accent": check.hex, "--accent-ink": check.ink };
     accent = check.ok ? "custom" : DEFAULT_APPEARANCE.accent;
   }
-  const contrastMore = a.contrast === "on" || (a.contrast === "follow-system" && sys.prefersContrastMore);
+  const contrastMore = contrastMoreOf(a.contrast, sys.prefersContrastMore);
   return {
     attrs: {
       "data-theme": a.theme === "follow-system" ? null : a.theme,

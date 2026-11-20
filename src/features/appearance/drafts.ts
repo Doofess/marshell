@@ -15,11 +15,16 @@ export type Drafts = {
   size: Draft;
 };
 
-/** The field text for settings that are saved: the custom accent (empty when a preset is used), the font and the size. */
+/**
+ * The field text for settings that are saved: the custom accent (empty when a preset is used), the font and the size. A saved
+ * accent that fails the check isn't used (rootState draws the default), so its field says why: the surfaces it was checked
+ * against can change between versions, and the colour would otherwise be gone with no word.
+ */
 export function draftsOf(a: Appearance): Drafts {
   const accent = a.accent.startsWith("#") ? a.accent : "";
+  const check = accent ? checkAccent(accent) : null;
   return {
-    accent: { text: accent, reason: null },
+    accent: { text: accent, reason: check && !check.ok ? check.reason : null },
     accentBase: accent,
     font: a.terminal_font.family ?? "",
     size: { text: String(a.terminal_font.size), reason: null },

@@ -49,7 +49,7 @@ export function readPageBackground(doc: Document = document): Rgb | null {
   return a === 255 ? [r, g, b] : null;
 }
 
-/** What can change the page's background: the system's scheme and forced colours here, the Appearance theme on the root. */
+/** What can change the page's background: the system's scheme and forced colours here, the Appearance theme and contrast on the root. */
 const QUERIES = ["(prefers-color-scheme: dark)", "(forced-colors: active)"];
 
 /** Keeps the window's background equal to the page's, now and whenever the theme changes. Returns the stop function. */
@@ -68,7 +68,7 @@ export function watchWindowBackground(doc: Document = document): () => void {
   const queries = QUERIES.map((q) => view.matchMedia(q));
   for (const q of queries) q.addEventListener("change", sync);
   const themeWatch = new MutationObserver(sync);
-  themeWatch.observe(doc.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  themeWatch.observe(doc.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-contrast"] });
   sync();
   return () => {
     themeWatch.disconnect();

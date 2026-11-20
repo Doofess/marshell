@@ -1,7 +1,7 @@
 import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef } from "react";
 import { SCRIPTED_SESSION, SCRIPTED_SIZE } from "./scriptedSession";
-import { appScheme, resolveScheme, terminalOptions, type TerminalThemeSetting } from "./terminalTheme";
+import { appHighContrast, appScheme, resolveScheme, terminalOptions, type TerminalThemeSetting } from "./terminalTheme";
 import "./ScriptedTerminal.css";
 
 /**
@@ -47,7 +47,7 @@ export function ScriptedTerminal({
         // A plain shell shows where you type: a solid block at the prompt even while the terminal is not focused.
         cursorInactiveStyle: script === SCRIPTED_SESSION ? "outline" : "block",
         scrollback: 1000,
-        ...terminalOptions(scheme()),
+        ...terminalOptions(scheme(), appHighContrast()),
       });
       const fit = new FitAddon();
       term.loadAddon(fit);
@@ -57,7 +57,7 @@ export function ScriptedTerminal({
 
       // The padded host takes the terminal's own background, so a terminal pinned light or dark has no mismatched edge.
       const apply = () => {
-        const o = terminalOptions(scheme());
+        const o = terminalOptions(scheme(), appHighContrast());
         term.options.theme = o.theme;
         term.options.minimumContrastRatio = o.minimumContrastRatio;
         el.style.backgroundColor = o.theme.background ?? "";
@@ -66,7 +66,7 @@ export function ScriptedTerminal({
       const prefers = matchMedia("(prefers-color-scheme: dark)");
       prefers.addEventListener("change", apply);
       const watch = new MutationObserver(apply);
-      watch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+      watch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-contrast"] });
       const resize = new ResizeObserver(() => fit.fit());
       resize.observe(el);
 

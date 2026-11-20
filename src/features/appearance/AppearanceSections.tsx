@@ -22,6 +22,8 @@ export type AppearanceViewState = {
   appearance: Appearance;
   /** The scheme the app shows now, for the terminal preview. */
   app: Scheme;
+  /** Whether High contrast is on, which gives the terminals true black or pure white. */
+  highContrast: boolean;
   wtFiles: FoundFile[] | null;
   error: { at: ErrorPlace; text: string } | null;
   accent: Draft;
@@ -175,7 +177,7 @@ export function AppearanceView({ state, handlers }: { state: AppearanceViewState
 export function TerminalView({ state, handlers }: { state: AppearanceViewState; handlers: AppearanceHandlers }) {
   const { appearance: a, error } = state;
   const ids = { themeHelp: useId(), size: useId(), sizeWhy: useId(), file: useId() };
-  const preview = resolveTerminalTheme({ ...terminalThemeOf(a, null), app: state.app }).theme;
+  const preview = resolveTerminalTheme({ ...terminalThemeOf(a, null), app: state.app, highContrast: state.highContrast }).theme;
   const font = resolveTerminalFont(a.terminal_font, wtFont(state.wtFiles ?? []));
   const { themes: found, note: skippedNote } = useMemo(() => schemesInFiles((state.wtFiles ?? []).map((f) => f.text)), [state.wtFiles]);
   const have = new Set(a.imported_themes.map((t) => t.id));
@@ -326,7 +328,7 @@ const sizeReason = "Enter a whole number from 8 to 32.";
 
 /** The state and handlers both sections share: the saved settings, the drafts being typed, and where a failed save shows. */
 function useAppearanceSection(announce: ((text: string) => void) | undefined, onClose?: () => void) {
-  const { appearance, save, error, wtFiles } = useAppearance();
+  const { appearance, highContrast, save, error, wtFiles } = useAppearance();
   // Which part this section last saved. A failed save shows (and is said) only in the section that made it.
   const [at, setAt] = useState<ErrorPlace | null>(null);
   const [drafts, setDrafts] = useState(() => draftsOf(appearance));
@@ -399,7 +401,7 @@ function useAppearanceSection(announce: ((text: string) => void) | undefined, on
     onClose,
   };
 
-  const state: AppearanceViewState = { appearance, app: appearance.theme === "follow-system" ? appScheme() : appearance.theme, wtFiles, error: error && at ? { at, text: error } : null, accent, size, importError };
+  const state: AppearanceViewState = { appearance, app: appearance.theme === "follow-system" ? appScheme() : appearance.theme, highContrast, wtFiles, error: error && at ? { at, text: error } : null, accent, size, importError };
   return { state, handlers };
 }
 

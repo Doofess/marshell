@@ -30,7 +30,7 @@ import { privateRedraw, reportMissingRedraw, syncRedraw } from "./syncRedraw";
 import { topAnchoredFit } from "./topAnchor";
 import { trackColorSchemeMode } from "./colorSchemeMode";
 import { BUNDLED_FONT, fontStack } from "./terminalFont";
-import { appScheme, resolveTerminalTheme, type TerminalThemeInput } from "./terminalTheme";
+import { appHighContrast, appScheme, resolveTerminalTheme, type TerminalThemeInput } from "./terminalTheme";
 import { useScreenScale } from "./useScreenScale";
 
 /** The terminal theme settings, without the app's scheme, which the terminal reads itself. */
@@ -196,7 +196,7 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
     if (!el || !fontReady) return;
     const fontFamily = fontStack(fontRef.current.family, fontRef.current.wtFamily);
     const fontSize = fontRef.current.size;
-    const resolve = () => resolveTerminalTheme({ ...themeRef.current, app: appScheme() });
+    const resolve = () => resolveTerminalTheme({ ...themeRef.current, app: appScheme(), highContrast: appHighContrast() });
     const first = resolve();
     // The gutter around the cells (app.css) matches the theme's background.
     const paintGutter = (background: string | undefined) => el.style.setProperty("--terminal-bg", background ?? null);
@@ -371,7 +371,7 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
     restyleRef.current = onScheme;
     scheme.addEventListener("change", onScheme);
     const themeWatch = new MutationObserver(onScheme);
-    themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-contrast"] });
 
     return () => {
       void stopCoreEvents.then((stop) => stop());
