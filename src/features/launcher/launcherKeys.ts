@@ -55,11 +55,14 @@ export function escapeStep({ confirm, open }: { confirm: boolean; open: OpenList
   return confirm ? "back" : (open ?? "close");
 }
 
-/** A press on the dimmed window around the sheet: Esc, for the main button only. preventDefault keeps the focus off the page body meanwhile. */
-export function backdropPress(e: { button: number; preventDefault: () => void }, escape: () => void) {
+/**
+ * A press on the dimmed window around the sheet: Esc, for the main button only, and not while a start is in flight (a stray press
+ * would hide the launcher where that start's failure is shown). preventDefault keeps the focus off the page body meanwhile.
+ */
+export function backdropPress(e: { button: number; preventDefault: () => void }, busy: boolean, escape: () => void) {
   if (e.button !== 0) return;
   e.preventDefault();
-  escape();
+  if (!busy) escape();
 }
 
 /**

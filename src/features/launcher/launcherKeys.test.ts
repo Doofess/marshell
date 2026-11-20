@@ -130,13 +130,18 @@ describe("launcherKeys: a press on the dimmed window", () => {
   it("is Esc for the main button only; a right or middle press closes nothing", () => {
     let escaped = 0;
     let prevented = 0;
-    const press = (button: number) => backdropPress({ button, preventDefault: () => prevented++ }, () => escaped++);
+    const press = (button: number, busy = false) => backdropPress({ button, preventDefault: () => prevented++ }, busy, () => escaped++);
     press(2);
     press(1);
     expect(escaped).toBe(0);
     press(0);
     expect(escaped).toBe(1);
     expect(prevented).toBe(1);
+  });
+  it("closes nothing while a start is in flight: a stray press would hide where its failure is shown", () => {
+    let escaped = 0;
+    backdropPress({ button: 0, preventDefault: () => {} }, true, () => escaped++);
+    expect(escaped).toBe(0);
   });
 });
 

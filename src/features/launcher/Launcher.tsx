@@ -342,7 +342,7 @@ export function Launcher({ view, onChange, onQuery, onPick, onUsePath, onBrowse,
       {/* A press on the dimmed window is Esc, as in the palette. */}
       <div
         className="launcher__backdrop"
-        onMouseDown={(e) => backdropPress(e, escape)}
+        onMouseDown={(e) => backdropPress(e, busy, escape)}
       />
       <div
         ref={sheet}
