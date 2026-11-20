@@ -12,7 +12,7 @@ The shared rules are above, imported from `AGENTS.md`, and `SCOPE.md` is binding
 4. A live check runs where the plan's exit criteria need the real app (below). Its findings go in `docs/research/<topic>.md`.
 5. The final whole-branch review runs on Opus, followed by one fix pass. Then the PR, a green CI and the merge.
 
-The project skills carry the details: `marshell-codex-task` hands a task to Codex CLI, the `marshell-reviewer` agent does step 5's review, and `marshell-ship` runs the checks, the PR and the merge.
+The project skills carry the details: the `marshell-reviewer` agent does step 5's review, and `marshell-ship` runs the checks, the PR and the merge.
 
 A PR body has "What it does", "Live check", "Known limits" and "Checks" sections, with the exact commands and counts from this session.
 
