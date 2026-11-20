@@ -4,7 +4,7 @@ import type { AccountStatus } from "../../generated/AccountStatus";
 import { AccountsView } from "./AccountsSection";
 
 const NOW = 1_000_000_000;
-const st = (agent: string, sign_in: AccountStatus["sign_in"]): AccountStatus => ({ agent, sign_in, email: null, plan: null, method: null, checked_ms: NOW });
+const st = (agent: string, sign_in: AccountStatus["sign_in"]): AccountStatus => ({ agent, sign_in, email: null, plan: null, method: null, last_account: null, token_env: null, checked_ms: NOW });
 const none = () => {};
 const view = (rows: Parameters<typeof AccountsView>[0]["rows"]) => renderToStaticMarkup(<AccountsView rows={rows} now={NOW} onSignIn={none} onCheckAgain={none} />);
 

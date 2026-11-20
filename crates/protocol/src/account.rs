@@ -26,6 +26,10 @@ pub struct AccountStatus {
     pub plan: Option<String>,
     /// How it is signed in: "ChatGPT" or "an API key" (Codex).
     pub method: Option<String>,
+    /// The account the CLI last signed in as, read from its own config file (Copilot): "login" or "login on host".
+    pub last_account: Option<String>,
+    /// The name of an environment variable that holds a token the CLI reads (Copilot). Never its value.
+    pub token_env: Option<String>,
     /// When the check finished, in milliseconds since the Unix epoch.
     #[ts(type = "number")]
     pub checked_ms: u64,

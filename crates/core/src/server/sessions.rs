@@ -391,6 +391,7 @@ pub(super) fn cli_task_argv(
             let args: &[&str] = match agent {
                 "claude" => &["auth", "login"],
                 "codex" => &["login"],
+                "copilot" => &["login"],
                 _ => return Err((StatusCode::BAD_REQUEST, format!("{name} has no sign-in command."))),
             };
             // A shim is not a program the pty can start: cmd.exe runs it.
@@ -1662,6 +1663,10 @@ mod tests {
         assert_eq!(
             argv_of("codex", CliTaskKind::SignIn, r"C:\x\codex.exe", &unknown).unwrap(),
             words(&[r"C:\x\codex.exe", "login"])
+        );
+        assert_eq!(
+            argv_of("copilot", CliTaskKind::SignIn, r"C:\x\copilot.exe", &unknown).unwrap(),
+            words(&[r"C:\x\copilot.exe", "login"])
         );
     }
 

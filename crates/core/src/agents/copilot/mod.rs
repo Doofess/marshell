@@ -59,6 +59,41 @@ pub fn skips_all(settings_text: Option<&str>, env: &dyn Fn(&str) -> Option<Strin
     truthy.then(|| "COPILOT_ALLOW_ALL".to_string())
 }
 
+/// The account Copilot last signed in as, from `lastLoggedInUser` of its `config.json` (JSONC: it starts with comment
+/// lines): "<login>" or "<login> on <host>". Only the login and the host are read, and only when they look like a
+/// login and a host; anything else of the file is never returned. A host of `github.com` is left out.
+pub fn last_account(config_text: &str) -> Option<String> {
+    let config = crate::config::jsonc::read_value(config_text).ok()?;
+    let user = config.get("lastLoggedInUser")?.as_object()?;
+    let login = user.get("login")?.as_str()?;
+    let ok = |s: &str, max: usize, extra: &[char]| {
+        (1..=max).contains(&s.len()) && s.chars().all(|c| c.is_ascii_alphanumeric() || extra.contains(&c))
+    };
+    if !ok(login, 100, &['-', '_']) {
+        return None;
+    }
+    let host = user.get("host").and_then(Value::as_str).and_then(|host| {
+        let host = host.trim();
+        let host = host
+            .strip_prefix("https://")
+            .or_else(|| host.strip_prefix("http://"))
+            .unwrap_or(host);
+        let host = host.strip_suffix('/').unwrap_or(host);
+        (ok(host, 253, &['.', '-', ':']) && !host.eq_ignore_ascii_case("github.com")).then(|| host.to_string())
+    });
+    Some(match host {
+        Some(host) => format!("{login} on {host}"),
+        None => login.to_string(),
+    })
+}
+
+/// The first of the variables Copilot reads a token from that is set and not blank. The value is never returned.
+pub fn token_env(env: &dyn Fn(&str) -> Option<String>) -> Option<&'static str> {
+    ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]
+        .into_iter()
+        .find(|name| env(name).is_some_and(|v| !v.trim().is_empty()))
+}
+
 /// A new session id for `--session-id`: a lowercase v4 UUID.
 pub fn new_session_id() -> String {
     let mut bytes = [0u8; 16];
@@ -180,6 +215,73 @@ mod tests {
         assert_eq!(linked["cwd"], "C:\\proj");
         assert_eq!(linked["transcript_path"], transcript(home));
         assert!(linked["hook_event_name"].as_str().is_some_and(|e| !e.is_empty()));
+    }
+
+    #[test]
+    fn last_account_reads_login_and_host() {
+        let text = |host: &str| format!(r#"{{"lastLoggedInUser":{{"host":"{host}","login":"octo"}}}}"#);
+        assert_eq!(last_account(&text("https://github.com")).as_deref(), Some("octo"));
+        assert_eq!(
+            last_account(&text("https://ghe.example.com/")).as_deref(),
+            Some("octo on ghe.example.com")
+        );
+        assert_eq!(
+            last_account(r#"{"lastLoggedInUser":{"login":"octo"}}"#).as_deref(),
+            Some("octo")
+        );
+    }
+
+    #[test]
+    fn last_account_reads_through_copilots_comment_header() {
+        let text = "// User settings belong in settings.json.\n// This file is managed automatically.\n{\n  \"lastLoggedInUser\": {\"host\": \"https://github.com\", \"login\": \"octo\"}\n}\n";
+        assert_eq!(last_account(text).as_deref(), Some("octo"));
+    }
+
+    #[test]
+    fn last_account_is_none_for_other_shapes() {
+        let long = format!(r#"{{"lastLoggedInUser":{{"login":"{}"}}}}"#, "a".repeat(500));
+        for text in [
+            r#"{"lastLoggedInUser":"octo"}"#,
+            r#"{"lastLoggedInUser":null}"#,
+            r#"{"lastLoggedInUser":{"host":"https://github.com"}}"#,
+            long.as_str(),
+            r#"{"lastLoggedInUser":{"login":"oc\u001bto"}}"#,
+            "{not json",
+            "",
+        ] {
+            assert_eq!(last_account(text), None, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn nothing_else_of_the_file_is_returned() {
+        let text = r#"{"copilotTokens":{"h:octo":"ghu_secret"},"authTokens":["x"],"lastLoggedInUser":{"host":"https://github.com","login":"octo","token":"ghu_other"}}"#;
+        assert_eq!(last_account(text).as_deref(), Some("octo"));
+    }
+
+    #[test]
+    fn token_env_names_the_first_set_variable_and_skips_blank_ones() {
+        let with = |pairs: &'static [(&'static str, &'static str)]| {
+            move |k: &str| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string())
+        };
+        assert_eq!(token_env(&|_| None), None);
+        assert_eq!(token_env(&with(&[("GITHUB_TOKEN", "x")])), Some("GITHUB_TOKEN"));
+        assert_eq!(
+            token_env(&with(&[("GITHUB_TOKEN", "x"), ("GH_TOKEN", "y")])),
+            Some("GH_TOKEN")
+        );
+        assert_eq!(
+            token_env(&with(&[
+                ("COPILOT_GITHUB_TOKEN", "  "),
+                ("GH_TOKEN", ""),
+                ("GITHUB_TOKEN", "z")
+            ])),
+            Some("GITHUB_TOKEN")
+        );
+        assert_eq!(
+            token_env(&with(&[("COPILOT_GITHUB_TOKEN", "a"), ("GH_TOKEN", "y")])),
+            Some("COPILOT_GITHUB_TOKEN")
+        );
     }
 
     #[test]

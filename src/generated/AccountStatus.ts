@@ -18,6 +18,14 @@ plan: string | null,
  */
 method: string | null, 
 /**
+ * The account the CLI last signed in as, read from its own config file (Copilot): "login" or "login on host".
+ */
+last_account: string | null, 
+/**
+ * The name of an environment variable that holds a token the CLI reads (Copilot). Never its value.
+ */
+token_env: string | null, 
+/**
  * When the check finished, in milliseconds since the Unix epoch.
  */
 checked_ms: number, };

@@ -3,7 +3,7 @@ import type { AccountStatus } from "../../generated/AccountStatus";
 import { accountExtraLine, accountLine } from "./accountsText";
 
 const NOW = 1_000_000_000;
-const st = (o: Partial<AccountStatus>): AccountStatus => ({ agent: "claude", sign_in: "signed_in", email: null, plan: null, method: null, checked_ms: NOW, ...o });
+const st = (o: Partial<AccountStatus>): AccountStatus => ({ agent: "claude", sign_in: "signed_in", email: null, plan: null, method: null, last_account: null, token_env: null, checked_ms: NOW, ...o });
 
 describe("accountLine", () => {
   it("Claude with email and plan", () => {

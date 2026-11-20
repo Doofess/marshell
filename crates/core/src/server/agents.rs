@@ -1314,13 +1314,23 @@ fn account_of(st: &AppState, agent: &str, kind: Adapter) -> AccountStatus {
         email: None,
         plan: None,
         method: None,
+        last_account: None,
+        token_env: None,
         checked_ms: 0,
     };
     match kind {
         // Antigravity has no status command, so nothing is run.
         Adapter::Antigravity => status.sign_in = SignIn::NoCommand,
-        // Copilot CLI's sign-in is not read until slice 6n2.
-        Adapter::Copilot => status.sign_in = SignIn::NoCommand,
+        // Copilot CLI has no status command: its own config file names the last account, and the environment may
+        // hold a token. Only the login, the host and the variable's name go out.
+        Adapter::Copilot => {
+            status.sign_in = SignIn::NoCommand;
+            status.last_account = st
+                .copilot_dir()
+                .and_then(|dir| std::fs::read_to_string(dir.join("config.json")).ok())
+                .and_then(|text| crate::agents::copilot::last_account(&text));
+            status.token_env = crate::agents::copilot::token_env(&|k| st.copilot_env(k)).map(str::to_string);
+        }
         Adapter::Qwen => {
             status.sign_in = SignIn::NoCommand;
             let selected = |path: &Path| {

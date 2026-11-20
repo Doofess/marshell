@@ -1987,6 +1987,41 @@ async fn qwen_account_without_a_selected_type_has_no_method() {
 }
 
 #[tokio::test]
+async fn copilot_account_names_the_last_account() {
+    let e = copilot_env();
+    let config = e.settings.parent().unwrap().join("config.json");
+    std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+    std::fs::write(
+        &config,
+        "// managed\n// automatically\n{\"copilotTokens\":{\"x\":\"ghu_secret\"},\"lastLoggedInUser\":{\"host\":\"https://github.com\",\"login\":\"octo\"}}",
+    )
+    .unwrap();
+    let (status, body) = get(&e.app, "/v1/agents/copilot/account").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["agent"], "copilot");
+    assert_eq!(body["sign_in"], "no_command");
+    assert_eq!(body["last_account"], "octo");
+    assert!(!body.to_string().contains("ghu_secret"), "{body}");
+}
+
+#[tokio::test]
+async fn copilot_account_without_a_config_file_has_no_account() {
+    let e = copilot_env();
+    let (status, body) = get(&e.app, "/v1/agents/copilot/account").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["sign_in"], "no_command");
+    assert_eq!(body["last_account"], Value::Null);
+}
+
+#[tokio::test]
+async fn copilot_account_with_a_named_home_reads_no_token_variable() {
+    // A token variable in this process must not show: a home a test names reads no environment.
+    let e = copilot_env();
+    let (_, body) = get(&e.app, "/v1/agents/copilot/account").await;
+    assert_eq!(body["token_env"], Value::Null, "{body}");
+}
+
+#[tokio::test]
 async fn account_for_a_missing_cli_is_unknown() {
     use std::sync::atomic::Ordering;
     let (_dir, app) = account_app(
