@@ -6,7 +6,7 @@ import type { RecordingPart } from "../../../generated/RecordingPart";
 import { ApiError } from "../../../lib/api/client";
 import { reasonOf } from "../../../lib/api/sessions";
 import { BUNDLED_FONT, fontStack } from "../../terminal/terminalFont";
-import { appScheme, resolveTerminalTheme, type TerminalThemeInput } from "../../terminal/terminalTheme";
+import { appHighContrast, appScheme, resolveTerminalTheme, type TerminalThemeInput } from "../../terminal/terminalTheme";
 import { clock, jumpTargets, nextTarget, terminalTakesKey } from "./castPlayer";
 import { createPlaybackEngine, type FramesQuery } from "./playbackEngine";
 import "./RecordingPlayer.css";
@@ -97,7 +97,7 @@ export function RecordingPlayer({
     void (async () => {
       const [{ Terminal }, { loadRenderer }] = await Promise.all([import("@xterm/xterm"), import("../../terminal/renderer")]);
       if (cancelled) return;
-      const resolve = () => resolveTerminalTheme({ ...live.current.theme, app: appScheme(el) });
+      const resolve = () => resolveTerminalTheme({ ...live.current.theme, app: appScheme(el), highContrast: appHighContrast() });
       const first = resolve();
       let cols = live.current.part.cols;
       let rows = live.current.part.rows;
@@ -151,7 +151,7 @@ export function RecordingPlayer({
       const prefers = matchMedia("(prefers-color-scheme: dark)");
       prefers.addEventListener("change", applyTheme);
       const watch = new MutationObserver(applyTheme);
-      watch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+      watch.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-contrast"] });
       const observer = new ResizeObserver(fit);
       observer.observe(el);
       fit();

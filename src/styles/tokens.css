@@ -3,15 +3,16 @@
   /* The app's scheme, for controls drawn inside something that forces its own (a PDF page is always light). */
   --app-scheme: light dark;
 
-  /* Surfaces: true black in dark, white and warm greys in light. */
-  --bg-base: light-dark(oklch(100% 0 none), oklch(0% 0 none));
-  --bg-raised: light-dark(oklch(98.2% 0.003 85), oklch(14.5% 0 none));
-  --bg-overlay: light-dark(oklch(95.6% 0.004 75), oklch(19.1% 0 none));
+  /* Surfaces: a dark grey in dark, a soft warm white in light. High contrast puts today's true black and pure white back
+     (appearance.css), and the default terminal theme follows the window (src/features/terminal/palettes.ts). */
+  --bg-base: light-dark(oklch(97% 0.003 85), oklch(18% 0 none));
+  --bg-raised: light-dark(oklch(95.2% 0.003 85), oklch(21.5% 0 none));
+  --bg-overlay: light-dark(oklch(92.7% 0.004 75), oklch(25% 0 none));
 
   /* Text: every tier is at least 4.5:1 on every surface (src/design/contrast.test.ts). */
   --text-1: light-dark(oklch(21.6% 0.006 56), oklch(92.2% 0 none));
   --text-2: light-dark(oklch(44.4% 0.011 74), oklch(71.9% 0 none));
-  --text-3: light-dark(oklch(50% 0.013 58), oklch(63.3% 0 none));
+  --text-3: light-dark(oklch(48% 0.013 58), oklch(66.5% 0 none));
 
   --hairline: color-mix(in oklch, var(--text-1) 10%, transparent);
   /* Controls, chips and keys are told apart by a fill, never a box. */
@@ -61,7 +62,7 @@
   --code-token-punctuation: light-dark(oklch(46% 0.01 60), oklch(76% 0 none));
   --code-token-link: light-dark(oklch(47% 0.14 235), oklch(77% 0.11 225));
   /* Quieter than the text, and still 4.5:1. */
-  --code-token-comment: light-dark(oklch(50% 0.015 80), oklch(66% 0.012 80));
+  --code-token-comment: light-dark(oklch(48.5% 0.015 80), oklch(68% 0.012 80));
   /* Inserted, deleted and changed follow --ok, --error and --caution, held to 4.5:1 for text. */
   --code-token-inserted: light-dark(oklch(47% 0.12 147), oklch(76% 0.17 147));
   --code-token-deleted: light-dark(oklch(50% 0.17 27), oklch(72% 0.16 29));

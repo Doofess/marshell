@@ -2,13 +2,21 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { contrast } from "../../design/contrast";
 import { parseTokens } from "../../design/cssTokens";
-import { ACCENT_SURFACES, checkAccent, normalizeHex } from "./customAccent";
+import { ACCENT_SURFACES, ACCENT_SURFACES_HIGH_CONTRAST, checkAccent, normalizeHex } from "./customAccent";
+
+const read = (f: string) => readFileSync(new URL(`../../styles/${f}`, import.meta.url), "utf8");
+const surfaces = ["--bg-base", "--bg-raised", "--bg-overlay"];
 
 it("uses the same surfaces as tokens.css", () => {
-  const tokens = parseTokens(readFileSync(new URL("../../styles/tokens.css", import.meta.url), "utf8"), ":root");
-  const surfaces = ["--bg-base", "--bg-raised", "--bg-overlay"];
+  const tokens = parseTokens(read("tokens.css"), ":root");
   expect(ACCENT_SURFACES.light).toEqual(surfaces.map((s) => tokens[s]!.light));
   expect(ACCENT_SURFACES.dark).toEqual(surfaces.map((s) => tokens[s]!.dark));
+});
+
+it("uses the same high-contrast surfaces as appearance.css", () => {
+  const tokens = parseTokens(read("appearance.css"), ':root[data-contrast="more"]');
+  expect(ACCENT_SURFACES_HIGH_CONTRAST.light).toEqual(surfaces.map((s) => tokens[s]!.light));
+  expect(ACCENT_SURFACES_HIGH_CONTRAST.dark).toEqual(surfaces.map((s) => tokens[s]!.dark));
 });
 
 describe("normalizeHex", () => {
