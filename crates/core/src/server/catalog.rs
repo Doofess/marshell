@@ -119,18 +119,11 @@ pub(super) fn build_for(st: &AppState, profile_env: &[(String, String)], version
 }
 
 /// What a WSL distro is asked for, per catalog agent in catalog order: the id and the word its shell starts, or None for
-/// an agent Marshell doesn't drive in WSL yet (Copilot CLI, slice 6n2). A manifest agent's word is its first command.
+/// an agent Marshell doesn't drive in WSL. A manifest agent's word is its first command.
 pub(super) fn wsl_words(st: &AppState) -> Vec<(String, Option<String>)> {
     let mut list: Vec<(String, Option<String>)> = adapters()
         .into_iter()
-        .map(|(id, ..)| {
-            let word = if id == "copilot" {
-                None
-            } else {
-                agent_command(id).map(String::from)
-            };
-            (id.to_string(), word)
-        })
+        .map(|(id, ..)| (id.to_string(), agent_command(id).map(String::from)))
         .collect();
     list.extend(st.agents().manifests().map(|m| {
         let word = m.commands.first().cloned().unwrap_or_else(|| m.id.clone());

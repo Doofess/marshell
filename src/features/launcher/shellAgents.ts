@@ -6,7 +6,10 @@ import type { LaunchProgram, LauncherChoice, ProgramId } from "./launchChoice";
 export type ShellOffer =
   | { state: "checking" }
   | { state: "unreached" }
-  | { state: "ready"; offered: LaunchProgram[]; missing: { label: string; problem: ShellAgentProblem }[] };
+  | { state: "ready"; offered: LaunchProgram[]; missing: MissingAgent[] };
+
+/** An agent the shell lacks, and why. `note` is the core's own sentence with more about the problem, shown as it was sent. */
+export type MissingAgent = { label: string; problem: ShellAgentProblem; note?: string };
 
 /**
  * Turns the core's answer for a shell into what the chip lists. `undefined` is not asked yet and an answer for another shell is
@@ -19,10 +22,12 @@ export function offerFor(agents: LaunchProgram[], answer: ShellAgents | "failed"
   if (answer.profile_id !== shellId) return { state: "checking" };
   if (!answer.reached) return { state: "unreached" };
   const problems = new Map(answer.agents.map((a) => [a.id, a.problem]));
+  const notes = new Map(answer.agents.map((a) => [a.id, a.note]));
   const offered = agents.filter((p) => problems.get(p.agent ?? p.id) === null);
-  const missing = agents.flatMap((p) => {
+  const missing = agents.flatMap((p): MissingAgent[] => {
     const problem = problems.get(p.id);
-    return p.preset === undefined && problem !== undefined && problem !== null ? [{ label: p.label, problem }] : [];
+    const note = notes.get(p.id);
+    return p.preset === undefined && problem !== undefined && problem !== null ? [{ label: p.label, problem, ...(note !== undefined ? { note } : {}) }] : [];
   });
   return { state: "ready", offered, missing };
 }
@@ -33,10 +38,15 @@ const REASONS: Record<ShellAgentProblem, string> = {
   path_has_space: "its path has a space, which Command Prompt can't start",
 };
 
-/** The one line under the agent list naming each agent the shell lacks and why, or null when it lacks none. */
-export function missingLine(shellLabel: string, missing: { label: string; problem: ShellAgentProblem }[]): string | null {
+/**
+ * The one line under the agent list naming each agent the shell lacks and why, or null when it lacks none. An agent's own
+ * sentence from the core follows the list, so the list keeps its shape and the sentence reads whole.
+ */
+export function missingLine(shellLabel: string, missing: MissingAgent[]): string | null {
   if (missing.length === 0) return null;
-  return `Not in ${shellLabel}: ${missing.map((m) => `${m.label} (${REASONS[m.problem]})`).join(", ")}`;
+  const list = `Not in ${shellLabel}: ${missing.map((m) => `${m.label} (${REASONS[m.problem]})`).join(", ")}`;
+  const notes = missing.flatMap((m) => (m.note !== undefined ? [m.note] : []));
+  return notes.length === 0 ? list : `${list}. ${notes.join(" ")}`;
 }
 
 /**

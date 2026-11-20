@@ -15,7 +15,9 @@ import "./History.css";
 export const NO_ARCHIVE_COPY = "Marshell has no copy of this conversation yet.";
 
 /** The agent's name in the view's sentences; an agent not named here reads as Claude Code, the one History had before Codex. */
-const agentName = (agent: string) => (agent === "codex" ? "Codex" : agent === "qwen" ? "Qwen Code" : "Claude Code");
+const agentName = (agent: string) => (agent === "codex" ? "Codex" : agent === "qwen" ? "Qwen Code" : agent === "copilot" ? "Copilot CLI" : "Claude Code");
+/** Codex, Qwen Code and Copilot CLI have no fork, and their conversations are titled by the first prompt. */
+const titledByPrompt = (agent: string) => agent === "codex" || agent === "qwen" || agent === "copilot";
 
 const limitedNotice = (agent: string, version: string | undefined) =>
   version
@@ -289,7 +291,7 @@ export function ConversationView({
               Resume
             </button>
           )}
-          {c.agent !== "codex" && c.agent !== "qwen" && (
+          {!titledByPrompt(c.agent) && (
             <button type="button" className="conversation__action conversation__action--quiet" onClick={onFork}>
               Fork
             </button>
@@ -339,7 +341,7 @@ export function ConversationView({
           />
           {editor === "rename" && (
             <p id={hintId} className="conversation__hint">
-              {c.agent === "codex" || c.agent === "qwen" ? "Leave empty to use the first prompt." : "Leave empty to use Claude Code's title."}
+              {titledByPrompt(c.agent) ? "Leave empty to use the first prompt." : "Leave empty to use Claude Code's title."}
             </p>
           )}
           {error && (

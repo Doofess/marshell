@@ -328,16 +328,16 @@ describe("AgentsSectionView errors", () => {
 
 describe("AgentsSectionView WSL group", () => {
   const wsl = (distros: string[] | undefined) =>
-    renderToStaticMarkup(<AgentsSectionView setup={SETUP} codex={CODEX_SETUP} antigravity={AGY_SETUP} qwen={QWEN_SETUP} panel={{ kind: "list" }} liveStatus={true} wslDistros={distros} {...handlers} />);
+    renderToStaticMarkup(<AgentsSectionView setup={SETUP} codex={CODEX_SETUP} antigravity={AGY_SETUP} qwen={QWEN_SETUP} copilot={COPILOT_SETUP} panel={{ kind: "list" }} liveStatus={true} wslDistros={distros} {...handlers} />);
   it("the_wsl_group_lists_each_distro", () => {
     const h = wsl(["Ubuntu", "Debian"]);
-    for (const agent of ["claude", "codex", "antigravity", "qwen"]) expect(h).toContain(`data-wsl-group="${agent}"`);
+    for (const agent of ["claude", "codex", "antigravity", "qwen", "copilot"]) expect(h).toContain(`data-wsl-group="${agent}"`);
     expect(h).toContain("Agents you run inside a WSL distro read their own settings there. Set up writes Marshell&#x27;s hooks into that distro.");
     for (const d of ["Ubuntu", "Debian"]) {
       expect(h).toContain(`>Set up in ${d}</button>`);
       expect(h).toContain(`>Remove from ${d}</button>`);
     }
-    expect(h.match(/>Set up in Ubuntu<\/button>/g)).toHaveLength(4);
+    expect(h.match(/>Set up in Ubuntu<\/button>/g)).toHaveLength(5);
     // Set up comes before Remove, and the group comes after the Windows controls.
     expect(h.indexOf(">Set up in Ubuntu<")).toBeLessThan(h.indexOf(">Remove from Ubuntu<"));
     expect(h.indexOf(">Hooks off<")).toBeLessThan(h.indexOf('data-wsl-group="claude"'));
@@ -366,11 +366,11 @@ describe("AgentsSectionView setup panel heading", () => {
 });
 
 describe("AgentsSectionView with a CLI missing on Windows", () => {
-  const missing = (agent: "codex" | "antigravity" | "qwen", distros: string[] | undefined) => {
-    const props = agent === "codex" ? { codex: { ...CODEX_SETUP, found: false } } : agent === "qwen" ? { qwen: { ...QWEN_SETUP, found: false } } : { antigravity: { ...AGY_SETUP, found: false } };
+  const missing = (agent: "codex" | "antigravity" | "qwen" | "copilot", distros: string[] | undefined) => {
+    const props = agent === "codex" ? { codex: { ...CODEX_SETUP, found: false } } : agent === "qwen" ? { qwen: { ...QWEN_SETUP, found: false } } : agent === "copilot" ? { copilot: { ...COPILOT_SETUP, found: false } } : { antigravity: { ...AGY_SETUP, found: false } };
     return renderToStaticMarkup(<AgentsSectionView setup={SETUP} {...props} panel={{ kind: "list" }} liveStatus={true} wslDistros={distros} {...handlers} />);
   };
-  for (const agent of ["codex", "antigravity", "qwen"] as const) {
+  for (const agent of ["codex", "antigravity", "qwen", "copilot"] as const) {
     it(`${agent}_not_found_on_windows_still_offers_its_wsl_group`, () => {
       const h = missing(agent, ["Ubuntu"]);
       const from = h.indexOf(`data-agent-card="${agent}"`);
@@ -384,7 +384,7 @@ describe("AgentsSectionView with a CLI missing on Windows", () => {
     });
     it(`${agent}_not_found_on_windows_keeps_its_live_status_switch`, () => {
       // Live status is Marshell's own setting, and it governs the agent's rows in a distro too.
-      const props = agent === "codex" ? { codex: { ...CODEX_SETUP, found: false }, codexLiveStatus: true } : agent === "qwen" ? { qwen: { ...QWEN_SETUP, found: false }, qwenLiveStatus: true } : { antigravity: { ...AGY_SETUP, found: false }, antigravityLiveStatus: true };
+      const props = agent === "codex" ? { codex: { ...CODEX_SETUP, found: false }, codexLiveStatus: true } : agent === "qwen" ? { qwen: { ...QWEN_SETUP, found: false }, qwenLiveStatus: true } : agent === "copilot" ? { copilot: { ...COPILOT_SETUP, found: false }, copilotLiveStatus: true } : { antigravity: { ...AGY_SETUP, found: false }, antigravityLiveStatus: true };
       const h = renderToStaticMarkup(<AgentsSectionView setup={SETUP} {...props} panel={{ kind: "list" }} liveStatus={true} wslDistros={["Ubuntu"]} {...handlers} />);
       const from = h.indexOf(`data-agent-card="${agent}"`);
       expect(h.slice(from, h.indexOf("</section>", from))).toContain("Live status");
@@ -394,6 +394,7 @@ describe("AgentsSectionView with a CLI missing on Windows", () => {
         codex: { codex: { ...CODEX_SETUP, found: false, hooks: "installed" as const, trust: "untrusted" as const }, codexLiveStatus: true },
         qwen: { qwen: { ...QWEN_SETUP, found: false, hooks: "installed" as const }, qwenLiveStatus: true },
         antigravity: { antigravity: { ...AGY_SETUP, found: false, hooks: "installed" as const }, antigravityLiveStatus: true },
+        copilot: { copilot: { ...COPILOT_SETUP, found: false, hooks: "installed" as const }, copilotLiveStatus: true },
       };
       const h = renderToStaticMarkup(<AgentsSectionView setup={SETUP} {...setups[agent]} panel={{ kind: "list" }} liveStatus={true} wslDistros={[]} {...handlers} />);
       const from = h.indexOf(`data-agent-card="${agent}"`);
@@ -455,11 +456,31 @@ describe("AgentsSectionView: Copilot CLI", () => {
     expect(on).toContain("Hooks on in C:/h/.copilot/hooks/marshell.json.");
     expect(on).not.toContain(">Set up</button>");
   });
-  it("Copilot's skill row says the skill isn't available for Copilot CLI yet", () => {
+  it("Copilot's section says when only VS Code's launcher is on PATH", () => {
+    const sentence = "Only VS Code's Copilot launcher is on PATH. Install Copilot CLI itself to use it here.";
+    // The text is the core's: whatever it sends is shown, as a line of the section.
+    const h = section(withCopilot({ ...COPILOT_SETUP, found: false, not_found_note: sentence }));
+    expect(h.replaceAll("&#x27;", "'")).toContain(`<p class="agents-dialog__line" dir="auto">${sentence}</p>`);
+    expect(h).toContain("Copilot CLI was not found on this computer.");
+    expect(h).not.toContain(">Set up</button>");
+    // A found Copilot, and one that is simply missing, carry no such line.
+    expect(withCopilot(COPILOT_SETUP).replaceAll("&#x27;", "'")).not.toContain("launcher is on PATH");
+    expect(withCopilot({ ...COPILOT_SETUP, found: false })).not.toContain('aria-label="Copilot CLI"');
+  });
+  it("Copilot's skill row offers Install the marshell skill", () => {
     const h = section(withCopilot(COPILOT_SETUP, { kind: "list" }, true));
     expect(h).toContain('data-agent-skill="copilot"');
-    expect(h).toContain("Marshell has no skill for Copilot CLI yet.");
-    expect(h).not.toContain("Install the marshell skill</button>");
+    expect(h).toContain("Install the marshell skill</button>");
+    expect(h).not.toContain("Marshell has no skill for Copilot CLI yet.");
+  });
+  it("the distro panel offers Set up in Ubuntu for Copilot CLI", () => {
+    const h = renderToStaticMarkup(<AgentsSectionView setup={SETUP} copilot={COPILOT_SETUP} panel={{ kind: "list" }} liveStatus={true} copilotLiveStatus={true} wslDistros={["Ubuntu"]} {...handlers} />);
+    const card = section(h);
+    expect(card).toContain('data-wsl-group="copilot"');
+    expect(card).toContain(">Set up in Ubuntu</button>");
+    expect(card).toContain(">Remove from Ubuntu</button>");
+    // Until the distros are known, there is no group.
+    expect(withCopilot(COPILOT_SETUP)).not.toContain('data-wsl-group="copilot"');
   });
   it("the Hooks off panel is titled for Copilot CLI", () => {
     expect(withCopilot({ ...COPILOT_SETUP, hooks: "installed" }, { kind: "off", agent: "copilot", removal: null, busy: false })).toContain("Turn Copilot CLI hooks off");

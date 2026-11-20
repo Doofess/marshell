@@ -16,7 +16,11 @@ agent: string,
 /**
  * A detected profile runs this agent.
  */
-found: boolean, version?: string, exe_path?: string, settings_path: string, 
+found: boolean, 
+/**
+ * Why the CLI wasn't found, when Marshell knows more than that it isn't on PATH.
+ */
+not_found_note?: string, version?: string, exe_path?: string, settings_path: string, 
 /**
  * The agent's own setting that skips every prompt unless Marshell's explicit mode flags override it.
  */

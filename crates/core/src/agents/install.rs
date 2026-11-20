@@ -10,6 +10,7 @@ pub fn npm_package(agent: &str) -> Option<&'static str> {
         "claude" => Some("@anthropic-ai/claude-code"),
         "codex" => Some("@openai/codex"),
         "qwen" => Some("@qwen-code/qwen-code"),
+        "copilot" => Some("@github/copilot"),
         _ => None,
     }
 }
@@ -100,6 +101,8 @@ pub fn install_kind(agent: &str, exe: &Path, exists: &dyn Fn(&Path) -> bool) -> 
         "antigravity" => file == "agy.exe" && folder.ends_with(&["agy".into(), "bin".into()]),
         // The standalone install: `%LOCALAPPDATA%\qwen-code\bin\qwen.cmd` calls `qwen-code\qwen-code\bin\qwen.cmd`.
         "qwen" => file == "qwen.cmd" && folder.ends_with(&["qwen-code".into(), "bin".into()]),
+        // The standalone install: `%LOCALAPPDATA%\GitHubCopilotCLI\copilot.exe`.
+        "copilot" => file == "copilot.exe" && folder.last().is_some_and(|d| d == "githubcopilotcli"),
         _ => false,
     };
     if native {
@@ -289,6 +292,53 @@ mod tests {
                 package: "@qwen-code/qwen-code".into()
             }
         );
+    }
+
+    #[test]
+    fn copilot_in_its_own_folder_updates_with_copilot_update() {
+        let exe = Path::new(r"C:\Users\u\AppData\Local\GitHubCopilotCLI\copilot.exe");
+        assert_eq!(kind("copilot", exe.to_str().unwrap()), InstallKind::Native);
+        assert_eq!(
+            update_argv("copilot", &InstallKind::Native, exe),
+            Some(vec![exe.to_string_lossy().into_owned(), "update".into()])
+        );
+        assert_eq!(
+            update_text("copilot", &InstallKind::Native).as_deref(),
+            Some("copilot update")
+        );
+    }
+
+    #[test]
+    fn an_npm_copilot_updates_with_npm() {
+        let package: PathBuf = [
+            r"C:\Users\u\AppData\Roaming\npm",
+            "node_modules",
+            "@github",
+            "copilot",
+            "package.json",
+        ]
+        .iter()
+        .collect();
+        let found = install_kind(
+            "copilot",
+            Path::new(r"C:\Users\u\AppData\Roaming\npm\copilot.cmd"),
+            &|p| p == package,
+        );
+        assert_eq!(
+            found,
+            InstallKind::Npm {
+                package: "@github/copilot".into()
+            }
+        );
+        assert_eq!(
+            update_text("copilot", &found).as_deref(),
+            Some("npm install -g @github/copilot@latest")
+        );
+    }
+
+    #[test]
+    fn a_copilot_elsewhere_has_no_update() {
+        assert_eq!(kind("copilot", r"C:\tools\copilot.exe"), InstallKind::Unknown);
     }
 
     #[test]

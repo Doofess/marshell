@@ -161,17 +161,18 @@ describe("where a conversation ran", () => {
     expect(historyAgentLabel("claude")).toBe("Claude Code");
     expect(historyAgentLabel("codex")).toBe("Codex CLI");
     expect(historyAgentLabel("qwen")).toBe("Qwen Code");
+    expect(historyAgentLabel("copilot")).toBe("Copilot CLI");
     expect(historyAgentLabel("other")).toBe("other");
   });
   it("words the import's progress, or says nothing when it isn't copying", () => {
-    expect(importLine({ copying: true, done: 120, total: 355, on: true })).toBe("Copying conversations from Claude Code, Codex and Qwen Code: 120 of 355.");
+    expect(importLine({ copying: true, done: 120, total: 355, on: true })).toBe("Copying conversations from Claude Code, Codex, Qwen Code and Copilot CLI: 120 of 355.");
     expect(importLine({ copying: false, done: 355, total: 355, on: true })).toBeNull();
     expect(importLine(null)).toBeNull();
   });
 
   it("words the end of a copy: finished, stopped by the switch, or unknown after a failed read", () => {
-    expect(importEndLine({ copying: false, done: 355, total: 355, on: true })).toBe("Finished copying conversations from Claude Code, Codex and Qwen Code.");
-    expect(importEndLine({ copying: false, done: 576, total: 1500, on: false })).toBe("Stopped copying conversations from Claude Code, Codex and Qwen Code: 576 of 1500 copied.");
+    expect(importEndLine({ copying: false, done: 355, total: 355, on: true })).toBe("Finished copying conversations from Claude Code, Codex, Qwen Code and Copilot CLI.");
+    expect(importEndLine({ copying: false, done: 576, total: 1500, on: false })).toBe("Stopped copying conversations from Claude Code, Codex, Qwen Code and Copilot CLI: 576 of 1500 copied.");
     expect(importEndLine(null)).toBeNull();
   });
 });

@@ -25,7 +25,8 @@ Nothing here deletes a folder. With -CodexAuth, start copies ~/.codex/auth.json 
        logging every request to <Scratch>\qwen-fake.jsonl), points OPENAI_BASE_URL, OPENAI_API_KEY and OPENAI_MODEL
        at it for the app and its tabs, and writes <Scratch>\home\.qwen\settings.json selecting that provider, so
        Qwen Code starts with no account. stop ends the fake model by its recorded PID.
-       start always sets COPILOT_HOME=<Scratch>\home\.copilot. With -CopilotFake, it also runs a second fake model on
+       start always sets COPILOT_HOME=<Scratch>\home\.copilot, or the new, empty folder -CopilotHome names (for a
+       Copilot home outside the user profile; deleted with the scratch folder at the end of the work). With -CopilotFake, it also runs a second fake model on
        -CopilotPort (log <Scratch>\copilot-fake.jsonl), sets Copilot CLI's BYOK variables for it (COPILOT_PROVIDER_*,
        COPILOT_MODEL, COPILOT_OFFLINE) and COPILOT_CACHE_HOME=<Scratch>\copilot-cache, and writes
        <Scratch>\home\.copilot\settings.json with auto-update and the taskbar helper off, so Copilot CLI starts with
@@ -57,6 +58,9 @@ param(
     # start only: runs the fake model for Copilot CLI (slice 6n1 decision 6); stop ends it.
     [switch]$CopilotFake,
     [int]$CopilotPort = 47613,
+    # start only: a new literal folder to use as COPILOT_HOME instead of <Scratch>\home\.copilot, for a Copilot home
+    # outside the user profile (slice 6n2 decision 4).
+    [string]$CopilotHome,
     # The checkout to run; defaults to the one holding this script.
     [string]$Repo = (Join-Path $PSScriptRoot '..\..\..'),
     [int]$Port = 9333
@@ -72,9 +76,13 @@ if ($CodexHome) {
     $CodexHome = [System.IO.Path]::GetFullPath($CodexHome).TrimEnd('\')
     if ($CodexHome.Length -gt 60) { throw "CodexHome is $($CodexHome.Length) characters; Codex needs at most 60: $CodexHome" }
 }
+if ($CopilotHome) {
+    if (-not [System.IO.Path]::IsPathRooted($CopilotHome)) { throw "CopilotHome must be an absolute path: $CopilotHome" }
+    $CopilotHome = [System.IO.Path]::GetFullPath($CopilotHome).TrimEnd('\')
+}
 foreach ($real in @("$HOME\.marshell", "$HOME\.claude", "$HOME\.codex", "$HOME\.gemini", "$HOME\.qwen", "$HOME\.copilot")) {
     $r = [System.IO.Path]::GetFullPath($real).TrimEnd('\')
-    foreach ($path in @($Scratch, $CodexHome) | Where-Object { $_ }) {
+    foreach ($path in @($Scratch, $CodexHome, $CopilotHome) | Where-Object { $_ }) {
         if ($path -ieq $r -or $path.StartsWith("$r\", 'OrdinalIgnoreCase')) { throw "$path is inside a real config folder: $real" }
     }
 }
@@ -222,7 +230,14 @@ switch ($Mode) {
             $env:OPENAI_MODEL = 'marshell-fake'
         }
         # Always a scratch Copilot home, so neither Copilot nor the core's Copilot adapter reads the real ~/.copilot.
-        $copilotDir = (New-Item -ItemType Directory -Path (Join-Path $agyHome '.copilot')).FullName
+        if ($CopilotHome) {
+            if ((Test-Path -LiteralPath $CopilotHome) -and (Get-ChildItem -LiteralPath $CopilotHome -Force | Select-Object -First 1)) {
+                throw "CopilotHome is not empty: $CopilotHome. Use a new literal path."
+            }
+            $copilotDir = (Test-Path -LiteralPath $CopilotHome) ? (Get-Item -LiteralPath $CopilotHome).FullName : (New-Item -ItemType Directory -Path $CopilotHome).FullName
+        } else {
+            $copilotDir = (New-Item -ItemType Directory -Path (Join-Path $agyHome '.copilot')).FullName
+        }
         $env:COPILOT_HOME = $copilotDir
         $copilotFakeRec = $null
         if ($CopilotFake) {

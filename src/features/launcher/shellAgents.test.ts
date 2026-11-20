@@ -23,6 +23,11 @@ describe("offerFor", () => {
       expect(effectiveAgent({ agent: "claude" }, offer)).toBeNull();
     }
   });
+  it("Copilot is offered for a distro that has it", () => {
+    const offer = offerFor(programs, answer("ubuntu", { claude: "not_installed", codex: "not_installed", antigravity: "not_installed", copilot: null }), "ubuntu");
+    expect(offer.state === "ready" && offer.offered.map((p) => p.id)).toEqual(["copilot"]);
+    expect(offer.state === "ready" && offer.missing.map((m) => m.label)).not.toContain("GitHub Copilot");
+  });
   it("a_preset_follows_its_agent", () => {
     const both = offerFor(programs, answer("ps", { claude: null, codex: "not_installed", antigravity: "not_installed", copilot: "not_installed" }), "ps");
     expect(both.state === "ready" && both.offered.map((p) => p.id)).toEqual(["claude", "preset:deepseek"]);
@@ -30,16 +35,40 @@ describe("offerFor", () => {
     expect(neither.state === "ready" && neither.offered.map((p) => p.id)).toEqual(["codex", "antigravity", "copilot"]);
   });
   it("missing_agents_keep_catalog_order_and_exact_reasons", () => {
-    const offer = offerFor(programs, answer("ubuntu", { claude: null, codex: null, antigravity: "not_installed", copilot: "not_driven_here" }), "ubuntu");
+    const offer = offerFor(programs, answer("ubuntu", { claude: null, codex: null, antigravity: "not_installed", copilot: "not_installed" }), "ubuntu");
     expect(offer.state).toBe("ready");
     if (offer.state !== "ready") return;
     expect(offer.missing).toEqual([
       { label: "Antigravity", problem: "not_installed" },
-      { label: "GitHub Copilot", problem: "not_driven_here" },
+      { label: "GitHub Copilot", problem: "not_installed" },
     ]);
-    expect(missingLine("Ubuntu", offer.missing)).toBe("Not in Ubuntu: Antigravity (not installed), GitHub Copilot (Marshell runs it in WSL later)");
+    expect(missingLine("Ubuntu", offer.missing)).toBe("Not in Ubuntu: Antigravity (not installed), GitHub Copilot (not installed)");
     expect(missingLine("Command Prompt", [{ label: "Amp", problem: "path_has_space" }])).toBe("Not in Command Prompt: Amp (its path has a space, which Command Prompt can't start)");
     expect(missingLine("Ubuntu", [])).toBeNull();
+  });
+  it("the_note_is_shown_for_the_agent_that_carries_one", () => {
+    const note = "Only VS Code's Copilot launcher is on PATH. Install Copilot CLI itself to use it here.";
+    const asked: ShellAgents = {
+      profile_id: "pwsh",
+      reached: true,
+      agents: [
+        { id: "claude", problem: null },
+        { id: "codex", problem: "not_installed" },
+        { id: "antigravity", problem: null },
+        { id: "copilot", problem: "not_installed", note },
+      ],
+    };
+    const offer = offerFor(programs, asked, "pwsh");
+    expect(offer.state).toBe("ready");
+    if (offer.state !== "ready") return;
+    expect(offer.missing).toEqual([
+      { label: "Codex", problem: "not_installed" },
+      { label: "GitHub Copilot", problem: "not_installed", note },
+    ]);
+    // The agent keeps its place in the list and its reason; its sentence follows the list, once.
+    expect(missingLine("PowerShell", offer.missing)).toBe(`Not in PowerShell: Codex (not installed), GitHub Copilot (not installed). ${note}`);
+    // Without a note the line reads as it always did.
+    expect(missingLine("PowerShell", [{ label: "Codex", problem: "not_installed" }])).toBe("Not in PowerShell: Codex (not installed)");
   });
   it("an_answer_for_another_shell_never_fills_this_one", () => {
     expect(offerFor(programs, answer("pwsh", { claude: null }), "ubuntu")).toEqual({ state: "checking" });

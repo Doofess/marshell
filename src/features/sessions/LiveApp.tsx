@@ -55,7 +55,7 @@ import { LiveSettings } from "../settings/LiveSettings";
 import { closesSettings, isTextEntry, freshSettingsStart, paletteSection } from "../settings/settingsRouting";
 import { COMPANY_NAMES, type CompanyAgent, type SettingsSection } from "../settings/settingsSections";
 import { cliTaskRequest, exitedTasks, runningCount, updateResult, type CliTaskKind, type PendingTask } from "../settings/cliTasks";
-import { accountLine, UNREACHABLE } from "../accounts/accountsText";
+import { signInResult, UNREACHABLE } from "../accounts/accountsText";
 import { getAccount, getInstall } from "../../lib/api/accounts";
 import { pickFile } from "../../lib/filePicker";
 import { Preview, type PreviewHandle } from "../preview/Preview";
@@ -356,7 +356,7 @@ export function LiveApp() {
   const versionBefore = useRef(new Map<string, string | null>());
   const openingTask = useRef(false);
   const [accountsRefresh, setAccountsRefresh] = useState(0);
-  const [companyRefresh, setCompanyRefresh] = useState<Record<CompanyAgent, number>>({ claude: 0, codex: 0, antigravity: 0, qwen: 0 });
+  const [companyRefresh, setCompanyRefresh] = useState<Record<CompanyAgent, number>>({ claude: 0, codex: 0, antigravity: 0, qwen: 0, copilot: 0 });
   // First run: shown once, when the saved settings say the onboarding was not seen. Nothing shows until that read has answered;
   // a failed read shows none.
   const [onboardingShown, setOnboardingShown] = useState<OnboardingShown>("unknown");
@@ -1922,7 +1922,7 @@ export function LiveApp() {
     const name = COMPANY_NAMES[task.agent];
     if (task.kind === "sign_in") {
       try {
-        announce(`${name}: ${accountLine(await getAccount(ep, task.agent), name, Date.now())}`);
+        announce(signInResult(await getAccount(ep, task.agent), name, Date.now()));
       } catch {
         announce(`${name}: ${UNREACHABLE}`);
       }
@@ -1953,7 +1953,7 @@ export function LiveApp() {
   // The tabs of each CLI that are running, not counting the sign-in and update tabs Settings opened (an update would warn about itself).
   const runningTabs = useMemo(() => {
     const others = infos.filter((i) => !pendingTasks.current.has(i.tab_id));
-    return { claude: runningCount(others, "claude"), codex: runningCount(others, "codex"), antigravity: runningCount(others, "antigravity"), qwen: runningCount(others, "qwen") };
+    return { claude: runningCount(others, "claude"), codex: runningCount(others, "codex"), antigravity: runningCount(others, "antigravity"), qwen: runningCount(others, "qwen"), copilot: runningCount(others, "copilot") };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the pending map is a ref; it changes together with the overlay.
   }, [infos, overlay]);
 

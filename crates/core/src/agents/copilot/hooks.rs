@@ -63,16 +63,26 @@ pub fn hooks_file(bridge: &Bridge, want: &HookPlanRequest) -> String {
             hooks.insert(event.to_string(), json!([entry_of(bridge, event, role, timeout)]));
         }
     }
+    hooks_text(hooks)
+}
+
+/// The text `hooks_file` writes with no entries; what `is_marshells` compares an entry-less file with.
+fn empty_hooks_text() -> String {
+    hooks_text(serde_json::Map::new())
+}
+
+fn hooks_text(hooks: serde_json::Map<String, Value>) -> String {
     let mut text =
         serde_json::to_string_pretty(&json!({ "version": 1, "hooks": hooks })).expect("a JSON value always serializes");
     text.push('\n');
     text
 }
 
-/// The command string of Marshell's status line.
+/// The command string of Marshell's status line. In a distro, which keeps no chain file, it says `--no-chain`.
 pub fn statusline_command(bridge: &Bridge) -> Result<String, PlanError> {
+    let no_chain = if bridge.distro().is_some() { " --no-chain" } else { "" };
     Ok(format!(
-        "{} statusline --agent {AGENT} --tag {TAG}",
+        "{} statusline --agent {AGENT} --tag {TAG}{no_chain}",
         common::bridge_prefix_of(AGENT_NAME, bridge)?
     ))
 }
@@ -83,7 +93,8 @@ pub struct Files<'a> {
     pub hooks_text: Option<&'a str>,
     pub settings_path: &'a Path,
     pub settings_text: Option<&'a str>,
-    pub chain_path: &'a Path,
+    /// `None` in a distro, which keeps no chain.
+    pub chain_path: Option<&'a Path>,
     pub chain_text: Option<&'a str>,
 }
 
@@ -106,13 +117,25 @@ fn entries_of(file: &Value) -> impl Iterator<Item = (&str, &Value)> {
         .flat_map(|(event, entries)| entries.iter().map(move |entry| (event, entry)))
 }
 
-/// The file is Marshell's: it has a `hooks` object, and every event holds only entries Marshell wrote.
-fn is_marshells(file: &Value) -> bool {
-    file.get("hooks").and_then(Value::as_object).is_some_and(|hooks| {
-        hooks
-            .values()
-            .all(|entries| entries.as_array().is_some_and(|e| e.iter().all(is_ours)))
-    })
+/// The file is Marshell's: it has a `hooks` object, and every event holds only entries Marshell wrote. A file with no
+/// entry at all (every list empty, or no list) proves nothing by its entries, and deleting or overwriting it is a
+/// write to a file someone else may have made: it is Marshell's only when its text is the one `hooks_file` writes with
+/// the status off (line endings aside).
+fn is_marshells(file: &Value, text: &str) -> bool {
+    let Some(hooks) = file.get("hooks").and_then(Value::as_object) else {
+        return false;
+    };
+    let ours = hooks
+        .values()
+        .all(|entries| entries.as_array().is_some_and(|e| e.iter().all(is_ours)));
+    if !ours {
+        return false;
+    }
+    entries_of(file).next().is_some() || unix_lines(text) == unix_lines(&empty_hooks_text())
+}
+
+fn unix_lines(text: &str) -> String {
+    text.replace("\r\n", "\n")
 }
 
 /// The hooks file's text when it is there and Marshell's. A file that doesn't parse, or isn't Marshell's, is an error.
@@ -121,7 +144,7 @@ fn marshells_hooks<'a>(files: &Files<'a>) -> Result<Option<&'a str>, PlanError> 
     let Ok(file) = read_value(text) else {
         return Err(does_not_parse(files.hooks_path, text));
     };
-    if !is_marshells(&file) {
+    if !is_marshells(&file, text) {
         return Err(PlanError::NotMarshells {
             path: files.hooks_path.to_path_buf(),
         });
@@ -276,6 +299,9 @@ fn set(pointer: &str, value: &Value) -> EditOp {
 /// - already Marshell's: pointed at this bridge, and nothing is saved;
 /// - missing or `null`: becomes Marshell's command, and the chain says the person had none;
 /// - anything else: left as it is, no chain.
+///
+/// In a distro (`bridge` is `Bridge::Distro`, and `files` holds no chain file) there is no chain: the person's own
+/// status line stays as it is, with a note, and Marshell's own line says `--no-chain`.
 pub fn install_plan(files: &Files, bridge: &Bridge, want: &HookPlanRequest) -> Result<ChangeSet, PlanError> {
     let title = "Set up Copilot CLI hooks".to_string();
     let existing = marshells_hooks(files)?;
@@ -311,10 +337,15 @@ pub fn install_plan(files: &Files, bridge: &Bridge, want: &HookPlanRequest) -> R
         None => String::new(),
     };
 
+    let mut left_alone = None;
     if want.status && want.statusline {
         let settings = parse_settings(files.settings_path, files.settings_text)?;
         let ours = statusline_command(bridge)?;
         let (ops, chain, tail): (Vec<EditOp>, Option<Value>, &str) = match line_of(&settings) {
+            Line::Theirs(_) if bridge.distro().is_some() => {
+                left_alone = bridge.distro().map(common::statusline_left_note);
+                (Vec::new(), None, "")
+            }
             Line::Ours(line) if command_text(line) != Some(&ours) => (
                 vec![set(STATUSLINE_COMMAND_POINTER, &json!(ours))],
                 None,
@@ -336,9 +367,10 @@ pub fn install_plan(files: &Files, bridge: &Bridge, want: &HookPlanRequest) -> R
             ops.into_iter()
                 .map(|op| edit(files.settings_path, ConfigScope::User, op, files.settings_text)),
         );
-        if let Some(chain) = chain {
+        let chain = chain.filter(|_| bridge.distro().is_none());
+        if let (Some(chain), Some(chain_path)) = (chain, files.chain_path) {
             edits.push(edit(
-                files.chain_path,
+                chain_path,
                 ConfigScope::Marshell,
                 set(STATUSLINE_POINTER, &chain),
                 files.chain_text,
@@ -353,7 +385,7 @@ pub fn install_plan(files: &Files, bridge: &Bridge, want: &HookPlanRequest) -> R
         }
     }
 
-    let reason = if how.is_empty() {
+    let mut reason = if how.is_empty() {
         if want.status {
             "Marshell's hooks are already in place, so nothing changes.".to_string()
         } else {
@@ -362,6 +394,9 @@ pub fn install_plan(files: &Files, bridge: &Bridge, want: &HookPlanRequest) -> R
     } else {
         format!("{how}.")
     };
+    if let Some(note) = left_alone {
+        reason = format!("{reason} {note}");
+    }
     Ok(ChangeSet { title, reason, edits })
 }
 
@@ -375,7 +410,11 @@ enum Saved {
     Unusable,
 }
 
-fn saved_line(chain_text: Option<&str>) -> Saved {
+fn saved_line(chain_text: Option<&str>, in_distro: bool) -> Saved {
+    // A distro keeps no chain: the line Marshell added there went over none.
+    if in_distro {
+        return Saved::Nothing;
+    }
     let Some(chain) = chain_text.and_then(|t| read_value(t).ok()) else {
         return Saved::Unusable;
     };
@@ -394,7 +433,10 @@ fn saved_line(chain_text: Option<&str>) -> Saved {
 /// The chain file is read, then deleted in the same change set, so one undo brings back all three files. While
 /// `statusLine.command` is Marshell's, the chain's command goes back in that key (or the key goes, when the chain
 /// holds `null`); a command the person changed since the setup is left alone. `settings.json` is never deleted.
-pub fn remove_plan(files: &Files) -> Result<RemovePlan, PlanError> {
+///
+/// In a distro (`distro` is its name) there is no chain: a status line of Marshell's was added over none, and the key
+/// goes, and any other is the person's, left alone.
+pub fn remove_plan(files: &Files, distro: Option<&str>) -> Result<RemovePlan, PlanError> {
     let title = "Turn Copilot CLI hooks off".to_string();
     let hooks = marshells_hooks(files)?;
     let settings = parse_settings(files.settings_path, files.settings_text)?;
@@ -403,7 +445,7 @@ pub fn remove_plan(files: &Files) -> Result<RemovePlan, PlanError> {
     let mut line_note = "";
     let mut ops: Vec<EditOp> = Vec::new();
     match line_of(&settings) {
-        Line::Ours(_) => match saved_line(files.chain_text) {
+        Line::Ours(_) => match saved_line(files.chain_text, distro.is_some()) {
             Saved::Command(command) => {
                 ops.push(set(STATUSLINE_COMMAND_POINTER, &json!(command)));
                 line_note = "puts your status line back";
@@ -421,9 +463,13 @@ pub fn remove_plan(files: &Files) -> Result<RemovePlan, PlanError> {
                 line_note = "removes its status line, because the saved copy of yours is missing and there is nothing to put back";
             }
         },
-        Line::Theirs(_) | Line::Other if files.chain_text.is_some() => {
+        Line::Theirs(_) | Line::Other if files.chain_text.is_some() || distro.is_some() => {
             statusline_left = true;
-            line_note = "leaves your status line alone, because it was changed since the setup";
+            line_note = if distro.is_some() {
+                "leaves your status line alone, because it is not Marshell's"
+            } else {
+                "leaves your status line alone, because it was changed since the setup"
+            };
         }
         _ => {}
     }
@@ -437,7 +483,7 @@ pub fn remove_plan(files: &Files) -> Result<RemovePlan, PlanError> {
         ops.into_iter()
             .map(|op| edit(files.settings_path, ConfigScope::User, op, files.settings_text)),
     );
-    let chain_edit = chain_delete(Some(files.chain_path), files.chain_text, None);
+    let chain_edit = chain_delete(files.chain_path, files.chain_text, distro);
     if edits.is_empty() && chain_edit.is_none() {
         return Ok(RemovePlan {
             changes: ChangeSet {
@@ -531,7 +577,7 @@ mod tests {
             hooks_text: state.hooks.as_deref(),
             settings_path: &sp,
             settings_text: state.settings.as_deref(),
-            chain_path: &cp,
+            chain_path: Some(&cp),
             chain_text: state.chain.as_deref(),
         })
     }
@@ -547,7 +593,7 @@ mod tests {
         install_with(state, &bridge(), &BOTH)
     }
     fn remove(state: &State) -> (RemovePlan, State) {
-        let plan = with_files(state, remove_plan).unwrap();
+        let plan = with_files(state, |files| remove_plan(files, None)).unwrap();
         let after = apply(&plan.changes, state);
         (plan, after)
     }
@@ -812,7 +858,7 @@ mod tests {
                 try_install(&state, &bridge(), &HookPlanRequest { status: false, ..BOTH }),
                 Err(PlanError::NotMarshells { path: path.clone() })
             );
-            assert_eq!(with_files(&state, remove_plan).err(), Some(want));
+            assert_eq!(with_files(&state, |files| remove_plan(files, None)).err(), Some(want));
         }
         assert_eq!(
             PlanError::NotMarshells { path: path.clone() }.to_string(),
@@ -821,6 +867,55 @@ mod tests {
                 path.display()
             )
         );
+    }
+
+    /// What `hooks_file` writes with the status off: no entries.
+    fn own_empty_text() -> String {
+        hooks_file(&bridge(), &HookPlanRequest { status: false, ..BOTH })
+    }
+
+    #[test]
+    fn an_empty_hooks_file_someone_else_wrote_is_not_marshells() {
+        let path = hooks_path(&copilot_home());
+        let own = own_empty_text();
+        let with_a_key = own.replace("\"hooks\": {}", "\"hooks\": {},\n  \"mine\": true");
+        assert_ne!(with_a_key, own);
+        for text in [
+            r#"{"hooks":{}}"#,
+            r#"{"version":1,"hooks":{"sessionStart":[]}}"#,
+            with_a_key.as_str(),
+        ] {
+            let state = State {
+                hooks: Some(text.to_string()),
+                ..State::default()
+            };
+            let want = || PlanError::NotMarshells { path: path.clone() };
+            assert_eq!(try_install(&state, &bridge(), &BOTH), Err(want()), "{text}");
+            assert_eq!(
+                try_install(&state, &bridge(), &HookPlanRequest { status: false, ..BOTH }),
+                Err(want()),
+                "{text}"
+            );
+            assert_eq!(
+                with_files(&state, |files| remove_plan(files, None)).err(),
+                Some(want()),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn marshells_own_empty_file_still_is() {
+        let own = own_empty_text();
+        // A file kept by an editor that saved it with Windows line endings is still the same file.
+        for text in [own.clone(), own.replace('\n', "\r\n")] {
+            assert!(is_marshells(&value(&text), &text), "{text:?}");
+            let state = State {
+                hooks: Some(text.clone()),
+                ..State::default()
+            };
+            assert!(try_install(&state, &bridge(), &BOTH).is_ok(), "{text:?}");
+        }
     }
 
     #[test]
@@ -834,7 +929,7 @@ mod tests {
             Err(PlanError::DoesNotParse { path: p, .. }) => assert_eq!(p, path),
             other => panic!("{other:?}"),
         }
-        match with_files(&state, remove_plan) {
+        match with_files(&state, |files| remove_plan(files, None)) {
             Err(PlanError::DoesNotParse { path: p, .. }) => assert_eq!(p, path),
             other => panic!("{:?}", other.map(|p| p.changes)),
         }
@@ -933,7 +1028,7 @@ mod tests {
             Err(PlanError::DoesNotParse { path: p, .. }) => assert_eq!(p, path),
             other => panic!("{other:?}"),
         }
-        match with_files(&state, remove_plan) {
+        match with_files(&state, |files| remove_plan(files, None)) {
             Err(PlanError::DoesNotParse { path: p, .. }) => assert_eq!(p, path),
             other => panic!("{:?}", other.map(|p| p.changes)),
         }
@@ -1038,7 +1133,7 @@ mod tests {
 
     #[test]
     fn removal_with_nothing_of_marshells_plans_nothing() {
-        let plan = with_files(&State::settings(&their_settings()), remove_plan).unwrap();
+        let plan = with_files(&State::settings(&their_settings()), |files| remove_plan(files, None)).unwrap();
         assert!(plan.changes.edits.is_empty());
         assert!(!plan.statusline_left);
     }
@@ -1137,5 +1232,116 @@ mod tests {
 
     fn ours_line_for(b: &Bridge) -> String {
         statusline_command(b).unwrap()
+    }
+
+    // ---- a WSL distro: no chain file ----
+
+    const LINUX_BRIDGE: &str = "/mnt/c/Users/Jane Doe/.marshell/bin/marshell-hook.exe";
+
+    fn distro_bridge() -> Bridge {
+        Bridge::Distro {
+            name: "Ubuntu".into(),
+            path: LINUX_BRIDGE.into(),
+        }
+    }
+
+    /// The distro's two files under its own `~/.copilot`, and no chain.
+    fn with_distro_files<T>(state: &State, f: impl FnOnce(&Files) -> T) -> T {
+        let home = PathBuf::from("/home/u/.copilot");
+        let (hp, sp) = (hooks_path(&home), settings_path(&home));
+        f(&Files {
+            hooks_path: &hp,
+            hooks_text: state.hooks.as_deref(),
+            settings_path: &sp,
+            settings_text: state.settings.as_deref(),
+            chain_path: None,
+            chain_text: None,
+        })
+    }
+
+    fn distro_paths(cs: &ChangeSet) -> Vec<String> {
+        cs.edits.iter().map(|e| e.path.replace("\\", "/")).collect()
+    }
+
+    #[test]
+    fn a_distro_install_writes_two_files_and_a_status_line_that_runs_without_the_chain() {
+        let cs = with_distro_files(&State::default(), |files| install_plan(files, &distro_bridge(), &BOTH)).unwrap();
+        let mut paths = distro_paths(&cs);
+        paths.dedup();
+        assert_eq!(
+            paths,
+            ["/home/u/.copilot/hooks/marshell.json", "/home/u/.copilot/settings.json"]
+        );
+        let EditOp::CreateFile { content } = &cs.edits[0].op else {
+            panic!("{:?}", cs.edits[0].op)
+        };
+        assert_eq!(content, &expected_hooks_text(LINUX_BRIDGE));
+        let EditOp::JsonSet { value, .. } = &cs.edits[1].op else {
+            panic!("{:?}", cs.edits[1].op)
+        };
+        let line: Value = serde_json::from_str(value).unwrap();
+        assert_eq!(
+            line["command"],
+            format!("'{LINUX_BRIDGE}' statusline --agent copilot --tag mshl1 --no-chain")
+        );
+        // The command on Windows has no such flag.
+        assert!(!ours_line().contains("--no-chain"));
+    }
+
+    #[test]
+    fn a_distro_install_leaves_their_status_line_and_says_so() {
+        let state = State::settings(&their_settings());
+        let cs = with_distro_files(&state, |files| install_plan(files, &distro_bridge(), &BOTH)).unwrap();
+        assert_eq!(
+            distro_paths(&cs),
+            ["/home/u/.copilot/hooks/marshell.json"],
+            "{:?}",
+            cs.edits
+        );
+        assert!(
+            cs.reason.ends_with(
+                "Ubuntu already has a status line, so Marshell leaves it. The row won't show the model or context use."
+            ),
+            "{}",
+            cs.reason
+        );
+    }
+
+    #[test]
+    fn a_distro_remove_takes_out_the_line_it_added_and_leaves_theirs() {
+        let bridge = distro_bridge();
+        let ours = with_distro_files(&State::default(), |files| install_plan(files, &bridge, &BOTH)).unwrap();
+        let hooks_text = match &ours.edits[0].op {
+            EditOp::CreateFile { content } => content.clone(),
+            op => panic!("{op:?}"),
+        };
+        let line = statusline_command(&bridge).unwrap();
+        let added = State {
+            hooks: Some(hooks_text.clone()),
+            settings: Some(format!(
+                "{{\"statusLine\": {{\"type\": \"command\", \"command\": {}}}}}",
+                serde_json::to_string(&line).unwrap()
+            )),
+            ..State::default()
+        };
+        let plan = with_distro_files(&added, |files| remove_plan(files, Some("Ubuntu"))).unwrap();
+        assert!(!plan.statusline_left);
+        assert_eq!(
+            distro_paths(&plan.changes),
+            ["/home/u/.copilot/hooks/marshell.json", "/home/u/.copilot/settings.json"]
+        );
+        assert!(
+            matches!(&plan.changes.edits[1].op, EditOp::JsonRemove { pointer } if pointer == "/statusLine"),
+            "{:?}",
+            plan.changes.edits
+        );
+
+        let theirs = State {
+            hooks: Some(hooks_text),
+            ..State::settings(&their_settings())
+        };
+        let plan = with_distro_files(&theirs, |files| remove_plan(files, Some("Ubuntu"))).unwrap();
+        assert!(plan.statusline_left);
+        assert_eq!(distro_paths(&plan.changes), ["/home/u/.copilot/hooks/marshell.json"]);
     }
 }

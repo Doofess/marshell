@@ -235,6 +235,12 @@ struct Inner {
     permission_hold: Duration,
     /// How long after a prompt arrived the hook route may still answer with a reference note.
     context_budget: Duration,
+    /// How long a Copilot `sessionEnd` the person asked for waits before the row reads Ended, so a `/clear` that goes on
+    /// under a new session never shows it.
+    copilot_end_hold: Duration,
+    /// The Copilot session each tab's hooks and status lines named last. It is kept here and not read from the history
+    /// index, which can be off for the run or slower than the hold.
+    copilot_sessions: Mutex<HashMap<String, String>>,
     /// How long a Working agent can go without a hook event before it reads Stuck.
     stuck_quiet: Duration,
     /// How long to wait for Claude to resume after its last background subagent stops.
@@ -404,6 +410,8 @@ impl AppState {
             holds: crate::hooks::holds::Holds::default(),
             permission_hold: DEFAULT_PERMISSION_HOLD,
             context_budget: hook::CONTEXT_BUDGET,
+            copilot_end_hold: hook::COPILOT_END_HOLD,
+            copilot_sessions: Mutex::new(HashMap::new()),
             stuck_quiet: DEFAULT_STUCK_QUIET,
             subagent_wait: DEFAULT_SUBAGENT_WAIT,
             done_settle: DEFAULT_DONE_SETTLE,
@@ -689,6 +697,28 @@ impl AppState {
     }
     pub fn context_budget(&self) -> Duration {
         self.0.context_budget
+    }
+    /// Sets how long a Copilot `sessionEnd` that the person asked for waits before it folds (500 ms by default). Call
+    /// it before the state is cloned.
+    pub fn with_copilot_end_hold(mut self, hold: Duration) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_copilot_end_hold runs before the state is shared")
+            .copilot_end_hold = hold;
+        self
+    }
+    pub fn copilot_end_hold(&self) -> Duration {
+        self.0.copilot_end_hold
+    }
+    /// Remembers `session` as the Copilot session the tab named last.
+    pub(crate) fn note_copilot_session(&self, tab: &str, session: &str) {
+        let mut sessions = self.0.copilot_sessions.lock().unwrap();
+        if sessions.get(tab).map(String::as_str) != Some(session) {
+            sessions.insert(tab.to_string(), session.to_string());
+        }
+    }
+    /// The Copilot session the tab named last, if it has named one.
+    pub(crate) fn copilot_session_of(&self, tab: &str) -> Option<String> {
+        self.0.copilot_sessions.lock().unwrap().get(tab).cloned()
     }
     /// Sets the hook silence threshold. Call it before the state is cloned.
     pub fn with_stuck_quiet(mut self, quiet: Duration) -> Self {
@@ -1056,6 +1086,7 @@ impl AppState {
         let removed = self.0.sessions.lock().unwrap().remove(tab);
         self.holds().release_tab(tab);
         self.hook_log().forget_tab(tab);
+        self.0.copilot_sessions.lock().unwrap().remove(tab);
         removed
     }
     pub fn origin_allowed(&self, origin: &str) -> bool {

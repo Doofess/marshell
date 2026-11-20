@@ -7,6 +7,7 @@
 //   WRITE <path>    a new-file call with one line of content (write_file, create)
 //   EDIT <path>     an edit replacing "marshell" with "marshell edited" (edit, str_replace_editor)
 //   READ <path>     a read call (read_file, view)
+//   ASK <question>  a question to the user with the answers "yes" and "no" (Copilot's ask_user, interactive runs only)
 // After a tool result, or for any other text, it replies with the text "done".
 // Argument names are read from the tool's schema in the request, so a renamed parameter still gets a value.
 
@@ -44,6 +45,8 @@ function argsFor(tool, target) {
     else if (["old_string", "old_str"].includes(name)) out[name] = "marshell";
     else if (["new_string", "new_str"].includes(name)) out[name] = "marshell edited";
     else if (name === "description") out.description = "Marshell live check";
+    else if (name === "message") out.message = target;
+    else if (name === "requestedSchema") out.requestedSchema = { properties: { answer: { type: "string", title: "Answer", enum: ["yes", "no"] } } };
     else if (required.has(name)) out[name] = plainValue(schema);
   }
   return out;
@@ -73,6 +76,7 @@ const VERB_TOOLS = {
   WRITE: ["write_file", "create"],
   EDIT: ["edit", "str_replace_editor", "str_replace"],
   READ: ["read_file", "view"],
+  ASK: ["ask_user"],
 };
 let toolsLogged = false;
 
@@ -83,7 +87,7 @@ function reply(body) {
   // Qwen sends a user turn as several text parts (system reminders first), so the last command line wins.
   // Copilot's plan mode puts "[[PLAN]] " before the prompt.
   const said = Array.isArray(last.content) ? last.content.map((p) => (typeof p === "string" ? p : p?.text ?? "")).join("\n") : textOf(last.content);
-  const matches = [...said.matchAll(/^(?:\[\[[A-Z]+\]\] )?(RUN|WRITE|EDIT|READ)[ \t]+(.+)$/gm)];
+  const matches = [...said.matchAll(/^(?:\[\[[A-Z]+\]\] )?(RUN|WRITE|EDIT|READ|ASK)[ \t]+(.+)$/gm)];
   const m = matches[matches.length - 1];
   if (!m) return { text: "done" };
   const offered = body.tools ?? [];

@@ -1567,6 +1567,7 @@ async fn import_status_route_reports_progress() {
             claude: Some(claude.path().to_path_buf()),
             codex: Some(codex.path().to_path_buf()),
             qwen: None,
+            copilot: None,
         },
         Timing {
             settle: Duration::from_millis(100),
@@ -1738,6 +1739,104 @@ async fn a_qwen_row_from_6l1_with_no_copy_shows_as_history_shows_any_uncopied_ro
     assert_eq!(
         reason,
         "Qwen Code no longer has this conversation, so it can't be resumed."
+    );
+    assert_eq!(env.state.live_session_count(), 0);
+}
+
+const COPILOT_ID: &str = "00000000-0000-4000-8000-000000000001";
+const COPILOT_LOG: &str =
+    include_str!("fixtures/copilot/transcripts/1.0.106/00000000-0000-4000-8000-000000000001.jsonl");
+
+/// Where Copilot CLI keeps the session `id` under `dir`: `<dir>/.copilot/session-state/<id>/events.jsonl`.
+fn copilot_log_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(".copilot").join("session-state").join(id).join("events.jsonl")
+}
+
+/// Copies the recorded Copilot event log into the archive as a conversation run outside Marshell.
+fn seed_copilot(env: &Env, dir: &Path) -> PathBuf {
+    let source = copilot_log_path(dir, COPILOT_ID);
+    std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+    std::fs::write(&source, COPILOT_LOG).unwrap();
+    let meta = marshell_core::history::SessionMeta {
+        agent: "copilot".into(),
+        session_id: COPILOT_ID.into(),
+        tab_id: String::new(),
+        cwd: env.work.path().to_string_lossy().into_owned(),
+        transcript_path: source.to_string_lossy().into_owned(),
+        started_ms: 1_000,
+        updated_ms: 2_000,
+        previous_in_tab: None,
+        recordings: Vec::new(),
+        client: marshell_protocol::history::Client::Terminal,
+        preset: None,
+        distro: None,
+    };
+    assert!(env.state.history().import(&meta, &source).unwrap());
+    source
+}
+
+#[tokio::test]
+async fn get_conversation_reads_a_copilot_session() {
+    let env = env();
+    let dir = tempfile::tempdir().unwrap();
+    seed_copilot(&env, dir.path());
+    let (status, body) = get_json(&env.app, &format!("/v1/history/copilot/{COPILOT_ID}")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["agent"], "copilot");
+    assert_eq!(body["session_id"], COPILOT_ID);
+    assert_eq!(body["turns"][0]["prompt"], "hello", "{body}");
+    let (_, list) = get_json(&env.app, "/v1/history").await;
+    assert_eq!(list.as_array().unwrap().len(), 1, "{list}");
+    assert_eq!(
+        (list[0]["agent"].as_str(), list[0]["session_id"].as_str()),
+        (Some("copilot"), Some(COPILOT_ID))
+    );
+    let (_, copilot) = get_json(&env.app, "/v1/history?agent=copilot").await;
+    assert_eq!(copilot.as_array().unwrap().len(), 1, "{copilot}");
+}
+
+#[tokio::test]
+async fn a_copilot_row_from_6n1_with_no_copy_shows_as_history_shows_any_uncopied_row() {
+    let env = env();
+    let dir = tempfile::tempdir().unwrap();
+    // 6n1's hooks indexed the session, and the log is gone: no file, no copy.
+    let source = copilot_log_path(dir.path(), COPILOT_ID);
+    let body = marshell_core::agents::copilot::link_body(
+        &json!({
+            "sessionId": COPILOT_ID, "hook_event_name": "sessionStart",
+            "cwd": env.work.path().to_string_lossy(),
+        }),
+        &dir.path().join(".copilot"),
+    )
+    .unwrap();
+    assert_eq!(body["transcript_path"], source.to_string_lossy().as_ref());
+    env.state.history().note_event("copilot", "t1", None, &body, 1000, None);
+    assert!(!source.exists());
+    // It is listed, as an uncopied Codex row is, with no turns to show.
+    let (_, list) = get_json(&env.app, "/v1/history").await;
+    assert_eq!(list.as_array().unwrap().len(), 1, "{list}");
+    assert_eq!(
+        (list[0]["agent"].as_str(), list[0]["turns"].as_u64()),
+        (Some("copilot"), Some(0))
+    );
+    // Opening it answers that Marshell has no copy yet, not a crash or a blank page.
+    let (status, text) = call(&env.app, req("GET", &format!("/v1/history/copilot/{COPILOT_ID}"), None)).await;
+    assert_eq!((status, text.as_str()), (StatusCode::NOT_FOUND, NO_COPY));
+    // Resuming it says Copilot CLI no longer has it.
+    let (status, text) = call(
+        &env.app,
+        req(
+            "POST",
+            &format!("/v1/history/copilot/{COPILOT_ID}/resume"),
+            Some(resume_body()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{text}");
+    let reason = serde_json::from_str::<Value>(&text).unwrap()["reason"].clone();
+    assert_eq!(
+        reason,
+        "Copilot CLI no longer has this conversation, so it can't be resumed."
     );
     assert_eq!(env.state.live_session_count(), 0);
 }

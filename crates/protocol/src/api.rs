@@ -1074,6 +1074,10 @@ pub struct ShellAgent {
     pub id: String,
     /// None when the shell can start the agent.
     pub problem: Option<ShellAgentProblem>,
+    /// More about `problem`, as a sentence to show, when Marshell has one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub note: Option<String>,
 }
 
 /// GET /v1/profiles/{id}/agents body: the agents a shell profile can start.
@@ -1217,7 +1221,7 @@ pub struct Settings {
     pub status_off: Vec<String>,
     /// Which events notify, and how.
     pub notifications: NotifySettings,
-    /// Whether Marshell keeps its own copy of the conversations Claude Code, Codex and Qwen Code ran outside it.
+    /// Whether Marshell keeps its own copy of the conversations Claude Code, Codex, Qwen Code and Copilot CLI ran outside it.
     pub history_import: bool,
     /// Recordings and images are kept up to this many GB (1024-based). None is no size limit.
     pub history_limit_gb: Option<u32>,

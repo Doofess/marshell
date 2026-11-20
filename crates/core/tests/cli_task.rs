@@ -236,6 +236,49 @@ async fn a_sign_in_tab_has_no_recording() {
     assert!(casts_of(home.path(), &tab).is_empty());
 }
 
+static COPILOT_SHIM: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+fn copilot_shim(_command: &str) -> Option<PathBuf> {
+    COPILOT_SHIM.get().cloned()
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn a_copilot_sign_in_tab_runs_copilot_login() {
+    let home = tempfile::tempdir().unwrap();
+    let bin = tempfile::tempdir().unwrap();
+    let shim = bin.path().join("copilot-marshell-test.cmd");
+    // Keeps the tab open so the row is there to read, and says what it was asked.
+    std::fs::write(&shim, "@echo copilot-asked %*\r\n@ping -n 30 127.0.0.1 >nul\r\n").unwrap();
+    COPILOT_SHIM.set(shim).unwrap();
+    let app = app_in(home.path(), copilot_shim);
+
+    let (status, body) = create(
+        &app,
+        serde_json::json!({ "cli_task": { "agent": "copilot", "kind": "sign_in" } }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let tab = tab_of(&body);
+    let list = sessions(&app).await;
+    let row = list["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["tab_id"] == tab)
+        .unwrap();
+    assert_eq!(row["name"], "Sign in to Copilot CLI");
+    assert_eq!(row["agent"], serde_json::Value::Null);
+    assert_eq!(row["state"]["kind"], "running");
+    assert_eq!(
+        send(&app, api("GET", &format!("/v1/sessions/{tab}/recording"), None))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    assert!(casts_of(home.path(), &tab).is_empty());
+}
+
 #[tokio::test]
 async fn a_cli_task_tab_is_not_remembered_and_reopens_as_a_shell() {
     let home = tempfile::tempdir().unwrap();

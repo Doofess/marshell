@@ -35,12 +35,23 @@ export function filesChanged(c: Conversation): ChangedFile[] {
   return [...byPath.values()];
 }
 
+/** A unified diff's hunk header, with its line ranges. Codex's `@@` lines carry none and stay lines. */
+const HUNK = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/;
+
 /** One edit as a unified diff `DiffView` can read: file headers, one hunk header with the counts, then the card's lines. */
 export function editDiff(path: string, card: ToolCard): string {
   const name = norm(path);
   const head = [`--- a/${name}`, `+++ b/${name}`];
   if (!card.detail) return head.join("\n");
   const created = card.file?.created === true;
+  // A card that holds a whole patch (Qwen Code's and Copilot CLI's edits): its hunks go under this file's headers.
+  const patch = created ? [] : card.detail.split("\n");
+  const at = patch.findIndex((l) => HUNK.test(l));
+  if (at >= 0) {
+    const hunks = patch.slice(at);
+    while (hunks[hunks.length - 1] === "") hunks.pop();
+    return [...head, ...hunks].join("\n");
+  }
   const lines = card.detail.split("\n").map((l) => (created ? `+${l}` : l));
   const added = lines.filter((l) => l.startsWith("+")).length;
   const removed = lines.filter((l) => l.startsWith("-")).length;

@@ -32,8 +32,16 @@ fn state(version: Option<&str>) -> AppState {
 }
 
 fn state_with(version: Option<&str>, profiles: Vec<marshell_protocol::api::Profile>) -> AppState {
+    state_in(tempfile::tempdir().unwrap().keep(), version, profiles)
+}
+
+/// A state whose Marshell home is `home`, for a test that puts something there before the core opens it.
+fn state_in(
+    home: std::path::PathBuf,
+    version: Option<&str>,
+    profiles: Vec<marshell_protocol::api::Profile>,
+) -> AppState {
     common::tie_children_to_test();
-    let home = tempfile::tempdir().unwrap().keep();
     let user_home = home.join("user");
     AppState::new(
         TOKEN.into(),
@@ -2186,6 +2194,22 @@ fn copilot_state(version: Option<&str>) -> AppState {
     state(Some(KNOWN))
         .with_copilot_home(tempfile::tempdir().unwrap().keep())
         .with_copilot_version(version.map(str::to_string))
+        .with_copilot_end_hold(std::time::Duration::from_millis(200))
+}
+
+/// Polls until the tab's row reads `want`, for at most 5 s, and answers whether it did. The hold a Copilot end waits is
+/// short in tests, but a slow machine must not fail them.
+async fn wait_for_live(st: &AppState, tab: &str, want: LiveState) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if row(st, tab).live.is_some_and(|live| live.state == want) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
 }
 
 /// A row that runs Copilot in `cwd`, with no process: enough for a hook to name an open tab.
@@ -2308,6 +2332,8 @@ async fn copilot_events_fold_into_the_tabs_live_status() {
     post_copilot(&app, &tab, "agentStop", "agentStop").await;
     let done = row(&st, &tab);
     post_copilot(&app, &tab, "sessionEnd-clear", "sessionEnd").await;
+    // The end the person asked for waits out the hold, then the row reads Ended.
+    assert!(wait_for_live(&st, &tab, LiveState::Ended).await);
     let ended = row(&st, &tab).live.unwrap();
     // `/clear`'s status line with the new id: the row runs again.
     post_copilot_as(&app, "statusline", Some(&tab), &copilot_statusline_body("idle")).await;
@@ -2366,6 +2392,106 @@ async fn a_late_session_end_from_clear_is_ignored() {
 }
 
 #[tokio::test]
+async fn a_clear_never_shows_ended() {
+    // A long hold, so a slow machine still posts the status line inside it.
+    let hold = std::time::Duration::from_millis(1000);
+    let st = copilot_state(Some(COPILOT)).with_copilot_end_hold(hold);
+    let app = router(st.clone());
+    let p = project();
+    let tab = reserve_copilot(&st, &p.repo);
+
+    post_copilot(&app, &tab, "sessionStart", "sessionStart").await;
+    post_copilot(&app, &tab, "userPromptSubmitted", "userPromptSubmitted").await;
+    assert_eq!(copilot_linked(&st, &tab).as_deref(), Some(COPILOT_A));
+
+    // `/clear`: A's `sessionEnd` comes first, the status line naming B within the hold.
+    let started = std::time::Instant::now();
+    let (code, _) = post_copilot(&app, &tab, "sessionEnd-clear", "sessionEnd").await;
+    let right_after = row(&st, &tab).live.unwrap().state;
+    // The answer doesn't wait for the hold: the bridge gives a `sessionEnd` 2 s.
+    let answered_in = started.elapsed();
+    post_copilot_as(
+        &app,
+        "statusline",
+        Some(&tab),
+        &copilot_statusline_of("idle", COPILOT_B),
+    )
+    .await;
+
+    // Never Ended, from the end until well after the hold has passed.
+    let mut seen = vec![right_after];
+    while started.elapsed() < hold + std::time::Duration::from_millis(500) {
+        seen.push(row(&st, &tab).live.unwrap().state);
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let linked = copilot_linked(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(code, StatusCode::NO_CONTENT);
+    assert!(answered_in < hold, "the answer waited for the hold: {answered_in:?}");
+    assert!(!seen.contains(&LiveState::Ended), "{seen:?}");
+    assert_eq!(linked.as_deref(), Some(COPILOT_B));
+}
+
+/// With history off nothing links a tab to a session, and with a busy index the link can land after the hold. What the
+/// hooks themselves named for the tab still tells a `/clear` from an `/exit`.
+#[tokio::test]
+async fn a_clear_never_shows_ended_with_history_off() {
+    let hold = std::time::Duration::from_millis(1000);
+    let home = tempfile::tempdir().unwrap().keep();
+    // A directory where the index file belongs: the index can't open, so history is off for this run.
+    std::fs::create_dir_all(home.join("history").join("index.sqlite")).unwrap();
+    let st = state_in(home, Some(KNOWN), vec![sleeper_profile()])
+        .with_copilot_home(tempfile::tempdir().unwrap().keep())
+        .with_copilot_version(Some(COPILOT.to_string()))
+        .with_copilot_end_hold(hold);
+    let app = router(st.clone());
+    let p = project();
+    let tab = reserve_copilot(&st, &p.repo);
+
+    post_copilot(&app, &tab, "sessionStart", "sessionStart").await;
+    post_copilot(&app, &tab, "userPromptSubmitted", "userPromptSubmitted").await;
+    assert_eq!(copilot_linked(&st, &tab), None, "history is off, so nothing is linked");
+
+    let started = std::time::Instant::now();
+    post_copilot(&app, &tab, "sessionEnd-clear", "sessionEnd").await;
+    post_copilot_as(
+        &app,
+        "statusline",
+        Some(&tab),
+        &copilot_statusline_of("idle", COPILOT_B),
+    )
+    .await;
+
+    let mut seen = Vec::new();
+    while started.elapsed() < hold + std::time::Duration::from_millis(500) {
+        seen.push(row(&st, &tab).live.unwrap().state);
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    stop(&st, &tab);
+    assert!(!seen.contains(&LiveState::Ended), "{seen:?}");
+}
+
+#[tokio::test]
+async fn an_exit_shows_ended_after_the_hold() {
+    let st = copilot_state(Some(COPILOT)).with_copilot_end_hold(std::time::Duration::from_millis(1000));
+    let app = router(st.clone());
+    let p = project();
+    let tab = reserve_copilot(&st, &p.repo);
+
+    post_copilot(&app, &tab, "sessionStart", "sessionStart").await;
+    // `/exit` ends the session the tab is linked to.
+    let mut end = copilot_hook_body("sessionEnd", "sessionEnd");
+    end["sessionId"] = COPILOT_A.into();
+    let (code, _) = post_copilot_as(&app, "event", Some(&tab), &end).await;
+    let at_once = row(&st, &tab).live.unwrap().state;
+    let ended = wait_for_live(&st, &tab, LiveState::Ended).await;
+    stop(&st, &tab);
+    assert_eq!(code, StatusCode::NO_CONTENT);
+    assert_ne!(at_once, LiveState::Ended);
+    assert!(ended, "the row never read Ended");
+}
+
+#[tokio::test]
 async fn a_copilot_tab_follows_its_session_after_clear() {
     let st = copilot_state(Some(COPILOT));
     let app = router(st.clone());
@@ -2374,6 +2500,7 @@ async fn a_copilot_tab_follows_its_session_after_clear() {
 
     post_copilot(&app, &tab, "sessionStart", "sessionStart").await;
     post_copilot(&app, &tab, "sessionEnd-clear", "sessionEnd").await;
+    assert!(wait_for_live(&st, &tab, LiveState::Ended).await);
     let ended = row(&st, &tab).live.unwrap();
     assert_eq!(copilot_linked(&st, &tab).as_deref(), Some(COPILOT_A));
 
@@ -2551,4 +2678,86 @@ async fn copilot_status_off_says_so() {
     stop(&st, &tab);
     assert_eq!(info.live, None);
     assert_eq!(info.status_note.as_deref(), Some("Live status is off for Copilot CLI"));
+}
+
+// ---- Copilot CLI inside WSL: a hook names the agent the tab runs, and its transcript is the distro's ----
+
+/// A state with a WSL tab whose distro's `copilot` is a recorded version (pinned, so no `wsl.exe` runs).
+fn wsl_copilot_state() -> AppState {
+    state_with(Some(KNOWN), vec![sleeper_profile(), wsl_profile()])
+        .with_wsl_version(Some(COPILOT.into()))
+        .with_copilot_home(tempfile::tempdir().unwrap().keep())
+}
+
+#[tokio::test]
+async fn a_copilot_hook_from_a_wsl_tab_marks_the_tab() {
+    let st = wsl_copilot_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    assert_eq!(st.wsl_distro_of_tab(&tab).as_deref(), Some("Ubuntu"));
+    assert_eq!(foreground_agent(&st, &tab), None);
+    let (code, _) = post_copilot(&app, &tab, "userPromptSubmitted", "userPromptSubmitted").await;
+    assert_eq!(code, StatusCode::NO_CONTENT);
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    let foreground = info.foreground.unwrap();
+    assert_eq!(
+        (foreground.program.as_str(), foreground.agent.as_deref()),
+        ("copilot", Some("copilot"))
+    );
+    assert_eq!(info.live.unwrap().state, LiveState::Working);
+}
+
+#[tokio::test]
+async fn a_copilot_session_end_from_a_wsl_tab_clears_the_mark() {
+    let st = wsl_copilot_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    post_copilot(&app, &tab, "userPromptSubmitted", "userPromptSubmitted").await;
+    assert_eq!(foreground_agent(&st, &tab).as_deref(), Some("copilot"));
+    let (code, _) = post_copilot(&app, &tab, "sessionEnd", "sessionEnd").await;
+    assert_eq!(code, StatusCode::NO_CONTENT);
+    let info = row(&st, &tab);
+    stop(&st, &tab);
+    // The row is a plain shell again, with no status left behind.
+    assert_eq!(info.foreground, None);
+    assert_eq!(info.live, None);
+}
+
+#[tokio::test]
+async fn a_wsl_copilot_session_links_its_distro_transcript() {
+    let st = wsl_copilot_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    // The body's own Linux paths, as the hook in the distro reports them.
+    let mut body = copilot_hook_body("agentStop", "agentStop");
+    body["transcriptPath"] = format!("/home/u/.copilot/session-state/{COPILOT_A}/events.jsonl").into();
+    body["cwd"] = "/home/u/proj".into();
+    let (code, _) = post_copilot_as(&app, "event", Some(&tab), &body).await;
+    let row = st.history().latest_for_tab_of(&tab, "copilot");
+    let stored = marshell_core::history::archive::read_meta(st.home(), "copilot", COPILOT_A).unwrap();
+    stop(&st, &tab);
+
+    assert_eq!(code, StatusCode::NO_CONTENT);
+    let row = row.expect("the WSL tab's Copilot session is in the history");
+    assert_eq!(
+        row.transcript_path,
+        format!(r"\\wsl.localhost\Ubuntu\home\u\.copilot\session-state\{COPILOT_A}\events.jsonl")
+    );
+    assert_eq!(row.cwd, r"\\wsl.localhost\Ubuntu\home\u\proj");
+    assert_eq!(stored.unwrap().distro.as_deref(), Some("Ubuntu"));
+}
+
+#[tokio::test]
+async fn a_wsl_copilot_hook_without_a_transcript_path_builds_none_from_the_windows_home() {
+    let st = wsl_copilot_state();
+    let app = router(st.clone());
+    let tab = start_shell(&app, "wsl-ubuntu").await;
+    // `sessionStart` names no transcript: a Windows tab derives one from the Copilot home, a WSL tab must not.
+    let mut body = copilot_hook_body("sessionStart", "sessionStart");
+    body["cwd"] = "/home/u/proj".into();
+    post_copilot_as(&app, "event", Some(&tab), &body).await;
+    let linked = copilot_linked(&st, &tab);
+    stop(&st, &tab);
+    assert_eq!(linked, None);
 }

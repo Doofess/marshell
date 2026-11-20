@@ -36,6 +36,14 @@ export const COMPANY_FIELDS: Record<CompanyAgent, CompanyField[]> = {
     { key: "ui.theme", label: "Theme", help: "The theme's name as /theme lists it, such as Qwen Dark." },
     { key: "general.vimMode", label: "Vim mode", help: "Vim keys in Qwen Code's prompt." },
   ],
+  copilot: [
+    { key: "model", label: "Default model", help: "The model a new Copilot CLI session starts with, by the name /model shows." },
+    { key: "defaultPermissionMode", label: "Default permission mode", help: "The permission mode a Copilot CLI session starts in. A mode picked in Marshell's launcher wins." },
+    { key: "autoUpdate", label: "Update automatically", help: "Copilot CLI downloads a newer version by itself and starts it the next time it runs." },
+    { key: "autoUpdatesChannel", label: "Update channel", help: "Which releases Copilot CLI updates to." },
+    { key: "theme", label: "Theme", help: "Copilot CLI's colour theme, by name, such as github." },
+    { key: "includeCoAuthoredBy", label: "Co-authored-by line", help: "Copilot CLI adds a Co-authored-by line to the commits it makes." },
+  ],
 };
 
 /** Labels for choice values whose raw spelling reads badly; any other value shows capitalised. */

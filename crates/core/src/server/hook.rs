@@ -20,6 +20,11 @@ use serde::Deserialize;
 /// note that comes later reaches no agent. 350 ms leaves the rest for the connect and the response.
 pub const CONTEXT_BUDGET: std::time::Duration = std::time::Duration::from_millis(350);
 
+/// How long a Copilot `sessionEnd` the person asked for waits before the row reads Ended. `/clear` sends one for the old
+/// session and a status line naming the new one follows about 0.2 s later; 500 ms covers that with room, and is well
+/// under the 2 s the bridge gives a `sessionEnd`.
+pub const COPILOT_END_HOLD: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// The note when it is ready in time to reach the agent, else None. The header chip shows what this returns, so it
 /// never claims a note the bridge had already given up on.
 fn note_in_budget(
@@ -128,12 +133,28 @@ pub async fn post(
     // A WSL tab's processes are Linux ones the foreground watcher can't read: its hooks say which agent runs there. The
     // mark comes first, so the check below sees it and an event of another agent in that tab is dropped.
     let mut left_wsl = false;
-    let session_id = json.get("session_id").and_then(serde_json::Value::as_str);
-    if matches!(agent.as_str(), "claude" | "codex" | "antigravity" | "qwen")
+    let mut on_wsl = false;
+    // Each agent names its session and its start and end in its own way.
+    let (session_id, session_ends, session_starts) = if agent == "copilot" {
+        (
+            copilot::session_id_of(&json),
+            copilot::ends_session(&json),
+            copilot::starts_session(&json),
+        )
+    } else {
+        let event = json.get("hook_event_name").and_then(serde_json::Value::as_str);
+        (
+            json.get("session_id").and_then(serde_json::Value::as_str),
+            event == Some("SessionEnd"),
+            event == Some("SessionStart"),
+        )
+    };
+    if matches!(agent.as_str(), "claude" | "codex" | "antigravity" | "qwen" | "copilot")
         && let Some(tab) = tab.as_deref()
         && in_wsl(&st, tab).await
     {
-        if json.get("hook_event_name").and_then(serde_json::Value::as_str) == Some("SessionEnd") {
+        on_wsl = true;
+        if session_ends {
             // The agent is gone from the row: nothing is left to fold into a status, even when no earlier hook marked it.
             // A row launched as an agent (History's Resume opens `claude --resume ...; exec bash -l`) outlives the agent
             // and has no mark to clear: it folds the SessionEnd as a Windows tab does, and shows Ended.
@@ -142,7 +163,7 @@ pub async fn post(
             left_wsl = cleared || !launched;
         } else if matches!(role, HookRole::Event | HookRole::Permission | HookRole::Statusline) {
             // A SessionStart runs the session again, even an ended one resumed under its own id.
-            if json.get("hook_event_name").and_then(serde_json::Value::as_str) == Some("SessionStart") {
+            if session_starts {
                 st.registry().forget_ended_session(tab);
             }
             st.registry().mark_hook_agent(tab, &agent, session_id);
@@ -222,7 +243,14 @@ pub async fn post(
                 return;
             }
             if !left_wsl {
-                fold_live_with(&st, &agent, role, tab, &json, at_ms, held).await;
+                if agent == "copilot" && role == HookRole::Event && !on_wsl && copilot::is_requested_end(&json) {
+                    // `/clear` ends the old session before anything names the new one, so the end waits: a status
+                    // line or an event that links the tab to a newer session meanwhile drops it. The answer to the
+                    // hook doesn't wait.
+                    hold_copilot_end(&st, tab, &json, at_ms);
+                } else {
+                    fold_live_with(&st, &agent, role, tab, &json, at_ms, held).await;
+                }
             }
             if (role == HookRole::Event || session == CopilotSession::Newer) && st.registry().is_open(tab) {
                 record_history(&st, &agent, tab, &json, at_ms).await;
@@ -276,8 +304,9 @@ enum CopilotSession {
     Stale,
 }
 
-/// Compares the session `body` names with the tab's latest linked Copilot session. The index is a file, so it is read
-/// off the async workers. With history off, or no session linked yet, nothing is stale.
+/// Compares the session `body` names with the session the tab named last and with its latest linked Copilot session.
+/// The index is a file, so it is read off the async workers. A tab that has named no other session, with history off or
+/// no session linked yet, has nothing stale.
 async fn copilot_session(st: &AppState, role: HookRole, tab: &str, body: &serde_json::Value) -> CopilotSession {
     let text = |key: &str| body.get(key).and_then(serde_json::Value::as_str);
     let (named, ending) = match role {
@@ -288,6 +317,15 @@ async fn copilot_session(st: &AppState, role: HookRole, tab: &str, body: &serde_
     let Some(named) = named.map(str::to_string) else {
         return CopilotSession::Current;
     };
+    // What the tab itself named last settles a late end before the index is asked: the index can be off for the run,
+    // and a link to the newer session can still be waiting for its lock.
+    if ending {
+        if st.copilot_session_of(tab).is_some_and(|last| last != named) {
+            return CopilotSession::Stale;
+        }
+    } else {
+        st.note_copilot_session(tab, &named);
+    }
     let (history, tab) = (st.history(), tab.to_string());
     let latest = tokio::task::spawn_blocking(move || history.latest_for_tab_of(&tab, "copilot"))
         .await
@@ -301,6 +339,21 @@ async fn copilot_session(st: &AppState, role: HookRole, tab: &str, body: &serde_
         _ if role == HookRole::Statusline => CopilotSession::Newer,
         _ => CopilotSession::Current,
     }
+}
+
+/// Folds a Copilot `sessionEnd` the person asked for after `copilot_end_hold`, in a detached task. The task asks
+/// `copilot_session` again with the same body: when the tab has named or been linked to a newer session meanwhile the
+/// end is dropped, else it folds as it would have at once. Nothing is held across the wait. A late newer link between the
+/// second check and the fold is a window of microseconds whose worst case is the row reading Ended for as long as
+/// the status line takes to arrive, which is what it did before the hold.
+fn hold_copilot_end(st: &AppState, tab: &str, body: &serde_json::Value, at_ms: u64) {
+    let (st, tab, body) = (st.clone(), tab.to_string(), body.clone());
+    tokio::spawn(async move {
+        tokio::time::sleep(st.copilot_end_hold()).await;
+        if copilot_session(&st, HookRole::Event, &tab, &body).await != CopilotSession::Stale {
+            fold_live_with(&st, "copilot", HookRole::Event, &tab, &body, at_ms, false).await;
+        }
+    });
 }
 
 /// Whether the tab's shell runs in a WSL distro. The first answer for a profile without `-d` asks `wsl.exe` for the default
@@ -359,18 +412,14 @@ async fn references_for(
 async fn record_history(st: &AppState, agent: &str, tab: &str, body: &serde_json::Value, at_ms: u64) {
     let history = st.history();
     // Copilot's bodies are camelCase and a status line's are snake_case: the recorder reads the one shape `link_body` makes.
-    let linked;
-    let body = if agent == "copilot" {
-        let Some(dir) = st.copilot_dir() else { return };
-        match copilot::link_body(body, &dir) {
-            Some(made) => {
-                linked = made;
-                &linked
-            }
+    // A Windows tab derives the transcript from the Copilot home, so that home is looked up here, and a WSL tab never uses it.
+    let copilot_dir = if agent == "copilot" {
+        match st.copilot_dir() {
+            Some(dir) => Some(dir),
             None => return,
         }
     } else {
-        body
+        None
     };
     let recording = st
         .session(tab)
@@ -382,6 +431,12 @@ async fn record_history(st: &AppState, agent: &str, tab: &str, body: &serde_json
     // without `-d` runs `wsl.exe`, so it sits in the blocking task).
     let meta = tokio::task::spawn_blocking(move || {
         let distro = asker.wsl_distro_of_tab(&tab);
+        let body = match (&copilot_dir, &distro) {
+            (None, _) => body,
+            // A WSL tab's transcript is the body's own Linux path, which the note reads under the distro's share.
+            (Some(_), Some(_)) => copilot::link_body_in_distro(&body)?,
+            (Some(dir), None) => copilot::link_body(&body, dir)?,
+        };
         noter.note_event(&agent, &tab, recording.as_deref(), &body, at_ms, distro.as_deref())
     })
     .await

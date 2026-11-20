@@ -64,8 +64,7 @@ export const COPILOT_SETUP: AgentSetup = {
   exe_path: "C:/l/GitHubCopilotCLI/copilot.exe",
   settings_path: "C:/h/.copilot/settings.json",
   hooks_path: "C:/h/.copilot/hooks/marshell.json",
-  skill: "unavailable",
-  skill_problem: "Marshell has no skill for Copilot CLI yet.",
+  skill_path: "C:/h/.copilot/skills/marshell/SKILL.md",
 };
 
 const file = (path: string, diff: string): FilePreview => ({ path, scope: "user", applies: "newSessions", before_hash: "h0", diff, status: { kind: "changes" } }) as FilePreview;

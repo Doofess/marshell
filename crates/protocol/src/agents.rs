@@ -75,6 +75,10 @@ pub struct AgentSetup {
     pub agent: String,
     /// A detected profile runs this agent.
     pub found: bool,
+    /// Why the CLI wasn't found, when Marshell knows more than that it isn't on PATH.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub not_found_note: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub version: Option<String>,

@@ -65,6 +65,8 @@ pub fn fold_event(prev: Option<&LiveStatus>, body: &Value, now_ms: u64) -> Optio
         "notification" | "Notification" => match body.get("notification_type").and_then(Value::as_str) {
             // Copilot's own dialog, with no card behind it.
             Some("permission_prompt") => (LiveState::NeedsPermission, wants_phrase(&next.phrase)),
+            // Copilot's question dialog (`ask_user`).
+            Some("elicitation_dialog") => (LiveState::NeedsQuestion, "Has a question".to_string()),
             // `agent_idle` is a background agent, not the turn ending.
             _ => return None,
         },
@@ -237,6 +239,37 @@ mod tests {
             (alone.state, alone.phrase.as_str()),
             (LiveState::NeedsPermission, "Wants to use a tool")
         );
+    }
+
+    #[test]
+    fn an_elicitation_dialog_needs_a_question() {
+        let running = fold(None, &hook!("preToolUse", "preToolUse-powershell"), 5);
+        for prev in [None, Some(&running)] {
+            let live = fold(prev, &hook!("notification", "notification-elicitation_dialog"), 6);
+            assert_eq!(
+                (live.state, live.phrase.as_str()),
+                (LiveState::NeedsQuestion, "Has a question")
+            );
+        }
+    }
+
+    #[test]
+    fn a_tool_result_after_a_question_is_working() {
+        let asking = fold(None, &hook!("notification", "notification-elicitation_dialog"), 5);
+        for body in [
+            hook!("postToolUse", "postToolUse-ask_user"),
+            hook!("postToolUse", "postToolUse"),
+        ] {
+            let live = fold(Some(&asking), &body, 6);
+            assert_eq!((live.state, live.phrase.as_str()), (LiveState::Working, "Thinking"));
+        }
+    }
+
+    #[test]
+    fn a_prompt_after_a_question_is_working() {
+        let asking = fold(None, &hook!("notification", "notification-elicitation_dialog"), 5);
+        let live = fold(Some(&asking), &hook!("userPromptSubmitted", "userPromptSubmitted"), 6);
+        assert_eq!((live.state, live.phrase.as_str()), (LiveState::Working, "Thinking"));
     }
 
     #[test]

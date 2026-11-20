@@ -346,14 +346,17 @@ pub fn run(
         let settings_text = read_text(&copilot_settings_file)?;
         let chain = paths::statusline_chain(home, "copilot");
         let chain_text = read_text(&chain)?;
-        copilot_hooks::remove_plan(&copilot_hooks::Files {
-            hooks_path: &copilot_hooks_file,
-            hooks_text: hooks_text.as_deref(),
-            settings_path: &copilot_settings_file,
-            settings_text: settings_text.as_deref(),
-            chain_path: &chain,
-            chain_text: chain_text.as_deref(),
-        })
+        copilot_hooks::remove_plan(
+            &copilot_hooks::Files {
+                hooks_path: &copilot_hooks_file,
+                hooks_text: hooks_text.as_deref(),
+                settings_path: &copilot_settings_file,
+                settings_text: settings_text.as_deref(),
+                chain_path: Some(&chain),
+                chain_text: chain_text.as_deref(),
+            },
+            None,
+        )
         .map(|plan| (hooks_text, plan))
         .map_err(|e| e.to_string())
     });
@@ -1091,7 +1094,7 @@ mod tests {
                 hooks_text: None,
                 settings_path: &settings,
                 settings_text: Some(original),
-                chain_path: &chain,
+                chain_path: Some(&chain),
                 chain_text: None,
             },
             &Bridge::local(&f.home),
@@ -1452,6 +1455,32 @@ mod tests {
     fn an_edited_qwen_skill_is_left() {
         let f = installed(ORIGINAL);
         let path = put_skill(&f, "qwen", b"mine");
+        let (code, out) = run_with(&f, "", true);
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"mine");
+        assert!(
+            out.contains(&format!(
+                "Left {}: it was edited after Marshell installed it.",
+                path.display()
+            )),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn uninstall_removes_copilots_skill() {
+        let f = installed(ORIGINAL);
+        let path = put_skill(&f, "copilot", marshell_core::agents::skill::SKILL_TEXT.as_bytes());
+        let (code, out) = run_with(&f, "", true);
+        assert_eq!(code, 0, "{out}");
+        assert!(out.contains(&*path.to_string_lossy()), "{out}");
+        assert!(!path.exists() && !path.parent().unwrap().exists(), "{out}");
+    }
+
+    #[test]
+    fn an_edited_copilot_skill_is_left() {
+        let f = installed(ORIGINAL);
+        let path = put_skill(&f, "copilot", b"mine");
         let (code, out) = run_with(&f, "", true);
         assert_eq!(code, 0, "{out}");
         assert_eq!(std::fs::read(&path).unwrap(), b"mine");

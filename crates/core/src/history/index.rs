@@ -641,7 +641,7 @@ fn insert(conn: &Connection, meta: &SessionMeta) -> anyhow::Result<()> {
 /// Parameters ?1 to ?8 are the query's fields, ?9 the place and ?10 whether headless runs show.
 fn filters() -> String {
     format!(
-        "(?1 IS NULL OR sessions.agent = ?1) AND sessions.agent NOT IN ('antigravity', 'copilot') AND (?2 IS NULL OR cwd = ?2)
+        "(?1 IS NULL OR sessions.agent = ?1) AND sessions.agent NOT IN ('antigravity') AND (?2 IS NULL OR cwd = ?2)
     AND (?3 IS NULL OR branch = ?3) AND (?4 IS NULL OR model = ?4)
     AND (?5 IS NULL OR updated_ms >= ?5)
     AND (?6 IS NULL OR EXISTS (SELECT 1 FROM tags WHERE tags.agent = sessions.agent
@@ -1315,11 +1315,11 @@ mod tests {
         assert!(listed(Some("antigravity")).is_empty());
     }
 
-    /// Copilot's sessions are linked for Resume only until 6n2's importer reads them: History does not list them.
+    /// Copilot CLI's sessions are linked for Resume and listed in History, as Qwen Code's are.
     #[test]
-    fn copilot_sessions_are_linked_but_not_listed() {
+    fn copilot_sessions_are_linked_and_listed() {
         let (_home, index) = fresh();
-        for (agent, id) in [("claude", "A"), ("copilot", "B")] {
+        for (agent, id) in [("claude", "A"), ("copilot", "B"), ("antigravity", "C")] {
             index
                 .upsert(&SessionMeta {
                     agent: agent.into(),
@@ -1338,8 +1338,9 @@ mod tests {
                 .map(|e| format!("{}:{}", e.agent, e.session_id))
                 .collect()
         };
-        assert_eq!(listed(None), ["claude:A"]);
-        assert!(listed(Some("copilot")).is_empty());
+        assert_eq!(listed(None), ["claude:A", "copilot:B"]);
+        assert_eq!(listed(Some("copilot")), ["copilot:B"]);
+        assert!(listed(Some("antigravity")).is_empty());
         assert_eq!(
             index.latest_for_tab_of("t1", "copilot").unwrap().unwrap().session_id,
             "B"
