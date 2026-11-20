@@ -13,6 +13,7 @@ mod notify;
 mod toast;
 mod tray;
 mod window_bg;
+mod window_strip;
 mod window_theme;
 
 use marshell_core::server::CoreConfig;
