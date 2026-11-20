@@ -3,13 +3,15 @@ import type { Appearance } from "../../generated/Appearance";
 import type { FoundFile } from "../../generated/FoundFile";
 import { getEndpoint } from "../../lib/api/client";
 import { settings as settingsApi } from "../../lib/api/settings";
-import { applyRootState, DEFAULT_APPEARANCE, rootState } from "./rootState";
+import { applyRootState, contrastMoreOf, DEFAULT_APPEARANCE, rootState } from "./rootState";
 import { SettingsReadError, SettingsSync } from "./settingsSync";
 import { watchWindowBackground } from "./windowBackground";
 import { watchWindowTheme } from "./windowTheme";
 
 type AppearanceContext = {
   appearance: Appearance;
+  /** Whether High contrast is on now: by the setting, or by the system asking for more contrast while the setting follows it. */
+  highContrast: boolean;
   /** Applies at once; rolls back and sets `error` if the core refuses or can't be reached. */
   save(next: Appearance): Promise<void>;
   error: string | null;
@@ -19,13 +21,13 @@ type AppearanceContext = {
   sync: SettingsSync | null;
 };
 
-const Ctx = createContext<AppearanceContext>({ appearance: DEFAULT_APPEARANCE, save: async () => {}, error: null, wtFiles: null, sync: null });
+const Ctx = createContext<AppearanceContext>({ appearance: DEFAULT_APPEARANCE, highContrast: false, save: async () => {}, error: null, wtFiles: null, sync: null });
 
 export function useAppearance(): AppearanceContext {
   return useContext(Ctx);
 }
 
-export const CONTRAST_QUERY = "(prefers-contrast: more)";
+const CONTRAST_QUERY = "(prefers-contrast: more)";
 
 /** Loads the Appearance settings once and keeps the root element's theme, accent, contrast and text size in step with them. */
 export function AppearanceProvider({ children }: { children: ReactNode }) {
@@ -88,6 +90,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     }
   }, [sync]);
 
-  const value = useMemo(() => ({ appearance, save, error, wtFiles, sync }), [appearance, save, error, wtFiles, sync]);
+  const highContrast = contrastMoreOf(appearance.contrast, contrastMore);
+  const value = useMemo(() => ({ appearance, highContrast, save, error, wtFiles, sync }), [appearance, highContrast, save, error, wtFiles, sync]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

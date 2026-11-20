@@ -96,8 +96,7 @@ import type { HookInstall } from "../../generated/HookInstall";
 import type { AgentCatalog } from "../../generated/AgentCatalog";
 import { catalogApi } from "../../lib/api/catalog";
 import { offeredModes } from "../modes/sessionModes";
-import { CONTRAST_QUERY, useAppearance } from "../appearance/AppearanceProvider";
-import { contrastMoreOf } from "../appearance/rootState";
+import { useAppearance } from "../appearance/AppearanceProvider";
 import { listen } from "@tauri-apps/api/event";
 import { needsYouCount } from "../attention/attention";
 import { useAttention } from "../attention/useAttention";
@@ -250,7 +249,7 @@ export function LiveApp() {
     [dispatch],
   );
   const { ref, width, height } = useElementSize();
-  const { appearance, wtFiles, sync } = useAppearance();
+  const { appearance, highContrast, wtFiles, sync } = useAppearance();
   // A session's theme is the setting with its profile's override. One object per override, kept until the setting changes,
   // so a terminal restyles only when its theme really does (the session list updates far more often).
   const themeFor = useMemo(() => {
@@ -1996,9 +1995,9 @@ export function LiveApp() {
   const paneActive = paneTabs.active ?? paneTabs.tabs[0]?.id ?? null;
   const paneTitles = tabTitles(paneTabs.tabs);
   const paneProjectNow = focusedRow?.projectKey ?? "";
-  // From the setting, not the root's attribute: the root gets it in an effect, after the render that the change causes.
-  const paneHighContrast = paneTabs.tabs.length > 0 && contrastMoreOf(appearance.contrast, matchMedia(CONTRAST_QUERY).matches);
-  const paneTheme = paneTabs.tabs.length > 0 ? resolveTerminalTheme({ ...themeFor(overrideOf(focusedId ?? "")), app: appScheme(), highContrast: paneHighContrast }).theme : undefined;
+  // From the settings, not the root's attributes: the root gets those in an effect, after the render that a change causes.
+  const paneScheme = appearance.theme === "follow-system" ? appScheme() : appearance.theme;
+  const paneTheme = paneTabs.tabs.length > 0 ? resolveTerminalTheme({ ...themeFor(overrideOf(focusedId ?? "")), app: paneScheme, highContrast }).theme : undefined;
   const paneRecent = recentFor(view.pane, paneProjectNow, paneSession ?? "");
   const openFromPane = () => {
     setFilesOnly(true);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { checkAccent } from "./customAccent";
 import { blurAccent, commitAccent, draftsOf, pickPreset, refill } from "./drafts";
 import { DEFAULT_APPEARANCE } from "./rootState";
 
@@ -61,5 +62,19 @@ describe("custom accent on blur", () => {
     const out = pickPreset(draftsOf({ ...DEFAULT_APPEARANCE, accent: "#3a7bd5" }));
     expect(out.accent).toEqual({ text: "", reason: null });
     expect(blurAccent(out).hex).toBeNull();
+  });
+});
+
+describe("a saved custom accent the surfaces no longer carry", () => {
+  // 3:1 on the white and black surfaces Marshell had before the soft ones; under it on the soft light overlay.
+  const saved = "#888888";
+  it("is shown with the reason it isn't used", () => {
+    const check = checkAccent(saved);
+    expect(check.ok).toBe(false);
+    expect(draftsOf({ ...DEFAULT_APPEARANCE, accent: saved }).accent).toEqual({ text: saved, reason: check.ok ? null : check.reason });
+  });
+  it("a saved accent that passes has no reason, and a preset has no text", () => {
+    expect(draftsOf({ ...DEFAULT_APPEARANCE, accent: "#3a7bd5" }).accent).toEqual({ text: "#3a7bd5", reason: null });
+    expect(draftsOf(DEFAULT_APPEARANCE).accent).toEqual({ text: "", reason: null });
   });
 });
