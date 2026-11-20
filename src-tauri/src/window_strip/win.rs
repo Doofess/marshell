@@ -5,6 +5,9 @@
 //! Tauri's `Resized` event keeps up (spike S13). The strip draws nothing of its own: it blits the pictures the page sent
 //! and turns the pointer into the three window actions (PLAN §9, Window-buttons strip slice decisions).
 //!
+//! The middle column answers the hit test as the system's Maximize button, which is what makes Windows 11 show Snap
+//! Layouts over it; its pointer then arrives as non-client messages, which feed the same pointer rules.
+//!
 //! The strip takes the pointer over its whole height, as the page's buttons under it do. The window's top edge resizes
 //! on the one row above the client area, which no child window covers: under Tauri's `unstable` feature the app's
 //! webview is a child webview, so Tauri makes no top-edge resize window of its own (live check, finding 1).
@@ -19,27 +22,29 @@
 use std::ptr::{null, null_mut};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BeginPaint, DIB_RGB_COLORS, EndPaint, InvalidateRect, PAINTSTRUCT,
-    SetDIBitsToDevice,
+    ScreenToClient, SetDIBitsToDevice,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent,
+    ReleaseCapture, SetCapture, TME_LEAVE, TME_NONCLIENT, TRACKMOUSEEVENT, TrackMouseEvent,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GetClientRect, GetForegroundWindow, GetParent, HWND_TOP, IDC_ARROW, IsZoomed,
-    LoadCursorW, MA_NOACTIVATE, PostMessageW, RegisterClassW, SW_HIDE, SW_SHOWNA, SWP_NOACTIVATE, SetForegroundWindow,
-    SetWindowPos, ShowWindow, WM_APP, WM_CAPTURECHANGED, WM_ERASEBKGND, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_PAINT, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS,
+    CreateWindowExW, DefWindowProcW, GetClientRect, GetCursorPos, GetForegroundWindow, GetParent, HTCLIENT,
+    HTMAXBUTTON, HWND_TOP, IDC_ARROW, IsZoomed, LoadCursorW, MA_NOACTIVATE, PostMessageW, RegisterClassW, SW_HIDE,
+    SW_SHOWNA, SWP_NOACTIVATE, SetForegroundWindow, SetWindowPos, ShowWindow, WM_APP, WM_CAPTURECHANGED, WM_ERASEBKGND,
+    WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCHITTEST, WM_NCLBUTTONDBLCLK,
+    WM_NCLBUTTONDOWN, WM_NCLBUTTONUP, WM_NCMOUSEMOVE, WM_PAINT, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WindowFromPoint,
 };
 
 use super::Paint;
 use super::pointer::{Button, Event, Outcome, Pointer, hit};
 
-/// `WM_MOUSELEAVE`, which windows-sys keeps behind the whole Controls feature.
+/// `WM_MOUSELEAVE` and its non-client twin, which windows-sys keeps behind the whole Controls feature.
 const WM_MOUSELEAVE: u32 = 0x02A3;
+const WM_NCMOUSELEAVE: u32 = 0x02A2;
 
 /// Where the strip's left edge is, in the parent's client area, when the strip ends at the right edge.
 pub(super) fn left_edge(client_width: i32, widths: [u32; 3]) -> i32 {
@@ -56,6 +61,15 @@ pub(super) fn slot_picture(paint: &Paint, button: Button, maximized: bool, lit: 
         Button::Close => &paint.close,
     };
     (if lit { &b.hover } else { &b.rest }, b.width)
+}
+
+/// What a point `x` pixels from the strip's left edge is to the system. The middle column is the system's own Maximize
+/// button, which is what makes Windows 11 show Snap Layouts over it; the other two are plain client area.
+pub(super) fn hit_code(x: i32, widths: [u32; 3]) -> u32 {
+    match hit(x, widths) {
+        Some(Button::Maximize) => HTMAXBUTTON,
+        _ => HTCLIENT,
+    }
 }
 
 /// GDI wants blue first. A trailing partial pixel is left as it is.
@@ -117,6 +131,8 @@ struct State {
     pointer: Pointer,
     /// Whether a `WM_MOUSELEAVE` is already asked for.
     tracking: bool,
+    /// The same for `WM_NCMOUSELEAVE`, over the middle column.
+    tracking_non_client: bool,
     /// Whether the parent was maximized when the strip last drew.
     zoomed: bool,
 }
@@ -127,6 +143,7 @@ static STATE: Mutex<State> = Mutex::new(State {
     pictures: None,
     pointer: Pointer::new(),
     tracking: false,
+    tracking_non_client: false,
     zoomed: false,
 });
 
@@ -279,45 +296,56 @@ fn act(button: Button) {
     }
 }
 
-/// A mouse move, press or release over the strip.
-fn handle_mouse(hwnd: HWND, msg: u32, lparam: LPARAM) {
-    let (x, y) = point_of(lparam);
-    // Copy out what the hit test needs; the lock is released before anything below.
-    let (widths, height) = {
-        let s = state();
-        match s.pictures.as_ref() {
-            Some(p) => (p.widths(), p.height),
-            None => return,
-        }
-    };
-    let over = button_at(x, y, widths, height);
-    let (outcome, arm) = match msg {
-        WM_MOUSEMOVE => {
+/// What the mouse did, whichever message said so.
+#[derive(Clone, Copy, PartialEq)]
+enum Input {
+    Move,
+    Down,
+    Up,
+}
+
+/// The strip's size as the hit test needs it, or `None` before the first pictures.
+fn measures() -> Option<([u32; 3], u32)> {
+    let s = state();
+    s.pictures.as_ref().map(|p| (p.widths(), p.height))
+}
+
+/// A mouse move, press or release over `over`. `non_client` says the message came from the middle column, which the
+/// hit test hands to the system as its Maximize button; the two kinds of message each have their own leave tracking.
+fn on_pointer(hwnd: HWND, input: Input, over: Option<Button>, non_client: bool) {
+    let (outcome, arm) = match input {
+        Input::Move => {
             let mut s = state();
-            let arm = !s.tracking;
-            s.tracking = true;
-            let outcome = s.pointer.on(Event::Move(over));
-            (outcome, arm)
+            let arm = if non_client {
+                !std::mem::replace(&mut s.tracking_non_client, true)
+            } else {
+                !std::mem::replace(&mut s.tracking, true)
+            };
+            (s.pointer.on(Event::Move(over)), arm)
         }
-        WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
+        Input::Down => {
             let Some(button) = over else { return };
             (feed(Event::Down(button)), false)
         }
-        // WM_LBUTTONUP: the press is settled before the capture goes, as releasing it sends `WM_CAPTURECHANGED`.
-        _ => (feed(Event::Up(over)), false),
+        // The press is settled before the capture goes, as releasing it sends `WM_CAPTURECHANGED`.
+        Input::Up => (feed(Event::Up(over)), false),
     };
     if arm {
         let mut track = TRACKMOUSEEVENT {
             cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
-            dwFlags: TME_LEAVE,
+            dwFlags: if non_client {
+                TME_LEAVE | TME_NONCLIENT
+            } else {
+                TME_LEAVE
+            },
             hwndTrack: hwnd,
             dwHoverTime: 0,
         };
         // SAFETY: `track` is a local describing the strip's own window.
         unsafe { TrackMouseEvent(&mut track) };
     }
-    match msg {
-        WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
+    match input {
+        Input::Down => {
             // SAFETY: the strip's own window takes the mouse; the lock is released.
             unsafe { SetCapture(hwnd) };
             let parent = parent_of(hwnd);
@@ -329,11 +357,11 @@ fn handle_mouse(hwnd: HWND, msg: u32, lparam: LPARAM) {
                 }
             }
         }
-        WM_LBUTTONUP => {
+        Input::Up => {
             // SAFETY: gives the mouse back; the `WM_CAPTURECHANGED` it sends finds the lock free.
             unsafe { ReleaseCapture() };
         }
-        _ => {}
+        Input::Move => {}
     }
     if outcome.redraw {
         invalidate(hwnd);
@@ -344,6 +372,21 @@ fn handle_mouse(hwnd: HWND, msg: u32, lparam: LPARAM) {
     }
 }
 
+/// The button under the pointer right now, or `None` when the pointer is not on the strip at all.
+fn under_pointer(hwnd: HWND) -> Option<Option<Button>> {
+    let mut at = POINT { x: 0, y: 0 };
+    // SAFETY: reads the pointer's place into a local, asks which window is there, and turns the point into the strip's
+    // own coordinates; none of the three sends the strip a message it locks for.
+    unsafe {
+        if GetCursorPos(&mut at) == 0 || WindowFromPoint(at) != hwnd {
+            return None;
+        }
+        ScreenToClient(hwnd, &mut at);
+    }
+    let (widths, height) = measures()?;
+    Some(button_at(at.x, at.y, widths, height))
+}
+
 unsafe extern "system" fn strip_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_ERASEBKGND => return 1,
@@ -352,14 +395,58 @@ unsafe extern "system" fn strip_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpara
             paint_window(hwnd);
             return 0;
         }
+        WM_NCHITTEST => {
+            let (x, y) = point_of(lparam);
+            let mut at = POINT { x, y };
+            // SAFETY: turns a screen point into this window's client point; `at` is a local.
+            unsafe { ScreenToClient(hwnd, &mut at) };
+            let code = measures().map_or(HTCLIENT, |(widths, _)| hit_code(at.x, widths));
+            return code as LRESULT;
+        }
         WM_MOUSEMOVE | WM_LBUTTONDOWN | WM_LBUTTONDBLCLK | WM_LBUTTONUP => {
-            handle_mouse(hwnd, msg, lparam);
+            // Client coordinates. The middle column sends these only while the strip holds the mouse.
+            let Some((widths, height)) = measures() else { return 0 };
+            let (x, y) = point_of(lparam);
+            let input = match msg {
+                WM_MOUSEMOVE => Input::Move,
+                WM_LBUTTONUP => Input::Up,
+                _ => Input::Down,
+            };
+            on_pointer(hwnd, input, button_at(x, y, widths, height), false);
             return 0;
         }
-        WM_MOUSELEAVE | WM_CAPTURECHANGED => {
-            if msg == WM_MOUSELEAVE {
-                state().tracking = false;
+        // The middle column's pointer, which the hit test made the system's Maximize button. None of these reaches the
+        // default procedure, which would draw and track a caption button of its own.
+        WM_NCMOUSEMOVE | WM_NCLBUTTONDOWN | WM_NCLBUTTONDBLCLK | WM_NCLBUTTONUP if wparam == HTMAXBUTTON as WPARAM => {
+            let input = match msg {
+                WM_NCMOUSEMOVE => Input::Move,
+                WM_NCLBUTTONUP => Input::Up,
+                _ => Input::Down,
+            };
+            on_pointer(hwnd, input, Some(Button::Maximize), true);
+            return 0;
+        }
+        WM_MOUSELEAVE | WM_NCMOUSELEAVE => {
+            {
+                let mut s = state();
+                if msg == WM_MOUSELEAVE {
+                    s.tracking = false;
+                } else {
+                    s.tracking_non_client = false;
+                }
             }
+            // Crossing between the middle column and its neighbours leaves one kind of area for the other, with the
+            // pointer still on the strip: then this is a move, not a leave.
+            let event = match under_pointer(hwnd) {
+                Some(over) => Event::Move(over),
+                None => Event::Leave,
+            };
+            if feed(event).redraw {
+                invalidate(hwnd);
+            }
+            return 0;
+        }
+        WM_CAPTURECHANGED => {
             if feed(Event::Leave).redraw {
                 invalidate(hwnd);
             }
@@ -458,6 +545,7 @@ pub(super) fn show(paint: Option<&Paint>) {
             let mut s = state();
             s.pointer = Pointer::new();
             s.tracking = false;
+            s.tracking_non_client = false;
         }
         // SAFETY: hides the strip's own window; the lock is released, as the procedure may run.
         unsafe { ShowWindow(hwnd, SW_HIDE) };
@@ -533,6 +621,20 @@ mod tests {
             (&p.minimize.rest[..], 3)
         );
         assert_eq!(slot_picture(&p, Button::Close, true, true), (&p.close.hover[..], 5));
+    }
+
+    #[test]
+    fn the_maximize_column_is_the_systems_maximize_button() {
+        let widths = [46, 46, 46];
+        assert_eq!(hit_code(0, widths), HTCLIENT);
+        assert_eq!(hit_code(45, widths), HTCLIENT);
+        assert_eq!(hit_code(46, widths), HTMAXBUTTON);
+        assert_eq!(hit_code(91, widths), HTMAXBUTTON);
+        assert_eq!(hit_code(92, widths), HTCLIENT);
+        assert_eq!(hit_code(137, widths), HTCLIENT);
+        // Past either end the default answer stands.
+        assert_eq!(hit_code(-1, widths), HTCLIENT);
+        assert_eq!(hit_code(138, widths), HTCLIENT);
     }
 
     #[test]
