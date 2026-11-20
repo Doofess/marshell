@@ -32,11 +32,13 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     ReleaseCapture, SetCapture, TME_LEAVE, TME_NONCLIENT, TRACKMOUSEEVENT, TrackMouseEvent,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GetClientRect, GetCursorPos, GetForegroundWindow, GetParent, HTCLIENT,
-    HTMAXBUTTON, HWND_TOP, IDC_ARROW, IsZoomed, LoadCursorW, MA_NOACTIVATE, PostMessageW, RegisterClassW, SW_HIDE,
-    SW_SHOWNA, SWP_NOACTIVATE, SetForegroundWindow, SetWindowPos, ShowWindow, WM_APP, WM_CAPTURECHANGED, WM_ERASEBKGND,
-    WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCHITTEST, WM_NCLBUTTONDBLCLK,
-    WM_NCLBUTTONDOWN, WM_NCLBUTTONUP, WM_NCMOUSEMOVE, WM_PAINT, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS, WindowFromPoint,
+    CreateWindowExW, DefWindowProcW, FindWindowExW, GWL_STYLE, GetClientRect, GetCursorPos, GetForegroundWindow,
+    GetParent, GetWindowLongW, HTCLIENT, HTMAXBUTTON, HWND_TOP, IDC_ARROW, IsZoomed, LoadCursorW, MA_NOACTIVATE,
+    PostMessageW, RegisterClassW, SW_HIDE, SW_SHOWNA, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_NOZORDER, SetForegroundWindow, SetWindowLongW, SetWindowPos, ShowWindow, WM_APP, WM_CAPTURECHANGED,
+    WM_ERASEBKGND, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCHITTEST,
+    WM_NCLBUTTONDBLCLK, WM_NCLBUTTONDOWN, WM_NCLBUTTONUP, WM_NCMOUSEMOVE, WM_PAINT, WNDCLASSW, WS_CHILD,
+    WS_CLIPSIBLINGS, WindowFromPoint,
 };
 
 use super::Paint;
@@ -313,37 +315,19 @@ fn measures() -> Option<([u32; 3], u32)> {
 /// A mouse move, press or release over `over`. `non_client` says the message came from the middle column, which the
 /// hit test hands to the system as its Maximize button; the two kinds of message each have their own leave tracking.
 fn on_pointer(hwnd: HWND, input: Input, over: Option<Button>, non_client: bool) {
-    let (outcome, arm) = match input {
+    let outcome = match input {
         Input::Move => {
-            let mut s = state();
-            let arm = if non_client {
-                !std::mem::replace(&mut s.tracking_non_client, true)
-            } else {
-                !std::mem::replace(&mut s.tracking, true)
-            };
-            (s.pointer.on(Event::Move(over)), arm)
+            let outcome = feed(Event::Move(over));
+            track(hwnd, non_client);
+            outcome
         }
         Input::Down => {
             let Some(button) = over else { return };
-            (feed(Event::Down(button)), false)
+            feed(Event::Down(button))
         }
         // The press is settled before the capture goes, as releasing it sends `WM_CAPTURECHANGED`.
-        Input::Up => (feed(Event::Up(over)), false),
+        Input::Up => feed(Event::Up(over)),
     };
-    if arm {
-        let mut track = TRACKMOUSEEVENT {
-            cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
-            dwFlags: if non_client {
-                TME_LEAVE | TME_NONCLIENT
-            } else {
-                TME_LEAVE
-            },
-            hwndTrack: hwnd,
-            dwHoverTime: 0,
-        };
-        // SAFETY: `track` is a local describing the strip's own window.
-        unsafe { TrackMouseEvent(&mut track) };
-    }
     match input {
         Input::Down => {
             let parent = parent_of(hwnd);
@@ -370,6 +354,93 @@ fn on_pointer(hwnd: HWND, input: Input, over: Option<Button>, non_client: bool) 
     if let Some(button) = outcome.act {
         // SAFETY: posts to the strip's own window; the action runs when the message arrives, not inside this one.
         unsafe { PostMessageW(hwnd, WM_APP, code_of(button), 0) };
+    }
+}
+
+/// Which leave to ask for when a leave message finds the pointer still on the strip, over `over`: the non-client one
+/// (`true`) or the client one. `None` when the pointer is in the kind of area the message says it left, so a leave never
+/// asks for its own kind again and two leaves can't feed each other.
+fn crossing(left_non_client: bool, over: Option<Button>) -> Option<bool> {
+    let non_client = over == Some(Button::Maximize);
+    (over.is_some() && non_client != left_non_client).then_some(non_client)
+}
+
+/// Asks the system for the leave message of one kind of area, unless it is already asked for.
+fn track(hwnd: HWND, non_client: bool) {
+    let already = {
+        let mut s = state();
+        if non_client {
+            std::mem::replace(&mut s.tracking_non_client, true)
+        } else {
+            std::mem::replace(&mut s.tracking, true)
+        }
+    };
+    if already {
+        return;
+    }
+    let mut track = TRACKMOUSEEVENT {
+        cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
+        dwFlags: if non_client {
+            TME_LEAVE | TME_NONCLIENT
+        } else {
+            TME_LEAVE
+        },
+        hwndTrack: hwnd,
+        dwHoverTime: 0,
+    };
+    // SAFETY: `track` is a local describing the strip's own window; the lock is released.
+    unsafe { TrackMouseEvent(&mut track) };
+}
+
+/// After the strip moved: a pointer it moved away from lights nothing and holds no press. A click on Maximize or Restore
+/// moves the strip from under a pointer that stays where it was, and no leave message is promised for that (live check,
+/// finding 9). The next move over the strip asks for its leave again.
+fn settle(hwnd: HWND) {
+    if state().pointer.idle() || under_pointer(hwnd).is_some() {
+        return;
+    }
+    let redraw = {
+        let mut s = state();
+        s.tracking = false;
+        s.tracking_non_client = false;
+        s.pointer.on(Event::Leave).redraw
+    };
+    if redraw {
+        invalidate(hwnd);
+    }
+}
+
+/// Gives every webview window of `parent` the `WS_CLIPSIBLINGS` style. wry makes its window without it, and a window
+/// without it paints over the siblings above it: the page was drawn over the strip, which was there, took the pointer and
+/// never showed (live check, finding 8).
+fn clip_webviews(parent: HWND) {
+    let class: Vec<u16> = "WRY_WEBVIEW\0".encode_utf16().collect();
+    let mut child: HWND = null_mut();
+    loop {
+        // SAFETY: walks the parent's children of one class; the class buffer outlives the call, and a stale handle ends
+        // the walk with null.
+        child = unsafe { FindWindowExW(parent, child, class.as_ptr(), null()) };
+        if child.is_null() {
+            return;
+        }
+        // SAFETY: reads and sets a style bit on a child of the app's own window, on the thread that owns it, then has the
+        // system take the new style in without moving, sizing, reordering or activating anything. The strip's lock is not
+        // held.
+        unsafe {
+            let style = GetWindowLongW(child, GWL_STYLE) as u32;
+            if style & WS_CLIPSIBLINGS == 0 {
+                SetWindowLongW(child, GWL_STYLE, (style | WS_CLIPSIBLINGS) as i32);
+                SetWindowPos(
+                    child,
+                    null_mut(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                );
+            }
+        }
     }
 }
 
@@ -438,9 +509,15 @@ unsafe extern "system" fn strip_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpara
                 }
             }
             // Crossing between the middle column and its neighbours leaves one kind of area for the other, with the
-            // pointer still on the strip: then this is a move, not a leave.
+            // pointer still on the strip: then this is a move, not a leave, and the area the pointer is in now is the
+            // one to hear from next. A release over the middle column ends here too, with no move after it.
             let event = match under_pointer(hwnd) {
-                Some(over) => Event::Move(over),
+                Some(over) => {
+                    if let Some(non_client) = crossing(msg == WM_NCMOUSELEAVE, over) {
+                        track(hwnd, non_client);
+                    }
+                    Event::Move(over)
+                }
                 None => Event::Leave,
             };
             if feed(event).redraw {
@@ -519,6 +596,7 @@ pub fn install(app: &tauri::AppHandle) {
         eprintln!("Marshell: no window strip this run: the window was not made");
         return;
     }
+    clip_webviews(parent);
     let mut s = state();
     s.hwnd = hwnd as isize;
     s.app = Some(app.clone());
@@ -528,6 +606,7 @@ pub fn install(app: &tauri::AppHandle) {
 pub fn on_resized(_window: &tauri::Window, size: tauri::PhysicalSize<u32>) {
     let Some(hwnd) = strip() else { return };
     place(i32::try_from(size.width).unwrap_or(i32::MAX));
+    settle(hwnd);
     let zoomed = is_zoomed(parent_of(hwnd));
     let changed = {
         let mut s = state();
@@ -569,6 +648,8 @@ pub(super) fn show(paint: Option<&Paint>) {
     };
     // SAFETY: a query on the parent's window; `client` is a local.
     if !parent.is_null() && unsafe { GetClientRect(parent, &mut client) } != 0 {
+        // Again here: a webview window made after `install` is brought in line before the strip shows.
+        clip_webviews(parent);
         place(client.right - client.left);
     }
     // SAFETY: shows the strip's own window without activating it; the lock is released.
@@ -637,6 +718,84 @@ mod tests {
         // Past either end the default answer stands.
         assert_eq!(hit_code(-1, widths), HTCLIENT);
         assert_eq!(hit_code(138, widths), HTCLIENT);
+    }
+
+    #[test]
+    fn a_leave_that_is_a_crossing_asks_for_the_other_areas_leave() {
+        // Out of the client area and onto the middle column: the next leave to wait for is the non-client one.
+        assert_eq!(crossing(false, Some(Button::Maximize)), Some(true));
+        assert_eq!(crossing(true, Some(Button::Minimize)), Some(false));
+        assert_eq!(crossing(true, Some(Button::Close)), Some(false));
+        // A leave that finds the pointer in the area it says it left asks for nothing, so two leaves can't feed each other.
+        assert_eq!(crossing(true, Some(Button::Maximize)), None);
+        assert_eq!(crossing(false, Some(Button::Close)), None);
+        assert_eq!(crossing(false, None), None);
+        assert_eq!(crossing(true, None), None);
+    }
+
+    /// A hidden window of a system class, or of `class`.
+    fn window(class: &str, style: u32, parent: HWND) -> HWND {
+        let class: Vec<u16> = format!("{class}\0").encode_utf16().collect();
+        // SAFETY: makes a hidden window on the test's own thread; the class buffer outlives the call.
+        let hwnd = unsafe {
+            CreateWindowExW(
+                0,
+                class.as_ptr(),
+                null(),
+                style,
+                0,
+                0,
+                10,
+                10,
+                parent,
+                null_mut(),
+                GetModuleHandleW(null()),
+                null(),
+            )
+        };
+        assert!(!hwnd.is_null(), "the test window was not made");
+        hwnd
+    }
+
+    fn style_of(hwnd: HWND) -> u32 {
+        // SAFETY: a query on a window the test made.
+        unsafe { GetWindowLongW(hwnd, GWL_STYLE) as u32 }
+    }
+
+    #[test]
+    fn the_webviews_window_stops_painting_over_its_siblings() {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{DestroyWindow, WS_CLIPCHILDREN, WS_POPUP};
+        let class: Vec<u16> = "WRY_WEBVIEW\0".encode_utf16().collect();
+        // SAFETY: registers the class name wry gives its webview windows, with the default procedure, in the test's process.
+        unsafe {
+            RegisterClassW(&WNDCLASSW {
+                style: 0,
+                lpfnWndProc: Some(DefWindowProcW),
+                cbClsExtra: 0,
+                cbWndExtra: 0,
+                hInstance: GetModuleHandleW(null()),
+                hIcon: null_mut(),
+                hCursor: null_mut(),
+                hbrBackground: null_mut(),
+                lpszMenuName: null(),
+                lpszClassName: class.as_ptr(),
+            });
+        }
+        let parent = window("STATIC", WS_POPUP, null_mut());
+        // The styles wry makes its window with: no `WS_CLIPSIBLINGS`.
+        let webview = window("WRY_WEBVIEW", WS_CHILD | WS_CLIPCHILDREN, parent);
+        let page = window("WRY_WEBVIEW", WS_CHILD | WS_CLIPCHILDREN, parent);
+        let other = window("STATIC", WS_CHILD, parent);
+        assert_eq!(style_of(webview) & WS_CLIPSIBLINGS, 0);
+
+        clip_webviews(parent);
+
+        assert_eq!(style_of(webview) & WS_CLIPSIBLINGS, WS_CLIPSIBLINGS);
+        assert_eq!(style_of(page) & WS_CLIPSIBLINGS, WS_CLIPSIBLINGS);
+        assert_eq!(style_of(webview) & WS_CLIPCHILDREN, WS_CLIPCHILDREN);
+        assert_eq!(style_of(other) & WS_CLIPSIBLINGS, 0);
+        // SAFETY: destroys the test's own windows; the children go with the parent.
+        unsafe { DestroyWindow(parent) };
     }
 
     #[test]

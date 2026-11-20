@@ -88,6 +88,11 @@ impl Pointer {
         }
     }
 
+    /// Whether the pointer is neither over a button nor down on one, so nothing can be left behind.
+    pub fn idle(&self) -> bool {
+        self.hover.is_none() && self.pressed.is_none()
+    }
+
     /// The one button drawn with its hover picture, if any. A pressed button is lit only while the pointer is on it.
     pub fn lit(&self) -> Option<Button> {
         match self.pressed {
@@ -147,6 +152,21 @@ mod tests {
         assert!(!p.on(Event::Move(Some(Button::Minimize))).redraw);
         let mut q = Pointer::default();
         assert!(!q.on(Event::Leave).redraw);
+    }
+
+    #[test]
+    fn a_pointer_is_idle_until_it_is_over_or_down_on_a_button() {
+        let mut p = Pointer::default();
+        assert!(p.idle());
+        p.on(Event::Move(Some(Button::Maximize)));
+        assert!(!p.idle());
+        p.on(Event::Leave);
+        assert!(p.idle());
+        // A press dragged off its button lights nothing and is still not idle.
+        p.on(Event::Down(Button::Close));
+        p.on(Event::Move(None));
+        assert_eq!(p.lit(), None);
+        assert!(!p.idle());
     }
 
     #[test]
