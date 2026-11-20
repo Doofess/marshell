@@ -51,6 +51,14 @@ pub struct Outcome {
 }
 
 impl Pointer {
+    /// A pointer over nothing. `const`, so the window's state can sit in a `static`.
+    pub const fn new() -> Self {
+        Self {
+            hover: None,
+            pressed: None,
+        }
+    }
+
     /// Takes one event. `redraw` is true exactly when `lit()` changed; `act` names the button a press and release
     /// on the same button completes.
     pub fn on(&mut self, event: Event) -> Outcome {

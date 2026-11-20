@@ -334,6 +334,8 @@ fn main() {
                 && window.label() == "main"
             {
                 browser::on_resized(window, *size);
+                #[cfg(windows)]
+                window_strip::on_resized(window, *size);
             }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event
                 && window.label() == "main"
@@ -355,6 +357,8 @@ fn main() {
             if let Some(w) = app.get_webview_window("main") {
                 disable_browser_shortcuts(&w);
             }
+            #[cfg(windows)]
+            window_strip::install(app.handle());
             app.manage(capture::CaptureState::default());
             let home = marshell_core::paths::home_dir()?;
             app.manage(HomeDir(home.clone()));

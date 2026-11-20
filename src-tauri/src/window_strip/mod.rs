@@ -4,9 +4,14 @@
 //! native window over them follows the edge instead, and draws the pictures the page sends (PLAN §9, Window-buttons strip
 //! slice decisions).
 
-// Used by the window in win.rs (Task 3).
-#[allow(dead_code)]
+// Only the window in win.rs uses the pointer's rules outside the tests.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub mod pointer;
+#[cfg(windows)]
+mod win;
+
+#[cfg(windows)]
+pub use win::{install, on_resized};
 
 use std::sync::Mutex;
 
@@ -70,7 +75,7 @@ impl Paint {
     }
 
     /// The widths of Minimize, Maximize and Close.
-    #[allow(dead_code)] // Used by the window in win.rs (Task 3).
+    #[cfg_attr(not(windows), allow(dead_code))] // Only the Windows window reads the widths.
     pub fn widths(&self) -> [u32; 3] {
         [self.minimize.width, self.maximize.width, self.close.width]
     }
@@ -102,15 +107,20 @@ static WANTED: Mutex<Wanted> = Mutex::new(Wanted {
     paint: None,
 });
 
-/// Gives the main window's strip its pictures and says whether it shows. `paint: None` keeps the pictures it has. Task 3
-/// hands the result to the strip's window; for now it is only remembered.
+/// Gives the main window's strip its pictures and says whether it shows. `paint: None` keeps the pictures it has. On
+/// Windows the strip's window then shows them or hides; elsewhere the request is only remembered.
 #[tauri::command]
 pub fn set_window_strip(window: tauri::Window, shown: bool, paint: Option<Paint>) -> Result<(), String> {
     if window.label() != "main" {
         return Err("only the main window has a strip".to_string());
     }
     let mut wanted = WANTED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    wanted.apply(shown, paint)?;
+    let result = wanted.apply(shown, paint)?;
+    // `WANTED` is read only here, never by the window's procedure, so holding it across the call cannot deadlock.
+    #[cfg(windows)]
+    win::show(result);
+    #[cfg(not(windows))]
+    let _ = result;
     Ok(())
 }
 
