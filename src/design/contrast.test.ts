@@ -77,8 +77,10 @@ describe("paper tints in a PDF", () => {
     });
 });
 
+const STATUS_AND_BRAND = ["--error", "--ok", "--caution", "--brand-claude", "--brand-claude-mark", "--brand-codex", "--brand-openai", "--brand-cyan", "--brand-deepseek", "--brand-violet", "--brand-generic", "--tool-shell", "--tool-dev", "--tool-remote"];
+
 describe("status and brand colours on surfaces", () => {
-  const names = ["--error", "--ok", "--caution", "--brand-claude", "--brand-claude-mark", "--brand-codex", "--brand-openai", "--brand-cyan", "--brand-deepseek", "--brand-violet", "--brand-generic", "--tool-shell", "--tool-dev", "--tool-remote"];
+  const names = STATUS_AND_BRAND;
   for (const theme of THEMES)
     for (const n of names)
       it(`${n} is at least 3:1 on every surface (${theme})`, () => {
@@ -203,6 +205,22 @@ describe("high contrast", () => {
   };
   const OVERLAYS = ["--hairline", "--fill", "--fill-strong", "--hover", "--selected"];
   const TEXT = ["--text-1", "--text-2", "--text-3"];
+
+  // High contrast draws other surfaces (true black, pure white), so what must hold on a surface must hold on these too.
+  it("has surfaces of its own", () => {
+    for (const theme of THEMES) expect(hc["--bg-base"]![theme]).not.toBe(tokens["--bg-base"]![theme]);
+  });
+  it("every code token is at least 4.5:1 on every high contrast surface", () => {
+    const codeTokens = Object.keys(hc).filter((n) => n.startsWith("--code-token-"));
+    expect(codeTokens).toHaveLength(12);
+    for (const theme of THEMES) for (const n of codeTokens) expect(minOnSurfaces(hc[n]![theme], hc, theme), `${n} (${theme})`).toBeGreaterThanOrEqual(4.5);
+  });
+  it("every status and brand colour is at least 3:1 on every high contrast surface", () => {
+    for (const theme of THEMES) for (const n of STATUS_AND_BRAND) expect(minOnSurfaces(hc[n]![theme], hc, theme), `${n} (${theme})`).toBeGreaterThanOrEqual(3);
+  });
+  it("every accent is at least 3:1 on every high contrast surface", () => {
+    for (const theme of THEMES) for (const a of ACCENTS) expect(minOnSurfaces(accent(a)["--accent"]![theme], hc, theme), `${a} (${theme})`).toBeGreaterThanOrEqual(3);
+  });
 
   for (const theme of THEMES)
     for (const t of TEXT)

@@ -1,7 +1,7 @@
 import type { ITheme } from "@xterm/xterm";
 import type { ImportedTheme } from "../../generated/ImportedTheme";
 import type { TerminalColors } from "../../generated/TerminalColors";
-import { MIN_CONTRAST, PALETTES, type Scheme } from "./palettes";
+import { HIGH_CONTRAST_PALETTES, MIN_CONTRAST, PALETTES, type Scheme } from "./palettes";
 
 export type { Scheme };
 /** docs/PLAN.md "Terminal theme": follow the app by default, or pin the terminal dark or light. */
@@ -23,8 +23,13 @@ export function appScheme(root: HTMLElement = document.documentElement): Scheme 
   return schemeFromComputed(getComputedStyle(root).colorScheme, matchMedia("(prefers-color-scheme: dark)").matches);
 }
 
-export function terminalOptions(scheme: Scheme): { theme: ITheme; minimumContrastRatio: number } {
-  return { theme: PALETTES[scheme], minimumContrastRatio: MIN_CONTRAST };
+/** Whether High contrast is on, from the root element's `data-contrast` (browser only). */
+export function appHighContrast(root: HTMLElement = document.documentElement): boolean {
+  return root.getAttribute("data-contrast") === "more";
+}
+
+export function terminalOptions(scheme: Scheme, highContrast = false): { theme: ITheme; minimumContrastRatio: number } {
+  return { theme: (highContrast ? HIGH_CONTRAST_PALETTES : PALETTES)[scheme], minimumContrastRatio: MIN_CONTRAST };
 }
 
 const ANSI_NAMES = [
@@ -67,6 +72,8 @@ export type TerminalThemeInput = {
   override?: string | null;
   imported: Pick<ImportedTheme, "id" | "colors">[];
   app: Scheme;
+  /** High contrast is on: the built-in palettes take the window's true black or pure white. Imported themes are unchanged. */
+  highContrast?: boolean;
   protection: boolean;
 };
 
@@ -76,7 +83,7 @@ export function resolveTerminalTheme(input: TerminalThemeInput): { theme: ITheme
   const pick = (name: string | null | undefined) => {
     if (name === "follow-app" || name === "dark" || name === "light") {
       const scheme = resolveScheme(name, input.app);
-      return { theme: PALETTES[scheme], scheme };
+      return { theme: (input.highContrast ? HIGH_CONTRAST_PALETTES : PALETTES)[scheme], scheme };
     }
     const found = input.imported.find((t) => t.id === name);
     return found ? { theme: themeFromColors(found.colors), scheme: schemeOfBackground(found.colors.background) } : null;

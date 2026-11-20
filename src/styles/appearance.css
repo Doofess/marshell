@@ -6,6 +6,10 @@
 /* High contrast: text at least 7:1 on every surface, dividers at least 3:1, and no fill fainter than 20%
    (src/design/contrast.test.ts). The three text tiers draw close together; size and weight carry the hierarchy. */
 :root[data-contrast="more"] {
+  --bg-base: light-dark(oklch(100% 0 none), oklch(0% 0 none));
+  --bg-raised: light-dark(oklch(98.2% 0.003 85), oklch(14.5% 0 none));
+  --bg-overlay: light-dark(oklch(95.6% 0.004 75), oklch(19.1% 0 none));
+
   --text-1: light-dark(oklch(0% 0 none), oklch(100% 0 none));
   --text-2: light-dark(oklch(22% 0.006 56), oklch(92% 0 none));
   --text-3: light-dark(oklch(26% 0.008 58), oklch(88% 0 none));

@@ -13,6 +13,7 @@ mod notify;
 mod toast;
 mod tray;
 mod window_bg;
+mod window_theme;
 
 use marshell_core::server::CoreConfig;
 use marshell_core::supervisor::{CoreEvent, Supervisor};
@@ -435,6 +436,7 @@ fn main() {
             link::notification_link,
             link::set_notification_link,
             window_bg::set_window_background,
+            window_theme::set_window_theme,
             browser::browser_open,
             browser::browser_show,
             browser::browser_place,

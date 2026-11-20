@@ -1,19 +1,40 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { contrast, deltaE } from "../../design/contrast";
+import { formatHex, parse } from "culori";
+import { contrast } from "../../design/contrast";
 import { parseTokens } from "../../design/cssTokens";
-import { MIN_CONTRAST, PALETTES } from "./palettes";
+import { HIGH_CONTRAST_PALETTES, MIN_CONTRAST, PALETTES } from "./palettes";
 
 const tokens = parseTokens(readFileSync(new URL("../../styles/tokens.css", import.meta.url), "utf8"), ":root");
+const appearanceCss = readFileSync(new URL("../../styles/appearance.css", import.meta.url), "utf8");
+const highContrast = parseTokens(appearanceCss, ':root[data-contrast="more"]');
+const hexOf = (css: string) => formatHex(parse(css))!;
+
+describe("default terminal backgrounds", () => {
+  // The same colour as the window to the sRGB byte, or a seam shows between the terminal and the window.
+  for (const scheme of ["dark", "light"] as const) {
+    it(`${scheme} is the base surface`, () => {
+      expect(PALETTES[scheme].background).toBe(hexOf(tokens["--bg-base"]![scheme]));
+      expect(PALETTES[scheme].cursorAccent).toBe(PALETTES[scheme].background);
+    });
+    it(`high-contrast ${scheme} is the high-contrast base surface`, () => {
+      expect(HIGH_CONTRAST_PALETTES[scheme].background).toBe(hexOf(highContrast["--bg-base"]![scheme]));
+      expect(HIGH_CONTRAST_PALETTES[scheme].cursorAccent).toBe(HIGH_CONTRAST_PALETTES[scheme].background);
+    });
+  }
+  it("high contrast keeps true black and pure white", () => {
+    expect(HIGH_CONTRAST_PALETTES.dark.background).toBe("#000000");
+    expect(HIGH_CONTRAST_PALETTES.light.background).toBe("#ffffff");
+  });
+});
+
 const ANSI = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white", "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite"] as const;
 
+for (const [label, set] of [["", PALETTES], ["high-contrast ", HIGH_CONTRAST_PALETTES]] as const)
 for (const scheme of ["dark", "light"] as const) {
-  describe(`${scheme} terminal palette`, () => {
-    const p = PALETTES[scheme];
+  describe(`${label}${scheme} terminal palette`, () => {
+    const p = set[scheme];
     const bg = p.background!;
-    it("sits flush with the app's base surface", () => {
-      expect(deltaE(bg, tokens["--bg-base"]![scheme])).toBeLessThan(1);
-    });
     it("reads at 7:1 for default text", () => {
       expect(contrast(p.foreground!, bg)).toBeGreaterThanOrEqual(7);
     });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Appearance } from "../../generated/Appearance";
-import { DEFAULT_APPEARANCE, rootState } from "./rootState";
+import { DEFAULT_APPEARANCE, contrastMoreOf, rootState } from "./rootState";
 
 const a = (over: Partial<Appearance>): Appearance => ({ ...DEFAULT_APPEARANCE, ...over });
 const off = { prefersContrastMore: false };
@@ -46,5 +46,18 @@ describe("rootState", () => {
     expect(rootState(a({ text_size: "default" }), off).attrs["data-text-size"]).toBeNull();
     expect(rootState(a({ text_size: "large" }), off).attrs["data-text-size"]).toBe("large");
     expect(rootState(a({ text_size: "larger" }), off).attrs["data-text-size"]).toBe("larger");
+  });
+});
+
+describe("contrastMoreOf", () => {
+  it("is on by the setting, whatever the system asks", () => {
+    expect(contrastMoreOf("on", false)).toBe(true);
+  });
+  it("follows the system only when the setting says to", () => {
+    expect(contrastMoreOf("follow-system", true)).toBe(true);
+    expect(contrastMoreOf("follow-system", false)).toBe(false);
+  });
+  it("is off by the setting, whatever the system asks", () => {
+    expect(contrastMoreOf("off", true)).toBe(false);
   });
 });

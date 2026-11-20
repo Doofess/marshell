@@ -3,12 +3,15 @@ import type { Appearance } from "../../generated/Appearance";
 import type { FoundFile } from "../../generated/FoundFile";
 import { getEndpoint } from "../../lib/api/client";
 import { settings as settingsApi } from "../../lib/api/settings";
-import { applyRootState, DEFAULT_APPEARANCE, rootState } from "./rootState";
+import { applyRootState, contrastMoreOf, DEFAULT_APPEARANCE, rootState } from "./rootState";
 import { SettingsReadError, SettingsSync } from "./settingsSync";
 import { watchWindowBackground } from "./windowBackground";
+import { watchWindowTheme } from "./windowTheme";
 
 type AppearanceContext = {
   appearance: Appearance;
+  /** Whether High contrast is on now: by the setting, or by the system asking for more contrast while the setting follows it. */
+  highContrast: boolean;
   /** Applies at once; rolls back and sets `error` if the core refuses or can't be reached. */
   save(next: Appearance): Promise<void>;
   error: string | null;
@@ -18,7 +21,7 @@ type AppearanceContext = {
   sync: SettingsSync | null;
 };
 
-const Ctx = createContext<AppearanceContext>({ appearance: DEFAULT_APPEARANCE, save: async () => {}, error: null, wtFiles: null, sync: null });
+const Ctx = createContext<AppearanceContext>({ appearance: DEFAULT_APPEARANCE, highContrast: false, save: async () => {}, error: null, wtFiles: null, sync: null });
 
 export function useAppearance(): AppearanceContext {
   return useContext(Ctx);
@@ -70,6 +73,8 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
 
   // The native window's background follows the theme too. Declared after the effect above, so the first read sees the root's state.
   useEffect(() => watchWindowBackground(), []);
+  // And so does the window's own theme, which WebView2 draws its right-click menu in.
+  useEffect(() => watchWindowTheme(), []);
 
   const save = useCallback(async (next: Appearance) => {
     setAppearance(next);
@@ -85,6 +90,7 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     }
   }, [sync]);
 
-  const value = useMemo(() => ({ appearance, save, error, wtFiles, sync }), [appearance, save, error, wtFiles, sync]);
+  const highContrast = contrastMoreOf(appearance.contrast, contrastMore);
+  const value = useMemo(() => ({ appearance, highContrast, save, error, wtFiles, sync }), [appearance, highContrast, save, error, wtFiles, sync]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

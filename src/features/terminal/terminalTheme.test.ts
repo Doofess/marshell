@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MIN_CONTRAST, PALETTES } from "./palettes";
+import { MIN_CONTRAST, HIGH_CONTRAST_PALETTES, PALETTES } from "./palettes";
 import { resolveScheme, resolveTerminalTheme, schemeFromComputed, schemeOfBackground, terminalOptions, themeFromColors } from "./terminalTheme";
 
 describe("resolveScheme", () => {
@@ -88,6 +88,11 @@ describe("resolveTerminalTheme", () => {
   });
   it("a setting naming a missing theme falls back to follow-app", () => {
     expect(resolveTerminalTheme({ ...base, setting: "wt:gone", app: "light" }).theme).toBe(PALETTES.light);
+  });
+  it("high contrast picks the true black and pure white palettes, and an imported theme keeps its colours", () => {
+    expect(resolveTerminalTheme({ ...base, highContrast: true }).theme).toBe(HIGH_CONTRAST_PALETTES.dark);
+    expect(resolveTerminalTheme({ ...base, highContrast: true, app: "light" }).theme).toBe(HIGH_CONTRAST_PALETTES.light);
+    expect(resolveTerminalTheme({ ...base, highContrast: true, setting: SOLAR.id }).theme.background).toBe(SOLAR.colors.background);
   });
   it("contrast protection off gives ratio 1", () => {
     expect(resolveTerminalTheme({ ...base, protection: false }).minimumContrastRatio).toBe(1);
