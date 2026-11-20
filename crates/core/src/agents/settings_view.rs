@@ -54,6 +54,14 @@ pub fn curated(agent: &str) -> &'static [&'static str] {
             "ui.theme",
             "general.vimMode",
         ],
+        "copilot" => &[
+            "model",
+            "defaultPermissionMode",
+            "autoUpdate",
+            "autoUpdatesChannel",
+            "theme",
+            "includeCoAuthoredBy",
+        ],
         _ => &[],
     }
 }
@@ -108,6 +116,10 @@ pub(crate) fn control(agent: &str, key: &str) -> Option<FieldControl> {
         ("qwen", "general.enableAutoUpdate" | "privacy.usageStatisticsEnabled" | "general.vimMode") => {
             FieldControl::Switch
         }
+        ("copilot", "model" | "theme") => FieldControl::Text,
+        ("copilot", "defaultPermissionMode") => choice(&["manual", "assisted", "allow-all"]),
+        ("copilot", "autoUpdatesChannel") => choice(&["stable", "prerelease"]),
+        ("copilot", "autoUpdate" | "includeCoAuthoredBy") => FieldControl::Switch,
         _ => return None,
     })
 }
@@ -183,16 +195,42 @@ pub fn mask_toml(value: &mut toml::Value) {
 /// Qwen's secret containers keep their structure and only string leaves are hidden. In particular, `auth` and
 /// `gitCoAuthor` are objects to walk, while numeric token limits and booleans stay visible.
 fn mask_qwen(value: &mut Value) {
-    fn walk(node: &mut Value, path: &mut Vec<String>, hide: bool) {
+    mask_leaves(value, &|path, key| {
+        key.eq_ignore_ascii_case("env")
+            || (path.is_empty() && key == "modelProviders")
+            || (path.len() == 2 && path[0] == "mcpServers" && key == "headers")
+            || (path.first().is_some_and(|p| p == "telemetry") && key.to_lowercase().ends_with("headers"))
+    });
+}
+
+/// Copilot CLI's masking, leaves only like Qwen's: the name rule would hide `includeCoAuthoredBy` and
+/// `storeTokenPlaintext`, which are booleans the form shows. Everything under a key named `env` or `headers`, under
+/// `sandbox.credentials` and under a `telemetry` key whose name holds `headers`, and the `proxyUrl` at the top, is
+/// hidden; so is any string whose own key looks secret. The match is case-insensitive, which hides at least as much as
+/// Copilot's own reading would. No managed file is read for Copilot (6n2 decision 10).
+fn mask_copilot(value: &mut Value) {
+    mask_leaves(value, &|path, key| {
+        let key = key.to_lowercase();
+        key == "env"
+            || key == "headers"
+            || (path.len() == 1 && path[0].eq_ignore_ascii_case("sandbox") && key == "credentials")
+            || (path.first().is_some_and(|p| p.eq_ignore_ascii_case("telemetry")) && key.contains("headers"))
+            || (path.is_empty() && key == "proxyurl")
+    });
+}
+
+/// The masking walk for an agent whose secret containers keep their structure. `container(path, key)` says whether
+/// everything under `key`, an entry of the object at `path`, is hidden: each string leaf there becomes `hidden`. Outside
+/// them a string leaf is hidden when its own key passes `is_secret_key`, and an array of strings goes through
+/// `mask_words`. A number or a boolean is never hidden.
+fn mask_leaves(value: &mut Value, container: &dyn Fn(&[String], &str) -> bool) {
+    fn walk(node: &mut Value, path: &mut Vec<String>, hide: bool, container: &dyn Fn(&[String], &str) -> bool) {
         match node {
             Value::Object(map) => {
                 for (key, child) in map {
-                    let secret_container = key.eq_ignore_ascii_case("env")
-                        || (path.is_empty() && key == "modelProviders")
-                        || (path.len() == 2 && path[0] == "mcpServers" && key == "headers")
-                        || (path.first().is_some_and(|p| p == "telemetry") && key.to_lowercase().ends_with("headers"));
+                    let secret_container = container(path, key);
                     path.push(key.clone());
-                    walk(child, path, hide || secret_container);
+                    walk(child, path, hide || secret_container, container);
                     path.pop();
                 }
             }
@@ -200,7 +238,7 @@ fn mask_qwen(value: &mut Value) {
                 if !hide && items.iter().all(Value::is_string) {
                     let words: Vec<String> = items.iter().filter_map(|v| v.as_str().map(str::to_string)).collect();
                     let masked = mask_words(&words);
-                    // The shared command scrubber may combine the words. Qwen keeps every array leaf, so hide
+                    // The shared command scrubber may combine the words. Qwen and Copilot keep every array leaf, so hide
                     // those strings individually when the scrubber cannot return one value per word.
                     *items = if masked.len() == items.len() {
                         masked.into_iter().map(Value::String).collect()
@@ -209,7 +247,7 @@ fn mask_qwen(value: &mut Value) {
                     };
                 }
                 for child in items {
-                    walk(child, path, hide);
+                    walk(child, path, hide, container);
                 }
             }
             Value::String(s) => {
@@ -222,7 +260,7 @@ fn mask_qwen(value: &mut Value) {
             _ => {}
         }
     }
-    walk(value, &mut Vec::new(), false);
+    walk(value, &mut Vec::new(), false, container);
 }
 
 fn mask_tree<T: Tree>(node: &mut T) {
@@ -665,10 +703,10 @@ pub(crate) fn parse_masked(agent: &str, text: &str) -> Result<Parsed, u32> {
             None => read_value(text).map_err(|_| 1u32)?,
         };
         let before = value.clone();
-        if agent == "qwen" {
-            mask_qwen(&mut value);
-        } else {
-            mask(&mut value);
+        match agent {
+            "qwen" => mask_qwen(&mut value),
+            "copilot" => mask_copilot(&mut value),
+            _ => mask(&mut value),
         }
         let body = text.strip_prefix('\u{feff}').unwrap_or(text);
         let hides = json_hides(body);
@@ -677,7 +715,10 @@ pub(crate) fn parse_masked(agent: &str, text: &str) -> Result<Parsed, u32> {
             Some(RawLock::Hidden)
         } else if hides.repeated_key {
             Some(RawLock::RepeatedKey)
-        } else if agent != "qwen" && !body.trim().is_empty() && serde_json::from_str::<Value>(body).is_err() {
+        } else if !matches!(agent, "qwen" | "copilot")
+            && !body.trim().is_empty()
+            && serde_json::from_str::<Value>(body).is_err()
+        {
             Some(RawLock::NotPlainJson)
         } else {
             None
@@ -760,11 +801,46 @@ fn qwen_text_problem(text: &str) -> Option<u32> {
     }
 }
 
+/// The line of the first problem when `text` is not a settings file Copilot CLI loads. Copilot 1.0.106 reads it as
+/// JSONC: one leading BOM, comments and trailing commas are fine (6n2 decision 16), and an object must stand at the
+/// top. Line 1 when the text is empty or the top is not an object.
+fn copilot_text_problem(text: &str) -> Option<u32> {
+    let body = text.strip_prefix('\u{feff}').unwrap_or(text);
+    if body.trim().is_empty() {
+        return Some(1);
+    }
+    if let Some((line, _)) = parse_problem(body) {
+        return Some(line);
+    }
+    // The shared JSONC reader also takes bare keys, single quotes, missing commas, hex and JSON5 numbers. Nothing in
+    // the research says Copilot CLI loads those, so a save has only the three it was seen to load (fail closed).
+    let strict = ParseOptions {
+        allow_comments: true,
+        allow_trailing_commas: true,
+        allow_loose_object_property_names: false,
+        allow_missing_commas: false,
+        allow_single_quoted_strings: false,
+        allow_hexadecimal_numbers: false,
+        allow_unary_plus_numbers: false,
+        allow_bare_decimal_point_numbers: false,
+        allow_non_finite_numbers: false,
+        allow_extended_string_escapes: false,
+    };
+    match jsonc_parser::parse_to_serde_value::<Value>(body, &strict) {
+        Ok(Value::Object(_)) => None,
+        Ok(_) => Some(1),
+        Err(e) => Some(u32::try_from(e.line_display()).unwrap_or(u32::MAX)),
+    }
+}
+
 /// The line of the first problem when `text` is not a whole settings file for `agent`: strict JSON with an object at
-/// the top for Claude Code and Antigravity, JSONC for Qwen Code, TOML for Codex.
+/// the top for Claude Code and Antigravity, JSONC for Qwen Code and Copilot CLI, TOML for Codex.
 pub(crate) fn text_problem(agent: &str, text: &str) -> Option<u32> {
     if agent == "qwen" {
         return qwen_text_problem(text);
+    }
+    if agent == "copilot" {
+        return copilot_text_problem(text);
     }
     if agent == "codex" {
         return text
@@ -837,7 +913,7 @@ pub fn view(
         }
     };
     out.raw = raw;
-    out.editable = matches!(agent, "claude" | "codex" | "antigravity" | "qwen");
+    out.editable = matches!(agent, "claude" | "codex" | "antigravity" | "qwen" | "copilot");
     out.hash = hash;
     out.text = plain;
     if out.editable && out.state == ViewState::Ok {
@@ -1053,6 +1129,186 @@ mod tests {
         assert_eq!(raw.pointer("/security/auth"), Some(&json!("hidden")));
         assert_eq!(raw.pointer("/general/gitCoAuthor"), Some(&json!("hidden")));
         assert_eq!(raw["maxTokens"], "hidden");
+    }
+
+    #[test]
+    fn qwen_masking_is_unchanged() {
+        let v = run(
+            "qwen",
+            r#"{"security":{"auth":{"selectedType":"qwen-oauth","apiKey":"private-value"}},"mcpServers":{"s":{"headers":{"X-Custom":"private-value"}}},"general":{"gitCoAuthor":{"commit":true}},"maxTokens":32768}"#,
+        );
+        let raw: Value = serde_json::from_str(v.raw.as_deref().unwrap()).unwrap();
+        assert_eq!(raw.pointer("/security/auth/selectedType"), Some(&json!("qwen-oauth")));
+        assert_eq!(raw.pointer("/security/auth/apiKey"), Some(&json!("hidden")));
+        assert_eq!(raw.pointer("/mcpServers/s/headers/X-Custom"), Some(&json!("hidden")));
+        assert_eq!(raw.pointer("/general/gitCoAuthor/commit"), Some(&json!(true)));
+        assert_eq!(raw["maxTokens"], 32768);
+    }
+
+    #[test]
+    fn copilot_curated_rows_and_controls() {
+        let v = run("copilot", "{}");
+        assert!(v.editable);
+        assert_eq!(
+            v.curated.iter().map(|r| r.key.as_str()).collect::<Vec<_>>(),
+            [
+                "model",
+                "defaultPermissionMode",
+                "autoUpdate",
+                "autoUpdatesChannel",
+                "theme",
+                "includeCoAuthoredBy"
+            ]
+        );
+        assert_eq!(v.curated[0].control, Some(FieldControl::Text));
+        assert_eq!(
+            v.curated[1].control,
+            Some(FieldControl::Choice {
+                values: ["manual", "assisted", "allow-all"].map(str::to_string).to_vec()
+            })
+        );
+        assert_eq!(v.curated[2].control, Some(FieldControl::Switch));
+        assert_eq!(
+            v.curated[3].control,
+            Some(FieldControl::Choice {
+                values: ["stable", "prerelease"].map(str::to_string).to_vec()
+            })
+        );
+        assert_eq!(v.curated[4].control, Some(FieldControl::Text));
+        assert_eq!(v.curated[5].control, Some(FieldControl::Switch));
+        // No managed file is read for Copilot (decision 10): no row is locked.
+        assert!(v.curated.iter().all(|r| r.lock.is_none()));
+    }
+
+    #[test]
+    fn copilot_secrets_are_hidden() {
+        let cases = [
+            (
+                json!({"hooks": {"preToolUse": [{"type": "command", "env": {"X": "private-value"}}]}}),
+                "/hooks/preToolUse/0/env/X",
+            ),
+            (
+                json!({"mcpServers": {"s": {"headers": {"X-Custom": "private-value"}}}}),
+                "/mcpServers/s/headers/X-Custom",
+            ),
+            (
+                json!({"sandbox": {"credentials": {"envVars": ["private-value"]}}}),
+                "/sandbox/credentials/envVars/0",
+            ),
+            (
+                json!({"sandbox": {"credentials": {"envVars": {"NAME": "private-value"}}}}),
+                "/sandbox/credentials/envVars/NAME",
+            ),
+            (
+                json!({"telemetry": {"headersProvider": "private-value"}}),
+                "/telemetry/headersProvider",
+            ),
+            (
+                json!({"telemetry": {"otlp": {"extraHeaders": {"X-Custom": "private-value"}}}}),
+                "/telemetry/otlp/extraHeaders/X-Custom",
+            ),
+            (json!({"proxyUrl": "http://person@example.test:8080"}), "/proxyUrl"),
+            (
+                json!({"sandbox": {"userPolicy": {"network": {"proxy": {"password": "private-value"}}}}}),
+                "/sandbox/userPolicy/network/proxy/password",
+            ),
+        ];
+        for (input, pointer) in cases {
+            let v = run("copilot", &input.to_string());
+            let raw: Value = serde_json::from_str(v.raw.as_deref().unwrap()).unwrap();
+            assert_eq!(raw.pointer(pointer), Some(&json!("hidden")), "{pointer}");
+            let form = v.others.iter().map(|r| r.value.as_deref().unwrap()).collect::<String>();
+            assert!(
+                form.contains("hidden") && !form.contains("private-value") && !form.contains("person"),
+                "{pointer}: {form}"
+            );
+            assert!(!v.raw.as_deref().unwrap().contains("private-value"), "{pointer}");
+            assert_eq!(v.raw_lock, Some(RawLock::Hidden), "{pointer}");
+            assert!(v.text.is_none(), "{pointer}");
+        }
+        // Only strings are hidden: a number or a boolean under a hidden key shows.
+        let v = run(
+            "copilot",
+            r#"{"env":{"COUNT":3,"ON":false},"telemetry":{"headersLimit":5},"proxyUrl":7}"#,
+        );
+        let raw: Value = serde_json::from_str(v.raw.as_deref().unwrap()).unwrap();
+        assert_eq!(raw.pointer("/env/COUNT"), Some(&json!(3)));
+        assert_eq!(raw.pointer("/env/ON"), Some(&json!(false)));
+        assert_eq!(raw.pointer("/telemetry/headersLimit"), Some(&json!(5)));
+        assert_eq!(raw["proxyUrl"], 7);
+        assert_eq!(v.raw_lock, None);
+    }
+
+    #[test]
+    fn co_authored_by_and_store_token_plaintext_are_not_hidden() {
+        let text = "{ // mine\n \"includeCoAuthoredBy\": true,\n \"storeTokenPlaintext\": false,\n}";
+        let v = run("copilot", text);
+        let raw: Value = serde_json::from_str(v.raw.as_deref().unwrap()).unwrap();
+        assert_eq!(raw["includeCoAuthoredBy"], true);
+        assert_eq!(raw["storeTokenPlaintext"], false);
+        let row = value_of(&v.curated, "includeCoAuthoredBy").unwrap();
+        assert_eq!(row.value.as_deref(), Some("true"));
+        assert_eq!(row.lock, None);
+        assert_eq!(
+            value_of(&v.others, "storeTokenPlaintext").unwrap().value.as_deref(),
+            Some("false")
+        );
+        assert_eq!(v.raw_lock, None);
+        assert_eq!(v.text.as_deref(), Some(text));
+    }
+
+    #[test]
+    fn a_copilot_file_with_comments_and_a_trailing_comma_stays_raw_editable() {
+        let text = "\u{feff}{ // mine\n \"model\": \"gpt\",\n \"theme\": \"dark\",\n}";
+        let v = run("copilot", text);
+        assert!(v.editable);
+        assert_eq!(v.raw_lock, None);
+        // The text the person edits never carries the byte-order mark.
+        assert_eq!(v.text.as_deref(), Some(&text['\u{feff}'.len_utf8()..]));
+        // Copilot CLI loads it, so saving it is no problem either.
+        assert_eq!(text_problem("copilot", text), None);
+        assert_eq!(text_problem("copilot", &text['\u{feff}'.len_utf8()..]), None);
+    }
+
+    #[test]
+    fn a_copilot_file_with_a_repeated_key_is_raw_read_only() {
+        let v = run("copilot", r#"{"model":"first","model":"second"}"#);
+        assert!(v.editable);
+        assert_eq!(v.raw_lock, Some(RawLock::RepeatedKey));
+        assert!(v.text.is_none());
+    }
+
+    #[test]
+    fn copilot_text_problem_names_the_line() {
+        for (bad, line) in [
+            ("{\n\"a\": ,\n}", 2),
+            ("{\n\n a: 1\n}", 3),
+            // The missing comma is found after the first value, on its line.
+            ("{\"a\": 1\n\"b\": 2}", 1),
+            ("{\n\"a\": 'x'\n}", 2),
+            ("{\"a\": 0x10}", 1),
+            ("{\n/* two\nlines */ \"a\": ,\n}", 3),
+            ("", 1),
+            ("  \n\n", 1),
+            ("// only a comment\n", 1),
+        ] {
+            assert_eq!(text_problem("copilot", bad), Some(line), "{bad:?}");
+        }
+        for ok in [
+            "{}",
+            "\u{feff}{}",
+            "// head\n{ /* in */ \"a\": 1, // tail\n}",
+            "{\r\n  \"a\": [1, 2,],\r\n}\r\n",
+        ] {
+            assert_eq!(text_problem("copilot", ok), None, "{ok:?}");
+        }
+    }
+
+    #[test]
+    fn an_array_at_the_top_is_a_problem() {
+        for bad in ["[]", "[{\"a\": 1}]", "null", "1", "\"text\"", "\u{feff}[]"] {
+            assert_eq!(text_problem("copilot", bad), Some(1), "{bad:?}");
+        }
     }
 
     #[test]

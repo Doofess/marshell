@@ -1502,10 +1502,6 @@ fn settings_plan_of(
     kind: Adapter,
     req: SettingsPlanRequest,
 ) -> Result<SettingsPlan, Refusal> {
-    // Copilot CLI's settings are shown, not edited, until slice 6n2.
-    if matches!(kind, Adapter::Copilot) {
-        return Err(unprocessable("Marshell doesn't change Copilot CLI's settings yet."));
-    }
     let (view, had_bom, crlf) = settings_read(st, agent, kind).map_err(Refusal::from)?;
     match view.state {
         ViewState::Unparsable { line } => {
@@ -1678,7 +1674,7 @@ fn raw_op(agent: &str, view: &AgentSettingsView, had_bom: bool, crlf: bool, text
     if let Some(line) = text_problem(agent, body) {
         return Err(unprocessable(format!("The text doesn't parse at line {line}.")));
     }
-    if agent == "qwen" && json_repeats_a_key(body) {
+    if matches!(agent, "qwen" | "copilot") && json_repeats_a_key(body) {
         return Err(unprocessable("Raw editing is off: a key appears twice in this file."));
     }
     if agent == "antigravity" {

@@ -1059,6 +1059,177 @@ async fn install_copilot(e: &CopilotEnv) -> Value {
     preview
 }
 
+impl CopilotEnv {
+    fn write_settings(&self, text: &str) {
+        std::fs::create_dir_all(self.settings.parent().unwrap()).unwrap();
+        std::fs::write(&self.settings, text).unwrap();
+    }
+
+    async fn settings_plan(&self, change: Value) -> (StatusCode, Vec<u8>) {
+        post_raw(
+            &self.app,
+            "/v1/agents/copilot/settings/plan",
+            json!({
+                "expected_hash": hash_at(&self.settings), "change": change
+            }),
+        )
+        .await
+    }
+
+    async fn settings_change(&self, change: Value) -> String {
+        let before = std::fs::read(&self.settings).ok();
+        let (status, bytes) = self.settings_plan(change).await;
+        assert_eq!(status, StatusCode::OK, "{}", text(&bytes));
+        let plan = json_of(&bytes);
+        assert_eq!(plan["preview"]["title"], "Change Copilot CLI settings");
+        assert_eq!(plan["preview"]["can_apply"], true, "{plan}");
+        assert_eq!(std::fs::read(&self.settings).ok(), before, "preview does not write");
+        let (status, applied) = post(&self.app, "/v1/config/apply", shown(&plan["preview"])).await;
+        assert_eq!(status, StatusCode::OK, "{applied}");
+        applied["snapshot_id"].as_str().unwrap().to_string()
+    }
+}
+
+#[tokio::test]
+async fn copilot_settings_form_edit_keeps_comments_bom_crlf_and_the_status_line() {
+    let e = copilot_env();
+    let original = "\u{feff}{\r\n  // my formatting\r\n  \"model\": \"old\",\r\n  \"statusLine\": {\"type\": \"command\", \"command\": \"C:/m/marshell-bridge.exe statusline --tag mshl1\", \"padding\": 2},\r\n}\r\n";
+    e.write_settings(original);
+    let change = json!({"kind":"form", "edits":edit("model", "\"new\"")});
+    let (status, v) = get(&e.app, "/v1/agents/copilot/settings-view").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(v["editable"], true);
+    assert_eq!(v["curated"].as_array().unwrap().len(), 6);
+    e.settings_change(change).await;
+    assert_eq!(
+        std::fs::read(&e.settings).unwrap(),
+        original.replace("\"old\"", "\"new\"").as_bytes()
+    );
+    // A key the file doesn't have yet is added; what was there stays, line ends and the mark included.
+    e.settings_change(json!({"kind":"form", "edits":edit("theme", "\"dark\"")}))
+        .await;
+    let written = std::fs::read_to_string(&e.settings).unwrap();
+    let kept = original.replace("\"old\"", "\"new\"");
+    assert!(written.starts_with('\u{feff}') && !written.starts_with("\u{feff}\u{feff}"));
+    assert!(written.contains("  // my formatting\r\n") && written.contains("\"padding\": 2}"));
+    assert!(written.contains("\"theme\"") && !written.replace("\r\n", "").contains('\n'));
+    let value = marshell_core::config::jsonc::read_value(&written).unwrap();
+    assert_eq!(value["theme"], "dark");
+    assert_eq!(value["model"], "new");
+    assert_eq!(
+        value["statusLine"],
+        marshell_core::config::jsonc::read_value(&kept).unwrap()["statusLine"]
+    );
+}
+
+#[tokio::test]
+async fn copilot_raw_edit_saves_the_typed_jsonc() {
+    let e = copilot_env();
+    for bom in [false, true] {
+        e.write_settings(if bom {
+            "\u{feff}{ // original\n}"
+        } else {
+            "{ // original\n}"
+        });
+        // Copilot CLI loads comments and a trailing comma, so both are saved as typed.
+        let typed = "{\r\n  // keep this exactly\r\n  \"model\" : \"typed\", /* and this */\r\n}\r\n";
+        e.settings_change(json!({"kind":"raw", "text":format!("\u{feff}\u{feff}{typed}")}))
+            .await;
+        let expected = if bom { format!("\u{feff}{typed}") } else { typed.into() };
+        assert_eq!(std::fs::read(&e.settings).unwrap(), expected.as_bytes());
+    }
+}
+
+#[tokio::test]
+async fn copilot_raw_edit_that_does_not_parse_is_refused() {
+    let e = copilot_env();
+    let original = "{ // unchanged\n}";
+    e.write_settings(original);
+    for (typed, line) in [
+        ("{\n\"model\": ,\n}", 2),
+        ("[]", 1),
+        ("null", 1),
+        ("1", 1),
+        ("\"text\"", 1),
+        ("", 1),
+        ("{\n  model: 1\n}", 2),
+    ] {
+        let (status, bytes) = e.settings_plan(json!({"kind":"raw", "text":typed})).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{typed:?}");
+        assert_eq!(text(&bytes), format!("The text doesn't parse at line {line}."));
+        assert_eq!(std::fs::read_to_string(&e.settings).unwrap(), original);
+    }
+}
+
+#[tokio::test]
+async fn copilot_raw_edit_is_refused_while_a_value_is_hidden() {
+    let e = copilot_env();
+    let original = r#"{"mcpServers":{"s":{"headers":{"X-Custom":"private-value"}}}}"#;
+    e.write_settings(original);
+    let (status, bytes) = e.settings_plan(json!({"kind":"raw", "text":"{}"})).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(
+        text(&bytes),
+        "This file holds secret values, so Marshell doesn't edit it as text."
+    );
+    assert!(!text(&bytes).contains("private-value"));
+    assert_eq!(std::fs::read_to_string(&e.settings).unwrap(), original);
+    let (_, v) = get(&e.app, "/v1/agents/copilot/settings-view").await;
+    assert!(!v.to_string().contains("private-value"));
+}
+
+#[tokio::test]
+async fn copilot_settings_undo_puts_the_file_back() {
+    let e = copilot_env();
+    let original = "\u{feff}{\r\n // mine\r\n \"autoUpdate\": false,\r\n}\r\n";
+    e.write_settings(original);
+    let snapshot = e
+        .settings_change(json!({"kind":"form", "edits":edit("autoUpdate", "true")}))
+        .await;
+    assert_ne!(std::fs::read(&e.settings).unwrap(), original.as_bytes());
+    let (status, bytes) = post_raw(
+        &e.app,
+        "/v1/agents/copilot/settings/undo",
+        json!({"snapshot_id":snapshot}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", text(&bytes));
+    assert_eq!(std::fs::read(&e.settings).unwrap(), original.as_bytes());
+}
+
+#[tokio::test]
+async fn copilot_settings_not_set_removes_the_key() {
+    let e = copilot_env();
+    e.write_settings("{ // mine\n \"theme\": \"dark\", \"autoUpdate\": false,\n}");
+    e.settings_change(json!({"kind":"form", "edits":[{"key":"theme", "value":null}]}))
+        .await;
+    let written = std::fs::read_to_string(&e.settings).unwrap();
+    let value = marshell_core::config::jsonc::read_value(&written).unwrap();
+    assert!(value.get("theme").is_none());
+    assert_eq!(value.get("autoUpdate"), Some(&json!(false)));
+    assert!(written.contains("// mine"));
+}
+
+#[tokio::test]
+async fn copilot_settings_plan_is_409_when_the_file_changed_since_the_form_opened() {
+    let e = copilot_env();
+    e.write_settings("{\"model\": \"opened\"}\n");
+    let opened = hash_at(&e.settings);
+    e.write_settings("{\"model\": \"changed by hand\"}\n");
+    let body = json!({
+        "expected_hash": opened,
+        "change": {"kind": "form", "edits": edit("model", "\"new\"")}
+    });
+    let (status, bytes) = post_raw(&e.app, "/v1/agents/copilot/settings/plan", body).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{}", text(&bytes));
+    assert_eq!(json_of(&bytes)["reason"], "changed");
+    assert_eq!(json_of(&bytes)["paths"], json!([e.settings.to_string_lossy()]));
+    assert_eq!(
+        std::fs::read_to_string(&e.settings).unwrap(),
+        "{\"model\": \"changed by hand\"}\n"
+    );
+}
+
 #[tokio::test]
 async fn copilot_skill_plan_creates_the_file_under_the_copilot_home() {
     let e = copilot_env();
