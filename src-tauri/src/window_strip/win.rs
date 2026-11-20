@@ -5,6 +5,10 @@
 //! Tauri's `Resized` event keeps up (spike S13). The strip draws nothing of its own: it blits the pictures the page sent
 //! and turns the pointer into the three window actions (PLAN §9, Window-buttons strip slice decisions).
 //!
+//! The strip takes the pointer over its whole height, as the page's buttons under it do. The window's top edge resizes
+//! on the one row above the client area, which no child window covers: under Tauri's `unstable` feature the app's
+//! webview is a child webview, so Tauri makes no top-edge resize window of its own (live check, finding 1).
+//!
 //! Everything here runs on the main thread, the one that owns the window. The state sits behind one lock, and the lock
 //! is never held across a call that can send a message to the strip's own procedure (`SetWindowPos`, `ShowWindow`,
 //! `SetCapture`, `ReleaseCapture`, `SetForegroundWindow`, a `tauri::Window` method): every path takes the lock, copies out
@@ -15,22 +19,20 @@
 use std::ptr::{null, null_mut};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BeginPaint, DIB_RGB_COLORS, EndPaint, InvalidateRect, PAINTSTRUCT,
-    ScreenToClient, SetDIBitsToDevice,
+    SetDIBitsToDevice,
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GetClientRect, GetForegroundWindow, GetParent, HTCLIENT, HTTRANSPARENT, HWND_TOP,
-    IDC_ARROW, IsZoomed, LoadCursorW, MA_NOACTIVATE, PostMessageW, RegisterClassW, SM_CYFRAME, SW_HIDE, SW_SHOWNA,
-    SWP_NOACTIVATE, SetForegroundWindow, SetWindowPos, ShowWindow, WM_APP, WM_CAPTURECHANGED, WM_ERASEBKGND,
-    WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCHITTEST, WM_PAINT, WNDCLASSW,
-    WS_CHILD, WS_CLIPSIBLINGS,
+    CreateWindowExW, DefWindowProcW, GetClientRect, GetForegroundWindow, GetParent, HWND_TOP, IDC_ARROW, IsZoomed,
+    LoadCursorW, MA_NOACTIVATE, PostMessageW, RegisterClassW, SW_HIDE, SW_SHOWNA, SWP_NOACTIVATE, SetForegroundWindow,
+    SetWindowPos, ShowWindow, WM_APP, WM_CAPTURECHANGED, WM_ERASEBKGND, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_PAINT, WNDCLASSW, WS_CHILD, WS_CLIPSIBLINGS,
 };
 
 use super::Paint;
@@ -43,12 +45,6 @@ const WM_MOUSELEAVE: u32 = 0x02A3;
 pub(super) fn left_edge(client_width: i32, widths: [u32; 3]) -> i32 {
     let sum: i64 = widths.iter().map(|w| i64::from(*w)).sum();
     (i64::from(client_width) - sum).clamp(0, i64::from(i32::MAX)) as i32
-}
-
-/// Whether a point `y` rows below the strip's top belongs to the window's own top edge, which must still resize the
-/// window. A maximized window has no edge to grab, so its buttons keep their whole height.
-pub(super) fn top_band(y: i32, frame: i32, maximized: bool) -> bool {
-    !maximized && y < frame
 }
 
 /// The picture a button is drawn with, and its width. The middle slot shows Restore while the window is maximized.
@@ -356,20 +352,6 @@ unsafe extern "system" fn strip_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpara
             paint_window(hwnd);
             return 0;
         }
-        WM_NCHITTEST => {
-            let (x, y) = point_of(lparam);
-            let mut at = POINT { x, y };
-            // SAFETY: turns a screen point into this window's client point; `at` is a local.
-            unsafe { ScreenToClient(hwnd, &mut at) };
-            let parent = parent_of(hwnd);
-            // SAFETY: a query for the window's DPI; a stale handle gives 0, which the metric reads as the system's.
-            let frame = unsafe { GetSystemMetricsForDpi(SM_CYFRAME, GetDpiForWindow(hwnd)) };
-            return if top_band(at.y, frame, is_zoomed(parent)) {
-                HTTRANSPARENT as LRESULT
-            } else {
-                HTCLIENT as LRESULT
-            };
-        }
         WM_MOUSEMOVE | WM_LBUTTONDOWN | WM_LBUTTONDBLCLK | WM_LBUTTONUP => {
             handle_mouse(hwnd, msg, lparam);
             return 0;
@@ -513,14 +495,6 @@ mod tests {
     fn the_strip_ends_at_the_right_edge() {
         assert_eq!(left_edge(1280, [46, 46, 46]), 1142);
         assert_eq!(left_edge(100, [46, 46, 46]), 0);
-    }
-
-    #[test]
-    fn the_top_band_lets_the_pointer_through_unless_maximized() {
-        assert!(top_band(0, 4, false));
-        assert!(top_band(3, 4, false));
-        assert!(!top_band(4, 4, false));
-        assert!(!top_band(0, 4, true));
     }
 
     /// A set whose pictures each start with a byte of their own.

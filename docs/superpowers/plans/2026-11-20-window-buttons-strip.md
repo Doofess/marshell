@@ -15,7 +15,7 @@
 ## Global Constraints
 
 - Branch `window-strip`, cut from `origin/main` (ca9ef743), in the worktree `.claude/worktrees/resize-fixes`.
-- No new crate or package. `windows-sys` gains features only (`Win32_Graphics_Gdi`, `Win32_System_LibraryLoader`, `Win32_UI_HiDpi`, and others only if a call needs them).
+- No new crate or package. `windows-sys` gains features only (`Win32_Graphics_Gdi`, `Win32_System_LibraryLoader`, and others only if a call needs them).
 - The one capability change is the line `"allow-set-window-strip"` in `src-tauri/capabilities/default.json` (allowed by the user). No other change to `capabilities/`, `tauri.conf.json` or `tauri.windows.conf.json`.
 - Windows only. Off Windows the command exists, stores nothing and returns `Ok(())`; the page never calls it there.
 - The page's three buttons keep their markup, names (`Minimize`, `Maximize`/`Restore`, `Close`) and handlers. Every change works with the keyboard alone and in forced colours.
@@ -37,7 +37,7 @@
 
 1. **A picture set whose sizes don't agree** (a scale change between two sends, a zoomed webview, a truncated array). The strip must refuse it whole and keep the last good set, never blit past a buffer. Pinned by `Paint::check` tests in Task 2 and the `stripSync` scale test in Task 5.
 2. **Something drawn over the bar's right end** (a dialog's scrim, a menu, a drag overlay, a toast). The strip must not sit on top of it. Pinned by Task 5's `shown` tests for every cover, and by Task 8 check C6, which also tries the two overlays that don't call `useCoverPage` (`Peek`, `AllSessionsMenu`) and a session toast.
-3. **The window's top edge and top-right corner above the buttons.** They must still resize the window, and the strip must not turn the top rows of the buttons into a dead band when the window is maximized. Pinned by `top_band` tests in Task 3 and Task 8 check C4.
+3. **The window's top edge and top-right corner above the buttons.** They must still resize the window, and the strip must not turn the top rows of the buttons into a dead band. The first look found that the top edge resizes only on the one row above the client area, which the strip never covers (the live-check note, finding 1), so the strip takes the pointer over its whole height and no test pins a band. Task 8 check C4 covers it.
 4. **A window maximized or restored by something other than the strip** (a double click on the bar, Win+Up, a snap, the page's own button by keyboard). The middle button must show Restore exactly when the window is maximized, and the strip must sit on the new right edge. Pinned by `slot_picture` tests in Task 3 and Task 8 check C3.
 5. **A click on the strip when Marshell isn't the front window, or with the keyboard in a browser page.** The window comes to the front, the action happens once, and the keyboard is where it was. Pinned by `Pointer` tests in Task 1 and Task 8 check C5.
 
@@ -135,7 +135,6 @@
   pub(super) fn show(paint: Option<&Paint>);                    // called by the command with `Wanted::apply`'s result
   // Pure, tested here:
   pub(super) fn left_edge(client_width: i32, widths: [u32; 3]) -> i32;         // client_width - sum, never below 0
-  pub(super) fn top_band(y: i32, frame: i32, maximized: bool) -> bool;         // true: let the pointer through
   pub(super) fn slot_picture<'a>(paint: &'a Paint, button: Button, maximized: bool, lit: bool) -> (&'a [u8], u32);
   pub(super) fn bgra(rgba: &[u8]) -> Vec<u8>;
   ```
@@ -144,7 +143,7 @@ What the window is (each line is a decision; the spike's `strip_spike.rs` shows 
 - Class `MarshellWindowStrip`, title `Window buttons`, style `WS_CHILD | WS_CLIPSIBLINGS`, not visible when made, parent the main window, arrow cursor, no background brush. `WM_ERASEBKGND` answers 1.
 - Placement: x = `left_edge(client width, widths)`, y = 0, size = the widths' sum by `paint.height`, with `SetWindowPos(HWND_TOP, SWP_NOACTIVATE)`: from `on_resized`, and from `show` whenever pictures arrive. `on_resized` also redraws when the parent's `IsZoomed` changed.
 - `WM_PAINT`: per button, `slot_picture` (the middle slot uses `restore` while the parent `IsZoomed`; `lit` from `Pointer::lit`), blitted with `SetDIBitsToDevice` as a top-down 32-bit `BI_RGB` picture. Pictures are turned to BGRA once, when they arrive.
-- `WM_NCHITTEST`: `HTTRANSPARENT` where `top_band(y, GetSystemMetricsForDpi(SM_CYFRAME, dpi), IsZoomed(parent))`, so Tauri's own top-edge window below takes the point; `HTCLIENT` elsewhere.
+- `WM_NCHITTEST`: left to the default, `HTCLIENT` over the whole strip. (As first written, the top `SM_CYFRAME` rows answered `HTTRANSPARENT` for a Tauri top-edge window below. This app has none: under Tauri's `unstable` feature the app's webview is a child webview, and Tauri makes that window only for a window-content webview. The band was removed at the first look; see the live-check note, finding 1.)
 - Mouse: `WM_MOUSEMOVE` is `Move(hit)` and arms `TrackMouseEvent(TME_LEAVE)`; `WM_MOUSELEAVE` and `WM_CAPTURECHANGED` are `Leave`; `WM_LBUTTONDOWN` and `WM_LBUTTONDBLCLK` are `Down` with `SetCapture`; `WM_LBUTTONUP` releases the capture and is `Up(hit)`, `Up(None)` outside the strip. `Outcome.redraw` invalidates the window.
 - `WM_MOUSEACTIVATE` answers `MA_NOACTIVATE`. On `Down`, if `GetForegroundWindow()` isn't the parent, `SetForegroundWindow(parent)`.
 - An action is posted to the strip as a `WM_APP` message and carried out when it arrives, not inside the mouse message: Minimize is `window.minimize()`, Maximize is `unmaximize()` when `is_maximized()` and `maximize()` otherwise, Close is `window.close()` (it raises `CloseRequested`, so the tray choice runs as for the page's button). `window` is `crate::main_window(app)`.
@@ -153,7 +152,6 @@ What the window is (each line is a decision; the spike's `strip_spike.rs` shows 
 
 - [ ] **Step 1: Write the failing tests** in `win.rs`:
   - `the_strip_ends_at_the_right_edge`: `left_edge(1280, [46, 46, 46])` is 1142; `left_edge(100, [46, 46, 46])` is 0.
-  - `the_top_band_lets_the_pointer_through_unless_maximized`: frame 4: y 0 and 3 are true, y 4 false; with `maximized` y 0 is false.
   - `the_middle_slot_shows_restore_while_maximized`: with pictures whose first byte differs per picture, `slot_picture(&p, Maximize, false, false)` is `maximize.rest`, `(.., true, false)` is `restore.rest`, `(.., true, true)` is `restore.hover`; `Minimize` and `Close` ignore `maximized`.
   - `bgra_swaps_red_and_blue`: `[1, 2, 3, 4, 5, 6, 7, 8]` becomes `[3, 2, 1, 4, 7, 6, 5, 8]`.
 - [ ] **Step 2:** Run `cargo test -p marshell-app -j 4 window_strip::win`. Expected: FAIL.
@@ -243,7 +241,7 @@ What the window is (each line is a decision; the spike's `strip_spike.rs` shows 
 **Files:**
 - Modify: `src-tauri/src/window_strip/win.rs`
 
-- [ ] **Step 1:** Add a test `the_maximize_column_is_the_systems_maximize_button`: a pure `hit_code(x, y, widths, frame, maximized) -> u32` gives `HTTRANSPARENT` in the top band, `HTMAXBUTTON` over the middle column and `HTCLIENT` over the other two. Run it; expected FAIL.
+- [ ] **Step 1:** Add a test `the_maximize_column_is_the_systems_maximize_button`: a pure `hit_code(x, widths) -> u32` gives `HTMAXBUTTON` over the middle column and `HTCLIENT` over the other two. Run it; expected FAIL.
 - [ ] **Step 2:** `WM_NCHITTEST` returns `hit_code`. The middle column's pointer now arrives as non-client messages, fed to the same `Pointer`: `WM_NCMOUSEMOVE` is `Move(Some(Maximize))` and arms `TrackMouseEvent(TME_LEAVE | TME_NONCLIENT)`; `WM_NCMOUSELEAVE` is `Leave`; `WM_NCLBUTTONDOWN` and `WM_NCLBUTTONDBLCLK` are `Down(Maximize)`; `WM_NCLBUTTONUP` is `Up(Some(Maximize))`. None of the four reaches `DefWindowProcW` for the middle column (the default would draw and track an old caption button).
 - [ ] **Step 3:** Run `cargo test -p marshell-app -j 4` and clippy. Expected: PASS.
 - [ ] **Step 4: The gate, with the user, in the live app on Windows 11.** Go: hovering Maximize shows the Snap Layouts flyout, picking a layout snaps the window, a plain click still maximizes and restores, the hover picture shows and clears, and Minimize and Close behave as before. No-go on any of them that a fix within this task doesn't cure: revert the task's commit, leave issue #23 open with what was seen, and record it in the live-check note.
@@ -269,7 +267,7 @@ Run with `marshell-live-check` (scratch homes, CDP). Each check gets a line in t
 - [ ] **C1, the pictures match the page.** For each of dark, light, dark with High contrast, light with High contrast and emulated forced colours: capture the page's own three buttons through CDP (the strip isn't in a CDP capture), at rest and with `data-look="hover"` set on each in turn, and compare with the bytes `paintStrip` gives for the same state (import `/src/features/window/strip/tiles.ts` in the dev webview). Record the share of pixels that differ and the largest difference. Any difference a person can see when the strip hides and shows (open and close the palette) is fixed in `tiles.ts` before going on.
 - [ ] **C2, scale.** The same compare at 125% and 150%. Say in the note whether the scale was the display's or emulated. Moving the window between scales isn't possible on one monitor: record it as not checked.
 - [ ] **C3, the middle button.** Maximize and restore by the strip, by a double click on the bar, by Win+Up and Win+Down, and by the page's button with the keyboard: Restore shows exactly while maximized, and the strip is on the right edge each time.
-- [ ] **C4, the edges (the user's hands).** Right edge, left edge and top-right corner, slow and fast, with and without a browser page in the side pane: the strip keeps up. The top edge above the buttons and the top-right corner still resize the window.
+- [ ] **C4, the edges (the user's hands).** Right edge, left edge and top-right corner, slow and fast, with and without a browser page in the side pane: the strip keeps up. The top edge above the buttons and the top-right corner still resize the window, as they do on `main` (the one row above the client area, and the corner outside it).
 - [ ] **C5, clicks and the keyboard.** With the keyboard in the terminal, then in a browser page, then with another app in front: a click on each button acts once, and the keyboard is where it was (`GetGUIThreadInfo` and the page's focus events, as in S13). Close shows the tray question on a scratch home that hasn't answered it, and the strip is hidden under that dialog.
 - [ ] **C6, overlays.** With each of the palette, the app menu, a context menu, Settings, the launcher, a file dragged over the window, `Peek`, the all-sessions menu and a session toast open: nothing of theirs is hidden by the strip. An overlay that can reach the strip's rectangle without calling `useCoverPage` gets the call (and leaves `NOT_COVERING` in `coverScan.test.ts`).
 - [ ] **C7, the keyboard alone.** Tab to each of the three buttons: the strip hides and the page's ring shows; Enter acts; after focus leaves, the strip is back.
