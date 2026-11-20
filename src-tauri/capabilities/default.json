@@ -37,6 +37,7 @@
     "allow-set-notification-link",
     "allow-set-window-background",
     "allow-set-window-theme",
+    "allow-set-window-strip",
     "allow-browser-open",
     "allow-browser-show",
     "allow-browser-place",

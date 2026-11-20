@@ -438,6 +438,7 @@ fn main() {
             link::set_notification_link,
             window_bg::set_window_background,
             window_theme::set_window_theme,
+            window_strip::set_window_strip,
             browser::browser_open,
             browser::browser_show,
             browser::browser_place,
