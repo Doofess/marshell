@@ -68,6 +68,17 @@ export function paneTabFocus(s: { outcome: "none" | "show" | "step"; from: "pane
 }
 
 /**
+ * What leaving a pane tab for the terminal does (Esc, or Ctrl+Shift+Tab, in a tab). Beside the terminal, the keyboard just moves
+ * there. In a window so narrow that the pane covers the terminal, the pane is hidden as well, so the keys never go to a program
+ * out of sight.
+ */
+export function leavePaneOutcome(covers: boolean): "hide" | "focus" {
+  return covers ? "hide" : "focus";
+}
+/** Said when leaving a tab hid the pane: the key that did it doesn't name the pane, so the line does, with the keys that bring it back. */
+export const paneHiddenText = (keys: string) => `The side pane is hidden. ${keys} shows it.`;
+
+/**
  * What the recent files of the session on screen are kept under: its repository's root (the row's `projectKey`), not the row's
  * label, so two projects whose folders share a name keep their own lists. Empty with no session on screen.
  */

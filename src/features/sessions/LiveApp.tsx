@@ -45,7 +45,7 @@ import { findCommand } from "../../lib/bindings";
 import { cancelsCloseBar, commandShortcut, sessionShortcut, type SessionShortcut } from "../../lib/appShortcuts";
 import { nextWaiting } from "../lane/laneLayout";
 import { focusPendingCard } from "../approval/focusPendingCard";
-import { MOVED_COMMANDS, osOfPlatform } from "../../lib/keymap";
+import { commandById, MOVED_COMMANDS, osOfPlatform, shortcutLabel } from "../../lib/keymap";
 import { paletteSessions } from "../palette/sessions";
 import { LiveHistory } from "../history/LiveHistory";
 import { LiveDoctor } from "../doctor/LiveDoctor";
@@ -79,7 +79,7 @@ import { browser, pageKey } from "../browser/browserApi";
 import type { UrlBarHandle } from "../browser/UrlBar";
 import { useBrowserPages } from "../browser/useBrowserPages";
 import { askedFrom, focusPane } from "../pane/focusPane";
-import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, PANE_BESIDE_SESSION, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome } from "../pane/paneCommands";
+import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, PANE_BESIDE_SESSION, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome } from "../pane/paneCommands";
 import { activeTab, currentEntry, isBrowserTab, openRefused, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
 import { takeOpens } from "../pane/opens";
 import { newsReducer } from "../pane/paneNews";
@@ -1068,6 +1068,13 @@ export function LiveApp() {
     if (paneToggleOutcome(stateRef.current.focusedId, mainViewRef.current !== "sessions") === "blocked") return announce(PANE_BESIDE_SESSION);
     paneRun({ kind: "preview" });
   };
+  // Esc or Ctrl+Shift+Tab in a pane tab: to the terminal, and in a window where the pane covers the terminal the pane goes too.
+  const toTerminalFromPane = () => {
+    const covers = document.querySelector('[data-pane="cover"]') !== null;
+    if (leavePaneOutcome(covers) === "focus" || !viewRef.current.pane.open) return actions.focusTerminal();
+    paneRun({ kind: "preview" });
+    announce(paneHiddenText(shortcutLabel(commandById("preview").binding!, os ?? "windows")));
+  };
   const paneRunRef = useRef(paneRun);
   paneRunRef.current = paneRun;
   // The + menu: where it opened and the button that opened it.
@@ -1490,7 +1497,9 @@ export function LiveApp() {
   const applyNav = (effect: NavEffect) => {
     switch (effect.type) {
       case "select-pane":
-        actions.focusTerminal();
+        // The key was pressed inside the side pane: leaving it may hide it. A session picked in the sidebar goes straight to its terminal.
+        if (document.activeElement?.closest("[data-nav-side]") != null) toTerminalFromPane();
+        else actions.focusTerminal();
         return;
       case "select-side":
         focusPane();
@@ -1542,7 +1551,7 @@ export function LiveApp() {
   });
   const sendNav = nav.send;
   // The app's shortcuts from a page, and the keyboard between the two (S12; 6q-0 decision 9).
-  useBrowserKeys({ os, focusTerminal: () => actions.focusTerminal() });
+  useBrowserKeys({ os, focusTerminal: () => toTerminalFromPane() });
   // The pages themselves: which are loaded (the page on screen is the newest), their events, popups and theme.
   const shownPane = tabsOf(view.pane, focusedId);
   const shownTab = shownPane.tabs.find((t) => t.id === (shownPane.active ?? shownPane.tabs[0]?.id));
@@ -2059,7 +2068,7 @@ export function LiveApp() {
                   onOpenOutside={(url) => {
                     if (isPageUrl(url) && url !== BLANK) void openUrl(url).catch(() => {});
                   }}
-                  onEscape={() => actions.focusTerminal()}
+                  onEscape={toTerminalFromPane}
                   announce={announce}
                   regionTarget={deliveryFor(focusedRow ?? null)}
                   onRegion={addRegion}
@@ -2089,7 +2098,7 @@ export function LiveApp() {
                   onPlace={(place) => paneSession !== undefined && paneDispatch({ type: "place", session: paneSession, paneTab: tab.id, place })}
                   onDirty={noteDirty}
                   active={active}
-                  onEscape={() => actions.focusTerminal()}
+                  onEscape={toTerminalFromPane}
                   announce={announce}
                   regionTarget={deliveryFor(focusedRow ?? null)}
                   onRegion={addRegion}
