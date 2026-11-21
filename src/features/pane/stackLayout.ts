@@ -4,6 +4,8 @@ import { DEFAULT_WEIGHT, type PanelId, type Weights } from "./panels";
 export const STACK = { min: 160, divider: 1, step: 16 } as const;
 /** The largest weight the core accepts. */
 const MAX_WEIGHT = 100_000;
+/** A pair whose weights sum to less than this is scaled up before a divider move, so the move has room to show. */
+export const MIN_PAIR = 100;
 
 /** A panel's weight: the saved one, or the default for one that is missing or not a positive number. */
 export const weightOf = (weights: Weights, panel: PanelId): number => {
@@ -93,6 +95,16 @@ export function movedPair(upperPx: number, lowerPx: number, by: number): { upper
 export function pairWeights(weights: Weights, upper: PanelId, lower: PanelId, upperPx: number, lowerPx: number): Weights {
   if (!(Number.isFinite(upperPx) && upperPx > 0 && Number.isFinite(lowerPx) && lowerPx > 0)) return weights;
   const share = upperPx / (upperPx + lowerPx);
+  const before = weightOf(weights, upper) + weightOf(weights, lower);
+  if (before < MIN_PAIR) {
+    // A tiny sum can't hold a split to the pixel: every weight is scaled up together, so the ratios stay.
+    const top = Math.max(...[...Object.values(weights), before].filter((v): v is number => typeof v === "number" && Number.isFinite(v)));
+    const factor = Math.max(1, Math.min(Math.ceil(MIN_PAIR / before), Math.floor(MAX_WEIGHT / top)));
+    const scaled: Weights = {};
+    for (const [k, v] of Object.entries(weights)) if (typeof v === "number") (scaled as Record<string, number>)[k] = v * factor;
+    for (const p of [upper, lower]) scaled[p] = weightOf(weights, p) * factor;
+    weights = scaled;
+  }
   let sum = weightOf(weights, upper) + weightOf(weights, lower);
   sum = Math.max(2, Math.min(Math.round(sum), Math.floor(MAX_WEIGHT / Math.max(share, 1 - share))));
   const up = Math.min(sum - 1, Math.max(1, Math.round(sum * share)));

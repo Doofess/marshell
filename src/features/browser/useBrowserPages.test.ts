@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { PaneView } from "../../generated/PaneView";
-import { paneReducer } from "../pane/paneState";
+import { paneReducer, tabsOf } from "../pane/paneState";
 import { canLoad, pageReducer, setLoadable, subscribePages, type PageEvent, type PageState } from "./pageStore";
 import { PAGE_REFUSED, TAB_LIMIT } from "../pane/paneCommands";
-import { openKeys, owners, pageAction, popupActions, popupNews, popupOutcome, unload } from "./useBrowserPages";
+import { openKeys, owners, pageAction, popupActions, popupNews, popupFold, popupOutcome, unload } from "./useBrowserPages";
 import { nextLive } from "./pages";
 import { slotStep } from "./usePageSlot";
 
@@ -178,5 +178,15 @@ describe("unload", () => {
       (e: PageEvent) => (pages = pageReducer(pages, e)),
     );
     expect(pages.has("a/t1")).toBe(false);
+  });
+});
+
+describe("popupFold", () => {
+  it("a second popup in the same tick sees the first one's tab", () => {
+    const pane = page(empty, "s1", "https://one.example/");
+    const first = popupOutcome(pane, "s1", "https://a.example/", false, []).actions;
+    const folded = popupFold(pane, first);
+    expect(popupNews(popupOutcome(folded, "s1", "https://b.example/", false, []).actions, folded)).toEqual(["s1"]);
+    expect(tabsOf(folded, "s1").tabs.length).toBe(tabsOf(pane, "s1").tabs.length + 1);
   });
 });

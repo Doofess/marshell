@@ -61,6 +61,11 @@ export function popupNews(actions: readonly PaneAction[], pane: PaneView): strin
   return actions.flatMap((a) => (a.type === "openPage" && a.background === true && count(paneReducer(pane, a), a.session) > count(pane, a.session) ? [a.session] : []));
 }
 
+/** The pane after a popup's actions, in order: what a second popup in the same tick reads. */
+export function popupFold(pane: PaneView, actions: readonly PaneAction[]): PaneView {
+  return actions.reduce(paneReducer, pane);
+}
+
 /**
  * What a page's report does to its tab: the tab takes the page's address and title. Nothing for a page no tab holds, and nothing
  * while a blank page is loading: a page reports `about:blank` before its first address has loaded, and the tab keeps the address
@@ -140,6 +145,8 @@ export function useBrowserPages(pane: PaneView, shownKey: string | null, { sessi
         if (line !== null) say(line);
         for (const action of actions) send(action);
         for (const session of popupNews(actions, pane)) tell(session);
+        // A second popup before the next render reads the pane with this one's tab in it.
+        paneRef.current = popupFold(pane, actions);
       }),
     ];
     return () => stops.forEach((stop) => stop());

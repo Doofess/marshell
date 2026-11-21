@@ -971,3 +971,11 @@ describe("the Browser and Files panels", () => {
     walk(5, mk({ a: { tabs: [b("t1")], active: "t1" }, b: { tabs: [f("t1", "/x.html"), f("t2")], active: "t2" } }));
   });
 });
+
+describe("a divider move with no stack saved", () => {
+  it("writes the stack it merges into", () => {
+    const next = paneReducer({ ...EMPTY, panels: undefined }, { type: "weights", weights: { browser: 3, files: 1 } });
+    expect(next.panels?.weights).toMatchObject({ browser: 3, files: 1 });
+    expect(next.panels?.shown).toEqual(stackOf({ ...EMPTY, panels: undefined }, null).shown);
+  });
+});

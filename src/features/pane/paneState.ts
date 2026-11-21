@@ -431,9 +431,8 @@ function weightOf(n: unknown): number | null {
   return typeof n === "number" && Number.isFinite(n) ? Math.min(100_000, Math.max(1, Math.round(n))) : null;
 }
 
-/** Merges the divider's weights into the saved stack. With no stack saved there is nothing to merge into (`pin` writes one first). */
+/** Merges the divider's weights into the saved stack; with no stack saved, into the one `stackOf` gives, which is then saved. */
 function mergeWeights(s: PaneView, weights: Weights): PaneView {
-  if (!s.panels) return s;
   const stack = stackOf(s, null);
   const merged: Weights = { ...stack.weights };
   let changed = false;

@@ -1,6 +1,6 @@
 import { useMemo, useRef, type SyntheticEvent } from "react";
 import { relayFrameFocus } from "./frameFocus";
-import { appKeyInit, forwardsToApp } from "./frameKeys";
+import { appKeyInit, trackHeld } from "./frameKeys";
 import { buildSrcdoc } from "./htmlDoc";
 import { classifyLink } from "./links";
 import type { LinkTarget } from "./links";
@@ -63,13 +63,13 @@ export function HtmlView({ text, name, docPath, onLink, onKey }: Props) {
     const held = new Set<string>();
     const pass = (ev: KeyboardEvent) => {
       if (ev.type === "keydown") latest.current.onKey(ev);
-      if (!forwardsToApp(ev, held)) return;
-      if (ev.type === "keydown") held.add(ev.code);
-      else held.delete(ev.code);
+      if (!trackHeld(ev, held)) return;
       if (!iframe.dispatchEvent(new KeyboardEvent(ev.type, appKeyInit(ev)))) ev.preventDefault();
     };
     doc.addEventListener("keydown", pass);
     doc.addEventListener("keyup", pass);
+    // A key let go after the keyboard left the frame never reaches it: forget what was held.
+    win.addEventListener("blur", () => held.clear());
     relayFrameFocus(win, iframe);
     // A page that has just loaded takes the keyboard when the pane's body had it, so the arrow keys scroll it.
     const body = iframe.closest(".preview__body");

@@ -121,3 +121,14 @@ describe("stackKey", () => {
     expect(stackKey([])).toBe("");
   });
 });
+
+describe("pairWeights with a tiny sum", () => {
+  it("a tiny weight sum still takes a divider move", () => {
+    const w = pairWeights({ browser: 1, files: 1 }, "browser", "files", 300, 100);
+    expect(w.browser! / w.files!).toBeCloseTo(3, 1);
+  });
+  it("scales the weights it does not move by the same factor", () => {
+    const w = pairWeights({ browser: 1, files: 1, changes: 2 } as Weights, "browser", "files", 100, 100) as Record<string, number>;
+    expect(w.changes! / (w.browser! + w.files!)).toBeCloseTo(1, 5);
+  });
+});
