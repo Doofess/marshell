@@ -321,6 +321,40 @@ describe("SettingsSync: browser", () => {
   });
 });
 
+describe("SettingsSync: files", () => {
+  const stored = { ...FI, word_wrap: true, tab_size: 2 };
+  const read = async () => ({ appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: ["codex"], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR, files: stored });
+  it("is null before the first read, then what the core holds", async () => {
+    const { sync } = setup(read);
+    expect(sync.files).toBeNull();
+    await sync.load();
+    expect(sync.files).toEqual(stored);
+  });
+  it("writes one changed field and keeps the others", async () => {
+    const { api, sync } = setup(read);
+    await sync.setFiles({ auto_save: true });
+    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: ["codex"], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR, files: { ...stored, auto_save: true } });
+    expect(sync.files).toEqual({ ...stored, auto_save: true });
+  });
+  it("keeps the same object between changes and tells subscribers after a write", async () => {
+    const { sync } = setup(read);
+    await sync.load();
+    expect(sync.files).toBe(sync.files);
+    const listener = vi.fn();
+    sync.subscribe(listener);
+    await sync.setFiles({ whitespace: true });
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+  it("says a failed read", async () => {
+    const { sync } = setup(async () => {
+      throw new Error("no core");
+    });
+    await expect(sync.load()).rejects.toThrow();
+    expect(sync.readFailed).toBe(true);
+    expect(sync.files).toBeNull();
+  });
+});
+
 describe("loadWithRetry", () => {
   const sleeps = () => {
     const waited: number[] = [];

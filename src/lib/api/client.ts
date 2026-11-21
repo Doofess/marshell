@@ -40,6 +40,7 @@ export async function coreFetch(
   method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE",
   path: string,
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<Response> {
   const headers = bearer(ep);
   if (body !== undefined) headers["Content-Type"] = "application/json";
@@ -47,6 +48,7 @@ export async function coreFetch(
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal,
   });
 }
 
@@ -56,8 +58,9 @@ export async function api<T>(
   method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE",
   path: string,
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<T> {
-  const res = await coreFetch(ep, method, path, body);
+  const res = await coreFetch(ep, method, path, body, signal);
   if (!res.ok) throw new ApiError(res.status, await res.text());
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;

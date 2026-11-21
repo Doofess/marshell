@@ -28,7 +28,7 @@ const DEFAULT_NOTIFY: NotifySettings = {
   terminal_alerts: true,
 };
 
-type FlagChange = Partial<Pick<Settings, "pause_warned" | "onboarded" | "close_to_tray" | "status_off" | "notifications" | "history_import" | "history_limit_gb" | "history_limit_days" | "history_backup_dir" | "browser">>;
+type FlagChange = Partial<Pick<Settings, "pause_warned" | "onboarded" | "close_to_tray" | "status_off" | "notifications" | "history_import" | "history_limit_gb" | "history_limit_days" | "history_backup_dir" | "browser" | "files">>;
 
 type SettingsApi = {
   get(ep: Endpoint): Promise<Settings>;
@@ -99,7 +99,7 @@ export class SettingsSync {
     this.limitDays = s.history_limit_days;
     this.backupDir = s.history_backup_dir;
     this.setBrowserValue(s.browser);
-    this.filesValue = s.files;
+    this.setFilesValue(s.files);
     this.appearance = s.appearance;
     this.emit();
     return s.appearance;
@@ -108,6 +108,19 @@ export class SettingsSync {
   /** The browser settings, as of the last read or write: null until a read has worked. The same object until it changes. */
   get browser(): BrowserSettings | null {
     return this.hasRead ? this.browserValue : null;
+  }
+
+  /** The Files settings, as of the last read or write: null until a read has worked. The same object until it changes. */
+  get files(): FilesSettings | null {
+    return this.hasRead ? this.filesValue : null;
+  }
+
+  /** Saves the changed Files fields. Reads first, like `save`, and sends every other field back unchanged. Queued with every other write. */
+  setFiles(change: Partial<FilesSettings>): Promise<void> {
+    return this.queued(async () => {
+      await this.readFirst();
+      await this.write({ files: { ...this.filesValue, ...change } });
+    });
   }
 
   /** True after a read that failed, until one works. */
@@ -158,6 +171,13 @@ export class SettingsSync {
     const cur = this.browserValue;
     if (cur.terminal_links === next.terminal_links && cur.open_agent_html === next.open_agent_html && cur.cookies === next.cookies) return;
     this.browserValue = next;
+  }
+
+  /** Keeps the current object when the fields are equal, so a store snapshot stays stable. */
+  private setFilesValue(next: FilesSettings): void {
+    const cur = this.filesValue;
+    if ((Object.keys(next) as (keyof FilesSettings)[]).every((k) => cur[k] === next[k]) && Object.keys(cur).length === Object.keys(next).length) return;
+    this.filesValue = next;
   }
 
   /** Whether conversations run outside Marshell are copied, as of the last read or write. True until a read works. */
@@ -224,7 +244,7 @@ export class SettingsSync {
     this.limitDays = s.history_limit_days;
     this.backupDir = s.history_backup_dir;
     this.setBrowserValue(s.browser);
-    this.filesValue = s.files;
+    this.setFilesValue(s.files);
     this.appearance = s.appearance;
     this.emit();
     return s.appearance;
@@ -323,7 +343,7 @@ export class SettingsSync {
     this.limitDays = s.history_limit_days;
     this.backupDir = s.history_backup_dir;
     this.setBrowserValue(s.browser);
-    this.filesValue = s.files;
+    this.setFilesValue(s.files);
     this.appearance = s.appearance;
     this.emit();
   }
