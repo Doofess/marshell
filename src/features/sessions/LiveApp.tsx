@@ -869,7 +869,7 @@ export function LiveApp() {
     announce(closedText(paneTabName(tab, tabTitles(shown.tabs))));
     // The dialog gave focus back to the tab it was asked from, which is going. After a save the close is drawn later than the next
     // frame, so focus waits for it. A close asked from the strip leaves the keyboard on the strip.
-    if (ask.from !== null) focusPane(ask.paneTab, ask.from);
+    if (ask.from !== null) focusPane("files", ask.paneTab, ask.from); // 6r-1a: replaced in Task 10 or 11.
   };
   // A tab that was not on screen mounts when it is selected, and its draft is read a moment later: wait for it, up to two seconds.
   const loadedText = async (key: string): Promise<SaveCommands | null> => {
@@ -958,7 +958,7 @@ export function LiveApp() {
     }
     paneDispatch({ type: "open", session, project: paneProject(), target });
     announce(openedText(lastSegment(target.path), panelOfPath(target.path))); // 6r-1a: replaced in Task 10 or 11.
-    focusPane();
+    focusPane("files"); // 6r-1a: replaced in Task 10 or 11.
     return true;
   };
   // What the terminal's Ctrl+click and the viewers get: one stable function that calls the latest `openInPane`.
@@ -992,7 +992,7 @@ export function LiveApp() {
     paneDispatch(action);
     announce(pageOpenedText(url));
     if (opts?.focus === "address" && opened) focusAddressSoon(pageKey(session, opened.id));
-    else focusPane();
+    else focusPane("files"); // 6r-1a: replaced in Task 10 or 11.
     return true;
   };
   const openPageRef = useRef(openPageInPane);
@@ -1032,7 +1032,7 @@ export function LiveApp() {
       case "preview": {
         const { shown } = toggleOutcome(pane, session);
         paneDispatch({ type: "toggle", session: session ?? null }); // 6r-1a: replaced in Task 10 or 11.
-        if (shown) focusPane();
+        if (shown) focusPane("files"); // 6r-1a: replaced in Task 10 or 11.
         else setTimeout(() => actions.focusTerminal(), 0);
         return;
       }
@@ -1045,7 +1045,7 @@ export function LiveApp() {
         // Asked once the change is drawn: whether the pane covers the terminal is the window's to say (`data-pane`).
         setTimeout(() => {
           const covers = document.querySelector('[data-pane="cover"]') !== null;
-          if (paneTabFocus({ outcome, from, covers })) focusPane();
+          if (paneTabFocus({ outcome, from, covers })) focusPane("files"); // 6r-1a: replaced in Task 10 or 11.
         }, 0);
         return;
       }
@@ -1059,7 +1059,7 @@ export function LiveApp() {
         const closed = tabsOf(pane, session).tabs.find((t) => t.id === closing.paneTab);
         announce(closedText(closed ? paneTabName(closed, tabTitles(tabsOf(pane, session).tabs)) : lastSegment(closing.path)));
         // A closed tab's body takes focus with it; the pane keeps the keyboard if it had it.
-        if (inside) focusPane();
+        if (inside) focusPane("files"); // 6r-1a: replaced in Task 10 or 11.
         return;
       }
       case "browse":
@@ -1118,7 +1118,7 @@ export function LiveApp() {
       if (refused) announce(TAB_LIMIT);
       else if (last !== null) announce(openedText(lastSegment(last), panelOfPath(last))); // 6r-1a: replaced in Task 10 or 11.
       else announce(FOLDER_REFUSED);
-      if (last !== null) focusPane();
+      if (last !== null) focusPane("files"); // 6r-1a: replaced in Task 10 or 11.
       return;
     }
     const ep = endpointRef.current;
@@ -1509,7 +1509,7 @@ export function LiveApp() {
         else actions.focusTerminal();
         return;
       case "select-side":
-        focusPane();
+        focusPane("files"); // 6r-1a: replaced in Task 10 or 11.
         return;
       case "bring-into-view": {
         const id = tabIdOfNumber(infos, effect.number);
@@ -2041,9 +2041,13 @@ export function LiveApp() {
   const paneNode =
     os ? (
       <SidePane
+        panel="files" // 6r-1a: replaced in Task 10 or 11.
+        plus={{ label: "New tab", menu: true }} // 6r-1a: replaced in Task 10 or 11.
+        fill={{ on: false, disabled: "No other panel is shown" }} // 6r-1a: replaced in Task 10 or 11.
+        hideKeys={paneKeys()} // 6r-1a: replaced in Task 10 or 11.
+        onFill={() => {}} // 6r-1a: replaced in Task 10 or 11.
         tabs={paneTabs.tabs.map((t) => ({ id: t.id, title: paneTitles.get(t.id) ?? "", path: currentEntry(t).path, kind: tabKind(isBrowserTab(t), currentEntry(t).path), openedBy: t.opened_by, unseen: t.unseen, unsaved: !isBrowserTab(t) && isUnsaved(unsaved, currentEntry(t).path, osName) }))}
         activeId={paneActive}
-        os={os}
         onSelect={(id) => paneSession !== undefined && paneDispatch({ type: "select", session: paneSession, paneTab: id })}
         onClose={(id) => {
           const tab = paneTabs.tabs.find((t) => t.id === id);
@@ -2159,7 +2163,7 @@ export function LiveApp() {
           paneNews={paneNews.size > 0}
           paneWidth={view.pane.width}
           onPaneWidth={(w) => paneDispatch({ type: "width", width: w })}
-          onDividerGone={() => focusPane()}
+          onDividerGone={() => focusPane("files")} // 6r-1a: replaced in Task 10 or 11.
           terminalMinWidth={terminalMinWidth}
           mainView={
             mainView === "history" && endpoint && os ? (

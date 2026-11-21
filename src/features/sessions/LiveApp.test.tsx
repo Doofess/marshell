@@ -722,7 +722,7 @@ describe("LiveApp: the side pane", () => {
   const closedPane: PaneView = { open: false, width: null, sessions: {}, recent: [] };
   const paneNode = (pane: PaneView, session: string) =>
     renderToStaticMarkup(
-      <SidePane tabs={[]} activeId={null} os="windows" onSelect={() => {}} onClose={() => {}} onMove={() => {}} onHide={() => {}} onPlus={() => {}}>
+      <SidePane panel="files" tabs={[]} activeId={null} plus={{ label: "New tab", menu: true }} fill={{ on: false }} hideKeys="Ctrl+Shift+Q" onFill={() => {}} onSelect={() => {}} onClose={() => {}} onMove={() => {}} onHide={() => {}} onPlus={() => {}}>
         {paneBody(pane, session) === "empty" ? <EmptyPane recent={recentFor(pane, "C:\\dev\\my-app", session)} onOpenFile={() => {}} onBrowse={() => {}} onRecent={() => {}} /> : null}
       </SidePane>,
     );

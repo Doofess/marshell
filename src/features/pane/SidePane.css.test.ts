@@ -29,7 +29,7 @@ describe("SidePane.css", () => {
     expect(fc).toMatch(/Highlight/);
     expect(fc).not.toMatch(/var\(/);
     const colours = [...fc.matchAll(/(?:color|background):\s*([^;]+);/g)].map((m) => m[1]!.trim());
-    for (const c of colours) expect(["Highlight", "HighlightText", "CanvasText", "ButtonText"]).toContain(c);
+    for (const c of colours) expect(["Highlight", "HighlightText", "CanvasText", "ButtonText", "GrayText"]).toContain(c);
   });
   it("puts :hover only inside (hover: hover) and (pointer: fine)", () => {
     const hover = media("(hover: hover) and (pointer: fine)");
@@ -57,6 +57,12 @@ describe("SidePane.css", () => {
     const j = fc.indexOf('.side-pane__tab[aria-selected="true"]:focus-visible {');
     expect(j).toBeGreaterThan(-1);
     expect(fc.slice(j, fc.indexOf("}", j))).toContain("outline-offset: -4px");
+  });
+  it("reads a pressed Fill and an unavailable button in forced colours, with system colours", () => {
+    const fc = media("(forced-colors: active)");
+    expect(fc).toContain('.side-pane__button[aria-pressed="true"]');
+    expect(fc).toContain('.side-pane__button[aria-disabled="true"]');
+    expect(fc).toContain("GrayText");
   });
   it("hides the strip's scrollbar and lets it scroll sideways", () => {
     expect(rule(".side-pane__tabs")).toContain("scrollbar-width: none");

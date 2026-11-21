@@ -154,7 +154,7 @@
   opacity: 1;
 }
 .side-pane__close:active,
-.side-pane__button:active {
+.side-pane__button:not([aria-disabled="true"]):active {
   box-shadow: inset 0 0 0 100vmax var(--selected);
 }
 
@@ -172,6 +172,17 @@
   color: var(--text-2);
 }
 
+/* Fill while its panel fills: a tint and the text colour, so it reads as on. */
+.side-pane__button[aria-pressed="true"] {
+  background: var(--fill-strong);
+  color: var(--text-1);
+}
+/* A button that can't be used stays reachable and says why in its title; it reads as quieter, and has no hover or press tint. */
+.side-pane__button[aria-disabled="true"] {
+  color: var(--text-3);
+  opacity: 0.6;
+}
+
 @media (hover: hover) and (pointer: fine) {
   .side-pane__tab:not([aria-selected="true"]):hover {
     background: var(--hover);
@@ -181,7 +192,7 @@
     opacity: 1;
   }
   .side-pane__close:hover,
-  .side-pane__button:hover {
+  .side-pane__button:not([aria-disabled="true"], [aria-pressed="true"]):hover {
     background: var(--hover);
     color: var(--text-1);
   }
@@ -328,5 +339,18 @@
   }
   .empty-pane__button {
     border: 1px solid ButtonText;
+  }
+  /* A pressed Fill is a Highlight fill; `none` keeps the system from painting a Canvas backplate behind the icon. */
+  .side-pane__button[aria-pressed="true"] {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+  .side-pane__button[aria-pressed="true"]:focus-visible {
+    outline-color: HighlightText;
+  }
+  .side-pane__button[aria-disabled="true"] {
+    color: GrayText;
+    opacity: 1;
   }
 }

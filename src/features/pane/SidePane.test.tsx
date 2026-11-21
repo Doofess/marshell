@@ -11,24 +11,41 @@ const tabs: StripTab[] = [
 ];
 const html = (more: Partial<SidePaneProps> = {}) =>
   renderToStaticMarkup(
-    <SidePane tabs={tabs} activeId="t2" os="windows" onSelect={noop} onClose={noop} onMove={noop} onHide={noop} onPlus={noop} {...more}>
+    <SidePane
+      panel="files"
+      tabs={tabs}
+      activeId="t2"
+      plus={{ label: "Open a file", menu: false }}
+      fill={{ on: false }}
+      hideKeys="Ctrl+Shift+A"
+      onSelect={noop}
+      onClose={noop}
+      onMove={noop}
+      onHide={noop}
+      onPlus={noop}
+      onFill={noop}
+      {...more}
+    >
       {more.children ?? <p>body</p>}
     </SidePane>,
   );
 
 describe("SidePane", () => {
-  it("is the side pane's section, a drop target and a navigation stop", () => {
+  it("is its panel's section and a navigation stop", () => {
     const out = html();
     expect(out).toContain("<section");
-    expect(out).toContain('aria-label="Side pane"');
-    expect(out).toContain("data-nav-side");
-    expect(out).toContain("data-drop-pane");
+    expect(out).toContain('aria-label="Files"');
+    expect(out).toContain('data-nav-side="files"');
+    expect(out).not.toContain("data-drop-pane");
     expect(out).toContain("<p>body</p>");
+  });
+  it("names its tablist after the panel", () => {
+    expect(html()).toContain('role="tablist" aria-label="Files tabs"');
+    expect(html({ panel: "browser" })).toContain('aria-label="Browser tabs"');
   });
   it("has a tablist of tabs wired to their panels, the path as the title", () => {
     const out = html();
     expect(out).toContain('role="tablist"');
-    expect(out).toContain('aria-label="Tabs"');
     expect(out.match(/<button[^>]*role="tab"/g)).toHaveLength(2);
     expect(out).toContain('id="pane-tab-t1"');
     expect(out).toContain('aria-controls="pane-panel-t1"');
@@ -47,11 +64,50 @@ describe("SidePane", () => {
     expect(out.match(/<button[^>]*aria-label="Close a\.md"[^>]*>/)![0]).toContain('tabindex="-1"');
     expect(out).not.toMatch(/<button[^>]*role="tab"[^>]*>(?:(?!<\/button>).)*<button/);
   });
-  it("ends with New tab and Hide, the hide title holding the shortcut", () => {
+  const btn = (out: string, label: string) => out.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`))![0];
+  const order = (out: string, ...labels: string[]) => labels.map((l) => out.indexOf(`aria-label="${l}"`));
+  it("ends with +, the menu when it has one, Fill and Hide, in that order", () => {
+    const out = html({ panel: "browser", plus: { label: "New tab", menu: true }, menu: { label: "Browser menu" }, onMenu: noop });
+    const at = order(out, "Close b.rs", "New tab", "Browser menu", "Fill the side pane", "Hide Browser");
+    expect([...at].sort((x, y) => x - y)).toEqual(at);
+    expect(at[0]).toBeGreaterThan(-1);
+    expect(btn(out, "Browser menu")).toContain('aria-haspopup="menu"');
+    expect(btn(out, "Browser menu")).toContain('title="Browser menu"');
+    expect(btn(out, "New tab")).toContain("data-pane-plus");
+  });
+  it("the Files panel has no menu button", () => {
     const out = html();
-    expect(out).toMatch(/<button[^>]*aria-label="New tab"[^>]*aria-haspopup="menu"|<button[^>]*aria-haspopup="menu"[^>]*aria-label="New tab"/);
-    expect(out).toMatch(/aria-label="Hide the side pane" title="Hide the side pane \(Ctrl\+Shift\+Q\)"/);
-    expect(out.indexOf('aria-label="Close b.rs"')).toBeLessThan(out.indexOf('aria-label="New tab"'));
+    expect(out).not.toContain("menu");
+    expect(out).toContain('aria-label="Open a file"');
+  });
+  it("+ opens a menu only when told to", () => {
+    expect(btn(html({ plus: { label: "New tab", menu: true } }), "New tab")).toContain('aria-haspopup="menu"');
+    expect(btn(html(), "Open a file")).not.toContain("aria-haspopup");
+  });
+  it("a + that can't be used is aria-disabled and says why", () => {
+    const b = btn(html({ plus: { label: "Open a file", menu: false, disabled: "No session is open" } }), "Open a file");
+    expect(b).toContain('aria-disabled="true"');
+    expect(b).not.toMatch(/\sdisabled/);
+    expect(b).toContain('title="Open a file: No session is open"');
+    expect(btn(html(), "Open a file")).not.toContain("aria-disabled");
+  });
+  it("Fill is pressed while its panel fills, and its tooltip says how to go back", () => {
+    const on = btn(html({ fill: { on: true } }), "Fill the side pane");
+    expect(on).toContain('aria-pressed="true"');
+    expect(on).toContain('title="Show the other panels"');
+    const off = btn(html(), "Fill the side pane");
+    expect(off).toContain('aria-pressed="false"');
+    expect(off).toContain('title="Fill the side pane"');
+  });
+  it("Fill with one panel shown is aria-disabled and says why", () => {
+    const b = btn(html({ fill: { on: false, disabled: "No other panel is shown" } }), "Fill the side pane");
+    expect(b).toContain('aria-disabled="true"');
+    expect(b).not.toMatch(/\sdisabled/);
+    expect(b).toContain('title="No other panel is shown"');
+  });
+  it("Hide names the panel and its key", () => {
+    expect(html()).toMatch(/aria-label="Hide Files" title="Hide Files \(Ctrl\+Shift\+A\)"/);
+    expect(html({ panel: "browser" })).toContain('aria-label="Hide Browser" title="Hide Browser (Ctrl+Shift+A)"');
   });
   it("a web tab shows the globe and never an image", () => {
     const globe = html({ tabs: [{ id: "b1", title: "Example.com", path: "https://example.com/", kind: "web", openedBy: null, unseen: false }], activeId: "b1" });
@@ -75,11 +131,12 @@ describe("SidePane", () => {
     const out = html({ tabs: [{ id: "f1", title: "sample-long-name.txt", path: "C:\\w\\sample-long-name.txt", kind: "text", openedBy: null, unseen: false }], activeId: "f1" });
     expect(out).toContain('<span class="side-pane__name-head">sample-long-name</span><span class="side-pane__name-tail">.txt</span>');
   });
-  it("with no tabs shows no tablist, and still the two buttons", () => {
+  it("with no tabs shows no tablist, and still its buttons", () => {
     const out = html({ tabs: [], activeId: null });
     expect(out).not.toContain('role="tablist"');
-    expect(out).toContain('aria-label="New tab"');
-    expect(out).toContain('aria-label="Hide the side pane"');
+    expect(out).toContain('aria-label="Open a file"');
+    expect(out).toContain('aria-label="Fill the side pane"');
+    expect(out).toContain('aria-label="Hide Files"');
   });
 
   it("a tab whose file can't be read still shows in the strip and closes", () => {
