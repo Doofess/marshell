@@ -83,7 +83,7 @@ import { browser, pageKey } from "../browser/browserApi";
 import type { UrlBarHandle } from "../browser/UrlBar";
 import { useBrowserPages } from "../browser/useBrowserPages";
 import { askedFrom, focusPane, panelOfElement } from "../pane/focusPane";
-import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, PANE_BESIDE_SESSION, noTabText, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, commandPanel, firstWith, hideFocus, landingPanel, panelButtonsFor, panelOrder, unseenPanels, panelHiddenText, panelToggleOutcome, shouldPin, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, receiptWithPaneHidden, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf } from "../pane/paneCommands";
+import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, PANE_BESIDE_SESSION, closeNothingText, noTabText, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, commandPanel, firstWith, hideFocus, landingPanel, panelButtonsFor, panelOrder, unseenPanels, panelHiddenText, panelToggleOutcome, shouldPin, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, receiptWithPaneHidden, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf } from "../pane/paneCommands";
 import { isPanelId, onScreen, PANEL_COMMAND, PANEL_LABEL, panelOf, panelOfPath, panelTabs, activeIn, stackOf, stackPanels, type PanelId } from "../pane/panels";
 import { activeTab, currentEntry, isBrowserTab, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
 import { dropPlan, takeOpens } from "../pane/opens";
@@ -1125,7 +1125,7 @@ export function LiveApp() {
       case "closePaneTab": {
         const panel = currentPanel();
         const closing = closeTabOutcome(pane, session, panel);
-        if (!closing || session === undefined || panel === null) return announce(noTabText(panel, session !== undefined && mainViewRef.current !== "sessions"));
+        if (!closing || session === undefined || panel === null) return announce(closeNothingText(pane, session, panel, session !== undefined && mainViewRef.current !== "sessions", paneKeys()));
         const asked = tabsOf(pane, session).tabs.find((t) => t.id === closing.paneTab);
         if (asked && askToClose(session, asked)) return;
         const inside = panelFocusRef.current === panel;

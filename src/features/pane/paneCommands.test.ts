@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PaneView } from "../../generated/PaneView";
-import { closeAsk, closeTabOutcome, commandPanel, firstWith, hideFocus, noTabsText, openedByText, panelButtonsFor, panelHiddenText, panelOrder, panelToggleOutcome, leavePaneOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneBody, paneHiddenText, paneTabFocus, receiptWithPaneHidden, paneTabOutcome, projectKeyOf, shouldPin, noTabText, PAGE_REFUSED, TAB_LIMIT } from "./paneCommands";
+import { closeAsk, closeNothingText, closeTabOutcome, commandPanel, firstWith, hideFocus, noTabsText, openedByText, panelButtonsFor, panelHiddenText, panelOrder, panelToggleOutcome, leavePaneOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneBody, paneHiddenText, paneTabFocus, receiptWithPaneHidden, paneTabOutcome, projectKeyOf, shouldPin, noTabText, PAGE_REFUSED, TAB_LIMIT } from "./paneCommands";
 import { paneReducer, recentFor } from "./paneState";
 import type { PanelId } from "./panels";
 import { landingPanel, unseenPanels } from "./paneCommands";
@@ -212,6 +212,22 @@ describe("closeTabOutcome", () => {
     expect(closeTabOutcome(s, "s1", "files")).toEqual({ paneTab: "t2", path: "/a/y.md" });
     expect(closeTabOutcome(s, "s1", null)).toBeNull();
     expect(closeTabOutcome(s, "s1", "browser")).toBeNull();
+  });
+});
+
+describe("closeNothingText", () => {
+  it("says the pane is hidden, with its key, when the session has tabs behind a hidden pane", () => {
+    const hidden = withTabs("s1", ["/a/x.md"], false);
+    expect(closeNothingText(hidden, "s1", null, false, "Ctrl+Shift+Q")).toBe("The side pane is hidden. Ctrl+Shift+Q shows it.");
+    // Another session has the tabs, or none has: there is nothing to close.
+    expect(closeNothingText(hidden, "s2", null, false, "Ctrl+Shift+Q")).toBe("No tabs open.");
+    expect(closeNothingText(EMPTY, "s1", null, false, "Ctrl+Shift+Q")).toBe("No tabs open.");
+    expect(closeNothingText(hidden, undefined, null, false, "Ctrl+Shift+Q")).toBe("No tabs open.");
+  });
+  it("says what a tab command says in a pane that is shown, or behind a view that replaces the terminal", () => {
+    const shown = withTabs("s1", ["/a/x.md"]);
+    expect(closeNothingText(shown, "s1", "browser", false, "Ctrl+Shift+Q")).toBe("No tabs open in Browser.");
+    expect(closeNothingText(withTabs("s1", ["/a/x.md"], false), "s1", null, true, "Ctrl+Shift+Q")).toBe("The side pane shows beside a session.");
   });
 });
 

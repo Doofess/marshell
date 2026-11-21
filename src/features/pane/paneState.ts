@@ -41,7 +41,7 @@ export type PaneAction =
   | { type: "openPage"; session: string; url: string; background?: true }
   /**
    * `marshell open`: a tab added behind the one on screen, or the tab already showing it, marked as new. It never changes `open`. It
-   * selects the tab only in a session that had none. `onScreen`: the pane is open with this session shown.
+   * selects the tab only in a panel that had none. `onScreen`: the pane is open with this session shown.
    */
   | { type: "openBackground"; session: string; kind: "file" | "browser"; target: string; by: string; project: string; onScreen: boolean }
   /** The panel's selected tab is in front of the person: it loses its "new" mark (`opened_by` stays). */

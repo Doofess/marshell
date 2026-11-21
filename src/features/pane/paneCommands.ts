@@ -140,6 +140,12 @@ export const paneHiddenText = (keys: string) => `The side pane is hidden. ${keys
  * announcer holds one notice, so the two are one line: said apart, the receipt would replace the hide before anyone heard it.
  */
 export const receiptWithPaneHidden = (receipt: string, keys: string) => `${receipt}. ${paneHiddenText(keys)}`;
+/**
+ * What "Close tab" says when it closes nothing. Behind a hidden pane the session may hold tabs, and none of them is closed unseen:
+ * the line says the pane is hidden, with the keys that show it. Otherwise it is what any tab command says (`noTabText`).
+ */
+export const closeNothingText = (pane: PaneView, session: string | undefined, panel: PanelId | null, replaced: boolean, keys: string): string =>
+  !replaced && !pane.open && tabsOf(pane, session).tabs.length > 0 ? paneHiddenText(keys) : noTabText(panel, replaced);
 
 /**
  * What the recent files of the session on screen are kept under: its repository's root (the row's `projectKey`), not the row's
