@@ -33,14 +33,16 @@ describe("FilesBody", () => {
     expect(out).toContain('aria-label="Resize the file tree"');
     expect(out).toContain('tabindex="0"');
   });
-  it("the DOM order follows the visual order", () => {
+  it("the DOM order follows the reading order", () => {
     const left = render({ position: "left" });
     expect(left.indexOf("TREE")).toBeLessThan(left.indexOf("FILE"));
     const right = render({ position: "right" });
     expect(right.indexOf("FILE")).toBeLessThan(right.indexOf("TREE"));
-    const rtl = render({ position: "left", rtl: true });
-    expect(rtl.indexOf("TREE")).toBeLessThan(rtl.indexOf("FILE"));
-    expect(rtl).toContain('data-rtl=""');
+    // Right to left, a row reads from the right: a tree on the left comes after the file, and one on the right before it.
+    const rtlLeft = render({ position: "left", rtl: true });
+    expect(rtlLeft.indexOf("FILE")).toBeLessThan(rtlLeft.indexOf("TREE"));
+    const rtlRight = render({ position: "right", rtl: true });
+    expect(rtlRight.indexOf("TREE")).toBeLessThan(rtlRight.indexOf("FILE"));
   });
   it("under 480 px the tree is drawn over the file", () => {
     const open = render({ panelWidth: 400, overlayOpen: true });

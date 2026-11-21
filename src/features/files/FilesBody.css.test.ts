@@ -32,8 +32,9 @@ describe("FilesBody.css", () => {
     const outside = css.replace(/@media [^{]*\(hover: hover\) and \(pointer: fine\) \{[\s\S]*?\n\}\n/g, "");
     expect(outside).not.toContain(":hover");
   });
-  it("flips with data-rtl and uses no physical sides", () => {
-    expect(css).toContain("row-reverse");
+  it("follows the writing direction as it is and uses no physical sides", () => {
+    // The row already runs right to left there, and the DOM is in reading order: a reversed row would read backwards.
+    expect(css).not.toContain("row-reverse");
     expect(css).not.toMatch(/\b(left|right|top|bottom)\s*:/);
   });
 });

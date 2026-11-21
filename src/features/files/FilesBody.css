@@ -105,9 +105,6 @@
   min-block-size: 0;
   overflow: clip;
 }
-.files-body[data-rtl] {
-  flex-direction: row-reverse;
-}
 .files-body__file {
   display: flex;
   flex: 1;

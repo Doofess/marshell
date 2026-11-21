@@ -20,7 +20,8 @@ export type FilesBodyProps = {
 
 /**
  * The Files panel's body: the tree beside the open file with a divider between them, or, under 480 px of panel, over the file.
- * The DOM order is the visual order: the tree first when it is on the left, also in a right-to-left layout (CSS reverses the row there).
+ * The DOM order is the reading order: the tree first when it is on the start edge (the left in a left-to-right layout, the right in
+ * the other), so Tab moves the way the eye reads. The row follows the writing direction as it is.
  */
 export function FilesBody({ tree, filter, file, pathBar, shown, position, width, panelWidth, rtl, overlayOpen, onWidth, onOverlay }: FilesBodyProps) {
   const side = treeSide(position, rtl);
@@ -90,10 +91,10 @@ export function FilesBody({ tree, filter, file, pathBar, shown, position, width,
   );
 
   const showTree = shown && (!narrow || overlayOpen);
-  const parts = showTree ? (narrow ? [fileColumn, treeColumn] : side === "left" ? [treeColumn, divider, fileColumn] : [fileColumn, divider, treeColumn]) : [fileColumn];
-  // Keys keep the file's frame mounted while the tree comes and goes. In the narrow layout the tree is absolutely placed over the file.
-  // The edge it sits on, in the inline direction: the start edge is the left in a left-to-right layout and the right in the other.
+  // The edge the tree sits on, in the inline direction: the start edge is the left in a left-to-right layout and the right in the other.
   const edge = (side === "left") !== rtl ? "start" : "end";
+  // Keys keep the file's frame mounted while the tree comes and goes. In the narrow layout the tree is absolutely placed over the file.
+  const parts = showTree ? (narrow ? [fileColumn, treeColumn] : edge === "start" ? [treeColumn, divider, fileColumn] : [fileColumn, divider, treeColumn]) : [fileColumn];
   return (
     <div className="files-body" data-side={side} data-edge={edge} data-narrow={narrow ? "" : undefined} data-rtl={rtl ? "" : undefined}>
       {parts}
