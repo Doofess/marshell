@@ -64,8 +64,31 @@ describe("PreviewPane", () => {
     const out = html({ phase: "tooLarge", size: 5 * 1024 * 1024, limit: 2 * 1024 * 1024 });
     expect(out).toContain("This file is too large to preview. It is 5 MB and the limit is 2 MB.");
   });
-  it("says a file isn't text", () => {
-    expect(html({ phase: "binary" })).toContain("This file isn&#x27;t text.");
+  const docx = { entry: { path: "C:\\docs\\report.docx", line: null, col: null, view: "rendered" as const } };
+  it("says a binary file can't be shown, with a reveal button when it can be revealed", () => {
+    const out = html({ phase: "binary" }, { ...docx, onReveal: noop });
+    expect(out).toContain("report.docx can&#x27;t be shown here.");
+    expect(out).toContain("Show in File Explorer");
+  });
+  it("names the file manager for the OS on the reveal button", () => {
+    expect(html({ phase: "binary" }, { ...docx, onReveal: noop, os: "mac" })).toContain("Show in Finder");
+    expect(html({ phase: "binary" }, { ...docx, onReveal: noop, os: "linux" })).toContain("Show in file manager");
+  });
+  it("gives a too-large file the same button and keeps its sentence", () => {
+    const out = html({ phase: "tooLarge", size: 5 * 1024 * 1024, limit: 2 * 1024 * 1024 }, { ...docx, onReveal: noop });
+    expect(out).toContain("This file is too large to preview. It is 5 MB and the limit is 2 MB.");
+    expect(out).toContain("Show in File Explorer");
+  });
+  it("has no reveal button without onReveal", () => {
+    expect(html({ phase: "binary" }, docx)).not.toContain("Show in File Explorer");
+    expect(html({ phase: "tooLarge", size: 5, limit: 2 }, docx)).not.toContain("Show in File Explorer");
+  });
+  it("leaves the name and folder out of the header when the path is shown elsewhere", () => {
+    const out = html({ phase: "loading" }, { pathShown: true });
+    expect(out).not.toContain("preview__name");
+    expect(out).not.toContain("preview__folder");
+    expect(out).toContain('aria-label="Back"');
+    expect(html({ phase: "loading" })).toContain("preview__name");
   });
   it("shows a PDF in the PDF view, not the old placeholder", () => {
     const out = html({ phase: "pdf", bytes: new ArrayBuffer(8), version: 0, hash: "", readOnly: null }, { entry: { path: "C:\\docs\\a.pdf", line: null, col: null, view: "rendered" } });

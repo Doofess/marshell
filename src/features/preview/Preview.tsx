@@ -11,6 +11,7 @@ import type { EditorPrefs } from "../editor/editorPrefs";
 import { isSaveKey, TextTab, type SaveCommands, type TextTabCommands } from "../editor/TextTab";
 import { canMarkRegion, fromDrag, initialRegion, regionLabel, regionStillValid, type Region } from "../regions/region";
 import type { Os } from "../../lib/keymap";
+import { revealLabel } from "../files/reveal";
 import { ViewportChip } from "../browser/ViewportChip";
 import { viewportWidth, type ViewportId } from "../browser/viewport";
 import { ImageView } from "./ImageView";
@@ -150,6 +151,10 @@ export type PreviewPaneProps = {
   prefs?: EditorPrefs;
   /** The Files setting "Auto save". Absent: off. */
   autoSave?: boolean;
+  /** Shows a file in the system's file manager. Absent: a file the pane can't show has no button. */
+  onReveal?: (path: string) => void;
+  /** The path bar above the pane already shows the name and folder, so the header leaves both out. */
+  pathShown?: boolean;
   /** The palette's "Select region" starts a region through this. */
   ref?: Ref<PreviewHandle>;
 };
@@ -224,12 +229,19 @@ type BodyProps = {
   /** The Files settings a text tab reads: the editor's, and Auto save. */
   prefs?: EditorPrefs;
   autoSave?: boolean;
+  /** Shows the file in the system's file manager; the button on a file the pane can't show appears only when given. */
+  onReveal?: (path: string) => void;
 };
 
 const noDirty = () => {};
 
-function Body({ entry, file, active, os, announce, refetch, textCommands, pdfCommands, pdfSave, onDirty, onImageSize, onPages, onLink, onKey, region, keptDraft, keptPdf, onSource, place, placeKey, onJump, placeNow, onWebLink, onHistory, viewport, onBox, prefs, autoSave }: BodyProps) {
+function Body({ entry, file, active, os, announce, refetch, textCommands, pdfCommands, pdfSave, onDirty, onImageSize, onPages, onLink, onKey, region, keptDraft, keptPdf, onSource, place, placeKey, onJump, placeNow, onWebLink, onHistory, viewport, onBox, prefs, autoSave, onReveal }: BodyProps) {
   const { name } = splitPath(entry.path);
+  const reveal = onReveal && (
+    <button type="button" className="preview__reveal" onClick={() => onReveal(entry.path)}>
+      {revealLabel(os)}
+    </button>
+  );
   // A text file, and a deleted one that was text, are the same tab: the editor stays mounted when the file goes and comes back.
   const textTab = (f: Extract<FileState, { phase: "text" | "deleted" }>) => (
     <TextTab key={entry.path} entry={entry} file={f} kind={kindOf(entry.path)} active={active} os={os} onDirty={onDirty} commands={textCommands} announce={announce} refetch={refetch} onLink={onLink} onKey={onKey} onSource={onSource} viewport={viewport} onBox={onBox} prefs={prefs} autoSave={autoSave} />
@@ -242,9 +254,19 @@ function Body({ entry, file, active, os, announce, refetch, textCommands, pdfCom
     case "image":
       return <ImageView url={file.url} name={name} onSize={(w, h) => onImageSize(file.url, w, h)} overlay={region.overlay(1)} />;
     case "tooLarge":
-      return <p className="preview__message">{`This file is too large to preview. It is ${formatSize(file.size)} and the limit is ${formatSize(file.limit)}.`}</p>;
+      return (
+        <>
+          <p className="preview__message">{`This file is too large to preview. It is ${formatSize(file.size)} and the limit is ${formatSize(file.limit)}.`}</p>
+          {reveal}
+        </>
+      );
     case "binary":
-      return <p className="preview__message">This file isn't text.</p>;
+      return (
+        <>
+          <p className="preview__message">{`${name} can't be shown here.`}</p>
+          {reveal}
+        </>
+      );
     case "pdf":
       return pdfTab(file, file.hash);
     case "deleted":
@@ -255,7 +277,7 @@ function Body({ entry, file, active, os, announce, refetch, textCommands, pdfCom
       if (file.last?.phase === "text" || (file.last === undefined && keptDraft)) return textTab(file);
       if (file.last === undefined && keptPdf) return pdfTab({ phase: "pdf", bytes: keptPdf, version: 0, hash: "", readOnly: null }, null);
       if (file.last?.phase === "pdf") return pdfTab(file.last, null);
-      return file.last ? <Body entry={entry} file={file.last} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} pdfCommands={pdfCommands} pdfSave={pdfSave} onDirty={onDirty} onImageSize={onImageSize} onPages={onPages} onLink={onLink} onKey={onKey} region={region} keptDraft={keptDraft} keptPdf={keptPdf} onSource={onSource} place={place} placeKey={placeKey} onJump={onJump} placeNow={placeNow} onWebLink={onWebLink} onHistory={onHistory} viewport={viewport} onBox={onBox} prefs={prefs} autoSave={autoSave} /> : <p className="preview__message">This file was deleted.</p>;
+      return file.last ? <Body entry={entry} file={file.last} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} pdfCommands={pdfCommands} pdfSave={pdfSave} onDirty={onDirty} onImageSize={onImageSize} onPages={onPages} onLink={onLink} onKey={onKey} region={region} keptDraft={keptDraft} keptPdf={keptPdf} onSource={onSource} place={place} placeKey={placeKey} onJump={onJump} placeNow={placeNow} onWebLink={onWebLink} onHistory={onHistory} viewport={viewport} onBox={onBox} prefs={prefs} autoSave={autoSave} onReveal={onReveal} /> : <p className="preview__message">This file was deleted.</p>;
     case "error":
       return <p className="preview__message">This file can't be previewed.</p>;
   }
@@ -290,7 +312,7 @@ function Body({ entry, file, active, os, announce, refetch, textCommands, pdfCom
 }
 
 /** The pane for one file: header, then the scrolling body. Everything it shows comes in as props, so it renders the same on any state. */
-export function PreviewPane({ entry, file, updated, os, canBack, canForward, onBack, onForward, onOpen, onView, onPlace, active, onEscape, announce, refetch, regionTarget, onRegion, onDirty, keptDraft = false, keptPdf = null, viewport = null, onViewport, prefs, autoSave, ref }: PreviewPaneProps) {
+export function PreviewPane({ entry, file, updated, os, canBack, canForward, onBack, onForward, onOpen, onView, onPlace, active, onEscape, announce, refetch, regionTarget, onRegion, onDirty, keptDraft = false, keptPdf = null, viewport = null, onViewport, prefs, autoSave, onReveal, pathShown = false, ref }: PreviewPaneProps) {
   const { name, folder } = splitPath(entry.path);
   // The width of the HTML frame's place, as its view reports it: the chip says what share of the size it is shown at.
   const [frameWidth, setFrameWidth] = useState(0);
@@ -561,8 +583,8 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
         <button type="button" className="preview__button" aria-label="Forward" title={`Forward (${alt}${os === "mac" ? "→" : "Right"})`} disabled={!canForward} onClick={goForward}>
           {arrow("M4.5 2.5 8 6 4.5 9.5")}
         </button>
-        <span className="preview__name">{name}</span>
-        {folder && (
+        {!pathShown && <span className="preview__name">{name}</span>}
+        {!pathShown && folder && (
           <span className="preview__folder" title={folder}>
             {folder}
           </span>
@@ -600,7 +622,7 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
             This file was deleted.
           </div>
         )}
-        <Body entry={entry} file={file} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} pdfCommands={pdfCommands} pdfSave={pdfSave} onDirty={noteDirty} onImageSize={(url, w, h) => setSize({ url, w, h })} onPages={(count) => setPages({ path: entry.path, count })} onLink={follow} onKey={keys} region={regionHooks} keptDraft={keptDraft} keptPdf={keptPdf} onSource={() => views.current?.merge()} place={placeOf(entry)} placeKey={moves.current.count} onJump={jump} placeNow={placeNowRef} onWebLink={(url) => follow({ kind: "web", url })} onHistory={(by) => { if (by < 0) { if (canBack) goBack(); } else if (canForward) goForward(); }} viewport={viewportWidth(viewport)} onBox={setFrameWidth} prefs={prefs} autoSave={autoSave} />
+        <Body entry={entry} file={file} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} pdfCommands={pdfCommands} pdfSave={pdfSave} onDirty={noteDirty} onImageSize={(url, w, h) => setSize({ url, w, h })} onPages={(count) => setPages({ path: entry.path, count })} onLink={follow} onKey={keys} region={regionHooks} keptDraft={keptDraft} keptPdf={keptPdf} onSource={() => views.current?.merge()} place={placeOf(entry)} placeKey={moves.current.count} onJump={jump} placeNow={placeNowRef} onWebLink={(url) => follow({ kind: "web", url })} onHistory={(by) => { if (by < 0) { if (canBack) goBack(); } else if (canForward) goForward(); }} viewport={viewportWidth(viewport)} onBox={setFrameWidth} prefs={prefs} autoSave={autoSave} onReveal={onReveal} />
       </div>
       {select?.step === "comment" && body.current
         ? createPortal(
