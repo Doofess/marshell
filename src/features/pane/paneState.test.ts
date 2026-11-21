@@ -607,6 +607,15 @@ describe("the Browser and Files panels", () => {
     for (const bad of ["wide", "", "Phone"]) expect(paneProblem(withViewport(bad))).toBe("viewport");
   });
 
+  it("sets and clears a Browser tab's viewport, and leaves a Files tab alone", () => {
+    const withPage = mk({ s1: { tabs: [b("p1")], active: "p1", active_browser: "p1" } });
+    const withTextFile = mk({ s1: { tabs: [f("f1")], active: "f1" } });
+    const set = paneReducer(withPage, { type: "viewport", session: "s1", paneTab: "p1", viewport: "phone" });
+    expect(tabsOf(set, "s1").tabs[0]!.viewport).toBe("phone");
+    expect("viewport" in tabsOf(paneReducer(set, { type: "viewport", session: "s1", paneTab: "p1", viewport: null }), "s1").tabs[0]!).toBe(false);
+    expect(paneReducer(withTextFile, { type: "viewport", session: "s1", paneTab: "f1", viewport: "phone" })).toBe(withTextFile);
+  });
+
   it("the stack is the window's: another session shows the same panels", () => {
     const s = mk({ a: { tabs: [b("t1")], active: "t1" }, c: { tabs: [f("t1")], active: "t1" } });
     const withStack = paneReducer(s, { type: "pin", session: "a" });
