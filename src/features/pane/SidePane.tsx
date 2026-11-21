@@ -2,9 +2,9 @@ import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type Point
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { isAgentId } from "../../components/AgentMark/agents";
 import { selectedProps } from "../../components/a11y/SelectedMark";
-import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
 import { agentLabel } from "../sessions/sessionActions";
 import { clickGuard } from "./clickGuard";
+import { PANEL_LABEL, type PanelId } from "./panels";
 import { dragIndex, stripKey } from "./stripKeys";
 import { splitName, type TabKind } from "./tabType";
 import "./SidePane.css";
@@ -48,16 +48,26 @@ function UnsavedMark() {
   return <span className="side-pane__unsaved" aria-hidden="true" />;
 }
 export type SidePaneProps = {
+  panel: PanelId;
   tabs: StripTab[];
   activeId: string | null;
-  os: Os;
-  /** `<KeptTabs/>` or `<EmptyPane/>`. */
+  /** What the panel holds: its tabs' bodies or its empty state. */
   children: ReactNode;
+  /** + : its name ("New tab" for Browser, "Open a file" for Files), whether it opens a menu, and why it can't be used. */
+  plus: { label: string; menu: boolean; disabled?: string };
+  /** The ⋯ button, for a panel that has a menu: its name ("Browser menu"). */
+  menu?: { label: string };
+  /** ⤢ : whether this panel fills the pane, and why it can't. */
+  fill: { on: boolean; disabled?: string };
+  /** The panel's own key, for the Hide button's tooltip: "Ctrl+Shift+A". */
+  hideKeys: string;
   onSelect(id: string): void;
   onClose(id: string): void;
   onMove(id: string, to: number): void;
-  onHide(): void;
   onPlus(anchor: { x: number; y: number }, opener: HTMLElement): void;
+  onMenu?(anchor: { x: number; y: number }, opener: HTMLElement): void;
+  onFill(): void;
+  onHide(): void;
 };
 
 /** How far the pointer goes before a press on a tab becomes a drag. */
@@ -117,8 +127,8 @@ function TabTitle({ kind, title }: { kind: TabKind; title: string }) {
 
 type Drag = { id: string; pointerId: number; startX: number; started: boolean };
 
-/** The side pane's frame: the tab strip with its + and hide buttons, then whatever the pane holds. */
-export function SidePane({ tabs, activeId, os, children, onSelect, onClose, onMove, onHide, onPlus }: SidePaneProps) {
+/** One panel's frame: its tab strip, ending with +, the menu (if it has one), Fill and Hide, then whatever the panel holds. */
+export function SidePane({ panel, tabs, activeId, children, plus: plusSpec, menu, fill, hideKeys, onSelect, onClose, onMove, onPlus, onMenu, onFill, onHide }: SidePaneProps) {
   const root = useRef<HTMLElement>(null);
   const plus = useRef<HTMLButtonElement>(null);
   // Where focus goes after the strip changes: a tab's id, or "active" for whichever tab became the selected one.
@@ -206,10 +216,10 @@ export function SidePane({ tabs, activeId, os, children, onSelect, onClose, onMo
   };
 
   return (
-    <section ref={root} className="side-pane" aria-label="Side pane" data-nav-side="" data-drop-pane="">
+    <section ref={root} className="side-pane" aria-label={PANEL_LABEL[panel]} data-nav-side={panel}>
       <div className="side-pane__strip">
         {tabs.length > 0 && (
-          <div className="side-pane__tabs" role="tablist" aria-label="Tabs">
+          <div className="side-pane__tabs" role="tablist" aria-label={`${PANEL_LABEL[panel]} tabs`}>
             {tabs.map((t) => {
               const selected = t.id === activeId;
               return (
@@ -257,18 +267,49 @@ export function SidePane({ tabs, activeId, os, children, onSelect, onClose, onMo
           ref={plus}
           type="button"
           className="side-pane__button"
-          aria-label="New tab"
-          aria-haspopup="menu"
-          title="New tab"
+          data-pane-plus=""
+          aria-label={plusSpec.label}
+          aria-haspopup={plusSpec.menu ? "menu" : undefined}
+          aria-disabled={plusSpec.disabled !== undefined ? "true" : undefined}
+          title={plusSpec.disabled !== undefined ? `${plusSpec.label}: ${plusSpec.disabled}` : plusSpec.label}
           onClick={(e) => {
+            if (plusSpec.disabled !== undefined) return;
             const r = e.currentTarget.getBoundingClientRect();
             onPlus({ x: r.left, y: r.bottom }, e.currentTarget);
           }}
         >
           {icon("M6 2.5v7M2.5 6h7")}
         </button>
-        <button type="button" className="side-pane__button" aria-label="Hide the side pane" title={`Hide the side pane (${shortcutLabel(commandById("preview").binding!, os)})`} onClick={onHide}>
-          {icon("M4.5 2.5 8 6 4.5 9.5")}
+        {menu && (
+          <button
+            type="button"
+            className="side-pane__button"
+            aria-label={menu.label}
+            aria-haspopup="menu"
+            title={menu.label}
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              onMenu?.({ x: r.left, y: r.bottom }, e.currentTarget);
+            }}
+          >
+            {icon("M2.5 6h.01M6 6h.01M9.5 6h.01")}
+          </button>
+        )}
+        <button
+          type="button"
+          className="side-pane__button"
+          aria-label="Fill the side pane"
+          aria-pressed={fill.on}
+          aria-disabled={fill.disabled !== undefined ? "true" : undefined}
+          title={fill.disabled ?? (fill.on ? "Show the other panels" : "Fill the side pane")}
+          onClick={() => {
+            if (fill.disabled === undefined) onFill();
+          }}
+        >
+          {icon("M7.5 1.5h3v3M10.5 1.5 7 5M4.5 10.5h-3v-3M1.5 10.5 5 7")}
+        </button>
+        <button type="button" className="side-pane__button" aria-label={`Hide ${PANEL_LABEL[panel]}`} title={`Hide ${PANEL_LABEL[panel]} (${hideKeys})`} onClick={onHide}>
+          {icon("M3 3l6 6M9 3 3 9")}
         </button>
       </div>
       <div className="side-pane__body">{children}</div>

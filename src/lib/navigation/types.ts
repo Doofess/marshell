@@ -9,8 +9,11 @@ export type Target =
   | { kind: "row"; number: number }
   /** A control in the top bar, or the launcher and palette buttons: it is activated, not selected. */
   | { kind: "top"; id: string }
-  /** The side pane, which is selected like a terminal: focus goes into it. */
-  | { kind: "side" };
+  /** One panel of the side pane ("browser", "files"), which is selected like a terminal: focus goes into it. */
+  | { kind: "side"; panel: string };
+
+/** A panel of the side pane that is on screen: its id (the value of its `data-nav-side`) and the name that is spoken ("Browser"). */
+export type SideStop = { id: string; name: string };
 
 export type Dir = "left" | "right" | "up" | "down";
 
@@ -22,15 +25,15 @@ export type NavContext = {
   panes: Array<number | null>;
   layout: NavLayout;
   names?: Record<number, string>;
-  /** The side pane's spoken name ("the side pane") while it is on screen; null or absent: it is not, and Tab never stops there. */
-  side?: string | null;
+  /** The panels of the side pane that are on screen, in Tab's order; empty, null or absent: none is, and Tab never stops there. */
+  side?: readonly SideStop[] | null;
 };
 
 export type NavState = {
   /** The slot holding the terminal that has the keyboard, or null: nothing is selected. */
   selectedPane: number | null;
-  /** The side pane has the keyboard. It wins over `selectedPane` when the pane is on screen. */
-  selectedSide: boolean;
+  /** The panel of the side pane that has the keyboard, or null. It wins over `selectedPane` while that panel is on screen; one that is not is forgotten. */
+  selectedSide: string | null;
   /** Where the navigation cursor is while the modifier is held and the user is moving about; it selects on release. */
   cursor: Target | null;
   /** The navigation modifier is down. */
@@ -56,17 +59,17 @@ export type NavEffect =
   | { type: "select-pane"; index: number }
   /** A session that is not on screen was chosen: show it in this slot, then select that slot. */
   | { type: "bring-into-view"; number: number; pane: number }
-  /** The side pane was selected: focus goes into it. */
-  | { type: "select-side" }
+  /** A panel of the side pane was selected: focus goes into it. */
+  | { type: "select-side"; panel: string }
   | { type: "activate"; id: string }
   | { type: "deselect" }
   | { type: "announce"; text: string };
 
-export const INITIAL_NAV: NavState = { selectedPane: null, selectedSide: false, cursor: null, held: false, engaged: false };
+export const INITIAL_NAV: NavState = { selectedPane: null, selectedSide: null, cursor: null, held: false, engaged: false };
 
 export const sameTarget = (a: Target | null, b: Target | null): boolean => {
   if (!a || !b || a.kind !== b.kind) return false;
-  if (a.kind === "side") return true;
+  if (a.kind === "side") return a.panel === (b as typeof a).panel;
   if (a.kind === "pane") return a.index === (b as typeof a).index;
   if (a.kind === "row") return a.number === (b as typeof a).number;
   return a.id === (b as typeof a).id;

@@ -78,14 +78,14 @@ describe("holding the modifier and pressing an arrow starts a cursor that can go
   it("selects a session that is on screen by selecting its pane, on release", () => {
     const r = run(at(0), [DOWN, arrow("left"), arrow("down"), arrow("down"), UP], GRID_CONTEXT);
     expect(without(r.effects)).toEqual([{ type: "select-pane", index: 2 }]);
-    expect(r.state).toEqual({ selectedPane: 2, selectedSide: false, cursor: null, held: false, engaged: false });
+    expect(r.state).toEqual({ selectedPane: 2, selectedSide: null, cursor: null, held: false, engaged: false });
     expect(announced(r.effects).at(-1)).toBe("Selected session 3, api-server");
   });
   it("brings a session that is not on screen into the focused pane, then selects it", () => {
     // Session 5 is only in the sidebar. From slot 0: left to row 1, then down through 2 and 3 to 5.
     const r = run(at(0), [DOWN, arrow("left"), arrow("down"), arrow("down"), arrow("down"), UP], GRID_CONTEXT);
     expect(without(r.effects)).toEqual([{ type: "bring-into-view", number: 5, pane: 0 }]);
-    expect(r.state).toEqual({ selectedPane: 0, selectedSide: false, cursor: null, held: false, engaged: false });
+    expect(r.state).toEqual({ selectedPane: 0, selectedSide: null, cursor: null, held: false, engaged: false });
     expect(announced(r.effects).at(-1)).toBe("Selected session 5, docs-site");
   });
   it("uses the first empty slot when nothing is selected", () => {
@@ -120,7 +120,7 @@ describe("holding the modifier and pressing an arrow starts a cursor that can go
   it("releasing the modifier with no cursor out changes nothing", () => {
     const r = run(at(2), [DOWN, UP], GRID_CONTEXT);
     expect(r.effects).toEqual([]);
-    expect(r.state).toEqual({ selectedPane: 2, selectedSide: false, cursor: null, held: false, engaged: false });
+    expect(r.state).toEqual({ selectedPane: 2, selectedSide: null, cursor: null, held: false, engaged: false });
   });
 });
 
@@ -128,7 +128,7 @@ describe("Esc and the select-none chord", () => {
   it("Esc while the cursor is out cancels it and keeps the selection", () => {
     const r = run(at(0), [DOWN, arrow("left"), arrow("down"), { type: "escape" }, UP], GRID_CONTEXT);
     expect(without(r.effects)).toEqual([]);
-    expect(r.state).toEqual({ selectedPane: 0, selectedSide: false, cursor: null, held: false, engaged: false });
+    expect(r.state).toEqual({ selectedPane: 0, selectedSide: null, cursor: null, held: false, engaged: false });
     expect(announced(r.effects).at(-1)).toBe("Cancelled");
   });
   it("Esc with no cursor out selects nothing", () => {
@@ -143,7 +143,7 @@ describe("Esc and the select-none chord", () => {
   it("the select-none chord deselects, also from the middle of a move", () => {
     const r = run(at(0), [DOWN, arrow("left"), { type: "select-none" }, UP], GRID_CONTEXT);
     expect(without(r.effects)).toEqual([{ type: "deselect" }]);
-    expect(r.state).toEqual({ selectedPane: null, selectedSide: false, cursor: null, held: false, engaged: false });
+    expect(r.state).toEqual({ selectedPane: null, selectedSide: null, cursor: null, held: false, engaged: false });
   });
   it("Tab after selecting none selects the first terminal again", () => {
     expect(run(at(2), [{ type: "select-none" }, DOWN, TAB], GRID_CONTEXT).state.selectedPane).toBe(0);
@@ -167,54 +167,94 @@ describe("the mouse", () => {
   });
 });
 
-describe("the side pane is a stop after the terminals", () => {
-  const SIDE = { kind: "side" } as const;
-  const withSide: NavContext = {
-    panes: [1],
-    names: NAMES,
-    side: "the side pane",
-    layout: [
-      { target: { kind: "pane", index: 0 }, rect: { x: 288, y: 40, w: 300, h: 300 } },
-      { target: SIDE, rect: { x: 600, y: 40, w: 300, h: 300 } },
-    ],
-  };
-  it("Tab goes from the terminal to the side pane and back", () => {
-    const first = run(at(0), [DOWN, TAB], withSide);
-    expect(without(first.effects)).toEqual([{ type: "select-side" }]);
-    expect(announced(first.effects)).toEqual(["Selected the side pane"]);
-    expect(first.state.selectedSide).toBe(true);
-    const back = run(first.state, [TAB], withSide);
+describe("each panel of the side pane is a stop after the terminals", () => {
+  const BROWSER = { kind: "side", panel: "browser" } as const;
+  const FILES = { kind: "side", panel: "files" } as const;
+  const PANELS = [
+    { id: "browser", name: "Browser" },
+    { id: "files", name: "Files" },
+  ];
+  const layout = [
+    { target: { kind: "pane", index: 0 } as const, rect: { x: 288, y: 40, w: 300, h: 300 } },
+    { target: BROWSER, rect: { x: 600, y: 40, w: 300, h: 150 } },
+    { target: FILES, rect: { x: 600, y: 191, w: 300, h: 150 } },
+  ];
+  const both: NavContext = { panes: [1], names: NAMES, side: PANELS, layout };
+  const filesOnly: NavContext = { ...both, side: [{ id: "files", name: "Files" }] };
+  it("Tab goes terminal, Browser, Files, terminal", () => {
+    const toBrowser = run(at(0), [DOWN, TAB], both);
+    expect(without(toBrowser.effects)).toEqual([{ type: "select-side", panel: "browser" }]);
+    expect(toBrowser.state.selectedSide).toBe("browser");
+    const toFiles = run(toBrowser.state, [TAB], both);
+    expect(without(toFiles.effects)).toEqual([{ type: "select-side", panel: "files" }]);
+    expect(toFiles.state.selectedSide).toBe("files");
+    const back = run(toFiles.state, [TAB], both);
     expect(without(back.effects)).toEqual([{ type: "select-pane", index: 0 }]);
     expect(announced(back.effects)).toEqual(["Selected session 1, billing"]);
+    expect(back.state.selectedSide).toBeNull();
   });
-  it("with the pane hidden Tab selects the terminal as before", () => {
-    const hidden: NavContext = { ...withSide, side: null };
-    const r = run(at(0), [DOWN, TAB], hidden);
-    expect(without(r.effects)).toEqual([{ type: "select-pane", index: 0 }]);
-    expect(r.state.selectedSide).toBe(false);
+  it("Tab skips a panel that isn't on screen", () => {
+    const first = run(at(0), [DOWN, TAB], filesOnly);
+    expect(without(first.effects)).toEqual([{ type: "select-side", panel: "files" }]);
+    expect(without(run(first.state, [TAB], filesOnly).effects)).toEqual([{ type: "select-pane", index: 0 }]);
   });
-  it("with a cursor out, Tab carries it to the side pane and the release selects it", () => {
-    const out = run(at(0, { cursor: { kind: "pane", index: 0 } }), [DOWN, TAB], withSide);
-    expect(out.state.cursor).toEqual(SIDE);
-    expect(announced(out.effects)).toEqual(["Cursor on the side pane"]);
-    const released = run(out.state, [UP], withSide);
-    expect(without(released.effects)).toEqual([{ type: "select-side" }]);
-    expect(released.state.selectedSide).toBe(true);
+  it("from Browser Tab goes to Files, not to the terminal", () => {
+    const r = run(at(null, { selectedSide: "browser" }), [DOWN, TAB], both);
+    expect(without(r.effects)).toEqual([{ type: "select-side", panel: "files" }]);
+    expect(r.state.selectedSide).toBe("files");
+  });
+  it("with no panel on screen Tab stays on the terminal's ring", () => {
+    for (const side of [[], null, undefined]) {
+      const ctx: NavContext = { ...both, side };
+      const r = run(at(0), [DOWN, TAB], ctx);
+      expect(without(r.effects)).toEqual([{ type: "select-pane", index: 0 }]);
+      expect(r.state.selectedSide).toBeNull();
+    }
+  });
+  it("a selected panel that left the screen is forgotten", () => {
+    const r = run(at(0, { selectedSide: "browser" }), [DOWN, TAB], filesOnly);
+    expect(without(r.effects)).toEqual([{ type: "select-side", panel: "files" }]);
+    expect(r.state.selectedSide).toBe("files");
+  });
+  it("with the cursor out Tab carries it over each panel and selects on release", () => {
+    const a = run(at(0, { cursor: { kind: "pane", index: 0 } }), [DOWN, TAB], both);
+    expect(a.state.cursor).toEqual(BROWSER);
+    expect(announced(a.effects)).toEqual(["Cursor on Browser"]);
+    const b = run(a.state, [TAB], both);
+    expect(b.state.cursor).toEqual(FILES);
+    expect(announced(b.effects)).toEqual(["Cursor on Files"]);
+    const released = run(b.state, [UP], both);
+    expect(without(released.effects)).toEqual([{ type: "select-side", panel: "files" }]);
+    expect(released.state.selectedSide).toBe("files");
     expect(released.state.cursor).toBeNull();
   });
-  it("an arrow can carry the cursor onto the side pane", () => {
-    const r = run(at(0), [DOWN, arrow("right")], withSide);
-    expect(r.state.cursor).toEqual(SIDE);
-    expect(announced(r.effects)).toEqual(["Cursor on the side pane"]);
+  it("an arrow moves the cursor between the two panels by their boxes", () => {
+    const down = run(at(null, { selectedSide: "browser" }), [DOWN, arrow("down")], both);
+    expect(down.state.cursor).toEqual(FILES);
+    expect(announced(down.effects)).toEqual(["Cursor on Files"]);
+    expect(run(at(null, { selectedSide: "files" }), [DOWN, arrow("up")], both).state.cursor).toEqual(BROWSER);
   });
-  it("an arrow starts from the side pane while it is selected", () => {
-    const r = run(at(null, { selectedSide: true }), [DOWN, arrow("left")], withSide);
+  it("an arrow can carry the cursor onto a panel", () => {
+    const r = run(at(0), [DOWN, arrow("right")], both);
+    expect(r.state.cursor).toEqual(BROWSER);
+    expect(announced(r.effects)).toEqual(["Cursor on Browser"]);
+  });
+  it("an arrow starts from the panel that is selected", () => {
+    const r = run(at(null, { selectedSide: "files" }), [DOWN, arrow("left")], both);
     expect(r.state.cursor).toEqual({ kind: "pane", index: 0 });
   });
+  it("says Selected Browser and Selected Files", () => {
+    expect(announced(run(INITIAL_NAV, [{ type: "choose", target: BROWSER }], both).effects)).toEqual(["Selected Browser"]);
+    expect(announced(run(INITIAL_NAV, [{ type: "choose", target: FILES }], both).effects)).toEqual(["Selected Files"]);
+  });
   it("selecting a terminal clears selectedSide", () => {
-    const r = run(at(null, { selectedSide: true }), [{ type: "choose", target: { kind: "pane", index: 0 } }], withSide);
-    expect(r.state.selectedSide).toBe(false);
+    const r = run(at(null, { selectedSide: "files" }), [{ type: "choose", target: { kind: "pane", index: 0 } }], filesOnly);
+    expect(r.state.selectedSide).toBeNull();
     expect(r.state.selectedPane).toBe(0);
+  });
+  it("Esc deselects a selected panel; one that left the screen is nothing to deselect", () => {
+    expect(without(run(at(null, { selectedSide: "files" }), [{ type: "escape" }], both).effects)).toEqual([{ type: "deselect" }]);
+    expect(run(at(null, { selectedSide: "browser" }), [{ type: "escape" }], filesOnly).effects).toEqual([]);
   });
 });
 

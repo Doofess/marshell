@@ -150,19 +150,23 @@
     color: var(--text-1);
   }
 }
-/* Shows and hides the side pane, at the bar's end edge. The sidebar button's twin, with its margin on the other side. */
+/* One button per side pane panel, at the bar's end edge. The sidebar button's twin, with its margin on the other side. */
 .window__pane-toggle {
   display: grid;
   place-items: center;
   flex: none;
   inline-size: 32px;
   block-size: 28px;
-  margin-inline-end: var(--space-1);
+  margin-inline-end: 2px;
   padding: 0;
   border: 0;
   border-radius: var(--radius);
   background: transparent;
   color: var(--text-2);
+}
+/* The panel buttons are 2 px apart; only the last keeps the bar's end margin. */
+.window__pane-toggle:last-of-type {
+  margin-inline-end: var(--space-1);
 }
 /* A tab an agent opened is waiting: a dot at the icon's top corner, until the pane has shown it. */
 .window__pane-toggle {

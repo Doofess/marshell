@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cancelsCloseBar, commandShortcut, sessionShortcut } from "./appShortcuts";
+import { cancelsCloseBar, commandShortcut, sessionShortcut, waitsForPalette } from "./appShortcuts";
 import type { KeyEventLike } from "./bindings";
 import { DEFAULT_NAV_MODIFIER } from "./navigation/modifier";
 
@@ -34,10 +34,18 @@ describe("sessionShortcut", () => {
     expect(sessionShortcut(ev("PageUp", cs), "windows")).toEqual({ kind: "prompt", by: -1 });
     expect(sessionShortcut(ev("PageDown", { metaKey: true }), "mac")).toEqual({ kind: "prompt", by: 1 });
   });
-  it("Ctrl+Shift+D and Ctrl+Shift+P are no shortcut", () => {
-    expect(sessionShortcut(ev("KeyD", cs), "windows")).toBeNull();
+  it("Ctrl+Shift+P is no shortcut", () => {
     expect(sessionShortcut(ev("KeyP", cs), "windows")).toBeNull();
-    expect(sessionShortcut(ev("KeyD", { metaKey: true }), "mac")).toBeNull();
+  });
+  it("Ctrl+Shift+A is the Browser panel and Ctrl+Shift+D the Files panel", () => {
+    expect(sessionShortcut(ev("KeyA", cs), "windows")).toEqual({ kind: "panel", panel: "browser" });
+    expect(sessionShortcut(ev("KeyD", cs), "windows")).toEqual({ kind: "panel", panel: "files" });
+    expect(sessionShortcut(ev("KeyA", { metaKey: true, altKey: true }), "mac")).toEqual({ kind: "panel", panel: "browser" });
+    expect(sessionShortcut(ev("KeyD", { metaKey: true }), "mac")).toEqual({ kind: "panel", panel: "files" });
+    // Cmd+A is Select all on macOS.
+    expect(sessionShortcut(ev("KeyA", { metaKey: true }), "mac")).toBeNull();
+    expect(commandShortcut("browser-panel")).toEqual({ kind: "panel", panel: "browser" });
+    expect(commandShortcut("files-panel")).toEqual({ kind: "panel", panel: "files" });
   });
   it("selects no terminal with the navigation modifier and Backspace; Tab is the navigation hook's own", () => {
     expect(DEFAULT_NAV_MODIFIER).toBe("ctrl+shift");
@@ -169,5 +177,20 @@ describe("browser tab commands", () => {
     expect(commandShortcut("new-browser-tab")).toEqual({ kind: "newBrowserTab" });
     expect(commandShortcut("open-url")).toEqual({ kind: "newBrowserTab" });
     expect(commandShortcut("clear-browser-data")).toEqual({ kind: "clearBrowserData" });
+  });
+});
+
+describe("waitsForPalette", () => {
+  it("a palette command that moves the keyboard waits for the palette to hand it back", () => {
+    for (const id of ["browser-panel", "files-panel"]) expect(waitsForPalette(commandShortcut(id)), id).toBe(true);
+    expect(waitsForPalette({ kind: "preview" })).toBe(true);
+    expect(waitsForPalette({ kind: "paneTab", by: 1 })).toBe(true);
+    expect(waitsForPalette({ kind: "closePaneTab" })).toBe(true);
+    expect(waitsForPalette({ kind: "newBrowserTab" })).toBe(true);
+  });
+  it("the other commands run at once", () => {
+    expect(waitsForPalette({ kind: "focusMode" })).toBe(false);
+    expect(waitsForPalette({ kind: "launcher" })).toBe(false);
+    expect(waitsForPalette(null)).toBe(false);
   });
 });

@@ -1,0 +1,227 @@
+/* A panel with no tabs: its mark, what is missing, what to do and two buttons, centred; then a list that reads from the start edge.
+ * The panel can be as short as 160 px, so the block is a size container: a short one drops the mark and scrolls what is left. */
+.empty-panel {
+  container-type: size;
+  display: grid;
+  min-inline-size: 0;
+  min-block-size: 0;
+  overflow-x: clip;
+  overflow-y: auto;
+  font-size: var(--text-13);
+}
+
+/* Auto margins centre the column and fall to nothing when it is taller than the panel, so its top is never out of reach. */
+.empty-panel__column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  box-sizing: border-box;
+  inline-size: min(100%, 22rem);
+  margin: auto;
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+}
+
+.empty-panel__icon {
+  flex: none;
+  margin-block-end: var(--space-1);
+  color: var(--text-3);
+}
+.empty-panel__icon-shape {
+  fill: var(--accent-tint);
+}
+
+.empty-panel__title {
+  margin: 0;
+  color: var(--text-1);
+  font-size: var(--text-15);
+  font-weight: 600;
+  line-height: 1.3;
+}
+.empty-panel__line {
+  max-inline-size: 34ch;
+  margin: 0;
+  color: var(--text-2);
+  line-height: var(--leading);
+  text-wrap: balance;
+}
+
+.empty-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+  margin-block-start: var(--space-2);
+}
+/* The first button is filled with the accent and the second tinted: told apart by fill and never by a box. */
+.empty-panel__button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-block-size: 28px;
+  padding: var(--space-1) var(--space-3);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-1);
+  font: inherit;
+  white-space: nowrap;
+}
+.empty-panel__button > svg {
+  flex: none;
+}
+.empty-panel__button--primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+/* A button that can't be used stays in reach of the keyboard; its tooltip says why. */
+.empty-panel__button[aria-disabled="true"] {
+  background: var(--hover);
+  color: var(--text-3);
+  cursor: default;
+}
+.empty-panel__button:not([aria-disabled="true"]):active {
+  scale: 0.97;
+}
+
+/* The list under the buttons: the ports the session listens on or the project's recent files. */
+.empty-panel__group {
+  display: grid;
+  gap: var(--space-1);
+  inline-size: 100%;
+  margin-block-start: var(--space-4);
+  text-align: start;
+}
+.empty-panel__heading {
+  margin: 0;
+  padding-inline: var(--space-2);
+  color: var(--text-2);
+  font-size: var(--text-12);
+  font-weight: 600;
+}
+.empty-panel__list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.empty-panel__row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  inline-size: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  text-align: start;
+}
+.empty-panel__row:active {
+  background: var(--fill);
+}
+/* A long name gives way before it pushes the row wider than the panel; the folder takes what the name leaves. */
+.empty-panel__name {
+  flex: 0 1 auto;
+  min-inline-size: 4ch;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.empty-panel__folder {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  overflow: clip;
+  color: var(--text-2);
+  font-size: var(--text-12);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A port in the list is one the session listens on now. */
+.empty-panel__dot {
+  flex: none;
+  align-self: center;
+  inline-size: 6px;
+  block-size: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.empty-panel__button:focus-visible,
+.empty-panel__row:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .empty-panel__button:not([aria-disabled="true"]):hover {
+    background: var(--fill-strong);
+  }
+  .empty-panel__button--primary:not([aria-disabled="true"]):hover {
+    background: color-mix(in oklch, var(--accent) 86%, var(--text-1));
+  }
+  .empty-panel__row:hover {
+    background: var(--selected);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .empty-panel__button {
+    transition: scale 160ms var(--ease-out);
+  }
+}
+
+/* A short panel keeps its words and its buttons and gives up the mark. */
+@container (height < 280px) {
+  .empty-panel__icon {
+    display: none;
+  }
+  .empty-panel__column {
+    padding-block: var(--space-3);
+  }
+}
+
+/* Forced colours: the filled button is the system's selection pair and the plain one its button pair. A fill may match the
+ * window here, so each button also gets a line around it. The buttons opt out of the system's repainting to keep the pair, so
+ * their hover is restated in system colours below. */
+@media (forced-colors: active) {
+  .empty-panel__icon {
+    color: CanvasText;
+  }
+  .empty-panel__icon-shape {
+    fill: none;
+  }
+  .empty-panel__button {
+    background: ButtonFace;
+    color: ButtonText;
+    outline: 1px solid ButtonText;
+    forced-color-adjust: none;
+  }
+  .empty-panel__button--primary {
+    background: Highlight;
+    color: HighlightText;
+    outline-color: Highlight;
+  }
+  .empty-panel__button[aria-disabled="true"] {
+    background: ButtonFace;
+    color: GrayText;
+    outline-color: GrayText;
+  }
+  .empty-panel__dot {
+    background: CanvasText;
+  }
+  .empty-panel__button:focus-visible,
+  .empty-panel__row:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+}
+@media (forced-colors: active) and (hover: hover) and (pointer: fine) {
+  .empty-panel__button:not([aria-disabled="true"]):hover {
+    background: Highlight;
+    color: HighlightText;
+  }
+}

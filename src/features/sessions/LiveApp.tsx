@@ -42,7 +42,7 @@ import { ContextMenu } from "../../components/ContextMenu/ContextMenu";
 import { opensApi } from "../../lib/api/opens";
 import { tasksApi } from "../../lib/api/tasks";
 import { findCommand } from "../../lib/bindings";
-import { cancelsCloseBar, commandShortcut, sessionShortcut, type SessionShortcut } from "../../lib/appShortcuts";
+import { cancelsCloseBar, commandShortcut, sessionShortcut, waitsForPalette, type SessionShortcut } from "../../lib/appShortcuts";
 import { nextWaiting } from "../lane/laneLayout";
 import { focusPendingCard } from "../approval/focusPendingCard";
 import { commandById, MOVED_COMMANDS, osOfPlatform, shortcutLabel } from "../../lib/keymap";
@@ -67,7 +67,9 @@ import type { SaveCommands, TextTabCommands } from "../editor/TextTab";
 import type { PaneTab } from "../../generated/PaneTab";
 import { PaneContext, PagePaneContext, type OpenPageInPane } from "../pane/PaneContext";
 import { dropCover, modalOnScreen } from "../pane/dropCover";
-import { EmptyPane } from "../pane/EmptyPane";
+import { EmptyBrowser, PAGES_UNAVAILABLE } from "../pane/EmptyBrowser";
+import { EmptyFiles } from "../pane/EmptyFiles";
+import { PanelStack } from "../pane/PanelStack";
 import { KeptTabs } from "../pane/KeptTabs";
 import { useBrowserKeys } from "../browser/useBrowserKeys";
 import { useCoverPage } from "../browser/pageCover";
@@ -76,13 +78,15 @@ import { BrowserTab } from "../browser/BrowserTab";
 import { ClearDataDialog } from "../browser/ClearDataDialog";
 import { BLANK, isPageUrl, ownOrigins as ownOriginsOf, shellRefuses } from "../browser/address";
 import { browserTabs } from "../browser/available";
+import { browserMenuChoice, browserMenuItems, menuTarget } from "../browser/browserMenu";
 import { browser, pageKey } from "../browser/browserApi";
 import type { UrlBarHandle } from "../browser/UrlBar";
 import { useBrowserPages } from "../browser/useBrowserPages";
-import { askedFrom, focusPane } from "../pane/focusPane";
-import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, PANE_BESIDE_SESSION, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, receiptWithPaneHidden, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome } from "../pane/paneCommands";
-import { activeTab, currentEntry, isBrowserTab, openRefused, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
-import { takeOpens } from "../pane/opens";
+import { askedFrom, focusPane, panelOfElement } from "../pane/focusPane";
+import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, PANE_BESIDE_SESSION, closeNothingText, noTabText, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, commandPanel, firstWith, hideFocus, landingPanel, panelButtonsFor, panelOrder, unseenPanels, panelHiddenText, panelToggleOutcome, shouldPin, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, receiptWithPaneHidden, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf } from "../pane/paneCommands";
+import { isPanelId, onScreen, PANEL_COMMAND, PANEL_LABEL, panelOf, panelOfPath, panelTabs, activeIn, stackOf, stackPanels, type PanelId } from "../pane/panels";
+import { activeTab, currentEntry, isBrowserTab, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
+import { dropPlan, takeOpens } from "../pane/opens";
 import { newsReducer } from "../pane/paneNews";
 import { plusChoice, plusMenuItems } from "../pane/plusMenu";
 import { SidePane } from "../pane/SidePane";
@@ -703,19 +707,48 @@ export function LiveApp() {
   });
   // Only the script command the header would show is listed.
   const os = endpoint ? osOfPlatform(endpoint.platform) : undefined;
+  // The panels of the side pane on screen: those of the stack while the pane is open beside a session, else none.
+  const stack = stackOf(view.pane, focusedId);
+  const beside = mainView === "sessions" && focusedId != null;
+  const panelsOn = beside ? onScreen(view.pane, focusedId) : [];
+  // Where the keyboard is: the panel `document.activeElement` is inside, from focusin and focusout. A page that has the keyboard is in the
+  // Browser panel, whatever `document.activeElement` still names (S12 finding 8).
+  const [panelInDom, setPanelInDom] = useState<PanelId | null>(null);
+  const pageHasKeys = useFocusedPage() !== null;
+  const panelFocus: PanelId | null = pageHasKeys ? "browser" : panelInDom;
+  const panelFocusRef = useRef(panelFocus);
+  panelFocusRef.current = panelFocus;
+  // The last panel that had the keyboard: the one a tab command acts on when none has it now.
+  const lastPanel = useRef<PanelId | null>(null);
+  if (panelFocus !== null) lastPanel.current = panelFocus;
+  useEffect(() => {
+    const inside = () => setPanelInDom(panelOfElement(document.activeElement));
+    document.addEventListener("focusin", inside);
+    document.addEventListener("focusout", inside);
+    return () => {
+      document.removeEventListener("focusin", inside);
+      document.removeEventListener("focusout", inside);
+    };
+  }, []);
+  // What a tab command acts on, read when it runs: the commands are called through refs, long after the render that made them.
+  const onNow = useRef({ session: focusedId, panelsOn });
+  onNow.current = { session: focusedId, panelsOn };
+  const currentPanel = (): PanelId | null => commandPanel(onNow.current.panelsOn, panelFocusRef.current, lastPanel.current, (p) => panelTabs(viewRef.current.pane, onNow.current.session, p).length > 0);
   // The side pane's preview tabs, by key: each hands over the commands the palette and the close question call on it, a text tab's
   // editor commands, and what saves the tab (a text tab's editor, or a PDF tab's notes).
   const textTabs = useRef(new Map<string, Pick<PreviewHandle, "text" | "saving">>());
-  // The preview tab on screen: the selected tab of the pane shown beside the session. Null when the pane is hidden or covered.
-  const shownPreview = (): Pick<PreviewHandle, "text" | "saving"> | null => {
-    if (!view.pane.open || mainView !== "sessions" || focusedId == null) return null;
-    const shown = tabsOf(view.pane, focusedId);
-    const id = shown.active ?? shown.tabs[0]?.id;
-    return id === undefined ? null : (textTabs.current.get(pageKey(focusedId, id)) ?? null);
-  };
+  // The selected tab of each panel on screen, in the order the commands look: the current panel's first, then the other. `get` is
+  // asked with the tab's key; the first answer that is not null wins. Null when the pane is hidden or covered.
+  const shownTabAnswer = <T,>(get: (key: string) => T | null): T | null =>
+    focusedId == null
+      ? null
+      : firstWith(panelOrder(panelsOn, currentPanel()), (panel) => {
+          const tab = activeTab(view.pane, focusedId, panel);
+          return tab ? get(pageKey(focusedId, tab.id)) : null;
+        });
   // The loaded text tab on screen, and what saves the tab on screen. Null when the tab is not an editor, or has nothing that saves, yet.
-  const shownText = (): TextTabCommands | null => shownPreview()?.text() ?? null;
-  const shownSaving = (): SaveCommands | null => shownPreview()?.saving() ?? null;
+  const shownText = (): TextTabCommands | null => shownTabAnswer((key) => textTabs.current.get(key)?.text() ?? null);
+  const shownSaving = (): SaveCommands | null => shownTabAnswer((key) => textTabs.current.get(key)?.saving() ?? null);
   const shownTextRef = useRef(shownText);
   shownTextRef.current = shownText;
   const shownSavingRef = useRef(shownSaving);
@@ -725,12 +758,7 @@ export function LiveApp() {
   // The side pane's tabs that can mark a region, by key: a preview tab (which also hands over its PDF commands) or a browser tab (which has none).
   const regionTabs = useRef(new Map<string, { selectRegion(): boolean; pdf?(): PdfCommands | null }>());
   // The loaded PDF tab on screen, found like the text tab. Null when the pane is hidden or covered, or the tab is not a PDF that has loaded.
-  const shownPdf = (): PdfCommands | null => {
-    if (!view.pane.open || mainView !== "sessions" || focusedId == null) return null;
-    const shown = tabsOf(view.pane, focusedId);
-    const id = shown.active ?? shown.tabs[0]?.id;
-    return id === undefined ? null : (regionTabs.current.get(pageKey(focusedId, id))?.pdf?.() ?? null);
-  };
+  const shownPdf = (): PdfCommands | null => shownTabAnswer((key) => regionTabs.current.get(key)?.pdf?.() ?? null);
   const shownPdfRef = useRef(shownPdf);
   shownPdfRef.current = shownPdf;
   // A command that would do nothing now (Close with no session in focus, Reopen with nothing closed) is left out too.
@@ -856,7 +884,7 @@ export function LiveApp() {
     const entry = currentEntry(tab);
     if (tabCloseAsk({ id: tab.id, path: entry.path, kind: tabKind(isBrowserTab(tab), entry.path) }, unsavedRef.current, osName) !== "ask") return false;
     const shown = tabsOf(viewRef.current.pane, session);
-    if ((shown.active ?? shown.tabs[0]?.id) !== tab.id) paneDispatch({ type: "select", session, paneTab: tab.id });
+    if (activeIn(shown, panelOf(tab)) !== tab.id) paneDispatch({ type: "select", session, paneTab: tab.id });
     setSaveAsk({ session, paneTab: tab.id, path: entry.path, from: askedFrom(document.activeElement) });
     return true;
   };
@@ -868,7 +896,7 @@ export function LiveApp() {
     announce(closedText(paneTabName(tab, tabTitles(shown.tabs))));
     // The dialog gave focus back to the tab it was asked from, which is going. After a save the close is drawn later than the next
     // frame, so focus waits for it. A close asked from the strip leaves the keyboard on the strip.
-    if (ask.from !== null) focusPane(ask.paneTab, ask.from);
+    if (ask.from !== null) focusPane(panelOf(tab), ask.paneTab, ask.from);
   };
   // A tab that was not on screen mounts when it is selected, and its draft is read a moment later: wait for it, up to two seconds.
   const loadedText = async (key: string): Promise<SaveCommands | null> => {
@@ -920,12 +948,12 @@ export function LiveApp() {
     const taken = takeOpens(viewRef.current.pane, opens, new Set(answered.current.keys()), {
       sessions: new Map(rows.map((r) => [r.id, { project: r.projectKey }])),
       shown: focusedId ?? null,
-      paneOpen: viewRef.current.pane.open && mainView === "sessions",
+      onScreen: panelsOn,
       refuses: (url) => shellRefuses(url, ownOrigins()),
     });
     const repeat = opens.flatMap((o) => answered.current.get(o.id) ?? []);
     for (const a of taken.actions) paneDispatch(a);
-    if (taken.news.length > 0) newsDispatch({ type: "add", sessions: taken.news });
+    if (taken.news.length > 0) newsDispatch({ type: "add", items: taken.news });
     for (const d of taken.done) answered.current.set(d.id, d);
     // The announcer holds one notice at a time, so a frame's tabs are said together.
     if (taken.said.length > 0) announce(taken.said.join(" "));
@@ -933,19 +961,20 @@ export function LiveApp() {
     if (reply.length > 0) void opensApi.done(ep, reply).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps -- a frame is applied when it arrives; the rest is read as it stands.
   }, [opens, settled, loaded]);
-  // A tab loses its "new" mark as soon as it is in front of the person: the pane open, the sessions view on screen and the session
-  // shown. That clears the session's news and, when its selected tab is marked, the tab's own mark.
-  const shownTabUnseen = focusedId != null && Boolean(activeTab(view.pane, focusedId)?.unseen);
+  // A tab loses its "new" mark as soon as it is in front of the person: its panel on screen beside the session on screen. That clears
+  // the panel's news and, when the panel's selected tab is marked, the tab's own mark. A panel that is hidden keeps both.
+  const unseenOn = unseenPanels(view.pane, focusedId, panelsOn);
+  const seenKey = `${panelsOn.join(",")}|${unseenOn.join(",")}`;
   useEffect(() => {
-    if (!view.pane.open || mainView !== "sessions" || focusedId == null) return;
-    newsDispatch({ type: "seen", session: focusedId });
-    if (shownTabUnseen) paneDispatch({ type: "seen", session: focusedId });
-  }, [view.pane.open, mainView, focusedId, shownTabUnseen, paneNews, paneDispatch]);
+    if (focusedId == null) return;
+    for (const panel of panelsOn) newsDispatch({ type: "seen", session: focusedId, panel });
+    for (const panel of unseenOn) paneDispatch({ type: "seen", session: focusedId, panel });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `seenKey` names the panels on screen and those with a marked selected tab.
+  }, [seenKey, focusedId, paneNews, paneDispatch]);
   // A session that is gone from the list is forgotten (derived from `rows`; the core's closed list is a different thing).
   useEffect(() => {
     if (!loaded) return;
-    const ids = new Set(rows.map((r) => r.id));
-    for (const id of paneNews) if (!ids.has(id)) newsDispatch({ type: "closed", session: id });
+    newsDispatch({ type: "only", sessions: new Set(rows.map((r) => r.id)) });
   }, [rows, loaded, paneNews]);
   // A new tab, or the file's own tab; shows the pane and moves focus into it. False when it was refused (and said so).
   const openInPane = (target: OpenTarget): boolean => {
@@ -955,9 +984,10 @@ export function LiveApp() {
       announce(check === "refused" ? TAB_LIMIT : NO_SESSION_TO_OPEN);
       return false;
     }
+    const panel = panelOfPath(target.path);
     paneDispatch({ type: "open", session, project: paneProject(), target });
-    announce(openedText(lastSegment(target.path)));
-    focusPane();
+    announce(openedText(lastSegment(target.path), panel));
+    focusPane(panel);
     return true;
   };
   // What the terminal's Ctrl+click and the viewers get: one stable function that calls the latest `openInPane`.
@@ -987,11 +1017,11 @@ export function LiveApp() {
       return false;
     }
     const action: PaneAction = { type: "openPage", session, url };
-    const opened = activeTab(paneReducer(pane, action), session);
+    const opened = activeTab(paneReducer(pane, action), session, "browser");
     paneDispatch(action);
     announce(pageOpenedText(url));
     if (opts?.focus === "address" && opened) focusAddressSoon(pageKey(session, opened.id));
-    else focusPane();
+    else focusPane("browser");
     return true;
   };
   const openPageRef = useRef(openPageInPane);
@@ -1022,6 +1052,40 @@ export function LiveApp() {
       () => announce("Couldn't open the file dialog."),
     );
   };
+  // "Open HTML file…": the same dialog as Browse…, filtered to HTML files; the file opens in the Browser panel's viewer.
+  const openHtmlFile = (): void => {
+    const s = stateRef.current;
+    if (s.focusedId === undefined) return announce(NO_SESSION_TO_OPEN);
+    pickFile(s.infos.find((i) => i.tab_id === s.focusedId)?.cwd ?? null, "html").then(
+      (path) => {
+        if (path !== null) openInPaneRef.current({ path });
+      },
+      () => announce("Couldn't open the file dialog."),
+    );
+  };
+  // A layout with no stack saved gets the one its tabs imply written down once a session is on screen with the pane open.
+  useEffect(() => {
+    if (focusedId != null && shouldPin(view.pane, focusedId, settled && loaded)) paneDispatch({ type: "pin", session: focusedId });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `shouldPin` reads these and nothing else.
+  }, [view.pane.open, view.pane.panels, focusedId, settled, loaded]);
+  const keysOf = (panel: PanelId) => shortcutLabel(commandById(PANEL_COMMAND[panel]).binding!, os ?? "windows");
+  // A panel's key, its title-bar button, the cursor's release on it and its x: blocked as the pane's switch is; else the panel shows
+  // (the keyboard goes into it) or hides (the keyboard goes where `hideFocus` says, never to the page body).
+  const togglePanel = (panel: PanelId) => {
+    const session = stateRef.current.focusedId;
+    if (paneToggleOutcome(session, mainViewRef.current !== "sessions") === "blocked") return announce(PANE_BESIDE_SESSION);
+    const pane = viewRef.current.pane;
+    const { shows } = panelToggleOutcome(pane, session ?? null, panel);
+    const covers = document.querySelector('[data-pane="cover"]') !== null;
+    const action: PaneAction = { type: "panel", panel, session: session ?? null };
+    const staying = onScreen(paneReducer(pane, action), session ?? null);
+    paneDispatch(action);
+    if (shows) return focusPane(panel);
+    announce(panelHiddenText(panel));
+    const to = hideFocus(panel, panelFocusRef.current, covers, staying);
+    if (to.to === "terminal") setTimeout(() => actions.focusTerminal(), 0);
+    else if (to.to === "panel") focusPane(to.panel);
+  };
   // The pane's four commands. Ctrl+Tab and the palette's next and previous tab leave focus where it is, except where that would
   // be on something no longer drawn (paneTabFocus).
   const paneRun = (shortcut: Extract<SessionShortcut, { kind: "preview" | "paneTab" | "closePaneTab" | "browse" }>) => {
@@ -1029,46 +1093,52 @@ export function LiveApp() {
     const session = stateRef.current.focusedId;
     switch (shortcut.kind) {
       case "preview": {
-        const { shown } = toggleOutcome(pane, session);
-        paneDispatch({ type: "toggle" });
-        if (shown) focusPane();
+        const action: PaneAction = { type: "toggle", session: session ?? null };
+        const next = paneReducer(pane, action);
+        paneDispatch(action);
+        // Shown: the keyboard goes to the panel a tab command would act on among those now on screen. Hidden: to the terminal.
+        const into = next.open ? commandPanel(onScreen(next, session ?? null), panelFocusRef.current, lastPanel.current, (p) => panelTabs(next, session, p).length > 0) : null;
+        if (into !== null) focusPane(into);
         else setTimeout(() => actions.focusTerminal(), 0);
         return;
       }
       case "paneTab": {
-        const outcome = paneTabOutcome(pane, session);
-        if (outcome === "none" || session === undefined) return announce(NO_TABS_OPEN);
+        const panel = currentPanel();
+        const outcome = paneTabOutcome(pane, session, panel);
+        if (outcome === "none" || session === undefined) return announce(noTabText(panel, session !== undefined && mainViewRef.current !== "sessions"));
         const from = document.activeElement?.closest('[data-nav-side] [role="tabpanel"]') != null ? "panel" : "elsewhere";
-        if (outcome === "show") paneDispatch({ type: "show" });
-        else paneDispatch({ type: "step", session, by: shortcut.by });
+        // Where the keyboard goes: into the panel that stepped, or into the one a shown pane opens on (the one that has the keyboard, else the last that had it).
+        let into: PanelId | null = panel;
+        if (outcome === "show") {
+          const action: PaneAction = { type: "show", session: session ?? null };
+          const next = paneReducer(pane, action);
+          into = commandPanel(onScreen(next, session ?? null), panelFocusRef.current, lastPanel.current, (p) => panelTabs(next, session, p).length > 0);
+          paneDispatch(action);
+        } else if (panel !== null) paneDispatch({ type: "step", session, panel, by: shortcut.by });
         // Asked once the change is drawn: whether the pane covers the terminal is the window's to say (`data-pane`).
         setTimeout(() => {
           const covers = document.querySelector('[data-pane="cover"]') !== null;
-          if (paneTabFocus({ outcome, from, covers })) focusPane();
+          if (into !== null && paneTabFocus({ outcome, from, covers })) focusPane(into);
         }, 0);
         return;
       }
       case "closePaneTab": {
-        const closing = closeTabOutcome(pane, session);
-        if (!closing || session === undefined) return announce(NO_TABS_OPEN);
+        const panel = currentPanel();
+        const closing = closeTabOutcome(pane, session, panel);
+        if (!closing || session === undefined || panel === null) return announce(closeNothingText(pane, session, panel, session !== undefined && mainViewRef.current !== "sessions", paneKeys()));
         const asked = tabsOf(pane, session).tabs.find((t) => t.id === closing.paneTab);
         if (asked && askToClose(session, asked)) return;
-        const inside = document.activeElement?.closest("[data-nav-side]") != null;
+        const inside = panelFocusRef.current === panel;
         paneDispatch({ type: "close", session, paneTab: closing.paneTab });
         const closed = tabsOf(pane, session).tabs.find((t) => t.id === closing.paneTab);
         announce(closedText(closed ? paneTabName(closed, tabTitles(tabsOf(pane, session).tabs)) : lastSegment(closing.path)));
-        // A closed tab's body takes focus with it; the pane keeps the keyboard if it had it.
-        if (inside) focusPane();
+        // A closed tab's body takes focus with it; the panel keeps the keyboard if it had it (its next tab, or its empty state's button).
+        if (inside) focusPane(panel);
         return;
       }
       case "browse":
         return browseFile();
     }
-  };
-  // The title-bar button and the cursor's release on it: Ctrl+Shift+Q beside a session, else a line saying where the pane shows.
-  const togglePane = () => {
-    if (paneToggleOutcome(stateRef.current.focusedId, mainViewRef.current !== "sessions") === "blocked") return announce(PANE_BESIDE_SESSION);
-    paneRun({ kind: "preview" });
   };
   // Esc or Ctrl+Shift+Tab in a pane tab: to the terminal, and in a window where the pane covers the terminal the pane goes too.
   const paneKeys = () => shortcutLabel(commandById("preview").binding!, os ?? "windows");
@@ -1085,7 +1155,10 @@ export function LiveApp() {
   };
   const paneRunRef = useRef(paneRun);
   paneRunRef.current = paneRun;
+  const togglePanelRef = useRef(togglePanel);
+  togglePanelRef.current = togglePanel;
   // The + menu: where it opened and the button that opened it.
+  const [browserMenu, setBrowserMenu] = useState<{ anchor: { x: number; y: number }; opener: HTMLElement } | null>(null);
   const [plusMenu, setPlusMenu] = useState<{ anchor: { x: number; y: number }; opener: HTMLElement } | null>(null);
   // Files dropped from the system: on a terminal each path is pasted into that session (never Enter); on the side pane every file opens
   // as a tab, in order. A paused or an ended session is refused before anything is pasted. A window covered by the launcher or a dialog
@@ -1098,26 +1171,16 @@ export function LiveApp() {
       const session = s.focusedId;
       if (session === undefined) return announce(NO_SESSION_TO_OPEN);
       const project = paneProject();
-      // The reducer is followed here too, so a drop of many files meets the 32-tab limit at the right file.
-      let pane = viewRef.current.pane;
-      let last: string | null = null;
-      let refused = false;
-      for (const path of paths) {
-        const stat = await statFile(path).catch(() => null);
-        if (stat?.kind !== "ok") continue;
-        if (openRefused(pane, session, path)) {
-          refused = true;
-          break;
-        }
-        const action: PaneAction = { type: "open", session, project, target: { path } };
-        pane = paneReducer(pane, action);
-        paneDispatch(action);
-        last = path;
-      }
-      if (refused) announce(TAB_LIMIT);
-      else if (last !== null) announce(openedText(lastSegment(last)));
+      // Every file is checked first; the plan follows the reducer, so a drop of many files meets the 32-tab limit at the right file.
+      const checked: { path: string; ok: boolean }[] = [];
+      for (const path of paths) checked.push({ path, ok: (await statFile(path).catch(() => null))?.kind === "ok" });
+      const plan = dropPlan(viewRef.current.pane, session, project, checked);
+      for (const action of plan.actions) paneDispatch(action);
+      const panel = plan.last === null ? null : panelOfPath(plan.last);
+      if (plan.refused) announce(TAB_LIMIT);
+      else if (plan.last !== null && panel !== null) announce(openedText(lastSegment(plan.last), panel));
       else announce(FOLDER_REFUSED);
-      if (last !== null) focusPane();
+      if (panel !== null) focusPane(panel);
       return;
     }
     const ep = endpointRef.current;
@@ -1482,22 +1545,8 @@ export function LiveApp() {
   const numberOf = (id: string | null | undefined) => (id ? (infos.find((i) => i.tab_id === id)?.number ?? null) : null);
   const navPanes = [numberOf(focusedId)];
   const navNames = useMemo(() => Object.fromEntries(rows.map((r) => [r.number, r.name])), [rows]);
-  // The side pane is a stop of the Tab chord while it is drawn (a session on screen, the sessions view, the pane open); whether focus is in it
-  // is tracked from focusin and focusout, so the chord knows which stop it is leaving.
-  const sidePaneDrawn = view.pane.open && focusedId !== null && focusedId !== undefined && mainView === "sessions";
-  const [sideFocusedInDom, setSideFocused] = useState(false);
-  // A page that has the keyboard is in the side pane, whatever `document.activeElement` still names (S12 finding 8).
-  const pageHasKeys = useFocusedPage() !== null;
-  const sideFocused = sideFocusedInDom || pageHasKeys;
-  useEffect(() => {
-    const inside = () => setSideFocused(document.activeElement?.closest("[data-nav-side]") != null);
-    document.addEventListener("focusin", inside);
-    document.addEventListener("focusout", inside);
-    return () => {
-      document.removeEventListener("focusin", inside);
-      document.removeEventListener("focusout", inside);
-    };
-  }, []);
+  // Each panel of the side pane on screen is a stop of the Tab chord; which one has the keyboard is `panelFocus`, so the chord knows which
+  // stop it is leaving.
   // A "select-pane" that hid the covering pane: the receipt that follows it says so too (the announcer holds one notice).
   const hidByNav = useRef(false);
   const applyNav = (effect: NavEffect) => {
@@ -1508,7 +1557,7 @@ export function LiveApp() {
         else actions.focusTerminal();
         return;
       case "select-side":
-        focusPane();
+        if (isPanelId(effect.panel)) focusPane(effect.panel);
         return;
       case "bring-into-view": {
         const id = tabIdOfNumber(infos, effect.number);
@@ -1526,8 +1575,10 @@ export function LiveApp() {
           case "sidebar":
             // As the button's click: fold or open, or say why a narrow window cannot open it.
             return void toggleSidebar(view);
-          case "pane":
-            return void togglePane();
+          case "panel-browser":
+            return void togglePanel("browser");
+          case "panel-files":
+            return void togglePanel("files");
         }
         return;
       case "deselect":
@@ -1553,8 +1604,8 @@ export function LiveApp() {
     panes: navPanes,
     selectedPane: 0,
     names: navNames,
-    side: sidePaneDrawn ? "the side pane" : null,
-    sideFocused,
+    side: panelsOn.map((id) => ({ id, name: PANEL_LABEL[id] })),
+    sideFocused: panelFocus,
     root: ref,
     apply: applyNav,
   });
@@ -1562,10 +1613,10 @@ export function LiveApp() {
   // The app's shortcuts from a page, and the keyboard between the two (S12; 6q-0 decision 9).
   useBrowserKeys({ os, focusTerminal: () => toTerminalFromPane() });
   // The pages themselves: which are loaded (the page on screen is the newest), their events, popups and theme.
-  const shownPane = tabsOf(view.pane, focusedId);
-  const shownTab = shownPane.tabs.find((t) => t.id === (shownPane.active ?? shownPane.tabs[0]?.id));
-  const shownPage = browserTabs(os) && view.pane.open && mainView === "sessions" && focusedId && shownTab && isBrowserTab(shownTab) ? pageKey(focusedId, shownTab.id) : null;
-  useBrowserPages(view.pane, shownPage, { sessions: loaded ? rows.map((r) => r.id) : null, dispatch: paneDispatch, focusedSession: () => stateRef.current.focusedId, own: ownOrigins, announce });
+  // The page on screen: Browser is on screen and its selected tab is a browser tab.
+  const shownTab = panelsOn.includes("browser") ? activeTab(view.pane, focusedId, "browser") : undefined;
+  const shownPage = browserTabs(os) && focusedId && shownTab && isBrowserTab(shownTab) ? pageKey(focusedId, shownTab.id) : null;
+  useBrowserPages(view.pane, shownPage, { sessions: loaded ? rows.map((r) => r.id) : null, dispatch: paneDispatch, browserSession: () => (onNow.current.panelsOn.includes("browser") ? onNow.current.session : null), news: (session) => newsDispatch({ type: "add", items: [{ session, panel: "browser" }] }), own: ownOrigins, announce });
 
   // The window's shortcuts and commands (side pane, shell panel, history, menu, next waiting). True when it was one of them.
   const windowCommand = useCallback(
@@ -1578,6 +1629,9 @@ export function LiveApp() {
         case "closePaneTab":
         case "browse":
           paneRunRef.current(shortcut);
+          return true;
+        case "panel":
+          togglePanelRef.current(shortcut.panel);
           return true;
         case "openFile":
           setFilesOnly(true);
@@ -1592,11 +1646,16 @@ export function LiveApp() {
           return true;
         // A box on the shown tab's page, PDF or image; any other tab has nothing to mark.
         case "selectRegion": {
-          const session = stateRef.current.focusedId;
-          const shown = tabsOf(v.pane, session);
-          const id = shown.active ?? shown.tabs[0]?.id;
-          const handle = v.pane.open && session !== undefined && id !== undefined ? regionTabs.current.get(pageKey(session, id)) : undefined;
-          if (!handle?.selectRegion()) announce("This tab has nothing to select a region in.");
+          // The current panel's selected tab first, then the other panel on screen: the first that can mark a region does.
+          const { session, panelsOn: on } = onNow.current;
+          const marked =
+            session == null
+              ? null
+              : firstWith(panelOrder(on, currentPanel()), (panel) => {
+                  const tab = activeTab(v.pane, session, panel);
+                  return tab && regionTabs.current.get(pageKey(session, tab.id))?.selectRegion() ? true : null;
+                });
+          if (marked === null) announce("This tab has nothing to select a region in.");
           return true;
         }
         // The text tab's commands run on the shown tab, and Save and Undo save on a PDF tab's notes too. The palette lists them only while
@@ -1804,7 +1863,7 @@ export function LiveApp() {
     }
     const shortcut = commandShortcut(id);
     // These move the focus (or open a panel that takes it), so they wait for the palette to hand it back first.
-    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "menu" || shortcut?.kind === "paneTab" || shortcut?.kind === "closePaneTab" || shortcut?.kind === "browse" || shortcut?.kind === "newBrowserTab" || shortcut?.kind === "clearBrowserData" || shortcut?.kind === "selectRegion" || shortcut?.kind === "paneSave" || shortcut?.kind === "paneUndoSave" || shortcut?.kind === "paneGoToLine" || shortcut?.kind === "paneFind" || shortcut?.kind === "paneOutline" || shortcut?.kind === "panePages" || shortcut?.kind === "paneNotes" || shortcut?.kind === "paneWordWrap") return void setTimeout(() => windowCommand(shortcut), 0);
+    if (waitsForPalette(shortcut)) return void setTimeout(() => windowCommand(shortcut), 0);
     if (windowCommand(shortcut)) return;
     if (shortcut?.kind === "launcher") setLauncherOpen(true);
     else if (shortcut?.kind === "prompt") jumpPrompt(shortcut.by);
@@ -2026,8 +2085,6 @@ export function LiveApp() {
   // the theme of the terminal beside it. A link inside a tab moves that tab; everything else that opens a file goes through `openInPane`.
   const paneSession = focusedId;
   const paneTabs = tabsOf(view.pane, paneSession);
-  const paneActive = paneTabs.active ?? paneTabs.tabs[0]?.id ?? null;
-  const paneTitles = tabTitles(paneTabs.tabs);
   const paneProjectNow = focusedRow?.projectKey ?? "";
   // From the settings, not the root's attributes: the root gets those in an effect, after the render that a change causes.
   const paneScheme = appearance.theme === "follow-system" ? appScheme() : appearance.theme;
@@ -2037,36 +2094,53 @@ export function LiveApp() {
     setFilesOnly(true);
     setOverlay("palette");
   };
-  const paneNode =
-    os ? (
+  // Back and Forward in a file tab. An entry of the other panel moves the tab there, so the keyboard, when it was in this tab, follows it.
+  const stepHistory = (tab: PaneTab, panel: PanelId, by: -1 | 1) => {
+    if (paneSession === undefined) return;
+    const lands = landingPanel(tab, by);
+    paneDispatch({ type: by < 0 ? "back" : "forward", session: paneSession, paneTab: tab.id });
+    if (lands !== null && lands !== panel && panelFocusRef.current === panel) focusPane(lands);
+  };
+  // One panel's frame: its own tabs, its own kept tabs, or its empty state. A panel that is leaving is still drawn until its motion ends.
+  const renderPanel = (panel: PanelId) => {
+    if (os === undefined) return null;
+    const tabsHere = panelTabs(view.pane, paneSession, panel);
+    const paneActive = activeIn(paneTabs, panel);
+    const paneTitles = tabTitles(tabsHere);
+    const newBrowserTab = () => void openPageInPane(BLANK, { focus: "address" });
+    return (
       <SidePane
-        tabs={paneTabs.tabs.map((t) => ({ id: t.id, title: paneTitles.get(t.id) ?? "", path: currentEntry(t).path, kind: tabKind(isBrowserTab(t), currentEntry(t).path), openedBy: t.opened_by, unseen: t.unseen, unsaved: !isBrowserTab(t) && isUnsaved(unsaved, currentEntry(t).path, osName) }))}
+        panel={panel}
+        plus={panel === "browser" ? { label: "New tab", menu: false, disabled: browserTabs(os) ? undefined : PAGES_UNAVAILABLE } : { label: "Open a file", menu: true }}
+        menu={panel === "browser" ? { label: "Browser menu" } : undefined}
+        fill={{ on: stack.filled === panel, disabled: stack.shown.length < 2 ? "No other panel is shown" : undefined }}
+        hideKeys={keysOf(panel)}
+        onFill={() => paneDispatch({ type: "fill", panel, session: paneSession ?? null })}
+        onMenu={(anchor, opener) => setBrowserMenu({ anchor, opener })}
+        tabs={tabsHere.map((t) => ({ id: t.id, title: paneTitles.get(t.id) ?? "", path: currentEntry(t).path, kind: tabKind(isBrowserTab(t), currentEntry(t).path), openedBy: t.opened_by, unseen: t.unseen, unsaved: !isBrowserTab(t) && isUnsaved(unsaved, currentEntry(t).path, osName) }))}
         activeId={paneActive}
-        os={os}
         onSelect={(id) => paneSession !== undefined && paneDispatch({ type: "select", session: paneSession, paneTab: id })}
         onClose={(id) => {
-          const tab = paneTabs.tabs.find((t) => t.id === id);
+          const tab = tabsHere.find((t) => t.id === id);
           if (paneSession === undefined || !tab) return;
           if (askToClose(paneSession, tab)) return;
           paneDispatch({ type: "close", session: paneSession, paneTab: id });
           announce(closedText(paneTabName(tab, paneTitles)));
         }}
         onMove={(id, to) => {
-          const tab = paneTabs.tabs.find((t) => t.id === id);
+          const tab = tabsHere.find((t) => t.id === id);
           if (paneSession === undefined || !tab) return;
+          // The strip holds only this panel's tabs, so `to` is already the index among them.
           paneDispatch({ type: "move", session: paneSession, paneTab: id, to });
-          announce(movedText(paneTabName(tab, paneTitles), to, paneTabs.tabs.length));
+          announce(movedText(paneTabName(tab, paneTitles), to, tabsHere.length));
         }}
-        onHide={() => {
-          paneDispatch({ type: "hide" });
-          setTimeout(() => actions.focusTerminal(), 0);
-        }}
-        onPlus={(anchor, opener) => setPlusMenu({ anchor, opener })}
+        onHide={() => togglePanel(panel)}
+        onPlus={panel === "browser" ? newBrowserTab : (anchor, opener) => setPlusMenu({ anchor, opener })}
       >
         {paneActive !== null && paneTheme ? (
           <KeptTabs
-            key={paneSession}
-            tabs={paneTabs.tabs}
+            key={`${paneSession}:${panel}`}
+            tabs={tabsHere}
             activeId={paneActive}
             render={(tab, active) =>
               isBrowserTab(tab) ? (
@@ -2102,9 +2176,14 @@ export function LiveApp() {
                   os={os}
                   canBack={tab.index > 0}
                   canForward={tab.index < tab.history.length - 1}
-                  onBack={() => paneSession !== undefined && paneDispatch({ type: "back", session: paneSession, paneTab: tab.id })}
-                  onForward={() => paneSession !== undefined && paneDispatch({ type: "forward", session: paneSession, paneTab: tab.id })}
-                  onOpen={(target) => paneSession !== undefined && paneDispatch({ type: "navigate", session: paneSession, paneTab: tab.id, project: paneProjectNow, target })}
+                  onBack={() => stepHistory(tab, panel, -1)}
+                  onForward={() => stepHistory(tab, panel, 1)}
+                  onOpen={(target) => {
+                    if (paneSession === undefined) return;
+                    // A link to a file of the other panel is an open there, which says the tab limit and where it opened.
+                    if (panelOfPath(target.path) !== panel) void openInPane(target);
+                    else paneDispatch({ type: "navigate", session: paneSession, paneTab: tab.id, project: paneProjectNow, target });
+                  }}
                   onView={(v) => paneSession !== undefined && paneDispatch({ type: "setView", session: paneSession, paneTab: tab.id, view: v })}
                   onPlace={(place) => paneSession !== undefined && paneDispatch({ type: "place", session: paneSession, paneTab: tab.id, place })}
                   onDirty={noteDirty}
@@ -2128,10 +2207,18 @@ export function LiveApp() {
               )
             }
           />
+        ) : panel === "browser" ? (
+          <EmptyBrowser available={browserTabs(os)} ports={focusedRow?.ports ?? []} onNewTab={newBrowserTab} onPort={(url) => void openPageInPane(url)} onOpenHtml={openHtmlFile} />
         ) : (
-          <EmptyPane recent={paneRecent} onOpenFile={openFromPane} onBrowse={browseFile} onRecent={(path) => void openInPane({ path })} />
+          <EmptyFiles recent={paneRecent} onOpenFile={openFromPane} onBrowse={browseFile} onRecent={(path) => void openInPane({ path })} />
         )}
       </SidePane>
+    );
+  };
+  // The stack is the window's: its panels whether or not the pane is open, so nothing inside changes while the pane holds and folds.
+  const paneNode =
+    os ? (
+      <PanelStack panels={stackPanels(stack)} weights={stack.weights} render={renderPanel} onWeights={(weights) => paneDispatch({ type: "weights", weights })} onDividerGone={() => focusPane(currentPanel() ?? "files")} />
     ) : undefined;
   // The core decides whether a banner is worth showing from this: whether the window has focus and which sessions are on screen.
   // Under the History view the terminals stay mounted but none is on screen, so none is reported (or marked in the sidebar) as seen.
@@ -2155,10 +2242,9 @@ export function LiveApp() {
           visibleIds={onScreenIds}
           pane={paneNode}
           paneShown={view.pane.open}
-          paneNews={paneNews.size > 0}
           paneWidth={view.pane.width}
           onPaneWidth={(w) => paneDispatch({ type: "width", width: w })}
-          onDividerGone={() => focusPane()}
+          onDividerGone={() => focusPane(currentPanel() ?? "files")}
           terminalMinWidth={terminalMinWidth}
           mainView={
             mainView === "history" && endpoint && os ? (
@@ -2251,7 +2337,8 @@ export function LiveApp() {
           onMenuRun={onMenuRun}
           onPalette={() => setOverlay("palette")}
           onToggleSidebar={() => toggleSidebar(view)}
-          onTogglePane={togglePane}
+          panelButtons={panelButtonsFor(panelsOn, paneNews, keysOf)}
+          onTogglePanel={(id) => isPanelId(id) && togglePanel(id)}
           noneSelected={nav.noneSelected}
           navCursor={nav.cursor}
         />
@@ -2276,10 +2363,39 @@ export function LiveApp() {
           }}
         />
       )}
+      {browserMenu && (
+        <ContextMenu
+          label="Browser menu"
+          items={browserMenuItems(menuTarget(activeTab(view.pane, focusedId, "browser")), browserTabs(os))}
+          anchor={browserMenu.anchor}
+          onRun={(itemId) => {
+            const { opener } = browserMenu;
+            const choice = browserMenuChoice(itemId);
+            const target = menuTarget(activeTab(view.pane, focusedId, "browser"));
+            setBrowserMenu(null);
+            // Focus goes back to the ⋯ button first, so a dialog that closes without a pick returns it there.
+            opener.focus();
+            if (choice === "copy" && target.kind === "page") {
+              navigator.clipboard.writeText(target.url).then(
+                () => announce("Copied the link."),
+                () => announce("Couldn't copy the link."),
+              );
+            } else if (choice === "outside" && target.kind === "page") {
+              if (isPageUrl(target.url) && target.url !== BLANK) void openUrl(target.url).catch(() => {});
+            } else if (choice === "html") openHtmlFile();
+            else if (choice === "clear") setClearData("ask");
+          }}
+          onClose={({ refocus }) => {
+            const { opener } = browserMenu;
+            setBrowserMenu(null);
+            if (refocus) opener.focus();
+          }}
+        />
+      )}
       {plusMenu && (
         <ContextMenu
-          label="New tab"
-          items={plusMenuItems(paneRecent, browserTabs(os))}
+          label="Open a file"
+          items={plusMenuItems(paneRecent)}
           anchor={plusMenu.anchor}
           onRun={(itemId) => {
             const { opener } = plusMenu;
@@ -2289,8 +2405,7 @@ export function LiveApp() {
             if (choice.kind === "recent") return void openInPane({ path: choice.path });
             // Focus goes back to the + button first, so a palette or a dialog that closes without a pick returns it there.
             opener.focus();
-            if (choice.kind === "browserTab") openPageInPane(BLANK, { focus: "address" });
-            else if (choice.kind === "openFile") openFromPane();
+            if (choice.kind === "openFile") openFromPane();
             else browseFile();
           }}
           onClose={({ refocus }) => {

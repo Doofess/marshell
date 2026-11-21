@@ -20,8 +20,6 @@ export type UrlBarProps = {
   /** Typed text became an address to open or a search. */
   onGo(url: string): void;
   onNav(action: Exclude<NavAction, "go">): void;
-  /** Open this address in the system browser. */
-  onOpenOutside(url: string): void;
   /** Esc in the box: the address is restored, and the owner takes focus away. */
   onEscape(): void;
   /** Starts or ends marking a region on the page. Without it the bar has no "Select region" button. */
@@ -48,15 +46,14 @@ const FORWARD = "M6 3.5 10.5 8 6 12.5";
 const RELOAD = "M13 8a5 5 0 1 1-1.6-3.7M13 2.8v2.9h-2.9";
 const STOP = "M4 4l8 8M12 4 4 12";
 const REGION = "M5 3H3v2M11 3h2v2M13 11v2h-2M5 13H3v-2";
-const OUTSIDE = "M9.5 3H13v3.5M13 3 7.5 8.5M11 9.5V11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h1.5";
 
 /** Where focus goes after a selection ends: the "Select region" button, or the address box when that button is disabled (the page went blank). */
 export function regionFocusTarget(button: { disabled: boolean; focus(): void } | null, box: { focus(): void } | null): { focus(): void } | null {
   return button !== null && !button.disabled ? button : box;
 }
 
-/** The browser tab's bar: Back, Forward, Reload or Stop, the address box, and a button that opens the page in the system browser. */
-export function UrlBar({ page, fallbackUrl = "", onGo, onNav, onOpenOutside, onEscape, onRegion, canRegion = false, selecting = false, note = null, announce, ref }: UrlBarProps) {
+/** The browser tab's bar: Back, Forward, Reload or Stop, the address box, and the Select region button. */
+export function UrlBar({ page, fallbackUrl = "", onGo, onNav, onEscape, onRegion, canRegion = false, selecting = false, note = null, announce, ref }: UrlBarProps) {
   const input = useRef<HTMLInputElement>(null);
   const regionButton = useRef<HTMLButtonElement>(null);
   // What the person has typed since the box took focus; null shows the page's own address.
@@ -142,16 +139,6 @@ export function UrlBar({ page, fallbackUrl = "", onGo, onNav, onOpenOutside, onE
             {icon(REGION)}
           </button>
         )}
-        <button
-          type="button"
-          className="url-bar__button"
-          aria-label="Open in the system browser"
-          title="Open in the system browser"
-          disabled={address === "" || address === BLANK}
-          onClick={() => onOpenOutside(address)}
-        >
-          {icon(OUTSIDE)}
-        </button>
       </div>
       {status !== null && <p className="url-bar__status">{status}</p>}
     </>

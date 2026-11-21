@@ -497,60 +497,76 @@ describe("MainWindow: the sidebar toggle", () => {
   });
 });
 
-describe("MainWindow: the side pane toggle", () => {
+describe("MainWindow: the panel buttons", () => {
   const stand = <aside className="preview-stand-in" />;
-  const toggle = (h: string) => h.match(/<button[^>]*class="window__pane-toggle"[^>]*>/)?.[0];
-  it("is the first child of the bar's end side, before the window controls", () => {
-    const h = html();
+  const BUTTONS = [
+    { id: "browser", label: "Browser", shown: false, news: false, keys: "Ctrl+Shift+A" },
+    { id: "files", label: "Files", shown: false, news: false, keys: "Ctrl+Shift+D" },
+  ];
+  const buttons = (h: string) => [...h.matchAll(/<button[^>]*class="window__pane-toggle"[^>]*>/g)].map((m) => m[0]);
+  const withProps = (p: Partial<Parameters<typeof MainWindow>[0]> = {}) => html({ panelButtons: BUTTONS, ...p });
+  it("are the first children of the bar's end side, Browser then Files, before the window controls", () => {
+    const h = withProps();
     const end = h.indexOf('class="window__bar-end"');
     expect(end).toBeGreaterThan(-1);
-    expect(h.indexOf("window__pane-toggle")).toBeGreaterThan(end);
-    expect(h.indexOf("window__pane-toggle")).toBeLessThan(h.indexOf("window__controls"));
     expect(h.slice(end, end + 200)).toMatch(/^[^>]*data-tauri-drag-region[^>]*><button[^>]*class="window__pane-toggle"/);
+    const [b, f] = buttons(h);
+    expect(b).toContain('data-nav-top="panel-browser"');
+    expect(b).toContain('aria-label="Browser"');
+    expect(f).toContain('data-nav-top="panel-files"');
+    expect(f).toContain('aria-label="Files"');
+    expect(h.lastIndexOf("window__pane-toggle")).toBeLessThan(h.indexOf("window__controls"));
+    expect(h.indexOf('data-icon="panel-browser"')).toBeLessThan(h.indexOf('data-icon="panel-files"'));
   });
-  it("the_pane_button_shows_news", () => {
-    const t = toggle(html({ paneNews: true }))!;
-    expect(t).toContain('data-news=""');
-    expect(t).toMatch(/title="[^"]* · A new tab is waiting"/);
+  it("a panel's button shows its own news", () => {
+    const h = withProps({ panelButtons: [BUTTONS[0]!, { ...BUTTONS[1]!, news: true }] });
+    const [b, f] = buttons(h);
+    expect(b).not.toContain("data-news");
+    expect(f).toContain('data-news=""');
+    expect(f).toMatch(/title="[^"]* · A new tab is waiting"/);
+    expect(h.match(/data-news/g)).toHaveLength(1);
   });
   it("no_news_no_dot", () => {
-    const t = toggle(html())!;
-    expect(t).not.toContain("data-news");
-    expect(t).not.toContain("A new tab is waiting");
+    const h = withProps();
+    expect(h).not.toContain("data-news");
+    expect(h).not.toContain("A new tab is waiting");
   });
-  it("says Show with aria-expanded false while the pane is hidden", () => {
-    const t = toggle(html())!;
-    expect(t).toContain('data-nav-top="pane"');
-    expect(t).toContain('aria-label="Side pane"');
-    expect(t).toContain('aria-expanded="false"');
-    expect(t).toContain('title="Show the side pane (Ctrl+Shift+Q)"');
-    expect(t).not.toContain("aria-disabled");
-    expect(html()).toContain('data-icon="side-pane"');
+  it("says Show with aria-expanded false for a panel that isn't shown", () => {
+    const [b] = buttons(withProps());
+    expect(b).toContain('aria-expanded="false"');
+    expect(b).toContain('title="Show Browser (Ctrl+Shift+A)"');
+    expect(b).not.toContain("aria-disabled");
   });
-  it("says Hide with aria-expanded true while the pane is shown", () => {
-    const t = toggle(html({ pane: stand, paneShown: true }))!;
-    expect(t).toContain('aria-expanded="true"');
-    expect(t).toContain('title="Hide the side pane (Ctrl+Shift+Q)"');
+  it("says Hide with aria-expanded true for a shown panel", () => {
+    const [b, f] = buttons(withProps({ pane: stand, paneShown: true, panelButtons: [{ ...BUTTONS[0]!, shown: true }, BUTTONS[1]!] }));
+    expect(b).toContain('aria-expanded="true"');
+    expect(b).toContain('title="Hide Browser (Ctrl+Shift+A)"');
+    expect(f).toContain('aria-expanded="false"');
   });
-  it("stays in the bar in the rail, in focus mode and on another OS", () => {
-    expect(toggle(html({ sidebarPref: "rail" }))).toBeDefined();
-    expect(toggle(html({ sidebarPref: "focus" }))).toBeDefined();
-    const mac = html({ os: "mac" });
-    expect(toggle(mac)).toBeDefined();
+  it("a shown panel isn't expanded while a main view replaces the terminal", () => {
+    const [b] = buttons(withProps({ mainView: <section />, pane: stand, paneShown: true, panelButtons: [{ ...BUTTONS[0]!, shown: true }, BUTTONS[1]!] }));
+    expect(b).toContain('aria-expanded="false"');
+  });
+  it("stay in the bar in the rail, in focus mode and on another OS", () => {
+    expect(buttons(withProps({ sidebarPref: "rail" }))).toHaveLength(2);
+    expect(buttons(withProps({ sidebarPref: "focus" }))).toHaveLength(2);
+    const mac = withProps({ os: "mac" });
+    expect(buttons(mac)).toHaveLength(2);
     expect(mac).not.toContain("window__controls");
   });
-  it("is aria-disabled, not disabled, with no session selected", () => {
-    const t = toggle(html({ rows: [], selectedId: undefined, pane: stand, paneShown: true }))!;
-    expect(t).toContain('aria-disabled="true"');
-    expect(t).not.toMatch(/\sdisabled/);
-    expect(t).toContain('aria-expanded="false"');
-    expect(t).toContain('title="The side pane shows beside a session"');
+  it("are aria-disabled, not disabled, with no session selected", () => {
+    for (const t of buttons(withProps({ rows: [], selectedId: undefined, pane: stand, paneShown: true }))) {
+      expect(t).toContain('aria-disabled="true"');
+      expect(t).not.toMatch(/\sdisabled/);
+      expect(t).toContain('aria-expanded="false"');
+      expect(t).toContain('title="The side pane shows beside a session"');
+    }
   });
-  it("is aria-disabled while a main view replaces the terminal", () => {
-    const t = toggle(html({ mainView: <section />, pane: stand, paneShown: true }))!;
-    expect(t).toContain('aria-disabled="true"');
-    expect(t).toContain('aria-expanded="false"');
-    expect(t).toContain('title="The side pane shows beside a session"');
+  it("are aria-disabled while a main view replaces the terminal", () => {
+    for (const t of buttons(withProps({ mainView: <section />, pane: stand, paneShown: true }))) {
+      expect(t).toContain('aria-disabled="true"');
+      expect(t).toContain('title="The side pane shows beside a session"');
+    }
   });
 });
 
@@ -564,9 +580,9 @@ describe("MainWindow: one terminal", () => {
   it("every top-bar control the cursor reaches does something when the cursor is released on it", () => {
     const ids = new Set<string>();
     for (const p of [{}, { sidebarPref: "rail" as const }, { width: 900 }]) {
-      for (const m of html({ rows: SCENARIO_ROWS.slice(0, 3), ...p }).matchAll(/data-nav-top="([^"]+)"/g)) ids.add(m[1]!);
+      for (const m of html({ rows: SCENARIO_ROWS.slice(0, 3), panelButtons: [{ id: "browser", label: "Browser", shown: false, news: false, keys: "" }, { id: "files", label: "Files", shown: false, news: false, keys: "" }], ...p }).matchAll(/data-nav-top="([^"]+)"/g)) ids.add(m[1]!);
     }
-    expect([...ids].sort()).toEqual(["palette", "pane", "sidebar"]);
+    expect([...ids].sort()).toEqual(["palette", "panel-browser", "panel-files", "sidebar"]);
     for (const id of ids) expect(topAction(id), id).not.toBeNull();
   });
   it("the divider reports the pane's width in pixels", () => {

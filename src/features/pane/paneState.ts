@@ -1,9 +1,11 @@
 import type { PaneEntry } from "../../generated/PaneEntry";
 import type { PaneTab } from "../../generated/PaneTab";
 import type { PaneView } from "../../generated/PaneView";
+import type { Panels } from "../../generated/Panels";
 import type { RecentFile } from "../../generated/RecentFile";
 import type { SessionTabs } from "../../generated/SessionTabs";
 import { BLANK, isPageUrl, pageTitle, sameUrl } from "../browser/address";
+import { type PanelId, PANELS, type Stack, type Weights, activeIn, isPanelId, onScreen, panelOf, panelOfPath, panelTabs, stackOf, stackPanels } from "./panels";
 
 export type { PaneEntry };
 
@@ -28,24 +30,37 @@ export type PaneAction =
   | { type: "place"; session: string; paneTab: string; place: Place }
   | { type: "select"; session: string; paneTab: string }
   /** The next or previous tab, wrapping. */
-  | { type: "step"; session: string; by: 1 | -1 }
+  | { type: "step"; session: string; panel: PanelId; by: 1 | -1 }
   | { type: "close"; session: string; paneTab: string }
-  /** `to` is the index the tab ends at. */
+  /** `to` is the index the tab ends at among its panel's tabs; the other panel's tabs keep their places in the session's list. */
   | { type: "move"; session: string; paneTab: string; to: number }
-  /** A web address: a new browser tab, or the tab already showing it (about:blank always makes a new one); shows the pane. */
-  | { type: "openPage"; session: string; url: string }
+  /**
+   * A web address: a new browser tab, or the tab already showing it (about:blank always makes a new one); shows the pane with the
+   * Browser panel in it. With `background` it never changes `open` or the stack, and selects the tab only when Browser had none.
+   */
+  | { type: "openPage"; session: string; url: string; background?: true }
   /**
    * `marshell open`: a tab added behind the one on screen, or the tab already showing it, marked as new. It never changes `open`. It
-   * selects the tab only in a session that had none. `onScreen`: the pane is open with this session shown.
+   * selects the tab only in a panel that had none. `onScreen`: the pane is open with this session shown.
    */
   | { type: "openBackground"; session: string; kind: "file" | "browser"; target: string; by: string; project: string; onScreen: boolean }
-  /** The session's selected tab is in front of the person: it loses its "new" mark (`opened_by` stays). */
-  | { type: "seen"; session: string }
+  /** The panel's selected tab is in front of the person: it loses its "new" mark (`opened_by` stays). */
+  | { type: "seen"; session: string; panel: PanelId }
   /** A browser tab's page moved or got a title: the tab's entry follows it. */
   | { type: "page"; session: string; paneTab: string; url: string; title: string | null }
-  | { type: "show" }
+  /** Shows the pane; writes the stack of `session` down when none is saved. */
+  | { type: "show"; session: string | null }
+  /** Hides the pane; the stack stays. */
   | { type: "hide" }
-  | { type: "toggle" }
+  | { type: "toggle"; session: string | null }
+  /** A panel's own toggle: its key, its button or its x. */
+  | { type: "panel"; panel: PanelId; session: string | null }
+  /** The panel's fill button: it fills the pane, or stops filling it. */
+  | { type: "fill"; panel: PanelId; session: string | null }
+  /** The divider moved: whole weights, 1 to 100000, merged into the stack's. */
+  | { type: "weights"; weights: Weights }
+  /** Writes the stack down when none is saved. */
+  | { type: "pin"; session: string }
   | { type: "width"; width: number | null };
 
 const NO_TABS: SessionTabs = { tabs: [], active: null };
@@ -55,10 +70,11 @@ export function tabsOf(s: PaneView, session: string | null | undefined): Session
   return (session != null && s.sessions[session]) || NO_TABS;
 }
 
-/** The session's selected tab. */
-export function activeTab(s: PaneView, session: string | null | undefined): PaneTab | undefined {
+/** The panel's selected tab in the session. */
+export function activeTab(s: PaneView, session: string | null | undefined, panel: PanelId): PaneTab | undefined {
   const t = tabsOf(s, session);
-  return t.tabs.find((x) => x.id === t.active);
+  const id = activeIn(t, panel);
+  return id === null ? undefined : t.tabs.find((x) => x.id === id);
 }
 
 /** Where the tab is now: the entry its history index points at. */
@@ -174,8 +190,42 @@ function nextId(tabs: readonly PaneTab[]): string {
   return `t${top + 1}`;
 }
 
+/**
+ * Rewrites both selection fields from `activeIn`, so the layout holds what the core accepts: while a session has tabs `active` names
+ * one of them (Files' selected tab, else Browser's), and `active_browser` is there only while Browser has a tab, naming its selected
+ * one. It runs on a session before a change (an old layout's implied selections are written down before one of them changes) and
+ * after every write of its tabs or selection. The same object when nothing changes.
+ */
+function settle(st: SessionTabs): SessionTabs {
+  const files = activeIn(st, "files");
+  const browser = activeIn(st, "browser");
+  const active = files ?? browser;
+  if (st.active === active && "active_browser" in st === (browser !== null) && (browser === null || st.active_browser === browser)) return st;
+  const { active_browser: _old, ...rest } = st;
+  return browser === null ? { ...rest, active } : { ...rest, active, active_browser: browser };
+}
+
+/** The tabs with the panel's selection set to this tab (not yet settled). */
+function pick(st: SessionTabs, panel: PanelId, id: string): SessionTabs {
+  return panel === "browser" ? { ...st, active_browser: id } : { ...st, active: id };
+}
+
 function setTabs(s: PaneView, session: string, next: SessionTabs): PaneView {
-  return { ...s, sessions: { ...s.sessions, [session]: next } };
+  return { ...s, sessions: { ...s.sessions, [session]: settle(next) } };
+}
+
+/** A stack as the layout holds it. */
+const panelsOf = (stack: Stack): Panels => ({ shown: [...stack.shown], weights: { ...stack.weights }, filled: stack.filled });
+
+/**
+ * The pane is open with this panel on screen. A hidden pane shows the panel alone, keeping the weights. An open one adds the panel
+ * to what it shows (in the stack's order), ends another panel's fill and keeps this panel's own. The stack is written down.
+ */
+function reveal(s: PaneView, session: string, panel: PanelId): PaneView {
+  const stack = stackOf(s, session);
+  if (!s.open) return { ...s, open: true, panels: panelsOf({ shown: [panel], weights: stack.weights, filled: null }) };
+  const shown = stack.shown.includes(panel) ? stack.shown : PANELS.filter((p) => p === panel || stack.shown.includes(p));
+  return { ...s, panels: panelsOf({ shown, weights: stack.weights, filled: stack.filled === panel ? panel : null }) };
 }
 
 /** The tabs with this one no longer marked new (the same object when it isn't). */
@@ -218,7 +268,7 @@ function editTab(s: PaneView, session: string, paneTab: string, edit: (t: PaneTa
   if (!cur || !old) return s;
   const next = edit(old);
   if (next === old) return s;
-  return setTabs(s, session, { ...cur, tabs: cur.tabs.map((t) => (t === old ? next : t)) });
+  return setTabs(s, session, { ...settle(cur), tabs: cur.tabs.map((t) => (t === old ? next : t)) });
 }
 
 /** Like `editTab`, for a file tab: a browser tab has no history to move through and no view to switch. */
@@ -231,18 +281,21 @@ const TITLE_MAX = 200;
 const cutTitle = (title: string | null): string | null =>
   title === null || title.length <= TITLE_MAX ? title : Array.from(title).slice(0, TITLE_MAX).join("");
 
-function openPage(s: PaneView, session: string, url: string): PaneView {
+function openPage(s: PaneView, session: string, url: string, background: boolean): PaneView {
   if (!isPageUrl(url)) return s;
-  const cur = tabsOf(s, session);
+  const cur = settle(tabsOf(s, session));
   const existing = cur.tabs.find((t) => tabShows(t, url));
   if (existing) {
-    const shown = seenTab(cur, existing.id);
-    if (cur.active === existing.id && s.open && shown === cur) return s;
-    return { ...setTabs(s, session, { ...shown, active: existing.id }), open: true };
+    if (background) return s;
+    const seen = seenTab(cur, existing.id);
+    if (seen === cur && onScreen(s, session).includes("browser") && activeIn(cur, "browser") === existing.id) return s;
+    return setTabs(reveal(s, session, "browser"), session, pick(seen, "browser", existing.id));
   }
   if (cur.tabs.length >= PANE_LIMITS.tabs) return s;
   const tab: PaneTab = { id: nextId(cur.tabs), kind: "browser", history: [entryOf({ path: url })], index: 0, title: null, opened_by: null, unseen: false };
-  return { ...setTabs(s, session, { tabs: [...cur.tabs, tab], active: tab.id }), open: true };
+  const added = { ...cur, tabs: [...cur.tabs, tab] };
+  // A background tab is selected only when Browser had none; `settle` does that.
+  return background ? setTabs(s, session, added) : setTabs(reveal(s, session, "browser"), session, pick(added, "browser", tab.id));
 }
 
 function pageMoved(s: PaneView, session: string, paneTab: string, url: string, title: string | null): PaneView {
@@ -256,7 +309,7 @@ function pageMoved(s: PaneView, session: string, paneTab: string, url: string, t
 }
 
 function open(s: PaneView, session: string, project: string, target: OpenTarget): PaneView {
-  const cur = tabsOf(s, session);
+  const cur = settle(tabsOf(s, session));
   const existing = cur.tabs.find((t) => tabHas(t, target.path));
   let next: PaneView;
   if (existing) {
@@ -269,38 +322,46 @@ function open(s: PaneView, session: string, project: string, target: OpenTarget)
         tab = { ...tab, history: existing.history.map((x, i) => (i === existing.index ? { ...x, line, col } : x)) };
       }
     }
-    if (tab === existing && cur.active === existing.id && s.open) {
+    const panel = panelOf(existing);
+    if (tab === existing && onScreen(s, session).includes(panel) && activeIn(cur, panel) === existing.id) {
       next = s;
     } else {
       const tabs = tab === existing ? cur.tabs : cur.tabs.map((t) => (t === existing ? tab : t));
-      next = { ...setTabs(s, session, { tabs, active: existing.id }), open: true };
+      next = setTabs(reveal(s, session, panel), session, pick({ ...cur, tabs }, panel, existing.id));
     }
   } else {
     if (cur.tabs.length >= PANE_LIMITS.tabs) return s;
     const tab: PaneTab = { id: nextId(cur.tabs), kind: "file", history: [entryOf(target)], index: 0, title: null, opened_by: null, unseen: false };
-    next = { ...setTabs(s, session, { tabs: [...cur.tabs, tab], active: tab.id }), open: true };
+    const panel = panelOf(tab);
+    next = setTabs(reveal(s, session, panel), session, pick({ ...cur, tabs: [...cur.tabs, tab] }, panel, tab.id));
   }
   return withRecent(next, project, target.path);
 }
 
 function openBackground(s: PaneView, a: Extract<PaneAction, { type: "openBackground" }>): PaneView {
   const { session, kind, target, by } = a;
-  const cur = tabsOf(s, session);
+  const cur = settle(tabsOf(s, session));
   const existing = cur.tabs.find((t) => (kind === "browser" ? tabShows(t, target) : tabHas(t, target)));
   let next: PaneView;
   if (existing) {
     // The tab in front of the person needs no mark.
-    const marked = a.onScreen && cur.active === existing.id ? existing : existing.opened_by === by && existing.unseen ? existing : { ...existing, opened_by: by, unseen: true };
+    const front = a.onScreen && activeIn(cur, panelOf(existing)) === existing.id;
+    const marked = front ? existing : existing.opened_by === by && existing.unseen ? existing : { ...existing, opened_by: by, unseen: true };
     next = marked === existing ? s : setTabs(s, session, { ...cur, tabs: cur.tabs.map((t) => (t === existing ? marked : t)) });
   } else {
     if (cur.tabs.length >= PANE_LIMITS.tabs) return s;
     const tab: PaneTab = { id: nextId(cur.tabs), kind, history: [entryOf({ path: target })], index: 0, title: null, opened_by: by, unseen: true };
-    next = setTabs(s, session, { tabs: [...cur.tabs, tab], active: cur.tabs.length === 0 ? tab.id : cur.active });
+    // `settle` selects it when its panel had no tab.
+    next = setTabs(s, session, { ...cur, tabs: [...cur.tabs, tab] });
   }
   return kind === "file" ? withRecent(next, a.project, target) : next;
 }
 
 function navigate(s: PaneView, session: string, paneTab: string, project: string, target: OpenTarget): PaneView {
+  const source = s.sessions[session]?.tabs.find((t) => t.id === paneTab);
+  if (!source || isBrowserTab(source)) return s;
+  // A link to a file of the other panel opens a tab there and leaves this tab's history alone.
+  if (panelOfPath(target.path) !== panelOf(source)) return open(s, session, project, target);
   const moved = editFileTab(s, session, paneTab, (t) => {
     const history = [...t.history.slice(0, t.index + 1), entryOf(target)].slice(-PANE_LIMITS.history);
     return { ...t, history, index: history.length - 1 };
@@ -308,18 +369,81 @@ function navigate(s: PaneView, session: string, paneTab: string, project: string
   return moved === s ? s : withRecent(moved, project, target.path);
 }
 
+/** Back or Forward: the tab moves through its history, and one that lands on an entry of the other panel goes there, selected. */
+function goThrough(s: PaneView, session: string, paneTab: string, by: 1 | -1): PaneView {
+  const cur = s.sessions[session];
+  const old = cur?.tabs.find((t) => t.id === paneTab);
+  if (!cur || !old || isBrowserTab(old)) return s;
+  const index = old.index + by;
+  if (index < 0 || index >= old.history.length) return s;
+  const tab = { ...old, index };
+  const panel = panelOf(tab);
+  const tabs = cur.tabs.map((t) => (t === old ? tab : t));
+  if (panel === panelOf(old)) return setTabs(s, session, { ...settle(cur), tabs });
+  return setTabs(reveal(s, session, panel), session, pick(seenTab({ ...settle(cur), tabs }, paneTab), panel, paneTab));
+}
+
 function close(s: PaneView, session: string, paneTab: string): PaneView {
   const cur = s.sessions[session];
   const at = cur ? cur.tabs.findIndex((t) => t.id === paneTab) : -1;
   if (!cur || at < 0) return s;
+  const was = settle(cur);
+  const panel = panelOf(cur.tabs[at]!);
   const tabs = cur.tabs.filter((_, i) => i !== at);
   if (tabs.length === 0) {
     const { [session]: _gone, ...sessions } = s.sessions;
     return { ...s, sessions };
   }
-  if (cur.active !== paneTab) return setTabs(s, session, { tabs, active: cur.active });
-  const active = (tabs[at] ?? tabs[at - 1])!.id;
-  return setTabs(s, session, seenTab({ tabs, active }, active));
+  if (activeIn(was, panel) !== paneTab) return setTabs(s, session, { ...was, tabs });
+  // The panel's neighbour: the tab that follows it in the panel, else the one before.
+  const mine = was.tabs.filter((t) => panelOf(t) === panel);
+  const from = mine.findIndex((t) => t.id === paneTab);
+  const next = mine[from + 1] ?? mine[from - 1];
+  if (!next) return setTabs(s, session, { ...was, tabs });
+  return setTabs(s, session, pick(seenTab({ ...was, tabs }, next.id), panel, next.id));
+}
+
+/** The stack as `show` and `toggle` leave it: the saved one, or the one the session's tabs imply, written down. */
+function shownWith(s: PaneView, session: string | null): PaneView {
+  return { ...s, open: true, panels: s.panels ?? panelsOf(stackOf(s, session)) };
+}
+
+function panelToggle(s: PaneView, panel: PanelId, session: string | null): PaneView {
+  const stack = stackOf(s, session);
+  if (!s.open) return { ...s, open: true, panels: panelsOf({ shown: [panel], weights: stack.weights, filled: null }) };
+  if (stackPanels(stack).includes(panel)) {
+    // The only panel shown: the pane hides and the panel stays shown.
+    if (stack.shown.length === 1) return { ...s, open: false, panels: panelsOf({ ...stack, filled: null }) };
+    return { ...s, panels: panelsOf({ shown: stack.shown.filter((p) => p !== panel), weights: stack.weights, filled: null }) };
+  }
+  return { ...s, panels: panelsOf({ shown: PANELS.filter((p) => p === panel || stack.shown.includes(p)), weights: stack.weights, filled: null }) };
+}
+
+function fill(s: PaneView, panel: PanelId, session: string | null): PaneView {
+  if (!s.open) return s;
+  const stack = stackOf(s, session);
+  if (stack.shown.length < 2 || !stack.shown.includes(panel)) return s;
+  return { ...s, panels: panelsOf({ ...stack, filled: stack.filled === panel ? null : panel }) };
+}
+
+/** The 1 to 100000 whole weight of a number, or null for one that is not a finite number. */
+function weightOf(n: unknown): number | null {
+  return typeof n === "number" && Number.isFinite(n) ? Math.min(100_000, Math.max(1, Math.round(n))) : null;
+}
+
+/** Merges the divider's weights into the saved stack. With no stack saved there is nothing to merge into (`pin` writes one first). */
+function mergeWeights(s: PaneView, weights: Weights): PaneView {
+  if (!s.panels) return s;
+  const stack = stackOf(s, null);
+  const merged: Weights = { ...stack.weights };
+  let changed = false;
+  for (const [key, value] of Object.entries(weights)) {
+    const w = weightOf(value);
+    if (!isPanelId(key) || w === null) continue;
+    if (merged[key] !== w) changed = true;
+    merged[key] = w;
+  }
+  return changed ? { ...s, panels: panelsOf({ ...stack, weights: merged }) } : s;
 }
 
 export function paneReducer(s: PaneView, a: PaneAction): PaneView {
@@ -329,21 +453,22 @@ export function paneReducer(s: PaneView, a: PaneAction): PaneView {
     case "navigate":
       return navigate(s, a.session, a.paneTab, a.project, a.target);
     case "openPage":
-      return openPage(s, a.session, a.url);
+      return openPage(s, a.session, a.url, a.background === true);
     case "openBackground":
       return openBackground(s, a);
     case "seen": {
-      const cur = tabsOf(s, a.session);
-      if (cur.active === null) return s;
-      const shown = seenTab(cur, cur.active);
+      const cur = settle(tabsOf(s, a.session));
+      const id = activeIn(cur, a.panel);
+      if (id === null) return s;
+      const shown = seenTab(cur, id);
       return shown === cur ? s : setTabs(s, a.session, shown);
     }
     case "page":
       return pageMoved(s, a.session, a.paneTab, a.url, a.title);
     case "back":
-      return editFileTab(s, a.session, a.paneTab, (t) => (t.index > 0 ? { ...t, index: t.index - 1 } : t));
+      return goThrough(s, a.session, a.paneTab, -1);
     case "forward":
-      return editFileTab(s, a.session, a.paneTab, (t) => (t.index < t.history.length - 1 ? { ...t, index: t.index + 1 } : t));
+      return goThrough(s, a.session, a.paneTab, 1);
     case "setView":
       return editFileTab(s, a.session, a.paneTab, (t) =>
         currentEntry(t).view === a.view ? t : { ...t, history: t.history.map((e, i) => (i === t.index ? { ...e, view: a.view } : e)) },
@@ -358,39 +483,60 @@ export function paneReducer(s: PaneView, a: PaneAction): PaneView {
       });
     }
     case "select": {
-      const cur = s.sessions[a.session];
-      if (!cur || !cur.tabs.some((t) => t.id === a.paneTab)) return s;
+      const raw = s.sessions[a.session];
+      const tab = raw?.tabs.find((t) => t.id === a.paneTab);
+      if (!raw || !tab) return s;
+      const cur = settle(raw);
+      const panel = panelOf(tab);
       // Choosing the tab already selected is still the person's first look at it.
       const shown = seenTab(cur, a.paneTab);
-      if (cur.active === a.paneTab && shown === cur) return s;
-      return setTabs(s, a.session, { ...shown, active: a.paneTab });
+      if (activeIn(cur, panel) === a.paneTab && shown === raw) return s;
+      return setTabs(s, a.session, pick(shown, panel, a.paneTab));
     }
     case "step": {
-      const cur = s.sessions[a.session];
-      if (!cur || cur.tabs.length === 0) return s;
-      const at = cur.tabs.findIndex((t) => t.id === cur.active);
-      const n = cur.tabs.length;
-      const id = cur.tabs[(((at < 0 ? 0 : at + a.by) % n) + n) % n]!.id;
-      return id === cur.active ? s : setTabs(s, a.session, { ...seenTab(cur, id), active: id });
+      const raw = s.sessions[a.session];
+      if (!raw) return s;
+      const cur = settle(raw);
+      const mine = cur.tabs.filter((t) => panelOf(t) === a.panel);
+      if (mine.length === 0) return s;
+      const here = activeIn(cur, a.panel);
+      const at = mine.findIndex((t) => t.id === here);
+      const n = mine.length;
+      const id = mine[(((at < 0 ? 0 : at + a.by) % n) + n) % n]!.id;
+      return id === here ? s : setTabs(s, a.session, pick(seenTab(cur, id), a.panel, id));
     }
     case "close":
       return close(s, a.session, a.paneTab);
     case "move": {
-      const cur = s.sessions[a.session];
-      const from = cur ? cur.tabs.findIndex((t) => t.id === a.paneTab) : -1;
-      if (!cur || from < 0 || !Number.isFinite(a.to)) return s;
-      const to = Math.min(cur.tabs.length - 1, Math.max(0, Math.round(a.to)));
+      const raw = s.sessions[a.session];
+      const tab = raw?.tabs.find((t) => t.id === a.paneTab);
+      if (!raw || !tab || !Number.isFinite(a.to)) return s;
+      const panel = panelOf(tab);
+      const mine = raw.tabs.filter((t) => panelOf(t) === panel);
+      const from = mine.indexOf(tab);
+      const to = Math.min(mine.length - 1, Math.max(0, Math.round(a.to)));
       if (to === from) return s;
-      const tabs = cur.tabs.filter((_, i) => i !== from);
-      tabs.splice(to, 0, cur.tabs[from]!);
-      return setTabs(s, a.session, { ...cur, tabs });
+      const order = mine.filter((t) => t !== tab);
+      order.splice(to, 0, tab);
+      // The panel's tabs fill the places the panel held; the other panel's tabs stay where they were.
+      let n = 0;
+      const tabs = raw.tabs.map((t) => (panelOf(t) === panel ? order[n++]! : t));
+      return setTabs(s, a.session, { ...settle(raw), tabs });
     }
     case "show":
-      return s.open ? s : { ...s, open: true };
+      return s.open ? s : shownWith(s, a.session);
     case "hide":
       return s.open ? { ...s, open: false } : s;
     case "toggle":
-      return { ...s, open: !s.open };
+      return s.open ? { ...s, open: false } : shownWith(s, a.session);
+    case "panel":
+      return panelToggle(s, a.panel, a.session);
+    case "fill":
+      return fill(s, a.panel, a.session);
+    case "weights":
+      return mergeWeights(s, a.weights);
+    case "pin":
+      return s.panels ? s : { ...s, panels: panelsOf(stackOf(s, a.session)) };
     case "width": {
       if (a.width === null) return s.width === null ? s : { ...s, width: null };
       if (!Number.isFinite(a.width)) return s;

@@ -5,6 +5,7 @@ import { addressFor, isPageUrl, pageTitle } from "../browser/address";
 import { agentLabel } from "../sessions/sessionActions";
 import { openedByText, openedText } from "./paneCommands";
 import { lastSegment, openRefused, paneReducer, type PaneAction } from "./paneState";
+import { panelOfPath, type PanelId } from "./panels";
 
 /** What the window knows when a frame of requests arrives. */
 export type OpensContext = {
@@ -12,7 +13,8 @@ export type OpensContext = {
   sessions: ReadonlyMap<string, { project: string }>;
   /** The session on screen. */
   shown: string | null;
-  paneOpen: boolean;
+  /** The panels in front of the person, for the session `shown`. */
+  onScreen: readonly PanelId[];
   /** True for an address the shell would not open in a page (the same check a typed address meets). */
   refuses(url: string): boolean;
 };
@@ -26,8 +28,8 @@ export type TakenOpens = {
   done: PaneOpenDone[];
   /** One announcement per tab added or marked. */
   said: string[];
-  /** The sessions that got a tab while the pane was hidden or another session was on screen, each once. */
-  news: string[];
+  /** The panels of the sessions that got a tab while the panel was not in front of the person, each once. */
+  news: { session: string; panel: PanelId }[];
 };
 
 /**
@@ -39,7 +41,7 @@ export function takeOpens(view: PaneView, opens: readonly PaneOpen[], seen: Read
   const actions: PaneAction[] = [];
   const done: PaneOpenDone[] = [];
   const said: string[] = [];
-  const news: string[] = [];
+  const news: { session: string; panel: PanelId }[] = [];
   let now = view;
   const answer = (id: number, refused: PaneOpenDone["refused"]) => done.push({ id, refused });
 
@@ -72,15 +74,44 @@ export function takeOpens(view: PaneView, opens: readonly PaneOpen[], seen: Read
       answer(open.id, "limit");
       continue;
     }
-    const onScreen = ctx.paneOpen && ctx.shown === open.tab_id;
+    const panel = panelOfPath(target);
+    const onScreen = ctx.shown === open.tab_id && ctx.onScreen.includes(panel);
     const action: PaneAction = { type: "openBackground", session: open.tab_id, kind: open.kind, target, by: open.by, project: session.project, onScreen };
     const next = paneReducer(now, action);
     answer(open.id, null);
     if (next === now) continue;
     actions.push(action);
     now = next;
-    said.push(open.by === "shell" ? openedText(title) : openedByText(agentLabel(open.by), title));
-    if (!onScreen && !news.includes(open.tab_id)) news.push(open.tab_id);
+    said.push(open.by === "shell" ? openedText(title, panel) : openedByText(agentLabel(open.by), title, panel));
+    if (!onScreen && !news.some((n) => n.session === open.tab_id && n.panel === panel)) news.push({ session: open.tab_id, panel });
   }
   return { view: now, actions, done, said, news };
+}
+
+/** What a drop on the side pane comes to: the actions to dispatch, the last file opened, and whether the 32-tab limit stopped it. */
+export type DropPlan = { actions: PaneAction[]; last: string | null; refused: boolean };
+
+/**
+ * A drop of files on the pane: each file that passed its check (`ok`: it is a file the core can read; a folder is not) opens as a
+ * tab in its own panel, in order. The reducer is followed here too, so a drop of many files meets the 32-tab limit at the right
+ * file, and the files after it are left out. Pure: the caller dispatches `actions`, says the limit when `refused`, and announces
+ * `last`.
+ */
+export function dropPlan(pane: PaneView, session: string, project: string, paths: readonly { path: string; ok: boolean }[]): DropPlan {
+  const actions: PaneAction[] = [];
+  let now = pane;
+  let last: string | null = null;
+  let refused = false;
+  for (const { path, ok } of paths) {
+    if (!ok) continue;
+    if (openRefused(now, session, path)) {
+      refused = true;
+      break;
+    }
+    const action: PaneAction = { type: "open", session, project, target: { path } };
+    now = paneReducer(now, action);
+    actions.push(action);
+    last = path;
+  }
+  return { actions, last, refused };
 }

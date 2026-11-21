@@ -21,7 +21,7 @@ import type { TerminalThemeSetting } from "../terminal/terminalTheme";
 import { COMPOSER, DRAWER, STATUS_BAR_HEIGHT, SIDEBAR, drawerPlacement, sidebarWidth as widthFor, type SidebarMode, type SidebarPref } from "./layout";
 import { SearchIcon } from "./SearchIcon";
 import { SidebarIcon } from "./SidebarIcon";
-import { SidePaneIcon } from "./SidePaneIcon";
+import { PanelIcon } from "./PanelIcon";
 import { isTool } from "../../components/AgentMark/kinds";
 import { hasPromptLine } from "../sidebar/promptLine";
 import type { Rect } from "../../lib/navigation/types";
@@ -55,6 +55,9 @@ const clampSidebar = (w: number) => Math.round(Math.min(SIDEBAR.max, Math.max(SI
 const WIDTH_RANK: Record<SidebarMode, number> = { focus: 0, rail: 1, expanded: 2 };
 /** The widest of the sidebar modes given: while the column moves it shows that one, so nothing in it reflows. */
 const widestMode = (...modes: Array<SidebarMode | null>): SidebarMode => modes.reduce<SidebarMode>((w, m) => (m !== null && WIDTH_RANK[m] > WIDTH_RANK[w] ? m : w), "focus");
+
+/** One side pane panel's button in the title bar. */
+export type PanelButton = { id: string; label: string; shown: boolean; news: boolean; keys: string };
 
 export type WindowLayout = "default" | "focus" | "rail";
 /** What makes the sidebar's shell panel live (see `MainWindowProps.shell`). */
@@ -162,8 +165,10 @@ export type MainWindowProps = {
   onPalette?: () => void;
   /** The click on the sidebar button next to it: fold the sidebar to the rail, or open it. Not called when a narrow window cannot open it. */
   onToggleSidebar?: () => void;
-  /** The click on the side pane button at the bar's end: show or hide the pane. Not called with no session or a main view in place. */
-  onTogglePane?: () => void;
+  /** One button per side pane panel at the bar's end, in order. `shown` is the panel's own state; the button is expanded only while the pane is wanted. */
+  panelButtons?: readonly PanelButton[];
+  /** The click on a panel's button: show or hide that panel. Not called with no session or a main view in place. */
+  onTogglePanel?: (id: string) => void;
   /** No terminal is selected (Ctrl+Shift+Backspace): no terminal is marked focused, and the window says how to pick one. */
   noneSelected?: boolean;
   /** The keyboard cursor while Ctrl+Shift is held, measured against the window. */
@@ -171,8 +176,6 @@ export type MainWindowProps = {
   /** The side pane's content. Shown (`paneShown`), it sits beside the session, or over it in a narrow window, and the terminals stay mounted. */
   pane?: ReactNode;
   paneShown?: boolean;
-  /** A tab `marshell open` added is waiting unseen: the pane button shows a dot. */
-  paneNews?: boolean;
   /** The saved width in pixels, or null for half the room. The window holds no width of its own. */
   paneWidth?: number | null;
   onPaneWidth?: (width: number | null) => void;
@@ -253,14 +256,14 @@ export function MainWindow({
   onMenuRun,
   onPalette,
   onToggleSidebar,
-  onTogglePane,
+  onTogglePanel,
+  panelButtons = [],
   onSidebarWidth,
   onSidebarReset,
   noneSelected = false,
   navCursor = null,
   pane,
   paneShown = false,
-  paneNews = false,
   paneWidth = null,
   onPaneWidth,
   onDividerGone,
@@ -451,9 +454,15 @@ export function MainWindow({
         </div>
         <div className="window__bar-end" data-tauri-drag-region>
           {/* Always in the bar, on every OS and in every sidebar mode; aria-disabled, like the sidebar's, so it says why it does nothing. */}
-          <button type="button" className="window__pane-toggle" data-nav-top="pane" aria-label="Side pane" aria-expanded={paneWanted} aria-disabled={paneBlocked || undefined} data-news={paneNews ? "" : undefined} title={(paneBlocked ? "The side pane shows beside a session" : `${paneWanted ? "Hide" : "Show"} the side pane (${shortcutLabel(commandById("preview").binding!, os)})`) + (paneNews ? " · A new tab is waiting" : "")} onClick={paneBlocked ? undefined : onTogglePane}>
-            <SidePaneIcon open={paneWanted} />
-          </button>
+          {panelButtons.map((b) => {
+            const expanded = b.shown && paneWanted;
+            const title = (paneBlocked ? "The side pane shows beside a session" : `${expanded ? "Hide" : "Show"} ${b.label} (${b.keys})`) + (b.news ? " · A new tab is waiting" : "");
+            return (
+              <button key={b.id} type="button" className="window__pane-toggle" data-nav-top={`panel-${b.id}`} aria-label={b.label} aria-expanded={expanded} aria-disabled={paneBlocked || undefined} data-news={b.news ? "" : undefined} title={title} onClick={paneBlocked ? undefined : () => onTogglePanel?.(b.id)}>
+                <PanelIcon panel={b.id} open={expanded} />
+              </button>
+            );
+          })}
           {os === "windows" && (
             <div className="window__controls" ref={controlsRef}>
               <button type="button" className="window__control" aria-label="Minimize" onClick={windowControls?.onMinimize}>

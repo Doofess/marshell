@@ -6,8 +6,11 @@ import type { Endpoint } from "../../generated/Endpoint";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import type { PaneView } from "../../generated/PaneView";
 import type { Task } from "../../generated/Task";
-import { EmptyPane } from "../pane/EmptyPane";
-import { PANE_BESIDE_SESSION, paneBody, paneToggleOutcome, toggleOutcome } from "../pane/paneCommands";
+import { EmptyBrowser } from "../pane/EmptyBrowser";
+import { EmptyFiles } from "../pane/EmptyFiles";
+import { PanelStack } from "../pane/PanelStack";
+import { PANEL_LABEL, activeIn, panelTabs, stackOf, stackPanels, type PanelId } from "../pane/panels";
+import { PANE_BESIDE_SESSION, paneBody, paneToggleOutcome } from "../pane/paneCommands";
 import { SidePane } from "../pane/SidePane";
 import { paneReducer, recentFor } from "../pane/paneState";
 import { FIXTURES } from "../sidebar/fixtures";
@@ -663,7 +666,7 @@ describe("LiveApp: what counts as a text box", () => {
     expect(source.split('keepsOwnKeys(e.target as HTMLElement | null, e.getModifierState("AltGraph"))')).toHaveLength(3);
   });
   it("draws the Address box with the class the keys are read by", () => {
-    const html = renderToStaticMarkup(<UrlBar page={undefined} onGo={() => {}} onNav={() => {}} onOpenOutside={() => {}} onEscape={() => {}} />);
+    const html = renderToStaticMarkup(<UrlBar page={undefined} onGo={() => {}} onNav={() => {}} onEscape={() => {}} />);
     expect(html).toContain(`class="${ADDRESS_BOX}" aria-label="Address"`);
   });
 });
@@ -722,8 +725,8 @@ describe("LiveApp: the side pane", () => {
   const closedPane: PaneView = { open: false, width: null, sessions: {}, recent: [] };
   const paneNode = (pane: PaneView, session: string) =>
     renderToStaticMarkup(
-      <SidePane tabs={[]} activeId={null} os="windows" onSelect={() => {}} onClose={() => {}} onMove={() => {}} onHide={() => {}} onPlus={() => {}}>
-        {paneBody(pane, session) === "empty" ? <EmptyPane recent={recentFor(pane, "C:\\dev\\my-app", session)} onOpenFile={() => {}} onBrowse={() => {}} onRecent={() => {}} /> : null}
+      <SidePane panel="files" tabs={[]} activeId={null} plus={{ label: "New tab", menu: true }} fill={{ on: false }} hideKeys="Ctrl+Shift+Q" onFill={() => {}} onSelect={() => {}} onClose={() => {}} onMove={() => {}} onHide={() => {}} onPlus={() => {}}>
+        {paneBody(pane, session) === "empty" ? <EmptyFiles recent={recentFor(pane, "C:\\dev\\my-app", session)} onOpenFile={() => {}} onBrowse={() => {}} onRecent={() => {}} /> : null}
       </SidePane>,
     );
   it("the title-bar button toggles beside a session, and otherwise says where the pane shows", () => {
@@ -733,11 +736,11 @@ describe("LiveApp: the side pane", () => {
     expect(PANE_BESIDE_SESSION).toBe("The side pane shows beside a session.");
   });
   it("Ctrl+Shift+Q with no tabs shows the empty pane", () => {
-    const next = paneReducer(closedPane, { type: "toggle" });
-    expect(toggleOutcome(closedPane, "t1")).toEqual({ shown: true, body: "empty" });
+    const next = paneReducer(closedPane, { type: "toggle", session: "t1" });
+    expect(paneBody(closedPane, "t1")).toBe("empty");
     expect(next.open).toBe(true);
     const h = paneNode(next, "t1");
-    expect(h).toContain("No tabs open in this session.");
+    expect(h).toContain("No files open");
     expect(h).toContain("Open file…");
   });
   it("a session with no tabs shows the empty state while the pane is open", () => {
@@ -746,9 +749,72 @@ describe("LiveApp: the side pane", () => {
     expect(paneBody(pane, "t2")).toBe("tabs");
     expect(paneBody(pane, "t1")).toBe("empty");
     const h = paneNode(pane, "t1");
-    expect(h).toContain("No tabs open in this session.");
+    expect(h).toContain("No files open");
     expect(h).toContain("Recent in this project");
     expect(h).toContain("a.md");
-    expect(h).toContain("Drop a file here to open it.");
+    expect(h).toContain("Open a file from this project, or drop one here.");
+  });
+});
+
+describe("LiveApp: the stack of panels", () => {
+  const closedPane: PaneView = { open: false, width: null, sessions: {}, recent: [] };
+  const withBoth = (): PaneView => {
+    let pane = paneReducer(closedPane, { type: "open", session: "t1", project: "p", target: { path: "C:\\p\\a.md" } });
+    pane = paneReducer(pane, { type: "openPage", session: "t1", url: "http://localhost:3000/" });
+    return pane;
+  };
+  /** The stack as `LiveApp`'s `renderPanel` composes it: one `SidePane` per panel, with that panel's own tabs. */
+  const stackHtml = (pane: PaneView, session: string) => {
+    const stack = stackOf(pane, session);
+    return renderToStaticMarkup(
+      <PanelStack
+        panels={stackPanels(stack)}
+        weights={stack.weights}
+        onWeights={() => {}}
+        render={(panel: PanelId) => {
+          const st = pane.sessions[session]!;
+          return (
+            <SidePane
+              panel={panel}
+              tabs={panelTabs(pane, session, panel).map((t) => ({ id: t.id, title: t.id, path: t.history[t.index]!.path, kind: t.kind === "browser" ? "web" : "text", openedBy: t.opened_by, unseen: t.unseen, unsaved: false }))}
+              activeId={activeIn(st, panel)}
+              plus={panel === "browser" ? { label: "New tab", menu: false } : { label: "Open a file", menu: true }}
+              menu={panel === "browser" ? { label: "Browser menu" } : undefined}
+              fill={{ on: stack.filled === panel, disabled: stack.shown.length < 2 ? "No other panel is shown" : undefined }}
+              hideKeys="Ctrl+Shift+A"
+              onFill={() => {}}
+              onSelect={() => {}}
+              onClose={() => {}}
+              onMove={() => {}}
+              onPlus={() => {}}
+              onHide={() => {}}
+            >
+              <i data-body={panel} />
+            </SidePane>
+          );
+        }}
+      />,
+    );
+  };
+  it("the stack draws a section for each panel, Browser first", () => {
+    const h = stackHtml(withBoth(), "t1");
+    expect(h).toContain(`data-panel="browser"`);
+    expect(h).toContain(`data-panel="files"`);
+    expect(h.indexOf(`data-panel="browser"`)).toBeLessThan(h.indexOf(`data-panel="files"`));
+    expect(h).toContain("Browser menu");
+    expect(h).toContain("Open a file");
+    expect(h).toContain(PANEL_LABEL.browser);
+  });
+  it("a filled panel is drawn alone", () => {
+    const pane = paneReducer(withBoth(), { type: "fill", panel: "files", session: "t1" });
+    const h = stackHtml(pane, "t1");
+    expect(h).toContain(`data-panel="files"`);
+    expect(h).not.toContain(`data-panel="browser"`);
+  });
+  it("an empty Browser panel lists the session's ports", () => {
+    const h = renderToStaticMarkup(<EmptyBrowser available ports={[{ port: 3000, url: "http://localhost:3000/" }]} onNewTab={() => {}} onOpenHtml={() => {}} onPort={() => {}} />);
+    expect(h).toContain("Running in this session");
+    expect(h).toContain("localhost:3000");
+    expect(renderToStaticMarkup(<EmptyBrowser available ports={[]} onNewTab={() => {}} onOpenHtml={() => {}} onPort={() => {}} />)).not.toContain("Running in this session");
   });
 });

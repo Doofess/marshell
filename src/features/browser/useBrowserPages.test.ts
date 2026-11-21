@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { PaneView } from "../../generated/PaneView";
 import { paneReducer } from "../pane/paneState";
 import { canLoad, pageReducer, setLoadable, subscribePages, type PageEvent, type PageState } from "./pageStore";
-import { openKeys, owners, pageAction, popupActions, unload } from "./useBrowserPages";
+import { openKeys, owners, pageAction, popupActions, popupNews, unload } from "./useBrowserPages";
 import { nextLive } from "./pages";
 import { slotStep } from "./usePageSlot";
 
@@ -78,12 +78,8 @@ describe("popupActions", () => {
   it("opens a tab in the popup's own session and keeps it selected when that session is on screen", () => {
     expect(popupActions(base, "a", "https://pop.example/", true, [])).toEqual([{ type: "openPage", session: "a", url: "https://pop.example/" }]);
   });
-  it("leaves the selected tab and the pane as they were when the session is not on screen", () => {
-    expect(popupActions(base, "a", "https://pop.example/", false, [])).toEqual([
-      { type: "openPage", session: "a", url: "https://pop.example/" },
-      { type: "select", session: "a", paneTab: "t2" },
-      { type: "hide" },
-    ]);
+  it("a popup from a session that isn't on screen opens in the background", () => {
+    expect(popupActions(base, "a", "https://pop.example/", false, [])).toEqual([{ type: "openPage", session: "a", url: "https://pop.example/", background: true }]);
   });
   it("a_popup_to_an_own_origin_opens_no_tab", () => {
     const own = [["localhost", 1420], ["127.0.0.1", 49152]] as const;
@@ -92,11 +88,30 @@ describe("popupActions", () => {
     }
     expect(popupActions(base, "a", "http://localhost:3000/", true, own)).toEqual([{ type: "openPage", session: "a", url: "http://localhost:3000/" }]);
   });
-  it("keeps the pane open when it was open", () => {
-    expect(popupActions(open, "a", "https://pop.example/", false, [])).toEqual([
-      { type: "openPage", session: "a", url: "https://pop.example/" },
-      { type: "select", session: "a", paneTab: "t2" },
-    ]);
+  it("a background popup is the same whether the pane was open or hidden", () => {
+    expect(popupActions(open, "a", "https://pop.example/", false, [])).toEqual(popupActions(base, "a", "https://pop.example/", false, []));
+  });
+});
+
+describe("popupNews", () => {
+  it("a popup opened in the background reports news for its session", () => {
+    const base = paneReducer(page(empty, "a", "https://one.example/"), { type: "hide" });
+    expect(popupNews(popupActions(base, "a", "https://pop.example/", false, []), base)).toEqual(["a"]);
+    expect(popupNews(popupActions(base, "a", "https://pop.example/", true, []), base)).toEqual([]);
+    expect(popupNews(popupActions(base, "a", "file:///C:/x", false, []), base)).toEqual([]);
+  });
+  it("reports nothing for an address its session already has open: no tab is added", () => {
+    const base = paneReducer(page(empty, "a", "https://one.example/"), { type: "hide" });
+    expect(popupNews(popupActions(base, "a", "https://one.example/", false, []), base)).toEqual([]);
+    // The same address in another session is a new tab there.
+    expect(popupNews(popupActions(base, "b", "https://one.example/", false, []), base)).toEqual(["b"]);
+  });
+  it("reports nothing when its session is at the tab limit: no tab is added", () => {
+    let full = empty;
+    for (let i = 0; i < 32; i++) full = page(full, "a", `https://example.com/${i}`);
+    full = paneReducer(full, { type: "hide" });
+    expect(full.sessions.a?.tabs.length).toBe(32);
+    expect(popupNews(popupActions(full, "a", "https://pop.example/", false, []), full)).toEqual([]);
   });
 });
 

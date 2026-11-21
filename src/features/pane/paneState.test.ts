@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
+import type { PaneTab } from "../../generated/PaneTab";
 import type { PaneView } from "../../generated/PaneView";
+import type { SessionTabs } from "../../generated/SessionTabs";
+import { type PanelId, PANELS, activeIn, onScreen, stackOf, stackPanels } from "./panels";
+import { paneProblem } from "./paneRules";
 import {
+  type OpenTarget,
   type PaneAction,
   activeTab,
   currentEntry,
@@ -62,7 +67,7 @@ describe("paneReducer", () => {
 
   it("a second open with a line moves the open tab to it", () => {
     const s = run(EMPTY, open("/a.ts", { line: 1 }), open("/a.ts", { line: 42, col: 7 }));
-    const tab = activeTab(s, "s")!;
+    const tab = activeTab(s, "s", "files")!;
     expect(tab.history).toHaveLength(1);
     expect(tab.history[0]).toMatchObject({ line: 42, col: 7 });
   });
@@ -70,23 +75,23 @@ describe("paneReducer", () => {
   it("a line or column too large to be one is left out, so the layout can still be saved", () => {
     // `app.log:1731234567890` reads as a path and a line; the core's layout holds a line as a u32 and refuses the whole save.
     const s = run(EMPTY, open("/app.log", { line: 1731234567890, col: 4294967296 }));
-    expect(activeTab(s, "s")!.history[0]).toMatchObject({ path: "/app.log", line: null, col: null });
+    expect(activeTab(s, "s", "files")!.history[0]).toMatchObject({ path: "/app.log", line: null, col: null });
     const top = run(EMPTY, open("/b.log", { line: 4294967295, col: 1 }));
-    expect(activeTab(top, "s")!.history[0]).toMatchObject({ line: 4294967295, col: 1 });
+    expect(activeTab(top, "s", "files")!.history[0]).toMatchObject({ line: 4294967295, col: 1 });
     const odd = run(EMPTY, open("/c.log", { line: -3, col: 1.5 }));
-    expect(activeTab(odd, "s")!.history[0]).toMatchObject({ line: null, col: null });
+    expect(activeTab(odd, "s", "files")!.history[0]).toMatchObject({ line: null, col: null });
   });
 
   it("a second open with a line too large keeps the tab's place", () => {
     const s = run(EMPTY, open("/a.ts", { line: 7 }), open("/a.ts", { line: 1731234567890 }));
-    expect(activeTab(s, "s")!.history).toEqual([{ path: "/a.ts", line: 7, col: null, view: "rendered" }]);
+    expect(activeTab(s, "s", "files")!.history).toEqual([{ path: "/a.ts", line: 7, col: null, view: "rendered" }]);
     const col = run(EMPTY, open("/a.ts", { line: 7 }), open("/a.ts", { line: 9, col: 1731234567890 }));
-    expect(activeTab(col, "s")!.history[0]).toMatchObject({ line: 9, col: null });
+    expect(activeTab(col, "s", "files")!.history[0]).toMatchObject({ line: 9, col: null });
   });
 
   it("a link inside a tab to a line too large moves the tab without the line", () => {
     const s = run(EMPTY, open("/a.md"), { type: "navigate", session: "s", paneTab: "t1", project: "p", target: { path: "/b.log", line: 1731234567890 } });
-    expect(activeTab(s, "s")!.history[1]).toMatchObject({ path: "/b.log", line: null });
+    expect(activeTab(s, "s", "files")!.history[1]).toMatchObject({ path: "/b.log", line: null });
   });
 
   it("the 33rd open is refused", () => {
@@ -102,9 +107,9 @@ describe("paneReducer", () => {
   it("navigate pushes onto the tab's history and drops what was forward", () => {
     const nav = (path: string): PaneAction => ({ type: "navigate", session: "s", paneTab: "t1", project: "p", target: { path } });
     let s = run(EMPTY, open("/a"), nav("/b"), nav("/c"));
-    expect(activeTab(s, "s")!.history.map((e) => e.path)).toEqual(["/a", "/b", "/c"]);
+    expect(activeTab(s, "s", "files")!.history.map((e) => e.path)).toEqual(["/a", "/b", "/c"]);
     s = run(s, { type: "back", session: "s", paneTab: "t1" }, nav("/d"));
-    const t = activeTab(s, "s")!;
+    const t = activeTab(s, "s", "files")!;
     expect(t.history.map((e) => e.path)).toEqual(["/a", "/b", "/d"]);
     expect(t.index).toBe(2);
   });
@@ -112,7 +117,7 @@ describe("paneReducer", () => {
   it("a history keeps its last 50 entries", () => {
     let s = run(EMPTY, open("/0"));
     for (let i = 1; i < 60; i++) s = run(s, { type: "navigate", session: "s", paneTab: "t1", project: "p", target: { path: `/${i}` } });
-    const t = activeTab(s, "s")!;
+    const t = activeTab(s, "s", "files")!;
     expect(t.history).toHaveLength(50);
     expect(t.history[0]!.path).toBe("/10");
     expect(t.history[49]!.path).toBe("/59");
@@ -128,26 +133,26 @@ describe("paneReducer", () => {
     const two = run(one, { type: "navigate", session: "s", paneTab: "t1", project: "p", target: { path: "/b" } });
     expect(paneReducer(two, fwd)).toBe(two);
     const back1 = paneReducer(two, back);
-    expect(activeTab(back1, "s")!.index).toBe(0);
+    expect(activeTab(back1, "s", "files")!.index).toBe(0);
     expect(paneReducer(back1, back)).toBe(back1);
-    expect(activeTab(paneReducer(back1, fwd), "s")!.index).toBe(1);
+    expect(activeTab(paneReducer(back1, fwd), "s", "files")!.index).toBe(1);
   });
 
   it("setView changes only the current entry", () => {
     const nav: PaneAction = { type: "navigate", session: "s", paneTab: "t1", project: "p", target: { path: "/b" } };
     let s = run(EMPTY, open("/a"), nav);
     s = run(s, { type: "setView", session: "s", paneTab: "t1", view: "source" });
-    expect(activeTab(s, "s")!.history.map((e) => e.view)).toEqual(["rendered", "source"]);
+    expect(activeTab(s, "s", "files")!.history.map((e) => e.view)).toEqual(["rendered", "source"]);
     expect(paneReducer(s, { type: "setView", session: "s", paneTab: "t1", view: "source" })).toBe(s);
   });
 
   it("step wraps both ways and does nothing with no tabs", () => {
-    expect(paneReducer(EMPTY, { type: "step", session: "s", by: 1 })).toBe(EMPTY);
+    expect(paneReducer(EMPTY, { type: "step", session: "s", panel: "files", by: 1 })).toBe(EMPTY);
     const s = run(EMPTY, open("/a"), open("/b"), open("/c"));
     expect(tabsOf(s, "s").active).toBe("t3");
-    const next = paneReducer(s, { type: "step", session: "s", by: 1 });
+    const next = paneReducer(s, { type: "step", session: "s", panel: "files", by: 1 });
     expect(tabsOf(next, "s").active).toBe("t1");
-    expect(tabsOf(paneReducer(next, { type: "step", session: "s", by: -1 }), "s").active).toBe("t3");
+    expect(tabsOf(paneReducer(next, { type: "step", session: "s", panel: "files", by: -1 }), "s").active).toBe("t3");
   });
 
   it("closing the selected tab selects the one to its right, else the one to its left", () => {
@@ -180,13 +185,13 @@ describe("paneReducer", () => {
   });
 
   it("toggle, show and hide set open", () => {
-    const shown = paneReducer(EMPTY, { type: "show" });
+    const shown = paneReducer(EMPTY, { type: "show", session: "s" });
     expect(shown.open).toBe(true);
-    expect(paneReducer(shown, { type: "show" })).toBe(shown);
+    expect(paneReducer(shown, { type: "show", session: "s" })).toBe(shown);
     expect(paneReducer(shown, { type: "hide" }).open).toBe(false);
     expect(paneReducer(EMPTY, { type: "hide" })).toBe(EMPTY);
-    expect(paneReducer(EMPTY, { type: "toggle" }).open).toBe(true);
-    expect(paneReducer(shown, { type: "toggle" }).open).toBe(false);
+    expect(paneReducer(EMPTY, { type: "toggle", session: "s" }).open).toBe(true);
+    expect(paneReducer(shown, { type: "toggle", session: "s" }).open).toBe(false);
   });
 
   it("width keeps null and rounds a number", () => {
@@ -272,7 +277,7 @@ describe("paneReducer", () => {
       { type: "setView", session: "s", paneTab: "zz", view: "source" },
       { type: "select", session: "s", paneTab: "zz" },
       { type: "select", session: "nope", paneTab: "t1" },
-      { type: "step", session: "nope", by: 1 },
+      { type: "step", session: "nope", panel: "files", by: 1 },
       { type: "close", session: "s", paneTab: "zz" },
       { type: "close", session: "nope", paneTab: "t1" },
       { type: "move", session: "s", paneTab: "zz", to: 0 },
@@ -291,24 +296,25 @@ describe("browser tabs", () => {
     expect(tabsOf(s, "s")).toEqual({
       tabs: [{ id: "t1", kind: "browser", history: [{ path: "https://a.dev/", line: null, col: null, view: "rendered" }], index: 0, title: null, opened_by: null, unseen: false }],
       active: "t1",
+      active_browser: "t1",
     });
     expect(s.open).toBe(true);
-    expect(isBrowserTab(activeTab(s, "s")!)).toBe(true);
+    expect(isBrowserTab(activeTab(s, "s", "browser")!)).toBe(true);
   });
 
   it("openPage of an address already open selects its tab", () => {
     const s = run(EMPTY, page("https://a.dev/"), open("/f"), page("https://b.dev/"), page("https://A.dev"));
     expect(ids(s)).toEqual(["t1", "t2", "t3"]);
-    expect(tabsOf(s, "s").active).toBe("t1");
+    expect(activeIn(tabsOf(s, "s"), "browser")).toBe("t1");
     const hidden = run(s, { type: "hide" }, page("https://b.dev/"));
     expect(hidden.open).toBe(true);
-    expect(tabsOf(hidden, "s").active).toBe("t3");
+    expect(activeIn(tabsOf(hidden, "s"), "browser")).toBe("t3");
   });
 
   it("openPage of about:blank always makes a new tab", () => {
     const s = run(EMPTY, page("about:blank"), page("about:blank"));
     expect(ids(s)).toEqual(["t1", "t2"]);
-    expect(tabsOf(s, "s").active).toBe("t2");
+    expect(activeIn(tabsOf(s, "s"), "browser")).toBe("t2");
   });
 
   it("openPage is refused at 32 tabs", () => {
@@ -319,7 +325,7 @@ describe("browser tabs", () => {
     expect(openRefused(s, "s", "https://A.dev/3")).toBe(false);
     expect(paneReducer(s, page("https://a.dev/extra"))).toBe(s);
     expect(paneReducer(s, page("about:blank"))).toBe(s);
-    expect(tabsOf(paneReducer(s, page("https://a.dev/3")), "s").active).toBe("t4");
+    expect(activeIn(tabsOf(paneReducer(s, page("https://a.dev/3")), "s"), "browser")).toBe("t4");
   });
 
   it("openPage refuses an address that is not a page", () => {
@@ -339,13 +345,13 @@ describe("browser tabs", () => {
 
   it("a page event moves the tab's address and title", () => {
     const s = run(EMPTY, page("https://a.dev/"), ev("t1", "https://a.dev/next", "Next"));
-    const t = activeTab(s, "s")!;
+    const t = activeTab(s, "s", "browser")!;
     expect(t.history).toEqual([{ path: "https://a.dev/next", line: null, col: null, view: "rendered" }]);
     expect(t.index).toBe(0);
     expect(t.title).toBe("Next");
     const long = run(s, ev("t1", "https://a.dev/next", "x".repeat(300)));
-    expect(activeTab(long, "s")!.title).toHaveLength(200);
-    expect(activeTab(run(s, ev("t1", "https://a.dev/next", null)), "s")!.title).toBeNull();
+    expect(activeTab(long, "s", "browser")!.title).toHaveLength(200);
+    expect(activeTab(run(s, ev("t1", "https://a.dev/next", null)), "s", "browser")!.title).toBeNull();
   });
 
   it("a page event with the same address and title returns the same state", () => {
@@ -457,26 +463,26 @@ describe("openBackground", () => {
   });
 
   it("stepping_onto_a_tab_clears_unseen", () => {
-    const s = run(EMPTY, open("/a"), bg("/b"), { type: "step", session: "s", by: 1 });
+    const s = run(EMPTY, open("/a"), bg("/b"), { type: "step", session: "s", panel: "files", by: 1 });
     expect(tab(s, "t2").unseen).toBe(false);
-    const back = run(EMPTY, open("/a"), bg("/b"), { type: "step", session: "s", by: -1 });
+    const back = run(EMPTY, open("/a"), bg("/b"), { type: "step", session: "s", panel: "files", by: -1 });
     expect(tab(back, "t2").unseen).toBe(false);
   });
 
   it("seen_clears_the_mark_on_the_active_tab_and_keeps_the_opener", () => {
-    const s = run(EMPTY, bg("/a", { by: "codex" }), { type: "seen", session: "s" });
+    const s = run(EMPTY, bg("/a", { by: "codex" }), { type: "seen", session: "s", panel: "files" });
     expect(tab(s, "t1")).toMatchObject({ opened_by: "codex", unseen: false });
   });
 
   it("seen_leaves_other_tabs_marked", () => {
-    const s = run(EMPTY, open("/a"), bg("/b", { by: "codex" }), { type: "seen", session: "s" });
+    const s = run(EMPTY, open("/a"), bg("/b", { by: "codex" }), { type: "seen", session: "s", panel: "files" });
     expect(tab(s, "t2")).toMatchObject({ opened_by: "codex", unseen: true });
   });
 
   it("seen_with_nothing_marked_returns_the_same_state", () => {
     const s = run(EMPTY, open("/a"));
-    expect(paneReducer(s, { type: "seen", session: "s" })).toBe(s);
-    expect(paneReducer(s, { type: "seen", session: "none" })).toBe(s);
+    expect(paneReducer(s, { type: "seen", session: "s", panel: "files" })).toBe(s);
+    expect(paneReducer(s, { type: "seen", session: "none", panel: "files" })).toBe(s);
   });
 
   it("opening_a_marked_tab_clears_unseen", () => {
@@ -553,5 +559,415 @@ describe("a place in a PDF", () => {
     expect(cur(s)).toMatchObject({ page: 1, top: 10_000 });
     s = run(s, at("t1", -3, -0.2));
     expect(cur(s)).toMatchObject({ page: 1, top: 0 });
+  });
+});
+
+describe("the Browser and Files panels", () => {
+  const f = (id: string, path = `/${id}.md`): PaneTab => ({
+    id,
+    kind: "file",
+    history: [{ path, line: null, col: null, view: "rendered" }],
+    index: 0,
+    title: null,
+    opened_by: null,
+    unseen: false,
+  });
+  const b = (id: string): PaneTab => ({ ...f(id, `https://${id}.test/`), kind: "browser" });
+  const mk = (sessions: Record<string, SessionTabs>, extra: Partial<PaneView> = {}): PaneView => ({ open: true, width: null, sessions, recent: [], ...extra });
+  const pg = (url: string, session = "s"): PaneAction => ({ type: "openPage", session, url });
+  const bgPage = (url: string, session = "s"): PaneAction => ({ type: "openPage", session, url, background: true });
+  const bg = (target: string, kind: "file" | "browser" = "file", session = "s"): PaneAction => ({
+    type: "openBackground",
+    session,
+    kind,
+    target,
+    by: "claude",
+    project: "p",
+    onScreen: false,
+  });
+  const sel = (st: PaneView, panel: PanelId, session = "s") => activeIn(tabsOf(st, session), panel);
+  const shown = (st: PaneView, session = "s") => stackOf(st, session).shown;
+  const select = (paneTab: string, session = "s"): PaneAction => ({ type: "select", session, paneTab });
+  // A pane saved by a build from before the panels: mixed tabs, and `active` on the Browser one.
+  const OLD = (): PaneView => mk({ s: { tabs: [f("t1"), b("t2"), f("t3")], active: "t2" } });
+
+  it("the old active tab stays its panel's selection after a select in the other panel", () => {
+    const old = OLD();
+    expect(sel(old, "browser")).toBe("t2");
+    expect(sel(old, "files")).toBe("t1");
+    const next = paneReducer(old, select("t3"));
+    expect(tabsOf(next, "s")).toMatchObject({ active: "t3", active_browser: "t2" });
+    expect(paneProblem(next)).toBeNull();
+    expect(paneProblem(paneReducer(old, select("t1")))).toBeNull();
+  });
+
+  it("the stack is the window's: another session shows the same panels", () => {
+    const s = mk({ a: { tabs: [b("t1")], active: "t1" }, c: { tabs: [f("t1")], active: "t1" } });
+    const withStack = paneReducer(s, { type: "pin", session: "a" });
+    expect(stackOf(withStack, "c")).toEqual(stackOf(withStack, "a"));
+    expect(shown(withStack, "c")).toEqual(["browser"]);
+    const other = run(withStack, open("/x.md", { session: "c" }));
+    expect(shown(other, "a")).toEqual(["browser", "files"]);
+    expect(shown(other, "c")).toEqual(["browser", "files"]);
+  });
+
+  it("the stack's panels are the same with the pane hidden", () => {
+    const s = run(EMPTY, pg("https://a.test/"), open("/a.md"));
+    const before = stackPanels(stackOf(s, "s"));
+    const hidden = paneReducer(s, { type: "hide" });
+    expect(stackPanels(stackOf(hidden, "s"))).toEqual(before);
+    expect(onScreen(hidden, "s")).toEqual([]);
+    expect(onScreen(s, "s")).toEqual(["browser", "files"]);
+    const one = run(s, { type: "panel", panel: "browser", session: "s" }, { type: "panel", panel: "files", session: "s" });
+    expect(one.open).toBe(false);
+    expect(stackPanels(stackOf(one, "s"))).toEqual(["files"]);
+    expect(onScreen(one, "s")).toEqual([]);
+  });
+
+  it("a filled panel is the stack's only panel", () => {
+    const s = run(EMPTY, pg("https://a.test/"), open("/a.md"), { type: "fill", panel: "files", session: "s" });
+    expect(stackOf(s, "s").filled).toBe("files");
+    expect(stackPanels(stackOf(s, "s"))).toEqual(["files"]);
+    expect(onScreen(s, "s")).toEqual(["files"]);
+    expect(stackOf(s, "s").shown).toEqual(["browser", "files"]);
+  });
+
+  it("an open selects the tab in its panel, shows the pane and adds the panel", () => {
+    const s0 = run(EMPTY, pg("https://a.test/"));
+    expect(shown(s0)).toEqual(["browser"]);
+    expect(s0.panels).toEqual({ shown: ["browser"], weights: {}, filled: null });
+    const s1 = run(s0, open("/a.md"));
+    expect(shown(s1)).toEqual(["browser", "files"]);
+    expect(sel(s1, "files")).toBe("t2");
+    expect(sel(s1, "browser")).toBe("t1");
+    expect(paneProblem(s1)).toBeNull();
+    const s2 = run(s1, open("/a.html"));
+    expect(sel(s2, "browser")).toBe("t3");
+    expect(sel(s2, "files")).toBe("t2");
+    expect(paneProblem(s2)).toBeNull();
+  });
+
+  it("an open into another panel ends a fill; into the filled panel keeps it", () => {
+    const filled = run(EMPTY, pg("https://a.test/"), open("/a.md"), { type: "fill", panel: "browser", session: "s" });
+    expect(stackOf(filled, "s").filled).toBe("browser");
+    const files = run(filled, open("/b.md"));
+    expect(stackOf(files, "s")).toMatchObject({ filled: null, shown: ["browser", "files"] });
+    const same = run(filled, open("/b.html"));
+    expect(stackOf(same, "s").filled).toBe("browser");
+    const page = run(filled, pg("https://b.test/"));
+    expect(stackOf(page, "s").filled).toBe("browser");
+  });
+
+  it("an open while the pane is hidden shows that panel alone", () => {
+    const s = mk({ s: { tabs: [f("t1"), b("t2")], active: "t1", active_browser: "t2" } }, { open: false, panels: { shown: ["browser", "files"], weights: { browser: 3000 }, filled: "browser" } });
+    const next = paneReducer(s, open("/new.md"));
+    expect(next.open).toBe(true);
+    expect(next.panels).toEqual({ shown: ["files"], weights: { browser: 3000 }, filled: null });
+    const page = paneReducer(s, pg("https://z.test/"));
+    expect(page.panels).toEqual({ shown: ["browser"], weights: { browser: 3000 }, filled: null });
+  });
+
+  it("an open of the tab already selected in a panel on screen returns the same state", () => {
+    const s = run(EMPTY, pg("https://a.test/"), open("/a.md"));
+    expect(paneReducer(s, open("/a.md"))).toBe(s);
+    expect(paneReducer(s, pg("https://a.test/"))).toBe(s);
+    const hidden = paneReducer(s, { type: "hide" });
+    expect(paneReducer(hidden, open("/a.md"))).not.toBe(hidden);
+    const off = run(s, { type: "panel", panel: "browser", session: "s" });
+    expect(paneReducer(off, pg("https://a.test/"))).not.toBe(off);
+    const notSelected = run(s, open("/b.md"));
+    expect(paneReducer(notSelected, open("/a.md"))).not.toBe(notSelected);
+  });
+
+  it("the first page in a session with no tabs is active and active_browser", () => {
+    const s = run(EMPTY, pg("https://a.test/"));
+    expect(tabsOf(s, "s")).toMatchObject({ active: "t1", active_browser: "t1" });
+    expect(paneProblem(s)).toBeNull();
+    const file = run(EMPTY, open("/a.md"));
+    expect("active_browser" in tabsOf(file, "s")).toBe(false);
+    expect(paneProblem(file)).toBeNull();
+    expect(paneProblem(run(EMPTY, open("/a.html")))).toBeNull();
+  });
+
+  it("the 33rd tab is refused whatever its panel", () => {
+    let s = EMPTY;
+    for (let i = 0; i < 16; i++) s = run(s, open(`/f${i}.md`), pg(`https://h${i}.test/`));
+    expect(ids(s)).toHaveLength(32);
+    expect(paneReducer(s, open("/extra.md"))).toBe(s);
+    expect(paneReducer(s, open("/extra.html"))).toBe(s);
+    expect(paneReducer(s, pg("https://extra.test/"))).toBe(s);
+    expect(paneReducer(s, pg("about:blank"))).toBe(s);
+    expect(paneReducer(s, bgPage("https://extra.test/"))).toBe(s);
+    expect(paneReducer(s, bg("/extra.html"))).toBe(s);
+  });
+
+  it("a link to a file of the other panel opens a tab there", () => {
+    const s = run(EMPTY, open("/a.md"));
+    const link: PaneAction = { type: "navigate", session: "s", paneTab: "t1", project: "p", target: { path: "/page.html" } };
+    const next = paneReducer(s, link);
+    expect(tabsOf(next, "s").tabs[0]).toBe(tabsOf(s, "s").tabs[0]);
+    expect(next).toEqual(run(s, open("/page.html")));
+    expect(sel(next, "browser")).toBe("t2");
+    expect(shown(next)).toEqual(["browser", "files"]);
+    expect(paneProblem(next)).toBeNull();
+    let full = run(EMPTY, open("/a.md"));
+    for (let i = 0; i < 31; i++) full = run(full, pg(`https://h${i}.test/`));
+    expect(paneReducer(full, link)).toBe(full);
+  });
+
+  it("Back onto an entry of the other panel takes the tab there, selected, with its panel shown", () => {
+    const moved: PaneTab = { ...f("t1", "/a.html"), history: [...f("t1", "/a.html").history, ...f("t1", "/b.md").history], index: 1 };
+    const s = mk({ s: { tabs: [moved, f("t2")], active: "t1" } }, { panels: { shown: ["files"], weights: { files: 4000 }, filled: null } });
+    const next = paneReducer(s, { type: "back", session: "s", paneTab: "t1" });
+    expect(tabsOf(next, "s").tabs[0]!.index).toBe(0);
+    expect(sel(next, "browser")).toBe("t1");
+    expect(sel(next, "files")).toBe("t2");
+    expect(next.panels).toEqual({ shown: ["browser", "files"], weights: { files: 4000 }, filled: null });
+    expect(paneProblem(next)).toBeNull();
+    const there = paneReducer(next, { type: "forward", session: "s", paneTab: "t1" });
+    expect(sel(there, "files")).toBe("t1");
+    expect(paneProblem(there)).toBeNull();
+  });
+
+  it("select sets its panel's selection only", () => {
+    const s = mk({ s: { tabs: [f("t1"), b("t2"), f("t3"), b("t4")], active: "t1", active_browser: "t2" } });
+    const files = paneReducer(s, select("t3"));
+    expect(tabsOf(files, "s")).toMatchObject({ active: "t3", active_browser: "t2" });
+    const browser = paneReducer(s, select("t4"));
+    expect(tabsOf(browser, "s")).toMatchObject({ active: "t1", active_browser: "t4" });
+    expect(paneReducer(s, select("t1"))).toBe(s);
+  });
+
+  it("step wraps inside the panel", () => {
+    const s = mk({ s: { tabs: [f("t1"), b("t2"), f("t3"), b("t4")], active: "t1", active_browser: "t2" } });
+    const step = (st: PaneView, panel: PanelId, by: 1 | -1) => paneReducer(st, { type: "step", session: "s", panel, by });
+    const a = step(s, "files", 1);
+    expect(sel(a, "files")).toBe("t3");
+    expect(sel(step(a, "files", 1), "files")).toBe("t1");
+    expect(sel(step(s, "browser", -1), "browser")).toBe("t4");
+    expect(sel(step(s, "browser", 1), "files")).toBe("t1");
+    const lone = mk({ s: { tabs: [f("t1")], active: "t1" } });
+    expect(step(lone, "browser", 1)).toBe(lone);
+  });
+
+  it("move reorders inside the panel and leaves the other panel's tabs where they were", () => {
+    const s = mk({ s: { tabs: [f("t1"), b("t2"), f("t3"), b("t4")], active: "t1", active_browser: "t2" } });
+    const mv = (paneTab: string, to: number): PaneAction => ({ type: "move", session: "s", paneTab, to });
+    expect(ids(paneReducer(s, mv("t3", 0)))).toEqual(["t3", "t2", "t1", "t4"]);
+    expect(ids(paneReducer(s, mv("t2", 9)))).toEqual(["t1", "t4", "t3", "t2"]);
+    expect(ids(paneReducer(s, mv("t4", 0)))).toEqual(["t1", "t4", "t3", "t2"]);
+    expect(paneReducer(s, mv("t1", 0))).toBe(s);
+  });
+
+  it("closing a panel's selected tab selects its neighbour in that panel", () => {
+    const s = mk({ s: { tabs: [f("t1"), b("t2"), f("t3"), f("t4"), b("t5")], active: "t3", active_browser: "t2" } });
+    const a = paneReducer(s, close("t3"));
+    expect(sel(a, "files")).toBe("t4");
+    expect(sel(a, "browser")).toBe("t2");
+    const b2 = paneReducer(s, close("t2"));
+    expect(sel(b2, "browser")).toBe("t5");
+    expect(sel(b2, "files")).toBe("t3");
+    const last = paneReducer(a, close("t4"));
+    expect(sel(last, "files")).toBe("t1");
+    expect(paneProblem(last)).toBeNull();
+  });
+
+  it("closing the Files panel's last tab leaves the panel shown and active on the Browser panel's tab", () => {
+    const s = run(EMPTY, open("/a.md"), pg("https://a.test/"), close("t1"));
+    expect(shown(s)).toEqual(["browser", "files"]);
+    expect(tabsOf(s, "s")).toMatchObject({ active: "t2", active_browser: "t2" });
+    expect(paneProblem(s)).toBeNull();
+  });
+
+  it("closing the Browser panel's last tab removes active_browser", () => {
+    const s = run(EMPTY, open("/a.md"), pg("https://a.test/"), close("t2"));
+    expect(tabsOf(s, "s").active).toBe("t1");
+    expect("active_browser" in tabsOf(s, "s")).toBe(false);
+    expect(paneProblem(s)).toBeNull();
+  });
+
+  it("closing the session's last tab forgets the session", () => {
+    const s = run(EMPTY, pg("https://a.test/"), close("t1"));
+    expect("s" in s.sessions).toBe(false);
+    expect(paneProblem(s)).toBeNull();
+  });
+
+  it("a background open never changes the stack", () => {
+    const base = run(EMPTY, open("/a.md"), { type: "hide" });
+    const files = paneReducer(base, bg("/b.md"));
+    expect(files.open).toBe(false);
+    expect(files.panels).toBe(base.panels);
+    expect(sel(files, "files")).toBe("t1");
+    const html = paneReducer(base, bg("/c.html"));
+    expect(html.open).toBe(false);
+    expect(html.panels).toBe(base.panels);
+    // The Browser panel had no tab, so the tab is its selection.
+    expect(sel(html, "browser")).toBe("t2");
+    expect(sel(paneReducer(html, bg("https://x.test/", "browser")), "browser")).toBe("t2");
+    const page = paneReducer(base, bgPage("https://x.test/"));
+    expect(page.open).toBe(false);
+    expect(page.panels).toBe(base.panels);
+    expect(tabsOf(page, "s")).toMatchObject({ active: "t1", active_browser: "t2" });
+    for (const empty of [paneReducer(EMPTY, bg("/a.md")), paneReducer(EMPTY, bg("https://x.test/", "browser")), paneReducer(EMPTY, bgPage("https://x.test/"))]) {
+      expect(empty.open).toBe(false);
+      expect(empty.panels).toBeUndefined();
+      expect(paneProblem(empty)).toBeNull();
+    }
+  });
+
+  it("seen clears the mark of that panel's selected tab only", () => {
+    const marked = (t: PaneTab): PaneTab => ({ ...t, opened_by: "claude", unseen: true });
+    const s = mk({ s: { tabs: [marked(f("t1")), marked(b("t2")), marked(f("t3"))], active: "t1", active_browser: "t2" } });
+    const files = paneReducer(s, { type: "seen", session: "s", panel: "files" });
+    expect(tabsOf(files, "s").tabs.map((t) => t.unseen)).toEqual([false, true, true]);
+    const browser = paneReducer(s, { type: "seen", session: "s", panel: "browser" });
+    expect(tabsOf(browser, "s").tabs.map((t) => t.unseen)).toEqual([true, false, true]);
+    expect(paneReducer(files, { type: "seen", session: "s", panel: "files" })).toBe(files);
+  });
+
+  it("Ctrl+Shift+Q shows the remembered panels, and writes the stack down when none was saved", () => {
+    const old = { ...OLD(), open: false };
+    for (const type of ["toggle", "show"] as const) {
+      const next = paneReducer(old, { type, session: "s" });
+      expect(next.open).toBe(true);
+      expect(next.panels).toEqual({ shown: ["browser", "files"], weights: {}, filled: null });
+    }
+    const none = paneReducer(old, { type: "show", session: null });
+    expect(none.panels).toEqual({ shown: ["files"], weights: {}, filled: null });
+    const saved = { ...old, panels: { shown: ["files"], weights: { files: 2 }, filled: null } };
+    expect(paneReducer(saved, { type: "toggle", session: "s" }).panels).toBe(saved.panels);
+    const open = paneReducer(old, { type: "show", session: "s" });
+    expect(paneReducer(open, { type: "hide" }).panels).toBe(open.panels);
+    expect(paneReducer(open, { type: "toggle", session: "s" }).panels).toBe(open.panels);
+  });
+
+  it("a panel's toggle", () => {
+    const two = run(EMPTY, pg("https://a.test/"), open("/a.md"));
+    const toggle = (st: PaneView, panel: PanelId) => paneReducer(st, { type: "panel", panel, session: "s" });
+    // On screen with another: it leaves.
+    const one = toggle(two, "browser");
+    expect(one.panels).toEqual({ shown: ["files"], weights: {}, filled: null });
+    expect(one.open).toBe(true);
+    // The only one shown: the pane hides and the panel stays shown.
+    const hidden = toggle(one, "files");
+    expect(hidden.open).toBe(false);
+    expect(hidden.panels?.shown).toEqual(["files"]);
+    // Pane hidden: that panel alone.
+    const back = toggle(hidden, "browser");
+    expect(back.open).toBe(true);
+    expect(back.panels).toEqual({ shown: ["browser"], weights: {}, filled: null });
+    // Not on screen while the pane is open: added; a fill ends.
+    expect(toggle(one, "browser").panels?.shown).toEqual(["browser", "files"]);
+    const filled = run(two, { type: "fill", panel: "files", session: "s" });
+    const added = toggle(filled, "browser");
+    expect(added.panels).toEqual({ shown: ["browser", "files"], weights: {}, filled: null });
+    // The filled one leaves; the other remains.
+    const gone = toggle(filled, "files");
+    expect(gone.panels).toEqual({ shown: ["browser"], weights: {}, filled: null });
+    for (const st of [two, one, hidden, back, filled, added, gone]) expect(paneProblem(st)).toBeNull();
+  });
+
+  it("fill", () => {
+    const two = run(EMPTY, pg("https://a.test/"), open("/a.md"));
+    const fill = (st: PaneView, panel: PanelId) => paneReducer(st, { type: "fill", panel, session: "s" });
+    const filled = fill(two, "browser");
+    expect(filled.panels?.filled).toBe("browser");
+    expect(fill(filled, "browser").panels?.filled).toBeNull();
+    expect(fill(filled, "files").panels?.filled).toBe("files");
+    const one = run(two, { type: "panel", panel: "browser", session: "s" });
+    expect(fill(one, "files")).toBe(one);
+    const hidden = paneReducer(two, { type: "hide" });
+    expect(fill(hidden, "files")).toBe(hidden);
+  });
+
+  it("weights are whole, 1 to 100000; NaN, an infinite number and an unknown key are dropped", () => {
+    const s = run(EMPTY, pg("https://a.test/"), open("/a.md"));
+    const w = (weights: Record<string, number>) => paneReducer(s, { type: "weights", weights } as PaneAction);
+    expect(w({ browser: 5000.4, files: 123456 }).panels?.weights).toEqual({ browser: 5000, files: 100000 });
+    expect(w({ browser: 0.2 }).panels?.weights).toEqual({ browser: 1 });
+    expect(w({ browser: Number.NaN, files: Number.POSITIVE_INFINITY, changes: 5 })).toBe(s);
+    expect(w({ browser: Number.NaN, files: 7000, changes: 5 }).panels?.weights).toEqual({ files: 7000 });
+    const merged = paneReducer(w({ browser: 3000 }), { type: "weights", weights: { files: 9000 } });
+    expect(merged.panels?.weights).toEqual({ browser: 3000, files: 9000 });
+    expect(paneProblem(merged)).toBeNull();
+  });
+
+  it("pin writes the stack once", () => {
+    const s = OLD();
+    const pinned = paneReducer(s, { type: "pin", session: "s" });
+    expect(pinned.panels).toEqual({ shown: ["browser", "files"], weights: {}, filled: null });
+    expect(paneReducer(pinned, { type: "pin", session: "s" })).toBe(pinned);
+    expect(paneReducer(pinned, { type: "pin", session: "other" })).toBe(pinned);
+  });
+
+  /** A small seeded generator, so a failure repeats. */
+  const mulberry32 = (seed: number) => () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+
+  function walk(seed: number, start: PaneView): void {
+    const rnd = mulberry32(seed);
+    const int = (n: number) => Math.floor(rnd() * n);
+    const pick = <T,>(list: readonly T[]): T => list[int(list.length)]!;
+    const sessions = ["a", "b", "c"];
+    let state = start;
+    // A session the walk has not touched is as it was loaded: the core accepts an old layout that names no Browser selection.
+    const loaded = new Set(Object.values(start.sessions));
+    const checked = (st: PaneView): PaneView => ({ ...st, sessions: Object.fromEntries(Object.entries(st.sessions).filter(([, v]) => !loaded.has(v))) });
+    for (let i = 0; i < 2000; i++) {
+      const session = pick(sessions);
+      const own = tabsOf(state, session).tabs;
+      const tabId = () => (own.length > 0 && rnd() < 0.85 ? pick(own).id : pick(["t99", "zz"]));
+      const path = () => pick([`/f${int(26)}.md`, `/f${int(26)}.html`, `C:\\p\\g${int(8)}.HTM`, `/d${int(8)}.pdf`, `/s${int(8)}.ts`]);
+      const url = () => pick([`https://h${int(26)}.test/`, `http://localhost:${3000 + int(5)}/`, "about:blank", "javascript:x", "file:///x"]);
+      const panel = () => pick(PANELS);
+      const target = (): OpenTarget => ({ path: rnd() < 0.15 ? url() : path(), line: rnd() < 0.3 ? int(100) : undefined });
+      const actions: PaneAction[] = [
+        { type: "open", session, project: "p", target: target() },
+        { type: "open", session, project: "p", target: target() },
+        { type: "navigate", session, paneTab: tabId(), project: "p", target: target() },
+        { type: "navigate", session, paneTab: tabId(), project: "p", target: target() },
+        { type: "back", session, paneTab: tabId() },
+        { type: "forward", session, paneTab: tabId() },
+        { type: "setView", session, paneTab: tabId(), view: pick(["rendered", "source"] as const) },
+        { type: "place", session, paneTab: tabId(), place: { page: int(5), top: rnd() } },
+        { type: "select", session, paneTab: tabId() },
+        { type: "step", session, panel: panel(), by: pick([1, -1] as const) },
+        { type: "close", session, paneTab: tabId() },
+        { type: "move", session, paneTab: tabId(), to: int(40) - 3 },
+        { type: "openPage", session, url: url() },
+        { type: "openPage", session, url: url() },
+        { type: "openPage", session, url: url(), background: true },
+        { type: "openBackground", session, kind: "file", target: path(), by: "claude", project: "p", onScreen: rnd() < 0.5 },
+        { type: "openBackground", session, kind: "browser", target: url(), by: "shell", project: "p", onScreen: rnd() < 0.5 },
+        { type: "seen", session, panel: panel() },
+        { type: "page", session, paneTab: tabId(), url: url(), title: rnd() < 0.5 ? "T" : null },
+        { type: "show", session: rnd() < 0.8 ? session : null },
+        { type: "hide" },
+        { type: "toggle", session: rnd() < 0.8 ? session : null },
+        { type: "width", width: rnd() * 5000 },
+        { type: "panel", panel: panel(), session: rnd() < 0.8 ? session : null },
+        { type: "panel", panel: panel(), session },
+        { type: "fill", panel: panel(), session: rnd() < 0.8 ? session : null },
+        { type: "fill", panel: panel(), session },
+        { type: "weights", weights: { [pick(["browser", "files", "changes"])]: pick([rnd() * 200000, -4, Number.NaN, Number.POSITIVE_INFINITY, 12.5]) } },
+        { type: "pin", session },
+      ];
+      const action = pick(actions);
+      state = paneReducer(state, action);
+      const problem = paneProblem(checked(state));
+      if (problem !== null) throw new Error(`seed ${seed}, action ${i} ${JSON.stringify(action)} broke ${problem}`);
+    }
+  }
+
+  it("every state the reducer reaches is one the core accepts", { timeout: 60_000 }, () => {
+    walk(1, EMPTY);
+    walk(2, { ...EMPTY, open: true });
+    walk(3, OLD());
+    walk(4, { ...OLD(), open: false, panels: { shown: ["browser", "files"], weights: { browser: 3000 }, filled: "files" } });
+    walk(5, mk({ a: { tabs: [b("t1")], active: "t1" }, b: { tabs: [f("t1", "/x.html"), f("t2")], active: "t2" } }));
   });
 });

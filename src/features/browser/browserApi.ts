@@ -8,7 +8,8 @@ export type Rect = { x: number; y: number; width: number; height: number };
 export type Size = { width: number; height: number };
 /** A straight stretch of the layout rule from window width `from`: x and width as a line over the window's width. */
 export type Piece = { from: number; x: number; xPerPx: number; width: number; widthPerPx: number };
-export type Rule = { pieces: Piece[]; top: number; bottom: number };
+/** `bottom` grows by `bottomPerPx` for each pixel the window is taller than `atHeight`, the height `bottom` was measured at. */
+export type Rule = { pieces: Piece[]; top: number; bottom: number; bottomPerPx: number; atHeight: number };
 export type Report = { rect: Rect; win: Size; rule: Rule | null; moving: boolean };
 
 export type NavAction = "go" | "back" | "forward" | "reload" | "stop";

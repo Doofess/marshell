@@ -42,5 +42,10 @@ export function paneColumn(width: number, i: ColumnInputs): { x: number; width: 
 }
 
 /** What the window publishes for a page's slot: the inputs of the pane's column, and whether the layout is moving. Null outside the window. */
-export type Layout = { inputs: ColumnInputs; moving: boolean };
+export type Layout = {
+  inputs: ColumnInputs;
+  moving: boolean;
+  /** How many px the slot's distance from the window's foot grows per px of window height: the share of the stack below it. Absent: 0. */
+  bottomPerPx?: number;
+};
 export const LayoutContext = createContext<Layout | null>(null);

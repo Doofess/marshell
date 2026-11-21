@@ -1,13 +1,23 @@
+import type { PaneTab } from "../../generated/PaneTab";
 import type { PaneView } from "../../generated/PaneView";
 import type { Os } from "../../lib/keymap";
 import { isPageUrl, pageTitle, shellRefuses } from "../browser/address";
 import { isUnsaved } from "../editor/drafts";
+import { panelHasNews } from "./paneNews";
 import { PANE_LIMITS, activeTab, openRefused, tabsOf } from "./paneState";
+import { PANELS, PANEL_LABEL, onScreen, panelOfPath, panelTabs, stackOf, type PanelId } from "./panels";
 import type { TabKind } from "./tabType";
 
 /** What the announcer says for the side pane. */
 export const NO_SESSION_TO_OPEN = "No session to open it in.";
 export const NO_TABS_OPEN = "No tabs open.";
+export const noTabsText = (panel: PanelId) => `No tabs open in ${PANEL_LABEL[panel]}.`;
+/**
+ * What a tab command (next, previous, close) says when it has no tab to act on: the panel that is empty, or that no tabs are open.
+ * While a view replaces the terminal no panel is on screen though the session may hold tabs, so it says where the pane shows instead.
+ */
+export const noTabText = (panel: PanelId | null, replaced: boolean): string => (replaced ? PANE_BESIDE_SESSION : panel ? noTabsText(panel) : NO_TABS_OPEN);
+export const panelHiddenText = (panel: PanelId) => `${PANEL_LABEL[panel]} is hidden.`;
 export const PANE_BESIDE_SESSION = "The side pane shows beside a session.";
 
 /** The title-bar button and the cursor: toggle the pane when a session is on screen and no main view replaces it, else say where it shows. */
@@ -16,16 +26,16 @@ export function paneToggleOutcome(session: string | null | undefined, viewing: b
 }
 export const TAB_LIMIT = `This session has ${PANE_LIMITS.tabs} tabs. Close one to open another.`;
 export const FOLDER_REFUSED = "A folder can't be shown in the side pane.";
-export const openedText = (name: string) => `Opened ${name} in the side pane.`;
+export const openedText = (name: string, panel: PanelId) => `Opened ${name} in ${PANEL_LABEL[panel]}.`;
 /** The announcement for a tab an agent opened with `marshell open`; `who` is the agent's name. */
-export const openedByText = (who: string, name: string) => `${who} opened ${name} in the side pane.`;
+export const openedByText = (who: string, name: string, panel: PanelId) => `${who} opened ${name} in ${PANEL_LABEL[panel]}.`;
 export const closedText = (name: string) => `Closed ${name}.`;
 export const movedText = (name: string, to: number, count: number) => `Moved ${name} to position ${to + 1} of ${count}.`;
 export const coverText = (cover: string) => `Close ${cover} to open a file.`;
 
 export const PAGE_REFUSED = "That address can't be opened in the side pane.";
 /** What the announcer says for a page that opened: its host, or "New tab" for a blank one. */
-export const pageOpenedText = (url: string) => openedText(pageTitle(null, url));
+export const pageOpenedText = (url: string) => openedText(pageTitle(null, url), "browser");
 
 /** Whether an open of this web address can go ahead: a session on screen, an address a page may hold and the shell would not refuse (`own` is the app's own origins), and room in the session (or the address already open). */
 export function pageOpenCheck(pane: PaneView, session: string | null | undefined, url: string, own: readonly (readonly [string, number])[]): "no-session" | "refused" | "limit" | "ok" {
@@ -45,15 +55,63 @@ export function paneBody(pane: PaneView, session: string | null | undefined): "t
   return tabsOf(pane, session).tabs.length > 0 ? "tabs" : "empty";
 }
 
-/** Ctrl+Shift+Q: the switch flips, and the pane shows the empty state when the session has no tabs. */
-export function toggleOutcome(pane: PaneView, session: string | null | undefined): { shown: boolean; body: "tabs" | "empty" } {
-  return { shown: !pane.open, body: paneBody(pane, session) };
+/** What the next-tab and previous-tab commands do in the panel: nothing to step through, show the hidden pane first, or step. */
+export function paneTabOutcome(pane: PaneView, session: string | null | undefined, panel: PanelId | null): "none" | "show" | "step" {
+  if (!pane.open) return tabsOf(pane, session).tabs.length > 0 ? "show" : "none";
+  if (panel === null || panelTabs(pane, session, panel).length === 0) return "none";
+  return "step";
 }
 
-/** What the next-tab and previous-tab commands do: nothing to step through, show the hidden pane first, or step. */
-export function paneTabOutcome(pane: PaneView, session: string | null | undefined): "none" | "show" | "step" {
-  if (tabsOf(pane, session).tabs.length === 0) return "none";
-  return pane.open ? "step" : "show";
+/** What `{ type: "panel" }` is about to do, by the reducer's own rule: it shows a panel that is not on screen, and hides the pane with its last panel. */
+export function panelToggleOutcome(pane: PaneView, session: string | null | undefined, panel: PanelId): { shows: boolean; paneHides: boolean } {
+  const shows = !onScreen(pane, session).includes(panel);
+  const only = stackOf(pane, session).shown;
+  return { shows, paneHides: !shows && only.length === 1 && only[0] === panel };
+}
+
+/** The panel a tab command acts on: the one with the keyboard; else the last one that had it, when it is on screen and holds tabs; else the first on screen that holds tabs; else the first on screen; null with none on screen. */
+export function commandPanel(on: readonly PanelId[], focused: PanelId | null, last: PanelId | null, holdsTabs: (p: PanelId) => boolean): PanelId | null {
+  if (on.length === 0) return null;
+  if (focused !== null && on.includes(focused)) return focused;
+  if (last !== null && on.includes(last) && holdsTabs(last)) return last;
+  return on.find(holdsTabs) ?? on[0]!;
+}
+
+/** Where the keyboard goes when `panel` hides: nowhere when it was elsewhere; to the terminal; or, where the pane covers the terminal and another panel stays, to that panel. */
+export function hideFocus(panel: PanelId, focused: PanelId | null, covers: boolean, staying: readonly PanelId[]): { to: "stay" } | { to: "terminal" } | { to: "panel"; panel: PanelId } {
+  if (focused !== panel) return { to: "stay" };
+  if (covers && staying.length > 0) return { to: "panel", panel: staying[0]! };
+  return { to: "terminal" };
+}
+
+/** `current` first, then the others in the stack's order. */
+export function panelOrder(on: readonly PanelId[], current: PanelId | null): PanelId[] {
+  return current !== null && on.includes(current) ? [current, ...on.filter((p) => p !== current)] : [...on];
+}
+
+/** The first panel's answer that is not null. */
+export function firstWith<T>(order: readonly PanelId[], get: (p: PanelId) => T | null): T | null {
+  for (const p of order) {
+    const v = get(p);
+    if (v !== null) return v;
+  }
+  return null;
+}
+
+/** The panels on screen whose selected tab is marked new: the ones a look at the pane clears. */
+export function unseenPanels(pane: PaneView, session: string | null | undefined, on: readonly PanelId[]): PanelId[] {
+  return on.filter((p) => activeTab(pane, session, p)?.unseen === true);
+}
+
+/** The panel the tab's history entry after a Back (`by` -1) or Forward (1) belongs to; null at either end. A tab that lands in the other panel moves there. */
+export function landingPanel(tab: PaneTab, by: -1 | 1): PanelId | null {
+  const entry = tab.history[tab.index + by];
+  return entry ? panelOfPath(entry.path) : null;
+}
+
+/** The title bar's buttons. `keys(panel)` is the panel command's shortcut label. */
+export function panelButtonsFor(on: readonly PanelId[], news: ReadonlySet<string>, keys: (p: PanelId) => string): { id: PanelId; label: string; shown: boolean; news: boolean; keys: string }[] {
+  return PANELS.map((id) => ({ id, label: PANEL_LABEL[id], shown: on.includes(id), news: panelHasNews(news, id), keys: keys(id) }));
 }
 
 /**
@@ -82,6 +140,12 @@ export const paneHiddenText = (keys: string) => `The side pane is hidden. ${keys
  * announcer holds one notice, so the two are one line: said apart, the receipt would replace the hide before anyone heard it.
  */
 export const receiptWithPaneHidden = (receipt: string, keys: string) => `${receipt}. ${paneHiddenText(keys)}`;
+/**
+ * What "Close tab" says when it closes nothing. Behind a hidden pane the session may hold tabs, and none of them is closed unseen:
+ * the line says the pane is hidden, with the keys that show it. Otherwise it is what any tab command says (`noTabText`).
+ */
+export const closeNothingText = (pane: PaneView, session: string | undefined, panel: PanelId | null, replaced: boolean, keys: string): string =>
+  !replaced && !pane.open && tabsOf(pane, session).tabs.length > 0 ? paneHiddenText(keys) : noTabText(panel, replaced);
 
 /**
  * What the recent files of the session on screen are kept under: its repository's root (the row's `projectKey`), not the row's
@@ -91,9 +155,10 @@ export function projectKeyOf(rows: ReadonlyArray<{ id: string; projectKey: strin
   return rows.find((r) => r.id === session)?.projectKey ?? "";
 }
 
-/** The tab "Close tab" closes: the selected one of the session. */
-export function closeTabOutcome(pane: PaneView, session: string | null | undefined): { paneTab: string; path: string } | null {
-  const tab = activeTab(pane, session);
+/** The tab "Close tab" closes: the selected one of the panel the command acts on. */
+export function closeTabOutcome(pane: PaneView, session: string | null | undefined, panel: PanelId | null): { paneTab: string; path: string } | null {
+  if (panel === null) return null;
+  const tab = activeTab(pane, session, panel);
   const entry = tab?.history[tab.index];
   return tab && entry ? { paneTab: tab.id, path: entry.path } : null;
 }
@@ -105,4 +170,9 @@ export function closeTabOutcome(pane: PaneView, session: string | null | undefin
  */
 export function closeAsk(tab: { id: string; path: string; kind: TabKind }, unsaved: ReadonlySet<string>, os: Os = "windows"): "ask" | "close" {
   return (tab.kind === "text" || tab.kind === "pdf") && isUnsaved(unsaved, tab.path, os) ? "ask" : "close";
+}
+
+/** Whether the stack is written down now: once the window has loaded, with the pane open, a session on screen and no stack saved. Never with no session on screen. */
+export function shouldPin(pane: PaneView, session: string | null | undefined, ready: boolean): boolean {
+  return ready && pane.open && !pane.panels && session != null;
 }

@@ -25,6 +25,8 @@ export type SessionShortcut =
   | { kind: "cheatsheet" }
   /** Show or hide the side pane (Ctrl+Shift+Q; Cmd+Alt+Q on macOS). With no tab open it shows the empty pane. */
   | { kind: "preview" }
+  /** Show or hide one panel of the side pane (Ctrl+Shift+A for Browser, Ctrl+Shift+D for Files; Cmd+Alt+A and Cmd+D on macOS). */
+  | { kind: "panel"; panel: "browser" | "files" }
   /** "Open file…": the palette, to pick a file for the side pane. Has no key of its own. */
   | { kind: "openFile" }
   /** The next or previous tab of the focused session's side pane, wrapping. */
@@ -74,6 +76,36 @@ export function sessionShortcut(e: KeyEventLike, os: Os): SessionShortcut | null
   return id === undefined ? null : commandShortcut(id);
 }
 
+const AFTER_PALETTE: ReadonlySet<SessionShortcut["kind"]> = new Set<SessionShortcut["kind"]>([
+  "nonePane",
+  "shellPanel",
+  "preview",
+  "panel",
+  "openFile",
+  "history",
+  "menu",
+  "paneTab",
+  "closePaneTab",
+  "browse",
+  "newBrowserTab",
+  "clearBrowserData",
+  "selectRegion",
+  "paneSave",
+  "paneUndoSave",
+  "paneGoToLine",
+  "paneFind",
+  "paneOutline",
+  "panePages",
+  "paneNotes",
+  "paneWordWrap",
+]);
+
+/**
+ * Whether a command run from the palette waits for the palette to hand the focus back first: the ones that move the keyboard, or
+ * open something that takes it. Run at once, the palette's own return of the focus would land after theirs and undo it.
+ */
+export const waitsForPalette = (shortcut: SessionShortcut | null | undefined): boolean => shortcut != null && AFTER_PALETTE.has(shortcut.kind);
+
 /** The shortcut a palette command id stands for, or null for a command the live window does not run yet. */
 export function commandShortcut(id: string): SessionShortcut | null {
   switch (id) {
@@ -105,6 +137,10 @@ export function commandShortcut(id: string): SessionShortcut | null {
       return { kind: "cheatsheet" };
     case "preview":
       return { kind: "preview" };
+    case "browser-panel":
+      return { kind: "panel", panel: "browser" };
+    case "files-panel":
+      return { kind: "panel", panel: "files" };
     case "open-file":
       return { kind: "openFile" };
     case "browse-file":

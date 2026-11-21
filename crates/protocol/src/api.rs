@@ -509,6 +509,10 @@ pub struct PaneOpensDone {
 pub struct SessionTabs {
     pub tabs: Vec<PaneTab>,
     pub active: Option<String>,
+    /// The Browser panel's selected tab. A layout.json from before the panels reads as None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub active_browser: Option<String>,
 }
 
 /// A file opened lately in a project.
@@ -517,6 +521,20 @@ pub struct SessionTabs {
 pub struct RecentFile {
     pub project: String,
     pub path: String,
+}
+
+/// The side pane's stack of panels.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Panels {
+    /// The panels shown while the pane is open: "browser" and "files", in that order, at least one.
+    pub shown: Vec<String>,
+    /// Each panel's weight in the stack's height: 1 to 100000; a panel with none has 10000.
+    #[serde(default)]
+    pub weights: BTreeMap<String, u32>,
+    /// The shown panel that fills the pane, hiding the other.
+    #[serde(default)]
+    pub filled: Option<String>,
 }
 
 /// The side pane: whether it shows, how wide, each session's tabs and the recent files.
@@ -529,6 +547,10 @@ pub struct PaneView {
     pub sessions: BTreeMap<String, SessionTabs>,
     /// Newest first.
     pub recent: Vec<RecentFile>,
+    /// The stack of panels. A layout.json from before the panels reads as None.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub panels: Option<Panels>,
 }
 
 /// How the window was laid out: the selected tab, the sidebar and the side pane.

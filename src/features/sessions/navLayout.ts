@@ -10,7 +10,7 @@ const SCROLLERS = ".sidebar__list,.rail__list";
 const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
 
 function targetOf({ pane, row, top, side }: Measured["attrs"]): Target | null {
-  if (side !== undefined) return { kind: "side" };
+  if (side !== undefined) return side ? { kind: "side", panel: side } : null;
   if (pane !== undefined) return /^\d+$/.test(pane) ? { kind: "pane", index: Number(pane) } : null;
   if (row !== undefined) return /^\d+$/.test(row) ? { kind: "row", number: Number(row) } : null;
   return top ? { kind: "top", id: top } : null;
@@ -19,7 +19,7 @@ function targetOf({ pane, row, top, side }: Measured["attrs"]): Target | null {
 /**
  * The navigation layout from what is on screen: each marked element becomes a target, with its rect made relative to the window
  * (`origin`). An element with no size is not drawn (`display: none`), a row outside its list's box is scrolled out of sight, and
- * an attribute that names no pane, row or control is a mistake in the markup, so all three are left out.
+ * an attribute that names no pane, row, panel or control is a mistake in the markup, so all four are left out.
  */
 export function navLayoutOf(items: Measured[], origin: Rect): NavLayout {
   return items.flatMap(({ attrs, rect, clip }) => {

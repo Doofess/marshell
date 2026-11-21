@@ -1,4 +1,6 @@
 import { useMemo, useRef, type SyntheticEvent } from "react";
+import { relayFrameFocus } from "./frameFocus";
+import { appKeyInit, forwardsToApp } from "./frameKeys";
 import { buildSrcdoc } from "./htmlDoc";
 import { classifyLink } from "./links";
 import type { LinkTarget } from "./links";
@@ -56,7 +58,19 @@ export function HtmlView({ text, name, docPath, onLink, onKey }: Props) {
     // A middle click would open the link in a new window; and a link dragged out would carry its address.
     doc.addEventListener("auxclick", (ev) => ((ev.target as Element | null)?.closest?.("a") ? ev.preventDefault() : undefined), true);
     doc.addEventListener("dragstart", (ev) => ((ev.target as Element | null)?.closest?.("a") ? ev.preventDefault() : undefined), true);
-    doc.addEventListener("keydown", (ev) => latest.current.onKey(ev));
+    // The pane's own keys first. Then a chord goes on to the app as a copy sent from the frame's element, since the app's
+    // shortcuts listen on the window and a key pressed in here never reaches it. What the app uses, the page doesn't get.
+    const held = new Set<string>();
+    const pass = (ev: KeyboardEvent) => {
+      if (ev.type === "keydown") latest.current.onKey(ev);
+      if (!forwardsToApp(ev, held)) return;
+      if (ev.type === "keydown") held.add(ev.code);
+      else held.delete(ev.code);
+      if (!iframe.dispatchEvent(new KeyboardEvent(ev.type, appKeyInit(ev)))) ev.preventDefault();
+    };
+    doc.addEventListener("keydown", pass);
+    doc.addEventListener("keyup", pass);
+    relayFrameFocus(win, iframe);
     // A page that has just loaded takes the keyboard when the pane's body had it, so the arrow keys scroll it.
     const body = iframe.closest(".preview__body");
     if (body && iframe.ownerDocument.activeElement === body) iframe.focus({ preventScroll: true });

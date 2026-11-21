@@ -263,3 +263,61 @@ async fn a_failed_create_records_nothing() {
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
     assert_eq!(layout_of(&app).await["launcher"], serde_json::json!({}));
 }
+
+fn saved_with_session_a(home: &std::path::Path) {
+    let saved = serde_json::json!({
+        "version": 1,
+        "tabs": [{ "tab_id": "a", "number": 1, "name": "a", "agent": null, "profile_id": "sleeper", "cwd": "C:/work" }],
+        "view": view(serde_json::json!(["a"])),
+        "launcher": {}
+    });
+    std::fs::write(home.join("layout.json"), saved.to_string()).unwrap();
+}
+
+fn pane_body(panels: serde_json::Value) -> serde_json::Value {
+    let browser = serde_json::json!({
+        "id": "t1", "kind": "browser", "index": 0, "title": null, "opened_by": null, "unseen": false,
+        "history": [{ "path": "https://example.com/", "line": null, "col": null, "view": "rendered" }]
+    });
+    let mut body = view(serde_json::json!(["a"]));
+    body["pane"] = serde_json::json!({
+        "open": true, "width": null, "panels": panels,
+        "sessions": { "a": { "tabs": [browser], "active": "t1", "active_browser": "t1" } },
+        "recent": []
+    });
+    body
+}
+
+#[tokio::test]
+async fn put_view_keeps_the_stack() {
+    let home = tempfile::tempdir().unwrap();
+    saved_with_session_a(home.path());
+    let app = app_in(home.path());
+    let body = pane_body(serde_json::json!({
+        "shown": ["browser", "files"], "weights": { "browser": 6000, "files": 14000 }, "filled": "files"
+    }));
+    let res = app
+        .clone()
+        .oneshot(request("PUT", "/v1/layout/view", Some(body.clone())))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    let res = app.oneshot(request("GET", "/v1/layout", None)).await.unwrap();
+    let doc: serde_json::Value = serde_json::from_slice(&body_bytes(res).await).unwrap();
+    assert_eq!(doc["view"]["pane"], body["pane"]);
+}
+
+#[tokio::test]
+async fn put_view_refuses_a_bad_stack() {
+    let home = tempfile::tempdir().unwrap();
+    saved_with_session_a(home.path());
+    let app = app_in(home.path());
+    let body = pane_body(serde_json::json!({ "shown": ["files", "browser"], "weights": {}, "filled": null }));
+    let res = app
+        .oneshot(request("PUT", "/v1/layout/view", Some(body)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let text = String::from_utf8(body_bytes(res).await).unwrap();
+    assert!(text.contains("pane.panels.shown"), "{text}");
+}

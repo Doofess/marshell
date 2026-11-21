@@ -71,11 +71,11 @@ describe("the pane in the view", () => {
     const s = run(state(), { type: "pane", action: { type: "open", session: "a", project: "p", target: { path: "/x.md" } } });
     expect(s.pane.open).toBe(true);
     expect(s.pane.sessions.a?.tabs).toHaveLength(1);
-    const same = viewReducer(s, { type: "pane", action: { type: "show" } });
+    const same = viewReducer(s, { type: "pane", action: { type: "show", session: null } });
     expect(same).toBe(s);
   });
   it("toSaved keeps the pane", () => {
-    const s = run(state(), { type: "pane", action: { type: "show" } });
+    const s = run(state(), { type: "pane", action: { type: "show", session: null } });
     expect(toSaved(s).pane.open).toBe(true);
   });
 });

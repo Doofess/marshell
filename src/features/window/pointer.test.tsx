@@ -89,12 +89,17 @@ describe("pointer: the command palette button", () => {
     expect(button(MainWindow({ width: 900, height: 800, rows, selectedId: row(0).id, onToggleSidebar }), "Sidebar").props.onClick).toBeUndefined();
   });
 
-  it("the side pane button calls onTogglePane, unless no session is shown or a main view replaces it", () => {
-    const onTogglePane = vi.fn();
-    (button(MainWindow({ width: 1180, height: 800, rows, selectedId: row(0).id, onTogglePane }), "Side pane").props.onClick as () => void)();
-    expect(onTogglePane).toHaveBeenCalledTimes(1);
-    expect(button(MainWindow({ width: 1180, height: 800, rows: [], onTogglePane }), "Side pane").props.onClick).toBeUndefined();
-    expect(button(MainWindow({ width: 1180, height: 800, rows, selectedId: row(0).id, mainView: "x", onTogglePane }), "Side pane").props.onClick).toBeUndefined();
+  it("a panel's button calls onTogglePanel with its id, unless no session is shown or a main view replaces it", () => {
+    const onTogglePanel = vi.fn();
+    const panelButtons = [
+      { id: "browser", label: "Browser", shown: false, news: false, keys: "Ctrl+Shift+A" },
+      { id: "files", label: "Files", shown: false, news: false, keys: "Ctrl+Shift+D" },
+    ];
+    (button(MainWindow({ width: 1180, height: 800, rows, selectedId: row(0).id, panelButtons, onTogglePanel }), "Files").props.onClick as () => void)();
+    (button(MainWindow({ width: 1180, height: 800, rows, selectedId: row(0).id, panelButtons, onTogglePanel }), "Browser").props.onClick as () => void)();
+    expect(onTogglePanel.mock.calls).toEqual([["files"], ["browser"]]);
+    expect(button(MainWindow({ width: 1180, height: 800, rows: [], panelButtons, onTogglePanel }), "Files").props.onClick).toBeUndefined();
+    expect(button(MainWindow({ width: 1180, height: 800, rows, selectedId: row(0).id, mainView: "x", panelButtons, onTogglePanel }), "Browser").props.onClick).toBeUndefined();
   });
 
   it("without a callback the buttons stay as they were (stories)", () => {
