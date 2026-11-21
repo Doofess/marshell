@@ -5,7 +5,7 @@ import type { Os } from "../../lib/keymap";
 import { interpretBlur, interpretKeyDown, interpretKeyUp, interpretMissedRelease, type FocusKind } from "../../lib/navigation/keys";
 import { run, type Result } from "../../lib/navigation/machine";
 import { DEFAULT_NAV_MODIFIER, isNavModifierHeld } from "../../lib/navigation/modifier";
-import { INITIAL_NAV, sameTarget, type NavContext, type NavEffect, type NavEvent, type NavLayout, type NavState, type Rect, type Target } from "../../lib/navigation/types";
+import { INITIAL_NAV, sameTarget, type NavContext, type NavEffect, type NavEvent, type NavLayout, type NavState, type Rect, type SideStop, type Target } from "../../lib/navigation/types";
 import { focusedPage } from "../browser/pageStore";
 import { isTextBox } from "../tasks/reviewOpen";
 import { measureNavLayout } from "./navLayout";
@@ -64,11 +64,11 @@ export function topAction(id: string): TopAction | null {
 }
 
 /** What the hint under the cursor names: "Session 3, api-server", "Empty slot 2", "Command palette". */
-function labelOf(t: Target, ctx: NavContext): string {
+export function labelOf(t: Target, ctx: NavContext): string {
   const session = (n: number) => (ctx.names?.[n] ? `Session ${n}, ${ctx.names[n]}` : `Session ${n}`);
   if (t.kind === "row") return session(t.number);
   if (t.kind === "top") return TOP_NAMES[t.id] ?? t.id;
-  if (t.kind === "side") return "Side pane";
+  if (t.kind === "side") return ctx.side?.find((p) => p.id === t.panel)?.name ?? t.panel;
   const n = ctx.panes[t.index] ?? null;
   return n === null ? `Empty slot ${t.index + 1}` : session(n);
 }
@@ -84,10 +84,10 @@ type Options = {
   /** The view's focused pane. */
   selectedPane: number | null;
   names: Record<number, string>;
-  /** The side pane's spoken name while it is drawn ("the side pane"), else null: Tab then never stops there. */
-  side: string | null;
-  /** Focus is inside the side pane right now. */
-  sideFocused: boolean;
+  /** The panels of the side pane that are drawn, in Tab's order, each with its spoken name; empty: Tab never stops in the pane. */
+  side: readonly SideStop[];
+  /** The id of the panel that has focus right now, or null when focus is in none of them. */
+  sideFocused: string | null;
   /** The window, which the cursor's rects are measured against. */
   root: RefObject<HTMLElement | null>;
   apply: (effect: NavEffect) => void;
@@ -113,7 +113,7 @@ export function useNavigation(opts: Options): { cursor: NavCursorView | null; no
     // Measured on the key press, never on render: the window may have changed since the last one.
     if (o.root.current && events.some((e) => e.type !== "modifier-down")) layout.current = measureNavLayout(o.root.current);
     const ctx: NavContext = { panes: o.panes, layout: layout.current, names: o.names, side: o.side };
-    const from: NavState = { ...current, selectedPane: noneRef.current ? null : o.selectedPane, selectedSide: o.side !== null && o.sideFocused };
+    const from: NavState = { ...current, selectedPane: noneRef.current ? null : o.selectedPane, selectedSide: o.sideFocused !== null && o.side.some((p) => p.id === o.sideFocused) ? o.sideFocused : null };
     const { state, effects } = step(from, events, ctx);
     setNavState(state);
     const at = state.cursor;

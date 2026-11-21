@@ -78,7 +78,7 @@ export const COMMANDS: Command[] = [
   { id: "run-script", label: "Run the repo's run script", group: "Session" },
   { id: "stop-script", label: "Stop the repo's run script", group: "Session" },
   { id: "edit-references", label: "Edit this project's references", group: "Session" },
-  { id: "nav-next-pane", label: "Switch between the terminal and the side pane", group: "Terminal", binding: { code: "Tab", nav: true } },
+  { id: "nav-next-pane", label: "Go to the next terminal or panel", group: "Terminal", binding: { code: "Tab", nav: true } },
   { id: "nav-none", label: "Select no terminal", group: "Terminal", binding: { code: "Backspace", nav: true } },
   { id: "find", label: "Search in scrollback", group: "Terminal", binding: { code: "KeyF" } },
   { id: "bookmark", label: "Bookmark this point", group: "Terminal", binding: { code: "KeyB" } },

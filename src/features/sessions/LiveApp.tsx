@@ -1555,8 +1555,8 @@ export function LiveApp() {
     panes: navPanes,
     selectedPane: 0,
     names: navNames,
-    side: sidePaneDrawn ? "the side pane" : null,
-    sideFocused,
+    side: sidePaneDrawn ? [{ id: "files", name: "Files" }] : [], // 6r-1a: replaced in Task 10 or 11.
+    sideFocused: sideFocused ? "files" : null, // 6r-1a: replaced in Task 10 or 11.
     root: ref,
     apply: applyNav,
   });

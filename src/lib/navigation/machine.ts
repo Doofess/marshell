@@ -22,24 +22,28 @@ const announce = (text: string): NavEffect => ({ type: "announce", text });
 /** The slots that hold a terminal, in order. Empty slots are skipped: there is nothing in them to select. */
 const visible = (ctx: NavContext) => ctx.panes.flatMap((s, i) => (s === null ? [] : [i]));
 
-/** The side pane has the keyboard now: it was selected, and it is still on screen. */
-const sideSelected = (s: NavState, ctx: NavContext) => s.selectedSide && ctx.side != null;
+/** The panel of the side pane that has the keyboard now: it was selected, and it is still on screen. One that left the screen is forgotten. */
+const sideSelected = (s: NavState, ctx: NavContext): string | null => (s.selectedSide !== null && ctx.side?.some((p) => p.id === s.selectedSide) ? s.selectedSide : null);
 
-/** The selected slot, forgotten if the window no longer has that many slots, or if the side pane has the keyboard instead. */
-const selectedOf = (s: NavState, ctx: NavContext) => (!sideSelected(s, ctx) && s.selectedPane !== null && s.selectedPane < ctx.panes.length ? s.selectedPane : null);
+/** The selected slot, forgotten if the window no longer has that many slots, or if a panel of the side pane has the keyboard instead. */
+const selectedOf = (s: NavState, ctx: NavContext) => (sideSelected(s, ctx) === null && s.selectedPane !== null && s.selectedPane < ctx.panes.length ? s.selectedPane : null);
 
-/** The side pane's name when it is on screen. */
-const sideName = (ctx: NavContext) => ctx.side ?? "the side pane";
+/** A panel's spoken name ("Browser"); its id when the window doesn't list it. */
+const sideName = (ctx: NavContext, panel: string) => ctx.side?.find((p) => p.id === panel)?.name ?? panel;
 
 /**
- * The stop after `from` in Tab's order: the terminals on screen, then the side pane (when it is on screen), then round to the first.
- * `from` is a slot (it may be empty or gone), the side pane, or null for nothing selected.
+ * The stop after `from` in Tab's order: the terminals on screen, then each panel of the side pane that is on screen (in the order
+ * `ctx.side` lists them), then round to the first terminal. `from` is a slot (it may be empty or gone), a panel (it may be gone),
+ * or null for nothing selected.
  */
 function nextStop(from: Target | null, ctx: NavContext): Target | null {
-  const stops: Target[] = [...visible(ctx).map((index): Target => ({ kind: "pane", index })), ...(ctx.side != null ? [{ kind: "side" } as const] : [])];
+  const stops: Target[] = [...visible(ctx).map((index): Target => ({ kind: "pane", index })), ...(ctx.side ?? []).map((p): Target => ({ kind: "side", panel: p.id }))];
   if (stops.length === 0) return null;
   if (!from) return stops[0]!;
-  if (from.kind === "side") return stops[0]!;
+  if (from.kind === "side") {
+    const at = stops.findIndex((t) => sameTarget(t, from));
+    return at < 0 ? stops[0]! : stops[(at + 1) % stops.length]!;
+  }
   const after = from.kind === "pane" ? from.index : -1;
   return stops.find((t) => t.kind === "side" || (t.kind === "pane" && t.index > after)) ?? stops[0]!;
 }
@@ -49,17 +53,17 @@ const rectOf = (ctx: NavContext, t: Target) => ctx.layout.find((l) => sameTarget
 function selectPane(state: NavState, index: number, ctx: NavContext): Result {
   const n = sessionOf(ctx, index);
   const text = n === null ? `Selected empty slot ${index + 1}` : `Selected ${sessionText(ctx, n)}`;
-  return { state: { ...state, selectedPane: index, selectedSide: false, cursor: null }, effects: [{ type: "select-pane", index }, announce(text)] };
+  return { state: { ...state, selectedPane: index, selectedSide: null, cursor: null }, effects: [{ type: "select-pane", index }, announce(text)] };
 }
 
-function selectSide(state: NavState, ctx: NavContext): Result {
-  return { state: { ...state, selectedSide: true, cursor: null }, effects: [{ type: "select-side" }, announce(`Selected ${sideName(ctx)}`)] };
+function selectSide(state: NavState, panel: string, ctx: NavContext): Result {
+  return { state: { ...state, selectedSide: panel, cursor: null }, effects: [{ type: "select-side", panel }, announce(`Selected ${sideName(ctx, panel)}`)] };
 }
 
 /** Commit a target: select its terminal, bring its session into view, or activate its control. */
 function commit(state: NavState, t: Target, ctx: NavContext): Result {
   if (t.kind === "pane") return selectPane(state, t.index, ctx);
-  if (t.kind === "side") return selectSide(state, ctx);
+  if (t.kind === "side") return selectSide(state, t.panel, ctx);
   if (t.kind === "top") return { state: { ...state, cursor: null }, effects: [{ type: "activate", id: t.id }, announce(`Activated ${t.id}`)] };
   const shown = ctx.panes.indexOf(t.number);
   if (shown >= 0) return selectPane(state, shown, ctx);
@@ -67,7 +71,7 @@ function commit(state: NavState, t: Target, ctx: NavContext): Result {
   const empty = ctx.panes.indexOf(null);
   const pane = sel ?? (empty >= 0 ? empty : 0);
   return {
-    state: { ...state, selectedPane: pane, selectedSide: false, cursor: null },
+    state: { ...state, selectedPane: pane, selectedSide: null, cursor: null },
     effects: [{ type: "bring-into-view", number: t.number, pane }, announce(`Selected ${sessionText(ctx, t.number)}`)],
   };
 }
@@ -75,7 +79,7 @@ function commit(state: NavState, t: Target, ctx: NavContext): Result {
 function describeTarget(t: Target, ctx: NavContext): string {
   if (t.kind === "row") return `Cursor on ${sessionText(ctx, t.number)}`;
   if (t.kind === "top") return `Cursor on ${t.id}`;
-  if (t.kind === "side") return `Cursor on ${sideName(ctx)}`;
+  if (t.kind === "side") return `Cursor on ${sideName(ctx, t.panel)}`;
   const n = sessionOf(ctx, t.index);
   return n === null ? `Cursor on empty slot ${t.index + 1}` : `Cursor on ${sessionText(ctx, n)}`;
 }
@@ -84,10 +88,10 @@ function moveWith(state: NavState, dir: Dir, ctx: NavContext): Result {
   const sel = selectedOf(state, ctx);
   const first = visible(ctx)[0] ?? null;
   const onSide = sideSelected(state, ctx);
-  const origin: Target | null = state.cursor ?? (onSide ? { kind: "side" } : sel !== null ? { kind: "pane", index: sel } : first !== null ? { kind: "pane", index: first } : null);
+  const origin: Target | null = state.cursor ?? (onSide !== null ? { kind: "side", panel: onSide } : sel !== null ? { kind: "pane", index: sel } : first !== null ? { kind: "pane", index: first } : null);
   if (!origin) return { state, effects: [announce("No terminal on screen")] };
   // Nothing was out yet and nothing was selected: the cursor appears on the first terminal, and the next arrow moves it.
-  if (!state.cursor && sel === null && !onSide) return { state: { ...state, cursor: origin }, effects: [announce(describeTarget(origin, ctx))] };
+  if (!state.cursor && sel === null && onSide === null) return { state: { ...state, cursor: origin }, effects: [announce(describeTarget(origin, ctx))] };
   const rect = rectOf(ctx, origin);
   let to = rect ? moveCursor(rect, origin, dir, ctx.layout) : null;
   // Leaving a terminal to the left lands on its own session's row when the list has it, not on whichever row is level with its middle.
@@ -116,8 +120,9 @@ function step(state: NavState, ev: NavEvent, ctx: NavContext): Result {
     case "tab": {
       const sel = selectedOf(state, ctx);
       // With a cursor out, Tab carries it to the next terminal; the selection waits for the release.
-      // The order is the terminals on screen, then the side pane (when it is drawn), then round to the first.
-      const current: Target | null = sideSelected(state, ctx) ? { kind: "side" } : sel !== null ? { kind: "pane", index: sel } : null;
+      // The order is the terminals on screen, then each panel of the side pane that is drawn, then round to the first terminal.
+      const onSide = sideSelected(state, ctx);
+      const current: Target | null = onSide !== null ? { kind: "side", panel: onSide } : sel !== null ? { kind: "pane", index: sel } : null;
       if (state.cursor) {
         const from = state.cursor.kind === "pane" || state.cursor.kind === "side" ? state.cursor : current;
         const next = nextStop(from, ctx);
@@ -131,10 +136,10 @@ function step(state: NavState, ev: NavEvent, ctx: NavContext): Result {
     case "arrow":
       return moveWith(state, ev.dir, ctx);
     case "select-none":
-      return { state: { ...state, selectedPane: null, selectedSide: false, cursor: null }, effects: [{ type: "deselect" }, announce("No session selected")] };
+      return { state: { ...state, selectedPane: null, selectedSide: null, cursor: null }, effects: [{ type: "deselect" }, announce("No session selected")] };
     case "escape":
       if (state.cursor) return { state: { ...state, cursor: null }, effects: [announce("Cancelled")] };
-      if (state.selectedPane !== null || sideSelected(state, ctx)) return { state: { ...state, selectedPane: null, selectedSide: false }, effects: [{ type: "deselect" }, announce("No session selected")] };
+      if (state.selectedPane !== null || sideSelected(state, ctx) !== null) return { state: { ...state, selectedPane: null, selectedSide: null }, effects: [{ type: "deselect" }, announce("No session selected")] };
       return { state, effects: [] };
     case "choose":
       return commit({ ...state, cursor: null }, ev.target, ctx);

@@ -19,8 +19,14 @@ describe("navLayoutOf", () => {
       { target: { kind: "top", id: "palette" }, rect: { x: 130, y: 0, w: 140, h: 40 } },
     ]);
   });
-  it("an element with data-nav-side is the side target", () => {
-    expect(navLayoutOf([at({ side: "" }, 710, 60, 300, 300)], ORIGIN)).toEqual([{ target: { kind: "side" }, rect: { x: 700, y: 40, w: 300, h: 300 } }]);
+  it("a panel is a target named by its id", () => {
+    expect(navLayoutOf([at({ side: "files" }, 710, 60, 300, 300), at({ side: "browser" }, 710, 360, 300, 300)], ORIGIN)).toEqual([
+      { target: { kind: "side", panel: "files" }, rect: { x: 700, y: 40, w: 300, h: 300 } },
+      { target: { kind: "side", panel: "browser" }, rect: { x: 700, y: 340, w: 300, h: 300 } },
+    ]);
+  });
+  it("an empty data-nav-side is not a target", () => {
+    expect(navLayoutOf([at({ side: "" }, 710, 60, 300, 300)], ORIGIN)).toEqual([]);
   });
   it("drops what is not drawn: a 0 by 0 row is out of sight (scrolled away, or display: none)", () => {
     expect(navLayoutOf([at({ row: "3" }, 0, 0, 0, 0)], ORIGIN)).toEqual([]);

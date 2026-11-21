@@ -5,7 +5,7 @@ import { reduce } from "../../lib/navigation/machine";
 import { GRID_CONTEXT, GRID_LAYOUT, NAMES } from "../../lib/navigation/fixtures";
 import { INITIAL_NAV } from "../../lib/navigation/types";
 import { dispatchPage } from "../browser/pageStore";
-import { claimsKey, focusKindOf, setNavState, step, subscribeNav, topAction, topName } from "./useNavigation";
+import { claimsKey, focusKindOf, labelOf, setNavState, step, subscribeNav, topAction, topName } from "./useNavigation";
 
 const key = (code: string, mods: { ctrl?: boolean; shift?: boolean } = { ctrl: true, shift: true }) => ({ code, key: code, ctrlKey: mods.ctrl ?? false, shiftKey: mods.shift ?? false, altKey: false, metaKey: false });
 
@@ -30,6 +30,14 @@ describe("topAction", () => {
   it("names a panel's button for the cursor's hint", () => {
     expect(topName("panel-browser")).toBe("Browser");
     expect(topName("panel-files")).toBe("Files");
+  });
+});
+
+describe("labelOf", () => {
+  it("the cursor's hint on a panel is its name", () => {
+    const ctx = { ...GRID_CONTEXT, side: [{ id: "browser", name: "Browser" }, { id: "files", name: "Files" }] };
+    expect(labelOf({ kind: "side", panel: "browser" }, ctx)).toBe("Browser");
+    expect(labelOf({ kind: "side", panel: "files" }, ctx)).toBe("Files");
   });
 });
 

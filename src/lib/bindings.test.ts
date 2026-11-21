@@ -139,7 +139,7 @@ describe("preview", () => {
   });
   it("reads Side pane, and has the pane's commands in the Window group with Ctrl+Tab on Next tab only", () => {
     expect(commandById("preview").label).toBe("Side pane");
-    expect(commandById("nav-next-pane").label).toBe("Switch between the terminal and the side pane");
+    expect(commandById("nav-next-pane").label).toBe("Go to the next terminal or panel");
     const labels = { "pane-next-tab": "Next tab", "pane-previous-tab": "Previous tab", "pane-close-tab": "Close tab", "browse-file": "Browse…" };
     for (const [id, label] of Object.entries(labels)) {
       expect(commandById(id).label, id).toBe(label);
