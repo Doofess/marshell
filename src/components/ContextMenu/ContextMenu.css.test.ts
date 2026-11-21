@@ -21,6 +21,12 @@ describe("ContextMenu.css", () => {
   it("draws no ring on the menu itself", () => {
     expect(rule(".context-menu:focus")).toMatch(/outline:\s*(2px solid transparent|none)/);
   });
+  it("sizes the menu by its content, not by the room beside the anchor", () => {
+    expect(rule(".context-menu")).toContain("inline-size: max-content");
+  });
+  it("caps the menu's width to the window", () => {
+    expect(rule(".context-menu")).toMatch(/max-inline-size:[^;]*100vw/);
+  });
   it("uses tokens only", () => {
     expect(bare).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(/i);
   });
