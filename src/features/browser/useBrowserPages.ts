@@ -31,13 +31,18 @@ export function owners(pane: PaneView, sessions: ReadonlySet<string> | null): Ma
 export const openKeys = (pane: PaneView, sessions: ReadonlySet<string> | null): Set<string> => new Set(owners(pane, sessions).keys());
 
 /**
- * What a page's popup does to the pane: a new browser tab in the popup's own session, selected when that session is on screen, and
+ * What a page's popup does to the pane: a new browser tab in the popup's own session, selected when that session's Browser panel is on screen, and
  * a background tab otherwise (it never selects, shows or hides anything). Nothing for an address the shell
  * would refuse (one of the app's own origins, in `own`).
  */
 export function popupActions(pane: PaneView, session: string, url: string, onScreen: boolean, own: readonly (readonly [string, number])[]): PaneAction[] {
   if (shellRefuses(url, own)) return [];
   return onScreen ? [{ type: "openPage", session, url }] : [{ type: "openPage", session, url, background: true }];
+}
+
+/** The sessions a popup's actions leave a tab in the background of: their Browser panel gets its dot. */
+export function popupNews(actions: readonly PaneAction[]): string[] {
+  return actions.flatMap((a) => (a.type === "openPage" && a.background === true ? [a.session] : []));
 }
 
 /**
@@ -68,8 +73,10 @@ type Options = {
   /** The ids of the sessions in the list, or null while the list isn't known. A session that is not there has no page loaded. */
   sessions: readonly string[] | null;
   dispatch(action: PaneAction): void;
-  /** The session on screen, if any. */
-  focusedSession(): string | null | undefined;
+  /** The session whose Browser panel is on screen now, if any (read when a popup arrives). */
+  browserSession(): string | null | undefined;
+  /** A tab opened in the background of this session's Browser panel: its button gets a dot. */
+  news(session: string): void;
   /** The app's own origins now (host and port): a popup to one opens no tab. */
   own(): readonly (readonly [string, number])[];
   /** Says something to the person. */
@@ -81,7 +88,7 @@ type Options = {
  * drops and the store forgets them; the shell's `browser://` events reach the store, and a page's address and title reach its tab; a popup opens a tab; the
  * pages follow the app's theme. Nothing is closed on unmount: the shell closes the pages at quit.
  */
-export function useBrowserPages(pane: PaneView, shownKey: string | null, { sessions, dispatch, focusedSession, own, announce }: Options): void {
+export function useBrowserPages(pane: PaneView, shownKey: string | null, { sessions, dispatch, browserSession, news, own, announce }: Options): void {
   const live = useRef<string[]>([]);
   const owned = owners(pane, sessions === null ? null : new Set(sessions));
   const open = new Set(owned.keys());
@@ -98,7 +105,8 @@ export function useBrowserPages(pane: PaneView, shownKey: string | null, { sessi
   const paneRef = useRef(pane);
   paneRef.current = pane;
   const send = useEffectEvent((action: PaneAction) => dispatch(action));
-  const onScreen = useEffectEvent(() => focusedSession());
+  const onScreen = useEffectEvent(() => browserSession());
+  const tell = useEffectEvent((session: string) => news(session));
   const ownOrigins = useEffectEvent(() => own());
   const say = useEffectEvent((text: string) => announce(text));
   useEffect(() => {
@@ -114,6 +122,7 @@ export function useBrowserPages(pane: PaneView, shownKey: string | null, { sessi
         const actions = popupActions(paneRef.current, owner.session, p.url, onScreen() === owner.session, ownOrigins());
         if (actions.length === 0) say(PAGE_REFUSED);
         for (const action of actions) send(action);
+        for (const session of popupNews(actions)) tell(session);
       }),
     ];
     return () => stops.forEach((stop) => stop());

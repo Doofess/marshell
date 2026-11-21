@@ -87,3 +87,31 @@ export function takeOpens(view: PaneView, opens: readonly PaneOpen[], seen: Read
   }
   return { view: now, actions, done, said, news };
 }
+
+/** What a drop on the side pane comes to: the actions to dispatch, the last file opened, and whether the 32-tab limit stopped it. */
+export type DropPlan = { actions: PaneAction[]; last: string | null; refused: boolean };
+
+/**
+ * A drop of files on the pane: each file that passed its check (`ok`: it is a file the core can read; a folder is not) opens as a
+ * tab in its own panel, in order. The reducer is followed here too, so a drop of many files meets the 32-tab limit at the right
+ * file, and the files after it are left out. Pure: the caller dispatches `actions`, says the limit when `refused`, and announces
+ * `last`.
+ */
+export function dropPlan(pane: PaneView, session: string, project: string, paths: readonly { path: string; ok: boolean }[]): DropPlan {
+  const actions: PaneAction[] = [];
+  let now = pane;
+  let last: string | null = null;
+  let refused = false;
+  for (const { path, ok } of paths) {
+    if (!ok) continue;
+    if (openRefused(now, session, path)) {
+      refused = true;
+      break;
+    }
+    const action: PaneAction = { type: "open", session, project, target: { path } };
+    now = paneReducer(now, action);
+    actions.push(action);
+    last = path;
+  }
+  return { actions, last, refused };
+}

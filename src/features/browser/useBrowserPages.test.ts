@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { PaneView } from "../../generated/PaneView";
 import { paneReducer } from "../pane/paneState";
 import { canLoad, pageReducer, setLoadable, subscribePages, type PageEvent, type PageState } from "./pageStore";
-import { openKeys, owners, pageAction, popupActions, unload } from "./useBrowserPages";
+import { openKeys, owners, pageAction, popupActions, popupNews, unload } from "./useBrowserPages";
 import { nextLive } from "./pages";
 import { slotStep } from "./usePageSlot";
 
@@ -90,6 +90,15 @@ describe("popupActions", () => {
   });
   it("a background popup is the same whether the pane was open or hidden", () => {
     expect(popupActions(open, "a", "https://pop.example/", false, [])).toEqual(popupActions(base, "a", "https://pop.example/", false, []));
+  });
+});
+
+describe("popupNews", () => {
+  it("a popup opened in the background reports news for its session", () => {
+    const base = paneReducer(page(empty, "a", "https://one.example/"), { type: "hide" });
+    expect(popupNews(popupActions(base, "a", "https://pop.example/", false, []))).toEqual(["a"]);
+    expect(popupNews(popupActions(base, "a", "https://pop.example/", true, []))).toEqual([]);
+    expect(popupNews(popupActions(base, "a", "file:///C:/x", false, []))).toEqual([]);
   });
 });
 

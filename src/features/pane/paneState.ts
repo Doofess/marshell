@@ -70,13 +70,6 @@ export function tabsOf(s: PaneView, session: string | null | undefined): Session
   return (session != null && s.sessions[session]) || NO_TABS;
 }
 
-/** The panel of the session's `active` tab, else of its first tab, else Files: where the one "selected tab" of a caller that has no panel in hand is. */
-export function selectedPanel(s: PaneView, session: string | null | undefined): PanelId {
-  const t = tabsOf(s, session);
-  const tab = t.tabs.find((x) => x.id === t.active) ?? t.tabs[0];
-  return tab ? panelOf(tab) : "files";
-}
-
 /** The panel's selected tab in the session. */
 export function activeTab(s: PaneView, session: string | null | undefined, panel: PanelId): PaneTab | undefined {
   const t = tabsOf(s, session);

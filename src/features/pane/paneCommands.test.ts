@@ -3,6 +3,7 @@ import type { PaneView } from "../../generated/PaneView";
 import { closeAsk, closeTabOutcome, commandPanel, firstWith, hideFocus, noTabsText, openedByText, panelButtonsFor, panelHiddenText, panelOrder, panelToggleOutcome, leavePaneOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneBody, paneHiddenText, paneTabFocus, receiptWithPaneHidden, paneTabOutcome, projectKeyOf, shouldPin, toggleOutcome, PAGE_REFUSED, TAB_LIMIT } from "./paneCommands";
 import { paneReducer, recentFor } from "./paneState";
 import type { PanelId } from "./panels";
+import { landingPanel, unseenPanels } from "./paneCommands";
 
 const EMPTY: PaneView = { open: false, width: null, sessions: {}, recent: [] };
 const withTabs = (session: string, paths: string[], open = true): PaneView => {
@@ -303,5 +304,28 @@ describe("shouldPin", () => {
   });
   it("a hidden pane is not pinned", () => {
     expect(shouldPin(EMPTY, "t1", true)).toBe(false);
+  });
+});
+
+describe("unseenPanels", () => {
+  const bg = (v: PaneView, target: string, kind: "file" | "browser" = "file") => paneReducer(v, { type: "openBackground", session: "s1", kind, target, by: "claude", project: "p", onScreen: false });
+  it("names only the panels on screen whose selected tab is unseen", () => {
+    const v = bg(bg(EMPTY, "/site/a.html"), "/notes/a.md");
+    expect(unseenPanels(v, "s1", ["browser", "files"])).toEqual(["browser", "files"]);
+    expect(unseenPanels(v, "s1", ["files"])).toEqual(["files"]);
+    expect(unseenPanels(v, "s1", [])).toEqual([]);
+    expect(unseenPanels(v, "s2", ["browser", "files"])).toEqual([]);
+  });
+});
+
+describe("landingPanel", () => {
+  it("is the panel of the entry a back or forward step lands on, and null at the ends", () => {
+    const base = withTabs("s1", ["/notes/a.md"]).sessions.s1!.tabs[0]!;
+    // An old layout's history can cross panels; a navigate never makes one.
+    const tab = { ...base, history: [base.history[0]!, { ...base.history[0]!, path: "/site/index.html" }], index: 1 };
+    expect(landingPanel(tab, -1)).toBe("files");
+    expect(landingPanel(tab, 1)).toBeNull();
+    expect(landingPanel({ ...tab, index: 0 }, 1)).toBe("browser");
+    expect(landingPanel({ ...tab, index: 0 }, -1)).toBeNull();
   });
 });

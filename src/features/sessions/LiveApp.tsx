@@ -82,10 +82,10 @@ import { browser, pageKey } from "../browser/browserApi";
 import type { UrlBarHandle } from "../browser/UrlBar";
 import { useBrowserPages } from "../browser/useBrowserPages";
 import { askedFrom, focusPane, panelOfElement } from "../pane/focusPane";
-import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, PANE_BESIDE_SESSION, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, commandPanel, hideFocus, panelButtonsFor, panelHiddenText, panelToggleOutcome, shouldPin, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, receiptWithPaneHidden, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf } from "../pane/paneCommands";
-import { isPanelId, onScreen, PANEL_COMMAND, PANEL_LABEL, PANELS, panelOfPath, panelTabs, activeIn, stackOf, stackPanels, type PanelId } from "../pane/panels";
-import { activeTab, currentEntry, isBrowserTab, openRefused, paneReducer, recentFor, selectedPanel, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
-import { takeOpens } from "../pane/opens";
+import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, PANE_BESIDE_SESSION, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, commandPanel, firstWith, hideFocus, landingPanel, noTabsText, panelButtonsFor, panelOrder, unseenPanels, panelHiddenText, panelToggleOutcome, shouldPin, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, receiptWithPaneHidden, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf } from "../pane/paneCommands";
+import { isPanelId, onScreen, PANEL_COMMAND, PANEL_LABEL, panelOf, panelOfPath, panelTabs, activeIn, stackOf, stackPanels, type PanelId } from "../pane/panels";
+import { activeTab, currentEntry, isBrowserTab, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
+import { dropPlan, takeOpens } from "../pane/opens";
 import { newsReducer } from "../pane/paneNews";
 import { plusChoice, plusMenuItems } from "../pane/plusMenu";
 import { SidePane } from "../pane/SidePane";
@@ -706,19 +706,48 @@ export function LiveApp() {
   });
   // Only the script command the header would show is listed.
   const os = endpoint ? osOfPlatform(endpoint.platform) : undefined;
+  // The panels of the side pane on screen: those of the stack while the pane is open beside a session, else none.
+  const stack = stackOf(view.pane, focusedId);
+  const beside = mainView === "sessions" && focusedId != null;
+  const panelsOn = beside ? onScreen(view.pane, focusedId) : [];
+  // Where the keyboard is: the panel `document.activeElement` is inside, from focusin and focusout. A page that has the keyboard is in the
+  // Browser panel, whatever `document.activeElement` still names (S12 finding 8).
+  const [panelInDom, setPanelInDom] = useState<PanelId | null>(null);
+  const pageHasKeys = useFocusedPage() !== null;
+  const panelFocus: PanelId | null = pageHasKeys ? "browser" : panelInDom;
+  const panelFocusRef = useRef(panelFocus);
+  panelFocusRef.current = panelFocus;
+  // The last panel that had the keyboard: the one a tab command acts on when none has it now.
+  const lastPanel = useRef<PanelId | null>(null);
+  if (panelFocus !== null) lastPanel.current = panelFocus;
+  useEffect(() => {
+    const inside = () => setPanelInDom(panelOfElement(document.activeElement));
+    document.addEventListener("focusin", inside);
+    document.addEventListener("focusout", inside);
+    return () => {
+      document.removeEventListener("focusin", inside);
+      document.removeEventListener("focusout", inside);
+    };
+  }, []);
+  // What a tab command acts on, read when it runs: the commands are called through refs, long after the render that made them.
+  const onNow = useRef({ session: focusedId, panelsOn });
+  onNow.current = { session: focusedId, panelsOn };
+  const currentPanel = (): PanelId | null => commandPanel(onNow.current.panelsOn, panelFocusRef.current, lastPanel.current, (p) => panelTabs(viewRef.current.pane, onNow.current.session, p).length > 0);
   // The side pane's preview tabs, by key: each hands over the commands the palette and the close question call on it, a text tab's
   // editor commands, and what saves the tab (a text tab's editor, or a PDF tab's notes).
   const textTabs = useRef(new Map<string, Pick<PreviewHandle, "text" | "saving">>());
-  // The preview tab on screen: the selected tab of the pane shown beside the session. Null when the pane is hidden or covered.
-  const shownPreview = (): Pick<PreviewHandle, "text" | "saving"> | null => {
-    if (!view.pane.open || mainView !== "sessions" || focusedId == null) return null;
-    const shown = tabsOf(view.pane, focusedId);
-    const id = shown.active ?? shown.tabs[0]?.id;
-    return id === undefined ? null : (textTabs.current.get(pageKey(focusedId, id)) ?? null);
-  };
+  // The selected tab of each panel on screen, in the order the commands look: the current panel's first, then the other. `get` is
+  // asked with the tab's key; the first answer that is not null wins. Null when the pane is hidden or covered.
+  const shownTabAnswer = <T,>(get: (key: string) => T | null): T | null =>
+    focusedId == null
+      ? null
+      : firstWith(panelOrder(panelsOn, currentPanel()), (panel) => {
+          const tab = activeTab(view.pane, focusedId, panel);
+          return tab ? get(pageKey(focusedId, tab.id)) : null;
+        });
   // The loaded text tab on screen, and what saves the tab on screen. Null when the tab is not an editor, or has nothing that saves, yet.
-  const shownText = (): TextTabCommands | null => shownPreview()?.text() ?? null;
-  const shownSaving = (): SaveCommands | null => shownPreview()?.saving() ?? null;
+  const shownText = (): TextTabCommands | null => shownTabAnswer((key) => textTabs.current.get(key)?.text() ?? null);
+  const shownSaving = (): SaveCommands | null => shownTabAnswer((key) => textTabs.current.get(key)?.saving() ?? null);
   const shownTextRef = useRef(shownText);
   shownTextRef.current = shownText;
   const shownSavingRef = useRef(shownSaving);
@@ -728,12 +757,7 @@ export function LiveApp() {
   // The side pane's tabs that can mark a region, by key: a preview tab (which also hands over its PDF commands) or a browser tab (which has none).
   const regionTabs = useRef(new Map<string, { selectRegion(): boolean; pdf?(): PdfCommands | null }>());
   // The loaded PDF tab on screen, found like the text tab. Null when the pane is hidden or covered, or the tab is not a PDF that has loaded.
-  const shownPdf = (): PdfCommands | null => {
-    if (!view.pane.open || mainView !== "sessions" || focusedId == null) return null;
-    const shown = tabsOf(view.pane, focusedId);
-    const id = shown.active ?? shown.tabs[0]?.id;
-    return id === undefined ? null : (regionTabs.current.get(pageKey(focusedId, id))?.pdf?.() ?? null);
-  };
+  const shownPdf = (): PdfCommands | null => shownTabAnswer((key) => regionTabs.current.get(key)?.pdf?.() ?? null);
   const shownPdfRef = useRef(shownPdf);
   shownPdfRef.current = shownPdf;
   // A command that would do nothing now (Close with no session in focus, Reopen with nothing closed) is left out too.
@@ -859,7 +883,7 @@ export function LiveApp() {
     const entry = currentEntry(tab);
     if (tabCloseAsk({ id: tab.id, path: entry.path, kind: tabKind(isBrowserTab(tab), entry.path) }, unsavedRef.current, osName) !== "ask") return false;
     const shown = tabsOf(viewRef.current.pane, session);
-    if ((shown.active ?? shown.tabs[0]?.id) !== tab.id) paneDispatch({ type: "select", session, paneTab: tab.id });
+    if (activeIn(shown, panelOf(tab)) !== tab.id) paneDispatch({ type: "select", session, paneTab: tab.id });
     setSaveAsk({ session, paneTab: tab.id, path: entry.path, from: askedFrom(document.activeElement) });
     return true;
   };
@@ -871,7 +895,7 @@ export function LiveApp() {
     announce(closedText(paneTabName(tab, tabTitles(shown.tabs))));
     // The dialog gave focus back to the tab it was asked from, which is going. After a save the close is drawn later than the next
     // frame, so focus waits for it. A close asked from the strip leaves the keyboard on the strip.
-    if (ask.from !== null) focusPane("files", ask.paneTab, ask.from); // 6r-1a: replaced in Task 10 or 11.
+    if (ask.from !== null) focusPane(panelOf(tab), ask.paneTab, ask.from);
   };
   // A tab that was not on screen mounts when it is selected, and its draft is read a moment later: wait for it, up to two seconds.
   const loadedText = async (key: string): Promise<SaveCommands | null> => {
@@ -923,12 +947,12 @@ export function LiveApp() {
     const taken = takeOpens(viewRef.current.pane, opens, new Set(answered.current.keys()), {
       sessions: new Map(rows.map((r) => [r.id, { project: r.projectKey }])),
       shown: focusedId ?? null,
-      onScreen: viewRef.current.pane.open && mainView === "sessions" ? PANELS : [], // 6r-1a: replaced in Task 10 or 11.
+      onScreen: panelsOn,
       refuses: (url) => shellRefuses(url, ownOrigins()),
     });
     const repeat = opens.flatMap((o) => answered.current.get(o.id) ?? []);
     for (const a of taken.actions) paneDispatch(a);
-    if (taken.news.length > 0) newsDispatch({ type: "add", items: taken.news }); // 6r-1a: replaced in Task 10 or 11.
+    if (taken.news.length > 0) newsDispatch({ type: "add", items: taken.news });
     for (const d of taken.done) answered.current.set(d.id, d);
     // The announcer holds one notice at a time, so a frame's tabs are said together.
     if (taken.said.length > 0) announce(taken.said.join(" "));
@@ -936,14 +960,16 @@ export function LiveApp() {
     if (reply.length > 0) void opensApi.done(ep, reply).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps -- a frame is applied when it arrives; the rest is read as it stands.
   }, [opens, settled, loaded]);
-  // A tab loses its "new" mark as soon as it is in front of the person: the pane open, the sessions view on screen and the session
-  // shown. That clears the session's news and, when its selected tab is marked, the tab's own mark.
-  const shownTabUnseen = focusedId != null && Boolean(activeTab(view.pane, focusedId, selectedPanel(view.pane, focusedId))?.unseen); // 6r-1a: replaced in Task 10 or 11.
+  // A tab loses its "new" mark as soon as it is in front of the person: its panel on screen beside the session on screen. That clears
+  // the panel's news and, when the panel's selected tab is marked, the tab's own mark. A panel that is hidden keeps both.
+  const unseenOn = unseenPanels(view.pane, focusedId, panelsOn);
+  const seenKey = `${panelsOn.join(",")}|${unseenOn.join(",")}`;
   useEffect(() => {
-    if (!view.pane.open || mainView !== "sessions" || focusedId == null) return;
-    for (const panel of PANELS) newsDispatch({ type: "seen", session: focusedId, panel }); // 6r-1a: replaced in Task 10 or 11.
-    if (shownTabUnseen) paneDispatch({ type: "seen", session: focusedId, panel: selectedPanel(view.pane, focusedId) }); // 6r-1a: replaced in Task 10 or 11.
-  }, [view.pane.open, mainView, focusedId, shownTabUnseen, paneNews, paneDispatch]);
+    if (focusedId == null) return;
+    for (const panel of panelsOn) newsDispatch({ type: "seen", session: focusedId, panel });
+    for (const panel of unseenOn) paneDispatch({ type: "seen", session: focusedId, panel });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `seenKey` names the panels on screen and those with a marked selected tab.
+  }, [seenKey, focusedId, paneNews, paneDispatch]);
   // A session that is gone from the list is forgotten (derived from `rows`; the core's closed list is a different thing).
   useEffect(() => {
     if (!loaded) return;
@@ -958,9 +984,10 @@ export function LiveApp() {
       announce(check === "refused" ? TAB_LIMIT : NO_SESSION_TO_OPEN);
       return false;
     }
+    const panel = panelOfPath(target.path);
     paneDispatch({ type: "open", session, project: paneProject(), target });
-    announce(openedText(lastSegment(target.path), panelOfPath(target.path))); // 6r-1a: replaced in Task 10 or 11.
-    focusPane("files"); // 6r-1a: replaced in Task 10 or 11.
+    announce(openedText(lastSegment(target.path), panel));
+    focusPane(panel);
     return true;
   };
   // What the terminal's Ctrl+click and the viewers get: one stable function that calls the latest `openInPane`.
@@ -990,11 +1017,11 @@ export function LiveApp() {
       return false;
     }
     const action: PaneAction = { type: "openPage", session, url };
-    const opened = activeTab(paneReducer(pane, action), session, "browser"); // 6r-1a: replaced in Task 10 or 11.
+    const opened = activeTab(paneReducer(pane, action), session, "browser");
     paneDispatch(action);
     announce(pageOpenedText(url));
     if (opts?.focus === "address" && opened) focusAddressSoon(pageKey(session, opened.id));
-    else focusPane("files"); // 6r-1a: replaced in Task 10 or 11.
+    else focusPane("browser");
     return true;
   };
   const openPageRef = useRef(openPageInPane);
@@ -1025,30 +1052,6 @@ export function LiveApp() {
       () => announce("Couldn't open the file dialog."),
     );
   };
-  // The panels of the side pane on screen: those of the stack while the pane is open beside a session, else none.
-  const stack = stackOf(view.pane, focusedId);
-  const beside = mainView === "sessions" && focusedId != null;
-  const panelsOn = beside ? onScreen(view.pane, focusedId) : [];
-  // Where the keyboard is: the panel `document.activeElement` is inside, from focusin and focusout. A page that has the keyboard is in the
-  // Browser panel, whatever `document.activeElement` still names (S12 finding 8).
-  const [panelInDom, setPanelInDom] = useState<PanelId | null>(null);
-  const pageHasKeys = useFocusedPage() !== null;
-  const panelFocus: PanelId | null = pageHasKeys ? "browser" : panelInDom;
-  const panelFocusRef = useRef(panelFocus);
-  panelFocusRef.current = panelFocus;
-  // The last panel that had the keyboard: the one a tab command acts on when none has it now.
-  const lastPanel = useRef<PanelId | null>(null);
-  if (panelFocus !== null) lastPanel.current = panelFocus;
-  useEffect(() => {
-    const inside = () => setPanelInDom(panelOfElement(document.activeElement));
-    document.addEventListener("focusin", inside);
-    document.addEventListener("focusout", inside);
-    return () => {
-      document.removeEventListener("focusin", inside);
-      document.removeEventListener("focusout", inside);
-    };
-  }, []);
-  const currentPanel = (): PanelId | null => commandPanel(panelsOn, panelFocus, lastPanel.current, (p) => panelTabs(view.pane, focusedId, p).length > 0);
   // A layout with no stack saved gets the one its tabs imply written down once a session is on screen with the pane open.
   useEffect(() => {
     if (focusedId != null && shouldPin(view.pane, focusedId, settled && loaded)) paneDispatch({ type: "pin", session: focusedId });
@@ -1089,29 +1092,37 @@ export function LiveApp() {
         return;
       }
       case "paneTab": {
-        const outcome = paneTabOutcome(pane, session, selectedPanel(pane, session)); // 6r-1a: replaced in Task 10 or 11.
-        if (outcome === "none" || session === undefined) return announce(NO_TABS_OPEN);
+        const panel = currentPanel();
+        const outcome = paneTabOutcome(pane, session, panel);
+        if (outcome === "none" || session === undefined) return announce(panel ? noTabsText(panel) : NO_TABS_OPEN);
         const from = document.activeElement?.closest('[data-nav-side] [role="tabpanel"]') != null ? "panel" : "elsewhere";
-        if (outcome === "show") paneDispatch({ type: "show", session: session ?? null }); // 6r-1a: replaced in Task 10 or 11.
-        else paneDispatch({ type: "step", session, panel: selectedPanel(pane, session), by: shortcut.by }); // 6r-1a: replaced in Task 10 or 11.
+        // Where the keyboard goes: into the panel that stepped, or into the one a shown pane opens on (the one that has the keyboard, else the last that had it).
+        let into: PanelId | null = panel;
+        if (outcome === "show") {
+          const action: PaneAction = { type: "show", session: session ?? null };
+          const next = paneReducer(pane, action);
+          into = commandPanel(onScreen(next, session ?? null), panelFocusRef.current, lastPanel.current, (p) => panelTabs(next, session, p).length > 0);
+          paneDispatch(action);
+        } else if (panel !== null) paneDispatch({ type: "step", session, panel, by: shortcut.by });
         // Asked once the change is drawn: whether the pane covers the terminal is the window's to say (`data-pane`).
         setTimeout(() => {
           const covers = document.querySelector('[data-pane="cover"]') !== null;
-          if (paneTabFocus({ outcome, from, covers })) focusPane("files"); // 6r-1a: replaced in Task 10 or 11.
+          if (into !== null && paneTabFocus({ outcome, from, covers })) focusPane(into);
         }, 0);
         return;
       }
       case "closePaneTab": {
-        const closing = closeTabOutcome(pane, session, selectedPanel(pane, session)); // 6r-1a: replaced in Task 10 or 11.
-        if (!closing || session === undefined) return announce(NO_TABS_OPEN);
+        const panel = currentPanel();
+        const closing = closeTabOutcome(pane, session, panel);
+        if (!closing || session === undefined || panel === null) return announce(panel ? noTabsText(panel) : NO_TABS_OPEN);
         const asked = tabsOf(pane, session).tabs.find((t) => t.id === closing.paneTab);
         if (asked && askToClose(session, asked)) return;
-        const inside = document.activeElement?.closest("[data-nav-side]") != null;
+        const inside = panelFocusRef.current === panel;
         paneDispatch({ type: "close", session, paneTab: closing.paneTab });
         const closed = tabsOf(pane, session).tabs.find((t) => t.id === closing.paneTab);
         announce(closedText(closed ? paneTabName(closed, tabTitles(tabsOf(pane, session).tabs)) : lastSegment(closing.path)));
-        // A closed tab's body takes focus with it; the pane keeps the keyboard if it had it.
-        if (inside) focusPane("files"); // 6r-1a: replaced in Task 10 or 11.
+        // A closed tab's body takes focus with it; the panel keeps the keyboard if it had it (its next tab, or its empty state's button).
+        if (inside) focusPane(panel);
         return;
       }
       case "browse":
@@ -1148,26 +1159,16 @@ export function LiveApp() {
       const session = s.focusedId;
       if (session === undefined) return announce(NO_SESSION_TO_OPEN);
       const project = paneProject();
-      // The reducer is followed here too, so a drop of many files meets the 32-tab limit at the right file.
-      let pane = viewRef.current.pane;
-      let last: string | null = null;
-      let refused = false;
-      for (const path of paths) {
-        const stat = await statFile(path).catch(() => null);
-        if (stat?.kind !== "ok") continue;
-        if (openRefused(pane, session, path)) {
-          refused = true;
-          break;
-        }
-        const action: PaneAction = { type: "open", session, project, target: { path } };
-        pane = paneReducer(pane, action);
-        paneDispatch(action);
-        last = path;
-      }
-      if (refused) announce(TAB_LIMIT);
-      else if (last !== null) announce(openedText(lastSegment(last), panelOfPath(last))); // 6r-1a: replaced in Task 10 or 11.
+      // Every file is checked first; the plan follows the reducer, so a drop of many files meets the 32-tab limit at the right file.
+      const checked: { path: string; ok: boolean }[] = [];
+      for (const path of paths) checked.push({ path, ok: (await statFile(path).catch(() => null))?.kind === "ok" });
+      const plan = dropPlan(viewRef.current.pane, session, project, checked);
+      for (const action of plan.actions) paneDispatch(action);
+      const panel = plan.last === null ? null : panelOfPath(plan.last);
+      if (plan.refused) announce(TAB_LIMIT);
+      else if (plan.last !== null && panel !== null) announce(openedText(lastSegment(plan.last), panel));
       else announce(FOLDER_REFUSED);
-      if (last !== null) focusPane("files"); // 6r-1a: replaced in Task 10 or 11.
+      if (panel !== null) focusPane(panel);
       return;
     }
     const ep = endpointRef.current;
@@ -1603,7 +1604,7 @@ export function LiveApp() {
   // The page on screen: Browser is on screen and its selected tab is a browser tab.
   const shownTab = panelsOn.includes("browser") ? activeTab(view.pane, focusedId, "browser") : undefined;
   const shownPage = browserTabs(os) && focusedId && shownTab && isBrowserTab(shownTab) ? pageKey(focusedId, shownTab.id) : null;
-  useBrowserPages(view.pane, shownPage, { sessions: loaded ? rows.map((r) => r.id) : null, dispatch: paneDispatch, focusedSession: () => stateRef.current.focusedId, own: ownOrigins, announce });
+  useBrowserPages(view.pane, shownPage, { sessions: loaded ? rows.map((r) => r.id) : null, dispatch: paneDispatch, browserSession: () => (onNow.current.panelsOn.includes("browser") ? onNow.current.session : null), news: (session) => newsDispatch({ type: "add", items: [{ session, panel: "browser" }] }), own: ownOrigins, announce });
 
   // The window's shortcuts and commands (side pane, shell panel, history, menu, next waiting). True when it was one of them.
   const windowCommand = useCallback(
@@ -1633,11 +1634,16 @@ export function LiveApp() {
           return true;
         // A box on the shown tab's page, PDF or image; any other tab has nothing to mark.
         case "selectRegion": {
-          const session = stateRef.current.focusedId;
-          const shown = tabsOf(v.pane, session);
-          const id = shown.active ?? shown.tabs[0]?.id;
-          const handle = v.pane.open && session !== undefined && id !== undefined ? regionTabs.current.get(pageKey(session, id)) : undefined;
-          if (!handle?.selectRegion()) announce("This tab has nothing to select a region in.");
+          // The current panel's selected tab first, then the other panel on screen: the first that can mark a region does.
+          const { session, panelsOn: on } = onNow.current;
+          const marked =
+            session == null
+              ? null
+              : firstWith(panelOrder(on, currentPanel()), (panel) => {
+                  const tab = activeTab(v.pane, session, panel);
+                  return tab && regionTabs.current.get(pageKey(session, tab.id))?.selectRegion() ? true : null;
+                });
+          if (marked === null) announce("This tab has nothing to select a region in.");
           return true;
         }
         // The text tab's commands run on the shown tab, and Save and Undo save on a PDF tab's notes too. The palette lists them only while
@@ -2076,6 +2082,13 @@ export function LiveApp() {
     setFilesOnly(true);
     setOverlay("palette");
   };
+  // Back and Forward in a file tab. An entry of the other panel moves the tab there, so the keyboard, when it was in this tab, follows it.
+  const stepHistory = (tab: PaneTab, panel: PanelId, by: -1 | 1) => {
+    if (paneSession === undefined) return;
+    const lands = landingPanel(tab, by);
+    paneDispatch({ type: by < 0 ? "back" : "forward", session: paneSession, paneTab: tab.id });
+    if (lands !== null && lands !== panel && panelFocusRef.current === panel) focusPane(lands);
+  };
   // One panel's frame: its own tabs, its own kept tabs, or its empty state. A panel that is leaving is still drawn until its motion ends.
   const renderPanel = (panel: PanelId) => {
     if (os === undefined) return null;
@@ -2151,9 +2164,14 @@ export function LiveApp() {
                   os={os}
                   canBack={tab.index > 0}
                   canForward={tab.index < tab.history.length - 1}
-                  onBack={() => paneSession !== undefined && paneDispatch({ type: "back", session: paneSession, paneTab: tab.id })}
-                  onForward={() => paneSession !== undefined && paneDispatch({ type: "forward", session: paneSession, paneTab: tab.id })}
-                  onOpen={(target) => paneSession !== undefined && paneDispatch({ type: "navigate", session: paneSession, paneTab: tab.id, project: paneProjectNow, target })}
+                  onBack={() => stepHistory(tab, panel, -1)}
+                  onForward={() => stepHistory(tab, panel, 1)}
+                  onOpen={(target) => {
+                    if (paneSession === undefined) return;
+                    // A link to a file of the other panel is an open there, which says the tab limit and where it opened.
+                    if (panelOfPath(target.path) !== panel) void openInPane(target);
+                    else paneDispatch({ type: "navigate", session: paneSession, paneTab: tab.id, project: paneProjectNow, target });
+                  }}
                   onView={(v) => paneSession !== undefined && paneDispatch({ type: "setView", session: paneSession, paneTab: tab.id, view: v })}
                   onPlace={(place) => paneSession !== undefined && paneDispatch({ type: "place", session: paneSession, paneTab: tab.id, place })}
                   onDirty={noteDirty}

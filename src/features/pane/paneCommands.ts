@@ -1,10 +1,11 @@
+import type { PaneTab } from "../../generated/PaneTab";
 import type { PaneView } from "../../generated/PaneView";
 import type { Os } from "../../lib/keymap";
 import { isPageUrl, pageTitle, shellRefuses } from "../browser/address";
 import { isUnsaved } from "../editor/drafts";
 import { panelHasNews } from "./paneNews";
 import { PANE_LIMITS, activeTab, openRefused, tabsOf } from "./paneState";
-import { PANELS, PANEL_LABEL, onScreen, panelTabs, stackOf, type PanelId } from "./panels";
+import { PANELS, PANEL_LABEL, onScreen, panelOfPath, panelTabs, stackOf, type PanelId } from "./panels";
 import type { TabKind } from "./tabType";
 
 /** What the announcer says for the side pane. */
@@ -95,6 +96,17 @@ export function firstWith<T>(order: readonly PanelId[], get: (p: PanelId) => T |
     if (v !== null) return v;
   }
   return null;
+}
+
+/** The panels on screen whose selected tab is marked new: the ones a look at the pane clears. */
+export function unseenPanels(pane: PaneView, session: string | null | undefined, on: readonly PanelId[]): PanelId[] {
+  return on.filter((p) => activeTab(pane, session, p)?.unseen === true);
+}
+
+/** The panel the tab's history entry after a Back (`by` -1) or Forward (1) belongs to; null at either end. A tab that lands in the other panel moves there. */
+export function landingPanel(tab: PaneTab, by: -1 | 1): PanelId | null {
+  const entry = tab.history[tab.index + by];
+  return entry ? panelOfPath(entry.path) : null;
 }
 
 /** The title bar's buttons. `keys(panel)` is the panel command's shortcut label. */
