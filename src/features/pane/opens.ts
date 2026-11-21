@@ -95,12 +95,14 @@ export function takeOpens(view: PaneView, opens: readonly PaneOpen[], seen: Read
 /**
  * Which of `full` to say the 32-tab limit for: a session is told once, and again only after it has had room. `told` is the sessions
  * told so far; the returned set is the one to keep. Pass an empty `full` when a frame refused nothing, so room is noticed.
+ * `canSay` names the sessions the line can be announced for (the one on screen; every one when omitted): a full session it
+ * refuses is neither said nor marked told, so it is heard when that session is on screen.
  */
-export function limitNews(told: ReadonlySet<string>, full: readonly string[], pane: PaneView): { say: string[]; told: Set<string> } {
-  const say = full.filter((s) => !told.has(s));
+export function limitNews(told: ReadonlySet<string>, full: readonly string[], pane: PaneView, canSay: (session: string) => boolean = () => true): { say: string[]; told: Set<string> } {
+  const say = full.filter((s) => !told.has(s) && canSay(s));
   const next = new Set<string>();
   for (const s of told) if (full.includes(s) || tabsOf(pane, s).tabs.length >= PANE_LIMITS.tabs) next.add(s);
-  for (const s of full) next.add(s);
+  for (const s of say) next.add(s);
   return { say, told: next };
 }
 

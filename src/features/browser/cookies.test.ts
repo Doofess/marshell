@@ -22,13 +22,14 @@ describe("the cookie rule", () => {
     expect(cookiesSaid("always", 2)).toBe("Cookies: Always. 2 tabs were loaded again.");
   });
   it("lists three radio rows", () => {
-    expect(cookieRows("never", true).map((r) => "label" in r && [r.id, r.label, r.checked, r.disabled])).toEqual([
+    expect(cookieRows("never", true, false).map((r) => "label" in r && [r.id, r.label, r.checked, r.disabled])).toEqual([
       ["cookies:always", "Keep always", false, undefined],
       ["cookies:until-quit", "Keep until quit", false, undefined],
       ["cookies:never", "Never keep", true, undefined],
     ]);
-    expect(cookieRows("always", false).every((r) => "label" in r && r.disabled === "Not available on this system yet")).toBe(true);
-    expect(cookieRows(null, true).every((r) => "label" in r && r.checked === false && r.disabled === "Your settings couldn't be read")).toBe(true);
+    expect(cookieRows("always", false, false).every((r) => "label" in r && r.disabled === "Not available on this system yet")).toBe(true);
+    expect(cookieRows(null, true, true).every((r) => "label" in r && r.checked === false && r.disabled === "Your settings couldn't be read")).toBe(true);
+    expect(cookieRows(null, true, false).every((r) => "label" in r && r.checked === false && r.disabled === undefined)).toBe(true);
   });
   it("reads a row's id back", () => {
     expect(cookieChoice("cookies:until-quit")).toBe("until-quit");

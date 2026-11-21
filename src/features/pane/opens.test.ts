@@ -199,6 +199,16 @@ describe("auto opens", () => {
     expect(roomy.told.has("s1")).toBe(false);
     expect(limitNews(roomy.told, ["s1"], fullView).say).toEqual(["s1"]);
   });
+
+  it("marks as told only the session the line is said for, so another session hears it when it is on screen", () => {
+    const fullView = full32();
+    const onS2 = (s: string): boolean => s === "s2";
+    const first = limitNews(new Set(), ["s1"], fullView, onS2);
+    expect(first.say).toEqual([]);
+    expect(first.told.has("s1")).toBe(false);
+    expect(limitNews(first.told, ["s1"], fullView, (s) => s === "s1").say).toEqual(["s1"]);
+    expect(limitNews(new Set(), ["s1", "s2"], fullView, onS2).say).toEqual(["s2"]);
+  });
 });
 
 describe("dropPlan", () => {

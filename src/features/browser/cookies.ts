@@ -12,10 +12,13 @@ export const COOKIE_ROWS: readonly { rule: CookieRule; label: string; said: stri
 export const SETTINGS_UNREAD = "Your settings couldn't be read";
 const NOT_YET = "Not available on this system yet";
 
-/** The three radio rows. With `now` null (the settings aren't read) none is checked and each is off. */
-export function cookieRows(now: CookieRule | null, pages: boolean): MenuItem[] {
+/**
+ * The three radio rows. With `now` null (the settings aren't read) none is checked; each says so only when the read `failed`
+ * (decision 28), and while the settings are still loading none claims an error.
+ */
+export function cookieRows(now: CookieRule | null, pages: boolean, failed: boolean): MenuItem[] {
   return COOKIE_ROWS.map(({ rule, label }): MenuItem => {
-    const disabled = !pages ? NOT_YET : now === null ? SETTINGS_UNREAD : undefined;
+    const disabled = !pages ? NOT_YET : now === null && failed ? SETTINGS_UNREAD : undefined;
     return { id: `cookies:${rule}`, label, radio: true, checked: now === rule, ...(disabled === undefined ? {} : { disabled }) };
   });
 }

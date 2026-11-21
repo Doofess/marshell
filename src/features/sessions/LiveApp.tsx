@@ -81,6 +81,7 @@ import { BLANK, isPageUrl, ownOrigins as ownOriginsOf, shellRefuses } from "../b
 import { browserTabs } from "../browser/available";
 import { browserMenuChoice, browserMenuItems, menuTarget, toggledText } from "../browser/browserMenu";
 import { useBrowserSettings } from "../browser/browserSettings";
+import { viewportReturn } from "../browser/viewportFocus";
 import { autoOpenNote } from "../browser/autoOpen";
 import { cookiesSaid, needsReload } from "../browser/cookies";
 import { saveShot, shotReason, type ShotTarget } from "../browser/screenshot";
@@ -966,10 +967,11 @@ export function LiveApp() {
     if (taken.news.length > 0) newsDispatch({ type: "add", items: taken.news });
     for (const d of taken.done) answered.current.set(d.id, d);
     // The announcer holds one notice at a time, so a frame's tabs are said together.
-    // The limit is said once per session, and only for the session on screen: another session's limit has no line.
-    const limit = limitNews(limitTold.current, taken.full, taken.view);
+    // The limit is said once per session, and only for the session on screen; another session isn't marked told, so it hears the line
+    // when a later frame meets its limit while it is on screen.
+    const limit = limitNews(limitTold.current, taken.full, taken.view, (s) => s === focusedId);
     limitTold.current = limit.told;
-    const said = limit.say.some((s) => s === focusedId) ? [...taken.said, TAB_LIMIT] : taken.said;
+    const said = limit.say.length > 0 ? [...taken.said, TAB_LIMIT] : taken.said;
     if (said.length > 0) announce(said.join(" "));
     const reply = [...taken.done, ...repeat];
     if (reply.length > 0) void opensApi.done(ep, reply).catch(() => {});
@@ -1636,7 +1638,7 @@ export function LiveApp() {
 
   // The Browser menu's acts, one function each: the menu, the viewport chip's menu and the palette all run these on the Browser panel's
   // front tab of the session on screen.
-  const { settings: browserSettings, set: setBrowserSetting } = useBrowserSettings();
+  const { settings: browserSettings, failed: browserSettingsFailed, set: setBrowserSetting } = useBrowserSettings();
   const frontTab = activeTab(view.pane, focusedId, "browser");
   const frontKey = focusedId && frontTab && isBrowserTab(frontTab) ? pageKey(focusedId, frontTab.id) : null;
   const frontLive = usePage(frontKey)?.live === true;
@@ -1689,10 +1691,20 @@ export function LiveApp() {
   // The viewport chip's own menu: where it opened and the chip that opened it.
   const [viewportMenu, setViewportMenu] = useState<{ anchor: { x: number; y: number }; opener: HTMLElement | null } | null>(null);
   const openViewportMenu = (anchor: { x: number; y: number }): void => setViewportMenu({ anchor, opener: document.activeElement instanceof HTMLElement ? document.activeElement : null });
-  const backToChip =(opener: HTMLElement | null): void => {
-    const chip = opener?.isConnected ? opener : document.querySelector<HTMLElement>(".viewport-chip");
-    chip?.focus();
-  };
+  // The focus goes back after the pick is on screen: Responsive removes the chip, so it can't be focused before the commit. It
+  // goes to the chip, or to the Browser menu's ⋯ button when none is left, and only the front tab's panel is searched (the tabs
+  // behind it stay mounted but hidden).
+  const viewportBack = useRef<{ picked: ViewportId | null | undefined; opener: HTMLElement | null } | null>(null);
+  useEffect(() => {
+    const back = viewportBack.current;
+    if (back === null) return;
+    viewportBack.current = null;
+    const panel = frontTab ? document.getElementById(`pane-panel-${frontTab.id}`) : null;
+    viewportReturn<HTMLElement>(back.picked, back.opener, {
+      chip: () => panel?.querySelector<HTMLElement>(".viewport-chip") ?? null,
+      menu: () => document.querySelector<HTMLElement>('button[aria-label="Browser menu"]'),
+    })?.focus();
+  });
 
   // The window's shortcuts and commands (side pane, shell panel, history, menu, next waiting). True when it was one of them.
   const windowCommand = useCallback(
@@ -2453,7 +2465,7 @@ export function LiveApp() {
       {browserMenu && (
         <ContextMenu
           label="Browser menu"
-          items={browserMenuItems(menuTarget(frontTab), { pages: browserTabs(os), settings: browserSettings, viewport: viewportOf(frontTab), shot: shotWhy(), autoNote: autoOpenNote(focusedInfo?.agent ?? null, hooks) })}
+          items={browserMenuItems(menuTarget(frontTab), { pages: browserTabs(os), settings: browserSettings, failed: browserSettingsFailed, viewport: viewportOf(frontTab), shot: shotWhy(), autoNote: autoOpenNote(focusedInfo?.agent ?? null, hooks) })}
           anchor={browserMenu.anchor}
           onRun={(itemId) => {
             const { opener } = browserMenu;
@@ -2493,14 +2505,14 @@ export function LiveApp() {
           onRun={(itemId) => {
             const { opener } = viewportMenu;
             const viewport = viewportChoice(itemId);
+            viewportBack.current = { picked: viewport, opener };
             setViewportMenu(null);
-            backToChip(opener);
             if (viewport !== undefined) setViewport(viewport);
           }}
           onClose={({ refocus }) => {
             const { opener } = viewportMenu;
             setViewportMenu(null);
-            if (refocus) backToChip(opener);
+            if (refocus) viewportBack.current = { picked: undefined, opener };
           }}
         />
       )}

@@ -9,7 +9,7 @@ type Row = Extract<MenuItem, { id: string }>;
 // Every id the menu has is present, so a lookup is never undefined.
 type Rows = Record<"copy" | "shot" | "shot-full" | "outside" | "html" | "links" | "auto" | "viewport" | "cookies" | "clear", Row>;
 const byId = (items: MenuItem[]): Rows => Object.fromEntries(items.filter((i): i is Row => "id" in i).map((r) => [r.id, r])) as Rows;
-const state: BrowserMenuState = { pages: true, settings: BROWSER_DEFAULTS, viewport: null, shot: null, autoNote: null };
+const state: BrowserMenuState = { pages: true, settings: BROWSER_DEFAULTS, failed: false, viewport: null, shot: null, autoNote: null };
 const page: MenuTarget = { kind: "page", url: "https://example.com/" };
 const NOT_YET = "Not available on this system yet";
 const UNREAD = "Your settings couldn't be read";
@@ -76,10 +76,15 @@ describe("browserMenuItems", () => {
     expect([off.links.disabled, off.cookies.disabled, off.clear.disabled, off["shot-full"].disabled]).toEqual(Array(4).fill(NOT_YET));
     expect(off.auto.disabled).toBeUndefined();
   });
-  it("shows nothing as chosen while the settings aren't read", () => {
-    const rows = byId(browserMenuItems(page, { ...state, settings: null }));
+  it("shows nothing as chosen, and the failure, when the settings couldn't be read", () => {
+    const rows = byId(browserMenuItems(page, { ...state, settings: null, failed: true }));
     expect([rows.links.checked, rows.links.disabled, rows.auto.checked, rows.auto.disabled]).toEqual([false, UNREAD, false, UNREAD]);
     expect(rows.cookies.rows!.every((r) => "checked" in r && r.checked === false && r.disabled === UNREAD)).toBe(true);
+  });
+  it("claims no error while the settings are still loading", () => {
+    const rows = byId(browserMenuItems(page, { ...state, settings: null, failed: false }));
+    expect([rows.links.checked, rows.links.disabled, rows.auto.checked, rows.auto.disabled]).toEqual([false, undefined, false, undefined]);
+    expect(rows.cookies.rows!.every((r) => "checked" in r && r.checked === false && r.disabled === undefined)).toBe(true);
   });
   it("Clear browsing data… says why where pages aren't available", () => {
     expect(byId(browserMenuItems(page, { ...state, pages: false })).clear.disabled).toBe(NOT_YET);

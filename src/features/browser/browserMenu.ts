@@ -33,6 +33,8 @@ export type BrowserMenuState = {
   pages: boolean;
   /** Null until a read works: nothing is shown as chosen then. */
   settings: BrowserSettings | null;
+  /** The read failed (`useBrowserSettings().failed`): the only case that says the settings couldn't be read. */
+  failed: boolean;
   /** The tab's. */
   viewport: ViewportId | null;
   /** `shotReason(...)`: why no picture can be taken now. */
@@ -47,7 +49,7 @@ const off = (reason: string | null | undefined): { disabled?: string } => (reaso
 export function browserMenuItems(t: MenuTarget, s: BrowserMenuState): MenuItem[] {
   const noAddress = t.kind === "page" ? undefined : t.kind === "file" ? "An HTML file has no address" : "No page is open";
   const needPages = s.pages ? undefined : NOT_YET;
-  const needSettings = s.settings === null ? SETTINGS_UNREAD : undefined;
+  const needSettings = s.settings === null && s.failed ? SETTINGS_UNREAD : undefined;
   return [
     { id: COPY, label: "Copy link", ...off(noAddress) },
     { id: SHOT, label: "Save screenshot", ...off(s.shot) },
@@ -59,7 +61,7 @@ export function browserMenuItems(t: MenuTarget, s: BrowserMenuState): MenuItem[]
     { id: LINKS, label: "Open terminal links here", checked: s.settings?.terminal_links === true, ...off(needPages ?? needSettings) },
     { id: AUTO, label: "Open HTML files agents write", checked: s.settings?.open_agent_html === true, ...(s.autoNote === null ? {} : { note: s.autoNote }), ...off(needSettings) },
     { id: VIEWPORT, label: "Viewport", rows: viewportRows(s.viewport), ...off(t.kind === "none" ? "No tab is open" : undefined) },
-    { id: COOKIES, label: "Cookies", rows: cookieRows(s.settings?.cookies ?? null, s.pages), ...off(needPages) },
+    { id: COOKIES, label: "Cookies", rows: cookieRows(s.settings?.cookies ?? null, s.pages, s.failed), ...off(needPages) },
     { separator: true },
     { id: CLEAR, label: "Clear browsing data…", ...off(needPages) },
   ];
