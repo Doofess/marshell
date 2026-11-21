@@ -727,20 +727,17 @@ fn call(
 const EMULATE_WAIT: Duration = Duration::from_secs(5);
 
 /// Lays the page out `to.width` wide and draws it at `to.scale`, or with None gives it back its own width. Nothing
-/// waits for it: `failed` runs, on another thread, when the page refuses or has not answered in `EMULATE_WAIT`.
-pub fn emulate(page: &Webview, to: Option<Emulate>, failed: impl FnOnce() + Send + 'static) {
+/// waits for it: `done` runs, on another thread, with whether the page took it, as soon as the page answers; a page
+/// that refuses, or has not answered in `EMULATE_WAIT`, is a no.
+pub fn emulate(page: &Webview, to: Option<Emulate>, done: impl FnOnce(bool) + Send + 'static) {
     let started = match to {
         Some(e) => call(page, "Emulation.setDeviceMetricsOverride", emulate_params(e)),
         None => call(page, "Emulation.clearDeviceMetricsOverride", "{}".to_string()),
     };
     let Ok(rx) = started else {
-        return failed();
+        return done(false);
     };
-    tauri::async_runtime::spawn_blocking(move || {
-        if !matches!(rx.recv_timeout(EMULATE_WAIT), Ok(Ok(_))) {
-            failed();
-        }
-    });
+    tauri::async_runtime::spawn_blocking(move || done(matches!(rx.recv_timeout(EMULATE_WAIT), Ok(Ok(_)))));
 }
 
 /// The page's size, as `Page.getLayoutMetrics` answers (JSON).

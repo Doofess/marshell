@@ -183,13 +183,11 @@ pub async fn post(
         && matches!(agent.as_str(), "claude" | "codex" | "antigravity" | "qwen" | "copilot")
         && let Some(tab) = tab.as_deref()
         && st.registry().is_open(tab)
+        && let Some(job) = super::auto_open::pending(st.settings_snapshot().browser.open_agent_html, &agent, &json)
     {
-        tokio::spawn(super::auto_open::queue(
-            st.clone(),
-            agent.clone(),
-            tab.to_string(),
-            json.clone(),
-        ));
+        // Only the written paths and the folder move into the task: with the setting off or nothing written there is
+        // no task and no copy of the body.
+        tokio::spawn(super::auto_open::queue(st.clone(), agent.clone(), tab.to_string(), job));
     }
     // A request waits for a card only in an open tab that runs the requesting agent: an agent started from a plain
     // shell tab inherits the tab's id (Antigravity's IDE reads the same hooks.json), and a tab the foreground

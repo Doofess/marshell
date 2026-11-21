@@ -121,22 +121,36 @@ pub(crate) fn html_targets(written: &[String], cwd: Option<&str>, distro: Option
     out
 }
 
-/// Queues the opens for one hook event. Spawned, never awaited by the hook's answer.
-pub(crate) async fn queue(st: AppState, agent: String, tab: String, body: serde_json::Value) {
-    // The copy is taken and the lock is gone before anything is awaited.
-    if !st.settings_snapshot().browser.open_agent_html {
-        return;
+/// What one hook event asks the queue to open: the paths its file tool wrote and the folder the event reports. Only
+/// these are moved into the spawned task, never the event's body.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Pending {
+    written: Vec<String>,
+    cwd: Option<String>,
+}
+
+/// The work an event leaves for `queue`, or None when there is none: the setting is off, or the event wrote no file.
+/// It only borrows the body, so an event that opens nothing costs no copy of it and no task.
+pub(crate) fn pending(open_agent_html: bool, agent: &str, body: &serde_json::Value) -> Option<Pending> {
+    if !open_agent_html {
+        return None;
     }
-    let written = agents::written(&agent, &body);
+    let written = agents::written(agent, body);
     if written.is_empty() {
-        return;
+        return None;
     }
     let cwd = body
         .pointer("/cwd")
         .and_then(serde_json::Value::as_str)
         .filter(|cwd| !cwd.trim().is_empty())
-        .map(str::to_string)
-        .or_else(|| st.registry().cwd_of_tab(&tab));
+        .map(str::to_string);
+    Some(Pending { written, cwd })
+}
+
+/// Queues the opens for one hook event. Spawned, never awaited by the hook's answer.
+pub(crate) async fn queue(st: AppState, agent: String, tab: String, pending: Pending) {
+    let Pending { written, cwd } = pending;
+    let cwd = cwd.or_else(|| st.registry().cwd_of_tab(&tab));
     // Reading the distro, and every check of a file, touches the system: off the async threads. An answer that fails
     // to arrive (a panic) opens nothing.
     let _ = tokio::task::spawn_blocking(move || {
@@ -159,6 +173,26 @@ pub(crate) async fn queue(st: AppState, agent: String, tab: String, body: serde_
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_event_queues_nothing_with_the_setting_off_or_when_it_writes_no_file() {
+        let write = serde_json::json!({
+            "hook_event_name": "PostToolUse", "tool_name": "Write", "cwd": r"C:\proj",
+            "tool_input": {"file_path": r"C:\proj\a.html", "content": "<p>x</p>"},
+            "tool_response": {"filePath": r"C:\proj\a.html"}
+        });
+        assert_eq!(pending(false, "claude", &write), None);
+        let read = serde_json::json!({
+            "hook_event_name": "PostToolUse", "tool_name": "Read", "cwd": r"C:\proj",
+            "tool_input": {"file_path": r"C:\proj\a.html"}
+        });
+        assert_eq!(pending(true, "claude", &read), None);
+        assert_eq!(pending(true, "claude", &serde_json::json!({})), None);
+        assert_eq!(pending(true, "unknown", &write), None);
+        let job = pending(true, "claude", &write).expect("a write queues");
+        assert_eq!(job.written, [r"C:\proj\a.html"]);
+        assert_eq!(job.cwd.as_deref(), Some(r"C:\proj"));
+    }
 
     fn s(items: &[&str]) -> Vec<String> {
         items.iter().map(|item| item.to_string()).collect()

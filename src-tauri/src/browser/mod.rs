@@ -336,21 +336,54 @@ fn settle(app: &AppHandle, key: &str, page: &Webview, slot: Rect) {
     #[cfg(windows)]
     {
         let label = page.label().to_string();
-        let Some(before) = lock(&state.emulated).ask(&label, fit.emulate) else {
-            return;
-        };
-        let on_failure = app.clone();
-        com::emulate(page, fit.emulate, move || {
-            let there = on_failure.get_webview(&label).is_some();
-            let state = on_failure.state::<BrowserState>();
+        let (before, free) = {
             let mut emulated = lock(&state.emulated);
-            if there {
-                emulated.failed(&label, fit.emulate, before);
-            } else {
-                emulated.forget(&label);
-            }
-        });
+            let Some(before) = emulated.ask(&label, fit.emulate) else {
+                return;
+            };
+            (before, emulated.begin(&label, fit.emulate))
+        };
+        // One call per page is in flight: while it is unanswered a newer want only waits, so a drag that asks for a
+        // new scale at every pixel never leaves a thread parked on each of them, and answers apply in the order asked.
+        if free {
+            send_emulation(app.clone(), label, fit.emulate, before);
+        }
     }
+}
+
+/// Sends one emulation and, when it is answered, the newest one that was asked meanwhile. `before` is what the page
+/// had if this call fails.
+#[cfg(windows)]
+fn send_emulation(app: AppHandle, label: String, want: Option<rules::Emulate>, before: Option<rules::Emulate>) {
+    let Some(page) = app.get_webview(&label) else {
+        lock(&app.state::<BrowserState>().emulated).forget(&label);
+        return;
+    };
+    com::emulate(&page, want, move |took| {
+        let there = app.get_webview(&label).is_some();
+        let next = {
+            let state = app.state::<BrowserState>();
+            let mut emulated = lock(&state.emulated);
+            if !there {
+                emulated.forget(&label);
+                None
+            } else {
+                if !took {
+                    emulated.failed(&label, want, before);
+                }
+                let has = if took { want } else { before };
+                let next = emulated.finish(&label, has);
+                if let Some(next) = next {
+                    // What is asked now is the one in flight, so a failure of it is judged against it.
+                    emulated.ask(&label, next);
+                }
+                next.map(|next| (next, has))
+            }
+        };
+        if let Some((next, has)) = next {
+            send_emulation(app, label, next, has);
+        }
+    });
 }
 
 /// The main window was resized: the page moves at once, inside the window's own resize, without a round trip to

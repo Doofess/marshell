@@ -610,6 +610,8 @@ pub fn emulate_params(e: Emulate) -> String {
 #[derive(Default)]
 pub struct Emulated {
     by_label: HashMap<String, Emulate>,
+    /// A page with a call in flight has an entry: None when nothing waits behind it, else the newest want.
+    in_flight: HashMap<String, Option<Option<Emulate>>>,
 }
 
 impl Emulated {
@@ -643,12 +645,40 @@ impl Emulated {
         }
     }
 
+    /// A call for `want` is to go out. True when the page has none in flight, and the caller sends it now; false when
+    /// one is, and `want` waits behind it, in place of any older want that waited: a drag asks for a new scale at
+    /// nearly every pixel, and a page that is slow to answer must not be handed all of them one by one.
+    pub fn begin(&mut self, label: &str, want: Option<Emulate>) -> bool {
+        match self.in_flight.get_mut(label) {
+            Some(parked) => {
+                *parked = Some(want);
+                false
+            }
+            None => {
+                self.in_flight.insert(label.to_string(), None);
+                true
+            }
+        }
+    }
+
+    /// The call in flight is over and the page has `applied`. The newest want that waited, when it is not what the
+    /// page has: the caller sends it, and it is now the one in flight. None leaves the page free.
+    pub fn finish(&mut self, label: &str, applied: Option<Emulate>) -> Option<Option<Emulate>> {
+        let next = self.in_flight.get_mut(label)?.take().filter(|want| *want != applied);
+        if next.is_none() {
+            self.in_flight.remove(label);
+        }
+        next
+    }
+
     pub fn forget(&mut self, label: &str) {
         self.by_label.remove(label);
+        self.in_flight.remove(label);
     }
 
     pub fn clear(&mut self) {
         self.by_label.clear();
+        self.in_flight.clear();
     }
 }
 
@@ -2277,6 +2307,36 @@ mod tests {
         e.ask("page-1", Some(b));
         e.failed("page-1", Some(a), before);
         assert_eq!(e.ask("page-1", Some(b)), None);
+    }
+
+    #[test]
+    fn only_the_latest_wanted_emulation_waits_behind_the_one_in_flight() {
+        let at = |scale: f64| Emulate { width: 1440, scale };
+        let mut e = Emulated::default();
+        // The first call goes out; the ones a drag makes while it is unanswered are parked, newest over older.
+        assert!(e.begin("page-1", Some(at(0.30))));
+        assert!(!e.begin("page-1", Some(at(0.29))));
+        assert!(!e.begin("page-1", Some(at(0.28))));
+        // Another page has its own call in flight.
+        assert!(e.begin("page-2", Some(at(0.5))));
+        // The answer comes: only the newest is sent next, and it is the one in flight until it answers.
+        assert_eq!(e.finish("page-1", Some(at(0.30))), Some(Some(at(0.28))));
+        assert!(!e.begin("page-1", None));
+        assert_eq!(e.finish("page-1", Some(at(0.28))), Some(None));
+        // Nothing is parked: the page is free for the next call.
+        assert_eq!(e.finish("page-1", None), None);
+        assert!(e.begin("page-1", Some(at(0.27))));
+        // A parked want that is what the page already has is not sent.
+        assert!(!e.begin("page-1", Some(at(0.26))));
+        assert!(!e.begin("page-1", Some(at(0.27))));
+        assert_eq!(e.finish("page-1", Some(at(0.27))), None);
+        assert!(e.begin("page-1", None));
+        // A page that is gone leaves nothing in flight.
+        e.forget("page-1");
+        assert_eq!(e.finish("page-1", None), None);
+        assert!(e.begin("page-1", None));
+        e.clear();
+        assert_eq!(e.finish("page-2", None), None);
     }
 
     #[test]
