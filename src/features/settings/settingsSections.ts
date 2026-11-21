@@ -1,9 +1,10 @@
 /** The sections of the Settings page, in the order the nav lists them. */
-export type SettingsSection = "appearance" | "terminal" | "notifications" | "profiles" | "history" | "projects" | "agents" | "accounts" | "claude" | "codex" | "antigravity" | "qwen" | "copilot" | "advanced";
+export type SettingsSection = "appearance" | "terminal" | "browser" | "notifications" | "profiles" | "history" | "projects" | "agents" | "accounts" | "claude" | "codex" | "antigravity" | "qwen" | "copilot" | "advanced";
 
 export const SETTINGS_SECTIONS: Array<{ id: SettingsSection; label: string }> = [
   { id: "appearance", label: "Appearance" },
   { id: "terminal", label: "Terminal" },
+  { id: "browser", label: "Browser" },
   { id: "notifications", label: "Notifications" },
   { id: "profiles", label: "Shell profiles" },
   { id: "history", label: "History" },

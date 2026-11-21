@@ -2661,6 +2661,7 @@ export function LiveApp() {
           accountsRefresh={accountsRefresh}
           companyRefresh={companyRefresh}
           running={runningTabs}
+          hooks={hooks}
           onSignIn={(agent) => void openCliTask(agent, "sign_in")}
           onUpdate={(agent) => void openCliTask(agent, "update")}
           onNotifications={() => {

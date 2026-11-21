@@ -58,6 +58,20 @@
   block-size: 1px;
   margin: 0;
 }
+.appearance__chip:has(input:disabled) {
+  color: var(--text-2);
+  cursor: not-allowed;
+}
+.appearance__lines {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.appearance__lines > li {
+  margin: 0;
+}
 .appearance__chip:has(input:focus-visible) {
   outline: 2px solid var(--focus, var(--accent));
   outline-offset: 2px;
