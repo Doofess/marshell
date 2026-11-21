@@ -62,7 +62,7 @@
 - A turn end that reaches Marshell after its tab closed, or as Marshell quits, is copied at the next start only when the conversation had no copy yet. One that had a copy keeps it without that turn until the conversation runs again in a tab, or, with the import switch on, until the importer sees the file change (decisions 3, 10 and 12).
 - After Copilot's `/clear`, a late `sessionEnd` of the old session is dropped before History sees it (as today); the old session's last turn was copied at its `agentStop`.
 - A conversation in a WSL distro's `/tmp` is gone when the distro stops, so the start-up pass has nothing to copy for it.
-- The uninstaller can't remove Marshell's hooks from a home the new rule refuses (decision 12).
+- The uninstaller can't remove Marshell's hooks from a home the new rule refuses, and while such a file is in its plan it changes nothing on Windows until the variable is unset (decision 12).
 - With the import switch on, a tab conversation is copied by its hook and again by the importer when the file grows. Both replace the whole copy; the tab, the client and the distro are kept.
 - Codex in a WSL tab is covered by tests, not by the live check (decision 11).
 
