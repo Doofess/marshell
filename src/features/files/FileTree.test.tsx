@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { extendTyped, FileTree, visibleRange } from "./FileTree";
+import { clickMove, extendTyped, FileTree, visibleRange } from "./FileTree";
 import type { TreeRow } from "./treeModel";
 
 const row = (over: Partial<TreeRow>): TreeRow => ({
@@ -138,5 +138,16 @@ describe("extendTyped", () => {
     expect(a).toEqual({ text: "s", at: 1000 });
     expect(extendTyped(a, "r", 1400)).toEqual({ text: "sr", at: 1400 });
     expect(extendTyped(a, "r", 1501)).toEqual({ text: "r", at: 1501 });
+  });
+});
+
+describe("clickMove", () => {
+  it("a click opens a file as a preview, toggles a folder, and does nothing on a link, a more or an empty row", () => {
+    expect(clickMove(row({ path: "a.ts", kind: "file" }))).toEqual({ type: "open", path: "a.ts", keep: false });
+    expect(clickMove(row({ path: "src", kind: "folder", expanded: false }))).toEqual({ type: "expand", path: "src" });
+    expect(clickMove(row({ path: "src", kind: "folder", expanded: true }))).toEqual({ type: "collapse", path: "src" });
+    expect(clickMove(row({ path: "current", kind: "link" }))).toBeNull();
+    expect(clickMove(row({ path: "d/more", kind: "more" }))).toBeNull();
+    expect(clickMove(row({ path: "d/empty", kind: "empty" }))).toBeNull();
   });
 });

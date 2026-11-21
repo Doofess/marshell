@@ -38,6 +38,11 @@ describe("treeMenuItems", () => {
     expect(l).not.toContain("Open");
     expect(l).toContain("Copy path");
   });
+  it("a link's menu has no Open: a link to a folder is never opened", () => {
+    const l = labels(treeMenuItems(row({ kind: "link", path: "current", name: "current" }), { pasteTo: paste, os: "windows" }));
+    expect(l).not.toContain("Open");
+    expect(l).toContain("Copy path");
+  });
   it("the paste row is off with the session's reason", () => {
     const items = treeMenuItems(row({}), { pasteTo: { name: "api-server", refused: "The session has ended." }, os: "windows" }).filter(isAction);
     expect(items.find((i) => i.id === "paste")?.disabled).toBe("The session has ended.");

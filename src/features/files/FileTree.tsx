@@ -28,6 +28,17 @@ export function extendTyped(prev: { text: string; at: number }, key: string, now
   return { text: prev.text !== "" && now - prev.at <= TYPE_AHEAD_MS ? prev.text + key : key, at: now };
 }
 
+/**
+ * What a click on a row does: a file opens as a preview, a folder opens or closes. A link is a link to a folder (the core lists
+ * a link to a file as the file) and is never opened, so the tree never leaves the project folder; "more" and "empty" rows do
+ * nothing.
+ */
+export function clickMove(r: TreeRow): TreeMove {
+  if (r.kind === "folder") return { type: r.expanded ? "collapse" : "expand", path: r.path };
+  if (r.kind === "file") return { type: "open", path: r.path, keep: false };
+  return null;
+}
+
 function Chevron() {
   return (
     <svg className="file-tree__chevron" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -167,8 +178,8 @@ export function FileTree(p: {
   const click = (r: TreeRow) => {
     if (!real(r)) return;
     onFocusRow(r.path);
-    if (r.kind === "folder") onMove({ type: r.expanded ? "collapse" : "expand", path: r.path });
-    else onMove({ type: "open", path: r.path, keep: false });
+    const move = clickMove(r);
+    if (move) onMove(move);
   };
   const context = (r: TreeRow, e: ReactMouseEvent<HTMLElement>) => {
     if (!real(r)) return;
