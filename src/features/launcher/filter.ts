@@ -12,11 +12,21 @@ const WORD_START = new Set([" ", "-", "_", "/", "\\", ".", "·"]);
 /**
  * Case-insensitive subsequence match, with no regular expressions so no input can be read as a pattern.
  * Returns the matched ranges (merged when adjacent), [] for an empty query, or null for no match.
+ * A query that occurs whole is one range: the first occurrence that starts a word, else the first occurrence.
  */
 export function matchRanges(query: string, text: string): Range[] | null {
   const q = Array.from(query.trim(), lower);
   if (q.length === 0) return [];
   const t = Array.from(text, lower);
+  let first = -1;
+  for (let i = 0; i + q.length <= t.length; i++) {
+    let same = true;
+    for (let k = 0; k < q.length && same; k++) same = t[i + k] === q[k];
+    if (!same) continue;
+    if (i === 0 || WORD_START.has(t[i - 1]!)) return [[i, i + q.length]];
+    if (first < 0) first = i;
+  }
+  if (first >= 0) return [[first, first + q.length]];
   const ranges: Range[] = [];
   let qi = 0;
   for (let i = 0; i < t.length && qi < q.length; i++) {
@@ -29,7 +39,10 @@ export function matchRanges(query: string, text: string): Range[] | null {
   return qi === q.length ? ranges : null;
 }
 
-/** Longer runs and word-start matches score higher; the start of the text counts most; shorter text breaks near-ties. */
+/**
+ * Longer runs and word-start matches score higher; the start of the text counts most; shorter text breaks near-ties.
+ * Each run after the first costs 6 points, more than a word-start run gains, so one unbroken match beats the same letters split.
+ */
 export function score(ranges: Range[], text: string): number {
   const t = Array.from(text);
   let s = 0;
@@ -38,7 +51,7 @@ export function score(ranges: Range[], text: string): number {
     if (a === 0) s += 8;
     else if (WORD_START.has(t[a - 1] ?? "")) s += 6;
   }
-  return s - t.length * 0.01;
+  return s - (ranges.length - 1) * 6 - t.length * 0.01;
 }
 
 function rank<T>(items: T[], query: string, label: (i: T) => string, recent: (i: T) => number): Hit<T>[] {
