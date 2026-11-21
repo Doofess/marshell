@@ -65,6 +65,7 @@ import { dropDraft, listDrafts } from "../editor/editorApi";
 import { SaveDialog, type SaveChoice } from "../editor/SaveDialog";
 import type { SaveCommands, TextTabCommands } from "../editor/TextTab";
 import type { PaneTab } from "../../generated/PaneTab";
+import type { CookieRule } from "../../generated/CookieRule";
 import { PaneContext, PagePaneContext, type OpenPageInPane } from "../pane/PaneContext";
 import { dropCover, modalOnScreen } from "../pane/dropCover";
 import { EmptyBrowser, PAGES_UNAVAILABLE } from "../pane/EmptyBrowser";
@@ -72,20 +73,26 @@ import { EmptyFiles } from "../pane/EmptyFiles";
 import { PanelStack } from "../pane/PanelStack";
 import { KeptTabs } from "../pane/KeptTabs";
 import { useBrowserKeys } from "../browser/useBrowserKeys";
-import { useCoverPage } from "../browser/pageCover";
-import { useFocusedPage } from "../browser/pageStore";
+import { uncovered, useCoverPage } from "../browser/pageCover";
+import { useFocusedPage, usePage } from "../browser/pageStore";
 import { BrowserTab } from "../browser/BrowserTab";
 import { ClearDataDialog } from "../browser/ClearDataDialog";
 import { BLANK, isPageUrl, ownOrigins as ownOriginsOf, shellRefuses } from "../browser/address";
 import { browserTabs } from "../browser/available";
-import { browserMenuChoice, browserMenuItems, menuTarget } from "../browser/browserMenu";
+import { browserMenuChoice, browserMenuItems, menuTarget, toggledText } from "../browser/browserMenu";
+import { useBrowserSettings } from "../browser/browserSettings";
+import { autoOpenNote } from "../browser/autoOpen";
+import { cookiesSaid, needsReload } from "../browser/cookies";
+import { saveShot, shotReason, type ShotTarget } from "../browser/screenshot";
+import { nextPaint } from "../browser/usePageSlot";
+import { saveScreenshot } from "../../lib/api/screenshots";
 import { browser, pageKey } from "../browser/browserApi";
 import type { UrlBarHandle } from "../browser/UrlBar";
 import { useBrowserPages } from "../browser/useBrowserPages";
 import { askedFrom, focusPane, panelOfElement } from "../pane/focusPane";
 import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, PANE_BESIDE_SESSION, closeNothingText, noTabText, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, commandPanel, firstWith, hideFocus, landingPanel, panelButtonsFor, panelOrder, unseenPanels, panelHiddenText, panelToggleOutcome, shouldPin, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, receiptWithPaneHidden, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf } from "../pane/paneCommands";
 import { isPanelId, onScreen, PANEL_COMMAND, PANEL_LABEL, panelOf, panelOfPath, panelTabs, activeIn, stackOf, stackPanels, type PanelId } from "../pane/panels";
-import { viewportOf } from "../browser/viewport";
+import { viewportOf, viewportRows, viewportChoice, viewportSaid, type ViewportId } from "../browser/viewport";
 import { activeTab, currentEntry, isBrowserTab, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
 import { dropPlan, limitNews, takeOpens } from "../pane/opens";
 import { newsReducer } from "../pane/paneNews";
@@ -775,7 +782,7 @@ export function LiveApp() {
     shellPanel: sidebarExpanded,
     sidebarToggle: sidebarToggleFor(sidebarPref, sidebarMode(width, sidebarPref)) !== null,
   });
-  const hiddenCommands = useMemo(() => [...baseHidden, ...idle, ...(adminCommandHidden(os) ? ["new-session-admin"] : []), ...(browserTabs(os) ? [] : ["new-browser-tab", "open-url", "clear-browser-data"]), ...(scriptControl?.kind === "run" ? [] : ["run-script"]), ...(scriptControl?.kind === "stop" ? [] : ["stop-script"])], [baseHidden, idle, scriptControl?.kind, os]);
+  const hiddenCommands = useMemo(() => [...baseHidden, ...idle, ...(adminCommandHidden(os) ? ["new-session-admin"] : []), ...(browserTabs(os) ? [] : ["new-browser-tab", "open-url", "clear-browser-data", "save-screenshot", "save-full-screenshot"]), ...(scriptControl?.kind === "run" ? [] : ["run-script"]), ...(scriptControl?.kind === "stop" ? [] : ["stop-script"])], [baseHidden, idle, scriptControl?.kind, os]);
   // An Ended administrator row's Resume reads "Reopen as administrator" in the palette too.
   const liveLabels = useMemo(() => (focusedRow?.elevated ? { ...paletteLabels, resume: REOPEN_AS_ADMIN } : paletteLabels), [paletteLabels, focusedRow?.elevated]);
 
@@ -1627,6 +1634,66 @@ export function LiveApp() {
   const shownPage = browserTabs(os) && focusedId && shownTab && isBrowserTab(shownTab) ? pageKey(focusedId, shownTab.id) : null;
   const { reloadPrivate } = useBrowserPages(view.pane, shownPage, { sessions: loaded ? rows.map((r) => r.id) : null, dispatch: paneDispatch, browserSession: () => (onNow.current.panelsOn.includes("browser") ? onNow.current.session : null), news: (session) => newsDispatch({ type: "add", items: [{ session, panel: "browser" }] }), own: ownOrigins, announce });
 
+  // The Browser menu's acts, one function each: the menu, the viewport chip's menu and the palette all run these on the Browser panel's
+  // front tab of the session on screen.
+  const { settings: browserSettings, set: setBrowserSetting } = useBrowserSettings();
+  const frontTab = activeTab(view.pane, focusedId, "browser");
+  const frontKey = focusedId && frontTab && isBrowserTab(frontTab) ? pageKey(focusedId, frontTab.id) : null;
+  const frontLive = usePage(frontKey)?.live === true;
+  const shotTarget = (): ShotTarget => {
+    const target = menuTarget(frontTab);
+    if (target.kind === "page" && frontKey !== null) return { kind: "page", key: frontKey, url: target.url, loaded: frontLive };
+    // A blank tab has no page to take a picture of.
+    return target.kind === "file" ? { kind: "file" } : { kind: "none" };
+  };
+  const shotWhy = (): string | null => shotReason(shotTarget(), browserTabs(os), panelsOn.includes("browser"));
+  const takeShot = (full: boolean): void => {
+    const target = shotTarget();
+    const why = shotWhy();
+    if (why !== null) return announce(why);
+    const ep = endpointRef.current;
+    if (target.kind !== "page" || !ep) return;
+    void saveShot(
+      { uncovered, paint: nextPaint, shoot: browser.screenshot, save: (host, at, png) => saveScreenshot(ep, host, at, png), now: () => new Date() },
+      { key: target.key, url: target.url },
+      full,
+    ).then((line) => announce(line));
+  };
+  const setViewport = (viewport: ViewportId | null): void => {
+    if (focusedId === undefined || !frontTab) return announce("No tab is open in Browser.");
+    paneDispatch({ type: "viewport", session: focusedId, paneTab: frontTab.id, viewport });
+    announce(viewportSaid(viewport));
+  };
+  const toggleBrowserSetting = (key: "terminal_links" | "open_agent_html"): void => {
+    if (browserSettings === null) return;
+    const on = !browserSettings[key];
+    const label = key === "terminal_links" ? "Open terminal links here" : "Open HTML files agents write";
+    setBrowserSetting({ [key]: on }).then(
+      () => announce(toggledText(label, on)),
+      () => announce("The setting wasn't saved."),
+    );
+  };
+  const setCookieRule = (rule: CookieRule): void => {
+    if (browserSettings === null) return;
+    const was = browserSettings.cookies;
+    // A change to or from "Never" is announced by the pages' own reload (useBrowserPages), with the count.
+    setBrowserSetting({ cookies: rule }).then(
+      () => needsReload(was, rule) || announce(cookiesSaid(rule, 0)),
+      () => announce("The setting wasn't saved."),
+    );
+  };
+  const shotRef = useRef(takeShot);
+  shotRef.current = takeShot;
+  const viewportRef = useRef(setViewport);
+  viewportRef.current = setViewport;
+  // The viewport chip's own menu: where it opened and the chip that opened it.
+  const [viewportMenu, setViewportMenu] = useState<{ anchor: { x: number; y: number }; opener: HTMLElement | null } | null>(null);
+  const openViewportMenu = (anchor: { x: number; y: number }): void => setViewportMenu({ anchor, opener: document.activeElement instanceof HTMLElement ? document.activeElement : null });
+  const backToChip =(opener: HTMLElement | null): void => {
+    const chip = opener?.isConnected ? opener : document.querySelector<HTMLElement>(".viewport-chip");
+    chip?.focus();
+  };
+
   // The window's shortcuts and commands (side pane, shell panel, history, menu, next waiting). True when it was one of them.
   const windowCommand = useCallback(
     (shortcut: SessionShortcut | null): boolean => {
@@ -1652,6 +1719,13 @@ export function LiveApp() {
           return true;
         case "clearBrowserData":
           setClearData("ask");
+          return true;
+        // The Browser panel's front tab: a picture of its page, and its viewport. The answer is announced.
+        case "screenshot":
+          shotRef.current(shortcut.full);
+          return true;
+        case "viewport":
+          viewportRef.current(shortcut.viewport);
           return true;
         // A box on the shown tab's page, PDF or image; any other tab has nothing to mark.
         case "selectRegion": {
@@ -2167,6 +2241,7 @@ export function LiveApp() {
                   regionTarget={deliveryFor(focusedRow ?? null)}
                   onRegion={addRegion}
                   viewport={viewportOf(tab)}
+                  onViewport={openViewportMenu}
                   ref={(bar) => {
                     // The address box of a new blank tab takes the keyboard through this (openPageInPane); the palette's "Select region" the region.
                     const key = pageKey(paneSession ?? "", tab.id);
@@ -2203,6 +2278,7 @@ export function LiveApp() {
                   regionTarget={deliveryFor(focusedRow ?? null)}
                   onRegion={addRegion}
                   viewport={panel === "browser" ? viewportOf(tab) : null}
+                  onViewport={panel === "browser" ? openViewportMenu : undefined}
                   ref={(preview) => {
                     const key = pageKey(paneSession ?? "", tab.id);
                     if (preview) {
@@ -2377,29 +2453,54 @@ export function LiveApp() {
       {browserMenu && (
         <ContextMenu
           label="Browser menu"
-          items={browserMenuItems(menuTarget(activeTab(view.pane, focusedId, "browser")), browserTabs(os))}
+          items={browserMenuItems(menuTarget(frontTab), { pages: browserTabs(os), settings: browserSettings, viewport: viewportOf(frontTab), shot: shotWhy(), autoNote: autoOpenNote(focusedInfo?.agent ?? null, hooks) })}
           anchor={browserMenu.anchor}
           onRun={(itemId) => {
             const { opener } = browserMenu;
             const choice = browserMenuChoice(itemId);
-            const target = menuTarget(activeTab(view.pane, focusedId, "browser"));
+            const target = menuTarget(frontTab);
             setBrowserMenu(null);
             // Focus goes back to the ⋯ button first, so a dialog that closes without a pick returns it there.
             opener.focus();
-            if (choice === "copy" && target.kind === "page") {
+            if (choice === null) return;
+            if (choice.kind === "copy" && target.kind === "page") {
               navigator.clipboard.writeText(target.url).then(
                 () => announce("Copied the link."),
                 () => announce("Couldn't copy the link."),
               );
-            } else if (choice === "outside" && target.kind === "page") {
+            } else if (choice.kind === "outside" && target.kind === "page") {
               if (isPageUrl(target.url) && target.url !== BLANK) void openUrl(target.url).catch(() => {});
-            } else if (choice === "html") openHtmlFile();
-            else if (choice === "clear") setClearData("ask");
+            } else if (choice.kind === "html") openHtmlFile();
+            else if (choice.kind === "clear") setClearData("ask");
+            else if (choice.kind === "shot") takeShot(choice.full);
+            else if (choice.kind === "viewport") setViewport(choice.viewport);
+            else if (choice.kind === "links") toggleBrowserSetting("terminal_links");
+            else if (choice.kind === "auto") toggleBrowserSetting("open_agent_html");
+            else if (choice.kind === "cookies") setCookieRule(choice.rule);
           }}
           onClose={({ refocus }) => {
             const { opener } = browserMenu;
             setBrowserMenu(null);
             if (refocus) opener.focus();
+          }}
+        />
+      )}
+      {viewportMenu && (
+        <ContextMenu
+          label="Viewport"
+          items={viewportRows(viewportOf(frontTab))}
+          anchor={viewportMenu.anchor}
+          onRun={(itemId) => {
+            const { opener } = viewportMenu;
+            const viewport = viewportChoice(itemId);
+            setViewportMenu(null);
+            backToChip(opener);
+            if (viewport !== undefined) setViewport(viewport);
+          }}
+          onClose={({ refocus }) => {
+            const { opener } = viewportMenu;
+            setViewportMenu(null);
+            if (refocus) backToChip(opener);
           }}
         />
       )}
