@@ -736,6 +736,9 @@ pub struct Cookies {
     pages: BTreeMap<String, bool>,
     /// A page that keeps data was made in this run.
     kept_made: bool,
+    /// A page that keeps data was made in this run while the rule was UntilQuit, and "Keep always" was not chosen
+    /// since.
+    until_quit_made: bool,
     /// What the last run left was cleared, or is being cleared.
     start_taken: bool,
 }
@@ -743,6 +746,10 @@ pub struct Cookies {
 impl Cookies {
     pub fn tell(&mut self, rule: CookieRule) {
         self.rule = Some(rule);
+        // Choosing "Keep always" is choosing to keep what "until quit" stored in this run.
+        if rule == CookieRule::Always {
+            self.until_quit_made = false;
+        }
     }
 
     /// Whether the next page is private: an error until a rule was told, so no page is made on a guess.
@@ -767,6 +774,9 @@ impl Cookies {
         self.pages.insert(key.to_string(), private);
         if !private {
             self.kept_made = true;
+            if self.rule == Some(CookieRule::UntilQuit) {
+                self.until_quit_made = true;
+            }
         }
     }
 
@@ -787,9 +797,25 @@ impl Cookies {
             .map(|(key, _)| key.as_str())
     }
 
-    /// UntilQuit now, and a page that keeps data was made in this run.
+    /// The keys of the pages that keep data, the ones a clear of the profile reaches. A private page is made again
+    /// by the app instead.
+    pub fn kept_keys(&self) -> Vec<String> {
+        self.pages
+            .iter()
+            .filter(|(_, private)| !**private)
+            .map(|(key, _)| key.clone())
+            .collect()
+    }
+
+    /// Whether quitting clears the profile (6r-1b decision 17): under UntilQuit once a page that keeps data was made
+    /// in this run; and under Never when a page was made under UntilQuit in this run and no switch to Always chose
+    /// to keep it, since that page's cookies are on disk.
     pub fn clears_at_quit(&self) -> bool {
-        self.rule == Some(CookieRule::UntilQuit) && self.kept_made
+        match self.rule {
+            Some(CookieRule::UntilQuit) => self.kept_made,
+            Some(CookieRule::Never) => self.until_quit_made,
+            _ => false,
+        }
     }
 }
 
@@ -2396,15 +2422,64 @@ mod tests {
     }
 
     #[test]
-    fn quit_clears_only_under_until_quit_after_a_kept_page() {
+    fn quit_clears_under_until_quit_after_a_kept_page() {
         let mut c = Cookies::default();
         c.tell(CookieRule::UntilQuit);
         assert!(!c.clears_at_quit());
         c.made("s/a", false);
         c.gone("s/a");
         assert!(c.clears_at_quit());
+    }
+
+    #[test]
+    fn quit_still_clears_what_until_quit_stored_after_a_switch_to_never() {
+        let mut c = Cookies::default();
+        c.tell(CookieRule::UntilQuit);
+        c.made("s/a", false);
+        c.tell(CookieRule::Never);
+        c.gone("s/a");
+        c.made("s/a", true);
+        assert!(c.clears_at_quit());
+    }
+
+    #[test]
+    fn quit_keeps_what_the_person_chose_to_keep_always() {
+        let mut c = Cookies::default();
+        c.tell(CookieRule::UntilQuit);
+        c.made("s/a", false);
+        c.tell(CookieRule::Always);
+        assert!(!c.clears_at_quit());
+        // The choice to keep stands through a later switch to never.
         c.tell(CookieRule::Never);
         assert!(!c.clears_at_quit());
+    }
+
+    #[test]
+    fn quit_does_not_clear_under_never_or_always_when_until_quit_stored_nothing() {
+        let mut c = Cookies::default();
+        c.tell(CookieRule::Always);
+        c.made("s/a", false);
+        c.tell(CookieRule::Never);
+        assert!(!c.clears_at_quit());
+        let mut c = Cookies::default();
+        c.tell(CookieRule::Never);
+        c.made("s/a", true);
+        assert!(!c.clears_at_quit());
+    }
+
+    #[test]
+    fn a_clear_reloads_only_the_pages_that_keep_data() {
+        let mut c = Cookies::default();
+        c.tell(CookieRule::Never);
+        c.made("s/a", true);
+        assert!(c.kept_keys().is_empty());
+        c.tell(CookieRule::Always);
+        c.made("s/b", false);
+        c.made("s/c", false);
+        c.made("s/d", true);
+        assert_eq!(c.kept_keys(), ["s/b", "s/c"]);
+        c.gone("s/b");
+        assert_eq!(c.kept_keys(), ["s/c"]);
     }
 
     #[test]

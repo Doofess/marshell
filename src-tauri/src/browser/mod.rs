@@ -787,7 +787,8 @@ pub async fn browser_theme(app: AppHandle, dark: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// Clears everything the pages' profile holds (sign-ins, storage, cache, history), then loads every page again.
+/// Clears everything the pages' profile holds (sign-ins, storage, cache, history), then loads the pages that keep
+/// data again.
 #[tauri::command]
 pub async fn browser_clear_data(app: AppHandle) -> Result<(), String> {
     supported()?;
@@ -800,7 +801,9 @@ pub async fn browser_clear_data(app: AppHandle) -> Result<(), String> {
             Some(page) => com::clear_data(&page).await?,
             None => com::clear_data(&Blank(blank_page(&app)?).0).await?,
         }
-        for page in pages(&app) {
+        // Only the pages that keep data are loaded again here; a private page is made again by the app.
+        let kept = lock(&app.state::<BrowserState>().cookies).kept_keys();
+        for page in kept.iter().filter_map(|key| page(&app, key)) {
             com::nav(&page, "reload")?;
         }
         Ok(())
@@ -876,7 +879,8 @@ fn kept_page(app: &AppHandle) -> Option<Webview> {
 #[cfg(windows)]
 const QUIT_CLEAR_WAIT: Duration = Duration::from_secs(3);
 
-/// Before Marshell quits: under "until quit", once a page that kept data was made in this run, the cookies and site
+/// Before Marshell quits: under "until quit" once a page that kept data was made in this run, or under "never" after
+/// a page was made under "until quit" and "always" was not chosen since, the cookies and site
 /// data are cleared, through such a page or a blank one made for it, and `then` runs on the main thread when the
 /// clear has answered or `QUIT_CLEAR_WAIT` has passed, whichever is first; otherwise `then` runs at once. A second
 /// call while the first is waiting does nothing. A run that ends another way leaves the clear to the next start.
