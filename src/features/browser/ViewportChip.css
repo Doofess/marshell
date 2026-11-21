@@ -1,7 +1,8 @@
 /* The viewport chip: told apart by its fill and tint, like the other chips; no edge. */
 .viewport-chip {
   flex: none;
-  max-inline-size: 16ch;
+  /* "Desktop 1440 · 99%" is 18 characters; 20ch leaves room for letters wider than a digit, and the padding counts in the box. */
+  max-inline-size: calc(20ch + 2 * var(--space-2));
   block-size: 28px;
   padding-inline: var(--space-2);
   border-radius: var(--radius);

@@ -12,6 +12,15 @@ describe("ViewportChip.css", () => {
     expect(rules.length).toBeGreaterThan(0);
     for (const m of rules) expect(m[2], m[1]!.trim()).not.toMatch(/\b(border|outline)(-width|-style|-color)?\s*:/);
   });
+  it("is wide enough for the longest label, \"Desktop 1440 · 99%\" (18 characters), plus its padding", () => {
+    const rule = css.match(/\.viewport-chip\s*\{([^{}]*)\}/)![1]!;
+    const max = rule.match(/max-inline-size:\s*([^;]+);/)![1]!;
+    const chars = Number(max.match(/(\d+(?:\.\d+)?)ch/)?.[1]);
+    expect(chars).toBeGreaterThanOrEqual("Desktop 1440 · 99%".length);
+    expect(max).toContain("var(--space-2)");
+    expect(rule).toMatch(/flex:\s*none/);
+    expect(rule).toMatch(/text-overflow:\s*ellipsis/);
+  });
   it("names system colors only inside forced-colors", () => {
     expect(forcedAt).toBeGreaterThan(-1);
     const forced = css.slice(forcedAt);
