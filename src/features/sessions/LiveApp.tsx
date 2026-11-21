@@ -85,6 +85,7 @@ import { useBrowserPages } from "../browser/useBrowserPages";
 import { askedFrom, focusPane, panelOfElement } from "../pane/focusPane";
 import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, PANE_BESIDE_SESSION, closeNothingText, noTabText, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, commandPanel, firstWith, hideFocus, landingPanel, panelButtonsFor, panelOrder, unseenPanels, panelHiddenText, panelToggleOutcome, shouldPin, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, receiptWithPaneHidden, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf } from "../pane/paneCommands";
 import { isPanelId, onScreen, PANEL_COMMAND, PANEL_LABEL, panelOf, panelOfPath, panelTabs, activeIn, stackOf, stackPanels, type PanelId } from "../pane/panels";
+import { viewportOf } from "../browser/viewport";
 import { activeTab, currentEntry, isBrowserTab, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
 import { dropPlan, takeOpens } from "../pane/opens";
 import { newsReducer } from "../pane/paneNews";
@@ -2157,6 +2158,7 @@ export function LiveApp() {
                   announce={announce}
                   regionTarget={deliveryFor(focusedRow ?? null)}
                   onRegion={addRegion}
+                  viewport={viewportOf(tab)}
                   ref={(bar) => {
                     // The address box of a new blank tab takes the keyboard through this (openPageInPane); the palette's "Select region" the region.
                     const key = pageKey(paneSession ?? "", tab.id);
@@ -2192,6 +2194,7 @@ export function LiveApp() {
                   announce={announce}
                   regionTarget={deliveryFor(focusedRow ?? null)}
                   onRegion={addRegion}
+                  viewport={panel === "browser" ? viewportOf(tab) : null}
                   ref={(preview) => {
                     const key = pageKey(paneSession ?? "", tab.id);
                     if (preview) {

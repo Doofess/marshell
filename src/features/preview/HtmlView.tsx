@@ -1,4 +1,5 @@
-import { useMemo, useRef, type SyntheticEvent } from "react";
+import { useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type SyntheticEvent } from "react";
+import { frameBox } from "../browser/viewport";
 import { relayFrameFocus } from "./frameFocus";
 import { appKeyInit, trackHeld } from "./frameKeys";
 import { buildSrcdoc } from "./htmlDoc";
@@ -14,6 +15,10 @@ type Props = {
   onLink: (link: Exclude<LinkTarget, { kind: "anchor" } | { kind: "none" }>) => void;
   /** A key pressed inside the page, where the pane's own key handling can't see it. Return true if it was used. */
   onKey: (e: KeyboardEvent) => void;
+  /** The tab's fixed viewport width in CSS px, or null (Responsive): the frame is centred at that width, or scaled down to fit. */
+  viewport?: number | null;
+  /** The width of the frame's place, each time it changes. */
+  onBox?: (width: number) => void;
 };
 
 /**
@@ -21,8 +26,25 @@ type Props = {
  * the window. The same-origin token is there only so this code can reach the frame's document to route its links; the page
  * itself can't run script, and its CSP (see `buildSrcdoc`) lets it load nothing.
  */
-export function HtmlView({ text, name, docPath, onLink, onKey }: Props) {
+export function HtmlView({ text, name, docPath, onLink, onKey, viewport = null, onBox }: Props) {
   const srcDoc = useMemo(() => buildSrcdoc(text), [text]);
+  // The frame's place: the wrapper's box, which a fixed viewport centres or scales the frame in.
+  const fit = useRef<HTMLDivElement>(null);
+  const [box, setBox] = useState({ width: 0, height: 0 });
+  const said = useEffectEvent((width: number) => onBox?.(width));
+  useLayoutEffect(() => {
+    const el = fit.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const read = () => {
+      const r = el.getBoundingClientRect();
+      setBox((b) => (b.width === r.width && b.height === r.height ? b : { width: r.width, height: r.height }));
+    };
+    read();
+    const watch = new ResizeObserver(read);
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, []);
+  useEffect(() => said(box.width), [box.width]);
   // The listeners below live as long as the frame's document; they read the latest props through this.
   const latest = useRef({ docPath, onLink, onKey });
   latest.current = { docPath, onLink, onKey };
@@ -76,5 +98,9 @@ export function HtmlView({ text, name, docPath, onLink, onKey }: Props) {
     if (body && iframe.ownerDocument.activeElement === body) iframe.focus({ preventScroll: true });
   };
 
-  return <iframe className="html-view" title={`${name}, rendered`} sandbox="allow-same-origin" srcDoc={srcDoc} onLoad={attach} />;
+  return (
+    <div ref={fit} className="html-view__fit">
+      <iframe className="html-view" title={`${name}, rendered`} sandbox="allow-same-origin" srcDoc={srcDoc} onLoad={attach} style={frameBox(box, viewport)} />
+    </div>
+  );
 }

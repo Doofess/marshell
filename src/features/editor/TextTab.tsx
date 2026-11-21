@@ -170,6 +170,9 @@ export type TextTabViewProps = {
   onUndo: () => void;
   onLink: (link: Outbound) => void;
   onKey: KeyHandler;
+  /** An HTML file's fixed viewport width in CSS px (null or absent: Responsive), and the width of its frame's place. */
+  viewport?: number | null;
+  onBox?: (width: number) => void;
 };
 
 /** What a text tab shows for a document, top to bottom. Pure: the state comes in as props. */
@@ -185,7 +188,7 @@ export function TextTabView(p: TextTabViewProps) {
       <div className="text-tab__body">
         {paged && (
           <div className="text-tab__pane" data-pane="rendered" hidden={!showRendered}>
-            {p.kind === "markdown" ? <MarkdownView text={p.rendered ?? doc.text} docPath={entry.path} onLink={p.onLink} /> : <HtmlView text={p.rendered ?? doc.text} name={name} docPath={entry.path} onLink={p.onLink} onKey={p.onKey} />}
+            {p.kind === "markdown" ? <MarkdownView text={p.rendered ?? doc.text} docPath={entry.path} onLink={p.onLink} /> : <HtmlView text={p.rendered ?? doc.text} name={name} docPath={entry.path} onLink={p.onLink} onKey={p.onKey} viewport={p.viewport ?? null} onBox={p.onBox} />}
           </div>
         )}
         <div className="text-tab__pane" data-pane="editor" hidden={showRendered}>
@@ -241,6 +244,8 @@ type Props = {
   refetch: () => void;
   onLink: (link: Outbound) => void;
   onKey: KeyHandler;
+  viewport?: number | null;
+  onBox?: (width: number) => void;
   /** Shows the tab's Source view: after a merge that left conflicts behind the Rendered view (6q-4b decision 7.2). */
   onSource: () => void;
 };
@@ -256,7 +261,7 @@ function textOf(file: Props["file"]): Extract<FileState, { phase: "text" }> | nu
  * component holds the pieces that live as long as the tab: the cursor shown in the footer, the rendered view's delayed text,
  * and what the pane can call.
  */
-export function TextTab({ entry, file, kind, active, os, onDirty, commands, announce, refetch, onLink, onKey, onSource }: Props) {
+export function TextTab({ entry, file, kind, active, os, onDirty, commands, announce, refetch, onLink, onKey, onSource, viewport, onBox }: Props) {
   const name = splitPath(entry.path).name;
   const editor = useRef<EditorHandle>(null);
   const root = useRef<HTMLDivElement>(null);
@@ -417,6 +422,8 @@ export function TextTab({ entry, file, kind, active, os, onDirty, commands, anno
       onUndo={() => pressed({ type: "unsave" })}
       onLink={onLink}
       onKey={onKey}
+      viewport={viewport}
+      onBox={onBox}
     />
   );
 }

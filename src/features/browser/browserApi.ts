@@ -10,7 +10,8 @@ export type Size = { width: number; height: number };
 export type Piece = { from: number; x: number; xPerPx: number; width: number; widthPerPx: number };
 /** `bottom` grows by `bottomPerPx` for each pixel the window is taller than `atHeight`, the height `bottom` was measured at. */
 export type Rule = { pieces: Piece[]; top: number; bottom: number; bottomPerPx: number; atHeight: number };
-export type Report = { rect: Rect; win: Size; rule: Rule | null; moving: boolean };
+/** `rect` is the page's whole place; the shell alone centres and scales a page of `viewport` CSS px in it (rules.rs `fit`). */
+export type Report = { rect: Rect; win: Size; rule: Rule | null; moving: boolean; page: string | null; viewport: number | null };
 
 export type NavAction = "go" | "back" | "forward" | "reload" | "stop";
 export type FocusReason = "next" | "previous" | "programmatic";

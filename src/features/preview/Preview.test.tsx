@@ -151,7 +151,7 @@ describe("Rendered and Source", () => {
   });
   it("keeps both views of an HTML file mounted and hides the one that is not chosen", () => {
     const source = html(text, page("source"));
-    expect(source).toMatch(/data-pane="rendered" hidden=""><iframe/);
+    expect(source).toMatch(/data-pane="rendered" hidden=""><div class="html-view__fit"><iframe/);
     expect(source).not.toMatch(/data-pane="editor" hidden/);
     const rendered = html(text, page("rendered"));
     expect(rendered).toMatch(/data-pane="editor" hidden=""/);

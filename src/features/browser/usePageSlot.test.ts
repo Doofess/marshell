@@ -127,3 +127,16 @@ describe("the page's gutter", () => {
     expect(inset.rule!.pieces[0]!.x).toBe(plain.rule!.pieces[0]!.x + 2);
   });
 });
+
+describe("slotReport and the viewport", () => {
+  const win = rect(0, 0, 1400, 900);
+  const slot = rect(900, 70, 400, 700);
+  it("reports the page's key and its tab's viewport", () => {
+    expect(slotReport(slot, win, null, false, 0, "s1/p1", 390)).toMatchObject({ page: "s1/p1", viewport: 390 });
+    expect(slotReport(slot, win, null, false, 0, "s1/p1", null)).toMatchObject({ viewport: null });
+  });
+  it("reports the whole place, whatever the viewport", () => {
+    // The shell's rule works out the place for a window size from constant insets; a centred box would break it.
+    expect(slotReport(slot, win, null, false, 0, "s1/p1", 390).rect).toEqual(slotReport(slot, win, null, false, 0, "s1/p1", null).rect);
+  });
+});

@@ -110,6 +110,15 @@ describe("UrlBar", () => {
   });
 });
 
+describe("UrlBar and the viewport chip", () => {
+  const bar = (more: Partial<Parameters<typeof UrlBar>[0]>) => renderToStaticMarkup(<UrlBar page={page()} onGo={noop} onNav={noop} onEscape={noop} onRegion={noop} {...more} />);
+  it("shows the chip at the end of the bar only for a fixed viewport", () => {
+    expect(bar({ viewport: { id: "phone", slot: 800 }, onViewport: () => {} })).toMatch(/Select region[\s\S]*Phone 390/);
+    expect(bar({})).not.toContain("viewport-chip");
+    expect(bar({ viewport: null })).not.toContain("viewport-chip");
+  });
+});
+
 describe("regionFocusTarget", () => {
   const el = (disabled: boolean) => ({ disabled, focus: () => {} });
   it("takes_the_button_when_it_can_be_pressed", () => {
