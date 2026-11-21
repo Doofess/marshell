@@ -88,7 +88,7 @@
   border-radius: 50%;
   background: currentColor;
 }
-/* ", new" or ", unsaved" for a screen reader, never seen. */
+/* ", new", ", unsaved" or ", preview" for a screen reader, never seen. */
 .side-pane__new-word {
   position: absolute;
   inline-size: 1px;
@@ -119,6 +119,10 @@
 .side-pane__name-tail {
   flex: none;
   white-space: nowrap;
+}
+/* A preview tab: its name in italics. Forced colors keep the italic and the system's text colors. */
+.side-pane__tab--preview .side-pane__title {
+  font-style: italic;
 }
 .side-pane__tab:active {
   box-shadow: inset 0 0 0 100vmax var(--selected);

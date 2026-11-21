@@ -15,6 +15,7 @@ import {
   keptTabs,
   openRefused,
   paneReducer,
+  previewTab,
   recentFor,
   samePath,
   tabTitles,
@@ -1001,5 +1002,120 @@ describe("a divider move with no stack saved", () => {
     const next = paneReducer(bare, { type: "weights", session: "s", weights: { browser: 3, files: 1 } });
     expect(next.panels?.shown).toEqual(stackOf(bare, "s").shown);
     expect(next.panels?.weights).toMatchObject({ browser: 3, files: 1 });
+  });
+});
+
+describe("preview tabs and the tree", () => {
+  const pv = (path: string, o: { session?: string } = {}): PaneAction => ({
+    type: "open",
+    session: o.session ?? "s",
+    project: "p",
+    target: { path },
+    preview: true,
+  });
+  const tabOf = (s: PaneView, id: string) => tabsOf(s, "s").tabs.find((t) => t.id === id)!;
+  const keep = (paneTab: string): PaneAction => ({ type: "keep", session: "s", paneTab });
+
+  it("an open with preview adds a preview tab", () => {
+    const s = run(EMPTY, pv("/a.ts"));
+    expect(tabsOf(s, "s").tabs).toHaveLength(1);
+    expect(tabOf(s, "t1").preview).toBe(true);
+    expect(previewTab(tabsOf(s, "s"), "files")?.id).toBe("t1");
+    expect(paneProblem(s)).toBeNull();
+  });
+  it("a second preview replaces the first in place, keeping its place in the strip", () => {
+    const s = run(EMPTY, pv("/a.ts"), open("/k.ts"), pv("/b.ts"));
+    const t = tabsOf(s, "s").tabs;
+    expect(t.map((x) => currentEntry(x).path)).toEqual(["/b.ts", "/k.ts"]);
+    expect(t[0]!.id).not.toBe("t1");
+    expect(t[0]!.preview).toBe(true);
+    expect(t[0]!.history).toHaveLength(1);
+    expect(t[0]!.index).toBe(0);
+    expect(tabsOf(s, "s").active).toBe(t[0]!.id);
+    expect(paneProblem(s)).toBeNull();
+  });
+  it("a preview of a file already open selects that tab and keeps it as it is", () => {
+    const s = run(EMPTY, open("/a.ts"), open("/b.ts"), pv("/a.ts"));
+    expect(tabsOf(s, "s").tabs).toHaveLength(2);
+    expect(tabOf(s, "t1").preview).toBeUndefined();
+    expect(tabsOf(s, "s").active).toBe("t1");
+    const s2 = run(EMPTY, pv("/a.ts"), open("/b.ts"), pv("/a.ts"));
+    expect(tabsOf(s2, "s").tabs).toHaveLength(2);
+    expect(tabOf(s2, "t1").preview).toBe(true);
+    expect(tabsOf(s2, "s").active).toBe("t1");
+  });
+  it("an open without preview of the file in a preview tab keeps the tab", () => {
+    const s = run(EMPTY, pv("/a.ts"), open("/a.ts"));
+    expect(tabsOf(s, "s").tabs).toHaveLength(1);
+    expect(tabOf(s, "t1").preview).toBeUndefined();
+  });
+  it("keep makes a preview tab an ordinary one", () => {
+    const s = run(EMPTY, pv("/a.ts"), keep("t1"));
+    expect(tabOf(s, "t1").preview).toBeUndefined();
+    expect("preview" in tabOf(s, "t1")).toBe(false);
+    expect(previewTab(tabsOf(s, "s"), "files")).toBeUndefined();
+    expect(run(s, keep("t1"))).toBe(s);
+  });
+  it("a preview never replaces a kept tab, and each panel has at most one preview", () => {
+    const s = run(EMPTY, open("/k.ts"), pv("/a.ts"), pv("/b.ts"));
+    expect(tabsOf(s, "s").tabs).toHaveLength(2);
+    expect(tabOf(s, "t1").preview).toBeUndefined();
+    const both = run(EMPTY, pv("/a.html"), pv("/b.ts"));
+    const t = tabsOf(both, "s").tabs;
+    expect(t).toHaveLength(2);
+    expect(t.every((x) => x.preview === true)).toBe(true);
+    expect(previewTab(tabsOf(both, "s"), "browser")).toBeDefined();
+    expect(previewTab(tabsOf(both, "s"), "files")).toBeDefined();
+    expect(paneProblem(both)).toBeNull();
+  });
+  it("a navigation inside a preview tab keeps it a preview", () => {
+    const s = run(EMPTY, pv("/a.ts"), { type: "navigate", session: "s", paneTab: "t1", project: "p", target: { path: "/b.ts" } });
+    expect(tabOf(s, "t1").preview).toBe(true);
+    expect(tabOf(s, "t1").history).toHaveLength(2);
+  });
+  it("marshell open and an agent's file never make a preview", () => {
+    const bg = (target: string): PaneAction => ({ type: "openBackground", session: "s", kind: "file", target, by: "shell", project: "p", onScreen: false });
+    const s = run(EMPTY, bg("/a.ts"));
+    expect(tabOf(s, "t1").preview).toBeUndefined();
+    const s2 = run(EMPTY, pv("/a.ts"), bg("/a.ts"));
+    expect(tabsOf(s2, "s").tabs).toHaveLength(1);
+    expect(tabOf(s2, "t1").preview).toBeUndefined();
+  });
+  it("tree sets the session's tree; treeView merges the window's", () => {
+    const s = run(EMPTY, { type: "tree", session: "s", tree: { root: "/r", expanded: ["a"] } }, { type: "treeView", view: { width: 300 } }, { type: "treeView", view: { hidden: true } });
+    expect(s.sessions.s!.tree).toEqual({ root: "/r", expanded: ["a"] });
+    expect(s.tree).toEqual({ hidden: true, width: 300 });
+    expect(paneProblem(s)).toBeNull();
+  });
+  it("tree keeps only relative folders and the first 500", () => {
+    const many = Array.from({ length: 600 }, (_, i) => `d${i}`);
+    const s = run(EMPTY, { type: "tree", session: "s", tree: { root: "/r", expanded: ["a/../b", "/x", "", "ok", ...many] } });
+    const e = s.sessions.s!.tree!.expanded;
+    expect(e).toHaveLength(500);
+    expect(e[0]).toBe("ok");
+    expect(e).not.toContain("/x");
+    expect(paneProblem(s)).toBeNull();
+  });
+  it("treeView clamps the width to 160 to 2048", () => {
+    const w = (width: number | null) => run(EMPTY, { type: "treeView", view: { width } }).tree?.width;
+    expect(w(2500)).toBe(2048);
+    expect(w(100)).toBe(160);
+    expect(w(null)).toBeNull();
+    expect(paneProblem(run(EMPTY, { type: "treeView", view: { width: 2500 } }))).toBeNull();
+  });
+  it("closing a session's last tab keeps its tree", () => {
+    const tree = { root: "/r", expanded: ["a"] };
+    const s = run(EMPTY, open("/a.ts"), { type: "tree", session: "s", tree }, close("t1"));
+    expect(s.sessions.s).toEqual({ tabs: [], active: null, tree });
+    expect(paneProblem(s)).toBeNull();
+    expect(run(EMPTY, open("/a.ts"), close("t1")).sessions.s).toBeUndefined();
+  });
+  it("a session with a tree and no tabs opens its next tab normally", () => {
+    const tree = { root: "/r", expanded: [] };
+    const s = run(EMPTY, { type: "tree", session: "s", tree }, open("/a.ts"));
+    expect(tabsOf(s, "s").tabs).toHaveLength(1);
+    expect(tabsOf(s, "s").active).toBe("t1");
+    expect(s.sessions.s!.tree).toEqual(tree);
+    expect(paneProblem(s)).toBeNull();
   });
 });

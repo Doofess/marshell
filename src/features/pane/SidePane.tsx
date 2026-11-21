@@ -21,11 +21,13 @@ export type StripTab = {
   unseen: boolean;
   /** The file has unsaved edits (a text tab): the tab shows a dot, and says so. */
   unsaved?: boolean;
+  /** A preview tab: its name is italic and is read with ", preview"; the next preview replaces it. */
+  preview?: boolean;
 };
 
 /** The tab's tooltip: its path or address, then who opened it, then whether its file has unsaved edits. */
-export function tabTitle(t: Pick<StripTab, "path" | "openedBy"> & { unsaved?: boolean }): string {
-  const edits = t.unsaved === true ? " · Unsaved edits" : "";
+export function tabTitle(t: Pick<StripTab, "path" | "openedBy"> & { unsaved?: boolean; preview?: boolean }): string {
+  const edits = (t.preview === true ? " · Preview: double-click to keep" : "") + (t.unsaved === true ? " · Unsaved edits" : "");
   if (t.openedBy === null) return `${t.path}${edits}`;
   if (t.openedBy === "shell") return `${t.path} · Opened with marshell open${edits}`;
   return `${t.path} · Opened by ${agentLabel(t.openedBy)}${edits}`;
@@ -63,6 +65,8 @@ export type SidePaneProps = {
   hideKeys: string;
   onSelect(id: string): void;
   onClose(id: string): void;
+  /** A double-click on a tab keeps a preview tab. Optional until the Files panel passes it. */
+  onKeep?(id: string): void;
   onMove(id: string, to: number): void;
   onPlus(anchor: { x: number; y: number }, opener: HTMLElement): void;
   onMenu?(anchor: { x: number; y: number }, opener: HTMLElement): void;
@@ -128,7 +132,7 @@ function TabTitle({ kind, title }: { kind: TabKind; title: string }) {
 type Drag = { id: string; pointerId: number; startX: number; started: boolean };
 
 /** One panel's frame: its tab strip, ending with +, the menu (if it has one), Fill and Hide, then whatever the panel holds. */
-export function SidePane({ panel, tabs, activeId, children, plus: plusSpec, menu, fill, hideKeys, onSelect, onClose, onMove, onPlus, onMenu, onFill, onHide }: SidePaneProps) {
+export function SidePane({ panel, tabs, activeId, children, plus: plusSpec, menu, fill, hideKeys, onSelect, onClose, onKeep, onMove, onPlus, onMenu, onFill, onHide }: SidePaneProps) {
   const root = useRef<HTMLElement>(null);
   const plus = useRef<HTMLButtonElement>(null);
   // Where focus goes after the strip changes: a tab's id, or "active" for whichever tab became the selected one.
@@ -231,7 +235,8 @@ export function SidePane({ panel, tabs, activeId, children, plus: plusSpec, menu
                     aria-controls={`pane-panel-${t.id}`}
                     tabIndex={t.id === tabbable ? 0 : -1}
                     title={tabTitle(t)}
-                    {...selectedProps(selected, "selected", "side-pane__tab")}
+                    {...selectedProps(selected, "selected", t.preview === true ? "side-pane__tab side-pane__tab--preview" : "side-pane__tab")}
+                    onDoubleClick={() => onKeep?.(t.id)}
                     onClick={() => {
                       // The click that ends a drag selects nothing.
                       if (swallowClick.current.take()) return;
@@ -253,6 +258,7 @@ export function SidePane({ panel, tabs, activeId, children, plus: plusSpec, menu
                     <TabTitle kind={t.kind} title={t.title} />
                     {t.unseen && <span className="side-pane__new-word">, new</span>}
                     {t.unsaved === true && <span className="side-pane__new-word">, unsaved</span>}
+                    {t.preview === true && <span className="side-pane__new-word">, preview</span>}
                   </button>
                   <button type="button" className="side-pane__close" tabIndex={-1} aria-label={`Close ${t.title}`} onClick={() => close(t.id)}>
                     {icon("M3 3l6 6M9 3 3 9")}

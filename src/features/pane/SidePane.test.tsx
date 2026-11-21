@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { PreviewPane, type PreviewPaneProps } from "../preview/Preview";
-import { SidePane, type SidePaneProps, type StripTab } from "./SidePane";
+import { SidePane, tabTitle, type SidePaneProps, type StripTab } from "./SidePane";
 
 const noop = () => {};
 const PATH1 = "C:\\w\\a.md";
@@ -231,5 +231,21 @@ describe("SidePane: the dot on a tab with unsaved edits", () => {
     // The name and the tooltip still tell both.
     expect(t).toMatch(/, new<\/span><span class="side-pane__new-word">, unsaved</);
     expect(t).toContain(`title="${PATH1} · Opened by Codex · Unsaved edits"`);
+  });
+});
+
+describe("SidePane: preview tabs", () => {
+  const tab1 = (out: string) => out.match(/<button[^>]*id="pane-tab-t1"[\s\S]*?<\/button>/)![0];
+  it("a preview tab's name is italic and read with \", preview\"", () => {
+    const t = tab1(html({ tabs: [{ ...tabs[0]!, preview: true }, tabs[1]!] }));
+    expect(t).toContain("side-pane__tab--preview");
+    expect(t).toMatch(/side-pane__new-word[^>]*>, preview</);
+    const plain = tab1(html());
+    expect(plain).not.toContain("side-pane__tab--preview");
+    expect(plain).not.toContain(", preview");
+  });
+  it("a preview tab's tooltip says how to keep it", () => {
+    expect(tabTitle({ path: "src/a.ts", openedBy: null, preview: true })).toBe("src/a.ts · Preview: double-click to keep");
+    expect(tab1(html({ tabs: [{ ...tabs[0]!, preview: true }, tabs[1]!] }))).toContain(`title="${PATH1} · Preview: double-click to keep"`);
   });
 });
