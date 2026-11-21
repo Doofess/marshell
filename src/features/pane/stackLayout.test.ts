@@ -33,6 +33,24 @@ describe("stackHeights", () => {
         expect(sum(h)).toBe(total - 1);
       }
   });
+  it("gives back the heights a divider move asked for, at every position", () => {
+    // The live check's case: a drag to 470 over 269 came back as 471 over 268.
+    expect(stackHeights(740, BF, pairWeights({ browser: 10000, files: 10000 }, "browser", "files", 470, 269))).toEqual({ browser: 470, files: 269 });
+    for (const total of [740, 630, 1081]) {
+      const room = total - 1;
+      for (let upper = 160; upper <= room - 160; upper++) {
+        const weights = pairWeights({ browser: 12720, files: 7280 }, "browser", "files", upper, room - upper);
+        expect(stackHeights(total, BF, weights), `${upper} of ${room}`).toEqual({ browser: upper, files: room - upper });
+      }
+    }
+  });
+  it("a spare pixel goes to the panel that is furthest from its share, and to the first on a tie", () => {
+    expect(stackHeights(740, BF, { browser: 10000, files: 10000 })).toEqual({ browser: 370, files: 369 });
+    // 739 × 0.3 = 221.7 and 739 × 0.7 = 517.3: the spare pixel is Browser's.
+    expect(stackHeights(740, BF, { browser: 3, files: 7 })).toEqual({ browser: 222, files: 517 });
+    // 739 × 0.7 = 517.3 and 739 × 0.3 = 221.7: the spare pixel is Files'.
+    expect(stackHeights(740, BF, { browser: 7, files: 3 })).toEqual({ browser: 517, files: 222 });
+  });
   it("a panel not shown has no height, and a bad weight counts as the default", () => {
     expect(stackHeights(600, B, {})).not.toHaveProperty("files");
     expect(stackHeights(601, BF, { browser: Number.NaN, files: -5 })).toEqual(stackHeights(601, BF, { browser: DEFAULT_WEIGHT, files: DEFAULT_WEIGHT }));

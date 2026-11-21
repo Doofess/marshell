@@ -52,8 +52,16 @@ export function stackHeights(total: number, shown: readonly PanelId[], weights: 
   if (shown.length === 0) return out;
   const target = Math.max(0, Math.floor(total) - (shown.length - 1) * STACK.divider);
   const whole = heights.map((h) => Math.floor(h + 1e-9));
-  // Whole pixels: round down, and the pixels that are left go to the first panel.
-  if (Number.isFinite(total) && total > 0) whole[0] = whole[0]! + (target - whole.reduce((s, h) => s + h, 0));
+  // Whole pixels: round down, and each pixel that is left goes to the panel that lost the most to the rounding, the first on a
+  // tie. A divider move saves weights for two whole heights, and this gives those two heights back.
+  if (Number.isFinite(total) && total > 0) {
+    const lost = heights.map((h, i) => h - whole[i]!);
+    const order = whole.map((_, i) => i).sort((a, b) => (Math.abs(lost[b]! - lost[a]!) > 1e-9 ? lost[b]! - lost[a]! : a - b));
+    const spare = target - whole.reduce((s, h) => s + h, 0);
+    for (let k = 0; k < spare; k++) whole[order[k % order.length]!]! += 1;
+    // A total that is not whole leaves less room than the shares took: the first panel gives it back.
+    if (spare < 0) whole[0] = whole[0]! + spare;
+  }
   shown.forEach((p, i) => {
     out[p] = whole[i]!;
   });
