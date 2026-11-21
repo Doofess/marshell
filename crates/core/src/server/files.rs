@@ -43,7 +43,7 @@ pub const MAX_LIST_FILES: usize = 20_000;
 /// The folder list also stops after this long, so a huge folder can't hang the palette.
 const LIST_BUDGET: Duration = Duration::from_secs(2);
 /// Folders the walk outside a repo does not enter.
-const SKIPPED_DIRS: [&str; 5] = ["node_modules", ".git", "target", "dist", "build"];
+pub(super) const SKIPPED_DIRS: [&str; 5] = ["node_modules", ".git", "target", "dist", "build"];
 
 const MODIFIED_MS: HeaderName = HeaderName::from_static("x-modified-ms");
 /// The SHA-256 of the bytes `content` serves. A save names it, so it writes only over what the tab loaded.

@@ -7,7 +7,7 @@
 //! Nothing keeps more than 4,096 bytes of a line.
 
 use super::AppState;
-use super::files::{links_refused, open_regular, project_root, row_of, strip_verbatim};
+use super::files::{SKIPPED_DIRS, links_refused, open_regular, project_root, row_of, strip_verbatim};
 use crate::git::{self, Stopped};
 use axum::Json;
 use axum::extract::{Path, State};
@@ -37,9 +37,6 @@ const SHOWN: usize = 240;
 const LEAD: usize = 40;
 /// The longest path a record takes.
 const MAX_PATH: usize = 32 * 1024;
-/// The walk outside a checkout does not enter these folders (`files.rs` has the same list for the
-/// file list).
-const SKIPPED_DIRS: [&str; 5] = ["node_modules", ".git", "target", "dist", "build"];
 
 /// The refusal for a text the route won't search, if any.
 fn check_query(q: &str) -> Option<&'static str> {

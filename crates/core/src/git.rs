@@ -123,12 +123,21 @@ pub enum Stopped {
     Cancelled,
 }
 
-/// A child that is killed and reaped when it goes out of scope, on every path, a panic included.
-struct Reaped(std::process::Child);
+/// A child that is killed and reaped when it goes out of scope, on every path, a panic included. On
+/// Windows it is killed with every process it started: Git for Windows' `cmd\git.exe`, the one most
+/// PATHs hold, is a launcher whose own child does the work.
+struct Reaped(std::process::Child, crate::job::ProcessTree);
+
+impl Reaped {
+    fn new(child: std::process::Child) -> Self {
+        let tree = crate::job::ProcessTree::adopt(&child);
+        Reaped(child, tree)
+    }
+}
 
 impl Drop for Reaped {
     fn drop(&mut self) {
-        let _ = self.0.kill();
+        self.1.kill(&mut self.0);
         let _ = self.0.wait();
     }
 }
@@ -165,7 +174,7 @@ fn stream_cmd(
     if cancel.load(Ordering::Relaxed) {
         return Ok(Stopped::Cancelled);
     }
-    let mut child = Reaped(
+    let mut child = Reaped::new(
         cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -376,5 +385,51 @@ mod tests {
         let cmd = Command::new("marshell-no-such-program");
         let err = stream_cmd(cmd, Instant::now() + Duration::from_secs(1), &cancel, |_| true).unwrap_err();
         assert!(err.to_string().contains("isn't installed"), "{err}");
+    }
+
+    /// Git for Windows' `cmd\git.exe`, the one most PATHs hold, is a launcher that runs the real git as its child:
+    /// a cancelled search must end that child too, not only the launcher.
+    #[cfg(windows)]
+    #[test]
+    fn stream_ends_the_childs_own_children_when_cancelled() {
+        fn pid_alive(pid: u32) -> bool {
+            let out = Command::new("tasklist")
+                .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+                .output()
+                .expect("tasklist runs");
+            String::from_utf8_lossy(&out.stdout).contains(&format!("\"{pid}\""))
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("pid.txt");
+        let mut cmd = Command::new("cmd.exe");
+        cmd.args(["/c", "powershell", "-NoProfile", "-Command"]).arg(format!(
+            "$PID | Set-Content -LiteralPath '{}'; Start-Sleep 60",
+            pid_file.display()
+        ));
+        let cancel = AtomicBool::new(false);
+        let stopped = std::thread::scope(|s| {
+            s.spawn(|| {
+                let started = Instant::now();
+                while std::fs::read_to_string(&pid_file).map_or(true, |t| t.trim().is_empty()) {
+                    assert!(
+                        started.elapsed() < Duration::from_secs(20),
+                        "the grandchild never wrote its PID"
+                    );
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                cancel.store(true, Ordering::Relaxed);
+            });
+            stream_cmd(cmd, Instant::now() + Duration::from_secs(30), &cancel, |_| true).unwrap()
+        });
+        assert_eq!(stopped, Stopped::Cancelled);
+        let grandchild: u32 = std::fs::read_to_string(&pid_file).unwrap().trim().parse().unwrap();
+        let started = Instant::now();
+        while pid_alive(grandchild) {
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "the grandchild {grandchild} outlived the cancel"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
     }
 }
