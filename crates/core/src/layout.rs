@@ -368,7 +368,7 @@ pub fn validate_view(v: &ViewLayout) -> Result<(), String> {
     validate_pane(&v.pane)
 }
 
-/// The same rules as `repair_pane`, but a bad value is an error naming the field. Whether a session exists is not checked here.
+/// The pane's stack of panels: the shown ones in the fixed order, their weights, and the filled one. A bad value is an error naming the field.
 fn validate_panels(p: &Panels) -> Result<(), String> {
     let ordered: Vec<&str> = PANEL_IDS
         .iter()
@@ -403,6 +403,7 @@ fn validate_panels(p: &Panels) -> Result<(), String> {
     Ok(())
 }
 
+/// The same rules as `repair_pane`, but a bad value is an error naming the field. Whether a session exists is not checked here.
 pub fn validate_pane(p: &PaneView) -> Result<(), String> {
     if let Some(w) = p.width.filter(|w| !PANE_WIDTH.contains(w)) {
         return Err(format!(

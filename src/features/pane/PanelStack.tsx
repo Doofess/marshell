@@ -2,8 +2,8 @@ import { Fragment, useContext, useLayoutEffect, useMemo, useRef, useState, type 
 import { useLayoutMotion } from "../window/motion";
 import { LayoutContext, type Layout } from "../window/paneColumn";
 import "./PanelStack.css";
-import { DEFAULT_WEIGHT, PANELS, PANEL_LABEL, type PanelId, type Weights } from "./panels";
-import { STACK, belowPerPx, movedPair, pairWeights, stackHeights, stackKey } from "./stackLayout";
+import { PANELS, PANEL_LABEL, type PanelId, type Weights } from "./panels";
+import { STACK, belowPerPx, movedPair, pairWeights, stackHeights, stackKey, weightOf } from "./stackLayout";
 
 export type PanelStackProps = {
   /** The stack's panels (`stackPanels`), in order. The same while the pane is hidden or folding. */
@@ -130,14 +130,10 @@ export function PanelStack({ panels, weights, render, onWeights, onDividerGone }
     move(pair);
   };
 
-  const weightOf = (p: PanelId) => {
-    const w = weights[p];
-    return typeof w === "number" && Number.isFinite(w) && w > 0 ? w : DEFAULT_WEIGHT;
-  };
   const tracks: string[] = [];
   drawn.forEach((p, i) => {
     if (i > 0) tracks.push(`${STACK.divider}px`);
-    tracks.push(heights === null ? `minmax(0, ${weightOf(p)}fr)` : `${motions[p].value}px`);
+    tracks.push(heights === null ? `minmax(0, ${weightOf(weights, p)}fr)` : `${motions[p].value}px`);
   });
   const style: CSSProperties = { gridTemplateRows: tracks.join(" ") };
 

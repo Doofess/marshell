@@ -5,7 +5,8 @@ export const STACK = { min: 160, divider: 1, step: 16 } as const;
 /** The largest weight the core accepts. */
 const MAX_WEIGHT = 100_000;
 
-const weightOf = (weights: Weights, panel: PanelId): number => {
+/** A panel's weight: the saved one, or the default for one that is missing or not a positive number. */
+export const weightOf = (weights: Weights, panel: PanelId): number => {
   const w = weights[panel];
   return typeof w === "number" && Number.isFinite(w) && w > 0 ? w : DEFAULT_WEIGHT;
 };

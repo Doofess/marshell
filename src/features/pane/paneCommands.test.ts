@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PaneView } from "../../generated/PaneView";
-import { closeAsk, closeTabOutcome, commandPanel, firstWith, hideFocus, noTabsText, openedByText, panelButtonsFor, panelHiddenText, panelOrder, panelToggleOutcome, leavePaneOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneBody, paneHiddenText, paneTabFocus, receiptWithPaneHidden, paneTabOutcome, projectKeyOf, shouldPin, toggleOutcome, PAGE_REFUSED, TAB_LIMIT } from "./paneCommands";
+import { closeAsk, closeTabOutcome, commandPanel, firstWith, hideFocus, noTabsText, openedByText, panelButtonsFor, panelHiddenText, panelOrder, panelToggleOutcome, leavePaneOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneBody, paneHiddenText, paneTabFocus, receiptWithPaneHidden, paneTabOutcome, projectKeyOf, shouldPin, PAGE_REFUSED, TAB_LIMIT } from "./paneCommands";
 import { paneReducer, recentFor } from "./paneState";
 import type { PanelId } from "./panels";
 import { landingPanel, unseenPanels } from "./paneCommands";
@@ -43,13 +43,14 @@ describe("openCheck", () => {
 
 describe("Ctrl+Shift+Q", () => {
   it("with no tabs shows the empty pane", () => {
-    expect(toggleOutcome(EMPTY, "s1")).toEqual({ shown: true, body: "empty" });
+    expect(paneBody(EMPTY, "s1")).toBe("empty");
     expect(paneReducer(EMPTY, { type: "toggle", session: "s1" }).open).toBe(true);
   });
   it("with tabs shows them, and hides an open pane", () => {
     const hidden = withTabs("s1", ["/a"], false);
-    expect(toggleOutcome(hidden, "s1")).toEqual({ shown: true, body: "tabs" });
-    expect(toggleOutcome(withTabs("s1", ["/a"]), "s1").shown).toBe(false);
+    expect(paneBody(hidden, "s1")).toBe("tabs");
+    expect(paneReducer(hidden, { type: "toggle", session: "s1" }).open).toBe(true);
+    expect(paneReducer(withTabs("s1", ["/a"]), { type: "toggle", session: "s1" }).open).toBe(false);
   });
 });
 

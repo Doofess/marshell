@@ -50,11 +50,6 @@ export function paneBody(pane: PaneView, session: string | null | undefined): "t
   return tabsOf(pane, session).tabs.length > 0 ? "tabs" : "empty";
 }
 
-/** Ctrl+Shift+Q: the switch flips, and the pane shows the empty state when the session has no tabs. */
-export function toggleOutcome(pane: PaneView, session: string | null | undefined): { shown: boolean; body: "tabs" | "empty" } {
-  return { shown: !pane.open, body: paneBody(pane, session) };
-}
-
 /** What the next-tab and previous-tab commands do in the panel: nothing to step through, show the hidden pane first, or step. */
 export function paneTabOutcome(pane: PaneView, session: string | null | undefined, panel: PanelId | null): "none" | "show" | "step" {
   if (!pane.open) return tabsOf(pane, session).tabs.length > 0 ? "show" : "none";

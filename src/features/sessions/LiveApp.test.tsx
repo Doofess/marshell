@@ -10,7 +10,7 @@ import { EmptyBrowser } from "../pane/EmptyBrowser";
 import { EmptyFiles } from "../pane/EmptyFiles";
 import { PanelStack } from "../pane/PanelStack";
 import { PANEL_LABEL, activeIn, panelTabs, stackOf, stackPanels, type PanelId } from "../pane/panels";
-import { PANE_BESIDE_SESSION, paneBody, paneToggleOutcome, toggleOutcome } from "../pane/paneCommands";
+import { PANE_BESIDE_SESSION, paneBody, paneToggleOutcome } from "../pane/paneCommands";
 import { SidePane } from "../pane/SidePane";
 import { paneReducer, recentFor } from "../pane/paneState";
 import { FIXTURES } from "../sidebar/fixtures";
@@ -737,7 +737,7 @@ describe("LiveApp: the side pane", () => {
   });
   it("Ctrl+Shift+Q with no tabs shows the empty pane", () => {
     const next = paneReducer(closedPane, { type: "toggle", session: "t1" });
-    expect(toggleOutcome(closedPane, "t1")).toEqual({ shown: true, body: "empty" });
+    expect(paneBody(closedPane, "t1")).toBe("empty");
     expect(next.open).toBe(true);
     const h = paneNode(next, "t1");
     expect(h).toContain("No files open");
@@ -759,7 +759,7 @@ describe("LiveApp: the side pane", () => {
 describe("LiveApp: the stack of panels", () => {
   const closedPane: PaneView = { open: false, width: null, sessions: {}, recent: [] };
   const withBoth = (): PaneView => {
-    let pane = paneReducer(closedPane, { type: "open", session: "t1", project: "p", target: { path: "C:\p\a.md" } });
+    let pane = paneReducer(closedPane, { type: "open", session: "t1", project: "p", target: { path: "C:\\p\\a.md" } });
     pane = paneReducer(pane, { type: "openPage", session: "t1", url: "http://localhost:3000/" });
     return pane;
   };
