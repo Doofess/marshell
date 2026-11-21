@@ -4,6 +4,7 @@ pub mod exe;
 pub mod hooks;
 pub mod status;
 pub mod transcript;
+pub mod writes;
 
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};

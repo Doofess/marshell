@@ -176,6 +176,21 @@ pub async fn post(
     {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
+    // An HTML file the agent's file tool wrote opens in the tab's side pane. It runs on its own and is not awaited, so
+    // the answer and its time are as they were; it sits outside the status fold, so the live-status switch doesn't
+    // reach it.
+    if role == HookRole::Event
+        && matches!(agent.as_str(), "claude" | "codex" | "antigravity" | "qwen" | "copilot")
+        && let Some(tab) = tab.as_deref()
+        && st.registry().is_open(tab)
+    {
+        tokio::spawn(super::auto_open::queue(
+            st.clone(),
+            agent.clone(),
+            tab.to_string(),
+            json.clone(),
+        ));
+    }
     // A request waits for a card only in an open tab that runs the requesting agent: an agent started from a plain
     // shell tab inherits the tab's id (Antigravity's IDE reads the same hooks.json), and a tab the foreground
     // watcher hasn't seen it in yet isn't one to hold for. Anything else passes before it folds anything, so the

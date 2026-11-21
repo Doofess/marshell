@@ -6,6 +6,7 @@ pub mod request;
 pub mod status;
 pub mod transcript;
 pub mod usage;
+pub mod writes;
 
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};

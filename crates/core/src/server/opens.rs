@@ -15,6 +15,9 @@ use tokio::sync::{oneshot, watch};
 
 /// How many requests may wait for the app. One more is refused.
 pub const MAX_WAITING: usize = 64;
+/// How many opens a hook asked for may wait for the app: half the queue, so an agent that writes many files can't
+/// refuse a `marshell open`.
+pub const MAX_AUTO_WAITING: usize = 32;
 /// The longest address or path, in characters.
 pub const TARGET_MAX: usize = 4096;
 /// How long the route waits for the app's answer.
@@ -76,6 +79,9 @@ impl Opens {
     ) -> Result<(u64, oneshot::Receiver<Outcome>), Full> {
         let mut waiting = self.waiting.lock().unwrap();
         if waiting.list.len() >= MAX_WAITING {
+            return Err(Full);
+        }
+        if auto && waiting.list.iter().filter(|(open, _)| open.auto).count() >= MAX_AUTO_WAITING {
             return Err(Full);
         }
         waiting.last_id += 1;
@@ -144,7 +150,7 @@ impl Opens {
 /// What a target is: "browser" for an address, "file" for anything else. Only text that starts with `http://` or
 /// `https://` (in any case) is an address, so `localhost:3000` and `example.com` are file names. The line to answer
 /// when it is neither one that can be opened. `pages` is whether this system has browser tabs.
-fn classify(target: &str, pages: bool) -> Result<&'static str, &'static str> {
+pub(crate) fn classify(target: &str, pages: bool) -> Result<&'static str, &'static str> {
     let Some(rest) = after_scheme(target) else {
         let fine = target.chars().count() <= TARGET_MAX
             && !files::refused(target)
@@ -175,7 +181,7 @@ fn after_scheme(target: &str) -> Option<&str> {
 
 /// The line for a path that can't be a file tab: missing, a folder, something that isn't a file, or reached through
 /// a link to a network share. It reads the disk, so it runs off the async threads.
-fn file_refusal(path: &str) -> Option<String> {
+pub(crate) fn file_refusal(path: &str) -> Option<String> {
     let on_disk = std::path::Path::new(path);
     if files::links_refused(on_disk) {
         return Some(BAD_PATH.into());
@@ -472,6 +478,28 @@ mod tests {
         shown.borrow_and_update();
         opens.drop_session("t3");
         assert!(!shown.has_changed().unwrap());
+    }
+
+    #[test]
+    fn opens_a_hook_asked_for_fill_half_the_queue_and_leave_room_for_a_command() {
+        let opens = Opens::default();
+        let auto = |opens: &Opens| opens.push("t1", "file", abs("a.html"), "claude".into(), true);
+        let held: Vec<_> = (0..MAX_AUTO_WAITING).map(|_| auto(&opens).expect("room")).collect();
+        assert_eq!(auto(&opens).err(), Some(Full));
+        // A command's open is still held, up to the queue's own limit.
+        let mut commands: Vec<_> = (0..MAX_WAITING - MAX_AUTO_WAITING)
+            .map(|_| pushed(&opens, "t1"))
+            .collect();
+        assert_eq!(opens.subscribe().borrow().len(), MAX_WAITING);
+        assert_eq!(
+            opens.push("t1", "file", abs("a.md"), "shell".into(), false).err(),
+            Some(Full)
+        );
+        assert_eq!(auto(&opens).err(), Some(Full));
+        // An answered hook open makes room for the next hook open once the queue has room too.
+        opens.done(&[answer(held[0].0, None)]);
+        assert!(auto(&opens).is_ok());
+        commands.clear();
     }
 
     #[test]

@@ -3002,3 +3002,168 @@ async fn a_wsl_copilot_hook_without_a_transcript_path_builds_none_from_the_windo
     stop(&st, &tab);
     assert_eq!(linked, None);
 }
+
+// An HTML file an agent's file tool wrote is queued to open in its session's side pane.
+
+/// What the app would see waiting to open.
+fn waiting_opens(st: &AppState) -> Vec<marshell_protocol::api::PaneOpen> {
+    st.opens().subscribe().borrow().clone()
+}
+
+/// The opens, once there are `count` of them (up to 2 s), as the spawned task fills the queue after the hook answers.
+async fn opens_when(st: &AppState, count: usize) -> Vec<marshell_protocol::api::PaneOpen> {
+    for _ in 0..100 {
+        if waiting_opens(st).len() >= count {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    waiting_opens(st)
+}
+
+/// The opens after 300 ms, for a test that expects none.
+async fn opens_after_a_wait(st: &AppState) -> Vec<marshell_protocol::api::PaneOpen> {
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    waiting_opens(st)
+}
+
+async fn post_written(app: &axum::Router, agent: &str, tab: &str, body: &serde_json::Value) -> StatusCode {
+    status(
+        app,
+        hook(Some("event"), Some(agent), Some(tab), serde_json::to_vec(body).unwrap()),
+    )
+    .await
+}
+
+fn claude_write(path: &std::path::Path) -> serde_json::Value {
+    serde_json::json!({
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Write",
+        "tool_input": {"file_path": path.to_string_lossy()},
+    })
+}
+
+fn html_file(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let path = dir.join(name);
+    std::fs::write(&path, "<p>hi</p>").unwrap();
+    path
+}
+
+#[tokio::test]
+async fn a_written_html_file_is_queued_for_its_session() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let dir = tempfile::tempdir().unwrap();
+    let tab = start_in(&app, "claude", dir.path()).await;
+    let file = html_file(dir.path(), "report.html");
+
+    assert_eq!(
+        post_written(&app, "claude", &tab, &claude_write(&file)).await,
+        StatusCode::NO_CONTENT
+    );
+    let got = opens_when(&st, 1).await;
+    stop(&st, &tab);
+
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(got[0].tab_id, tab);
+    assert_eq!(got[0].kind, "file");
+    assert_eq!(got[0].target, file.to_string_lossy());
+    assert_eq!(got[0].by, "claude");
+    assert!(got[0].auto);
+}
+
+#[tokio::test]
+async fn nothing_is_queued_with_the_setting_off_for_a_file_that_is_not_there_or_for_a_text_file() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let dir = tempfile::tempdir().unwrap();
+    let tab = start_in(&app, "claude", dir.path()).await;
+
+    // A file the tool did not leave on disk, and one that is not HTML.
+    let missing = dir.path().join("missing.html");
+    let text = dir.path().join("notes.md");
+    std::fs::write(&text, "# notes").unwrap();
+    post_written(&app, "claude", &tab, &claude_write(&missing)).await;
+    post_written(&app, "claude", &tab, &claude_write(&text)).await;
+    assert!(opens_after_a_wait(&st).await.is_empty());
+
+    // A real HTML file with the setting off.
+    let settings = serde_json::json!({ "appearance": {}, "browser": {"open_agent_html": false} });
+    let res = app
+        .clone()
+        .oneshot(
+            base("PUT", "/v1/settings")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(settings.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let file = html_file(dir.path(), "report.html");
+    post_written(&app, "claude", &tab, &claude_write(&file)).await;
+    let got = opens_after_a_wait(&st).await;
+    stop(&st, &tab);
+    assert!(got.is_empty(), "{got:?}");
+}
+
+#[tokio::test]
+async fn a_full_queue_drops_the_rest_and_the_hook_still_answers() {
+    let st = state(Some(KNOWN));
+    let app = router(st.clone());
+    let dir = tempfile::tempdir().unwrap();
+    let tab = start_in(&app, "claude", dir.path()).await;
+
+    for n in 0..40 {
+        let file = html_file(dir.path(), &format!("page{n}.html"));
+        assert_eq!(
+            post_written(&app, "claude", &tab, &claude_write(&file)).await,
+            StatusCode::NO_CONTENT,
+            "post {n}"
+        );
+    }
+    let first = opens_when(&st, 32).await;
+    assert_eq!(first.len(), 32);
+    let after = opens_after_a_wait(&st).await;
+    stop(&st, &tab);
+    assert_eq!(after.len(), 32);
+    assert!(after.iter().all(|open| open.auto));
+}
+
+#[tokio::test]
+async fn a_relative_codex_path_opens_from_the_hooks_cwd() {
+    let st = state(Some(KNOWN)).with_codex_version(Some("0.163.0".into()));
+    let app = router(st.clone());
+    let dir = tempfile::tempdir().unwrap();
+    let tab = start_in(&app, "codex", dir.path()).await;
+    std::fs::create_dir(dir.path().join("out")).unwrap();
+    let file = html_file(&dir.path().join("out"), "report.html");
+    let body = serde_json::json!({
+        "hook_event_name": "PostToolUse",
+        "tool_name": "apply_patch",
+        "cwd": dir.path().to_string_lossy(),
+        "tool_input": {"command": "*** Begin Patch\n*** Add File: out/report.html\n+<p>hi</p>\n*** End Patch"},
+    });
+
+    assert_eq!(post_written(&app, "codex", &tab, &body).await, StatusCode::NO_CONTENT);
+    let got = opens_when(&st, 1).await;
+    stop(&st, &tab);
+
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(got[0].target, file.to_string_lossy());
+    assert_eq!(got[0].by, "codex");
+}
+
+#[tokio::test]
+async fn an_event_of_another_agent_than_the_tabs_opens_nothing() {
+    let st = state(Some(KNOWN)).with_codex_version(Some("0.163.0".into()));
+    let app = router(st.clone());
+    let dir = tempfile::tempdir().unwrap();
+    let tab = start_in(&app, "codex", dir.path()).await;
+    let file = html_file(dir.path(), "report.html");
+
+    post_written(&app, "claude", &tab, &claude_write(&file)).await;
+    let got = opens_after_a_wait(&st).await;
+    stop(&st, &tab);
+    assert!(got.is_empty(), "{got:?}");
+}

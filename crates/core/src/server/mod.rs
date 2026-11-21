@@ -1,6 +1,7 @@
 mod activity;
 pub(crate) mod agents;
 mod attachments;
+mod auto_open;
 mod catalog;
 mod config;
 mod diagnostics;
