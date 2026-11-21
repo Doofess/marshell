@@ -83,13 +83,27 @@ So "always" is today's behaviour; "until quit" is a clear of the cookies at quit
 | The same while the viewport is emulated at 1280 | A 1280 × 2688 PNG: the screenshot has the emulated width at full size, whatever the panel's width. |
 | A tab whose page isn't loaded | "The page isn't open." A screenshot needs a loaded page. |
 
+A second run the same day (15:04 to 15:12, a new scratch home, the same build) added:
+
+| Check | Result |
+| --- | --- |
+| `Page.captureScreenshot {format: "png"}` with no viewport set, in a 317 × 672 page | A 317 × 672 PNG in 21 ms: the part on screen. |
+| The same with the viewport at 1440 and `scale: 317 / 1440`, the page scrolled to 1000 | A 1440 × 3053 PNG in 81 ms: the part on screen at full size, not the scaled drawing. No clip is needed. |
+| `Page.getLayoutMetrics` | `cssContentSize` is the page's size (1425 × 5164 beside a 15 px scrollbar), `cssVisualViewport` its scroll position and visible size. |
+| The whole of a page 40,021 px tall (`captureBeyondViewport: true`, no clip) | A 302 × 40,021 PNG in 195 ms, **wrong below 16,384 px**: the rows at 16,500, 20,000, 30,000 and 39,900 held the page's top again, not its own colours. The rows at 200, 8,000 and 16,000 were right. A page 120,021 px tall gave a PNG that tall in 496 ms (1.6 s at a 1440 viewport). |
+| The same page with `clip: {x: 0, y: 0, width: 302, height: 16384, scale: 1}` | A 302 × 16,384 PNG, right at rows 200, 8,000 and 16,000. |
+| A clip lower down, `{y: 30000, height: 1000}` | A 302 × 1000 PNG with the right colour for row 30,000: a tall page can be read in bands. |
+| A clip taller than the page (16,384 on a 5164 px page) | A 302 × 16,384 PNG, white below the page. A clip has to be cut to the page's size. |
+| A clip far wider than the page (`width: 100000, height: 16384`) | **No answer in 20 s, and the page was gone** ("The page isn't open." until it loaded again). A clip's size must never come from anywhere but the page's measured size and a fixed cap. |
+| A loaded page whose tab is behind another | `Page.captureScreenshot` **never answered** (20 s), for the part on screen and for a clip; `Page.getLayoutMetrics` answered. Only the page on screen can be captured, as with `CapturePreview` ("hidden"). |
+
 ## What 6r-1b and 6r-1c take from this
 
 - **A local page, if the user approves it (6r-1c), is a folder mapped with `DENY`** to a host name of its own in that tab's webview. `file://` stays refused: on it modules and `fetch` don't work, any script, image or HTML file on the disk can be pulled in, and every local file shares one `localStorage`.
 - **What a local page can still do** is what any web page can: talk to the internet, so a script can send out whatever it can read, which is every file under the mapped folder. Which folder is mapped (the file's own, or the project's) is the size of that reach, and `sub/page2.html` needs its parent mapped for `../app.js`.
 - **A mapped tab should not go to a web address in the same webview.** `DENY` held in the checks, but a link to the web is better opened as a tab of its own.
 - **The viewport sizes use `Emulation.setDeviceMetricsOverride` with `scale`** when the width is wider than the panel, per page; it survives navigation and must be set again for a page that is loaded again.
-- **"Save screenshot" can use `Page.captureScreenshot`**, for the whole page or the part on screen.
+- **"Save screenshot" can use `Page.captureScreenshot`**: with no clip for the part on screen, and for the whole page with a clip cut to the page's measured size and to 16,384 px of height, below which one picture goes wrong. It works for the page on screen only.
 - **CDP from the shell is new surface**: until now the page's Rust called no DevTools-protocol method.
 
 ## Not checked
