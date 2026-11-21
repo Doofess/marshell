@@ -117,7 +117,7 @@ pnpm check:generated
 
 ## How it was built
 
-Built with AI coding agents (Claude Code). The plan and the decisions taken slice by slice are in [docs/PLAN.md](docs/PLAN.md).
+Built with AI coding agents. The plan and the decisions taken slice by slice are in [docs/PLAN.md](docs/PLAN.md).
 
 ## License
 
