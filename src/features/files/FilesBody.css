@@ -124,12 +124,9 @@
   min-inline-size: 0;
   min-block-size: 0;
   max-inline-size: 100%;
-  overflow-y: auto;
-  scrollbar-width: none;
+  /* The filter box stays put; the tree or the search results under it scroll themselves (`.file-tree`), windowed. */
+  overflow: clip;
   background: var(--bg-base);
-}
-.files-body__tree::-webkit-scrollbar {
-  display: none;
 }
 .files-body__rows {
   min-block-size: 0;

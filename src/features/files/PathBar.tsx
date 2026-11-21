@@ -1,4 +1,4 @@
-import { Fragment, type KeyboardEvent, type MouseEvent } from "react";
+import { Fragment, type KeyboardEvent, type MouseEvent, useLayoutEffect, useRef } from "react";
 import type { Segment } from "./pathSegments";
 import "./FilesBody.css";
 
@@ -16,6 +16,15 @@ const icon = { width: 16, height: 16, viewBox: "0 0 16 16", fill: "none", stroke
 
 export function PathBar({ segments, windows, treeShown, onReveal, onCollapseAll, onToggleTree, onMenu }: PathBarProps) {
   const sep = windows ? "\\" : "/";
+  // A path longer than the bar scrolls sideways with no scrollbar; it opens at its end, so the file's name is in view. (Right to
+  // left, the end is a negative scroll.)
+  const path = useRef<HTMLElement>(null);
+  const shown = segments.map((s) => s.label).join(sep);
+  useLayoutEffect(() => {
+    const el = path.current;
+    if (!el) return;
+    el.scrollLeft = getComputedStyle(el).direction === "rtl" ? -el.scrollWidth : el.scrollWidth;
+  }, [shown]);
   const onContextMenu = (e: MouseEvent<HTMLElement>) => {
     e.preventDefault();
     onMenu({ x: e.clientX, y: e.clientY }, e.currentTarget);
@@ -28,7 +37,7 @@ export function PathBar({ segments, windows, treeShown, onReveal, onCollapseAll,
   };
   return (
     <div className="path-bar" onContextMenu={onContextMenu}>
-      <nav className="path-bar__path" aria-label="File path">
+      <nav ref={path} className="path-bar__path" aria-label="File path">
         {segments.map((s, i) => (
           <Fragment key={i}>
             {i > 0 && (
