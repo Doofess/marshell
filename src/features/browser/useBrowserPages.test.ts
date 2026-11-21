@@ -3,7 +3,7 @@ import type { PaneView } from "../../generated/PaneView";
 import { paneReducer, tabsOf } from "../pane/paneState";
 import { canLoad, pageReducer, setLoadable, subscribePages, type PageEvent, type PageState } from "./pageStore";
 import { PAGE_REFUSED, TAB_LIMIT } from "../pane/paneCommands";
-import { openKeys, owners, pageAction, popupActions, popupNews, popupFold, popupOutcome, unload } from "./useBrowserPages";
+import { openKeys, owners, pageAction, popupActions, popupNews, popupFold, popupOutcome, reloadPlan, unload } from "./useBrowserPages";
 import { nextLive } from "./pages";
 import { slotStep } from "./usePageSlot";
 
@@ -33,6 +33,17 @@ describe("openKeys", () => {
   it("counts every session while the session list isn't known, so a core that is starting again unloads nothing", () => {
     const s = page(page(empty, "a", "https://example.com/"), "b", "http://localhost:3000/");
     expect(openKeys(s, null)).toEqual(new Set(["a/t1", "b/t1"]));
+  });
+});
+
+describe("reloadPlan", () => {
+  it("loads every loaded page again, each at its tab's address, and counts them", () => {
+    const s = page(page(empty, "s1", "https://a.example/"), "s2", "https://b.example/x");
+    expect(reloadPlan(s, ["s1/t1", "s2/t1", "s3/t1"])).toEqual([
+      { key: "s1/t1", url: "https://a.example/" },
+      { key: "s2/t1", url: "https://b.example/x" },
+      { key: "s3/t1", url: null },
+    ]);
   });
 });
 

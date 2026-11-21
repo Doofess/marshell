@@ -1,12 +1,15 @@
-import { useEffect, useEffectEvent, useMemo, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useSyncExternalStore } from "react";
 import type { PaneView } from "../../generated/PaneView";
 import { appScheme } from "../terminal/terminalTheme";
-import { PANE_LIMITS, isBrowserTab, paneReducer, tabsOf, type PaneAction } from "../pane/paneState";
+import type { CookieRule } from "../../generated/CookieRule";
+import { PANE_LIMITS, currentEntry, isBrowserTab, paneReducer, tabsOf, type PaneAction } from "../pane/paneState";
 import { PAGE_REFUSED, TAB_LIMIT } from "../pane/paneCommands";
 import { passingBlank, shellRefuses } from "./address";
 import { browser, onBrowser, pageKey } from "./browserApi";
 import { nextLive } from "./pages";
-import { dispatchPage, pageIcon, setLoadable, startPageStore, subscribePages, type PageEvent } from "./pageStore";
+import { useBrowserSettings } from "./browserSettings";
+import { cookiesSaid, needsReload, ruleToTell } from "./cookies";
+import { dispatchPage, openPage, pageIcon, setLoadable, startPageStore, subscribePages, type PageEvent } from "./pageStore";
 
 const ignore = () => {};
 
@@ -90,6 +93,32 @@ export async function unload(keys: readonly string[], close: (key: string) => Pr
   );
 }
 
+/** What loading every loaded page again does: each key's tab address, or null for a key whose tab is gone (closed, not opened again). */
+export function reloadPlan(pane: PaneView, keys: readonly string[]): { key: string; url: string | null }[] {
+  const owned = owners(pane, null);
+  return keys.map((key) => {
+    const o = owned.get(key);
+    const tab = o ? tabsOf(pane, o.session).tabs.find((t) => t.id === o.paneTab) : undefined;
+    return { key, url: tab ? currentEntry(tab).path : null };
+  });
+}
+
+/**
+ * Closes each page and opens the ones with an address again at once, shown or not (a page behind another tab loads there, as it was).
+ * The calls go through the shell's queue, so they come after a `cookies` call asked before them. Returns how many were opened.
+ */
+export function reloadPages(plan: readonly { key: string; url: string | null }[]): number {
+  let opened = 0;
+  for (const { key, url } of plan) {
+    void browser.close(key).catch(ignore);
+    dispatchPage({ type: "closed", key });
+    if (url === null) continue;
+    void openPage(key, url).catch(ignore);
+    opened += 1;
+  }
+  return opened;
+}
+
 type Options = {
   /** The ids of the sessions in the list, or null while the list isn't known. A session that is not there has no page loaded. */
   sessions: readonly string[] | null;
@@ -109,7 +138,7 @@ type Options = {
  * drops and the store forgets them; the shell's `browser://` events reach the store, and a page's address and title reach its tab; a popup opens a tab; the
  * pages follow the app's theme. Nothing is closed on unmount: the shell closes the pages at quit.
  */
-export function useBrowserPages(pane: PaneView, shownKey: string | null, { sessions, dispatch, browserSession, news, own, announce }: Options): void {
+export function useBrowserPages(pane: PaneView, shownKey: string | null, { sessions, dispatch, browserSession, news, own, announce }: Options): { reloadPrivate(): number } {
   const live = useRef<string[]>([]);
   const owned = owners(pane, sessions === null ? null : new Set(sessions));
   const open = new Set(owned.keys());
@@ -152,6 +181,23 @@ export function useBrowserPages(pane: PaneView, shownKey: string | null, { sessi
     return () => stops.forEach((stop) => stop());
   }, []);
 
+  // The cookie rule: told before any page is made (the shell's queue holds every call until then), and told again on a change. A
+  // change to or from "never" makes the loaded pages again, since a page's privacy is decided when it is made.
+  // Reads refs only, so it is safe in an effect and in an event handler alike.
+  const reloadLoaded = useCallback((): number => reloadPages(reloadPlan(paneRef.current, live.current)), []);
+  const { settings, failed } = useBrowserSettings();
+  const rule = ruleToTell(settings, failed);
+  const told = useRef<CookieRule | null>(null);
+  useEffect(() => {
+    if (rule === null || rule === told.current) return;
+    const last = told.current;
+    told.current = rule;
+    // Asked first, so the closes and opens of the reload queue behind it.
+    void browser.cookies(rule).catch(ignore);
+    if (needsReload(last, rule)) say(cookiesSaid(rule, reloadLoaded()));
+    // `say` and `reloadLoaded` read only refs and effect events.
+  }, [rule, reloadLoaded]);
+
   // The pages follow the app's theme: sent on mount and on every change.
   useEffect(() => {
     const push = () => void browser.theme(appScheme() === "dark").catch(ignore);
@@ -165,6 +211,10 @@ export function useBrowserPages(pane: PaneView, shownKey: string | null, { sessi
       watch.disconnect();
     };
   }, []);
+
+  // After "Clear browsing data…": under "never" the pages' cookies live in memory, so the pages are made again to lose them.
+  const reloadPrivate = useCallback((): number => (told.current === "never" ? reloadLoaded() : 0), []);
+  return { reloadPrivate };
 }
 
 /** The site icon of each key's page, for the tab strip: an image address, or null before one arrives. Draws again when an icon changes. */

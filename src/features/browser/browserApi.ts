@@ -1,6 +1,7 @@
 // The app's calls to the shell's pages (src-tauri/src/browser/). Types match the Rust structs in rules.rs field for field.
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { CookieRule } from "../../generated/CookieRule";
 import { inTauri } from "../../lib/window/appWindow";
 
 export type Chord = { code: string; ctrl: boolean; shift: boolean; alt: boolean };
@@ -37,7 +38,15 @@ export type BrowserEvents = {
 };
 
 // Every call goes through one queue, so React's StrictMode double effects reach the shell in the order they were asked.
-let tail: Promise<unknown> = Promise.resolve();
+// The queue starts closed: its first `tail` is a gate that the first `cookies` call's end (good or bad) opens, so a page is
+// never made before the shell knows the rule, and every call asked before it keeps its order behind it. Outside Tauri nothing waits.
+let openGate: () => void = () => {};
+let told = false;
+let tail: Promise<unknown> = inTauri()
+  ? new Promise<void>((resolve) => {
+      openGate = resolve;
+    })
+  : Promise.resolve();
 
 function call<T>(command: string, args: Record<string, unknown>, outside: T): Promise<T> {
   if (!inTauri()) return Promise.resolve(outside);
@@ -46,7 +55,18 @@ function call<T>(command: string, args: Record<string, unknown>, outside: T): Pr
   return result;
 }
 
+/** Tells the shell the rule. The first call goes straight to the shell and its end opens the queue; later ones take their turn in it. */
+function cookies(rule: CookieRule): Promise<void> {
+  if (!inTauri()) return Promise.resolve();
+  if (told) return call<void>("browser_cookies", { rule }, undefined);
+  told = true;
+  const result = invoke<void>("browser_cookies", { rule });
+  result.then(openGate, openGate);
+  return result;
+}
+
 export const browser = {
+  cookies,
   open: (key: string, url: string) => call<void>("browser_open", { key, url }, undefined),
   show: (key: string | null) => call<void>("browser_show", { key }, undefined),
   place: (report: Report) => call<void>("browser_place", { report }, undefined),

@@ -1040,6 +1040,8 @@ export function LiveApp() {
     setClearData("busy");
     try {
       await browser.clearData();
+      // Under "Never keep" the pages' cookies live in memory: the pages are made again, with no line of their own.
+      reloadPrivate();
       announce("Cleared the browser's data.");
     } catch {
       announce("Couldn't clear the browser's data.");
@@ -1623,7 +1625,7 @@ export function LiveApp() {
   // The page on screen: Browser is on screen and its selected tab is a browser tab.
   const shownTab = panelsOn.includes("browser") ? activeTab(view.pane, focusedId, "browser") : undefined;
   const shownPage = browserTabs(os) && focusedId && shownTab && isBrowserTab(shownTab) ? pageKey(focusedId, shownTab.id) : null;
-  useBrowserPages(view.pane, shownPage, { sessions: loaded ? rows.map((r) => r.id) : null, dispatch: paneDispatch, browserSession: () => (onNow.current.panelsOn.includes("browser") ? onNow.current.session : null), news: (session) => newsDispatch({ type: "add", items: [{ session, panel: "browser" }] }), own: ownOrigins, announce });
+  const { reloadPrivate } = useBrowserPages(view.pane, shownPage, { sessions: loaded ? rows.map((r) => r.id) : null, dispatch: paneDispatch, browserSession: () => (onNow.current.panelsOn.includes("browser") ? onNow.current.session : null), news: (session) => newsDispatch({ type: "add", items: [{ session, panel: "browser" }] }), own: ownOrigins, announce });
 
   // The window's shortcuts and commands (side pane, shell panel, history, menu, next waiting). True when it was one of them.
   const windowCommand = useCallback(
