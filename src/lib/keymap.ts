@@ -89,6 +89,9 @@ export const COMMANDS: Command[] = [
   { id: "focus-mode", label: "Focus mode", group: "Window", binding: { code: "KeyI" } },
   // Cmd+Q is Quit on macOS, so the side pane takes Cmd+Alt+Q there.
   { id: "preview", label: "Side pane", group: "Window", binding: { code: "KeyQ", mac: { code: "KeyQ", alt: true } } },
+  // The side pane's panels. Cmd+A is Select all on macOS, so the Browser panel takes Cmd+Alt+A there.
+  { id: "browser-panel", label: "Browser panel", group: "Window", binding: { code: "KeyA", mac: { code: "KeyA", alt: true } } },
+  { id: "files-panel", label: "Files panel", group: "Window", binding: { code: "KeyD" } },
   { id: "open-file", label: "Open file…", group: "Window" },
   { id: "browse-file", label: "Browse…", group: "Window" },
   // The browser tab (Windows only for now: the window hides them elsewhere). None has a default key.

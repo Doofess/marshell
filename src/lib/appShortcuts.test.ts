@@ -34,10 +34,18 @@ describe("sessionShortcut", () => {
     expect(sessionShortcut(ev("PageUp", cs), "windows")).toEqual({ kind: "prompt", by: -1 });
     expect(sessionShortcut(ev("PageDown", { metaKey: true }), "mac")).toEqual({ kind: "prompt", by: 1 });
   });
-  it("Ctrl+Shift+D and Ctrl+Shift+P are no shortcut", () => {
-    expect(sessionShortcut(ev("KeyD", cs), "windows")).toBeNull();
+  it("Ctrl+Shift+P is no shortcut", () => {
     expect(sessionShortcut(ev("KeyP", cs), "windows")).toBeNull();
-    expect(sessionShortcut(ev("KeyD", { metaKey: true }), "mac")).toBeNull();
+  });
+  it("Ctrl+Shift+A is the Browser panel and Ctrl+Shift+D the Files panel", () => {
+    expect(sessionShortcut(ev("KeyA", cs), "windows")).toEqual({ kind: "panel", panel: "browser" });
+    expect(sessionShortcut(ev("KeyD", cs), "windows")).toEqual({ kind: "panel", panel: "files" });
+    expect(sessionShortcut(ev("KeyA", { metaKey: true, altKey: true }), "mac")).toEqual({ kind: "panel", panel: "browser" });
+    expect(sessionShortcut(ev("KeyD", { metaKey: true }), "mac")).toEqual({ kind: "panel", panel: "files" });
+    // Cmd+A is Select all on macOS.
+    expect(sessionShortcut(ev("KeyA", { metaKey: true }), "mac")).toBeNull();
+    expect(commandShortcut("browser-panel")).toEqual({ kind: "panel", panel: "browser" });
+    expect(commandShortcut("files-panel")).toEqual({ kind: "panel", panel: "files" });
   });
   it("selects no terminal with the navigation modifier and Backspace; Tab is the navigation hook's own", () => {
     expect(DEFAULT_NAV_MODIFIER).toBe("ctrl+shift");

@@ -153,3 +153,8 @@ export function closeTabOutcome(pane: PaneView, session: string | null | undefin
 export function closeAsk(tab: { id: string; path: string; kind: TabKind }, unsaved: ReadonlySet<string>, os: Os = "windows"): "ask" | "close" {
   return (tab.kind === "text" || tab.kind === "pdf") && isUnsaved(unsaved, tab.path, os) ? "ask" : "close";
 }
+
+/** Whether the stack is written down now: once the window has loaded, with the pane open, a session on screen and no stack saved. Never with no session on screen. */
+export function shouldPin(pane: PaneView, session: string | null | undefined, ready: boolean): boolean {
+  return ready && pane.open && !pane.panels && session != null;
+}

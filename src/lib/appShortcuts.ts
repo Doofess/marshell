@@ -25,6 +25,8 @@ export type SessionShortcut =
   | { kind: "cheatsheet" }
   /** Show or hide the side pane (Ctrl+Shift+Q; Cmd+Alt+Q on macOS). With no tab open it shows the empty pane. */
   | { kind: "preview" }
+  /** Show or hide one panel of the side pane (Ctrl+Shift+A for Browser, Ctrl+Shift+D for Files; Cmd+Alt+A and Cmd+D on macOS). */
+  | { kind: "panel"; panel: "browser" | "files" }
   /** "Open file…": the palette, to pick a file for the side pane. Has no key of its own. */
   | { kind: "openFile" }
   /** The next or previous tab of the focused session's side pane, wrapping. */
@@ -105,6 +107,10 @@ export function commandShortcut(id: string): SessionShortcut | null {
       return { kind: "cheatsheet" };
     case "preview":
       return { kind: "preview" };
+    case "browser-panel":
+      return { kind: "panel", panel: "browser" };
+    case "files-panel":
+      return { kind: "panel", panel: "files" };
     case "open-file":
       return { kind: "openFile" };
     case "browse-file":

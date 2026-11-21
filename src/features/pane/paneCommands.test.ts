@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PaneView } from "../../generated/PaneView";
-import { closeAsk, closeTabOutcome, commandPanel, firstWith, hideFocus, noTabsText, openedByText, panelButtonsFor, panelHiddenText, panelOrder, panelToggleOutcome, leavePaneOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneBody, paneHiddenText, paneTabFocus, receiptWithPaneHidden, paneTabOutcome, projectKeyOf, toggleOutcome, PAGE_REFUSED, TAB_LIMIT } from "./paneCommands";
+import { closeAsk, closeTabOutcome, commandPanel, firstWith, hideFocus, noTabsText, openedByText, panelButtonsFor, panelHiddenText, panelOrder, panelToggleOutcome, leavePaneOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneBody, paneHiddenText, paneTabFocus, receiptWithPaneHidden, paneTabOutcome, projectKeyOf, shouldPin, toggleOutcome, PAGE_REFUSED, TAB_LIMIT } from "./paneCommands";
 import { paneReducer, recentFor } from "./paneState";
 import type { PanelId } from "./panels";
 
@@ -286,4 +286,22 @@ it("says the pane is hidden and which keys show it", () => {
 
 it("says the hidden line after the cursor's receipt, in one notice, so neither replaces the other", () => {
   expect(receiptWithPaneHidden("Selected session 2, api", "Ctrl+Shift+Q")).toBe("Selected session 2, api. The side pane is hidden. Ctrl+Shift+Q shows it.");
+});
+
+describe("shouldPin", () => {
+  const open: PaneView = { ...EMPTY, open: true };
+  it("nothing is pinned with no session on screen", () => {
+    expect(shouldPin(open, null, true)).toBe(false);
+    expect(shouldPin(open, undefined, true)).toBe(false);
+  });
+  it("an absent stack with the pane open and a session on screen is pinned, once everything has loaded", () => {
+    expect(shouldPin(open, "t1", true)).toBe(true);
+    expect(shouldPin(open, "t1", false)).toBe(false);
+  });
+  it("a saved stack is never pinned again", () => {
+    expect(shouldPin({ ...open, panels: { shown: ["files"], weights: {}, filled: null } }, "t1", true)).toBe(false);
+  });
+  it("a hidden pane is not pinned", () => {
+    expect(shouldPin(EMPTY, "t1", true)).toBe(false);
+  });
 });
