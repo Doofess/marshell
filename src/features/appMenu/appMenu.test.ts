@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { menuKey } from "../../components/ContextMenu/menuKeys";
-import { appMenuItems, appMenuKey, doctorItemLabel, leavesAppMenu, menuKeyCloses, menuPlace, pressMenuButton, SETTINGS_ITEMS, submenuPlace, toggleMenu, type MenuState } from "./appMenu";
+import { appMenuItems, appMenuKey, doctorItemLabel, leavesAppMenu, menuKeyCloses, menuPlace, pressMenuButton, SETTINGS_ITEMS, toggleMenu, type MenuState } from "./appMenu";
 
 describe("appMenu", () => {
   it("the_menu_lists_settings_history_doctor_departures", () => {
@@ -23,12 +23,6 @@ describe("appMenu", () => {
   });
   it("a_menu_opens_above_its_button", () => {
     expect(menuPlace({ left: 14, top: 760 }, { w: 200, h: 160 }, { w: 1200, h: 800 })).toEqual({ x: 14, y: 596 });
-  });
-  it("the_submenu_opens_beside_the_menu_or_on_the_other_side", () => {
-    const vp = { w: 1200, h: 800 };
-    const size = { w: 180, h: 200 };
-    expect(submenuPlace({ left: 14, right: 214 }, 600, size, vp)).toEqual({ x: 216, y: 592 });
-    expect(submenuPlace({ left: 1000, right: 1190 }, 100, size, vp)).toEqual({ x: 818, y: 100 });
   });
 });
 

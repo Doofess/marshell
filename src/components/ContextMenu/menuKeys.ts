@@ -1,6 +1,22 @@
-/** One row of a context menu: an action, or a rule between groups. */
-/** `disabled` is the reason the item cannot run: it is still listed and reachable, so the reason can be read, but it never runs. */
-export type MenuItem = { id: string; label: string; shortcut?: string; disabled?: string; submenu?: true } | { separator: true };
+/**
+ * One row of a context menu: an action, or a rule between groups.
+ * `disabled` is the reason the row cannot run: it is still listed and reachable, so the reason can be read, but it never runs.
+ */
+export type MenuRow = {
+  id: string;
+  label: string;
+  shortcut?: string;
+  disabled?: string;
+  /** Present on a row that is on or off: `menuitemcheckbox`, or `menuitemradio` with `radio`. */
+  checked?: boolean;
+  radio?: true;
+  /** A line under the label that is always shown; the row still runs. */
+  note?: string;
+  /** With `rows`, the row opens a submenu of them; `submenu: true` alone is the app menu's own marker and stays. */
+  submenu?: true;
+  rows?: MenuItem[];
+};
+export type MenuItem = MenuRow | { separator: true };
 
 export type MenuKeyResult =
   | { kind: "move"; index: number }
@@ -10,7 +26,10 @@ export type MenuKeyResult =
   | { kind: "back" }
   | null;
 
-const isAction = (i: MenuItem): i is Exclude<MenuItem, { separator: true }> => !("separator" in i);
+export const isAction = (i: MenuItem): i is MenuRow => !("separator" in i);
+
+/** True for a row that opens a submenu: the app menu's `submenu` marker, or a row that carries `rows`. */
+export const opensSubmenu = (i: MenuRow): boolean => i.submenu === true || i.rows !== undefined;
 
 /** The next action index from `from` in direction `dir`, wrapping and stepping over separators; -1 if there are none. */
 function step(items: MenuItem[], from: number, dir: 1 | -1): number {
@@ -41,11 +60,11 @@ export function menuKey(key: string, items: MenuItem[], active: number, mods: Mo
     case " ": {
       const it = items[active];
       if (!it || !isAction(it) || it.disabled !== undefined) return null;
-      return it.submenu ? { kind: "open", id: it.id } : { kind: "run", id: it.id };
+      return opensSubmenu(it) ? { kind: "open", id: it.id } : { kind: "run", id: it.id };
     }
     case "ArrowRight": {
       const it = items[active];
-      return it && isAction(it) && it.submenu && it.disabled === undefined ? { kind: "open", id: it.id } : null;
+      return it && isAction(it) && opensSubmenu(it) && it.disabled === undefined ? { kind: "open", id: it.id } : null;
     }
     case "ArrowLeft":
       return { kind: "back" };

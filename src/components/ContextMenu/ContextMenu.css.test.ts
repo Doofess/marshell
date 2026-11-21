@@ -16,7 +16,7 @@ describe("ContextMenu.css", () => {
     expect(rule(".context-menu")).toContain("var(--bg-overlay)");
   });
   it("marks the active item with the app accent", () => {
-    expect(rule('.context-menu [role="menuitem"]:focus')).toContain("var(--accent)");
+    expect(rule('.context-menu [role^="menuitem"]:focus')).toContain("var(--accent)");
   });
   it("draws no ring on the menu itself", () => {
     expect(rule(".context-menu:focus")).toMatch(/outline:\s*(2px solid transparent|none)/);
@@ -28,5 +28,21 @@ describe("ContextMenu.css", () => {
     const forced = css.slice(css.indexOf("@media (forced-colors: active)"));
     expect(forced).toContain("Highlight");
     expect(forced).toContain("HighlightText");
+  });
+  it("draws the check mark and the radio dot in currentColor, so they follow the row's text", () => {
+    expect(rule(".context-menu__mark")).toContain("currentColor");
+    expect(rule(".context-menu__mark")).not.toMatch(/(?:color|stroke|fill):\s*var\(/);
+  });
+  it("names system colors only for the marks in forced colors", () => {
+    const forced = css.slice(css.indexOf("@media (forced-colors: active)"));
+    const block = /\.context-menu__mark[^{]*\{[^}]*\}/.exec(forced)?.[0] ?? "";
+    expect(block).not.toBe("");
+    expect(block).not.toMatch(/var\(--|#[0-9a-f]{3,8}\b|oklch|rgb/i);
+    expect(block).toMatch(/CanvasText|Highlight|GrayText|LinkText/);
+  });
+  it("keeps the note quiet and lets it follow the focused row in forced colors", () => {
+    expect(rule(".context-menu__note")).toContain("var(--text-2)");
+    const forced = css.slice(css.indexOf("@media (forced-colors: active)"));
+    expect(forced).toMatch(/:focus[^{]*\.context-menu__note/);
   });
 });

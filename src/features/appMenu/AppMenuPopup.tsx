@@ -1,12 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { menuKey, type MenuItem } from "../../components/ContextMenu/menuKeys";
+import { submenuPlace } from "../../components/ContextMenu/submenuPlace";
 import { AuxGlyph, StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { usePopupFocus } from "../../lib/usePopupFocus";
 import { useCoverPage } from "../browser/pageCover";
 import type { Os } from "../../lib/keymap";
 import "../../components/ContextMenu/ContextMenu.css";
 import "./AppMenu.css";
-import { appMenuItems, appMenuKey, doctorItemLabel, leavesAppMenu, menuKeyCloses, menuPlace, SETTINGS_ITEMS, submenuPlace, type AppMenuRun } from "./appMenu";
+import { appMenuItems, appMenuKey, doctorItemLabel, leavesAppMenu, menuKeyCloses, menuPlace, SETTINGS_ITEMS, type AppMenuRun } from "./appMenu";
 
 type Props = {
   os: Os;

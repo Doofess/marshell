@@ -99,6 +99,30 @@ describe("a disabled item", () => {
   });
 });
 
+describe("menuKey rows that carry rows", () => {
+  const withRows: MenuItem[] = [
+    { id: "viewport", label: "Viewport", rows: [{ id: "viewport:phone", label: "Phone", checked: false, radio: true }] },
+    { id: "links", label: "Open terminal links here", checked: true },
+    { id: "auto", label: "Automatic", checked: false, note: "A note." },
+  ];
+  it("a row with rows opens on Enter, Space and the right arrow, like a submenu row", () => {
+    for (const k of ["Enter", " ", "ArrowRight"]) expect(menuKey(k, withRows, 0)).toEqual({ kind: "open", id: "viewport" });
+  });
+  it("a disabled row with rows does not open", () => {
+    const off: MenuItem[] = [{ id: "v", label: "Viewport", disabled: "Not now.", rows: [{ id: "v:a", label: "A" }] }];
+    for (const k of ["Enter", " ", "ArrowRight"]) expect(menuKey(k, off, 0)).toBeNull();
+  });
+  it("a checked row runs on Enter and Space, and the right arrow does nothing", () => {
+    expect(menuKey("Enter", withRows, 1)).toEqual({ kind: "run", id: "links" });
+    expect(menuKey(" ", withRows, 2)).toEqual({ kind: "run", id: "auto" });
+    expect(menuKey("ArrowRight", withRows, 1)).toBeNull();
+  });
+  it("type-ahead finds a checked row by its label", () => {
+    expect(menuKey("o", withRows, 0)).toEqual({ kind: "move", index: 1 });
+    expect(menuKey("a", withRows, 0)).toEqual({ kind: "move", index: 2 });
+  });
+});
+
 describe("menuKey submenus", () => {
   const sub: MenuItem[] = [{ id: "s", label: "Settings", submenu: true }, { id: "h", label: "History" }];
   it("a_submenu_item_opens_on_enter_space_and_right_arrow", () => {
