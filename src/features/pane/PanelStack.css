@@ -1,0 +1,68 @@
+/* The side pane's panels, top to bottom. The tracks are set inline: weights before the stack is measured, pixels after. */
+.panel-stack {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  block-size: 100%;
+  min-block-size: 0;
+  overflow: clip;
+}
+
+/* A row shrinks to nothing; its content fills it and is squeezed while the row moves, never pinned at its settled height. */
+.panel-stack__row {
+  min-block-size: 0;
+  overflow: clip;
+}
+.panel-stack__row > * {
+  block-size: 100%;
+}
+
+/* The divider between two panels: a 1 px hairline whose 8 px hit area overhangs both sides, so it costs one pixel. */
+.panel-stack__divider {
+  --hit: 8px;
+  position: relative;
+  z-index: 1;
+  background: var(--hairline);
+  cursor: row-resize;
+  /* A drag moves the divider; it must not scroll the page or select text. */
+  touch-action: none;
+  user-select: none;
+}
+.panel-stack__divider::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  inset-block: calc((var(--hit) - 1px) / -2);
+}
+.panel-stack__divider:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 0;
+}
+.panel-stack__divider:active {
+  background: var(--accent);
+}
+@media (hover: hover) and (pointer: fine) {
+  .panel-stack__divider:hover {
+    background: var(--accent);
+  }
+}
+/* While a row moves, or with one panel's height going to nothing, the divider only holds its track: nothing to hover, press or reach. */
+.panel-stack__divider[aria-hidden="true"] {
+  pointer-events: none;
+}
+.panel-stack__divider[aria-hidden="true"]::before {
+  content: none;
+}
+/* Forced colours replace the accent with Canvas, which would hide the divider while it is hovered or dragged: use system colours. */
+@media (forced-colors: active) {
+  .panel-stack__divider {
+    background: CanvasText;
+  }
+  .panel-stack__divider:active {
+    background: Highlight;
+  }
+}
+@media (forced-colors: active) and (hover: hover) and (pointer: fine) {
+  .panel-stack__divider:hover {
+    background: Highlight;
+  }
+}
