@@ -122,7 +122,7 @@ export function visibleRows(listings: ReadonlyMap<string, Listing>, expanded: Re
 export type TreeMove =
   | { type: "focus"; index: number }
   | { type: "expand" | "collapse"; path: string }
-  | { type: "open"; path: string; keep: boolean }
+  | { type: "open"; path: string; keep: boolean; line?: number }
   | { type: "filter" }
   | { type: "menu" }
   | null;
