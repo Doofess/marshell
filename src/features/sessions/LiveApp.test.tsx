@@ -6,7 +6,7 @@ import type { Endpoint } from "../../generated/Endpoint";
 import type { SessionInfo } from "../../generated/SessionInfo";
 import type { PaneView } from "../../generated/PaneView";
 import type { Task } from "../../generated/Task";
-import { EmptyPane } from "../pane/EmptyPane";
+import { EmptyFiles } from "../pane/EmptyFiles";
 import { PANE_BESIDE_SESSION, paneBody, paneToggleOutcome, toggleOutcome } from "../pane/paneCommands";
 import { SidePane } from "../pane/SidePane";
 import { paneReducer, recentFor } from "../pane/paneState";
@@ -723,7 +723,7 @@ describe("LiveApp: the side pane", () => {
   const paneNode = (pane: PaneView, session: string) =>
     renderToStaticMarkup(
       <SidePane panel="files" tabs={[]} activeId={null} plus={{ label: "New tab", menu: true }} fill={{ on: false }} hideKeys="Ctrl+Shift+Q" onFill={() => {}} onSelect={() => {}} onClose={() => {}} onMove={() => {}} onHide={() => {}} onPlus={() => {}}>
-        {paneBody(pane, session) === "empty" ? <EmptyPane recent={recentFor(pane, "C:\\dev\\my-app", session)} onOpenFile={() => {}} onBrowse={() => {}} onRecent={() => {}} /> : null}
+        {paneBody(pane, session) === "empty" ? <EmptyFiles recent={recentFor(pane, "C:\\dev\\my-app", session)} onOpenFile={() => {}} onBrowse={() => {}} onRecent={() => {}} /> : null}
       </SidePane>,
     );
   it("the title-bar button toggles beside a session, and otherwise says where the pane shows", () => {
@@ -737,7 +737,7 @@ describe("LiveApp: the side pane", () => {
     expect(toggleOutcome(closedPane, "t1")).toEqual({ shown: true, body: "empty" });
     expect(next.open).toBe(true);
     const h = paneNode(next, "t1");
-    expect(h).toContain("No tabs open in this session.");
+    expect(h).toContain("No files open");
     expect(h).toContain("Open file…");
   });
   it("a session with no tabs shows the empty state while the pane is open", () => {
@@ -746,9 +746,9 @@ describe("LiveApp: the side pane", () => {
     expect(paneBody(pane, "t2")).toBe("tabs");
     expect(paneBody(pane, "t1")).toBe("empty");
     const h = paneNode(pane, "t1");
-    expect(h).toContain("No tabs open in this session.");
+    expect(h).toContain("No files open");
     expect(h).toContain("Recent in this project");
     expect(h).toContain("a.md");
-    expect(h).toContain("Drop a file here to open it.");
+    expect(h).toContain("Open a file from this project, or drop one here.");
   });
 });

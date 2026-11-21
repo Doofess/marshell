@@ -67,7 +67,7 @@ import type { SaveCommands, TextTabCommands } from "../editor/TextTab";
 import type { PaneTab } from "../../generated/PaneTab";
 import { PaneContext, PagePaneContext, type OpenPageInPane } from "../pane/PaneContext";
 import { dropCover, modalOnScreen } from "../pane/dropCover";
-import { EmptyPane } from "../pane/EmptyPane";
+import { EmptyFiles } from "../pane/EmptyFiles";
 import { KeptTabs } from "../pane/KeptTabs";
 import { useBrowserKeys } from "../browser/useBrowserKeys";
 import { useCoverPage } from "../browser/pageCover";
@@ -2134,7 +2134,8 @@ export function LiveApp() {
             }
           />
         ) : (
-          <EmptyPane recent={paneRecent} onOpenFile={openFromPane} onBrowse={browseFile} onRecent={(path) => void openInPane({ path })} />
+          // 6r-1a: replaced in Task 10 or 11.
+          <EmptyFiles recent={paneRecent} onOpenFile={openFromPane} onBrowse={browseFile} onRecent={(path) => void openInPane({ path })} />
         )}
       </SidePane>
     ) : undefined;
