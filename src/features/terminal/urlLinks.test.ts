@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { pathLinkProvider, type BufferLike } from "./pathLinks";
-import { findUrls, targetHint, urlHint, urlLinkProvider, webLinkHandler } from "./urlLinks";
+import { findUrls, linkTarget, targetHint, urlHint, urlLinkProvider, webLinkHandler } from "./urlLinks";
 
 /** The same stub as pathLinks.test.ts: a row starting with `!` is a wrapped continuation; `世` is wide and followed by `~`. */
 function stub(rows: string[]): BufferLike {
@@ -167,9 +167,28 @@ describe("urlLinkProvider", () => {
   it("the hover hint over a plain address names the side pane where browser tabs are available", async () => {
     const element = { setAttribute: vi.fn(), removeAttribute: vi.fn() };
     const t = { buffer: { active: stub(["https://a.example"]) }, element: element as unknown as HTMLElement };
-    const [l] = (await run(urlLinkProvider(t, "windows", vi.fn(async () => {}), true), 1)) ?? [];
+    const [l] = (await run(urlLinkProvider(t, "windows", vi.fn(async () => {}), () => true), 1)) ?? [];
     l!.hover!({} as MouseEvent, l!.text);
     expect(element.setAttribute).toHaveBeenCalledWith("title", "Ctrl+click to open in the side pane");
+  });
+
+  it("a link goes to the side pane only when there are pages and the switch is on", () => {
+    const page = () => true;
+    expect(linkTarget(page, true)).toBe("pane");
+    expect(linkTarget(page, false)).toBe("browser");
+    expect(linkTarget(null, true)).toBe("browser");
+  });
+
+  it("the hint follows the switch while the terminal lives", async () => {
+    let here = true;
+    const element = { setAttribute: vi.fn(), removeAttribute: vi.fn() };
+    const t = { buffer: { active: stub(["see https://example.com/ now"]) }, element: element as unknown as HTMLElement };
+    const [l] = (await run(urlLinkProvider(t, "windows", async () => {}, () => here), 1)) ?? [];
+    l!.hover!({} as MouseEvent, l!.text);
+    expect(element.setAttribute).toHaveBeenLastCalledWith("title", "Ctrl+click to open in the side pane");
+    here = false;
+    l!.hover!({} as MouseEvent, l!.text);
+    expect(element.setAttribute).toHaveBeenLastCalledWith("title", "Ctrl+click to open in your browser");
   });
 
   it("the hint over a hyperlink names the side pane where browser tabs are available", () => {

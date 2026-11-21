@@ -20,7 +20,8 @@ import { ENDED_LINE, FAILED_LINE, SESSION_ENDED } from "./coreRestart";
 import { jumpFrom, promptTarget, trackPrompts, type Prompt } from "./promptMarks";
 import "./PromptMarks.css";
 import { pathLinkProvider } from "./pathLinks";
-import { urlLinkProvider, webLinkHandler } from "./urlLinks";
+import { linkTarget, urlLinkProvider, webLinkHandler } from "./urlLinks";
+import { useBrowserSettings } from "../browser/browserSettings";
 import { ReplayGate } from "./replayGate";
 import { sendsFirstSize, shouldFit } from "./fitGate";
 import { FitHoldContext, fitHold } from "./fitHold";
@@ -175,6 +176,9 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
   const openPage = useOpenPageInPane();
   const pageRef = useRef(openPage);
   pageRef.current = openPage;
+  // "Open terminal links here": on until the settings are read.
+  const hereRef = useRef(true);
+  hereRef.current = useBrowserSettings().settings?.terminal_links ?? true;
   const themeRef = useRef(theme);
   themeRef.current = theme;
   // Re-applies the theme to the live terminal; set while a terminal exists.
@@ -203,10 +207,11 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
     paintGutter(first.theme.background);
     let current = first.scheme;
     // OSC 8 hyperlinks follow the same rule as a plain web address: the modifier, and only http and https, in the system browser.
-    const inPane = pageRef.current !== null;
+    // The "Open terminal links here" setting decides, read when a link is hovered or clicked.
+    const inPane = () => linkTarget(pageRef.current, hereRef.current) === "pane";
     const openWeb = (url: string): Promise<void> => {
       const page = pageRef.current;
-      if (!page) return openUrl(url);
+      if (!page || !inPane()) return openUrl(url);
       page(url);
       return Promise.resolve();
     };
