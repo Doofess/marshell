@@ -978,6 +978,14 @@ pub struct AttachmentSaved {
     pub reference: String,
 }
 
+/// POST /v1/screenshots reply: the name the picture was saved under in the Downloads folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ScreenshotSaved {
+    /// The file name the core made, `<host> <YYYY-MM-DD HHMMSS>.png`, with ` (2)` and up when that name was taken.
+    pub name: String,
+}
+
 /// POST /v1/sessions/{tab}/paste body: paste a saved attachment's reference and a comment into the session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]

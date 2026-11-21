@@ -10,6 +10,19 @@ pub fn home_dir() -> anyhow::Result<PathBuf> {
     Ok(home.join(brand::HOME_DIR_NAME))
 }
 
+/// Where a picture of a page is saved: `$MARSHELL_DOWNLOADS` when set and not empty (tests and live checks),
+/// else the person's Downloads folder. `dirs` asks the system for the known folder and doesn't follow `USERPROFILE`.
+pub fn downloads_dir() -> Option<PathBuf> {
+    downloads_dir_from(std::env::var_os(brand::env_var("DOWNLOADS")))
+}
+
+fn downloads_dir_from(over: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    match over {
+        Some(dir) if !dir.is_empty() => Some(PathBuf::from(dir)),
+        _ => dirs::download_dir(),
+    }
+}
+
 /// `<home>/run/endpoint.json`: port + token for the bridge and CLI.
 pub fn endpoint_file(home: &Path) -> PathBuf {
     home.join("run").join("endpoint.json")
@@ -143,6 +156,15 @@ pub fn managed_file(home: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn downloads_follows_the_override() {
+        let over = std::ffi::OsString::from("scratch-downloads");
+        assert_eq!(downloads_dir_from(Some(over)), Some(PathBuf::from("scratch-downloads")));
+        // Empty or unset: the system's folder, whatever it is.
+        assert_eq!(downloads_dir_from(Some("".into())), dirs::download_dir());
+        assert_eq!(downloads_dir_from(None), dirs::download_dir());
+    }
 
     #[test]
     fn app_record_is_in_bin() {
