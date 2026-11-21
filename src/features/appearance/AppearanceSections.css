@@ -198,7 +198,6 @@
   /* Forced colors replaces --text-2, so a disabled chip says so with the system's disabled color. */
   .appearance__chip:has(input:disabled) {
     color: GrayText;
-    border-color: GrayText;
   }
   .appearance__swatch,
   .appearance__preview,

@@ -12,7 +12,7 @@ describe("AppearanceSections.css", () => {
     const rule = forced.match(/\.appearance__chip:has\(input:disabled\)\s*\{([^{}]*)\}/);
     expect(rule, "a disabled-chip rule inside forced-colors").not.toBeNull();
     expect(rule![1]).toMatch(/color:\s*GrayText\s*;/);
-    expect(rule![1]).toMatch(/border-color:\s*GrayText\s*;/);
+    expect(rule![1]).not.toContain("border-color");
     expect(forced).not.toMatch(/var\(|#[0-9a-f]{3}|oklch/i);
   });
 });
