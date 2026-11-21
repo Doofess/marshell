@@ -51,16 +51,16 @@ export function step(state: NavState, events: NavEvent[], ctx: NavContext): Resu
   return run(state, events, ctx);
 }
 
-const TOP_NAMES: Record<string, string> = { palette: "Command palette", sidebar: "Sidebar", launcher: "New session", pane: "Side pane" };
+const TOP_NAMES: Record<string, string> = { palette: "Command palette", sidebar: "Sidebar", launcher: "New session", "panel-browser": "Browser", "panel-files": "Files" };
 
 /** What the hint names for a top-bar control. */
 export const topName = (id: string): string => TOP_NAMES[id] ?? id;
 
-export type TopAction = "palette" | "launcher" | "sidebar" | "pane";
+export type TopAction = "palette" | "launcher" | "sidebar" | "panel-browser" | "panel-files";
 
 /** What releasing the cursor on a top-bar control does: the same as clicking it. Null for an id with no action. */
 export function topAction(id: string): TopAction | null {
-  return id === "palette" || id === "launcher" || id === "sidebar" || id === "pane" ? id : null;
+  return id === "palette" || id === "launcher" || id === "sidebar" || id === "panel-browser" || id === "panel-files" ? id : null;
 }
 
 /** What the hint under the cursor names: "Session 3, api-server", "Empty slot 2", "Command palette". */

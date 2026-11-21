@@ -8,12 +8,15 @@ const rule = (sel: string) => css.match(new RegExp("(?:^|\\n)" + escape(sel) + "
 
 describe("side pane toggle button", () => {
   const base = rule(".window__pane-toggle");
-  it("is a fixed 32 by 28 target that never shrinks, with its margin at the end", () => {
+  it("is a fixed 32 by 28 target that never shrinks, ", () => {
     expect(base).toMatch(/flex:\s*none/);
     expect(base).toMatch(/block-size:\s*28px/);
     expect(base).toMatch(/inline-size:\s*32px/);
-    expect(base).toMatch(/margin-inline-end:\s*var\(--space-1\)/);
     expect(base).not.toMatch(/margin-inline-start/);
+  });
+  it("only the last button keeps the end margin", () => {
+    expect(base).toMatch(/margin-inline-end:\s*2px/);
+    expect(rule(".window__pane-toggle:last-of-type")).toMatch(/margin-inline-end:\s*var\(--space-1\)/);
   });
   it("has its own focus, pressed and disabled rules", () => {
     expect(rule(".window__pane-toggle:focus-visible")).toMatch(/outline:\s*2px solid/);

@@ -81,7 +81,7 @@ import type { UrlBarHandle } from "../browser/UrlBar";
 import { useBrowserPages } from "../browser/useBrowserPages";
 import { askedFrom, focusPane } from "../pane/focusPane";
 import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, PANE_BESIDE_SESSION, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, receiptWithPaneHidden, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome } from "../pane/paneCommands";
-import { PANELS, panelOfPath } from "../pane/panels";
+import { PANEL_LABEL, PANELS, panelOfPath } from "../pane/panels";
 import { activeTab, currentEntry, isBrowserTab, openRefused, paneReducer, recentFor, selectedPanel, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
 import { takeOpens } from "../pane/opens";
 import { newsReducer } from "../pane/paneNews";
@@ -1527,8 +1527,9 @@ export function LiveApp() {
           case "sidebar":
             // As the button's click: fold or open, or say why a narrow window cannot open it.
             return void toggleSidebar(view);
-          case "pane":
-            return void togglePane();
+          case "panel-browser":
+          case "panel-files":
+            return void togglePane(); // 6r-1a: replaced in Task 10 or 11.
         }
         return;
       case "deselect":
@@ -2161,7 +2162,6 @@ export function LiveApp() {
           visibleIds={onScreenIds}
           pane={paneNode}
           paneShown={view.pane.open}
-          paneNews={paneNews.size > 0}
           paneWidth={view.pane.width}
           onPaneWidth={(w) => paneDispatch({ type: "width", width: w })}
           onDividerGone={() => focusPane("files")} // 6r-1a: replaced in Task 10 or 11.
@@ -2257,7 +2257,8 @@ export function LiveApp() {
           onMenuRun={onMenuRun}
           onPalette={() => setOverlay("palette")}
           onToggleSidebar={() => toggleSidebar(view)}
-          onTogglePane={togglePane}
+          panelButtons={PANELS.map((id) => ({ id, label: PANEL_LABEL[id], shown: view.pane.open, news: paneNews.size > 0, keys: paneKeys() }))} // 6r-1a: replaced in Task 10 or 11.
+          onTogglePanel={togglePane} // 6r-1a: replaced in Task 10 or 11.
           noneSelected={nav.noneSelected}
           navCursor={nav.cursor}
         />
