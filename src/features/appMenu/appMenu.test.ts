@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { menuKey } from "../../components/ContextMenu/menuKeys";
-import { appMenuItems, appMenuKey, doctorItemLabel, isMenuTrigger, leavesAppMenu, menuAnchor, menuKeyCloses, menuPlace,pressMenuButton, SETTINGS_ITEMS, toggleMenu, type MenuState } from "./appMenu";
+import { appMenuItems, appMenuKey, doctorItemLabel, isMenuTrigger, leavesAppMenu, menuAnchor, menuKeyCloses, menuPlace, pressMenuButton, SETTINGS_ITEMS, toggleMenu, type MenuState } from "./appMenu";
 
 describe("appMenu", () => {
   it("the_menu_lists_settings_history_doctor_departures", () => {

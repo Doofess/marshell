@@ -11,7 +11,7 @@ import { browserTabs } from "../browser/available";
 import type { HookInstall } from "../../generated/HookInstall";
 import type { HookAgent } from "../../lib/api/agents";
 import { osOfPlatform } from "../../lib/keymap";
-import { AppearanceSection,TerminalSection } from "../appearance/AppearanceSections";
+import { AppearanceSection, TerminalSection } from "../appearance/AppearanceSections";
 import type { SettingsSync } from "../appearance/settingsSync";
 import { CompanySection } from "../companies/CompanySection";
 import { openerUsable } from "../departures/liveBoard";

@@ -104,14 +104,18 @@ export function reloadPlan(pane: PaneView, keys: readonly string[]): { key: stri
 }
 
 /**
- * Closes each page and opens the ones with an address again at once, shown or not (a page behind another tab loads there, as it was).
+ * Closes every page, then opens the ones with an address again, shown or not (a page behind another tab loads there, as it was).
+ * Every close comes before the first open: private pages share one store of cookies and site data, which ends only when the last
+ * of them is closed (S14), so a page opened while another is still there would find it as it was.
  * The calls go through the shell's queue, so they come after a `cookies` call asked before them. Returns how many were opened.
  */
 export function reloadPages(plan: readonly { key: string; url: string | null }[]): number {
-  let opened = 0;
-  for (const { key, url } of plan) {
+  for (const { key } of plan) {
     void browser.close(key).catch(ignore);
     dispatchPage({ type: "closed", key });
+  }
+  let opened = 0;
+  for (const { key, url } of plan) {
     if (url === null) continue;
     void openPage(key, url).catch(ignore);
     opened += 1;

@@ -937,6 +937,10 @@ pub fn before_quit(app: &AppHandle, then: impl FnOnce(&AppHandle) + Send + 'stat
             let on_main = app.clone();
             if app.run_on_main_thread(move || then(&on_main)).is_err() {
                 eprintln!("Marshell: quitting could not go on after the cookies were cleared");
+                // `then` is gone with the call that failed, so the next quit asked for starts over.
+                if let Some(state) = app.try_state::<BrowserState>() {
+                    state.quitting.store(false, Ordering::SeqCst);
+                }
             }
         }
         let then = Arc::new(Mutex::new(Some(then)));
