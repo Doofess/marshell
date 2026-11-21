@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { browser } from "./browserApi";
 import { dispatchPage, openPage, pageIcon, pageReducer, type PageState } from "./pageStore";
 
 const state = (key: string, extra: Partial<{ url: string; title: string }> = {}) =>
@@ -131,6 +132,42 @@ describe("openPage", () => {
     await openPage("s/t", "https://a.test/");
     dispatchPage({ type: "icon", key: "s/t", src: "data:x" });
     expect(pageIcon("s/t")).toBe("data:x");
+    dispatchPage({ type: "gone" });
+  });
+
+  // A tab that shows after the pages were made again (a cookie rule that crosses "never") sees its page held but not loaded, and asks
+  // for it. The shell takes a second open of a key it has as a navigation, so the page would load twice.
+  it("asks the shell once for a page it is already asking for at the same address", async () => {
+    let answer: () => void = () => {};
+    const open = vi.spyOn(browser, "open").mockImplementation(() => new Promise<void>((done) => (answer = done)));
+    const first = openPage("s/t", "https://a.test/");
+    const again = openPage("s/t", "https://a.test/");
+    expect(open).toHaveBeenCalledTimes(1);
+    answer();
+    await Promise.all([first, again]);
+    // Once it has answered, asking is a new ask.
+    void openPage("s/t", "https://a.test/");
+    expect(open).toHaveBeenCalledTimes(2);
+    open.mockRestore();
+    dispatchPage({ type: "gone" });
+  });
+
+  it("asks again for a page whose address differs, and after a failed ask", async () => {
+    const open = vi.spyOn(browser, "open").mockRejectedValueOnce(new Error("no")).mockResolvedValue(undefined);
+    await expect(openPage("s/t", "https://a.test/")).rejects.toThrow("no");
+    await openPage("s/t", "https://a.test/");
+    expect(open).toHaveBeenCalledTimes(2);
+    open.mockRestore();
+    dispatchPage({ type: "gone" });
+  });
+
+  it("asks again for a page the app closed while its ask was in flight", () => {
+    const open = vi.spyOn(browser, "open").mockImplementation(() => new Promise<void>(() => {}));
+    void openPage("s/t", "https://a.test/");
+    dispatchPage({ type: "closed", key: "s/t" });
+    void openPage("s/t", "https://a.test/");
+    expect(open).toHaveBeenCalledTimes(2);
+    open.mockRestore();
     dispatchPage({ type: "gone" });
   });
 });

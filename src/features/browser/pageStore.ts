@@ -78,20 +78,37 @@ export function pageReducer(pages: ReadonlyMap<string, PageState>, e: PageEvent)
 }
 
 let pages: ReadonlyMap<string, PageState> = new Map();
+const asking = new Map<string, { url: string; answer: Promise<void> }>();
 const listeners = new Set<() => void>();
 
 /** Applies an event to the app's store; the app sends `opening` itself before it asks for a page, and `closed` when it closes one. */
 export function dispatchPage(e: PageEvent): void {
+  // A page the app closed is not the one an ask in flight is for: the next ask is its own.
+  if (e.type === "closed") asking.delete(e.key);
+  if (e.type === "gone") asking.clear();
   const next = pageReducer(pages, e);
   if (next === pages) return;
   pages = next;
   for (const l of listeners) l();
 }
 
-/** Asks the shell to open the key's page at `url`. The store holds the page from here on, so what it reports is kept. */
+/**
+ * Asks the shell to open the key's page at `url`. The store holds the page from here on, so what it reports is kept. An ask for a
+ * page the app is already asking for at the same address shares that ask: the shell takes a second open of a key it has as a
+ * navigation, so it would load the page twice (the pages made again for a cookie rule, and their tab's own open).
+ */
 export function openPage(key: string, url: string): Promise<void> {
+  const pending = asking.get(key);
+  if (pending?.url === url) return pending.answer;
   dispatchPage({ type: "opening", key });
-  return browser.open(key, url);
+  const answer = browser.open(key, url);
+  const entry = { url, answer };
+  asking.set(key, entry);
+  const done = () => {
+    if (asking.get(key) === entry) asking.delete(key);
+  };
+  answer.then(done, done);
+  return answer;
 }
 
 function subscribe(l: () => void): () => void {
