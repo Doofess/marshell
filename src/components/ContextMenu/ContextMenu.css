@@ -23,7 +23,6 @@
 .context-menu [role^="menuitem"] {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-4);
   box-sizing: border-box;
   block-size: 28px;
@@ -47,16 +46,21 @@
   color: var(--text-2);
   text-align: end;
 }
-/* An item that cannot run stays in the list, so the reason under it can be read. */
+/*
+ * An item that cannot run stays in the list, so the reason under it can be read. A reason or a note has no width of its own
+ * and is as wide as its row: it takes a line to itself and wraps there, and the menu is as wide as its labels.
+ */
 .context-menu [role^="menuitem"][aria-disabled="true"] {
   flex-wrap: wrap;
+  row-gap: 0;
   block-size: auto;
   padding-block: var(--space-1);
   color: var(--text-2);
 }
 .context-menu__reason {
-  flex-basis: 100%;
-  max-inline-size: 30ch;
+  box-sizing: border-box;
+  inline-size: 0;
+  min-inline-size: 100%;
   font-size: var(--text-12);
   line-height: 1.35;
   text-wrap: pretty;
@@ -97,13 +101,15 @@
   padding-block: var(--space-1);
 }
 .context-menu__note {
-  flex-basis: 100%;
-  max-inline-size: 30ch;
+  box-sizing: border-box;
+  inline-size: 0;
+  min-inline-size: 100%;
   color: var(--text-2);
   font-size: var(--text-12);
   line-height: 1.35;
   text-wrap: pretty;
 }
+.context-menu__item--marked > .context-menu__reason,
 .context-menu__item--marked > .context-menu__note {
   padding-inline-start: calc(var(--menu-mark) + var(--space-2));
 }

@@ -27,6 +27,23 @@ describe("ContextMenu.css", () => {
   it("caps the menu's width to the window", () => {
     expect(rule(".context-menu")).toMatch(/max-inline-size:[^;]*100vw/);
   });
+  it("starts every label at the row's start: only the shortcut and the submenu arrow are pushed to the end", () => {
+    expect(rule('.context-menu [role^="menuitem"]')).not.toContain("space-between");
+    expect(rule(".context-menu__shortcut")).toContain("margin-inline-start: auto");
+    expect(rule(".context-menu__more")).toContain("margin-inline-start: auto");
+  });
+  it("keeps a reason and a note on a line of their own, and out of the menu's width", () => {
+    for (const s of [".context-menu__reason", ".context-menu__note"]) {
+      expect(rule(s)).toContain("inline-size: 0");
+      expect(rule(s)).toContain("min-inline-size: 100%");
+      expect(rule(s)).not.toContain("flex-basis: 100%");
+    }
+  });
+  it("lines a reason and a note up with the label of a marked row, inside the row", () => {
+    for (const s of [".context-menu__reason", ".context-menu__note"]) expect(rule(s)).toContain("box-sizing: border-box");
+    expect(bare).toMatch(/\.context-menu__item--marked > \.context-menu__reason,\s*\.context-menu__item--marked > \.context-menu__note \{[^}]*padding-inline-start/);
+    expect(rule('.context-menu [role^="menuitem"][aria-disabled="true"]')).toContain("row-gap: 0");
+  });
   it("uses tokens only", () => {
     expect(bare).not.toMatch(/#[0-9a-f]{3,8}\b|rgb\(/i);
   });
