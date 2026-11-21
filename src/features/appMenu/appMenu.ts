@@ -35,15 +35,31 @@ export function doctorItemLabel(issues: number | undefined): string {
 
 type Size = { w: number; h: number };
 
-/** Above its button, or at the window's bottom left when it has no button to sit on. */
-export function menuPlace(anchor: { left: number; top: number } | null, size: Size, viewport: Size): { x: number; y: number } {
-  return anchor
-    ? placeMenu({ x: anchor.left, y: anchor.top - size.h - 4 }, size, viewport)
-    : placeMenu({ x: 8, y: viewport.h - size.h - 8 }, size, viewport);
+/** The button's top left; `bottom` is set for a button in the title bar, whose menu opens under it. */
+export type MenuAnchor = { left: number; top: number; bottom?: number };
+
+/** The anchor for a button's rectangle: by its top (the menu opens above it), or with its bottom (it opens under it). */
+export function menuAnchor(r: { left: number; top: number; bottom: number }, below: boolean): MenuAnchor {
+  return below ? { left: r.left, top: r.top, bottom: r.bottom } : { left: r.left, top: r.top };
+}
+
+/** Above its button, under it when the anchor has a bottom, or at the window's bottom left when it has no button to sit on. */
+export function menuPlace(anchor: MenuAnchor | null, size: Size, viewport: Size): { x: number; y: number } {
+  if (!anchor) return placeMenu({ x: 8, y: viewport.h - size.h - 8 }, size, viewport);
+  return placeMenu({ x: anchor.left, y: anchor.bottom === undefined ? anchor.top - size.h - 4 : anchor.bottom + 4 }, size, viewport);
 }
 
 /** The open menu: where it sits (null when no button is on screen) and what had the focus before it opened. */
-export type MenuState = { anchor: { left: number; top: number } | null; back: { focus(): void; isConnected: boolean } | null } | null;
+export type MenuState = { anchor: MenuAnchor | null; back: { focus(): void; isConnected: boolean } | null } | null;
+
+/** The buttons that open the menu: the sidebar's, the rail's and the title bar's brand. */
+export const MENU_TRIGGERS = ".sidebar__menu, .rail__menu, .window__brand";
+
+/** A press or a focus move onto one of those is left to its click, which toggles the menu. */
+export function isMenuTrigger(n: object): boolean {
+  const closest = (n as { closest?: (s: string) => unknown }).closest;
+  return typeof closest === "function" && closest.call(n, MENU_TRIGGERS) !== null;
+}
 
 /** The menu key: closes an open menu, else opens with `request`. */
 export function toggleMenu(open: MenuState, request: NonNullable<MenuState>): MenuState {

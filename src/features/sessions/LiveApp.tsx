@@ -142,7 +142,7 @@ import { adminCommandHidden, launcherFromPalette, launcherOpens, passesLauncher,
 import { REOPEN_AS_ADMIN } from "../../lib/adminCopy";
 import { LiveLauncher } from "./LiveLauncher";
 import { AppMenu } from "../appMenu/AppMenuPopup";
-import { pressMenuButton, toggleMenu, type AppMenuRun, type MenuState } from "../appMenu/appMenu";
+import { isMenuTrigger, menuAnchor, pressMenuButton, toggleMenu, type AppMenuRun, type MenuState } from "../appMenu/appMenu";
 import { LivePalette } from "./LivePalette";
 import { recordsRecent, sessionRowTarget } from "../palette/paletteList";
 import { cannotRun } from "../palette/runnable";
@@ -170,8 +170,8 @@ const SIDEBAR_NEEDS_WIDTH = "Widen the window to open the sidebar.";
 /** What the announcer says when the shell panel is asked for where it is not drawn: the rail, focus mode, or a window under 960 px. */
 const SHELL_PANEL_ELSEWHERE = "The shell panel is in the expanded sidebar.";
 // The footer's and the rail's Menu buttons: a press on one is the toggle's own, so it doesn't count as leaving the menu.
+// The menu key opens from the sidebar's or the rail's button, above it; the title bar's brand button opens the same menu under itself.
 const MENU_BUTTONS = ".sidebar__menu, .rail__menu";
-const isMenuButton = (n: object) => n instanceof Element && n.closest(MENU_BUTTONS) !== null;
 
 /** Wait for the core's command before opening the bar; a failed request still opens it with the local text. */
 function SessionResumeBar({ endpoint, info, profileName, ...props }: Omit<ComponentProps<typeof ResumeBar>, "command" | "folder"> & { endpoint: Endpoint | null; info: SessionInfo; profileName: string }) {
@@ -2375,7 +2375,7 @@ export function LiveApp() {
           onOpenDoctor={() => setOverlay("doctor")}
           onOpenMenu={(button) => {
             const r = button.getBoundingClientRect();
-            const next = pressMenuButton(menu, { anchor: { left: r.left, top: r.top }, back: button });
+            const next = pressMenuButton(menu, { anchor: menuAnchor(r, button.closest(".window__brand") !== null), back: button });
             setMenu(next.menu);
             next.focus?.focus();
           }}
@@ -2564,7 +2564,7 @@ export function LiveApp() {
           os={os}
           anchor={menu.anchor}
           doctorIssues={doctorIssues}
-          isTrigger={isMenuButton}
+          isTrigger={isMenuTrigger}
           onRun={(item: AppMenuRun) => {
             const { back } = menu;
             setMenu(null);
