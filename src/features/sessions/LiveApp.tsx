@@ -81,7 +81,7 @@ import type { UrlBarHandle } from "../browser/UrlBar";
 import { useBrowserPages } from "../browser/useBrowserPages";
 import { askedFrom, focusPane } from "../pane/focusPane";
 import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, PANE_BESIDE_SESSION, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, receiptWithPaneHidden, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome } from "../pane/paneCommands";
-import { activeTab, currentEntry, isBrowserTab, openRefused, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
+import { activeTab, currentEntry, isBrowserTab, openRefused, paneReducer, recentFor, selectedPanel, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
 import { takeOpens } from "../pane/opens";
 import { newsReducer } from "../pane/paneNews";
 import { plusChoice, plusMenuItems } from "../pane/plusMenu";
@@ -935,11 +935,11 @@ export function LiveApp() {
   }, [opens, settled, loaded]);
   // A tab loses its "new" mark as soon as it is in front of the person: the pane open, the sessions view on screen and the session
   // shown. That clears the session's news and, when its selected tab is marked, the tab's own mark.
-  const shownTabUnseen = focusedId != null && Boolean(activeTab(view.pane, focusedId)?.unseen);
+  const shownTabUnseen = focusedId != null && Boolean(activeTab(view.pane, focusedId, selectedPanel(view.pane, focusedId))?.unseen); // 6r-1a: replaced in Task 10 or 11.
   useEffect(() => {
     if (!view.pane.open || mainView !== "sessions" || focusedId == null) return;
     newsDispatch({ type: "seen", session: focusedId });
-    if (shownTabUnseen) paneDispatch({ type: "seen", session: focusedId });
+    if (shownTabUnseen) paneDispatch({ type: "seen", session: focusedId, panel: selectedPanel(view.pane, focusedId) }); // 6r-1a: replaced in Task 10 or 11.
   }, [view.pane.open, mainView, focusedId, shownTabUnseen, paneNews, paneDispatch]);
   // A session that is gone from the list is forgotten (derived from `rows`; the core's closed list is a different thing).
   useEffect(() => {
@@ -987,7 +987,7 @@ export function LiveApp() {
       return false;
     }
     const action: PaneAction = { type: "openPage", session, url };
-    const opened = activeTab(paneReducer(pane, action), session);
+    const opened = activeTab(paneReducer(pane, action), session, "browser"); // 6r-1a: replaced in Task 10 or 11.
     paneDispatch(action);
     announce(pageOpenedText(url));
     if (opts?.focus === "address" && opened) focusAddressSoon(pageKey(session, opened.id));
@@ -1030,7 +1030,7 @@ export function LiveApp() {
     switch (shortcut.kind) {
       case "preview": {
         const { shown } = toggleOutcome(pane, session);
-        paneDispatch({ type: "toggle" });
+        paneDispatch({ type: "toggle", session: session ?? null }); // 6r-1a: replaced in Task 10 or 11.
         if (shown) focusPane();
         else setTimeout(() => actions.focusTerminal(), 0);
         return;
@@ -1039,8 +1039,8 @@ export function LiveApp() {
         const outcome = paneTabOutcome(pane, session);
         if (outcome === "none" || session === undefined) return announce(NO_TABS_OPEN);
         const from = document.activeElement?.closest('[data-nav-side] [role="tabpanel"]') != null ? "panel" : "elsewhere";
-        if (outcome === "show") paneDispatch({ type: "show" });
-        else paneDispatch({ type: "step", session, by: shortcut.by });
+        if (outcome === "show") paneDispatch({ type: "show", session: session ?? null }); // 6r-1a: replaced in Task 10 or 11.
+        else paneDispatch({ type: "step", session, panel: selectedPanel(pane, session), by: shortcut.by }); // 6r-1a: replaced in Task 10 or 11.
         // Asked once the change is drawn: whether the pane covers the terminal is the window's to say (`data-pane`).
         setTimeout(() => {
           const covers = document.querySelector('[data-pane="cover"]') !== null;

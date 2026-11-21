@@ -733,7 +733,7 @@ describe("LiveApp: the side pane", () => {
     expect(PANE_BESIDE_SESSION).toBe("The side pane shows beside a session.");
   });
   it("Ctrl+Shift+Q with no tabs shows the empty pane", () => {
-    const next = paneReducer(closedPane, { type: "toggle" });
+    const next = paneReducer(closedPane, { type: "toggle", session: "t1" });
     expect(toggleOutcome(closedPane, "t1")).toEqual({ shown: true, body: "empty" });
     expect(next.open).toBe(true);
     const h = paneNode(next, "t1");

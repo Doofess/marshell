@@ -38,7 +38,7 @@ describe("openCheck", () => {
 describe("Ctrl+Shift+Q", () => {
   it("with no tabs shows the empty pane", () => {
     expect(toggleOutcome(EMPTY, "s1")).toEqual({ shown: true, body: "empty" });
-    expect(paneReducer(EMPTY, { type: "toggle" }).open).toBe(true);
+    expect(paneReducer(EMPTY, { type: "toggle", session: "s1" }).open).toBe(true);
   });
   it("with tabs shows them, and hides an open pane", () => {
     const hidden = withTabs("s1", ["/a"], false);

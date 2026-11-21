@@ -2,7 +2,7 @@ import type { PaneView } from "../../generated/PaneView";
 import type { Os } from "../../lib/keymap";
 import { isPageUrl, pageTitle, shellRefuses } from "../browser/address";
 import { isUnsaved } from "../editor/drafts";
-import { PANE_LIMITS, activeTab, openRefused, tabsOf } from "./paneState";
+import { PANE_LIMITS, activeTab, openRefused, selectedPanel, tabsOf } from "./paneState";
 import type { TabKind } from "./tabType";
 
 /** What the announcer says for the side pane. */
@@ -93,7 +93,7 @@ export function projectKeyOf(rows: ReadonlyArray<{ id: string; projectKey: strin
 
 /** The tab "Close tab" closes: the selected one of the session. */
 export function closeTabOutcome(pane: PaneView, session: string | null | undefined): { paneTab: string; path: string } | null {
-  const tab = activeTab(pane, session);
+  const tab = activeTab(pane, session, selectedPanel(pane, session));
   const entry = tab?.history[tab.index];
   return tab && entry ? { paneTab: tab.id, path: entry.path } : null;
 }
