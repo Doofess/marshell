@@ -59,8 +59,8 @@ export type PaneAction =
   | { type: "panel"; panel: PanelId; session: string | null }
   /** The panel's fill button: it fills the pane, or stops filling it. */
   | { type: "fill"; panel: PanelId; session: string | null }
-  /** The divider moved: whole weights, 1 to 100000, merged into the stack's. */
-  | { type: "weights"; weights: Weights }
+  /** The divider moved: whole weights, 1 to 100000, merged into the stack's. `session` is the one the drawn stack was derived from. */
+  | { type: "weights"; session?: string | null; weights: Weights }
   /** Writes the stack down when none is saved. */
   | { type: "pin"; session: string }
   | { type: "width"; width: number | null };
@@ -433,9 +433,9 @@ function weightOf(n: unknown): number | null {
   return typeof n === "number" && Number.isFinite(n) ? Math.min(100_000, Math.max(1, Math.round(n))) : null;
 }
 
-/** Merges the divider's weights into the saved stack; with no stack saved, into the one `stackOf` gives, which is then saved. */
-function mergeWeights(s: PaneView, weights: Weights): PaneView {
-  const stack = stackOf(s, null);
+/** Merges the divider's weights into the saved stack; with no stack saved, into the one `stackOf` gives for the session, which is then saved. */
+function mergeWeights(s: PaneView, weights: Weights, session: string | null): PaneView {
+  const stack = stackOf(s, session);
   const merged: Weights = { ...stack.weights };
   let changed = false;
   for (const [key, value] of Object.entries(weights)) {
@@ -541,7 +541,7 @@ export function paneReducer(s: PaneView, a: PaneAction): PaneView {
     case "fill":
       return fill(s, a.panel, a.session);
     case "weights":
-      return mergeWeights(s, a.weights);
+      return mergeWeights(s, a.weights, a.session ?? null);
     case "pin":
       return s.panels ? s : { ...s, panels: panelsOf(stackOf(s, a.session)) };
     case "width": {

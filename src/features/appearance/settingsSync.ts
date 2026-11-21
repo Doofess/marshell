@@ -25,6 +25,8 @@ const DEFAULT_NOTIFY: NotifySettings = {
   terminal_alerts: true,
 };
 
+type FlagChange = Partial<Pick<Settings, "pause_warned" | "onboarded" | "close_to_tray" | "status_off" | "notifications" | "history_import" | "history_limit_gb" | "history_limit_days" | "history_backup_dir" | "browser">>;
+
 type SettingsApi = {
   get(ep: Endpoint): Promise<Settings>;
   put(ep: Endpoint, s: Settings): Promise<Settings>;
@@ -56,8 +58,8 @@ export class SettingsSync {
   private backupDir: string | null = null;
   /** The Browser panel settings. Kept from the last read, so every save sends them back unchanged. */
   private browserValue: BrowserSettings = DEFAULT_BROWSER;
-  /** The browser changes in order: the last one's end. Never rejects. */
-  private browserQueue: Promise<void> = Promise.resolve();
+  /** Every settings write in order: the last one's end. Never rejects. */
+  private queue: Promise<void> = Promise.resolve();
   /** True after a read that failed, until one works. */
   private failed = false;
   private listeners = new Set<() => void>();
@@ -116,17 +118,29 @@ export class SettingsSync {
   }
 
   /**
-   * Saves the changed browser fields. Reads first, like `save`, and sends every other field back unchanged. One change is in flight
-   * at a time, and each is built from the value the one before it stored, so two quick changes never put each other's field back.
-   * A change that fails doesn't stop the next.
+   * Runs one settings write after every earlier one has ended, so one write is in flight at a time and each sends the values the
+   * one before it stored. A write that fails doesn't stop the next, and each caller gets its own result or rejection. Never call it
+   * from inside a queued unit: that would wait on itself.
+   */
+  private queued<T>(run: () => Promise<T>): Promise<T> {
+    const result = this.queue.then(run);
+    this.queue = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
+  }
+
+  /**
+   * Saves the changed browser fields. Reads first, like `save`, and sends every other field back unchanged. It goes through the
+   * same queue as every other write, so it is built from the value the write before it stored, and no write overlapping it sends
+   * the old browser block back. A change that fails doesn't stop the next.
    */
   setBrowser(change: Partial<BrowserSettings>): Promise<void> {
-    const run = this.browserQueue.then(async () => {
+    return this.queued(async () => {
       await this.readFirst();
-      await this.writeFlags({ browser: { ...this.browserValue, ...change } });
+      await this.write({ browser: { ...this.browserValue, ...change } });
     });
-    this.browserQueue = run.catch(() => {});
-    return run;
   }
 
   private emit(): void {
@@ -180,8 +194,12 @@ export class SettingsSync {
     return this.warned;
   }
 
-  /** Saves `next` and returns what the core stored. Rejects with a SettingsReadError when nothing has been read yet and a read fails. */
-  async save(next: Appearance): Promise<Appearance> {
+  /** Saves `next` and returns what the core stored. Rejects with a SettingsReadError when nothing has been read yet and a read fails. Queued with every other write. */
+  save(next: Appearance): Promise<Appearance> {
+    return this.queued(() => this.saveNow(next));
+  }
+
+  private async saveNow(next: Appearance): Promise<Appearance> {
     if (!this.hasRead) {
       try {
         await this.load();
@@ -211,9 +229,11 @@ export class SettingsSync {
   }
 
   /** Switches one agent's live status on or off. Reads first, like `save`, and sends every other field back unchanged. */
-  async setStatusOff(agent: string, off: boolean): Promise<void> {
-    const rest = (await this.readFirst()).filter((id) => id !== agent);
-    await this.writeFlags({ status_off: off ? [...rest, agent] : rest });
+  setStatusOff(agent: string, off: boolean): Promise<void> {
+    return this.queued(async () => {
+      const rest = (await this.readFirst()).filter((id) => id !== agent);
+      await this.write({ status_off: off ? [...rest, agent] : rest });
+    });
   }
 
   /** Records that the first-Pause warning was confirmed. Reads first, like `save`, and sends the appearance last read back unchanged. */
@@ -258,7 +278,13 @@ export class SettingsSync {
     return this.off;
   }
 
-  private async writeFlags(change: Partial<Pick<Settings, "pause_warned" | "onboarded" | "close_to_tray" | "status_off" | "notifications" | "history_import" | "history_limit_gb" | "history_limit_days" | "history_backup_dir" | "browser">>): Promise<void> {
+  /** Writes the changed fields through the queue. */
+  private writeFlags(change: FlagChange): Promise<void> {
+    return this.queued(() => this.write(change));
+  }
+
+  /** The write itself, for a queued unit to call: it reads first when no read has worked. */
+  private async write(change: FlagChange): Promise<void> {
     if (!this.hasRead) {
       try {
         await this.load();

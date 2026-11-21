@@ -276,6 +276,27 @@ describe("SettingsSync: browser", () => {
     expect(api.put.mock.calls[1]![1].browser).toEqual({ terminal_links: false, open_agent_html: false, cookies: "until-quit" });
     expect(sync.browser).toEqual({ terminal_links: false, open_agent_html: false, cookies: "until-quit" });
   });
+  it.each([
+    ["an appearance save", (sync: SettingsSync) => sync.save({ ...teal, theme: "dark" as const })],
+    ["a flag write", (sync: SettingsSync) => sync.setCloseToTray(true)],
+  ])("%s that overlaps a browser change waits for it and sends its result", async (_name, other) => {
+    const { api, sync } = setup(read);
+    await sync.load();
+    const releases: (() => void)[] = [];
+    api.put.mockImplementation((_ep: Endpoint, s: Settings) => new Promise<Settings>((resolve) => releases.push(() => resolve(s))));
+    const a = sync.setBrowser({ cookies: "until-quit" });
+    const b = other(sync);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(api.put).toHaveBeenCalledTimes(1);
+    releases[0]!();
+    await a;
+    await new Promise((r) => setTimeout(r, 0));
+    expect(api.put).toHaveBeenCalledTimes(2);
+    expect(api.put.mock.calls[1]![1].browser.cookies).toBe("until-quit");
+    releases[1]!();
+    await b;
+    expect(sync.browser?.cookies).toBe("until-quit");
+  });
   it("a change that fails doesn't stop the next one", async () => {
     const { api, sync } = setup(read);
     await sync.load();

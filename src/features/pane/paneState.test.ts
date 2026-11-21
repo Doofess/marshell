@@ -993,4 +993,13 @@ describe("a divider move with no stack saved", () => {
     expect(next.panels?.weights).toMatchObject({ browser: 3, files: 1 });
     expect(next.panels?.shown).toEqual(stackOf({ ...EMPTY, panels: undefined }, null).shown);
   });
+
+  it("keeps the session's panels when the move names the session", () => {
+    const pane = run(EMPTY, open("/a.txt"), { type: "openPage", session: "s", url: "https://a.test/" });
+    const bare: PaneView = { ...pane, panels: undefined };
+    expect(stackOf(bare, "s").shown).toEqual(["browser", "files"]);
+    const next = paneReducer(bare, { type: "weights", session: "s", weights: { browser: 3, files: 1 } });
+    expect(next.panels?.shown).toEqual(stackOf(bare, "s").shown);
+    expect(next.panels?.weights).toMatchObject({ browser: 3, files: 1 });
+  });
 });

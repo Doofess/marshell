@@ -2323,7 +2323,7 @@ export function LiveApp() {
   // The stack is the window's: its panels whether or not the pane is open, so nothing inside changes while the pane holds and folds.
   const paneNode =
     os ? (
-      <PanelStack panels={stackPanels(stack)} weights={stack.weights} render={renderPanel} onWeights={(weights) => paneDispatch({ type: "weights", weights })} onDividerGone={() => focusPane(currentPanel() ?? "files")} />
+      <PanelStack panels={stackPanels(stack)} weights={stack.weights} render={renderPanel} onWeights={(weights) => paneDispatch({ type: "weights", session: focusedId, weights })} onDividerGone={() => focusPane(currentPanel() ?? "files")} />
     ) : undefined;
   // The core decides whether a banner is worth showing from this: whether the window has focus and which sessions are on screen.
   // Under the History view the terminals stay mounted but none is on screen, so none is reported (or marked in the sidebar) as seen.
