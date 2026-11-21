@@ -91,7 +91,8 @@ pub fn transcript_allowed(path: &str, session_id: &str, distro: Option<&str>) ->
 }
 
 /// Like `transcript_allowed` for a sidecar read back from the archive. A Codex conversation's source is a
-/// rollout named `rollout-<time>-<id>.jsonl` (or `.jsonl.zst`), so only its place and kind are checked.
+/// rollout named `rollout-<time>-<id>.jsonl` (or `.jsonl.zst`) for this very session, so its place, its kind and
+/// the id in its name are checked (see `codex_transcript_allowed`).
 pub fn sidecar_allowed(agent: &str, path: &str, session_id: &str) -> bool {
     sidecar_allowed_in(agent, path, session_id, None)
 }
@@ -110,10 +111,34 @@ pub fn sidecar_allowed_in(agent: &str, path: &str, session_id: &str, distro: Opt
     if agent != "codex" {
         return transcript_allowed(path, session_id, distro);
     }
+    codex_transcript_allowed(path, session_id, distro)
+}
+
+/// True when `path` is a Codex rollout for this session: a readable place, no `..` part, and a last component
+/// `rollout-<time>-<session_id>.jsonl` (or `.jsonl.zst`). The time is not empty and holds only digits and
+/// `T - : . Z + _`; its form is not checked further, so a rollout whose time Codex writes in a new form still
+/// counts. Makes no filesystem call.
+fn codex_transcript_allowed(path: &str, session_id: &str, distro: Option<&str>) -> bool {
+    if !valid_session_id(session_id) || !readable_place(path, distro) {
+        return false;
+    }
+    if path.split(['/', '\\']).any(|part| part == "..") {
+        return false;
+    }
     let name = last_component(path);
-    valid_session_id(session_id)
-        && readable_place(path, distro)
-        && (name.ends_with(".jsonl") || name.ends_with(".jsonl.zst"))
+    let Some(stem) = name.strip_suffix(".jsonl.zst").or_else(|| name.strip_suffix(".jsonl")) else {
+        return false;
+    };
+    let time = stem
+        .strip_prefix("rollout-")
+        .and_then(|rest| rest.strip_suffix(session_id))
+        .and_then(|rest| rest.strip_suffix('-'));
+    time.is_some_and(|time| {
+        !time.is_empty()
+            && time
+                .chars()
+                .all(|c| c.is_ascii_digit() || matches!(c, 'T' | '-' | ':' | '.' | 'Z' | '+' | '_'))
+    })
 }
 
 /// An Antigravity conversation id: a UUID, 8-4-4-4-12 hex digits.
@@ -169,6 +194,17 @@ fn copilot_transcript_allowed(path: &str, session_id: &str, distro: Option<&str>
     }
     let parts: Vec<&str> = path.split(['/', '\\']).collect();
     parts.iter().all(|part| *part != "..") && parts.ends_with(&["session-state", session_id, "events.jsonl"])
+}
+
+/// True when `event` is one after which `agent`'s conversation is copied: a turn's end or the session's. This is the
+/// one table of each CLI's event names for that; a Copilot status line, Antigravity and any other agent never ask.
+pub fn copy_event(agent: &str, event: &str) -> bool {
+    match agent {
+        "claude" | "qwen" => matches!(event, "Stop" | "StopFailure" | "SessionEnd"),
+        "codex" => matches!(event, "Stop" | "Interrupt" | "SessionEnd"),
+        "copilot" => matches!(event, "agentStop" | "errorOccurred" | "sessionEnd"),
+        _ => false,
+    }
 }
 
 /// Reads the conversation in `text`, the decoded transcript of `agent`'s session. None for an agent whose
@@ -243,10 +279,45 @@ mod tests {
         assert!(!transcript_allowed(r"\\wsl.localhost\Ubuntu", ID, Some("Ubuntu")));
         assert!(!transcript_allowed(&file, "../x", Some("Ubuntu")));
         // The other agents' sources too.
-        let rollout = r"\\wsl.localhost\Ubuntu\home\u\.codex\sessions\2026\10\31\rollout-2026-10-31T10-00-00-abc.jsonl";
-        assert!(sidecar_allowed_in("codex", rollout, ID, Some("Ubuntu")));
+        let rollout =
+            format!(r"\\wsl.localhost\Ubuntu\home\u\.codex\sessions\2026\10\31\rollout-2026-10-31T10-00-00-{ID}.jsonl");
+        assert!(sidecar_allowed_in("codex", &rollout, ID, Some("Ubuntu")));
         let agy = agy_path('\\', ID).replacen("C:\\Users", r"\\wsl.localhost\Ubuntu\home", 1);
         assert!(sidecar_allowed_in("antigravity", &agy, ID, Some("Ubuntu")));
+    }
+
+    #[test]
+    fn a_codex_rollout_must_be_named_for_its_session() {
+        let dir = r"C:\Users\me\.codex\sessions\2026\10\24";
+        let wsl =
+            format!(r"\\wsl.localhost\Ubuntu\home\u\.codex\sessions\2026\10\31\rollout-2026-10-31T10-00-00-{ID}.jsonl");
+        let allowed = [
+            (format!(r"{dir}\rollout-2026-10-24T19-31-03-{ID}.jsonl"), ID),
+            (format!(r"{dir}\rollout-2026-10-24T19-31-03-{ID}.jsonl.zst"), ID),
+            (format!(r"{dir}\rollout-2026-10-24T19:31:03.123Z-{ID}.jsonl"), ID),
+            (r"C:\x\rollout-2026-01-01T00-00-00-cdx-1.jsonl".to_string(), "cdx-1"),
+            // The time is not format-checked (decision 12), so an id of digits and `-` that ends another id whose
+            // earlier groups are digits too is accepted: `000000000001` is the last group of `ID`.
+            (format!(r"{dir}\rollout-2026-10-24T19-31-03-{ID}.jsonl"), "000000000001"),
+        ];
+        for (path, id) in &allowed {
+            assert!(sidecar_allowed("codex", path, id), "{path} for {id}");
+        }
+        assert!(sidecar_allowed_in("codex", &wsl, ID, Some("Ubuntu")));
+        let refused = [
+            (format!(r"{dir}\rollout-2026-10-24T19-31-03-abc.jsonl"), ID),
+            (format!(r"{dir}\{ID}.jsonl"), ID),
+            (format!(r"{dir}\rollout-{ID}.jsonl"), ID),
+            (format!(r"{dir}\rollout--{ID}.jsonl"), ID),
+            (r"C:\x\rollout-2026-01-01T00-00-00-cdx-1.jsonl".to_string(), "1"),
+            (format!(r"{dir}\..\rollout-2026-10-24T19-31-03-{ID}.jsonl"), ID),
+            (format!(r"{dir}\rollout-2026-10-24T19-31-03-{ID}.json"), ID),
+            (format!(r"{dir}\rollout-2026-10-24T19-31-03-{ID}.jsonl\"), ID),
+        ];
+        for (path, id) in &refused {
+            assert!(!sidecar_allowed("codex", path, id), "{path} for {id}");
+        }
+        assert!(!sidecar_allowed_in("codex", &wsl, ID, None));
     }
 
     #[test]

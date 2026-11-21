@@ -119,28 +119,36 @@ pub fn new_session_id() -> String {
 /// `<copilot_home>/session-state/<id>/events.jsonl`; a status line's own `transcript_path` is the session's folder, not
 /// the file, so it is never used. None without a valid id.
 pub fn link_body(body: &Value, copilot_home: &Path) -> Option<Value> {
-    linked(body, Some(copilot_home))
+    linked(body, Some(copilot_home), None)
+}
+
+/// `link_body`, for a session the tab already has a record of: `known` is the transcript path that record holds.
+/// The path is the body's own `transcriptPath`, else `known`, else what `link_body` (with a home) or
+/// `link_body_in_distro` (without) would build.
+pub fn link_body_known(body: &Value, copilot_home: Option<&Path>, known: Option<&str>) -> Option<Value> {
+    linked(body, copilot_home, known)
 }
 
 /// `link_body`, where `copilot_home` is None when the transcript must come from the body itself: its `transcriptPath`,
-/// or the `events.jsonl` in the session folder a status line names.
-fn linked(body: &Value, copilot_home: Option<&Path>) -> Option<Value> {
+/// the `known` path of the tab's own record, or the `events.jsonl` in the session folder a status line names.
+fn linked(body: &Value, copilot_home: Option<&Path>, known: Option<&str>) -> Option<Value> {
     let text = |key: &str| body.get(key).and_then(Value::as_str);
     let id = session_id_of(body)?;
     // The id goes into a path and a command line.
     if !crate::history::valid_session_id(id) {
         return None;
     }
-    let transcript = match (text("transcriptPath"), copilot_home) {
-        (Some(path), _) => path.to_string(),
-        (None, Some(home)) => home
+    let transcript = match (text("transcriptPath"), known, copilot_home) {
+        (Some(path), _, _) => path.to_string(),
+        (None, Some(path), _) => path.to_string(),
+        (None, None, Some(home)) => home
             .join("session-state")
             .join(id)
             .join("events.jsonl")
             .to_string_lossy()
             .into_owned(),
         // A status line names the session's folder: the log is the file in it.
-        (None, None) => {
+        (None, None, None) => {
             let folder = text("transcript_path")?.trim_end_matches('/');
             if folder.rsplit('/').next() != Some(id) {
                 return None;
@@ -184,7 +192,7 @@ pub fn starts_session(body: &Value) -> bool {
 /// home. Only `agentStop` carries a `transcriptPath`, so the status line is what links a session before its first reply
 /// ends. None when the body names neither.
 pub fn link_body_in_distro(body: &Value) -> Option<Value> {
-    linked(body, None)
+    linked(body, None, None)
 }
 
 #[cfg(test)]
@@ -231,6 +239,56 @@ mod tests {
             link_body(&with_path, home).unwrap()["transcript_path"],
             "D:\\c\\session-state\\x\\events.jsonl"
         );
+    }
+
+    #[test]
+    fn a_body_with_its_own_transcript_path_ignores_the_known_one() {
+        let home = Path::new("C:/Users/u/.copilot");
+        let body = json!({"sessionId": ID, "hook_event_name": "agentStop", "transcriptPath": r"D:\c\session-state\x\events.jsonl"});
+        let known = Some(r"D:\other\session-state\x\events.jsonl");
+        for home in [Some(home), None] {
+            assert_eq!(
+                link_body_known(&body, home, known).unwrap()["transcript_path"],
+                r"D:\c\session-state\x\events.jsonl"
+            );
+        }
+    }
+
+    #[test]
+    fn an_end_with_no_transcript_path_uses_the_known_one() {
+        let home = Path::new("C:/Users/u/.copilot");
+        let body = json!({"sessionId": ID, "cwd": "C:\\proj", "hook_event_name": "sessionEnd"});
+        let known = format!(r"D:\other\session-state\{ID}\events.jsonl");
+        let linked = link_body_known(&body, Some(home), Some(&known)).unwrap();
+        assert_eq!(linked["transcript_path"], known.as_str());
+        assert_ne!(linked["transcript_path"], transcript(home).as_str());
+        assert_eq!(linked["hook_event_name"], "sessionEnd");
+        assert_eq!(linked["session_id"], ID);
+    }
+
+    #[test]
+    fn an_end_in_a_distro_with_no_transcript_path_uses_the_known_one() {
+        let body = json!({"sessionId": ID, "cwd": "/home/u/p", "hook_event_name": "sessionEnd"});
+        let known = format!(r"\\wsl.localhost\Ubuntu\tmp\c\session-state\{ID}\events.jsonl");
+        assert_eq!(
+            link_body_known(&body, None, Some(&known)).unwrap()["transcript_path"],
+            known.as_str()
+        );
+        // Nothing known and no home: nothing is built, as `link_body_in_distro` answers.
+        assert_eq!(link_body_known(&body, None, None), None);
+        assert_eq!(link_body_in_distro(&body), None);
+        // The id must still be a plain one.
+        let bad = json!({"sessionId": "../x", "hook_event_name": "sessionEnd"});
+        assert_eq!(link_body_known(&bad, None, Some(&known)), None);
+    }
+
+    #[test]
+    fn a_first_event_with_nothing_known_builds_the_path_from_the_home() {
+        let home = Path::new("C:/Users/u/.copilot");
+        let body = json!({"sessionId": ID, "cwd": "C:\\proj", "hook_event_name": "sessionStart"});
+        let linked = link_body_known(&body, Some(home), None).unwrap();
+        assert_eq!(linked["transcript_path"], transcript(home).as_str());
+        assert_eq!(linked, link_body(&body, home).unwrap());
     }
 
     #[test]

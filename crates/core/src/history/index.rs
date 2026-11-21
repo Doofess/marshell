@@ -214,15 +214,17 @@ impl Index {
 
     /// The tab's session with the highest updated_ms.
     pub fn latest_for_tab(&self, tab_id: &str) -> anyhow::Result<Option<SessionMeta>> {
-        let sql = format!("SELECT {COLUMNS} FROM sessions WHERE tab_id = ?1 ORDER BY updated_ms DESC LIMIT 1");
+        let sql =
+            format!("SELECT {COLUMNS} FROM sessions WHERE tab_id = ?1 ORDER BY updated_ms DESC, rowid DESC LIMIT 1");
         Ok(self.conn.query_row(&sql, params![tab_id], read_row).optional()?)
     }
 
     /// The tab's session of `agent` with the highest updated_ms. A CLI started from inside another inherits the
     /// tab id, so a tab can hold rows of more than one agent.
     pub fn latest_for_tab_of(&self, tab_id: &str, agent: &str) -> anyhow::Result<Option<SessionMeta>> {
-        let sql =
-            format!("SELECT {COLUMNS} FROM sessions WHERE tab_id = ?1 AND agent = ?2 ORDER BY updated_ms DESC LIMIT 1");
+        let sql = format!(
+            "SELECT {COLUMNS} FROM sessions WHERE tab_id = ?1 AND agent = ?2 ORDER BY updated_ms DESC, rowid DESC LIMIT 1"
+        );
         Ok(self.conn.query_row(&sql, params![tab_id, agent], read_row).optional()?)
     }
 
@@ -821,6 +823,24 @@ mod tests {
         let hits = index.bookmarks(&HistoryQuery::default()).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].session_id, "a");
+    }
+
+    // A guard test: SQLite most likely answers this way already, and the explicit `rowid DESC` pins it.
+    #[test]
+    fn the_session_linked_later_wins_a_tie() {
+        let (_home, index) = fresh();
+        index.upsert(&meta("first", "t1", 5000, None)).unwrap();
+        index.upsert(&meta("second", "t1", 5000, Some("first"))).unwrap();
+        let latest = |index: &Index| {
+            (
+                index.latest_for_tab("t1").unwrap().unwrap().session_id,
+                index.latest_for_tab_of("t1", "claude").unwrap().unwrap().session_id,
+            )
+        };
+        assert_eq!(latest(&index), ("second".to_string(), "second".to_string()));
+        // The first row written again with the same time keeps its place: it was linked first.
+        index.upsert(&meta("first", "t1", 5000, None)).unwrap();
+        assert_eq!(latest(&index), ("second".to_string(), "second".to_string()));
     }
 
     #[test]

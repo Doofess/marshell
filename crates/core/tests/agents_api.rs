@@ -3937,3 +3937,57 @@ fn copilot_hooks_plan_applies_in_a_home_outside_the_profile() {
     assert!(hooks.is_file(), "{}", hooks.display());
     assert!(settings.is_file(), "{}", settings.display());
 }
+
+#[test]
+fn codex_hooks_plan_under_a_wide_home_is_refused_by_name() {
+    use marshell_core::agents::codex::hooks as codex_hooks;
+    use marshell_core::agents::common::Bridge;
+    use marshell_core::config::guard::{Guard, Holds, WideHome};
+    use marshell_core::config::service::ConfigService;
+    use marshell_protocol::agents::HookPlanRequest;
+    use marshell_protocol::config::{FileStatus, RefuseReason};
+
+    let dir = tempfile::tempdir().unwrap();
+    let root = canonical(dir.path());
+    // `CODEX_HOME` names `root`, which holds Marshell's home: the guard refuses it by name.
+    let home = root.join("mh");
+    std::fs::create_dir_all(&home).unwrap();
+    let guard = Guard::new(vec![], vec![], home.clone()).with_wide_homes(vec![WideHome {
+        variable: "CODEX_HOME",
+        folder: root.clone(),
+        holds: Holds::MarshellHome,
+    }]);
+    let service = ConfigService::with_guard(home.clone(), guard);
+
+    let named = root.to_string_lossy().into_owned();
+    let env = move |k: &str| (k == "CODEX_HOME").then(|| named.clone());
+    let hooks = codex_hooks::hooks_path(&env, &root.join("profile"));
+    assert_eq!(hooks, root.join("hooks.json"));
+    let want = HookPlanRequest {
+        status: true,
+        statusline: false,
+        approve: false,
+        skill: false,
+        distro: None,
+    };
+    let plan = codex_hooks::install_plan(&hooks, None, &Bridge::local(&home), &want).unwrap();
+    let preview = service.preview(plan);
+    assert!(!preview.can_apply, "{preview:?}");
+    let file = preview
+        .files
+        .iter()
+        .find(|f| f.path == hooks.to_string_lossy())
+        .unwrap();
+    let detail = format!(
+        "CODEX_HOME names {}, a folder that holds Marshell's own folder.",
+        root.display()
+    );
+    assert_eq!(
+        file.status,
+        FileStatus::Refused {
+            reason: RefuseReason::OutsideAllowed,
+            detail
+        }
+    );
+    assert!(!hooks.exists());
+}
