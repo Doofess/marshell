@@ -188,7 +188,6 @@
   }
   .files-body[data-narrow] .files-body__tree {
     background: Canvas;
-    border-color: CanvasText;
   }
 }
 @media (forced-colors: active) and (hover: hover) and (pointer: fine) {
