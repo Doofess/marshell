@@ -130,6 +130,14 @@ fn lenient_session(session: &mut serde_json::Value) -> bool {
     let Some(tabs) = fields.get_mut("tabs").and_then(Value::as_array_mut) else {
         return false;
     };
+    for tab in tabs.iter_mut() {
+        // A viewport that is not a known size is dropped alone; the tab stays.
+        if let Some(t) = tab.as_object_mut()
+            && t.get("viewport").is_some_and(|v| !v.as_str().is_some_and(is_viewport))
+        {
+            t.remove("viewport");
+        }
+    }
     tabs.retain(|tab| serde_json::from_value::<PaneTab>(tab.clone()).is_ok());
     if !fields.get("active").is_some_and(Value::is_string) {
         fields.insert("active".into(), Value::Null);
@@ -294,6 +302,9 @@ fn repair_pane(pane: &mut PaneView, tabs: &[SavedTab]) {
                 tab.opened_by = None;
                 tab.unseen = false;
             }
+            if tab.viewport.as_deref().is_some_and(|v| !is_viewport(v)) {
+                tab.viewport = None;
+            }
             if tab.kind == "browser" {
                 // A browser tab holds one address: the entry it was showing.
                 let at = (tab.index as usize).min(tab.history.len().saturating_sub(1));
@@ -364,6 +375,11 @@ fn fold_to_one_pane(view: &mut ViewLayout) {
 /// An opener: 1 to 32 characters of a-z, 0-9 and "-".
 pub(crate) fn is_opener(id: &str) -> bool {
     (1..=32).contains(&id.len()) && id.bytes().all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-'))
+}
+
+/// A browser tab's viewport size: phone, tablet, laptop or desktop.
+pub(crate) fn is_viewport(id: &str) -> bool {
+    matches!(id, "phone" | "tablet" | "laptop" | "desktop")
 }
 
 const MAX_RECENT: usize = 5;
@@ -478,6 +494,9 @@ pub fn validate_pane(p: &PaneView) -> Result<(), String> {
             }
             if tab.unseen && tab.opened_by.is_none() {
                 return Err(format!("{at}: unseen needs opened_by"));
+            }
+            if tab.viewport.as_deref().is_some_and(|v| !is_viewport(v)) {
+                return Err(format!("{at}: viewport must be phone, tablet, laptop or desktop"));
             }
             let browser = tab.kind == "browser";
             if !browser && tab.title.is_some() {
@@ -845,6 +864,7 @@ mod tests {
             title: None,
             opened_by: None,
             unseen: false,
+            viewport: None,
         }
     }
 
@@ -1402,6 +1422,52 @@ mod tests {
         assert_eq!(session.tabs.len(), 1);
         assert_eq!(session.tabs[0].id, "t1");
         assert_eq!(session.active, some("t1"));
+    }
+
+    #[test]
+    fn a_tab_with_an_unreadable_viewport_is_kept_without_it() {
+        for bad in [
+            serde_json::json!(390),
+            serde_json::json!("wide"),
+            serde_json::json!(null),
+        ] {
+            let pane = serde_json::json!({
+                "open": true,
+                "sessions": {"ta": {"tabs": [{
+                    "id": "a", "kind": "browser",
+                    "history": [{"path": "https://example.com/", "view": "rendered"}],
+                    "index": 0, "viewport": bad
+                }], "active": "a"}}
+            });
+            let doc = load_with_pane(pane, 304.into());
+            let tabs = &doc.view.pane.sessions["ta"].tabs;
+            assert_eq!(tabs.len(), 1, "{bad:?}");
+            assert_eq!(tabs[0].viewport, None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_tab_keeps_a_viewport_it_can_have() {
+        let mut t = browser_tab("a", "https://example.com/");
+        t.viewport = Some("phone".into());
+        let mut doc = doc_with("ta");
+        doc.view.pane = pane_with("ta", session(vec![t]));
+        assert_eq!(validate_view(&doc.view), Ok(()));
+        let home = tempfile::tempdir().unwrap();
+        save(home.path(), &doc).unwrap();
+        let back = load(home.path());
+        assert_eq!(back.view.pane.sessions["ta"].tabs[0].viewport.as_deref(), Some("phone"));
+    }
+
+    #[test]
+    fn validate_pane_refuses_a_viewport_that_is_not_a_size() {
+        let mut t = browser_tab("a", "https://example.com/");
+        t.viewport = Some("wide".into());
+        let err = validate_pane(&pane_with("ta", session(vec![t]))).unwrap_err();
+        assert!(
+            err.contains("viewport must be phone, tablet, laptop or desktop"),
+            "{err}"
+        );
     }
 
     #[test]

@@ -601,6 +601,12 @@ describe("the Browser and Files panels", () => {
     expect(paneProblem(paneReducer(old, select("t1")))).toBeNull();
   });
 
+  it("paneProblem refuses a viewport that is not a size, and takes the four sizes", () => {
+    const withViewport = (viewport: string | undefined): PaneView => mk({ s: { tabs: [{ ...b("t1"), viewport }], active: "t1", active_browser: "t1" } });
+    for (const ok of [undefined, "phone", "tablet", "laptop", "desktop"]) expect(paneProblem(withViewport(ok))).toBeNull();
+    for (const bad of ["wide", "", "Phone"]) expect(paneProblem(withViewport(bad))).toBe("viewport");
+  });
+
   it("the stack is the window's: another session shows the same panels", () => {
     const s = mk({ a: { tabs: [b("t1")], active: "t1" }, c: { tabs: [f("t1")], active: "t1" } });
     const withStack = paneReducer(s, { type: "pin", session: "a" });

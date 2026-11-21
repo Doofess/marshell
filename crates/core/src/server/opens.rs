@@ -72,6 +72,7 @@ impl Opens {
         kind: &str,
         target: String,
         by: String,
+        auto: bool,
     ) -> Result<(u64, oneshot::Receiver<Outcome>), Full> {
         let mut waiting = self.waiting.lock().unwrap();
         if waiting.list.len() >= MAX_WAITING {
@@ -84,6 +85,7 @@ impl Opens {
             kind: kind.to_string(),
             target,
             by,
+            auto,
         };
         let (tx, rx) = oneshot::channel();
         waiting.list.push((open, tx));
@@ -222,7 +224,7 @@ pub async fn open(State(st): State<AppState>, Path(tab): Path<String>, Json(req)
         }
     }
     let by = opener(&st, req.from.as_deref());
-    let Ok((_, answer)) = st.opens().push(&tab, kind, req.target, by) else {
+    let Ok((_, answer)) = st.opens().push(&tab, kind, req.target, by, false) else {
         return text(StatusCode::SERVICE_UNAVAILABLE, FULL);
     };
     // The session may have closed while the file was checked, after its requests were dropped.
@@ -378,7 +380,7 @@ mod tests {
 
     fn pushed(opens: &Opens, tab: &str) -> (u64, oneshot::Receiver<Outcome>) {
         opens
-            .push(tab, "file", abs("a.md"), "shell".into())
+            .push(tab, "file", abs("a.md"), "shell".into(), false)
             .expect("the queue has room")
     }
 
@@ -387,6 +389,17 @@ mod tests {
             id,
             refused: refused.map(str::to_string),
         }
+    }
+
+    #[test]
+    fn a_pushed_open_carries_whether_a_hook_asked() {
+        let opens = Opens::default();
+        opens
+            .push("t1", "file", abs("a.md"), "claude".into(), true)
+            .expect("the queue has room");
+        let _ = pushed(&opens, "t1");
+        let list = opens.subscribe().borrow().clone();
+        assert_eq!(list.iter().map(|o| o.auto).collect::<Vec<_>>(), [true, false]);
     }
 
     #[test]
@@ -465,7 +478,10 @@ mod tests {
     fn the_queue_holds_64_and_takes_more_once_one_is_answered() {
         let opens = Opens::default();
         let held: Vec<_> = (0..MAX_WAITING).map(|_| pushed(&opens, "t1")).collect();
-        assert_eq!(opens.push("t1", "file", abs("a.md"), "shell".into()).err(), Some(Full));
+        assert_eq!(
+            opens.push("t1", "file", abs("a.md"), "shell".into(), false).err(),
+            Some(Full)
+        );
         assert_eq!(opens.subscribe().borrow().len(), MAX_WAITING);
         opens.done(&[answer(held[0].0, None)]);
         let (next, _rx) = pushed(&opens, "t1");

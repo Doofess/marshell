@@ -11,7 +11,7 @@ const sessions = new Map([
   ["s2", { project: "p2" }],
 ]);
 const ctx = (o: Partial<Parameters<typeof takeOpens>[3]> = {}): Parameters<typeof takeOpens>[3] => ({ sessions, shown: "s1", onScreen: [], refuses: () => false, ...o });
-const req = (id: number, target: string, o: Partial<PaneOpen> = {}): PaneOpen => ({ id, tab_id: "s1", kind: "file", target, by: "claude", ...o });
+const req = (id: number, target: string, o: Partial<PaneOpen> = {}): PaneOpen => ({ id, tab_id: "s1", kind: "file", target, by: "claude", auto: false, ...o });
 const none = new Set<number>();
 const open = (path: string): PaneAction => ({ type: "open", session: "s1", project: "p1", target: { path } });
 const titles = (v: PaneView, session = "s1") => tabsOf(v, session).tabs.map((t) => t.history[0]!.path);

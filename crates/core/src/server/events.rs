@@ -190,6 +190,7 @@ mod tests {
             kind: "file".into(),
             target: r"C:\a.md".into(),
             by: "shell".into(),
+            auto: false,
         };
         // The session list changed too (a session that has just started), and has not gone out yet.
         tx.send_replace(empty);
