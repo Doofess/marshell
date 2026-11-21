@@ -298,10 +298,10 @@ export function SidePane({ panel, tabs, activeId, children, plus: plusSpec, menu
         <button
           type="button"
           className="side-pane__button"
-          aria-label="Fill the side pane"
+          aria-label={`Fill the side pane with ${PANEL_LABEL[panel]}`}
           aria-pressed={fill.on}
           aria-disabled={fill.disabled !== undefined ? "true" : undefined}
-          title={fill.disabled ?? (fill.on ? "Show the other panels" : "Fill the side pane")}
+          title={fill.disabled ?? (fill.on ? "Show the other panels" : `Fill the side pane with ${PANEL_LABEL[panel]}`)}
           onClick={() => {
             if (fill.disabled === undefined) onFill();
           }}
@@ -309,7 +309,7 @@ export function SidePane({ panel, tabs, activeId, children, plus: plusSpec, menu
           {icon("M7.5 1.5h3v3M10.5 1.5 7 5M4.5 10.5h-3v-3M1.5 10.5 5 7")}
         </button>
         <button type="button" className="side-pane__button" aria-label={`Hide ${PANEL_LABEL[panel]}`} title={`Hide ${PANEL_LABEL[panel]} (${hideKeys})`} onClick={onHide}>
-          {icon("M3 3l6 6M9 3 3 9")}
+          {icon("M3 6h6")}
         </button>
       </div>
       <div className="side-pane__body">{children}</div>

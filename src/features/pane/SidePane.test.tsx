@@ -68,7 +68,7 @@ describe("SidePane", () => {
   const order = (out: string, ...labels: string[]) => labels.map((l) => out.indexOf(`aria-label="${l}"`));
   it("ends with +, the menu when it has one, Fill and Hide, in that order", () => {
     const out = html({ panel: "browser", plus: { label: "New tab", menu: true }, menu: { label: "Browser menu" }, onMenu: noop });
-    const at = order(out, "Close b.rs", "New tab", "Browser menu", "Fill the side pane", "Hide Browser");
+    const at = order(out, "Close b.rs", "New tab", "Browser menu", "Fill the side pane with Browser", "Hide Browser");
     expect([...at].sort((x, y) => x - y)).toEqual(at);
     expect(at[0]).toBeGreaterThan(-1);
     expect(btn(out, "Browser menu")).toContain('aria-haspopup="menu"');
@@ -92,18 +92,26 @@ describe("SidePane", () => {
     expect(btn(html(), "Open a file")).not.toContain("aria-disabled");
   });
   it("Fill is pressed while its panel fills, and its tooltip says how to go back", () => {
-    const on = btn(html({ fill: { on: true } }), "Fill the side pane");
+    const on = btn(html({ fill: { on: true } }), "Fill the side pane with Files");
     expect(on).toContain('aria-pressed="true"');
     expect(on).toContain('title="Show the other panels"');
-    const off = btn(html(), "Fill the side pane");
+    const off = btn(html(), "Fill the side pane with Files");
     expect(off).toContain('aria-pressed="false"');
-    expect(off).toContain('title="Fill the side pane"');
+    expect(off).toContain('title="Fill the side pane with Files"');
   });
   it("Fill with one panel shown is aria-disabled and says why", () => {
-    const b = btn(html({ fill: { on: false, disabled: "No other panel is shown" } }), "Fill the side pane");
+    const b = btn(html({ fill: { on: false, disabled: "No other panel is shown" } }), "Fill the side pane with Files");
     expect(b).toContain('aria-disabled="true"');
     expect(b).not.toMatch(/\sdisabled/);
     expect(b).toContain('title="No other panel is shown"');
+  });
+  it("names each Fill button after its panel and draws Hide as a bar", () => {
+    expect(html({ panel: "browser" })).toContain('aria-label="Fill the side pane with Browser"');
+    expect(html({ panel: "files" })).toContain('title="Fill the side pane with Files"');
+    expect(btn(html({ panel: "browser", fill: { on: true } }), "Fill the side pane with Browser")).toContain('title="Show the other panels"');
+    const hide = html({ panel: "browser" }).match(/<button[^>]*aria-label="Hide Browser"[^>]*>.*?<\/button>/)![0];
+    expect(hide).toContain('d="M3 6h6"');
+    expect(hide).not.toContain("M3 3l6 6M9 3 3 9");
   });
   it("Hide names the panel and its key", () => {
     expect(html()).toMatch(/aria-label="Hide Files" title="Hide Files \(Ctrl\+Shift\+A\)"/);
@@ -135,7 +143,7 @@ describe("SidePane", () => {
     const out = html({ tabs: [], activeId: null });
     expect(out).not.toContain('role="tablist"');
     expect(out).toContain('aria-label="Open a file"');
-    expect(out).toContain('aria-label="Fill the side pane"');
+    expect(out).toContain('aria-label="Fill the side pane with Files"');
     expect(out).toContain('aria-label="Hide Files"');
   });
 

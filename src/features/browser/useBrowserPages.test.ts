@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { PaneView } from "../../generated/PaneView";
 import { paneReducer } from "../pane/paneState";
 import { canLoad, pageReducer, setLoadable, subscribePages, type PageEvent, type PageState } from "./pageStore";
-import { openKeys, owners, pageAction, popupActions, popupNews, unload } from "./useBrowserPages";
+import { PAGE_REFUSED, TAB_LIMIT } from "../pane/paneCommands";
+import { openKeys, owners, pageAction, popupActions, popupNews, popupOutcome, unload } from "./useBrowserPages";
 import { nextLive } from "./pages";
 import { slotStep } from "./usePageSlot";
 
@@ -112,6 +113,22 @@ describe("popupNews", () => {
     full = paneReducer(full, { type: "hide" });
     expect(full.sessions.a?.tabs.length).toBe(32);
     expect(popupNews(popupActions(full, "a", "https://pop.example/", false, []), full)).toEqual([]);
+  });
+});
+
+describe("popupOutcome", () => {
+  it("says the limit line for a popup in a session with 32 tabs", () => {
+    let full = empty;
+    for (let i = 0; i < 32; i++) full = page(full, "s1", `https://example.com/${i}`);
+    expect(popupOutcome(full, "s1", "https://example.com/", true, [])).toEqual({ actions: [], say: TAB_LIMIT });
+  });
+  it("says the refusal for an address the shell would not open", () => {
+    expect(popupOutcome(page(empty, "s1", "https://one.example/"), "s1", "file:///c:/x.html", true, []).say).toBe(PAGE_REFUSED);
+  });
+  it("says nothing for a popup that opens", () => {
+    const r = popupOutcome(page(empty, "s1", "https://one.example/"), "s1", "https://pop.example/", true, []);
+    expect(r.say).toBeNull();
+    expect(r.actions).toHaveLength(1);
   });
 });
 
