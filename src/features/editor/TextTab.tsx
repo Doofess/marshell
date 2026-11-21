@@ -9,9 +9,12 @@ import type { LinkTarget } from "../preview/links";
 import { MarkdownView } from "../preview/MarkdownView";
 import type { ReadOnlyReason } from "../preview/reload";
 import type { FileState } from "../preview/usePreviewFile";
+import { autoSaveDue, autoSaveTimer, AUTO_SAVE_MS, type AutoSaveFacts } from "./autoSave";
 import { ChangedBar } from "./ChangedBar";
+import { countConflicts } from "./conflicts";
 import { Editor, type EditorHandle } from "./Editor";
 import type { DocEvent, DocState } from "./editorDoc";
+import { EDITOR_DEFAULTS, type EditorPrefs } from "./editorPrefs";
 import { EditorFooter } from "./EditorFooter";
 import { languageFor } from "./fileTypes";
 import { COLOUR_CAP } from "./tokens";
@@ -41,6 +44,8 @@ export type TextTabCommands = SaveCommands & {
   nextConflict(): void;
   /** Moves to the previous conflict marker; does nothing while the Rendered view hides the editor. */
   previousConflict(): void;
+  /** Saves now when an auto save is due (the setting is on, the tab has unsaved edits and nothing stops it). The pane calls it before the session on screen changes. */
+  autoSave(): void;
 };
 
 /**
@@ -61,12 +66,20 @@ export function dirtyNews(told: boolean | null, ready: boolean, dirty: boolean):
   return !ready || told === dirty ? null : dirty;
 }
 
+/** What decides an auto save, from a document's state. */
+function factsOf(d: DocState, on: boolean, readOnly: boolean): AutoSaveFacts {
+  return { on, dirty: d.dirty, conflict: d.conflict !== null, markers: on && d.dirty && countConflicts(d.text) > 0, readOnly, saving: d.saving };
+}
+
 /** How long the rendered view waits after the last key. */
 export const RENDER_MS = 150;
 
-/** Word wrap starts on for prose and plain text, and off for code and markup: also code that only the file's first line names. */
-export function wrapAtStart(kind: PreviewKind, path: string, firstLine: string | undefined): boolean {
-  if (kind === "markdown") return true;
+/**
+ * Word wrap starts on for prose and plain text, and off for code and markup: also code that only the file's first line names.
+ * With the Files setting "Word wrap" on (`all`), every file starts wrapped.
+ */
+export function wrapAtStart(kind: PreviewKind, path: string, firstLine: string | undefined, all = false): boolean {
+  if (all || kind === "markdown") return true;
   return kind === "text" && languageFor(path, firstLine) === undefined;
 }
 
@@ -152,6 +165,8 @@ export type TextTabViewProps = {
   eol: Eol;
   cursor: { line: number; column: number };
   wrap: boolean;
+  /** The Files settings the editor reads. Absent: the defaults. */
+  prefs?: EditorPrefs;
   hintId: string;
   /** The text the rendered view shows, when it is not the document's. */
   rendered?: string;
@@ -202,6 +217,7 @@ export function TextTabView(p: TextTabViewProps) {
               firstLine={p.firstLine}
               readOnly={p.readOnly !== null}
               wrap={p.wrap}
+              prefs={p.prefs}
               onEdit={p.onEdit}
               onCursor={p.onCursor}
               onConflict={p.onConflict}
@@ -248,6 +264,10 @@ type Props = {
   onBox?: (width: number) => void;
   /** Shows the tab's Source view: after a merge that left conflicts behind the Rendered view (6q-4b decision 7.2). */
   onSource: () => void;
+  /** The Files settings the editor reads. Absent: the defaults. */
+  prefs?: EditorPrefs;
+  /** The Files setting "Auto save". Absent: off. */
+  autoSave?: boolean;
 };
 
 /** The file a text tab last had text of. A deleted file keeps showing what it was. */
@@ -261,7 +281,7 @@ function textOf(file: Props["file"]): Extract<FileState, { phase: "text" }> | nu
  * component holds the pieces that live as long as the tab: the cursor shown in the footer, the rendered view's delayed text,
  * and what the pane can call.
  */
-export function TextTab({ entry, file, kind, active, os, onDirty, commands, announce, refetch, onLink, onKey, onSource, viewport, onBox }: Props) {
+export function TextTab({ entry, file, kind, active, os, onDirty, commands, announce, refetch, onLink, onKey, onSource, viewport, onBox, prefs = EDITOR_DEFAULTS, autoSave = false }: Props) {
   const name = splitPath(entry.path).name;
   const editor = useRef<EditorHandle>(null);
   const root = useRef<HTMLDivElement>(null);
@@ -314,7 +334,7 @@ export function TextTab({ entry, file, kind, active, os, onDirty, commands, anno
   const firstLine = useRef<string | undefined>(undefined);
   if (firstLine.current === undefined && text) firstLine.current = text.text.split(/\r\n|\r|\n/, 1)[0] ?? "";
   // The editor keeps the choice while the tab is loaded.
-  const wrap = wrapAtStart(kind, entry.path, firstLine.current);
+  const wrap = wrapAtStart(kind, entry.path, firstLine.current, prefs.word_wrap);
   const appChord = useCallback((e: KeyboardEvent) => findCommand(e, os) !== undefined, [os]);
 
   // The rendered view gets the editor's text 150 ms after the last key, and the file's own text until the document is open.
@@ -338,6 +358,40 @@ export function TextTab({ entry, file, kind, active, os, onDirty, commands, anno
   latest.current = { doc, readOnly };
   const say = useRef(announce);
   say.current = announce;
+
+  // Auto save. What decides it is read from the refs at the moment it runs, so a timer, a blur or a leaving never acts on a stale
+  // render. Nothing here saves on unmount: an unmount may follow "Don't save" in the close question, so leaving a session goes
+  // through the handle's `autoSave()` while the tab is still there.
+  const autoOn = useRef(autoSave);
+  autoOn.current = autoSave;
+  const saveIfDue = useCallback(() => {
+    const { doc: d, readOnly: ro } = latest.current;
+    if (autoSaveDue(factsOf(d, autoOn.current, ro !== null))) dispatch({ type: "save", auto: true });
+  }, [dispatch]);
+  // The text of the last save sent, so a refused one is not tried again each second (see `autoSaveTimer`).
+  const lastSent = useRef<string | null>(null);
+  if (doc.saving && doc.sent !== null) lastSent.current = doc.sent;
+  // Restarted by every change, and when a save ends with the tab dirty with text typed while it was out; a dirty tab restored
+  // from a draft starts it too.
+  useEffect(() => {
+    if (doc.text !== lastSent.current) lastSent.current = null;
+    if (!autoSaveTimer({ ...factsOf(doc, autoSave, readOnly !== null), text: doc.text, lastSent: lastSent.current })) return;
+    const timer = setTimeout(saveIfDue, AUTO_SAVE_MS);
+    return () => clearTimeout(timer);
+  }, [autoSave, doc, readOnly, saveIfDue]);
+  // Leaving the tab, and the window going to the background or losing focus.
+  useEffect(() => {
+    if (!active) saveIfDue();
+  }, [active, saveIfDue]);
+  useEffect(() => {
+    const hidden = () => document.visibilityState === "hidden" && saveIfDue();
+    document.addEventListener("visibilitychange", hidden);
+    window.addEventListener("blur", saveIfDue);
+    return () => {
+      document.removeEventListener("visibilitychange", hidden);
+      window.removeEventListener("blur", saveIfDue);
+    };
+  }, [saveIfDue]);
   useImperativeHandle(
     commands,
     () => ({
@@ -356,8 +410,9 @@ export function TextTab({ entry, file, kind, active, os, onDirty, commands, anno
       previousConflict: () => conflictJump({ rendered: hidden.current, editor: editor.current, announce: say.current }, "previous"),
       dirty: () => latest.current.doc.dirty,
       focus: () => editor.current?.focus(),
+      autoSave: saveIfDue,
     }),
-    [dispatch, save, discard],
+    [dispatch, save, discard, saveIfDue],
   );
 
   // Said once when the document opens, clean or not: the window may show a dot for a draft that turned out to match the disk.
@@ -407,6 +462,7 @@ export function TextTab({ entry, file, kind, active, os, onDirty, commands, anno
       eol={text?.eol ?? "lf"}
       cursor={cursor}
       wrap={wrap}
+      prefs={prefs}
       hintId={hintId}
       rendered={rendered}
       firstLine={firstLine.current}

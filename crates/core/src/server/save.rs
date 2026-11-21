@@ -31,10 +31,42 @@ const READ_ONLY: &str = "The file is read-only or in use by another program.";
 /// One save at a time, so two saves of one file can't both pass the hash check.
 static SAVE_LOCK: Mutex<()> = Mutex::new(());
 
+/// How old the newest copy of a file may be before an auto save takes another: five minutes, so the file history's twenty copies
+/// reach back at least 100 minutes of auto saves (6r-2 decision 24).
+pub const AUTO_COPY_MS: u64 = 300_000;
+
+/// Whether a save takes a copy of the old bytes before it writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Copy {
+    /// A save by hand, and an undo: every time.
+    Always,
+    /// An auto save: only when the newest copy is at least this many milliseconds old, or there is none.
+    IfOlderThan(u64),
+}
+
+/// Whether the copy is due, given when the file's newest copy was taken. A copy dated after `now` (the clock was set back) does
+/// not hold copies off.
+fn copy_due(copy: &Copy, newest: Option<u64>, now: u64) -> bool {
+    match (copy, newest) {
+        (Copy::Always, _) | (_, None) => true,
+        (Copy::IfOlderThan(ms), Some(at)) => at > now || now - at >= *ms,
+    }
+}
+
 #[derive(Deserialize)]
 pub struct SaveQuery {
     path: String,
     expect: Option<String>,
+    /// `auto=1`: the save is the editor's auto save, which takes a file-history copy only every `AUTO_COPY_MS`.
+    #[serde(default, deserialize_with = "flag")]
+    auto: Option<bool>,
+}
+
+/// A query flag: `1` and `true` are on, anything else is off. (serde reads a bool from `true` and `false` only, and a flag that
+/// is not understood must not fail the save.)
+fn flag<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<bool>, D::Error> {
+    let text = Option::<String>::deserialize(d)?;
+    Ok(text.map(|t| t == "1" || t == "true"))
 }
 
 /// What the tab says the disk holds.
@@ -176,7 +208,7 @@ fn found(disk: io::Result<Disk>) -> Done {
 }
 
 /// The save itself, under the lock: read, compare, copy the old bytes, write.
-fn save_checked(path: &Path, expect: &Expect, body: &[u8], home: &Path) -> Done {
+fn save_checked(path: &Path, expect: &Expect, body: &[u8], home: &Path, copy: Copy) -> Done {
     let _guard = SAVE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let new_hash = hash_bytes(body);
     match (read_disk(path), expect) {
@@ -199,7 +231,7 @@ fn save_checked(path: &Path, expect: &Expect, body: &[u8], home: &Path) -> Done 
             if read_only {
                 return Done::ReadOnly;
             }
-            replace(path, &bytes, body, new_hash, home)
+            replace(path, &bytes, body, new_hash, home, copy)
         }
         (disk, _) => found(disk),
     }
@@ -207,8 +239,8 @@ fn save_checked(path: &Path, expect: &Expect, body: &[u8], home: &Path) -> Done 
 
 /// Writes `new` over a file that holds `old`, once a copy of `old` is on disk. A write that fails
 /// leaves the file holding `old`. The caller holds the lock.
-fn replace(path: &Path, old: &[u8], new: &[u8], new_hash: String, home: &Path) -> Done {
-    replace_with(path, old, new, new_hash, home, write_whole)
+fn replace(path: &Path, old: &[u8], new: &[u8], new_hash: String, home: &Path, copy: Copy) -> Done {
+    replace_with(path, old, new, new_hash, home, copy, write_whole)
 }
 
 /// `replace`, with the write of an open file's whole content as `put`, so a test can cut it short.
@@ -218,6 +250,7 @@ fn replace_with(
     new: &[u8],
     new_hash: String,
     home: &Path,
+    copy: Copy,
     put: impl Fn(&mut File, &[u8]) -> io::Result<()>,
 ) -> Done {
     // The file is opened before its copy is taken: one that can't be written (another program
@@ -226,24 +259,37 @@ fn replace_with(
         Ok(file) => file,
         Err(e) => return write_failed(e),
     };
-    let snapshot = match History::new(home).take(path, old, &new_hash, super::doctor::now_ms()) {
-        Ok(id) => id,
-        Err(e) => {
-            return Done::Failed(format!(
-                "The file's old text could not be copied, so it was not saved: {e:#}"
-            ));
+    let history = History::new(home);
+    let now = super::doctor::now_ms();
+    // An auto save skips its copy while the file's newest is fresh. A history that can't be read is no reason to skip: the copy is
+    // taken, and fails the save, as it always has, if the history can't be written.
+    let due = copy_due(&copy, history.newest_ms(path).unwrap_or(None), now);
+    let snapshot = if due {
+        match history.take(path, old, &new_hash, now) {
+            Ok(id) => Some(id),
+            Err(e) => {
+                return Done::Failed(format!(
+                    "The file's old text could not be copied, so it was not saved: {e:#}"
+                ));
+            }
         }
+    } else {
+        None
     };
     match put(&mut file, new) {
         Ok(()) => {
             // Closed first, so the time the answer carries is the one the file keeps.
             drop(file);
-            saved(path, new_hash, Some(snapshot))
+            saved(path, new_hash, snapshot)
         }
         Err(e) => {
             // A write cut short (a full disk) left part of the new text in the file: the old bytes
-            // go back over it. If that fails too they are still in the file history.
-            let _ = put(&mut file, old);
+            // go back over it. If that fails too they are still in the file history, and when this
+            // save took no copy of them (an auto save, with a fresh copy of an older text), they are
+            // copied now.
+            if put(&mut file, old).is_err() && snapshot.is_none() {
+                let _ = history.take(path, old, &new_hash, now);
+            }
             write_failed(e)
         }
     }
@@ -258,7 +304,7 @@ fn unsave_checked(path: &Path, save: &Saved, home: &Path) -> Done {
                 return Done::ReadOnly;
             }
             // The undo is a save like any other, so it can be undone too.
-            replace(path, &bytes, &save.before, hash_bytes(&save.before), home)
+            replace(path, &bytes, &save.before, hash_bytes(&save.before), home, Copy::Always)
         }
         disk => found(disk),
     }
@@ -274,8 +320,13 @@ pub async fn save(State(st): State<AppState>, Query(q): Query<SaveQuery>, body: 
         return Done::BadPath.into_response();
     };
     let home = st.home().to_path_buf();
+    let copy = if q.auto == Some(true) {
+        Copy::IfOlderThan(AUTO_COPY_MS)
+    } else {
+        Copy::Always
+    };
     let done = tokio::task::spawn_blocking(move || {
-        barred(&path, &home).unwrap_or_else(|| save_checked(&path, &expect, &body, &home))
+        barred(&path, &home).unwrap_or_else(|| save_checked(&path, &expect, &body, &home, copy))
     })
     .await;
     match done {
@@ -347,11 +398,134 @@ mod tests {
             file.write_all(&bytes[..bytes.len() / 2])?;
             Err(io::Error::other("the disk is full"))
         };
-        let done = replace_with(&path, old, new, hash_bytes(new), home.path(), put);
+        let done = replace_with(&path, old, new, hash_bytes(new), home.path(), Copy::Always, put);
         assert!(matches!(done, Done::Failed(_)));
         assert_eq!(std::fs::read(&path).unwrap(), old);
         // The copy stays: it is the only one if the second write fails too.
         assert_eq!(copies(home.path()), 1);
+    }
+
+    const AUTO: Copy = Copy::IfOlderThan(AUTO_COPY_MS);
+
+    /// A save of "old" to "new" in a fresh folder, with the newest copy of the file `age_ms` old (none for None).
+    fn saved_with_copy_aged(age_ms: Option<u64>, copy: Copy) -> (Done, tempfile::TempDir, tempfile::TempDir, PathBuf) {
+        let (home, dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let path = dir.path().join("a.txt");
+        std::fs::write(&path, "old").unwrap();
+        if let Some(age) = age_ms {
+            let at = super::super::doctor::now_ms() - age;
+            History::new(home.path()).take(&path, b"older", "h", at).unwrap();
+        }
+        let done = save_checked(&path, &Expect::Hash(hash_bytes(b"old")), b"new", home.path(), copy);
+        // Both folders are handed back, so they live while the caller reads the file and the history.
+        (done, home, dir, path)
+    }
+
+    fn snapshot_of(done: Done) -> Option<String> {
+        match done {
+            Done::Saved(saved) => saved.snapshot,
+            _ => panic!("the save did not work"),
+        }
+    }
+
+    #[test]
+    fn an_auto_save_takes_no_copy_when_the_newest_is_under_5_minutes_old() {
+        let (done, home, _dir, path) = saved_with_copy_aged(Some(60_000), AUTO);
+        assert_eq!(snapshot_of(done), None);
+        assert_eq!(std::fs::read(&path).unwrap(), b"new");
+        // The index is as it was: the one copy it held.
+        assert_eq!(copies(home.path()), 1);
+    }
+
+    #[test]
+    fn an_auto_save_takes_a_copy_when_the_newest_is_5_minutes_old() {
+        let (done, home, _dir, path) = saved_with_copy_aged(Some(AUTO_COPY_MS + 60_000), AUTO);
+        assert!(snapshot_of(done).is_some());
+        assert_eq!(std::fs::read(&path).unwrap(), b"new");
+        assert_eq!(copies(home.path()), 2);
+    }
+
+    #[test]
+    fn an_auto_save_of_a_file_with_no_copies_takes_one() {
+        let (done, home, _dir, _path) = saved_with_copy_aged(None, AUTO);
+        assert!(snapshot_of(done).is_some());
+        assert_eq!(copies(home.path()), 1);
+    }
+
+    #[test]
+    fn a_save_without_auto_always_takes_a_copy() {
+        let (done, home, _dir, _path) = saved_with_copy_aged(Some(1_000), Copy::Always);
+        assert!(snapshot_of(done).is_some());
+        assert_eq!(copies(home.path()), 2);
+    }
+
+    #[test]
+    fn the_copy_is_due_from_exactly_5_minutes() {
+        let now = 10_000_000;
+        assert!(!copy_due(&AUTO, Some(now - 299_999), now));
+        assert!(copy_due(&AUTO, Some(now - 300_000), now));
+        assert!(copy_due(&AUTO, None, now));
+        // A copy from the future (the clock went back) is no reason to go without copies until the clock catches up.
+        assert!(copy_due(&AUTO, Some(now + 1_000), now));
+        assert!(copy_due(&Copy::Always, Some(now), now));
+    }
+
+    #[test]
+    fn a_cut_short_auto_save_that_cannot_restore_takes_the_copy_it_skipped() {
+        let (home, dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let path = dir.path().join("a.txt");
+        let (old, new) = (b"the old text".as_slice(), b"a new text that is longer".as_slice());
+        std::fs::write(&path, old).unwrap();
+        let at = super::super::doctor::now_ms() - 1_000;
+        History::new(home.path()).take(&path, b"older", "h", at).unwrap();
+        // Every write stops half-way, so the old bytes can't be put back either.
+        let put = |file: &mut File, bytes: &[u8]| {
+            file.write_all(&bytes[..bytes.len() / 2])?;
+            Err(io::Error::other("the disk is full"))
+        };
+        let done = replace_with(&path, old, new, hash_bytes(new), home.path(), AUTO, put);
+        assert!(matches!(done, Done::Failed(_)));
+        // The file's text from before the save is in the history, as a save with a copy would have left it.
+        assert_eq!(copies(home.path()), 2);
+    }
+
+    #[test]
+    fn a_cut_short_auto_save_that_restores_takes_no_copy() {
+        let (home, dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let path = dir.path().join("a.txt");
+        let (old, new) = (b"the old text".as_slice(), b"a new text that is longer".as_slice());
+        std::fs::write(&path, old).unwrap();
+        let at = super::super::doctor::now_ms() - 1_000;
+        History::new(home.path()).take(&path, b"older", "h", at).unwrap();
+        let calls = Cell::new(0);
+        let put = |file: &mut File, bytes: &[u8]| {
+            calls.set(calls.get() + 1);
+            if calls.get() > 1 {
+                return write_whole(file, bytes);
+            }
+            file.write_all(&bytes[..bytes.len() / 2])?;
+            Err(io::Error::other("the disk is full"))
+        };
+        let done = replace_with(&path, old, new, hash_bytes(new), home.path(), AUTO, put);
+        assert!(matches!(done, Done::Failed(_)));
+        assert_eq!(std::fs::read(&path).unwrap(), old);
+        assert_eq!(copies(home.path()), 1);
+    }
+
+    #[test]
+    fn the_auto_flag_reads_1_and_true_and_nothing_else_is_auto() {
+        let query = |q: &str| {
+            Query::<SaveQuery>::try_from_uri(&format!("/v1/files/content?path=a&{q}").parse().unwrap())
+                .unwrap()
+                .0
+        };
+        assert_eq!(query("auto=1").auto, Some(true));
+        assert_eq!(query("auto=true").auto, Some(true));
+        assert_eq!(query("auto=0").auto, Some(false));
+        assert_eq!(query("auto=false").auto, Some(false));
+        assert_eq!(query("expect=none").auto, None);
+        // Anything else is not a request for fewer copies.
+        assert_eq!(query("auto=yes").auto, Some(false));
     }
 
     #[cfg(windows)]
@@ -368,7 +542,13 @@ mod tests {
             .open(&path)
             .unwrap();
         for _ in 0..3 {
-            let done = save_checked(&path, &Expect::Hash(hash_bytes(b"old")), b"new", home.path());
+            let done = save_checked(
+                &path,
+                &Expect::Hash(hash_bytes(b"old")),
+                b"new",
+                home.path(),
+                Copy::Always,
+            );
             assert!(matches!(done, Done::ReadOnly));
         }
         assert_eq!(std::fs::read(&path).unwrap(), b"old");

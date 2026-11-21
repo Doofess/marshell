@@ -6,10 +6,11 @@ import { keymap, type KeyBinding } from "@codemirror/view";
 import { describe, expect, it } from "vitest";
 import { findCommand } from "../../lib/bindings";
 import { COMMANDS, shortcutLabel, type Os } from "../../lib/keymap";
-import { editorChords, editorKeys, extensions, indentOf } from "./setup";
+import { EDITOR_DEFAULTS } from "./editorPrefs";
+import { editorChords, editorKeys, extensions, indentOf, optionsOn, prefsEffects } from "./setup";
 
 const make = (o: Partial<Parameters<typeof extensions>[0]> = {}, doc = "one\ntwo") =>
-  EditorState.create({ doc, extensions: extensions({ readOnly: false, wrap: false, name: "a.txt", appChord: () => false, ...o }) });
+  EditorState.create({ doc, extensions: extensions({ readOnly: false, wrap: false, name: "a.txt", appChord: () => false, prefs: EDITOR_DEFAULTS, ...o }) });
 
 /** Every key a state's keymaps name, in any platform's field. */
 const named = (state: EditorState): string[] =>
@@ -136,5 +137,50 @@ describe("setup", () => {
     expect(indentOf("", "make")).toBe("\t");
     expect(indentOf("x:\n    y", "make")).toBe("\t");
     expect(indentOf("", "go")).toBe("\t");
+  });
+
+  it("a file whose indent can't be told takes the tab size in spaces", () => {
+    expect(indentOf("", undefined, 2)).toBe("  ");
+    expect(indentOf("", undefined, 8)).toBe("        ");
+    // A file with an indent of its own keeps it, and a language that needs a tab keeps that.
+    expect(indentOf("a\n    b", undefined, 2)).toBe("    ");
+    expect(indentOf("a\n  b", undefined, 8)).toBe("  ");
+    expect(indentOf("", "go", 2)).toBe("\t");
+  });
+});
+
+describe("the Files settings in the editor", () => {
+  const prefs = { ...EDITOR_DEFAULTS };
+
+  it("tab size sets how wide a tab is drawn", () => {
+    expect(make({ prefs: { ...prefs, tab_size: 2 } }).facet(EditorState.tabSize)).toBe(2);
+    expect(make({ prefs: { ...prefs, tab_size: 8 } }).facet(EditorState.tabSize)).toBe(8);
+  });
+
+  it("Tab key indents off leaves Tab unbound", () => {
+    const keys = (tab_indents: boolean) => named(make({ prefs: { ...prefs, tab_indents } }));
+    expect(keys(true)).toContain("Tab");
+    expect(keys(false)).not.toContain("Tab");
+    // Shift-Tab goes with it, and the rest of the keymap stays.
+    expect(keys(false).map(canon)).not.toContain(canon("Shift-Tab"));
+    expect(keys(false)).toContain("Alt-z");
+  });
+
+  it("indent guides, whitespace and scroll past end are on only when asked", () => {
+    expect(optionsOn(make({ prefs: { ...prefs, indent_guides: false, whitespace: false, scroll_past_end: false } })).sort()).toEqual([]);
+    expect(optionsOn(make({ prefs: { ...prefs, indent_guides: true, whitespace: false, scroll_past_end: false } })).sort()).toEqual(["guides"]);
+    expect(optionsOn(make({ prefs: { ...prefs, indent_guides: false, whitespace: true, scroll_past_end: false } })).sort()).toEqual(["whitespace"]);
+    expect(optionsOn(make({ prefs: { ...prefs, indent_guides: false, whitespace: false, scroll_past_end: true } })).sort()).toEqual(["scrollPastEnd"]);
+    expect(optionsOn(make({ prefs: { ...prefs, indent_guides: true, whitespace: true, scroll_past_end: true } })).sort()).toEqual(["guides", "scrollPastEnd", "whitespace"]);
+  });
+
+  it("reconfigurePrefs applies a change to a live view without rebuilding it", () => {
+    let state = make({ prefs: { ...prefs, tab_size: 4, tab_indents: true, indent_guides: false } });
+    // A view needs a DOM; the effects are what reconfigurePrefs sends, so a state applies them the same way.
+    const effects = prefsEffects({ ...prefs, tab_size: 2, tab_indents: false, indent_guides: true, whitespace: true }, () => false);
+    state = state.update({ effects }).state;
+    expect(state.facet(EditorState.tabSize)).toBe(2);
+    expect(named(state)).not.toContain("Tab");
+    expect(optionsOn(state).sort()).toEqual(["guides", "whitespace"]);
   });
 });

@@ -7,6 +7,7 @@ import { placePopover } from "../regions/placement";
 import { RegionComment, type RegionTarget } from "../regions/RegionComment";
 import { RegionLayer } from "../regions/RegionLayer";
 import { getDraft, getPdfDraft } from "../editor/editorApi";
+import type { EditorPrefs } from "../editor/editorPrefs";
 import { isSaveKey, TextTab, type SaveCommands, type TextTabCommands } from "../editor/TextTab";
 import { canMarkRegion, fromDrag, initialRegion, regionLabel, regionStillValid, type Region } from "../regions/region";
 import type { Os } from "../../lib/keymap";
@@ -145,6 +146,10 @@ export type PreviewPaneProps = {
   viewport?: ViewportId | null;
   /** The viewport chip was pressed: opens the viewport menu at this corner. */
   onViewport?: (anchor: { x: number; y: number }) => void;
+  /** The Files settings the editor of a text tab reads. Absent: the defaults. */
+  prefs?: EditorPrefs;
+  /** The Files setting "Auto save". Absent: off. */
+  autoSave?: boolean;
   /** The palette's "Select region" starts a region through this. */
   ref?: Ref<PreviewHandle>;
 };
@@ -159,6 +164,8 @@ export type PreviewHandle = {
   pdf(): PdfCommands | null;
   /** What saves the tab: a text tab's editor, or a PDF tab's notes. Null for anything else. */
   saving(): SaveCommands | null;
+  /** Saves a text tab now when an auto save is due. The window calls it before the session on screen changes. Nothing for any other tab. */
+  autoSave(): void;
 };
 
 /** What the pane keeps while a region is being marked. */
@@ -214,15 +221,18 @@ type BodyProps = {
   /** An HTML file's fixed viewport width, and where its frame reports the width of its place. */
   viewport: number | null;
   onBox: (width: number) => void;
+  /** The Files settings a text tab reads: the editor's, and Auto save. */
+  prefs?: EditorPrefs;
+  autoSave?: boolean;
 };
 
 const noDirty = () => {};
 
-function Body({ entry, file, active, os, announce, refetch, textCommands, pdfCommands, pdfSave, onDirty, onImageSize, onPages, onLink, onKey, region, keptDraft, keptPdf, onSource, place, placeKey, onJump, placeNow, onWebLink, onHistory, viewport, onBox }: BodyProps) {
+function Body({ entry, file, active, os, announce, refetch, textCommands, pdfCommands, pdfSave, onDirty, onImageSize, onPages, onLink, onKey, region, keptDraft, keptPdf, onSource, place, placeKey, onJump, placeNow, onWebLink, onHistory, viewport, onBox, prefs, autoSave }: BodyProps) {
   const { name } = splitPath(entry.path);
   // A text file, and a deleted one that was text, are the same tab: the editor stays mounted when the file goes and comes back.
   const textTab = (f: Extract<FileState, { phase: "text" | "deleted" }>) => (
-    <TextTab key={entry.path} entry={entry} file={f} kind={kindOf(entry.path)} active={active} os={os} onDirty={onDirty} commands={textCommands} announce={announce} refetch={refetch} onLink={onLink} onKey={onKey} onSource={onSource} viewport={viewport} onBox={onBox} />
+    <TextTab key={entry.path} entry={entry} file={f} kind={kindOf(entry.path)} active={active} os={os} onDirty={onDirty} commands={textCommands} announce={announce} refetch={refetch} onLink={onLink} onKey={onKey} onSource={onSource} viewport={viewport} onBox={onBox} prefs={prefs} autoSave={autoSave} />
   );
   switch (file.phase) {
     case "loading":
@@ -245,7 +255,7 @@ function Body({ entry, file, active, os, announce, refetch, textCommands, pdfCom
       if (file.last?.phase === "text" || (file.last === undefined && keptDraft)) return textTab(file);
       if (file.last === undefined && keptPdf) return pdfTab({ phase: "pdf", bytes: keptPdf, version: 0, hash: "", readOnly: null }, null);
       if (file.last?.phase === "pdf") return pdfTab(file.last, null);
-      return file.last ? <Body entry={entry} file={file.last} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} pdfCommands={pdfCommands} pdfSave={pdfSave} onDirty={onDirty} onImageSize={onImageSize} onPages={onPages} onLink={onLink} onKey={onKey} region={region} keptDraft={keptDraft} keptPdf={keptPdf} onSource={onSource} place={place} placeKey={placeKey} onJump={onJump} placeNow={placeNow} onWebLink={onWebLink} onHistory={onHistory} viewport={viewport} onBox={onBox} /> : <p className="preview__message">This file was deleted.</p>;
+      return file.last ? <Body entry={entry} file={file.last} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} pdfCommands={pdfCommands} pdfSave={pdfSave} onDirty={onDirty} onImageSize={onImageSize} onPages={onPages} onLink={onLink} onKey={onKey} region={region} keptDraft={keptDraft} keptPdf={keptPdf} onSource={onSource} place={place} placeKey={placeKey} onJump={onJump} placeNow={placeNow} onWebLink={onWebLink} onHistory={onHistory} viewport={viewport} onBox={onBox} prefs={prefs} autoSave={autoSave} /> : <p className="preview__message">This file was deleted.</p>;
     case "error":
       return <p className="preview__message">This file can't be previewed.</p>;
   }
@@ -280,7 +290,7 @@ function Body({ entry, file, active, os, announce, refetch, textCommands, pdfCom
 }
 
 /** The pane for one file: header, then the scrolling body. Everything it shows comes in as props, so it renders the same on any state. */
-export function PreviewPane({ entry, file, updated, os, canBack, canForward, onBack, onForward, onOpen, onView, onPlace, active, onEscape, announce, refetch, regionTarget, onRegion, onDirty, keptDraft = false, keptPdf = null, viewport = null, onViewport, ref }: PreviewPaneProps) {
+export function PreviewPane({ entry, file, updated, os, canBack, canForward, onBack, onForward, onOpen, onView, onPlace, active, onEscape, announce, refetch, regionTarget, onRegion, onDirty, keptDraft = false, keptPdf = null, viewport = null, onViewport, prefs, autoSave, ref }: PreviewPaneProps) {
   const { name, folder } = splitPath(entry.path);
   // The width of the HTML frame's place, as its view reports it: the chip says what share of the size it is shown at.
   const [frameWidth, setFrameWidth] = useState(0);
@@ -436,6 +446,7 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
     text: () => textCommands.current,
     pdf: () => pdfCommands.current,
     saving: () => textCommands.current ?? pdfSave.current,
+    autoSave: () => textCommands.current?.autoSave(),
   }));
   const add = async (comment: string) => {
     if (!select) return;
@@ -589,7 +600,7 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
             This file was deleted.
           </div>
         )}
-        <Body entry={entry} file={file} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} pdfCommands={pdfCommands} pdfSave={pdfSave} onDirty={noteDirty} onImageSize={(url, w, h) => setSize({ url, w, h })} onPages={(count) => setPages({ path: entry.path, count })} onLink={follow} onKey={keys} region={regionHooks} keptDraft={keptDraft} keptPdf={keptPdf} onSource={() => views.current?.merge()} place={placeOf(entry)} placeKey={moves.current.count} onJump={jump} placeNow={placeNowRef} onWebLink={(url) => follow({ kind: "web", url })} onHistory={(by) => { if (by < 0) { if (canBack) goBack(); } else if (canForward) goForward(); }} viewport={viewportWidth(viewport)} onBox={setFrameWidth} />
+        <Body entry={entry} file={file} active={active} os={os} announce={announce} refetch={refetch} textCommands={textCommands} pdfCommands={pdfCommands} pdfSave={pdfSave} onDirty={noteDirty} onImageSize={(url, w, h) => setSize({ url, w, h })} onPages={(count) => setPages({ path: entry.path, count })} onLink={follow} onKey={keys} region={regionHooks} keptDraft={keptDraft} keptPdf={keptPdf} onSource={() => views.current?.merge()} place={placeOf(entry)} placeKey={moves.current.count} onJump={jump} placeNow={placeNowRef} onWebLink={(url) => follow({ kind: "web", url })} onHistory={(by) => { if (by < 0) { if (canBack) goBack(); } else if (canForward) goForward(); }} viewport={viewportWidth(viewport)} onBox={setFrameWidth} prefs={prefs} autoSave={autoSave} />
       </div>
       {select?.step === "comment" && body.current
         ? createPortal(

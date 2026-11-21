@@ -230,6 +230,64 @@ describe("step", () => {
     expect(state).toMatchObject({ saving: false, sent: null, dirty: true, text: "mine", line });
     expect(effects).toEqual([{ type: "announce", text: line }]);
   });
+  it("an auto save that works says nothing and offers no undo", () => {
+    const s = run(doc(), { type: "edited", text: "mine" }, { type: "save", auto: true });
+    expect(s.state).toMatchObject({ saving: true, sent: "mine", sentAuto: true });
+    expect(s.effects).toEqual([{ type: "save", expect: H1, auto: true }]);
+    const { state, effects } = run(s.state, { type: "saved", hash: H2, snapshot: null });
+    expect(state).toMatchObject({ base: { text: "mine", hash: H2 }, dirty: false, saving: false, sent: null, sentAuto: false, lastSave: null, undoOffered: false, line: null });
+    expect(effects).toEqual([{ type: "dropDraft" }, { type: "refetch" }]);
+    // Even when the core took a copy, no undo is offered: the person didn't ask for the save.
+    const copied = run(s.state, { type: "saved", hash: H2, snapshot: "snap" });
+    expect(copied.state).toMatchObject({ lastSave: null, undoOffered: false, line: null });
+    expect(types(copied.effects)).not.toContain("announce");
+  });
+  it("an auto save keeps the text typed while it was out dirty, and offers no undo", () => {
+    const { state, effects } = run(doc(), { type: "edited", text: "mine" }, { type: "save", auto: true }, { type: "edited", text: "mine, more" }, { type: "saved", hash: H2, snapshot: null });
+    expect(state).toMatchObject({ text: "mine, more", base: { text: "mine", hash: H2 }, dirty: true, saving: false, undoOffered: false, lastSave: null });
+    expect(types(effects)).toEqual(["putDraft", "refetch"]);
+  });
+  it("an auto save that fails or meets a conflict says what Ctrl+S would", () => {
+    const auto = run(doc(), { type: "edited", text: "mine" }, { type: "save", auto: true });
+    const manual = run(doc(), { type: "edited", text: "mine" }, { type: "save" });
+    const failed: DocEvent = { type: "saveFailed", line: "The file is read-only or in use by another program." };
+    const conflict: DocEvent = { type: "saveConflict", hash: H2 };
+    const tooLarge: DocEvent = { type: "saveTooLarge" };
+    for (const e of [failed, conflict, tooLarge]) {
+      const a = run(auto.state, e);
+      const m = run(manual.state, e);
+      expect(a.effects, e.type).toEqual(m.effects);
+      expect(a.effects.some((x) => x.type === "announce"), e.type).toBe(true);
+      expect(a.state, e.type).toEqual(m.state);
+      expect(a.state.sentAuto, e.type).toBe(false);
+    }
+  });
+  it("an auto save with the changed-on-disk bar up does nothing and says nothing", () => {
+    const s = run(doc(), { type: "edited", text: "mine" }, { type: "disk", disk: { text: "x", hash: H2 } }).state;
+    expect(step(s, { type: "save", auto: true }, N)).toEqual({ state: s, effects: [] });
+  });
+  it("an auto save while clean, or while a save is out, does nothing", () => {
+    const clean = doc();
+    expect(step(clean, { type: "save", auto: true }, N)).toEqual({ state: clean, effects: [] });
+    const out = run(doc(), { type: "edited", text: "mine" }, { type: "save", auto: true }).state;
+    expect(step(out, { type: "save", auto: true }, N)).toEqual({ state: out, effects: [] });
+  });
+  it("an auto save never makes a file that is gone", () => {
+    const s = run(doc(), { type: "edited", text: "mine" }, { type: "gone" }).state;
+    expect(step(s, { type: "save", auto: true }, N)).toEqual({ state: s, effects: [] });
+  });
+  it("Ctrl+S still says Saved and offers undo", () => {
+    const { state, effects } = run(doc(), { type: "edited", text: "mine" }, { type: "save" }, { type: "saved", hash: H2, snapshot: "snap" });
+    expect(state).toMatchObject({ sentAuto: false, undoOffered: true, lastSave: { snapshot: "snap", hash: H2 }, line: "Saved a.txt." });
+    expect(effects).toContainEqual({ type: "announce", text: "Saved a.txt." });
+  });
+  it("Ctrl+S pressed while an auto save is out gets its Saved when the answer comes", () => {
+    const out = run(doc(), { type: "edited", text: "mine" }, { type: "save", auto: true }, { type: "save" });
+    expect(out.effects).toEqual([]);
+    const { state, effects } = run(out.state, { type: "saved", hash: H2, snapshot: "snap" });
+    expect(state).toMatchObject({ undoOffered: true, line: "Saved a.txt." });
+    expect(effects).toContainEqual({ type: "announce", text: "Saved a.txt." });
+  });
   it("step_keep_mine_moves_base_to_the_disk_and_keeps_the_draft", () => {
     const disk = { text: "other", hash: H2 };
     const { state, effects } = run(doc(), { type: "edited", text: "mine" }, { type: "disk", disk }, { type: "keepMine" });

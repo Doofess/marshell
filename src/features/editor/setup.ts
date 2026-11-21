@@ -2,16 +2,37 @@ import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { bracketMatching, indentOnInput } from "@codemirror/language";
 import { findPrevious, gotoLine, search, searchKeymap } from "@codemirror/search";
-import { Compartment, EditorState, Facet, type Extension } from "@codemirror/state";
-import { drawSelection, EditorView, highlightActiveLine, keymap, lineNumbers, type Command, type KeyBinding } from "@codemirror/view";
+import { Compartment, EditorState, Facet, type Extension, type StateEffect } from "@codemirror/state";
+import { drawSelection, EditorView, highlightActiveLine, highlightWhitespace, keymap, lineNumbers, scrollPastEnd, type Command, type KeyBinding } from "@codemirror/view";
 import { findCommand, type Chord } from "../../lib/bindings";
 import { keyText, type Os } from "../../lib/keymap";
 import { APP_KEYS_BOX } from "../tasks/reviewOpen";
+import type { EditorPrefs } from "./editorPrefs";
+import { indentGuides } from "./indentGuides";
 
 /** Word wrap: on or off, switched without rebuilding the editor. */
 export const WRAP: Compartment = new Compartment();
 /** Read-only and the label that says so. */
 export const READ_ONLY: Compartment = new Compartment();
+
+/** How wide a tab is drawn. */
+const TAB_SIZE: Compartment = new Compartment();
+/** The keymap, rebuilt when Tab stops or starts indenting. */
+const KEYS: Compartment = new Compartment();
+const GUIDES: Compartment = new Compartment();
+const WHITESPACE: Compartment = new Compartment();
+const PAST_END: Compartment = new Compartment();
+/** What the Tab key puts in. The editor owns it: the file's own indent decides it, and the tab size where the file has none. */
+export const INDENT: Compartment = new Compartment();
+
+/** Which of the optional drawings are on: for a test, since CodeMirror's own extensions can't be told apart in a state. */
+const optionOn = Facet.define<string, string[]>({ combine: (v) => [...v] });
+export const optionsOn = (state: EditorState): string[] => state.facet(optionOn);
+
+const guides = (on: boolean): Extension => (on ? [indentGuides(), optionOn.of("guides")] : []);
+const whitespace = (on: boolean): Extension => (on ? [highlightWhitespace(), optionOn.of("whitespace")] : []);
+const pastEnd = (on: boolean): Extension => (on ? [scrollPastEnd(), optionOn.of("scrollPastEnd")] : []);
+const keys = (prefs: EditorPrefs, appChord: (e: KeyboardEvent) => boolean): Extension => keymap.of(bindings(here(), appChord, prefs.tab_indents));
 
 /** The words CodeMirror's find bar and go-to-line box use, as the plan spells them. */
 const PHRASES: Record<string, string> = {
@@ -51,9 +72,10 @@ const TAB_LANGUAGES = ["make", "go"];
 
 /**
  * What the Tab key puts in: the file's own indent, read from its first indented line among the first 500. A tab stays a tab,
- * spaces stay as many spaces (two to eight), and a file with no indent yet gets four spaces, the tab size.
+ * spaces stay as many spaces (two to eight), and a file with no indent yet gets the tab size in spaces (four unless the Files
+ * settings say otherwise).
  */
-export function indentOf(text: string, language?: string): string {
+export function indentOf(text: string, language?: string, tabSize = 4): string {
   if (language !== undefined && TAB_LANGUAGES.includes(language)) return "\t";
   let from = 0;
   for (let n = 0; n < 500 && from <= text.length; n++) {
@@ -66,7 +88,7 @@ export function indentOf(text: string, language?: string): string {
     if (end === -1) break;
     from = end + 1;
   }
-  return "    ";
+  return " ".repeat(tabSize);
 }
 
 /* Keys. A key is a CodeMirror key name ("Mod-Shift-k"). Mod is Ctrl, and Cmd on macOS. */
@@ -136,12 +158,12 @@ function eventOf(c: Chord): KeyboardEvent {
 }
 
 /** What the editor binds, on a platform: CodeMirror's keymaps, less what is left out and less every key `appChord` says the app takes. */
-function bindings(platform: Platform, appChord: (e: KeyboardEvent) => boolean): KeyBinding[] {
+function bindings(platform: Platform, appChord: (e: KeyboardEvent) => boolean, tabIndents = true): KeyBinding[] {
   const wrap: KeyBinding = { key: "Alt-z", run: toggleWrap, scope: "editor search-panel", preventDefault: true };
   const line: KeyBinding = { key: "Mod-g", run: gotoLine, scope: "editor search-panel", preventDefault: true };
   // Mod-g is go to line, so find next and previous keep F3 and Shift-F3 (and Shift-Mod-g for the previous one).
   const finds = searchKeymap.filter((b) => b.key !== "Mod-g");
-  const sources: readonly KeyBinding[] = [{ key: "Escape", run: armTabFocus }, ...closeBracketsKeymap, line, wrap, ...finds, { key: "Shift-Mod-g", run: findPrevious, scope: "editor search-panel", preventDefault: true }, ...historyKeymap, indentWithTab, ...defaultKeymap];
+  const sources: readonly KeyBinding[] = [{ key: "Escape", run: armTabFocus }, ...closeBracketsKeymap, line, wrap, ...finds, { key: "Shift-Mod-g", run: findPrevious, scope: "editor search-panel", preventDefault: true }, ...historyKeymap, ...(tabIndents ? [indentWithTab] : []), ...defaultKeymap];
   const taken = (key: string) => appChord(eventOf(chordOfKey(key, platform)));
   const out: KeyBinding[] = [];
   for (const b of sources) {
@@ -183,7 +205,7 @@ export function editorKeys(os: Os): string[] {
  * left out, so the key reaches the window's own handler. Tab indents; Esc, then Tab, leaves (CodeMirror's tab-focus mode, which
  * Esc turns on for two seconds), and Ctrl+M switches Tab between the two. Esc closes the find bar and nothing more.
  */
-export function extensions(o: { readOnly: boolean; wrap: boolean; name: string; appChord: (e: KeyboardEvent) => boolean }): Extension[] {
+export function extensions(o: { readOnly: boolean; wrap: boolean; name: string; appChord: (e: KeyboardEvent) => boolean; prefs: EditorPrefs }): Extension[] {
   return [
     lineNumbers(),
     history(),
@@ -195,10 +217,32 @@ export function extensions(o: { readOnly: boolean; wrap: boolean; name: string; 
     search({ top: true }),
     EditorState.phrases.of(PHRASES),
     EditorState.allowMultipleSelections.of(false),
-    EditorState.tabSize.of(4),
+    TAB_SIZE.of(EditorState.tabSize.of(o.prefs.tab_size)),
     EditorView.contentAttributes.of({ role: "textbox", "aria-multiline": "true", spellcheck: "false", class: APP_KEYS_BOX }),
     READ_ONLY.of(access(o.name, o.readOnly)),
     WRAP.of(wrapping(o.wrap)),
-    keymap.of(bindings(here(), o.appChord)),
+    GUIDES.of(guides(o.prefs.indent_guides)),
+    WHITESPACE.of(whitespace(o.prefs.whitespace)),
+    PAST_END.of(pastEnd(o.prefs.scroll_past_end)),
+    KEYS.of(keys(o.prefs, o.appChord)),
   ];
+}
+
+/**
+ * What a change of the Files settings reconfigures, for a view that is open: how wide a tab is drawn, whether Tab indents (the
+ * keymap is rebuilt), the guides, the whitespace marks and the room past the last line. Word wrap is the tab's (`WRAP`).
+ */
+export function prefsEffects(prefs: EditorPrefs, appChord: (e: KeyboardEvent) => boolean): StateEffect<unknown>[] {
+  return [
+    TAB_SIZE.reconfigure(EditorState.tabSize.of(prefs.tab_size)),
+    GUIDES.reconfigure(guides(prefs.indent_guides)),
+    WHITESPACE.reconfigure(whitespace(prefs.whitespace)),
+    PAST_END.reconfigure(pastEnd(prefs.scroll_past_end)),
+    KEYS.reconfigure(keys(prefs, appChord)),
+  ];
+}
+
+/** Applies a change of the Files settings to an open view. */
+export function reconfigurePrefs(view: EditorView, prefs: EditorPrefs, appChord: (e: KeyboardEvent) => boolean): void {
+  view.dispatch({ effects: prefsEffects(prefs, appChord) });
 }

@@ -194,7 +194,7 @@ async function runSave(effect: Extract<Effect, { type: "save" }>, d: EffectDeps)
   const { encoding, eol } = d.format();
   // The text the reducer says the save sent; the base becomes exactly this when the save is answered.
   const bytes = encodeFile(s.sent ?? s.text, encoding, eol);
-  const r = await d.api.saveFile(d.path, bytes, effect.expect);
+  const r = await d.api.saveFile(d.path, bytes, effect.expect, effect.auto === true);
   switch (r.kind) {
     case "saved":
       d.dispatch({ type: "saved", hash: r.saved.hash, snapshot: r.saved.snapshot });

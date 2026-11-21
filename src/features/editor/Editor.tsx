@@ -8,7 +8,8 @@ import { conflictKeys, conflictTints, jumpToConflict } from "./conflictTints";
 import { EDITOR_HINT } from "./EditorFooter";
 import { languageFor } from "./fileTypes";
 import { lineMarks, setMarks } from "./lineMarks";
-import { access, extensions, indentOf, READ_ONLY, toggleWrap, WRAP, wrapping } from "./setup";
+import { EDITOR_DEFAULTS, type EditorPrefs } from "./editorPrefs";
+import { access, extensions, INDENT, indentOf, reconfigurePrefs, READ_ONLY, toggleWrap, WRAP, wrapping } from "./setup";
 import { shiki } from "./shikiBridge";
 import "./Editor.css";
 
@@ -37,6 +38,8 @@ type Props = {
   firstLine?: string;
   readOnly: boolean;
   wrap: boolean;
+  /** The Files settings the editor reads; a change reconfigures the open view. Absent: the defaults. */
+  prefs?: EditorPrefs;
   /** A line to scroll to a third from the top; scrolls again when it changes. */
   target?: number;
   /** The text after a change the person made: typing, paste, cut, undo, redo, replace. */
@@ -86,7 +89,7 @@ const never = () => false;
  * effect. The props that later change (name, read-only, wrap, language) reconfigure the view; the text only changes through
  * the person or `setText`.
  */
-export function Editor({ name, path, initial, firstLine, readOnly, wrap, target, onEdit, onCursor, appChord, hintId = EDITOR_HINT, onConflict, ref }: Props) {
+export function Editor({ name, path, initial, firstLine, readOnly, wrap, prefs = EDITOR_DEFAULTS, target, onEdit, onCursor, appChord, hintId = EDITOR_HINT, onConflict, ref }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   // The callbacks as of the last render, so the view made once never calls an old one.
@@ -94,7 +97,7 @@ export function Editor({ name, path, initial, firstLine, readOnly, wrap, target,
   calls.current = { onEdit, onCursor, onConflict };
   const language = useMemo(() => languageFor(path, firstLine), [path, firstLine]);
   // What the view was last given, so an unchanged prop does not reconfigure it.
-  const given = useRef({ name, readOnly, wrap, language });
+  const given = useRef({ name, readOnly, wrap, language, prefs });
 
   useEffect(() => {
     const parent = host.current;
@@ -104,10 +107,11 @@ export function Editor({ name, path, initial, firstLine, readOnly, wrap, target,
       state: EditorState.create({
         doc: initial,
         extensions: [
-          extensions({ readOnly, wrap, name, appChord: appChord ?? never }),
+          extensions({ readOnly, wrap, name, appChord: appChord ?? never, prefs }),
           COLOURS.of(shiki(language)),
-          // Tab puts in what the file is indented with, so a tab-indented file does not get spaces.
-          indentUnit.of(indentOf(initial, language)),
+          // Tab puts in what the file is indented with, so a tab-indented file does not get spaces; a file with no indent yet gets
+          // the tab size in spaces.
+          INDENT.of(indentUnit.of(indentOf(initial, language, prefs.tab_size))),
           lineMarks(),
           conflictTints(),
           keymap.of(conflictKeys((at, of) => calls.current.onConflict?.(at, of))),
@@ -126,7 +130,7 @@ export function Editor({ name, path, initial, firstLine, readOnly, wrap, target,
       calls.current.onCursor(line.number, head - line.from + 1);
     };
     view.current = v;
-    given.current = { name, readOnly, wrap, language };
+    given.current = { name, readOnly, wrap, language, prefs };
     report(v.state);
     return () => {
       v.destroy();
@@ -142,8 +146,15 @@ export function Editor({ name, path, initial, firstLine, readOnly, wrap, target,
     if (was.name !== name || was.readOnly !== readOnly) v.dispatch({ effects: READ_ONLY.reconfigure(access(name, readOnly)) });
     if (was.wrap !== wrap) v.dispatch({ effects: WRAP.reconfigure(wrapping(wrap)) });
     if (was.language !== language) v.dispatch({ effects: COLOURS.reconfigure(shiki(language)) });
-    given.current = { name, readOnly, wrap, language };
-  }, [name, readOnly, wrap, language]);
+    // The settings come as a new object on each change, and the same values in a new object are no change.
+    const p = was.prefs;
+    if (p.tab_indents !== prefs.tab_indents || p.indent_guides !== prefs.indent_guides || p.whitespace !== prefs.whitespace || p.scroll_past_end !== prefs.scroll_past_end || p.tab_size !== prefs.tab_size) {
+      reconfigurePrefs(v, prefs, appChord ?? never);
+      // The Tab key's indent follows the tab size where the file has no indent of its own.
+      if (p.tab_size !== prefs.tab_size) v.dispatch({ effects: INDENT.reconfigure(indentUnit.of(indentOf(v.state.doc.toString(), language, prefs.tab_size))) });
+    }
+    given.current = { name, readOnly, wrap, language, prefs };
+  }, [name, readOnly, wrap, language, prefs, appChord]);
 
   const reveal = (line: number) => {
     const v = view.current;

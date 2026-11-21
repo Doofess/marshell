@@ -29,11 +29,14 @@ async function lineOf(res: Response): Promise<string> {
   }
 }
 
-/** Save the bytes to the file. `expect` is the hash the edits started from, or null for no file. */
-export async function saveFile(path: string, bytes: Uint8Array, expect: string | null): Promise<SaveResult> {
+/**
+ * Save the bytes to the file. `expect` is the hash the edits started from, or null for no file. `auto` marks the editor's own auto
+ * save, for which the core takes a file-history copy only every five minutes.
+ */
+export async function saveFile(path: string, bytes: Uint8Array, expect: string | null, auto = false): Promise<SaveResult> {
   try {
     const ep = await getEndpoint();
-    const query = `path=${encodeURIComponent(path)}&expect=${expect ?? "none"}`;
+    const query = `path=${encodeURIComponent(path)}&expect=${expect ?? "none"}${auto ? "&auto=1" : ""}`;
     // The body is raw bytes, so this does not go through `coreFetch`, which sends JSON.
     const res = await fetch(coreUrl(ep, `/v1/files/content?${query}`), {
       method: "PUT",
