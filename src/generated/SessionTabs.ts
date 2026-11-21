@@ -4,4 +4,8 @@ import type { PaneTab } from "./PaneTab";
 /**
  * One session's tabs in the side pane.
  */
-export type SessionTabs = { tabs: Array<PaneTab>, active: string | null, };
+export type SessionTabs = { tabs: Array<PaneTab>, active: string | null, 
+/**
+ * The Browser panel's selected tab. A layout.json from before the panels reads as None.
+ */
+active_browser?: string, };

@@ -3,7 +3,7 @@
 
 use crate::store::{self, Versioned};
 use marshell_protocol::api::{
-    LauncherChoice, LayoutDoc, PaneTab, PaneView, RecentFile, SavedTab, SessionMode, ViewLayout,
+    LauncherChoice, LayoutDoc, PaneTab, PaneView, Panels, RecentFile, SavedTab, SessionMode, ViewLayout,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -65,6 +65,13 @@ fn lenient_pane(doc: &mut serde_json::Value) {
         fields.insert("width".into(), Value::Null);
     }
 
+    if fields
+        .get("panels")
+        .is_some_and(|p| serde_json::from_value::<Panels>(p.clone()).is_err())
+    {
+        fields.remove("panels");
+    }
+
     if !fields.get("sessions").is_some_and(Value::is_object) {
         fields.insert("sessions".into(), Value::Object(Map::new()));
     }
@@ -94,6 +101,9 @@ fn lenient_session(session: &mut serde_json::Value) -> bool {
     if !fields.get("active").is_some_and(Value::is_string) {
         fields.insert("active".into(), Value::Null);
     }
+    if fields.get("active_browser").is_some_and(|a| !a.is_string()) {
+        fields.remove("active_browser");
+    }
     true
 }
 
@@ -109,6 +119,9 @@ const MAX_PANE_HISTORY: usize = 50;
 const MAX_RECENT_FILES: usize = 200;
 const MAX_PATH_CHARS: usize = 4096;
 const PANE_VIEWS: [&str; 2] = ["rendered", "source"];
+/// The side pane's panels, top to bottom.
+const PANEL_IDS: [&str; 2] = ["browser", "files"];
+const PANEL_WEIGHT: std::ops::RangeInclusive<u32> = 1..=100_000;
 
 /// A missing, broken or newer-version file means the defaults. The file itself is not touched.
 /// The side pane's parts that can't be read are dropped and the rest of the file is kept.
@@ -208,11 +221,34 @@ fn is_page_address(s: &str) -> bool {
     s.chars().count() <= MAX_PATH_CHARS && (s == "about:blank" || s.starts_with("http://") || s.starts_with("https://"))
 }
 
+/// Pulls the stack of panels back into range: known panels in order, good weights, a fill that can be.
+fn repair_panels(panels: &mut Option<Panels>) {
+    let Some(p) = panels else {
+        return;
+    };
+    let shown: Vec<String> = PANEL_IDS
+        .iter()
+        .filter(|id| p.shown.iter().any(|s| s == *id))
+        .map(|id| id.to_string())
+        .collect();
+    if shown.is_empty() {
+        *panels = None;
+        return;
+    }
+    p.weights
+        .retain(|k, v| PANEL_IDS.contains(&k.as_str()) && PANEL_WEIGHT.contains(v));
+    if !(shown.len() == 2 && p.filled.as_ref().is_some_and(|f| shown.contains(f))) {
+        p.filled = None;
+    }
+    p.shown = shown;
+}
+
 /// Pulls the pane back into range: drops what cannot be drawn and clamps the rest, so one bad part loses nothing else.
 fn repair_pane(pane: &mut PaneView, tabs: &[SavedTab]) {
     if pane.width.is_some_and(|w| !PANE_WIDTH.contains(&w)) {
         pane.width = None;
     }
+    repair_panels(&mut pane.panels);
     pane.sessions.retain(|id, _| tabs.iter().any(|t| &t.tab_id == id));
     for st in pane.sessions.values_mut() {
         let mut seen = BTreeSet::new();
@@ -267,6 +303,13 @@ fn repair_pane(pane: &mut PaneView, tabs: &[SavedTab]) {
             }
         }
         st.tabs = kept;
+        if !st
+            .active_browser
+            .as_ref()
+            .is_some_and(|a| st.tabs.iter().any(|t| &t.id == a))
+        {
+            st.active_browser = None;
+        }
         if !st.active.as_ref().is_some_and(|a| st.tabs.iter().any(|t| &t.id == a)) {
             st.active = st.tabs.first().map(|t| t.id.clone());
         }
@@ -326,6 +369,40 @@ pub fn validate_view(v: &ViewLayout) -> Result<(), String> {
 }
 
 /// The same rules as `repair_pane`, but a bad value is an error naming the field. Whether a session exists is not checked here.
+fn validate_panels(p: &Panels) -> Result<(), String> {
+    let ordered: Vec<&str> = PANEL_IDS
+        .iter()
+        .copied()
+        .filter(|id| p.shown.iter().any(|s| s == id))
+        .collect();
+    if p.shown.is_empty() || p.shown.iter().map(String::as_str).ne(ordered.iter().copied()) {
+        return Err(format!(
+            "pane.panels.shown must hold \"browser\" and \"files\" once each, in that order, and at least one, not {:?}",
+            p.shown
+        ));
+    }
+    for (key, weight) in &p.weights {
+        if !PANEL_IDS.contains(&key.as_str()) {
+            return Err(format!("pane.panels.weights.{key} is not a panel"));
+        }
+        if !PANEL_WEIGHT.contains(weight) {
+            return Err(format!(
+                "pane.panels.weights.{key} must be {} to {}, not {weight}",
+                PANEL_WEIGHT.start(),
+                PANEL_WEIGHT.end()
+            ));
+        }
+    }
+    if let Some(f) = &p.filled
+        && (p.shown.len() != 2 || !p.shown.contains(f))
+    {
+        return Err(format!(
+            "pane.panels.filled must name a shown panel, and only while two are shown, not {f:?}"
+        ));
+    }
+    Ok(())
+}
+
 pub fn validate_pane(p: &PaneView) -> Result<(), String> {
     if let Some(w) = p.width.filter(|w| !PANE_WIDTH.contains(w)) {
         return Err(format!(
@@ -333,6 +410,9 @@ pub fn validate_pane(p: &PaneView) -> Result<(), String> {
             PANE_WIDTH.start(),
             PANE_WIDTH.end()
         ));
+    }
+    if let Some(panels) = &p.panels {
+        validate_panels(panels)?;
     }
     for (session, st) in &p.sessions {
         if st.tabs.len() > MAX_PANE_TABS {
@@ -432,6 +512,15 @@ pub fn validate_pane(p: &PaneView) -> Result<(), String> {
         if !active_ok {
             return Err(format!(
                 "pane.sessions.{session}.active must name one of its tabs (or be null with no tabs)"
+            ));
+        }
+        if st
+            .active_browser
+            .as_ref()
+            .is_some_and(|a| !st.tabs.iter().any(|t| &t.id == a))
+        {
+            return Err(format!(
+                "pane.sessions.{session}.active_browser must name one of its tabs (or be null)"
             ));
         }
     }
@@ -789,7 +878,11 @@ mod tests {
 
     fn session(tabs: Vec<PaneTab>) -> SessionTabs {
         let active = tabs.first().map(|t| t.id.clone());
-        SessionTabs { tabs, active }
+        SessionTabs {
+            tabs,
+            active,
+            active_browser: None,
+        }
     }
 
     fn pane_with(id: &str, st: SessionTabs) -> PaneView {
@@ -1294,5 +1387,155 @@ mod tests {
     fn a_broken_part_outside_the_pane_still_means_the_defaults() {
         let doc = load_with_pane(serde_json::json!({"open": true}), "wide".into());
         assert_eq!(doc, LayoutDoc::default());
+    }
+
+    fn stack(shown: &[&str], weights: &[(&str, u32)], filled: Option<&str>) -> marshell_protocol::api::Panels {
+        marshell_protocol::api::Panels {
+            shown: shown.iter().map(|s| s.to_string()).collect(),
+            weights: weights.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
+            filled: filled.map(String::from),
+        }
+    }
+
+    fn repaired_stack(panels: marshell_protocol::api::Panels) -> Option<marshell_protocol::api::Panels> {
+        let mut doc = doc_with("a");
+        doc.view.pane.panels = Some(panels);
+        repair(doc).view.pane.panels
+    }
+
+    #[test]
+    fn an_old_pane_reads_with_no_panels() {
+        let pane = serde_json::json!({
+            "open": true, "width": 480, "recent": [],
+            "sessions": {"ta": {"tabs": [good_file_tab("t1")], "active": "t1"}}
+        });
+        let doc = load_with_pane(pane, 304.into());
+        assert_eq!(doc.view.pane.panels, None);
+        assert_eq!(doc.view.pane.sessions["ta"].active_browser, None);
+        assert_eq!(doc.view.pane.sessions["ta"].tabs.len(), 1);
+    }
+
+    #[test]
+    fn a_stack_of_the_wrong_type_loses_only_itself() {
+        for bad in [
+            serde_json::json!("files"),
+            serde_json::json!({"shown": "files"}),
+            serde_json::json!({"shown": ["files"], "weights": {"files": 1.5}}),
+            serde_json::json!({"shown": ["files"], "filled": 3}),
+        ] {
+            let pane = serde_json::json!({
+                "open": true, "width": 480, "recent": [], "panels": bad,
+                "sessions": {"ta": {"tabs": [good_file_tab("t1")], "active": "t1", "active_browser": 7}}
+            });
+            let doc = load_with_pane(pane, 304.into());
+            assert_tabs_and_sidebar_kept(&doc);
+            let pane = &doc.view.pane;
+            assert!(pane.open);
+            assert_eq!(pane.width, Some(480));
+            assert_eq!(pane.panels, None);
+            assert_eq!(pane.sessions["ta"].tabs.len(), 1);
+            assert_eq!(pane.sessions["ta"].active, some("t1"));
+            assert_eq!(pane.sessions["ta"].active_browser, None);
+        }
+    }
+
+    #[test]
+    fn repair_keeps_a_good_stack() {
+        let good = stack(
+            &["browser", "files"],
+            &[("browser", 6000), ("files", 14000)],
+            Some("files"),
+        );
+        assert_eq!(repaired_stack(good.clone()), Some(good));
+    }
+
+    #[test]
+    fn repair_orders_and_dedupes_shown() {
+        let got = repaired_stack(stack(&["files", "browser", "files"], &[], None)).unwrap();
+        assert_eq!(got.shown, vec!["browser", "files"]);
+    }
+
+    #[test]
+    fn repair_drops_an_unknown_panel() {
+        let got = repaired_stack(stack(&["changes", "files"], &[], None)).unwrap();
+        assert_eq!(got.shown, vec!["files"]);
+        assert_eq!(repaired_stack(stack(&["changes"], &[], None)), None);
+    }
+
+    #[test]
+    fn repair_drops_a_bad_weight() {
+        let got = repaired_stack(stack(
+            &["browser", "files"],
+            &[("tree", 5), ("browser", 0), ("files", 100_001)],
+            None,
+        ))
+        .unwrap();
+        assert!(got.weights.is_empty());
+        let got = repaired_stack(stack(
+            &["browser", "files"],
+            &[("tree", 5), ("browser", 0), ("files", 7)],
+            None,
+        ))
+        .unwrap();
+        assert_eq!(got.weights.len(), 1);
+        assert_eq!(got.weights["files"], 7);
+    }
+
+    #[test]
+    fn repair_clears_a_fill_that_cannot_be() {
+        assert_eq!(
+            repaired_stack(stack(&["files"], &[], Some("browser"))).unwrap().filled,
+            None
+        );
+        assert_eq!(
+            repaired_stack(stack(&["files"], &[], Some("files"))).unwrap().filled,
+            None
+        );
+    }
+
+    #[test]
+    fn repair_clears_an_active_browser_that_names_no_tab() {
+        let mut st = session(vec![browser_tab("t1", "https://example.com/")]);
+        st.active_browser = Some("gone".into());
+        assert_eq!(repaired("ta", st).sessions["ta"].active_browser, None);
+        let mut st = session(vec![browser_tab("t1", "https://example.com/")]);
+        st.active_browser = Some("t1".into());
+        assert_eq!(repaired("ta", st).sessions["ta"].active_browser, some("t1"));
+    }
+
+    #[test]
+    fn validate_names_the_stack_field() {
+        let check = |panels: marshell_protocol::api::Panels, starts: &str| {
+            let pane = PaneView {
+                panels: Some(panels),
+                ..PaneView::default()
+            };
+            let err = validate_pane(&pane).unwrap_err();
+            assert!(err.starts_with(starts), "{err}");
+        };
+        check(stack(&["files", "browser"], &[], None), "pane.panels.shown");
+        check(stack(&["files", "files"], &[], None), "pane.panels.shown");
+        check(stack(&[], &[], None), "pane.panels.shown");
+        check(stack(&["changes"], &[], None), "pane.panels.shown");
+        check(stack(&["files"], &[("tree", 5)], None), "pane.panels.weights.tree");
+        check(stack(&["files"], &[("files", 0)], None), "pane.panels.weights.files");
+        check(
+            stack(&["files"], &[("files", 100_001)], None),
+            "pane.panels.weights.files",
+        );
+        check(stack(&["files"], &[], Some("files")), "pane.panels.filled");
+        check(stack(&["browser", "files"], &[], Some("tree")), "pane.panels.filled");
+        let mut st = session(vec![browser_tab("t1", "https://example.com/")]);
+        st.active_browser = Some("gone".into());
+        let err = validate_pane(&pane_with("a", st)).unwrap_err();
+        assert!(err.starts_with("pane.sessions.a.active_browser"), "{err}");
+        let good = stack(&["browser", "files"], &[("browser", 1)], Some("browser"));
+        assert!(
+            validate_pane(&PaneView {
+                panels: Some(good),
+                ..PaneView::default()
+            })
+            .is_ok()
+        );
     }
 }
