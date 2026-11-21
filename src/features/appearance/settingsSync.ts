@@ -1,6 +1,7 @@
 import type { Appearance } from "../../generated/Appearance";
 import type { BrowserSettings } from "../../generated/BrowserSettings";
 import type { Endpoint } from "../../generated/Endpoint";
+import type { FilesSettings } from "../../generated/FilesSettings";
 import type { NotifySettings } from "../../generated/NotifySettings";
 import type { RetentionLimits } from "../../generated/RetentionLimits";
 import type { Settings } from "../../generated/Settings";
@@ -15,6 +16,8 @@ export class SettingsReadError extends Error {
 }
 
 const DEFAULT_BROWSER: BrowserSettings = { terminal_links: true, open_agent_html: true, cookies: "always" };
+
+const DEFAULT_FILES: FilesSettings = { preview_tabs: true, auto_save: false, tab_indents: true, word_wrap: false, indent_guides: true, whitespace: false, scroll_past_end: false, tab_size: 4, tree_position: "automatic" };
 
 const DEFAULT_NOTIFY: NotifySettings = {
   needs_you: { banner: true, sound: true },
@@ -58,6 +61,8 @@ export class SettingsSync {
   private backupDir: string | null = null;
   /** The Browser panel settings. Kept from the last read, so every save sends them back unchanged. */
   private browserValue: BrowserSettings = DEFAULT_BROWSER;
+  /** The Files settings. Kept from the last read, so every save sends them back unchanged. */
+  private filesValue: FilesSettings = DEFAULT_FILES;
   /** Every settings write in order: the last one's end. Never rejects. */
   private queue: Promise<void> = Promise.resolve();
   /** True after a read that failed, until one works. */
@@ -94,6 +99,7 @@ export class SettingsSync {
     this.limitDays = s.history_limit_days;
     this.backupDir = s.history_backup_dir;
     this.setBrowserValue(s.browser);
+    this.filesValue = s.files;
     this.appearance = s.appearance;
     this.emit();
     return s.appearance;
@@ -207,7 +213,7 @@ export class SettingsSync {
         throw new SettingsReadError();
       }
     }
-    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, close_to_tray: this.tray, status_off: this.off, notifications: this.notify, history_import: this.importOn, history_limit_gb: this.limitGb, history_limit_days: this.limitDays, history_backup_dir: this.backupDir, browser: this.browserValue });
+    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, close_to_tray: this.tray, status_off: this.off, notifications: this.notify, history_import: this.importOn, history_limit_gb: this.limitGb, history_limit_days: this.limitDays, history_backup_dir: this.backupDir, browser: this.browserValue, files: this.filesValue });
     this.warned = s.pause_warned;
     this.seen = s.onboarded;
     this.tray = s.close_to_tray;
@@ -218,6 +224,7 @@ export class SettingsSync {
     this.limitDays = s.history_limit_days;
     this.backupDir = s.history_backup_dir;
     this.setBrowserValue(s.browser);
+    this.filesValue = s.files;
     this.appearance = s.appearance;
     this.emit();
     return s.appearance;
@@ -303,7 +310,7 @@ export class SettingsSync {
       history_limit_gb: this.limitGb,
       history_limit_days: this.limitDays,
       history_backup_dir: this.backupDir,
-      browser: this.browserValue,
+      browser: this.browserValue, files: this.filesValue,
       ...change,
     });
     this.warned = s.pause_warned;
@@ -316,6 +323,7 @@ export class SettingsSync {
     this.limitDays = s.history_limit_days;
     this.backupDir = s.history_backup_dir;
     this.setBrowserValue(s.browser);
+    this.filesValue = s.files;
     this.appearance = s.appearance;
     this.emit();
   }

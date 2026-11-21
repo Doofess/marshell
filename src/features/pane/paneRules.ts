@@ -4,6 +4,11 @@ import { PANELS, isPanelId, panelOf } from "./panels";
 
 const VIEWPORT_IDS: readonly string[] = VIEWPORTS.map((v) => v.id);
 
+/** A folder of a saved tree, as `tree_folder_ok` in the core: relative to the root, "/" separated, no empty, "." or ".." part. */
+export function treeFolderOk(f: string): boolean {
+  return f.length > 0 && f.length <= 4096 && !/[\\:]/.test(f) && !f.startsWith("/") && f.split("/").every((c) => c !== "" && c !== "." && c !== "..");
+}
+
 /**
  * A test helper: what the core accepts of a pane, in TypeScript. Returns the name of the first field that breaks a rule, or null.
  * While a session has tabs its `active` names one of them (a Files tab when Files has any, else a Browser tab); `active_browser` is
@@ -11,7 +16,9 @@ const VIEWPORT_IDS: readonly string[] = VIEWPORTS.map((v) => v.id);
  * `filled` null or one of two shown, and weights that are whole numbers from 1 to 100000 under panel ids.
  */
 export function paneProblem(pane: PaneView): string | null {
+  if (pane.tree?.width != null && (pane.tree.width < 160 || pane.tree.width > 2048)) return "tree.width";
   for (const st of Object.values(pane.sessions)) {
+    if (st.tree && (st.tree.expanded.length > 500 || !st.tree.expanded.every(treeFolderOk))) return "tree.expanded";
     const panels = st.tabs.map(panelOf);
     if (st.tabs.length > 32) return "tabs";
     if (new Set(st.tabs.map((t) => t.id)).size !== st.tabs.length) return "tabs";

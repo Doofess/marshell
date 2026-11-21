@@ -2,7 +2,9 @@
 //! means the defaults, and a broken file is left alone until the next save moves it aside.
 
 use crate::store::{self, Versioned};
-use marshell_protocol::api::{Appearance, BrowserSettings, CookieRule, NotifySettings, QuietHours, Settings};
+use marshell_protocol::api::{
+    Appearance, BrowserSettings, CookieRule, FilesSettings, NotifySettings, QuietHours, Settings, TreePosition,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::Path;
@@ -38,6 +40,9 @@ struct FileDoc {
     /// Each value that does not read falls back on its own default.
     #[serde(default, deserialize_with = "lenient_browser")]
     browser: BrowserSettings,
+    /// Each value that does not read falls back on its own default.
+    #[serde(default, deserialize_with = "lenient_files")]
+    files: FilesSettings,
     /// Read only, to migrate an older file; never written.
     #[serde(default, skip_serializing)]
     sound_off: bool,
@@ -68,6 +73,47 @@ fn lenient_browser<'de, D: serde::Deserializer<'de>>(d: D) -> Result<BrowserSett
         match serde_json::from_value::<CookieRule>(v.clone()) {
             Ok(rule) => out.cookies = rule,
             Err(_) => tracing::warn!("settings file has an invalid browser.cookies, using the default"),
+        }
+    }
+    Ok(out)
+}
+
+/// The files block, one field at a time like the browser block: a value of the wrong type, a `tab_size` other than
+/// 2, 4 or 8, or an unknown position reads as its default. Only the field's name is logged.
+fn lenient_files<'de, D: serde::Deserializer<'de>>(d: D) -> Result<FilesSettings, D::Error> {
+    let value = serde_json::Value::deserialize(d)?;
+    let mut out = FilesSettings::default();
+    let Some(fields) = value.as_object() else {
+        if !value.is_null() {
+            tracing::warn!("settings file has an invalid files block, using the defaults");
+        }
+        return Ok(out);
+    };
+    for (name, slot) in [
+        ("preview_tabs", &mut out.preview_tabs),
+        ("auto_save", &mut out.auto_save),
+        ("tab_indents", &mut out.tab_indents),
+        ("word_wrap", &mut out.word_wrap),
+        ("indent_guides", &mut out.indent_guides),
+        ("whitespace", &mut out.whitespace),
+        ("scroll_past_end", &mut out.scroll_past_end),
+    ] {
+        match fields.get(name) {
+            None => {}
+            Some(serde_json::Value::Bool(b)) => *slot = *b,
+            Some(_) => tracing::warn!("settings file has an invalid files.{name}, using the default"),
+        }
+    }
+    if let Some(v) = fields.get("tab_size") {
+        match v.as_u64() {
+            Some(n @ (2 | 4 | 8)) => out.tab_size = n as u8,
+            _ => tracing::warn!("settings file has an invalid files.tab_size, using the default"),
+        }
+    }
+    if let Some(v) = fields.get("tree_position") {
+        match serde_json::from_value::<TreePosition>(v.clone()) {
+            Ok(p) => out.tree_position = p,
+            Err(_) => tracing::warn!("settings file has an invalid files.tree_position, using the default"),
         }
     }
     Ok(out)
@@ -157,6 +203,7 @@ pub fn load(home: &Path) -> Settings {
         history_limit_days,
         history_backup_dir: doc.history_backup_dir.filter(|dir| !dir.trim().is_empty()),
         browser: doc.browser,
+        files: doc.files,
     }
 }
 
@@ -205,6 +252,7 @@ pub fn save(home: &Path, s: &Settings) -> anyhow::Result<()> {
             history_limit_days: s.history_limit_days,
             history_backup_dir: s.history_backup_dir.clone(),
             browser: s.browser.clone(),
+            files: s.files.clone(),
             sound_off: false,
         },
     )
@@ -287,7 +335,11 @@ pub fn validate(s: &Settings) -> Result<(), String> {
     check_font_size(a)?;
     check_imported_themes(a)?;
     check_terminal_theme(a)?;
-    check_limits(s.history_limit_gb, s.history_limit_days)
+    check_limits(s.history_limit_gb, s.history_limit_days)?;
+    if !matches!(s.files.tab_size, 2 | 4 | 8) {
+        return Err("files.tab_size must be 2, 4 or 8".into());
+    }
+    Ok(())
 }
 
 /// Puts the default in place of every field that fails its check, and returns the names of those
@@ -318,6 +370,71 @@ fn repair(a: &mut Appearance) -> Vec<&'static str> {
 mod tests {
     use super::*;
     use marshell_protocol::api::{BrowserSettings, CookieRule, ImportedTheme, TerminalColors};
+
+    #[test]
+    fn files_settings_default_to_the_reference_choices() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(
+            load(home.path()).files,
+            FilesSettings {
+                preview_tabs: true,
+                auto_save: false,
+                tab_indents: true,
+                word_wrap: false,
+                indent_guides: true,
+                whitespace: false,
+                scroll_past_end: false,
+                tab_size: 4,
+                tree_position: TreePosition::Automatic,
+            }
+        );
+    }
+
+    #[test]
+    fn files_settings_round_trip() {
+        let home = tempfile::tempdir().unwrap();
+        let s = Settings {
+            files: FilesSettings {
+                preview_tabs: false,
+                auto_save: true,
+                tab_indents: false,
+                word_wrap: true,
+                indent_guides: false,
+                whitespace: true,
+                scroll_past_end: true,
+                tab_size: 8,
+                tree_position: TreePosition::Right,
+            },
+            ..Settings::default()
+        };
+        save(home.path(), &s).unwrap();
+        assert_eq!(load(home.path()).files, s.files);
+    }
+
+    #[test]
+    fn one_unreadable_files_value_reads_as_its_default_and_the_rest_is_kept() {
+        let home = tempfile::tempdir().unwrap();
+        write_settings(
+            home.path(),
+            r#"{"files": {"auto_save": true, "tab_size": 3, "tree_position": "top", "word_wrap": "yes"}}"#,
+        );
+        assert_eq!(
+            load(home.path()).files,
+            FilesSettings {
+                auto_save: true,
+                ..FilesSettings::default()
+            }
+        );
+    }
+
+    #[test]
+    fn validate_refuses_a_tab_size_other_than_2_4_or_8() {
+        let mut s = Settings::default();
+        s.files.tab_size = 3;
+        assert_eq!(validate(&s), Err("files.tab_size must be 2, 4 or 8".to_string()));
+        s.files.tab_size = 2;
+        assert!(validate(&s).is_ok());
+    }
 
     fn write_settings(home: &Path, json: &str) {
         std::fs::write(crate::paths::settings_file(home), json).unwrap();

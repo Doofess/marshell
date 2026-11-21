@@ -2,6 +2,7 @@
 import type { Panels } from "./Panels";
 import type { RecentFile } from "./RecentFile";
 import type { SessionTabs } from "./SessionTabs";
+import type { TreeView } from "./TreeView";
 
 /**
  * The side pane: whether it shows, how wide, each session's tabs and the recent files.
@@ -18,4 +19,8 @@ recent: Array<RecentFile>,
 /**
  * The stack of panels. A layout.json from before the panels reads as None.
  */
-panels?: Panels, };
+panels?: Panels, 
+/**
+ * The file tree's visibility and width.
+ */
+tree?: TreeView, };

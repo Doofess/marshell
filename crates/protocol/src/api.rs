@@ -459,6 +459,10 @@ pub struct PaneTab {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub viewport: Option<String>,
+    /// Some(true) for a preview tab, which the next file opened from the tree replaces. The app never writes false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub preview: Option<bool>,
 }
 
 /// The body of a `marshell open` request: one address or file for a session's side pane.
@@ -520,6 +524,27 @@ pub struct SessionTabs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub active_browser: Option<String>,
+    /// The file tree's saved state for this session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tree: Option<TreeState>,
+}
+
+/// A session's file tree: its root and the open folders.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TreeState {
+    pub root: String,
+    /// Open folders relative to `root`, with "/" separators.
+    pub expanded: Vec<String>,
+}
+
+/// The file tree's size and visibility, per window.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TreeView {
+    pub hidden: bool,
+    pub width: Option<u32>,
 }
 
 /// A file opened lately in a project.
@@ -558,6 +583,10 @@ pub struct PaneView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub panels: Option<Panels>,
+    /// The file tree's visibility and width.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tree: Option<TreeView>,
 }
 
 /// How the window was laid out: the selected tab, the sidebar and the side pane.
@@ -1268,6 +1297,8 @@ pub struct Settings {
     pub history_backup_dir: Option<String>,
     /// The Browser panel's settings.
     pub browser: BrowserSettings,
+    /// The Files panel's settings.
+    pub files: FilesSettings,
 }
 
 /// How long a page keeps its cookies.
@@ -1320,6 +1351,51 @@ impl Default for Settings {
             history_limit_days: None,
             history_backup_dir: None,
             browser: BrowserSettings::default(),
+            files: FilesSettings::default(),
+        }
+    }
+}
+
+/// Where the file tree sits beside the open file.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum TreePosition {
+    #[default]
+    Automatic,
+    Left,
+    Right,
+}
+
+/// The Files panel's settings, in `settings.json` under `files`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct FilesSettings {
+    pub preview_tabs: bool,
+    pub auto_save: bool,
+    pub tab_indents: bool,
+    pub word_wrap: bool,
+    pub indent_guides: bool,
+    pub whitespace: bool,
+    pub scroll_past_end: bool,
+    /// 2, 4 or 8.
+    pub tab_size: u8,
+    pub tree_position: TreePosition,
+}
+
+impl Default for FilesSettings {
+    fn default() -> Self {
+        Self {
+            preview_tabs: true,
+            auto_save: false,
+            tab_indents: true,
+            word_wrap: false,
+            indent_guides: true,
+            whitespace: false,
+            scroll_past_end: false,
+            tab_size: 4,
+            tree_position: TreePosition::default(),
         }
     }
 }
