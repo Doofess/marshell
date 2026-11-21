@@ -1,6 +1,7 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { ILink, ILinkHandler, ILinkProvider } from "@xterm/xterm";
 import type { Endpoint } from "../../generated/Endpoint";
+import type { OpenPageInPane } from "../pane/PaneContext";
 import { logicalLine, type BufferLike } from "./pathLinks";
 
 /** An address longer than this is not a link at all. */
@@ -43,6 +44,11 @@ export function findUrls(text: string): Array<{ start: number; end: number; url:
     out.push({ start: m.index, end: m.index + url.length, url });
   }
   return out;
+}
+
+/** Where a link in terminal output goes: the side pane when the window has pages and "Open terminal links here" is on, else the system browser. */
+export function linkTarget(page: OpenPageInPane | null, here: boolean): "pane" | "browser" {
+  return page !== null && here ? "pane" : "browser";
 }
 
 /** The tooltip over a clickable web address. */
@@ -97,7 +103,7 @@ const modifierHeld = (platform: Endpoint["platform"], event: MouseEvent): boolea
  * (the system browser by default; the side pane where the window has browser tabs, which `inPane` says for the hint): a plain
  * click is left to selection and to a program that reads the mouse.
  */
-export function urlLinkProvider(term: { buffer: { active: BufferLike }; element?: HTMLElement | undefined }, platform: Endpoint["platform"], open: Open = openUrl, inPane = false): ILinkProvider {
+export function urlLinkProvider(term: { buffer: { active: BufferLike }; element?: HTMLElement | undefined }, platform: Endpoint["platform"], open: Open = openUrl, inPane: () => boolean = () => false): ILinkProvider {
   return {
     provideLinks(bufferLineNumber, callback) {
       const ll = logicalLine(term.buffer.active, bufferLineNumber - 1);
@@ -114,7 +120,7 @@ export function urlLinkProvider(term: { buffer: { active: BufferLike }; element?
             activate(event) {
               if (modifierHeld(platform, event)) openWeb(u.url, open);
             },
-            hover: () => term.element?.setAttribute("title", urlHint(platform, inPane)),
+            hover: () => term.element?.setAttribute("title", urlHint(platform, inPane())),
             leave: () => term.element?.removeAttribute("title"),
           };
         }),
@@ -127,7 +133,7 @@ export function urlLinkProvider(term: { buffer: { active: BufferLike }; element?
  * xterm's handler for OSC 8 hyperlinks, under the same rule as a plain address: the modifier, and only http and https. It takes
  * the place of xterm's own, which asks before it opens and shows the address; here the hint shows it (`targetHint`).
  */
-export function webLinkHandler(platform: Endpoint["platform"], element: () => HTMLElement | undefined, open: Open = openUrl, inPane = false): ILinkHandler {
+export function webLinkHandler(platform: Endpoint["platform"], element: () => HTMLElement | undefined, open: Open = openUrl, inPane: () => boolean = () => false): ILinkHandler {
   return {
     activate(event, text) {
       // The parsed address, so what opens is the string the hint showed.
@@ -135,7 +141,7 @@ export function webLinkHandler(platform: Endpoint["platform"], element: () => HT
       if (url && modifierHeld(platform, event)) hand(url.href, open);
     },
     hover(_event, text) {
-      const hint = targetHint(platform, text, inPane);
+      const hint = targetHint(platform, text, inPane());
       if (hint === null) element()?.removeAttribute("title");
       else element()?.setAttribute("title", hint);
     },

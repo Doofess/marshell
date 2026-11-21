@@ -2,8 +2,9 @@
 //! reads its event and queues what follows with `post`, and never calls back into a webview from inside the callback.
 
 use super::rules::{
-    HOLD_LOOK, HoldLook, KeyEvent, KeyRoute, MAX_ICON_BYTES, PopupGate, TAB_HOLD, TabHold, clipped_title,
-    focus_out_direction, icon_src, key_event, reported_address, route_key, unparsed_address,
+    Emulate, HOLD_LOOK, HoldLook, KeyEvent, KeyRoute, MAX_ICON_BYTES, PopupGate, Rect, TAB_HOLD, TabHold,
+    clipped_title, emulate_params, focus_out_direction, icon_src, key_event, reported_address, route_key, shot_params,
+    unparsed_address,
 };
 use super::{
     BrowserState, FocusOut, Job, PageFocus, PageIcon, PageKey, PageKeyEvent, PageState, emit, focus_app, lock, post,
@@ -15,27 +16,27 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, Webview};
 use webview2_com::Microsoft::Web::WebView2::Win32::{
-    COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG, COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG, COREWEBVIEW2_KEY_EVENT_KIND,
-    COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_KEY_UP,
-    COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_UP,
-    COREWEBVIEW2_MOVE_FOCUS_REASON, COREWEBVIEW2_MOVE_FOCUS_REASON_NEXT, COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS,
-    COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC, COREWEBVIEW2_PHYSICAL_KEY_STATUS,
-    COREWEBVIEW2_PREFERRED_COLOR_SCHEME_DARK, COREWEBVIEW2_PREFERRED_COLOR_SCHEME_LIGHT,
-    COREWEBVIEW2_PROCESS_FAILED_KIND, COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED,
-    COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED, ICoreWebView2, ICoreWebView2_13, ICoreWebView2_15,
-    ICoreWebView2Controller, ICoreWebView2Profile2,
+    COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_SITE, COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG,
+    COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG, COREWEBVIEW2_KEY_EVENT_KIND, COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN,
+    COREWEBVIEW2_KEY_EVENT_KIND_KEY_UP, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
+    COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_UP, COREWEBVIEW2_MOVE_FOCUS_REASON, COREWEBVIEW2_MOVE_FOCUS_REASON_NEXT,
+    COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS, COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC,
+    COREWEBVIEW2_PHYSICAL_KEY_STATUS, COREWEBVIEW2_PREFERRED_COLOR_SCHEME_DARK,
+    COREWEBVIEW2_PREFERRED_COLOR_SCHEME_LIGHT, COREWEBVIEW2_PROCESS_FAILED_KIND,
+    COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED, COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED,
+    ICoreWebView2, ICoreWebView2_13, ICoreWebView2_15, ICoreWebView2Controller, ICoreWebView2Profile2,
 };
 use webview2_com::{
-    AcceleratorKeyPressedEventHandler, CapturePreviewCompletedHandler, ClearBrowsingDataCompletedHandler,
-    DocumentTitleChangedEventHandler, FaviconChangedEventHandler, FocusChangedEventHandler, GetFaviconCompletedHandler,
-    HistoryChangedEventHandler, MoveFocusRequestedEventHandler, NavigationCompletedEventHandler,
-    NavigationStartingEventHandler, NewWindowRequestedEventHandler, ProcessFailedEventHandler,
-    SourceChangedEventHandler, take_pwstr,
+    AcceleratorKeyPressedEventHandler, CallDevToolsProtocolMethodCompletedHandler, CapturePreviewCompletedHandler,
+    ClearBrowsingDataCompletedHandler, DocumentTitleChangedEventHandler, FaviconChangedEventHandler,
+    FocusChangedEventHandler, GetFaviconCompletedHandler, HistoryChangedEventHandler, MoveFocusRequestedEventHandler,
+    NavigationCompletedEventHandler, NavigationStartingEventHandler, NewWindowRequestedEventHandler,
+    ProcessFailedEventHandler, SourceChangedEventHandler, take_pwstr,
 };
 use windows::Win32::Foundation::HGLOBAL;
 use windows::Win32::System::Com::StructuredStorage::CreateStreamOnHGlobal;
 use windows::Win32::System::Com::{IStream, STREAM_SEEK_SET};
-use windows_core::Interface;
+use windows_core::{HSTRING, Interface};
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
 use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
@@ -691,9 +692,87 @@ pub async fn capture(page: &Webview) -> Result<Vec<u8>, String> {
     answer(rx, Duration::from_secs(5), "the page's picture was not ready in 5 s").await
 }
 
+/// Starts a DevTools-protocol call on the page (S14: the in-process call works where no DevTools port is open) and
+/// returns where its answer will arrive: the result as JSON, or what the page said instead. The sender is dropped
+/// with no answer when the page goes away first. `method` is a `&'static str`: only this module names one, and no
+/// caller passes a method on from the app.
+fn call(
+    page: &Webview,
+    method: &'static str,
+    params: String,
+) -> Result<mpsc::Receiver<Result<String, String>>, String> {
+    let (tx, rx) = mpsc::channel::<Result<String, String>>();
+    page.with_webview(move |pv| {
+        let done = tx.clone();
+        let handler = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(move |result, json| {
+            let _ = done.send(result.map(|()| json).map_err(|e| hr_text(&e)));
+            Ok(())
+        }));
+        // SAFETY: COM calls on the live controller, on the webview's own thread; the handler is owned by the
+        // webview until it has run.
+        let started = unsafe {
+            pv.controller()
+                .CoreWebView2()
+                .and_then(|w| w.CallDevToolsProtocolMethod(&HSTRING::from(method), &HSTRING::from(params), &handler))
+        };
+        if let Err(e) = started {
+            let _ = tx.send(Err(hr_text(&e)));
+        }
+    })
+    .map_err(|e| e.to_string())?;
+    Ok(rx)
+}
+
+/// How long a page has to answer a change of its viewport before the change counts as not made.
+const EMULATE_WAIT: Duration = Duration::from_secs(5);
+
+/// Lays the page out `to.width` wide and draws it at `to.scale`, or with None gives it back its own width. Nothing
+/// waits for it: `done` runs, on another thread, with whether the page took it, as soon as the page answers; a page
+/// that refuses, or has not answered in `EMULATE_WAIT`, is a no.
+pub fn emulate(page: &Webview, to: Option<Emulate>, done: impl FnOnce(bool) + Send + 'static) {
+    let started = match to {
+        Some(e) => call(page, "Emulation.setDeviceMetricsOverride", emulate_params(e)),
+        None => call(page, "Emulation.clearDeviceMetricsOverride", "{}".to_string()),
+    };
+    let Ok(rx) = started else {
+        return done(false);
+    };
+    tauri::async_runtime::spawn_blocking(move || done(matches!(rx.recv_timeout(EMULATE_WAIT), Ok(Ok(_)))));
+}
+
+/// The page's size, as `Page.getLayoutMetrics` answers (JSON).
+pub async fn page_metrics(page: &Webview) -> Result<String, String> {
+    let rx = call(page, "Page.getLayoutMetrics", "{}".to_string())?;
+    answer(rx, Duration::from_secs(5), "the page's size was not ready in 5 s").await
+}
+
+/// A picture of the page, as `Page.captureScreenshot` answers (JSON holding the PNG): the part on screen, or with
+/// `clip` that part of the whole page. Only the shown page answers (S14), so the caller asks only that one.
+pub async fn screenshot(page: &Webview, clip: Option<Rect>) -> Result<String, String> {
+    let rx = call(page, "Page.captureScreenshot", shot_params(clip))?;
+    answer(rx, Duration::from_secs(10), "the page's picture was not ready in 10 s").await
+}
+
 /// Clears everything the profile holds: cookies and sign-ins, storage, the cache, history, saved permissions.
 /// Asked of one page, done for the profile every page shares.
 pub async fn clear_data(page: &Webview) -> Result<(), String> {
+    clear(
+        page,
+        false,
+        Duration::from_secs(30),
+        "the pages' data was not cleared in 30 s",
+    )
+    .await
+}
+
+/// Clears what sites stored in the profile, the cookies and every kind of site storage, and leaves the rest: the
+/// "until quit" cookie rule's clear (6r-1b decision 19). Asked of a page that keeps data, never of a private one,
+/// whose profile is the one in memory.
+pub async fn clear_site_data(page: &Webview, limit: Duration) -> Result<(), String> {
+    clear(page, true, limit, "the pages' cookies were not cleared in time").await
+}
+
+async fn clear(page: &Webview, site_only: bool, limit: Duration, late: &'static str) -> Result<(), String> {
     let (tx, rx) = mpsc::channel::<Result<(), String>>();
     page.with_webview(move |pv| {
         let done = tx.clone();
@@ -710,7 +789,11 @@ pub async fn clear_data(page: &Webview) -> Result<(), String> {
                         let _ = done.send(result.map_err(|e| hr_text(&e)));
                         Ok(())
                     }));
-                    profile.ClearBrowsingDataAll(&handler)
+                    if site_only {
+                        profile.ClearBrowsingData(COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_SITE, &handler)
+                    } else {
+                        profile.ClearBrowsingDataAll(&handler)
+                    }
                 })
         };
         if let Err(e) = started {
@@ -718,7 +801,7 @@ pub async fn clear_data(page: &Webview) -> Result<(), String> {
         }
     })
     .map_err(|e| e.to_string())?;
-    answer(rx, Duration::from_secs(30), "the pages' data was not cleared in 30 s").await
+    answer(rx, limit, late).await
 }
 
 /// Back, Forward, Reload and Stop, on the page's own history. Back and Forward pass the allow-list like any other

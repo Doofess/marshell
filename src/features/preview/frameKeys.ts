@@ -1,5 +1,5 @@
 /** The parts of a key event read here, so a test needs no DOM. */
-export type FrameKey = Pick<KeyboardEvent, "key" | "code" | "ctrlKey" | "shiftKey" | "altKey" | "metaKey" | "repeat" | "defaultPrevented"> & { type: string };
+export type FrameKey = Pick<KeyboardEvent, "key" | "code" | "ctrlKey" | "shiftKey" | "altKey" | "metaKey" | "repeat" | "defaultPrevented"> & { type: string; getModifierState?: (key: string) => boolean };
 
 const MODIFIERS: ReadonlySet<string> = new Set(["Control", "Shift", "Alt", "Meta"]);
 
@@ -11,7 +11,17 @@ const MODIFIERS: ReadonlySet<string> = new Set(["Control", "Shift", "Alt", "Meta
  */
 export function forwardsToApp(e: FrameKey, held: ReadonlySet<string>): boolean {
   if (e.type === "keyup") return MODIFIERS.has(e.key) || held.has(e.code);
+  // AltGr reports Ctrl and Alt together; it types a character, so it is the page's.
+  if (e.getModifierState?.("AltGraph") === true) return false;
   return !e.defaultPrevented && (e.ctrlKey || e.altKey || e.metaKey);
+}
+
+/** `forwardsToApp` with its bookkeeping: a forwarded press adds its code to `held`, a forwarded release removes it. True when the key goes on to the app. */
+export function trackHeld(e: FrameKey, held: Set<string>): boolean {
+  if (!forwardsToApp(e, held)) return false;
+  if (e.type === "keydown") held.add(e.code);
+  else held.delete(e.code);
+  return true;
 }
 
 /** The copy of a frame's key that the app's document gets: it bubbles to the window and can be cancelled. */

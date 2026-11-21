@@ -5,6 +5,7 @@ import type { Panels } from "../../generated/Panels";
 import type { RecentFile } from "../../generated/RecentFile";
 import type { SessionTabs } from "../../generated/SessionTabs";
 import { BLANK, isPageUrl, pageTitle, sameUrl } from "../browser/address";
+import type { ViewportId } from "../browser/viewport";
 import { type PanelId, PANELS, type Stack, type Weights, activeIn, isPanelId, onScreen, panelOf, panelOfPath, panelTabs, stackOf, stackPanels } from "./panels";
 
 export type { PaneEntry };
@@ -27,6 +28,7 @@ export type PaneAction =
   | { type: "navigate"; session: string; paneTab: string; project: string; target: OpenTarget }
   | { type: "back" | "forward"; session: string; paneTab: string }
   | { type: "setView"; session: string; paneTab: string; view: View }
+  | { type: "viewport"; session: string; paneTab: string; viewport: ViewportId | null }
   | { type: "place"; session: string; paneTab: string; place: Place }
   | { type: "select"; session: string; paneTab: string }
   /** The next or previous tab, wrapping. */
@@ -57,8 +59,8 @@ export type PaneAction =
   | { type: "panel"; panel: PanelId; session: string | null }
   /** The panel's fill button: it fills the pane, or stops filling it. */
   | { type: "fill"; panel: PanelId; session: string | null }
-  /** The divider moved: whole weights, 1 to 100000, merged into the stack's. */
-  | { type: "weights"; weights: Weights }
+  /** The divider moved: whole weights, 1 to 100000, merged into the stack's. `session` is the one the drawn stack was derived from. */
+  | { type: "weights"; session?: string | null; weights: Weights }
   /** Writes the stack down when none is saved. */
   | { type: "pin"; session: string }
   | { type: "width"; width: number | null };
@@ -431,10 +433,9 @@ function weightOf(n: unknown): number | null {
   return typeof n === "number" && Number.isFinite(n) ? Math.min(100_000, Math.max(1, Math.round(n))) : null;
 }
 
-/** Merges the divider's weights into the saved stack. With no stack saved there is nothing to merge into (`pin` writes one first). */
-function mergeWeights(s: PaneView, weights: Weights): PaneView {
-  if (!s.panels) return s;
-  const stack = stackOf(s, null);
+/** Merges the divider's weights into the saved stack; with no stack saved, into the one `stackOf` gives for the session, which is then saved. */
+function mergeWeights(s: PaneView, weights: Weights, session: string | null): PaneView {
+  const stack = stackOf(s, session);
   const merged: Weights = { ...stack.weights };
   let changed = false;
   for (const [key, value] of Object.entries(weights)) {
@@ -469,6 +470,12 @@ export function paneReducer(s: PaneView, a: PaneAction): PaneView {
       return goThrough(s, a.session, a.paneTab, -1);
     case "forward":
       return goThrough(s, a.session, a.paneTab, 1);
+    case "viewport":
+      return editTab(s, a.session, a.paneTab, (t) => {
+        if (panelOf(t) !== "browser" || t.viewport === (a.viewport ?? undefined)) return t;
+        const { viewport: _was, ...rest } = t;
+        return a.viewport === null ? rest : { ...rest, viewport: a.viewport };
+      });
     case "setView":
       return editFileTab(s, a.session, a.paneTab, (t) =>
         currentEntry(t).view === a.view ? t : { ...t, history: t.history.map((e, i) => (i === t.index ? { ...e, view: a.view } : e)) },
@@ -534,7 +541,7 @@ export function paneReducer(s: PaneView, a: PaneAction): PaneView {
     case "fill":
       return fill(s, a.panel, a.session);
     case "weights":
-      return mergeWeights(s, a.weights);
+      return mergeWeights(s, a.weights, a.session ?? null);
     case "pin":
       return s.panels ? s : { ...s, panels: panelsOf(stackOf(s, a.session)) };
     case "width": {

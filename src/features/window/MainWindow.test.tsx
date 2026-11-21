@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { MainWindow } from "./MainWindow";
+import { BrandButton, MainWindow } from "./MainWindow";
 import { COMPOSER, STATUS_BAR_HEIGHT } from "./layout";
 import { SCENARIO_REQUESTS, SCENARIO_ROWS } from "./scenario";
 import { windowTitle } from "./windowTitle";
@@ -324,6 +324,28 @@ describe("MainWindow: the brand button in focus mode", () => {
   it("is there in the expanded sidebar and in the rail", () => {
     expect(html()).toContain("Marshell menu");
     expect(html({ layout: "rail" })).toContain("Marshell menu");
+  });
+  it("says whether the app menu is open, as the Menu button in the sidebar does", () => {
+    const brand = (p: Parameters<typeof html>[0]) => html(p).match(/<button[^>]*class="window__brand"[^>]*>/)![0];
+    expect(brand({})).toContain('aria-expanded="false"');
+    expect(brand({ menuOpen: true })).toContain('aria-expanded="true"');
+    expect(brand({ menuOpen: true, layout: "rail" })).toContain('aria-expanded="true"');
+  });
+  it("a press hands the button to the window's menu opener, the same one the sidebar's Menu button uses", () => {
+    const opened: unknown[] = [];
+    const button = { name: "the button" };
+    const el = BrandButton({ expanded: true, menuOpen: false, onOpenMenu: (b) => opened.push(b) });
+    (el.props as { onClick: (e: { currentTarget: unknown }) => void }).onClick({ currentTarget: button });
+    expect(opened).toEqual([button]);
+  });
+  it("a press with no opener does nothing", () => {
+    const el = BrandButton({ expanded: false, menuOpen: false });
+    expect(() => (el.props as { onClick: (e: { currentTarget: unknown }) => void }).onClick({ currentTarget: {} })).not.toThrow();
+  });
+  it("keeps aria-haspopup and its name", () => {
+    const tag = html().match(/<button[^>]*class="window__brand"[^>]*>/)![0];
+    expect(tag).toContain('aria-haspopup="menu"');
+    expect(tag).toContain('aria-label="Marshell menu"');
   });
 });
 

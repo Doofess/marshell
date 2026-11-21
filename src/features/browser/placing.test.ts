@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Report } from "./browserApi";
 import { createPlacer } from "./placing";
 
-const report = (w: number): Report => ({ rect: { x: 0, y: 0, width: 10, height: 10 }, win: { width: w, height: 600 }, rule: null, moving: false });
+const report = (w: number): Report => ({ rect: { x: 0, y: 0, width: 10, height: 10 }, win: { width: w, height: 600 }, rule: null, moving: false, page: null, viewport: null });
 const deferred = () => {
   let resolve!: () => void;
   const promise = new Promise<void>((r) => (resolve = r));

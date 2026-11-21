@@ -4,6 +4,7 @@ import type { KeyEventLike } from "../../lib/bindings";
 import type { Os } from "../../lib/keymap";
 import { interpretBlur, interpretKeyDown, interpretKeyUp, interpretMissedRelease, type FocusKind } from "../../lib/navigation/keys";
 import { run, type Result } from "../../lib/navigation/machine";
+import { topName } from "../../lib/navigation/names";
 import { DEFAULT_NAV_MODIFIER, isNavModifierHeld } from "../../lib/navigation/modifier";
 import { INITIAL_NAV, sameTarget, type NavContext, type NavEffect, type NavEvent, type NavLayout, type NavState, type Rect, type SideStop, type Target } from "../../lib/navigation/types";
 import { focusedPage } from "../browser/pageStore";
@@ -51,10 +52,7 @@ export function step(state: NavState, events: NavEvent[], ctx: NavContext): Resu
   return run(state, events, ctx);
 }
 
-const TOP_NAMES: Record<string, string> = { palette: "Command palette", sidebar: "Sidebar", launcher: "New session", "panel-browser": "Browser", "panel-files": "Files" };
-
-/** What the hint names for a top-bar control. */
-export const topName = (id: string): string => TOP_NAMES[id] ?? id;
+export { topName };
 
 export type TopAction = "palette" | "launcher" | "sidebar" | "panel-browser" | "panel-files";
 
@@ -67,7 +65,7 @@ export function topAction(id: string): TopAction | null {
 export function labelOf(t: Target, ctx: NavContext): string {
   const session = (n: number) => (ctx.names?.[n] ? `Session ${n}, ${ctx.names[n]}` : `Session ${n}`);
   if (t.kind === "row") return session(t.number);
-  if (t.kind === "top") return TOP_NAMES[t.id] ?? t.id;
+  if (t.kind === "top") return topName(t.id);
   if (t.kind === "side") return ctx.side?.find((p) => p.id === t.panel)?.name ?? t.panel;
   const n = ctx.panes[t.index] ?? null;
   return n === null ? `Empty slot ${t.index + 1}` : session(n);

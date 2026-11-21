@@ -11,6 +11,8 @@ tauri-build = { version = "2", features = [] }
 marshell-core.workspace = true
 marshell-protocol.workspace = true
 serde.workspace = true
+# browser/rules.rs: reading a page's size and its picture from its DevTools answers (slice 6r-1b decision 21).
+serde_json.workspace = true
 # `unstable`: a browser page is a child webview of the main window (slice 6q-3 decision 2).
 tauri = { version = "2", features = ["tray-icon", "unstable"] }
 tauri-plugin-dialog = "2"
@@ -18,9 +20,6 @@ tauri-plugin-notification = "2.7"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-window-state = "2"
-
-[dev-dependencies]
-serde_json.workspace = true
 
 # Reaches the WebView2 settings Tauri does not expose (main.rs: the browser's own shortcuts).
 [target."cfg(windows)".dependencies]

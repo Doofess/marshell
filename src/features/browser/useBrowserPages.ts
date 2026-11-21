@@ -1,12 +1,15 @@
-import { useEffect, useEffectEvent, useMemo, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useSyncExternalStore } from "react";
 import type { PaneView } from "../../generated/PaneView";
 import { appScheme } from "../terminal/terminalTheme";
-import { isBrowserTab, paneReducer, tabsOf, type PaneAction } from "../pane/paneState";
-import { PAGE_REFUSED } from "../pane/paneCommands";
+import type { CookieRule } from "../../generated/CookieRule";
+import { currentEntry, isBrowserTab, openRefused, paneReducer, tabsOf, type PaneAction } from "../pane/paneState";
+import { PAGE_REFUSED, TAB_LIMIT } from "../pane/paneCommands";
 import { passingBlank, shellRefuses } from "./address";
 import { browser, onBrowser, pageKey } from "./browserApi";
 import { nextLive } from "./pages";
-import { dispatchPage, pageIcon, setLoadable, startPageStore, subscribePages, type PageEvent } from "./pageStore";
+import { useBrowserSettings } from "./browserSettings";
+import { cookiesSaid, needsReload, ruleToTell } from "./cookies";
+import { dispatchPage, openPage, pageIcon, setLoadable, startPageStore, subscribePages, type PageEvent } from "./pageStore";
 
 const ignore = () => {};
 
@@ -41,6 +44,17 @@ export function popupActions(pane: PaneView, session: string, url: string, onScr
 }
 
 /**
+ * What a popup does and what the app says about it: a session at the tab limit gets the limit line when the popup would add a tab (an address already open is selected instead), an address the shell would
+ * refuse gets the refusal, and a popup that opens says nothing.
+ */
+export function popupOutcome(pane: PaneView, session: string, url: string, onScreen: boolean, own: readonly (readonly [string, number])[]): { actions: PaneAction[]; say: string | null } {
+  const actions = popupActions(pane, session, url, onScreen, own);
+  if (actions.length === 0) return { actions, say: PAGE_REFUSED };
+  if (openRefused(pane, session, url)) return { actions: [], say: TAB_LIMIT };
+  return { actions, say: null };
+}
+
+/**
  * The sessions a popup's actions leave a new tab in the background of: their Browser panel gets its dot. A session gets none when
  * the action adds no tab to `pane` (the address is already open there, or the session is at its tab limit): the dot says a tab is
  * waiting, and none would be.
@@ -48,6 +62,11 @@ export function popupActions(pane: PaneView, session: string, url: string, onScr
 export function popupNews(actions: readonly PaneAction[], pane: PaneView): string[] {
   const count = (s: PaneView, session: string) => tabsOf(s, session).tabs.length;
   return actions.flatMap((a) => (a.type === "openPage" && a.background === true && count(paneReducer(pane, a), a.session) > count(pane, a.session) ? [a.session] : []));
+}
+
+/** The pane after a popup's actions, in order: what a second popup in the same tick reads. */
+export function popupFold(pane: PaneView, actions: readonly PaneAction[]): PaneView {
+  return actions.reduce(paneReducer, pane);
 }
 
 /**
@@ -74,6 +93,36 @@ export async function unload(keys: readonly string[], close: (key: string) => Pr
   );
 }
 
+/** What loading every loaded page again does: each key's tab address, or null for a key whose tab is gone (closed, not opened again). */
+export function reloadPlan(pane: PaneView, keys: readonly string[]): { key: string; url: string | null }[] {
+  const owned = owners(pane, null);
+  return keys.map((key) => {
+    const o = owned.get(key);
+    const tab = o ? tabsOf(pane, o.session).tabs.find((t) => t.id === o.paneTab) : undefined;
+    return { key, url: tab ? currentEntry(tab).path : null };
+  });
+}
+
+/**
+ * Closes every page, then opens the ones with an address again, shown or not (a page behind another tab loads there, as it was).
+ * Every close comes before the first open: private pages share one store of cookies and site data, which ends only when the last
+ * of them is closed (S14), so a page opened while another is still there would find it as it was.
+ * The calls go through the shell's queue, so they come after a `cookies` call asked before them. Returns how many were opened.
+ */
+export function reloadPages(plan: readonly { key: string; url: string | null }[]): number {
+  for (const { key } of plan) {
+    void browser.close(key).catch(ignore);
+    dispatchPage({ type: "closed", key });
+  }
+  let opened = 0;
+  for (const { key, url } of plan) {
+    if (url === null) continue;
+    void openPage(key, url).catch(ignore);
+    opened += 1;
+  }
+  return opened;
+}
+
 type Options = {
   /** The ids of the sessions in the list, or null while the list isn't known. A session that is not there has no page loaded. */
   sessions: readonly string[] | null;
@@ -93,7 +142,7 @@ type Options = {
  * drops and the store forgets them; the shell's `browser://` events reach the store, and a page's address and title reach its tab; a popup opens a tab; the
  * pages follow the app's theme. Nothing is closed on unmount: the shell closes the pages at quit.
  */
-export function useBrowserPages(pane: PaneView, shownKey: string | null, { sessions, dispatch, browserSession, news, own, announce }: Options): void {
+export function useBrowserPages(pane: PaneView, shownKey: string | null, { sessions, dispatch, browserSession, news, own, announce }: Options): { reloadPrivate(): number } {
   const live = useRef<string[]>([]);
   const owned = owners(pane, sessions === null ? null : new Set(sessions));
   const open = new Set(owned.keys());
@@ -125,14 +174,33 @@ export function useBrowserPages(pane: PaneView, shownKey: string | null, { sessi
         const owner = ownersRef.current.get(p.key);
         if (!owner) return;
         const pane = paneRef.current;
-        const actions = popupActions(pane, owner.session, p.url, onScreen() === owner.session, ownOrigins());
-        if (actions.length === 0) say(PAGE_REFUSED);
+        const { actions, say: line } = popupOutcome(pane, owner.session, p.url, onScreen() === owner.session, ownOrigins());
+        if (line !== null) say(line);
         for (const action of actions) send(action);
         for (const session of popupNews(actions, pane)) tell(session);
+        // A second popup before the next render reads the pane with this one's tab in it.
+        paneRef.current = popupFold(pane, actions);
       }),
     ];
     return () => stops.forEach((stop) => stop());
   }, []);
+
+  // The cookie rule: told before any page is made (the shell's queue holds every call until then), and told again on a change. A
+  // change to or from "never" makes the loaded pages again, since a page's privacy is decided when it is made.
+  // Reads refs only, so it is safe in an effect and in an event handler alike.
+  const reloadLoaded = useCallback((): number => reloadPages(reloadPlan(paneRef.current, live.current)), []);
+  const { settings, failed } = useBrowserSettings();
+  const rule = ruleToTell(settings, failed);
+  const told = useRef<CookieRule | null>(null);
+  useEffect(() => {
+    if (rule === null || rule === told.current) return;
+    const last = told.current;
+    told.current = rule;
+    // Asked first, so the closes and opens of the reload queue behind it.
+    void browser.cookies(rule).catch(ignore);
+    if (needsReload(last, rule)) say(cookiesSaid(rule, reloadLoaded()));
+    // `say` and `reloadLoaded` read only refs and effect events.
+  }, [rule, reloadLoaded]);
 
   // The pages follow the app's theme: sent on mount and on every change.
   useEffect(() => {
@@ -147,6 +215,10 @@ export function useBrowserPages(pane: PaneView, shownKey: string | null, { sessi
       watch.disconnect();
     };
   }, []);
+
+  // After "Clear browsing data…": under "never" the pages' cookies live in memory, so the pages are made again to lose them.
+  const reloadPrivate = useCallback((): number => (told.current === "never" ? reloadLoaded() : 0), []);
+  return { reloadPrivate };
 }
 
 /** The site icon of each key's page, for the tab strip: an image address, or null before one arrives. Draws again when an icon changes. */

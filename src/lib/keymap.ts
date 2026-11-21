@@ -98,6 +98,14 @@ export const COMMANDS: Command[] = [
   { id: "new-browser-tab", label: "New browser tab", group: "Window" },
   { id: "open-url", label: "Open URL…", group: "Window" },
   { id: "clear-browser-data", label: "Clear the browser's data…", group: "Window" },
+  // The Browser panel's front tab: pictures of the page, and its viewport. None has a default key.
+  { id: "save-screenshot", label: "Save screenshot", group: "Window" },
+  { id: "save-full-screenshot", label: "Save full-page screenshot", group: "Window" },
+  { id: "viewport-responsive", label: "Viewport: Responsive", group: "Window" },
+  { id: "viewport-phone", label: "Viewport: Phone", group: "Window" },
+  { id: "viewport-tablet", label: "Viewport: Tablet", group: "Window" },
+  { id: "viewport-laptop", label: "Viewport: Laptop", group: "Window" },
+  { id: "viewport-desktop", label: "Viewport: Desktop", group: "Window" },
   // A page, a PDF or an image in the side pane; no default key.
   { id: "select-region", label: "Select region", group: "Window" },
   { id: "pane-next-tab", label: "Next tab", group: "Window", binding: { code: "Tab", ctrl: true } },

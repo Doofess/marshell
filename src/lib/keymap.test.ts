@@ -272,6 +272,23 @@ describe("browser tab commands", () => {
     for (const id of ["new-browser-tab", "open-url", "clear-browser-data"]) expect(commandById(id).binding).toBeUndefined();
   });
 });
+describe("the screenshot and viewport commands", () => {
+  it("has the screenshot and viewport commands, with no default key", () => {
+    const want: [string, string][] = [
+      ["save-screenshot", "Save screenshot"],
+      ["save-full-screenshot", "Save full-page screenshot"],
+      ["viewport-responsive", "Viewport: Responsive"],
+      ["viewport-phone", "Viewport: Phone"],
+      ["viewport-tablet", "Viewport: Tablet"],
+      ["viewport-laptop", "Viewport: Laptop"],
+      ["viewport-desktop", "Viewport: Desktop"],
+    ];
+    for (const [id, label] of want) {
+      expect(commandById(id)).toMatchObject({ label, group: "Window" });
+      expect(commandById(id).binding).toBeUndefined();
+    }
+  });
+});
 describe("the select region command", () => {
   it("is in the Window group with no default key", () => {
     expect(commandById("select-region")).toMatchObject({ label: "Select region", group: "Window" });

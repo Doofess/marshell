@@ -455,6 +455,10 @@ pub struct PaneTab {
     /// True until the tab is first selected after `marshell open` added or marked it.
     #[serde(default)]
     pub unseen: bool,
+    /// A browser tab's chosen viewport: "phone", "tablet", "laptop" or "desktop". None is Responsive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub viewport: Option<String>,
 }
 
 /// The body of a `marshell open` request: one address or file for a session's side pane.
@@ -482,6 +486,9 @@ pub struct PaneOpen {
     pub target: String,
     /// Who asked: an agent's id, or `shell`.
     pub by: String,
+    /// True for an open the core queued from an agent's hook.
+    #[serde(default)]
+    pub auto: bool,
 }
 
 /// The app's answer for one queued open request.
@@ -971,6 +978,14 @@ pub struct AttachmentSaved {
     pub reference: String,
 }
 
+/// POST /v1/screenshots reply: the name the picture was saved under in the Downloads folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ScreenshotSaved {
+    /// The file name the core made, `<host> <YYYY-MM-DD HHMMSS>.png`, with ` (2)` and up when that name was taken.
+    pub name: String,
+}
+
 /// POST /v1/sessions/{tab}/paste body: paste a saved attachment's reference and a comment into the session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -1251,6 +1266,44 @@ pub struct Settings {
     pub history_limit_days: Option<u32>,
     /// A folder that holds an exact copy of the history, in a "Marshell history" folder of its own. None is no backup.
     pub history_backup_dir: Option<String>,
+    /// The Browser panel's settings.
+    pub browser: BrowserSettings,
+}
+
+/// How long a page keeps its cookies.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum CookieRule {
+    /// Kept between runs.
+    #[default]
+    Always,
+    /// Kept until Marshell quits.
+    UntilQuit,
+    /// Never kept: private pages.
+    Never,
+}
+
+/// The Browser panel's settings, in `settings.json` under `browser`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct BrowserSettings {
+    /// A Ctrl+click on a link in a terminal opens it in the Browser panel.
+    pub terminal_links: bool,
+    /// An HTML file an agent writes opens in the Browser panel.
+    pub open_agent_html: bool,
+    pub cookies: CookieRule,
+}
+
+impl Default for BrowserSettings {
+    fn default() -> Self {
+        Self {
+            terminal_links: true,
+            open_agent_html: true,
+            cookies: CookieRule::default(),
+        }
+    }
 }
 
 impl Default for Settings {
@@ -1266,6 +1319,7 @@ impl Default for Settings {
             history_limit_gb: None,
             history_limit_days: None,
             history_backup_dir: None,
+            browser: BrowserSettings::default(),
         }
     }
 }

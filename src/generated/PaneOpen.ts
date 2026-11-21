@@ -19,4 +19,8 @@ target: string,
 /**
  * Who asked: an agent's id, or `shell`.
  */
-by: string, };
+by: string, 
+/**
+ * True for an open the core queued from an agent's hook.
+ */
+auto: boolean, };

@@ -1,3 +1,4 @@
+import { topName } from "./names";
 import { moveCursor } from "./spatial";
 import { sameTarget, type Dir, type NavContext, type NavEffect, type NavEvent, type NavState, type Target } from "./types";
 
@@ -64,7 +65,7 @@ function selectSide(state: NavState, panel: string, ctx: NavContext): Result {
 function commit(state: NavState, t: Target, ctx: NavContext): Result {
   if (t.kind === "pane") return selectPane(state, t.index, ctx);
   if (t.kind === "side") return selectSide(state, t.panel, ctx);
-  if (t.kind === "top") return { state: { ...state, cursor: null }, effects: [{ type: "activate", id: t.id }, announce(`Activated ${t.id}`)] };
+  if (t.kind === "top") return { state: { ...state, cursor: null }, effects: [{ type: "activate", id: t.id }, announce(`Activated ${topName(t.id)}`)] };
   const shown = ctx.panes.indexOf(t.number);
   if (shown >= 0) return selectPane(state, shown, ctx);
   const sel = selectedOf(state, ctx);
@@ -78,7 +79,7 @@ function commit(state: NavState, t: Target, ctx: NavContext): Result {
 
 function describeTarget(t: Target, ctx: NavContext): string {
   if (t.kind === "row") return `Cursor on ${sessionText(ctx, t.number)}`;
-  if (t.kind === "top") return `Cursor on ${t.id}`;
+  if (t.kind === "top") return `Cursor on ${topName(t.id)}`;
   if (t.kind === "side") return `Cursor on ${sideName(ctx, t.panel)}`;
   const n = sessionOf(ctx, t.index);
   return n === null ? `Cursor on empty slot ${t.index + 1}` : `Cursor on ${sessionText(ctx, n)}`;

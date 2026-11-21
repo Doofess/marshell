@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appKeyInit, forwardsToApp, type FrameKey } from "./frameKeys";
+import { appKeyInit, forwardsToApp, trackHeld, type FrameKey } from "./frameKeys";
 
 const key = (over: Partial<FrameKey>): FrameKey => ({ type: "keydown", key: "a", code: "KeyA", ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, repeat: false, defaultPrevented: false, ...over });
 const none = new Set<string>();
@@ -36,5 +36,17 @@ describe("forwardsToApp", () => {
 describe("appKeyInit", () => {
   it("copies what the app's shortcuts read, as an event that bubbles and can be cancelled", () => {
     expect(appKeyInit(key({ ctrlKey: true, shiftKey: true, key: "A", repeat: true }))).toEqual({ key: "A", code: "KeyA", ctrlKey: true, shiftKey: true, altKey: false, metaKey: false, repeat: true, bubbles: true, cancelable: true });
+  });
+});
+
+describe("AltGr and held keys", () => {
+  it("does not forward a chord typed with AltGr", () => {
+    expect(forwardsToApp(key({ ctrlKey: true, altKey: true, key: "@", getModifierState: (k) => k === "AltGraph" }), new Set())).toBe(false);
+  });
+  it("forgets a held key when told the keyboard left", () => {
+    const held = new Set<string>();
+    expect(trackHeld(key({ type: "keydown", ctrlKey: true, code: "KeyK" }), held)).toBe(true);
+    held.clear();
+    expect(trackHeld(key({ type: "keyup", code: "KeyK", key: "k" }), held)).toBe(false);
   });
 });

@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { COMMANDS } from "../../lib/keymap";
+import { COMMANDS, type Command } from "../../lib/keymap";
 import { filterCommands, filterProjects, filterSessions, highlight, matchRanges, parseSessionNumber, pickByLetter, projectLabel, sessionDetail, type Project, type SessionRef } from "./filter";
 
 const P = (id: string, name: string, branch: string | undefined, lastUsedMs: number): Project => ({ id, name, branch, path: `C:/dev/${name}`, lastUsedMs });
 const projects = [P("a", "my-app", "main", 300), P("b", "app-server", "develop", 200), P("c", "snapshot", undefined, 100), P("d", "marketing", "feat/pricing", 400)];
 
 describe("matchRanges", () => {
+  it("returns one unbroken run when the whole query occurs in the text", () => {
+    expect(matchRanges("main", "my-app · main")).toEqual([[9, 13]]);
+  });
+  it("takes the unbroken run that starts a word over an earlier one", () => {
+    expect(matchRanges("ab", "xab ab")).toEqual([[4, 6]]);
+  });
   it("matches a subsequence, case-insensitively, and reports where", () => {
     expect(matchRanges("MA", "my-app")).toEqual([[0, 1], [3, 4]]);
     expect(matchRanges("app", "my-app")).toEqual([[3, 6]]);
@@ -68,6 +74,14 @@ describe("filterCommands", () => {
   });
   it("returns nothing for a query that matches nothing", () => {
     expect(filterCommands("qqqq", COMMANDS)).toEqual([]);
+  });
+  it("puts a command typed by its name before a longer command that holds the same words", () => {
+    const commands: Command[] = [
+      { id: "shot-full", label: "Save full-page screenshot", group: "App" },
+      { id: "shot", label: "Save screenshot", group: "App" },
+    ];
+    expect(filterCommands("Save screenshot", commands)[0]!.item.id).toBe("shot");
+    expect(filterCommands("save screen", commands)[0]!.item.id).toBe("shot");
   });
 });
 

@@ -19,7 +19,8 @@ Nothing here deletes a folder. With -CodexAuth, start copies ~/.codex/auth.json 
        start always creates <Scratch>\home\.gemini, with Desktop, Documents and Downloads beside it (the system's
        file dialogs open there), and starts the app with USERPROFILE=<Scratch>\home, so agy and
        the core's reads and writes of agy's settings.json use the scratch home; CARGO_HOME and RUSTUP_HOME are pinned
-       to the real ones first. With -AgyAuth, it also copies ~/.gemini/oauth_creds.json and google_accounts.json into
+       to the real ones first. start and restart also set MARSHELL_DOWNLOADS to <Scratch>\home\Downloads, where
+       "Save screenshot" then writes (the core's Downloads folder doesn't follow USERPROFILE). With -AgyAuth, it also copies ~/.gemini/oauth_creds.json and google_accounts.json into
        <Scratch>\home\.gemini (nothing else), and stop deletes those two copies.
        With -QwenFake, start also runs fake-openai.mjs (a scripted OpenAI-compatible model on 127.0.0.1:-QwenPort,
        logging every request to <Scratch>\qwen-fake.jsonl), points OPENAI_BASE_URL, OPENAI_API_KEY and OPENAI_MODEL
@@ -205,6 +206,10 @@ function Start-DevApp([string]$RepoPath, $Homes, [string]$LogName) {
     if (-not $env:CARGO_HOME) { $env:CARGO_HOME = Join-Path $HOME '.cargo' }
     if (-not $env:RUSTUP_HOME) { $env:RUSTUP_HOME = Join-Path $HOME '.rustup' }
     $env:USERPROFILE = $Homes.agyHome
+    # The core asks the system for the Downloads folder, which doesn't follow USERPROFILE: a page's screenshot would
+    # land in the person's real Downloads. start made this folder; restart finds it there.
+    $env:MARSHELL_DOWNLOADS = Join-Path $Homes.agyHome 'Downloads'
+    Write-Host "MARSHELL_DOWNLOADS=$($env:MARSHELL_DOWNLOADS)"
     $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$Port"
     # NO_COLOR here is the calling tool's own environment, not the person's: tabs would inherit it and CLIs would
     # drop colour (Qwen's /theme refuses to change). The app never sets it, so a real user's NO_COLOR still

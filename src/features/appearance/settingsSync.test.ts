@@ -2,11 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { Settings } from "../../generated/Settings";
 import { DEFAULT_APPEARANCE } from "./rootState";
-import { READ_FAILED, SettingsReadError, SettingsSync } from "./settingsSync";
+import { READ_FAILED, SettingsReadError, SettingsSync, loadWithRetry } from "./settingsSync";
 
 const ep: Endpoint = { port: 1, token: "t", platform: "windows" };
 const teal = { ...DEFAULT_APPEARANCE, accent: "teal" };
 const N = { needs_you: { banner: true, sound: true }, done: { banner: true, sound: true }, error: { banner: true, sound: true }, subagent_sound: false, quiet_hours: { enabled: false, start: "22:00", end: "08:00" }, terminal_alerts: true };
+const BR = { terminal_links: true, open_agent_html: true, cookies: "always" as const };
 const N_OFF = { ...N, needs_you: { banner: true, sound: false } };
 
 function setup(get: () => Promise<Settings>) {
@@ -28,7 +29,7 @@ describe("SettingsSync", () => {
     let calls = 0;
     const { api, sync } = setup(async () => {
       if (++calls === 1) throw new Error("not yet");
-      return { appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null };
+      return { appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR };
     });
     await expect(sync.load()).rejects.toThrow();
     const dark = { ...teal, theme: "dark" as const };
@@ -38,14 +39,14 @@ describe("SettingsSync", () => {
   });
 
   it("a save sends back the pause warning it read", async () => {
-    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: true, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null }));
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: true, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR }));
     await sync.load();
     await sync.save(teal);
-    expect(api.put).toHaveBeenCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null });
+    expect(api.put).toHaveBeenCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR });
   });
 
   it("after one successful read a save does not read again", async () => {
-    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: true, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null }));
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: true, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR }));
     expect(await sync.load()).toEqual(teal);
     await sync.save(teal);
     expect(api.get).toHaveBeenCalledTimes(1);
@@ -53,20 +54,20 @@ describe("SettingsSync", () => {
   });
 
   it("markPauseWarned sends the last appearance with pause_warned true, and the getter follows", async () => {
-    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null }));
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR }));
     await sync.load();
     expect(sync.pauseWarned).toBe(false);
     await sync.markPauseWarned();
-    expect(api.put).toHaveBeenCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null });
+    expect(api.put).toHaveBeenCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR });
     expect(sync.pauseWarned).toBe(true);
   });
 
   it("setCloseToTray saves the choice and the getter follows; every other save sends it back unchanged", async () => {
-    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null }));
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR }));
     await sync.load();
     expect(sync.closeToTray).toBeNull();
     await sync.setCloseToTray(false);
-    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: false, onboarded: false, close_to_tray: false, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null });
+    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: false, onboarded: false, close_to_tray: false, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR });
     expect(sync.closeToTray).toBe(false);
     await sync.markOnboarded();
     expect(api.put).toHaveBeenLastCalledWith(ep, expect.objectContaining({ close_to_tray: false, onboarded: true }));
@@ -75,18 +76,18 @@ describe("SettingsSync", () => {
   });
 
   it("setHistoryImport saves the switch, and a later appearance save sends it back unchanged", async () => {
-    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null }));
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR }));
     await sync.load();
     expect(sync.historyImport).toBe(true);
     await sync.setHistoryImport(false);
-    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: false, history_limit_gb: null, history_limit_days: null, history_backup_dir: null });
+    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: false, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR });
     expect(sync.historyImport).toBe(false);
     await sync.save(teal);
-    expect(api.put).toHaveBeenLastCalledWith(ep, expect.objectContaining({ history_import: false, history_limit_gb: null, history_limit_days: null, history_backup_dir: null }));
+    expect(api.put).toHaveBeenLastCalledWith(ep, expect.objectContaining({ history_import: false, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR }));
   });
 
   it("every save sends back the retention limits it read", async () => {
-    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: 5, history_limit_days: 90, history_backup_dir: null }));
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: 5, history_limit_days: 90, history_backup_dir: null, browser: BR }));
     await sync.load();
     await sync.save(teal);
     expect(api.put).toHaveBeenLastCalledWith(ep, expect.objectContaining({ history_limit_gb: 5, history_limit_days: 90, history_backup_dir: null }));
@@ -95,7 +96,7 @@ describe("SettingsSync", () => {
   });
 
   it("every save sends back the backup folder it read", async () => {
-    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: "D:\Backups" }));
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: "D:\Backups", browser: BR }));
     await sync.load();
     await sync.save(teal);
     expect(api.put).toHaveBeenLastCalledWith(ep, expect.objectContaining({ history_backup_dir: "D:\Backups" }));
@@ -104,18 +105,18 @@ describe("SettingsSync", () => {
   });
 
   it("setHistoryLimits saves both limits, and a later appearance save sends them back unchanged", async () => {
-    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: "D:/B" }));
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: "D:/B", browser: BR }));
     await sync.load();
     expect(sync.historyLimits).toEqual({ limit_gb: null, limit_days: null });
     await sync.setHistoryLimits({ limit_gb: 5, limit_days: 90 });
-    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: 5, history_limit_days: 90, history_backup_dir: "D:/B" });
+    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: 5, history_limit_days: 90, history_backup_dir: "D:/B", browser: BR });
     expect(sync.historyLimits).toEqual({ limit_gb: 5, limit_days: 90 });
     await sync.save(teal);
     expect(api.put).toHaveBeenLastCalledWith(ep, expect.objectContaining({ history_limit_gb: 5, history_limit_days: 90, history_backup_dir: "D:/B" }));
   });
 
   it("setHistoryBackupDir saves the folder or clears it, keeping the limits", async () => {
-    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: 2, history_limit_days: null, history_backup_dir: null }));
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: 2, history_limit_days: null, history_backup_dir: null, browser: BR }));
     await sync.load();
     expect(sync.historyBackupDir).toBeNull();
     await sync.setHistoryBackupDir("E:/Backups");
@@ -127,7 +128,7 @@ describe("SettingsSync", () => {
   });
 
   it("a refused history save rejects with the core's error and keeps the values it had", async () => {
-    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null }));
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR }));
     await sync.load();
     api.put.mockRejectedValueOnce(new Error("That folder doesn't exist."));
     await expect(sync.setHistoryBackupDir("Z:/nope")).rejects.toThrow("That folder doesn't exist.");
@@ -167,41 +168,41 @@ describe("SettingsSync", () => {
   });
 
   it("an appearance save after markPauseWarned keeps the warning", async () => {
-    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null }));
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR }));
     await sync.markPauseWarned();
     await sync.save(teal);
-    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null });
+    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR });
   });
 
   it("markOnboarded sends onboarded true and keeps pause_warned", async () => {
-    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: true, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null }));
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: true, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR }));
     await sync.load();
     await sync.markOnboarded();
-    expect(api.put).toHaveBeenCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null });
+    expect(api.put).toHaveBeenCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR });
   });
 
   it("markPauseWarned keeps onboarded", async () => {
-    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: true, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null }));
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: true, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR }));
     await sync.load();
     await sync.markPauseWarned();
-    expect(api.put).toHaveBeenCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null });
+    expect(api.put).toHaveBeenCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR });
   });
 });
 
 describe("SettingsSync: live status switch", () => {
-  const read = (status_off: string[]) => async () => ({ appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off, notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null });
+  const read = (status_off: string[]) => async () => ({ appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off, notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR });
   it("turning it off adds the agent and keeps every other field", async () => {
     const { api, sync } = setup(read(["codex"]));
     await sync.setStatusOff("claude", true);
-    expect(api.put).toHaveBeenCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: ["codex", "claude"], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null });
+    expect(api.put).toHaveBeenCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: ["codex", "claude"], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR });
     expect(sync.statusOff).toEqual(["codex", "claude"]);
   });
   it("turning it on removes the agent, and an unrelated save sends the list back", async () => {
     const { api, sync } = setup(read(["claude", "codex"]));
     await sync.setStatusOff("claude", false);
-    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: ["codex"], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null });
+    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: ["codex"], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR });
     await sync.save(teal);
-    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: ["codex"], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null });
+    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: ["codex"], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR });
   });
   it("sends nothing when the settings cannot be read", async () => {
     const { api, sync } = setup(async () => {
@@ -213,18 +214,158 @@ describe("SettingsSync: live status switch", () => {
 });
 
 describe("SettingsSync: notifications", () => {
-  const read = (n: typeof N) => async () => ({ appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: ["codex"], notifications: n, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null });
+  const read = (n: typeof N) => async () => ({ appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: ["codex"], notifications: n, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR });
   it("saving them keeps every other field, and other saves send them back", async () => {
     const { api, sync } = setup(read(N));
     await sync.setNotifications(N_OFF);
-    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: ["codex"], notifications: N_OFF, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null });
+    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: ["codex"], notifications: N_OFF, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR });
     expect(sync.notifications).toEqual(N_OFF);
     await sync.setStatusOff("claude", true);
-    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: ["codex", "claude"], notifications: N_OFF, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null });
+    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: ["codex", "claude"], notifications: N_OFF, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR });
   });
   it("an appearance save sends the stored settings back unchanged", async () => {
     const { api, sync } = setup(read(N_OFF));
     await sync.save(teal);
-    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: ["codex"], notifications: N_OFF, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null });
+    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: ["codex"], notifications: N_OFF, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR });
+  });
+});
+
+describe("SettingsSync: browser", () => {
+  const stored = { terminal_links: false, open_agent_html: true, cookies: "never" as const };
+  const read = async () => ({ appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: ["codex"], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: stored });
+  it("is null before the first read, then what the core holds", async () => {
+    const { sync } = setup(read);
+    expect(sync.browser).toBeNull();
+    expect(sync.readFailed).toBe(false);
+    await sync.load();
+    expect(sync.browser).toEqual(stored);
+  });
+  it("writes one changed field and keeps the others", async () => {
+    const { api, sync } = setup(read);
+    await sync.setBrowser({ cookies: "until-quit" });
+    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: ["codex"], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: { terminal_links: false, open_agent_html: true, cookies: "until-quit" } });
+    expect(sync.browser).toEqual({ terminal_links: false, open_agent_html: true, cookies: "until-quit" });
+  });
+  it("keeps the same object between changes and tells subscribers after a write", async () => {
+    const { sync } = setup(read);
+    await sync.load();
+    expect(sync.browser).toBe(sync.browser);
+    const listener = vi.fn();
+    const off = sync.subscribe(listener);
+    await sync.setBrowser({ terminal_links: true });
+    expect(listener).toHaveBeenCalledTimes(1);
+    off();
+    await sync.setBrowser({ terminal_links: false });
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+  it("two quick changes go out one after the other, the second built from the first's result", async () => {
+    const { api, sync } = setup(read);
+    await sync.load();
+    const releases: (() => void)[] = [];
+    api.put.mockImplementation((_ep: Endpoint, s: Settings) => new Promise<Settings>((resolve) => releases.push(() => resolve(s))));
+    const a = sync.setBrowser({ cookies: "until-quit" });
+    const b = sync.setBrowser({ open_agent_html: false });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(api.put).toHaveBeenCalledTimes(1);
+    releases[0]!();
+    await a;
+    await new Promise((r) => setTimeout(r, 0));
+    expect(api.put).toHaveBeenCalledTimes(2);
+    releases[1]!();
+    await b;
+    expect(api.put.mock.calls[1]![1].browser).toEqual({ terminal_links: false, open_agent_html: false, cookies: "until-quit" });
+    expect(sync.browser).toEqual({ terminal_links: false, open_agent_html: false, cookies: "until-quit" });
+  });
+  it.each([
+    ["an appearance save", (sync: SettingsSync) => sync.save({ ...teal, theme: "dark" as const })],
+    ["a flag write", (sync: SettingsSync) => sync.setCloseToTray(true)],
+  ])("%s that overlaps a browser change waits for it and sends its result", async (_name, other) => {
+    const { api, sync } = setup(read);
+    await sync.load();
+    const releases: (() => void)[] = [];
+    api.put.mockImplementation((_ep: Endpoint, s: Settings) => new Promise<Settings>((resolve) => releases.push(() => resolve(s))));
+    const a = sync.setBrowser({ cookies: "until-quit" });
+    const b = other(sync);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(api.put).toHaveBeenCalledTimes(1);
+    releases[0]!();
+    await a;
+    await new Promise((r) => setTimeout(r, 0));
+    expect(api.put).toHaveBeenCalledTimes(2);
+    expect(api.put.mock.calls[1]![1].browser.cookies).toBe("until-quit");
+    releases[1]!();
+    await b;
+    expect(sync.browser?.cookies).toBe("until-quit");
+  });
+  it("a change that fails doesn't stop the next one", async () => {
+    const { api, sync } = setup(read);
+    await sync.load();
+    api.put.mockRejectedValueOnce(new Error("down"));
+    const a = sync.setBrowser({ cookies: "never" });
+    const b = sync.setBrowser({ open_agent_html: false });
+    await expect(a).rejects.toThrow("down");
+    await b;
+    expect(sync.browser).toEqual({ terminal_links: false, open_agent_html: false, cookies: "never" });
+  });
+  it("says a failed read", async () => {
+    const { sync } = setup(async () => {
+      throw new Error("no core");
+    });
+    const listener = vi.fn();
+    sync.subscribe(listener);
+    await expect(sync.load()).rejects.toThrow();
+    expect(sync.readFailed).toBe(true);
+    expect(sync.browser).toBeNull();
+    expect(listener).toHaveBeenCalled();
+  });
+});
+
+describe("loadWithRetry", () => {
+  const sleeps = () => {
+    const waited: number[] = [];
+    return { waited, sleep: async (ms: number) => void waited.push(ms) };
+  };
+  it("stops at the first success, after the waits that came before it", async () => {
+    let calls = 0;
+    const { waited, sleep } = sleeps();
+    const got = await loadWithRetry(async () => (++calls < 3 ? Promise.reject(new Error("no core")) : "ok"), () => true, [10, 20, 40], sleep);
+    expect(got).toBe("ok");
+    expect(calls).toBe(3);
+    expect(waited).toEqual([10, 20]);
+  });
+  it("rejects with the last error once every attempt failed", async () => {
+    let calls = 0;
+    const { waited, sleep } = sleeps();
+    await expect(loadWithRetry(async () => Promise.reject(new Error(`try ${++calls}`)), () => true, [10, 20], sleep)).rejects.toThrow("try 3");
+    expect(waited).toEqual([10, 20]);
+  });
+  it("tries no more once the caller is gone", async () => {
+    let calls = 0;
+    let live = true;
+    const { sleep } = sleeps();
+    await expect(
+      loadWithRetry(
+        async () => {
+          calls++;
+          live = false;
+          throw new Error("no core");
+        },
+        () => live,
+        [10, 20],
+        sleep,
+      ),
+    ).rejects.toThrow("no core");
+    expect(calls).toBe(1);
+  });
+  it("leaves the store read after a failed first read, so the rule can arrive later", async () => {
+    let calls = 0;
+    const { api, sync } = setup(async () => {
+      if (++calls === 1) throw new Error("not yet");
+      return { appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: { ...BR, cookies: "until-quit" as const } };
+    });
+    await loadWithRetry(() => sync.load(), () => true, [0], async () => {});
+    expect(api.get).toHaveBeenCalledTimes(2);
+    expect(sync.readFailed).toBe(false);
+    expect(sync.browser?.cookies).toBe("until-quit");
   });
 });

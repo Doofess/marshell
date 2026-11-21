@@ -423,6 +423,12 @@
 .preview__body[data-view="html"] {
   overflow: clip;
 }
+/* Holds the frame, and clips what a scaled frame's layout box leaves outside it. The frame is placed by its style (frameBox). */
+.html-view__fit {
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+}
 .html-view {
   position: absolute;
   inset: 0;

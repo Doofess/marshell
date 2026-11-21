@@ -1,4 +1,5 @@
 import { findCommand, type KeyEventLike } from "./bindings";
+import type { ViewportId } from "../features/browser/viewport";
 import type { Os } from "./keymap";
 
 /** A shortcut the app takes even while a terminal has focus. Everything else goes to the program in the terminal. */
@@ -37,6 +38,10 @@ export type SessionShortcut =
   | { kind: "newBrowserTab" }
   /** "Clear the browser's data…": asks first. Has no key of its own. */
   | { kind: "clearBrowserData" }
+  /** "Save screenshot" and "Save full-page screenshot": the Browser panel's front page. Neither has a key of its own. */
+  | { kind: "screenshot"; full: boolean }
+  /** "Viewport: Responsive", "Viewport: Phone" and the other sizes, for the Browser panel's front tab (null is Responsive). None has a key of its own. */
+  | { kind: "viewport"; viewport: ViewportId | null }
   /** "Select region": a box on the side pane's page, PDF or image. Has no key of its own. */
   | { kind: "selectRegion" }
   /** The text tab's commands: "Save file", "Undo last save", "Go to line…" and "Word wrap". None has a key of its own; the palette runs them on the shown text tab. */
@@ -150,6 +155,20 @@ export function commandShortcut(id: string): SessionShortcut | null {
       return { kind: "newBrowserTab" };
     case "clear-browser-data":
       return { kind: "clearBrowserData" };
+    case "save-screenshot":
+      return { kind: "screenshot", full: false };
+    case "save-full-screenshot":
+      return { kind: "screenshot", full: true };
+    case "viewport-responsive":
+      return { kind: "viewport", viewport: null };
+    case "viewport-phone":
+      return { kind: "viewport", viewport: "phone" };
+    case "viewport-tablet":
+      return { kind: "viewport", viewport: "tablet" };
+    case "viewport-laptop":
+      return { kind: "viewport", viewport: "laptop" };
+    case "viewport-desktop":
+      return { kind: "viewport", viewport: "desktop" };
     case "select-region":
       return { kind: "selectRegion" };
     case "pane-next-tab":

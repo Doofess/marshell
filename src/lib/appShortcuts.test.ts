@@ -180,6 +180,18 @@ describe("browser tab commands", () => {
   });
 });
 
+describe("the screenshot and viewport commands", () => {
+  it("maps the new commands", () => {
+    expect(commandShortcut("save-screenshot")).toEqual({ kind: "screenshot", full: false });
+    expect(commandShortcut("save-full-screenshot")).toEqual({ kind: "screenshot", full: true });
+    expect(commandShortcut("viewport-responsive")).toEqual({ kind: "viewport", viewport: null });
+    expect(commandShortcut("viewport-phone")).toEqual({ kind: "viewport", viewport: "phone" });
+    expect(commandShortcut("viewport-tablet")).toEqual({ kind: "viewport", viewport: "tablet" });
+    expect(commandShortcut("viewport-laptop")).toEqual({ kind: "viewport", viewport: "laptop" });
+    expect(commandShortcut("viewport-desktop")).toEqual({ kind: "viewport", viewport: "desktop" });
+  });
+});
+
 describe("waitsForPalette", () => {
   it("a palette command that moves the keyboard waits for the palette to hand it back", () => {
     for (const id of ["browser-panel", "files-panel"]) expect(waitsForPalette(commandShortcut(id)), id).toBe(true);

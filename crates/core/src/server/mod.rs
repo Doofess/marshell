@@ -1,6 +1,7 @@
 mod activity;
 pub(crate) mod agents;
 mod attachments;
+mod auto_open;
 mod catalog;
 mod config;
 mod diagnostics;
@@ -30,6 +31,7 @@ mod pty_ws;
 mod references;
 mod reports;
 mod save;
+mod screenshots;
 mod scripts;
 mod sessions;
 mod settings;
@@ -1037,6 +1039,15 @@ impl AppState {
             .notifications
             .clone()
     }
+    /// Whether an HTML file an agent wrote opens in the side pane, from memory and without copying the settings.
+    pub(crate) fn open_agent_html(&self) -> bool {
+        self.0
+            .settings
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .browser
+            .open_agent_html
+    }
     /// A copy of the current settings.
     pub(crate) fn settings_snapshot(&self) -> Settings {
         self.0.settings.lock().unwrap_or_else(|e| e.into_inner()).clone()
@@ -1340,6 +1351,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/v1/sessions/{tab}/attachments",
             post(attachments::save).layer(DefaultBodyLimit::max(files::IMAGE_CAP as usize + 1)),
+        )
+        .route(
+            "/v1/screenshots",
+            post(screenshots::save).layer(DefaultBodyLimit::max(screenshots::SHOT_CAP as usize + 1)),
         )
         .route("/v1/sessions/{tab}/paste", post(attachments::paste))
         .route("/v1/sessions/{tab}/paste-paths", post(attachments::paste_paths))

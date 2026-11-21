@@ -601,6 +601,21 @@ describe("the Browser and Files panels", () => {
     expect(paneProblem(paneReducer(old, select("t1")))).toBeNull();
   });
 
+  it("paneProblem refuses a viewport that is not a size, and takes the four sizes", () => {
+    const withViewport = (viewport: string | undefined): PaneView => mk({ s: { tabs: [{ ...b("t1"), viewport }], active: "t1", active_browser: "t1" } });
+    for (const ok of [undefined, "phone", "tablet", "laptop", "desktop"]) expect(paneProblem(withViewport(ok))).toBeNull();
+    for (const bad of ["wide", "", "Phone"]) expect(paneProblem(withViewport(bad))).toBe("viewport");
+  });
+
+  it("sets and clears a Browser tab's viewport, and leaves a Files tab alone", () => {
+    const withPage = mk({ s1: { tabs: [b("p1")], active: "p1", active_browser: "p1" } });
+    const withTextFile = mk({ s1: { tabs: [f("f1")], active: "f1" } });
+    const set = paneReducer(withPage, { type: "viewport", session: "s1", paneTab: "p1", viewport: "phone" });
+    expect(tabsOf(set, "s1").tabs[0]!.viewport).toBe("phone");
+    expect("viewport" in tabsOf(paneReducer(set, { type: "viewport", session: "s1", paneTab: "p1", viewport: null }), "s1").tabs[0]!).toBe(false);
+    expect(paneReducer(withTextFile, { type: "viewport", session: "s1", paneTab: "f1", viewport: "phone" })).toBe(withTextFile);
+  });
+
   it("the stack is the window's: another session shows the same panels", () => {
     const s = mk({ a: { tabs: [b("t1")], active: "t1" }, c: { tabs: [f("t1")], active: "t1" } });
     const withStack = paneReducer(s, { type: "pin", session: "a" });
@@ -969,5 +984,22 @@ describe("the Browser and Files panels", () => {
     walk(3, OLD());
     walk(4, { ...OLD(), open: false, panels: { shown: ["browser", "files"], weights: { browser: 3000 }, filled: "files" } });
     walk(5, mk({ a: { tabs: [b("t1")], active: "t1" }, b: { tabs: [f("t1", "/x.html"), f("t2")], active: "t2" } }));
+  });
+});
+
+describe("a divider move with no stack saved", () => {
+  it("writes the stack it merges into", () => {
+    const next = paneReducer({ ...EMPTY, panels: undefined }, { type: "weights", weights: { browser: 3, files: 1 } });
+    expect(next.panels?.weights).toMatchObject({ browser: 3, files: 1 });
+    expect(next.panels?.shown).toEqual(stackOf({ ...EMPTY, panels: undefined }, null).shown);
+  });
+
+  it("keeps the session's panels when the move names the session", () => {
+    const pane = run(EMPTY, open("/a.txt"), { type: "openPage", session: "s", url: "https://a.test/" });
+    const bare: PaneView = { ...pane, panels: undefined };
+    expect(stackOf(bare, "s").shown).toEqual(["browser", "files"]);
+    const next = paneReducer(bare, { type: "weights", session: "s", weights: { browser: 3, files: 1 } });
+    expect(next.panels?.shown).toEqual(stackOf(bare, "s").shown);
+    expect(next.panels?.weights).toMatchObject({ browser: 3, files: 1 });
   });
 });

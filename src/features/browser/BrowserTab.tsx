@@ -11,7 +11,8 @@ import { enterReason, isQuiet, quietly } from "./pageFocus";
 import { pageRegionStep, type PageRegion, type PageRegionEvent } from "./pageRegion";
 import { openPage, useFocusedPage, usePage, type PageState } from "./pageStore";
 import { NO_PICTURE_TEXT, UrlBar, type UrlBarHandle } from "./UrlBar";
-import { usePageSlot } from "./usePageSlot";
+import { usePageSlot, useSlotWidth } from "./usePageSlot";
+import { pageBox, viewportWidth, type ViewportId } from "./viewport";
 import "./BrowserTab.css";
 
 /**
@@ -64,6 +65,11 @@ export type BrowserTabViewProps = {
   pageKey?: string;
   /** Focus reached the slot. */
   onSlotFocus?: (e: FocusEvent<HTMLDivElement>) => void;
+  /** Where the page sits in the slot (`pageBox`): undefined when it fills it. */
+  box?: ReturnType<typeof pageBox>;
+  /** The tab's fixed viewport and the width of the place it is shown in, for the chip at the end of the bar. */
+  viewport?: { id: ViewportId; slot: number } | null;
+  onViewport?: (anchor: { x: number; y: number }) => void;
 };
 
 /** The comment box beside the box, below or above it, kept inside the slot, and focused once it is placed. */
@@ -107,7 +113,7 @@ function PagePopover({ region, children }: { region: Region; children: ReactNode
 }
 
 /** The tab's markup: the bar, its status line, and the slot the shell's page sits over. Without browser tabs, a plain explanation. */
-export function BrowserTabView({ page, url, available, frozen, keys, slotRef, barRef, onGo, onNav, onOpenOutside, onEscape, announce, onRegion, canRegion, selection, note, pageKey, onSlotFocus }: BrowserTabViewProps) {
+export function BrowserTabView({ page, url, available, frozen, keys, slotRef, barRef, onGo, onNav, onOpenOutside, onEscape, announce, onRegion, canRegion, selection, note, pageKey, onSlotFocus, box, viewport, onViewport }: BrowserTabViewProps) {
   if (!available) {
     const address = page?.url || url;
     return (
@@ -133,21 +139,26 @@ export function BrowserTabView({ page, url, available, frozen, keys, slotRef, ba
         selecting={selection != null}
         note={note}
         announce={announce}
+        viewport={viewport}
+        onViewport={onViewport}
       />
       <div ref={slotRef} className="browser-tab__slot" tabIndex={selection != null ? -1 : 0} aria-label="Web page" data-page-key={pageKey} data-keys={keys ? "" : undefined} onFocus={onSlotFocus}>
-        {frozen !== null && (frozen.picture !== null ? <img alt="" className="browser-tab__picture" src={frozen.picture} /> : <div className="browser-tab__fill" />)}
-        {selection != null && selection.step !== "wait" && frozen?.picture != null && (
-          // In the slot's one cell, over the picture and the size of it, so the box's fractions are the picture's.
-          <div className="browser-tab__region">
-            <div className="region-capture" {...selection.onDrag} />
-            <RegionLayer region={selection.region} onChange={selection.onChange} onConfirm={selection.onConfirm} onCancel={selection.onCancel} paged={false} />
-            {selection.step === "comment" && (
-              <PagePopover region={selection.region}>
-                <RegionComment target={selection.target} busy={selection.busy} error={selection.error} onAdd={selection.onAdd} onCancel={selection.onBack} />
-              </PagePopover>
-            )}
-          </div>
-        )}
+        {/* The page's box: the whole content box of the slot, or the narrower one the shell centres a fixed viewport in. */}
+        <div className="browser-tab__page" style={box}>
+          {frozen !== null && (frozen.picture !== null ? <img alt="" className="browser-tab__picture" src={frozen.picture} /> : <div className="browser-tab__fill" />)}
+          {selection != null && selection.step !== "wait" && frozen?.picture != null && (
+            // In the page's one cell, over the picture and the size of it, so the box's fractions are the picture's.
+            <div className="browser-tab__region">
+              <div className="region-capture" {...selection.onDrag} />
+              <RegionLayer region={selection.region} onChange={selection.onChange} onConfirm={selection.onConfirm} onCancel={selection.onCancel} paged={false} />
+              {selection.step === "comment" && (
+                <PagePopover region={selection.region}>
+                  <RegionComment target={selection.target} busy={selection.busy} error={selection.error} onAdd={selection.onAdd} onCancel={selection.onBack} />
+                </PagePopover>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -181,6 +192,10 @@ export type BrowserTabProps = {
   onRegion?: (r: { png: Blob; label: string; comment: string }) => Promise<void>;
   /** Focuses and selects the address box; starts a region. */
   ref?: Ref<BrowserTabHandle>;
+  /** The tab's viewport: its id (`viewportOf`), null for Responsive. */
+  viewport?: ViewportId | null;
+  /** The viewport chip was pressed: opens the viewport menu at this corner. */
+  onViewport?: (anchor: { x: number; y: number }) => void;
 };
 
 const ignore = () => {};
@@ -215,12 +230,14 @@ export function noteFor(note: PageNote | null, url: string, status: PageState["s
 }
 
 /** A browser tab: the URL bar over a slot, and the page the shell keeps there while the tab is on screen. */
-export function BrowserTab({ pageKey, url, active, available = true, onPage, onOpenOutside, onEscape, announce, regionTarget = null, onRegion, ref }: BrowserTabProps) {
+export function BrowserTab({ pageKey, url, active, available = true, onPage, onOpenOutside, onEscape, announce, regionTarget = null, onRegion, viewport = null, onViewport, ref }: BrowserTabProps) {
   const page = usePage(pageKey);
   const slot = useRef<HTMLDivElement>(null);
   const bar = useRef<UrlBarHandle>(null);
   const covered = usePageCovered();
-  const frozen = usePageSlot(slot, pageKey, active && available, covered, url);
+  const width = viewportWidth(viewport);
+  const frozen = usePageSlot(slot, pageKey, active && available, covered, url, width);
+  const slotWidth = useSlotWidth(slot);
   const keys = useFocusedPage() === pageKey;
 
   const say = useEffectEvent((u: string, t: string) => onPage(u, t));
@@ -395,6 +412,9 @@ export function BrowserTab({ pageKey, url, active, available = true, onPage, onO
       canRegion={canRegion}
       selection={view}
       note={noteFor(note, pageUrl, page?.status ?? null)}
+      box={pageBox(slotWidth, width)}
+      viewport={viewport === null ? null : { id: viewport, slot: slotWidth }}
+      onViewport={onViewport}
     />
   );
 }

@@ -247,10 +247,13 @@ fn close_once(app: tauri::AppHandle, keep_in_tray: bool) {
 }
 
 /// Ends Marshell. The browser pages are closed first, while the event loop still runs: a page that is killed
-/// with the process loses the sign-ins of its last half minute.
+/// with the process loses the sign-ins of its last half minute. Before that, the "until quit" cookie rule clears
+/// what the pages stored, which can take a moment (at most three seconds).
 pub fn quit(app: &tauri::AppHandle) {
-    browser::close_all(app);
-    app.exit(0);
+    browser::before_quit(app, |app| {
+        browser::close_all(app);
+        app.exit(0);
+    });
 }
 
 /// What the window keeps between runs: everything but the frame, which the config sets (none on Windows, where the
@@ -452,7 +455,9 @@ fn main() {
             browser::browser_focus,
             browser::browser_capture,
             browser::browser_theme,
-            browser::browser_clear_data
+            browser::browser_clear_data,
+            browser::browser_screenshot,
+            browser::browser_cookies
         ])
         .build(tauri::generate_context!())
         .expect("failed to build the app");

@@ -6,6 +6,11 @@ import { usePopupFocus } from "../../lib/usePopupFocus";
 import { AgentsSection } from "../agents/AgentsSection";
 import type { SetupStart } from "../agents/agentsState";
 import { AccountsSection } from "../accounts/AccountsSection";
+import { BrowserSection } from "../browser/BrowserSection";
+import { browserTabs } from "../browser/available";
+import type { HookInstall } from "../../generated/HookInstall";
+import type { HookAgent } from "../../lib/api/agents";
+import { osOfPlatform } from "../../lib/keymap";
 import { AppearanceSection, TerminalSection } from "../appearance/AppearanceSections";
 import type { SettingsSync } from "../appearance/settingsSync";
 import { CompanySection } from "../companies/CompanySection";
@@ -42,6 +47,7 @@ export function SettingsPanels({ section, mounted, render }: { section: Settings
 const NONE: ReadonlySet<CompanyAgent> = new Set();
 const ZERO: Record<CompanyAgent, number> = { claude: 0, codex: 0, antigravity: 0, qwen: 0, copilot: 0 };
 const noop = () => {};
+const NO_HOOKS: Partial<Record<HookAgent, HookInstall>> = {};
 
 type Props = {
   /** The core's endpoint. Shell profiles, Agents and Advanced talk to the core and show nothing without it. */
@@ -64,6 +70,8 @@ type Props = {
   accountsRefresh?: number;
   /** Bumped per CLI when its update tab exits, so its section reads the version again. */
   companyRefresh?: Record<CompanyAgent, number>;
+  /** Each CLI's hook state: the Browser section says which agents open their HTML files. */
+  hooks?: Partial<Record<HookAgent, HookInstall>>;
   /** How many tabs are running each CLI. */
   running?: Record<CompanyAgent, number>;
   /** "Sign in to …" and "Update …" open a tab; the window closes Settings and selects it. */
@@ -78,7 +86,7 @@ type Props = {
  * Focus moves to the shown section's heading on open and on a section change. Esc and "Back to sessions" close it, unless
  * something inside already handled that Esc or the shell profiles hold unsaved edits; focus then returns to what had it before.
  */
-export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, initialCwd, announce, onProfilesSaved, onAgentsChanged, onNotifications, found = NONE, accountsRefresh = 0, companyRefresh = ZERO, running = ZERO, onSignIn = noop, onUpdate = noop, onClose }: Props) {
+export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, initialCwd, announce, onProfilesSaved, onAgentsChanged, onNotifications, found = NONE, accountsRefresh = 0, companyRefresh = ZERO, running = ZERO, hooks = NO_HOOKS, onSignIn = noop, onUpdate = noop, onClose }: Props) {
   const root = useRef<HTMLDivElement>(null);
   useCoverPage();
   const opener = useRef<HTMLElement | null | undefined>(undefined);
@@ -133,6 +141,10 @@ export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, 
         return <AppearanceSection announce={announce} />;
       case "terminal":
         return <TerminalSection announce={announce} />;
+      case "browser": {
+        const platform = endpoint?.platform ?? "windows";
+        return <BrowserSection announce={announce} pages={browserTabs(osOfPlatform(platform))} platform={platform} found={[...found]} hooks={hooks} />;
+      }
       case "notifications":
         return <NotificationsSection sync={sync} announce={announce} />;
       case "profiles":

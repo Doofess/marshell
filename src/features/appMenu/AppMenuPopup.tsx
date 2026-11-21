@@ -1,17 +1,18 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { menuKey, type MenuItem } from "../../components/ContextMenu/menuKeys";
+import { submenuPlace } from "../../components/ContextMenu/submenuPlace";
 import { AuxGlyph, StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { usePopupFocus } from "../../lib/usePopupFocus";
 import { useCoverPage } from "../browser/pageCover";
 import type { Os } from "../../lib/keymap";
 import "../../components/ContextMenu/ContextMenu.css";
 import "./AppMenu.css";
-import { appMenuItems, appMenuKey, doctorItemLabel, leavesAppMenu, menuKeyCloses, menuPlace, SETTINGS_ITEMS, submenuPlace, type AppMenuRun } from "./appMenu";
+import { appMenuItems, appMenuKey, doctorItemLabel, leavesAppMenu, menuKeyCloses, menuPlace, SETTINGS_ITEMS, type AppMenuRun, type MenuAnchor } from "./appMenu";
 
 type Props = {
   os: Os;
-  /** The menu button's top left, in viewport pixels; none opens at the window's bottom left. */
-  anchor: { left: number; top: number } | null;
+  /** The menu button's top left, in viewport pixels (with its bottom, the menu opens under it); none opens at the window's bottom left. */
+  anchor: MenuAnchor | null;
   /** Unknown before the first check: no number shows. */
   doctorIssues?: number;
   onRun: (r: AppMenuRun) => void;

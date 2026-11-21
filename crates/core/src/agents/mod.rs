@@ -193,6 +193,19 @@ pub fn permission_output(agent: &str, decision: &PermissionDecision, request: &V
     }
 }
 
+/// The files this event says `agent`'s file tool wrote, as that CLI gave them. Empty for any other event, for a call
+/// the event says failed, and for an agent that isn't one of the five.
+pub fn written(agent: &str, body: &Value) -> Vec<String> {
+    match agent {
+        "claude" => claude::writes::written(body),
+        "codex" => codex::writes::written(body),
+        "antigravity" => antigravity::writes::written(body),
+        "qwen" => qwen::writes::written(body),
+        "copilot" => copilot::writes::written(body),
+        _ => Vec::new(),
+    }
+}
+
 /// What a released or timed-out hold answers instead of the 204. `None` for an agent whose own prompt takes
 /// over (Claude Code, Codex, Qwen Code: no decision, so Qwen shows its own dialog). Antigravity gets a deny: only a
 /// Bypass tab is held, and there agy runs the call on an empty answer.

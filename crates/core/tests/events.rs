@@ -131,13 +131,13 @@ async fn events_sends_the_queue_at_connect_and_on_change() {
 
     let opens = core.state.opens();
     let (id, _answer) = opens
-        .push("t1", "browser", "https://example.com/".into(), "claude".into())
+        .push("t1", "browser", "https://example.com/".into(), "claude".into(), false)
         .expect("the queue has room");
     let event = next_event(&mut ws).await;
     assert_eq!(
         event,
         serde_json::json!({ "type": "opens", "data": [
-            { "id": id, "tab_id": "t1", "kind": "browser", "target": "https://example.com/", "by": "claude" }
+            { "id": id, "tab_id": "t1", "kind": "browser", "target": "https://example.com/", "by": "claude", "auto": false }
         ] })
     );
 

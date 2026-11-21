@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { menuKey } from "../../components/ContextMenu/menuKeys";
-import { appMenuItems, appMenuKey, doctorItemLabel, leavesAppMenu, menuKeyCloses, menuPlace, pressMenuButton, SETTINGS_ITEMS, submenuPlace, toggleMenu, type MenuState } from "./appMenu";
+import { appMenuItems, appMenuKey, doctorItemLabel, isMenuTrigger, leavesAppMenu, menuAnchor, menuKeyCloses, menuPlace, pressMenuButton, SETTINGS_ITEMS, toggleMenu, type MenuState } from "./appMenu";
 
 describe("appMenu", () => {
   it("the_menu_lists_settings_history_doctor_departures", () => {
@@ -24,11 +24,32 @@ describe("appMenu", () => {
   it("a_menu_opens_above_its_button", () => {
     expect(menuPlace({ left: 14, top: 760 }, { w: 200, h: 160 }, { w: 1200, h: 800 })).toEqual({ x: 14, y: 596 });
   });
-  it("the_submenu_opens_beside_the_menu_or_on_the_other_side", () => {
-    const vp = { w: 1200, h: 800 };
-    const size = { w: 180, h: 200 };
-    expect(submenuPlace({ left: 14, right: 214 }, 600, size, vp)).toEqual({ x: 216, y: 592 });
-    expect(submenuPlace({ left: 1000, right: 1190 }, 100, size, vp)).toEqual({ x: 818, y: 100 });
+  it("a_menu_opened_from_the_title_bar_opens_under_its_button", () => {
+    expect(menuPlace({ left: 12, top: 8, bottom: 36 }, { w: 200, h: 160 }, { w: 1200, h: 800 })).toEqual({ x: 12, y: 40 });
+  });
+  it("a_menu_under_a_button_still_stays_inside_the_window", () => {
+    expect(menuPlace({ left: 12, top: 760, bottom: 790 }, { w: 200, h: 160 }, { w: 1200, h: 800 })).toEqual({ x: 12, y: 632 });
+  });
+});
+
+describe("menuAnchor", () => {
+  const rect = { left: 12, top: 8, bottom: 36 };
+  it("the_sidebar_and_rail_buttons_anchor_by_their_top_so_the_menu_opens_above", () => {
+    expect(menuAnchor(rect, false)).toEqual({ left: 12, top: 8 });
+  });
+  it("the_title_bar_brand_anchors_by_its_bottom_so_the_menu_opens_under_it", () => {
+    expect(menuAnchor(rect, true)).toEqual({ left: 12, top: 8, bottom: 36 });
+  });
+});
+
+describe("isMenuTrigger", () => {
+  const el = (classes: string[]) => ({ closest: (sel: string) => (classes.some((c) => sel.split(",").map((s) => s.trim()).includes(`.${c}`)) ? {} : null) });
+  it("the_sidebar_rail_and_brand_buttons_toggle_the_menu", () => {
+    for (const c of ["sidebar__menu", "rail__menu", "window__brand"]) expect(isMenuTrigger(el([c])), c).toBe(true);
+  });
+  it("nothing_else_does", () => {
+    expect(isMenuTrigger(el(["window__palette"]))).toBe(false);
+    expect(isMenuTrigger({})).toBe(false);
   });
 });
 

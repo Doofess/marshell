@@ -74,6 +74,18 @@ describe("BrowserTabView", () => {
     expect(none).toContain("browser-tab__fill");
     expect(html()).not.toContain("<img");
   });
+  it("draws the frozen picture in the page's box, not across the place", () => {
+    const out = html({ frozen: { picture: "data:image/png;base64,AA==", phase: "frozen" }, box: { inlineSize: 390, marginInlineStart: 205 } });
+    const box = out.match(/<div[^>]*class="browser-tab__page"[^>]*>/)![0];
+    expect(box).toContain("inline-size:390px");
+    expect(box).toContain("margin-inline-start:205px");
+    expect(out).toMatch(/class="browser-tab__page"[^>]*><img/);
+    expect(html({ frozen: null, box: undefined })).not.toContain("inline-size");
+  });
+  it("keeps the slot itself unsized", () => {
+    const slot = html({ box: { inlineSize: 390, marginInlineStart: 205 } }).match(/<div[^>]*class="browser-tab__slot"[^>]*>/)![0];
+    expect(slot).not.toContain("style=");
+  });
 });
 
 describe("BrowserTabView: a region on the page", () => {

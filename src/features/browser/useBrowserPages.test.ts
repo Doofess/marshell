@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { PaneView } from "../../generated/PaneView";
-import { paneReducer } from "../pane/paneState";
+import { paneReducer, tabsOf } from "../pane/paneState";
 import { canLoad, pageReducer, setLoadable, subscribePages, type PageEvent, type PageState } from "./pageStore";
-import { openKeys, owners, pageAction, popupActions, popupNews, unload } from "./useBrowserPages";
+import { PAGE_REFUSED, TAB_LIMIT } from "../pane/paneCommands";
+import { openKeys, owners, pageAction, popupActions, popupNews, popupFold, popupOutcome, reloadPlan, unload } from "./useBrowserPages";
 import { nextLive } from "./pages";
 import { slotStep } from "./usePageSlot";
 
@@ -32,6 +33,17 @@ describe("openKeys", () => {
   it("counts every session while the session list isn't known, so a core that is starting again unloads nothing", () => {
     const s = page(page(empty, "a", "https://example.com/"), "b", "http://localhost:3000/");
     expect(openKeys(s, null)).toEqual(new Set(["a/t1", "b/t1"]));
+  });
+});
+
+describe("reloadPlan", () => {
+  it("loads every loaded page again, each at its tab's address, and counts them", () => {
+    const s = page(page(empty, "s1", "https://a.example/"), "s2", "https://b.example/x");
+    expect(reloadPlan(s, ["s1/t1", "s2/t1", "s3/t1"])).toEqual([
+      { key: "s1/t1", url: "https://a.example/" },
+      { key: "s2/t1", url: "https://b.example/x" },
+      { key: "s3/t1", url: null },
+    ]);
   });
 });
 
@@ -115,6 +127,29 @@ describe("popupNews", () => {
   });
 });
 
+describe("popupOutcome", () => {
+  it("says the limit line for a popup in a session with 32 tabs", () => {
+    let full = empty;
+    for (let i = 0; i < 32; i++) full = page(full, "s1", `https://example.com/${i}`);
+    expect(popupOutcome(full, "s1", "https://example.com/", true, [])).toEqual({ actions: [], say: TAB_LIMIT });
+  });
+  it("keeps the actions for an address already open in a session with 32 tabs", () => {
+    let full = empty;
+    for (let i = 0; i < 32; i++) full = page(full, "s1", `https://example.com/${i}`);
+    const r = popupOutcome(full, "s1", "https://example.com/5", true, []);
+    expect(r.say).toBeNull();
+    expect(r.actions).toEqual([{ type: "openPage", session: "s1", url: "https://example.com/5" }]);
+  });
+  it("says the refusal for an address the shell would not open", () => {
+    expect(popupOutcome(page(empty, "s1", "https://one.example/"), "s1", "file:///c:/x.html", true, []).say).toBe(PAGE_REFUSED);
+  });
+  it("says nothing for a popup that opens", () => {
+    const r = popupOutcome(page(empty, "s1", "https://one.example/"), "s1", "https://pop.example/", true, []);
+    expect(r.say).toBeNull();
+    expect(r.actions).toHaveLength(1);
+  });
+});
+
 describe("pageAction", () => {
   const owner = { session: "a", paneTab: "t1" };
   it("gives the tab its page's address and title, and no title for an empty one", () => {
@@ -161,5 +196,15 @@ describe("unload", () => {
       (e: PageEvent) => (pages = pageReducer(pages, e)),
     );
     expect(pages.has("a/t1")).toBe(false);
+  });
+});
+
+describe("popupFold", () => {
+  it("a second popup in the same tick sees the first one's tab", () => {
+    const pane = page(empty, "s1", "https://one.example/");
+    const first = popupOutcome(pane, "s1", "https://a.example/", false, []).actions;
+    const folded = popupFold(pane, first);
+    expect(popupNews(popupOutcome(folded, "s1", "https://b.example/", false, []).actions, folded)).toEqual(["s1"]);
+    expect(tabsOf(folded, "s1").tabs.length).toBe(tabsOf(pane, "s1").tabs.length + 1);
   });
 });

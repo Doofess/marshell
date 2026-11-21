@@ -1,4 +1,5 @@
 import type { Appearance } from "../../generated/Appearance";
+import type { BrowserSettings } from "../../generated/BrowserSettings";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { NotifySettings } from "../../generated/NotifySettings";
 import type { RetentionLimits } from "../../generated/RetentionLimits";
@@ -13,6 +14,8 @@ export class SettingsReadError extends Error {
   }
 }
 
+const DEFAULT_BROWSER: BrowserSettings = { terminal_links: true, open_agent_html: true, cookies: "always" };
+
 const DEFAULT_NOTIFY: NotifySettings = {
   needs_you: { banner: true, sound: true },
   done: { banner: true, sound: true },
@@ -21,6 +24,8 @@ const DEFAULT_NOTIFY: NotifySettings = {
   quiet_hours: { enabled: false, start: "22:00", end: "08:00" },
   terminal_alerts: true,
 };
+
+type FlagChange = Partial<Pick<Settings, "pause_warned" | "onboarded" | "close_to_tray" | "status_off" | "notifications" | "history_import" | "history_limit_gb" | "history_limit_days" | "history_backup_dir" | "browser">>;
 
 type SettingsApi = {
   get(ep: Endpoint): Promise<Settings>;
@@ -51,6 +56,13 @@ export class SettingsSync {
   private limitDays: number | null = null;
   /** The backup folder for the history. Kept from the last read, so every save sends it back unchanged. */
   private backupDir: string | null = null;
+  /** The Browser panel settings. Kept from the last read, so every save sends them back unchanged. */
+  private browserValue: BrowserSettings = DEFAULT_BROWSER;
+  /** Every settings write in order: the last one's end. Never rejects. */
+  private queue: Promise<void> = Promise.resolve();
+  /** True after a read that failed, until one works. */
+  private failed = false;
+  private listeners = new Set<() => void>();
   /** The appearance the core last stored, which a pause-warning write sends back unchanged. */
   private appearance: Appearance | null = null;
 
@@ -62,8 +74,16 @@ export class SettingsSync {
   /** Reads the settings from the core. Rejects if it can't be reached. */
   async load(): Promise<Appearance> {
     // Asked each time: a restarted core listens on a new endpoint.
-    const s = await this.api.get(await this.getEndpoint());
+    let s: Settings;
+    try {
+      s = await this.api.get(await this.getEndpoint());
+    } catch (e) {
+      this.failed = true;
+      this.emit();
+      throw e;
+    }
     this.hasRead = true;
+    this.failed = false;
     this.warned = s.pause_warned;
     this.seen = s.onboarded;
     this.tray = s.close_to_tray;
@@ -73,8 +93,65 @@ export class SettingsSync {
     this.limitGb = s.history_limit_gb;
     this.limitDays = s.history_limit_days;
     this.backupDir = s.history_backup_dir;
+    this.setBrowserValue(s.browser);
     this.appearance = s.appearance;
+    this.emit();
     return s.appearance;
+  }
+
+  /** The browser settings, as of the last read or write: null until a read has worked. The same object until it changes. */
+  get browser(): BrowserSettings | null {
+    return this.hasRead ? this.browserValue : null;
+  }
+
+  /** True after a read that failed, until one works. */
+  get readFailed(): boolean {
+    return this.failed;
+  }
+
+  /** Calls `listener` after every read and write, a failed read too. Returns the function that stops it. */
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  /**
+   * Runs one settings write after every earlier one has ended, so one write is in flight at a time and each sends the values the
+   * one before it stored. A write that fails doesn't stop the next, and each caller gets its own result or rejection. Never call it
+   * from inside a queued unit: that would wait on itself.
+   */
+  private queued<T>(run: () => Promise<T>): Promise<T> {
+    const result = this.queue.then(run);
+    this.queue = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
+  }
+
+  /**
+   * Saves the changed browser fields. Reads first, like `save`, and sends every other field back unchanged. It goes through the
+   * same queue as every other write, so it is built from the value the write before it stored, and no write overlapping it sends
+   * the old browser block back. A change that fails doesn't stop the next.
+   */
+  setBrowser(change: Partial<BrowserSettings>): Promise<void> {
+    return this.queued(async () => {
+      await this.readFirst();
+      await this.write({ browser: { ...this.browserValue, ...change } });
+    });
+  }
+
+  private emit(): void {
+    for (const l of [...this.listeners]) l();
+  }
+
+  /** Keeps the current object when the fields are equal, so a store snapshot stays stable. */
+  private setBrowserValue(next: BrowserSettings): void {
+    const cur = this.browserValue;
+    if (cur.terminal_links === next.terminal_links && cur.open_agent_html === next.open_agent_html && cur.cookies === next.cookies) return;
+    this.browserValue = next;
   }
 
   /** Whether conversations run outside Marshell are copied, as of the last read or write. True until a read works. */
@@ -117,8 +194,12 @@ export class SettingsSync {
     return this.warned;
   }
 
-  /** Saves `next` and returns what the core stored. Rejects with a SettingsReadError when nothing has been read yet and a read fails. */
-  async save(next: Appearance): Promise<Appearance> {
+  /** Saves `next` and returns what the core stored. Rejects with a SettingsReadError when nothing has been read yet and a read fails. Queued with every other write. */
+  save(next: Appearance): Promise<Appearance> {
+    return this.queued(() => this.saveNow(next));
+  }
+
+  private async saveNow(next: Appearance): Promise<Appearance> {
     if (!this.hasRead) {
       try {
         await this.load();
@@ -126,7 +207,7 @@ export class SettingsSync {
         throw new SettingsReadError();
       }
     }
-    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, close_to_tray: this.tray, status_off: this.off, notifications: this.notify, history_import: this.importOn, history_limit_gb: this.limitGb, history_limit_days: this.limitDays, history_backup_dir: this.backupDir });
+    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, close_to_tray: this.tray, status_off: this.off, notifications: this.notify, history_import: this.importOn, history_limit_gb: this.limitGb, history_limit_days: this.limitDays, history_backup_dir: this.backupDir, browser: this.browserValue });
     this.warned = s.pause_warned;
     this.seen = s.onboarded;
     this.tray = s.close_to_tray;
@@ -136,7 +217,9 @@ export class SettingsSync {
     this.limitGb = s.history_limit_gb;
     this.limitDays = s.history_limit_days;
     this.backupDir = s.history_backup_dir;
+    this.setBrowserValue(s.browser);
     this.appearance = s.appearance;
+    this.emit();
     return s.appearance;
   }
 
@@ -146,9 +229,11 @@ export class SettingsSync {
   }
 
   /** Switches one agent's live status on or off. Reads first, like `save`, and sends every other field back unchanged. */
-  async setStatusOff(agent: string, off: boolean): Promise<void> {
-    const rest = (await this.readFirst()).filter((id) => id !== agent);
-    await this.writeFlags({ status_off: off ? [...rest, agent] : rest });
+  setStatusOff(agent: string, off: boolean): Promise<void> {
+    return this.queued(async () => {
+      const rest = (await this.readFirst()).filter((id) => id !== agent);
+      await this.write({ status_off: off ? [...rest, agent] : rest });
+    });
   }
 
   /** Records that the first-Pause warning was confirmed. Reads first, like `save`, and sends the appearance last read back unchanged. */
@@ -193,7 +278,13 @@ export class SettingsSync {
     return this.off;
   }
 
-  private async writeFlags(change: Partial<Pick<Settings, "pause_warned" | "onboarded" | "close_to_tray" | "status_off" | "notifications" | "history_import" | "history_limit_gb" | "history_limit_days" | "history_backup_dir">>): Promise<void> {
+  /** Writes the changed fields through the queue. */
+  private writeFlags(change: FlagChange): Promise<void> {
+    return this.queued(() => this.write(change));
+  }
+
+  /** The write itself, for a queued unit to call: it reads first when no read has worked. */
+  private async write(change: FlagChange): Promise<void> {
     if (!this.hasRead) {
       try {
         await this.load();
@@ -212,6 +303,7 @@ export class SettingsSync {
       history_limit_gb: this.limitGb,
       history_limit_days: this.limitDays,
       history_backup_dir: this.backupDir,
+      browser: this.browserValue,
       ...change,
     });
     this.warned = s.pause_warned;
@@ -223,6 +315,34 @@ export class SettingsSync {
     this.limitGb = s.history_limit_gb;
     this.limitDays = s.history_limit_days;
     this.backupDir = s.history_backup_dir;
+    this.setBrowserValue(s.browser);
     this.appearance = s.appearance;
+    this.emit();
+  }
+}
+
+/** The waits, in milliseconds, between a failed start-up read of the settings and each new attempt: five attempts over about 15 seconds. */
+export const LOAD_RETRY_WAITS: readonly number[] = [1000, 2000, 4000, 8000];
+
+/**
+ * Runs `load`, and after a failure runs it again after each wait in `waits`, stopping at the first success or once `live()` is
+ * false. Resolves with the first success; rejects with the last error when every attempt failed, or with the failure in hand when
+ * `live()` went false. A failed read keeps the Browser pages private (decision 28 of slice 6r-1b), so a core that is only slow to
+ * start must not pin that for the whole run.
+ */
+export async function loadWithRetry<T>(
+  load: () => Promise<T>,
+  live: () => boolean,
+  waits: readonly number[] = LOAD_RETRY_WAITS,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await load();
+    } catch (e) {
+      if (i >= waits.length || !live()) throw e;
+      await sleep(waits[i]!);
+      if (!live()) throw e;
+    }
   }
 }

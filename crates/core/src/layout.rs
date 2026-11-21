@@ -69,7 +69,10 @@ fn lenient_pane(doc: &mut serde_json::Value) {
         .get("panels")
         .is_some_and(|p| serde_json::from_value::<Panels>(p.clone()).is_err())
     {
-        fields.remove("panels");
+        let kept = fields.get_mut("panels").is_some_and(lenient_panels);
+        if !kept {
+            fields.remove("panels");
+        }
     }
 
     if !fields.get("sessions").is_some_and(Value::is_object) {
@@ -87,6 +90,36 @@ fn lenient_pane(doc: &mut serde_json::Value) {
     }
 }
 
+/// Drops from the saved stack the weights and the fill that can't be read, one by one. False when the stack itself is
+/// unreadable, which is when its `shown` isn't a list of strings.
+fn lenient_panels(panels: &mut serde_json::Value) -> bool {
+    use serde_json::Value;
+
+    let Some(fields) = panels.as_object_mut() else {
+        return false;
+    };
+    let shown_ok = fields
+        .get("shown")
+        .and_then(Value::as_array)
+        .is_some_and(|a| a.iter().all(Value::is_string));
+    if !shown_ok {
+        return false;
+    }
+    match fields.get_mut("weights") {
+        Some(Value::Object(weights)) => {
+            weights.retain(|_, w| w.as_u64().is_some_and(|n| u32::try_from(n).is_ok()));
+        }
+        Some(_) => {
+            fields.remove("weights");
+        }
+        None => {}
+    }
+    if fields.get("filled").is_some_and(|f| !f.is_string()) {
+        fields.remove("filled");
+    }
+    true
+}
+
 /// Keeps the tabs of one session that parse. False when the session itself is unreadable.
 fn lenient_session(session: &mut serde_json::Value) -> bool {
     use serde_json::Value;
@@ -97,6 +130,14 @@ fn lenient_session(session: &mut serde_json::Value) -> bool {
     let Some(tabs) = fields.get_mut("tabs").and_then(Value::as_array_mut) else {
         return false;
     };
+    for tab in tabs.iter_mut() {
+        // A viewport that is not a known size is dropped alone; the tab stays.
+        if let Some(t) = tab.as_object_mut()
+            && t.get("viewport").is_some_and(|v| !v.as_str().is_some_and(is_viewport))
+        {
+            t.remove("viewport");
+        }
+    }
     tabs.retain(|tab| serde_json::from_value::<PaneTab>(tab.clone()).is_ok());
     if !fields.get("active").is_some_and(Value::is_string) {
         fields.insert("active".into(), Value::Null);
@@ -261,6 +302,9 @@ fn repair_pane(pane: &mut PaneView, tabs: &[SavedTab]) {
                 tab.opened_by = None;
                 tab.unseen = false;
             }
+            if tab.viewport.as_deref().is_some_and(|v| !is_viewport(v)) {
+                tab.viewport = None;
+            }
             if tab.kind == "browser" {
                 // A browser tab holds one address: the entry it was showing.
                 let at = (tab.index as usize).min(tab.history.len().saturating_sub(1));
@@ -331,6 +375,11 @@ fn fold_to_one_pane(view: &mut ViewLayout) {
 /// An opener: 1 to 32 characters of a-z, 0-9 and "-".
 pub(crate) fn is_opener(id: &str) -> bool {
     (1..=32).contains(&id.len()) && id.bytes().all(|b| matches!(b, b'a'..=b'z' | b'0'..=b'9' | b'-'))
+}
+
+/// A browser tab's viewport size: phone, tablet, laptop or desktop.
+pub(crate) fn is_viewport(id: &str) -> bool {
+    matches!(id, "phone" | "tablet" | "laptop" | "desktop")
 }
 
 const MAX_RECENT: usize = 5;
@@ -445,6 +494,9 @@ pub fn validate_pane(p: &PaneView) -> Result<(), String> {
             }
             if tab.unseen && tab.opened_by.is_none() {
                 return Err(format!("{at}: unseen needs opened_by"));
+            }
+            if tab.viewport.as_deref().is_some_and(|v| !is_viewport(v)) {
+                return Err(format!("{at}: viewport must be phone, tablet, laptop or desktop"));
             }
             let browser = tab.kind == "browser";
             if !browser && tab.title.is_some() {
@@ -812,6 +864,7 @@ mod tests {
             title: None,
             opened_by: None,
             unseen: false,
+            viewport: None,
         }
     }
 
@@ -1372,6 +1425,52 @@ mod tests {
     }
 
     #[test]
+    fn a_tab_with_an_unreadable_viewport_is_kept_without_it() {
+        for bad in [
+            serde_json::json!(390),
+            serde_json::json!("wide"),
+            serde_json::json!(null),
+        ] {
+            let pane = serde_json::json!({
+                "open": true,
+                "sessions": {"ta": {"tabs": [{
+                    "id": "a", "kind": "browser",
+                    "history": [{"path": "https://example.com/", "view": "rendered"}],
+                    "index": 0, "viewport": bad
+                }], "active": "a"}}
+            });
+            let doc = load_with_pane(pane, 304.into());
+            let tabs = &doc.view.pane.sessions["ta"].tabs;
+            assert_eq!(tabs.len(), 1, "{bad:?}");
+            assert_eq!(tabs[0].viewport, None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_tab_keeps_a_viewport_it_can_have() {
+        let mut t = browser_tab("a", "https://example.com/");
+        t.viewport = Some("phone".into());
+        let mut doc = doc_with("ta");
+        doc.view.pane = pane_with("ta", session(vec![t]));
+        assert_eq!(validate_view(&doc.view), Ok(()));
+        let home = tempfile::tempdir().unwrap();
+        save(home.path(), &doc).unwrap();
+        let back = load(home.path());
+        assert_eq!(back.view.pane.sessions["ta"].tabs[0].viewport.as_deref(), Some("phone"));
+    }
+
+    #[test]
+    fn validate_pane_refuses_a_viewport_that_is_not_a_size() {
+        let mut t = browser_tab("a", "https://example.com/");
+        t.viewport = Some("wide".into());
+        let err = validate_pane(&pane_with("ta", session(vec![t]))).unwrap_err();
+        assert!(
+            err.contains("viewport must be phone, tablet, laptop or desktop"),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn a_pane_that_is_not_an_object_reads_as_an_empty_pane() {
         let doc = load_with_pane(serde_json::json!([]), 304.into());
         assert_tabs_and_sidebar_kept(&doc);
@@ -1418,12 +1517,7 @@ mod tests {
 
     #[test]
     fn a_stack_of_the_wrong_type_loses_only_itself() {
-        for bad in [
-            serde_json::json!("files"),
-            serde_json::json!({"shown": "files"}),
-            serde_json::json!({"shown": ["files"], "weights": {"files": 1.5}}),
-            serde_json::json!({"shown": ["files"], "filled": 3}),
-        ] {
+        for bad in [serde_json::json!("files"), serde_json::json!({"shown": "files"})] {
             let pane = serde_json::json!({
                 "open": true, "width": 480, "recent": [], "panels": bad,
                 "sessions": {"ta": {"tabs": [good_file_tab("t1")], "active": "t1", "active_browser": 7}}
@@ -1438,6 +1532,40 @@ mod tests {
             assert_eq!(pane.sessions["ta"].active, some("t1"));
             assert_eq!(pane.sessions["ta"].active_browser, None);
         }
+    }
+
+    #[test]
+    fn a_bad_weight_or_fill_loses_only_itself() {
+        for (bad, weights) in [
+            (
+                serde_json::json!({"shown": ["files"], "weights": {"files": 1.5}}),
+                vec![],
+            ),
+            (serde_json::json!({"shown": ["files"], "filled": 3}), vec![]),
+            (
+                serde_json::json!({"shown": ["browser", "files"], "weights": {"files": -5, "browser": 3}, "filled": 7}),
+                vec![("browser", 3)],
+            ),
+        ] {
+            let shown = bad["shown"].clone();
+            let pane = serde_json::json!({"open": true, "width": 480, "recent": [], "panels": bad, "sessions": {}});
+            let doc = load_with_pane(pane, 304.into());
+            assert_tabs_and_sidebar_kept(&doc);
+            let panels = doc.view.pane.panels.expect("the stack is kept");
+            assert_eq!(serde_json::json!(panels.shown), shown);
+            let want: std::collections::BTreeMap<String, u32> =
+                weights.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+            assert_eq!(panels.weights, want);
+            assert_eq!(panels.filled, None);
+        }
+    }
+
+    #[test]
+    fn a_stack_whose_shown_cannot_be_read_is_dropped() {
+        let pane = serde_json::json!({"open": true, "width": 480, "recent": [], "sessions": {},
+            "panels": {"shown": "browser", "weights": {"browser": 3}}});
+        let doc = load_with_pane(pane, 304.into());
+        assert_eq!(doc.view.pane.panels, None);
     }
 
     #[test]

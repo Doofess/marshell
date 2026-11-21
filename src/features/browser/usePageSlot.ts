@@ -1,4 +1,4 @@
-import { useContext, useEffect, useEffectEvent, useMemo, useRef, useState, type RefObject } from "react";
+import { useContext, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { flushSync } from "react-dom";
 import { LayoutContext, paneColumn, type ColumnInputs, type Layout } from "../window/paneColumn";
 import type { Frozen } from "./BrowserTab";
@@ -65,20 +65,20 @@ function rulePiecesFor(inputs: ColumnInputs, start: number, end: number): Piece[
  * below the slot's); the rule also names the window height it was measured at. A slot with no size reports a zero box and no rule:
  * there is nothing for the page to follow.
  */
-export function slotReport(slot: DOMRectLike, win: DOMRectLike, inputs: ColumnInputs | null, moving: boolean, bottomPerPx = 0): Report {
+export function slotReport(slot: DOMRectLike, win: DOMRectLike, inputs: ColumnInputs | null, moving: boolean, bottomPerPx = 0, page: string | null = null, viewport: number | null = null): Report {
   const size = { width: finite(win.width), height: finite(win.height) };
   const x = finite(slot.x);
   const y = finite(slot.y);
   const width = finite(slot.width);
   const height = finite(slot.height);
-  if (width <= 0 || height <= 0) return { rect: { x: 0, y: 0, width: 0, height: 0 }, win: size, rule: null, moving };
+  if (width <= 0 || height <= 0) return { rect: { x: 0, y: 0, width: 0, height: 0 }, win: size, rule: null, moving, page, viewport };
   const rect = { x, y, width, height };
-  if (inputs === null) return { rect, win: size, rule: null, moving };
+  if (inputs === null) return { rect, win: size, rule: null, moving, page, viewport };
   const col = paneColumn(size.width, inputs);
   const start = x - col.x;
   const end = col.x + col.width - (x + width);
   const rule = { pieces: rulePiecesFor(inputs, start, end), top: y, bottom: size.height - (y + height), bottomPerPx: finite(bottomPerPx), atHeight: size.height };
-  return { rect, win: size, rule, moving };
+  return { rect, win: size, rule, moving, page, viewport };
 }
 
 /** The gutter, in px, between the slot's edge and its page. The slot draws the page's focus ring there while the page has the keys. */
@@ -94,18 +94,18 @@ export function insetRect(r: DOMRectLike, by: number): DOMRectLike {
 }
 
 /** The slot's box in the window's coordinates, and the window's size. That is `.window`, which the app sizes itself. The page sits `PAGE_GUTTER` inside it. */
-function measure(el: HTMLElement, layout: Layout | null): Report {
+function measure(el: HTMLElement, layout: Layout | null, page: string, viewport: number | null): Report {
   const r = el.getBoundingClientRect();
   const w = el.closest<HTMLElement>(".window")?.getBoundingClientRect();
   const left = w?.left ?? 0;
   const top = w?.top ?? 0;
   const win = { x: 0, y: 0, width: w?.width ?? window.innerWidth, height: w?.height ?? window.innerHeight, right: w?.width ?? window.innerWidth, bottom: w?.height ?? window.innerHeight };
   const slot = { x: r.left - left, y: r.top - top, width: r.width, height: r.height, right: r.right - left, bottom: r.bottom - top };
-  return slotReport(insetRect(slot, PAGE_GUTTER), win, layout?.inputs ?? null, layout?.moving ?? false, layout?.bottomPerPx ?? 0);
+  return slotReport(insetRect(slot, PAGE_GUTTER), win, layout?.inputs ?? null, layout?.moving ?? false, layout?.bottomPerPx ?? 0, page, viewport);
 }
 
 /** Resolves after the next frame has been painted: a timeout queued from the frame's callback runs after that paint (S12). */
-function nextPaint(): Promise<void> {
+export function nextPaint(): Promise<void> {
   return new Promise((done) => requestAnimationFrame(() => setTimeout(done, 0)));
 }
 
@@ -126,7 +126,7 @@ const ignore = () => {};
  * `url` is the address a missing page opens at. The window's `resize` event is never a trigger: it fires a frame ahead of the
  * layout, which `.window` follows from its own observer (S12 finding 17).
  */
-export function usePageSlot(ref: RefObject<HTMLElement | null>, pageKey: string, active: boolean, covered: boolean, url: string): Frozen | null {
+export function usePageSlot(ref: RefObject<HTMLElement | null>, pageKey: string, active: boolean, covered: boolean, url: string, viewport: number | null): Frozen | null {
   const page = usePage(pageKey);
   const layout = useContext(LayoutContext);
   const step = slotStep(page, active, covered, useCanLoad(pageKey));
@@ -204,7 +204,7 @@ export function usePageSlot(ref: RefObject<HTMLElement | null>, pageKey: string,
   useEffect(() => {
     const el = ref.current;
     if (!el || !active) return;
-    const report = () => placer.current!.report(() => measure(el, layout));
+    const report = () => placer.current!.report(() => measure(el, layout, pageKey, viewport));
     report();
     const observer = new ResizeObserver(report);
     observer.observe(el);
@@ -234,7 +234,25 @@ export function usePageSlot(ref: RefObject<HTMLElement | null>, pageKey: string,
       // A report still waiting would measure a slot that may be gone, and place the page at 0 × 0.
       placer.current!.cancel();
     };
-  }, [ref, active, layout, moving]);
+  }, [ref, active, layout, moving, pageKey, viewport]);
 
   return freeze.phase === "live" ? null : { picture: freeze.picture, phase: freeze.phase };
+}
+
+/**
+ * The width of the place the shell fits a page in: the slot's width less the gutter on both sides. Kept current by a
+ * `ResizeObserver`; 0 before the first measure.
+ */
+export function useSlotWidth(ref: RefObject<HTMLElement | null>): number {
+  const [width, setWidth] = useState(0);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const read = () => setWidth(Math.max(0, el.getBoundingClientRect().width - 2 * PAGE_GUTTER));
+    read();
+    const observer = new ResizeObserver(read);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [ref]);
+  return width;
 }

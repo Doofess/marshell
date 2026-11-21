@@ -105,9 +105,9 @@ export type MainWindowProps = {
   footer?: SidebarFooter | null;
   /** A click on the sidebar footer's Doctor count. */
   onOpenDoctor?: () => void;
-  /** The Menu button in the sidebar footer and at the rail's bottom. Left out, there is none. */
+  /** The Menu button in the sidebar footer and at the rail's bottom, and the brand button in the title bar. Left out, there is none. */
   onOpenMenu?: (button: HTMLElement) => void;
-  /** The menu is open: both buttons say so. */
+  /** The menu is open: those buttons say so. */
   menuOpen?: boolean;
   /** The needs-you count the window title leads with. The live app passes the one count it also gives the taskbar badge. */
   needsYou?: number;
@@ -195,6 +195,16 @@ const icon = (d: string) => (
     <path d={d} />
   </svg>
 );
+
+/** The title bar's brand: the app menu's button, named for what it shows. A press opens the window's one app menu from it, under it. */
+export function BrandButton({ expanded, menuOpen, onOpenMenu }: { expanded: boolean; menuOpen: boolean; onOpenMenu?: (button: HTMLElement) => void }) {
+  return (
+    <button type="button" className="window__brand" aria-label="Marshell menu" aria-haspopup="menu" aria-expanded={menuOpen} onClick={(e) => onOpenMenu?.(e.currentTarget)}>
+      <Logo size={22} decorative />
+      {expanded && <Wordmark height={13} decorative />}
+    </button>
+  );
+}
 
 /**
  * The main window composite (docs/PLAN.md deliverable 5): a Windows-style frame around the sidebar or rail, the session header and the terminal.
@@ -428,10 +438,7 @@ export function MainWindow({
         <div className="window__bar-side" data-tauri-drag-region>
           {/* In focus mode this column has no width: its buttons are not rendered, so keyboard focus can never land on something nobody sees. */}
           {mode !== "focus" && (
-            <button type="button" className="window__brand" aria-label="Marshell menu" aria-haspopup="menu">
-              <Logo size={22} decorative />
-              {mode === "expanded" && <Wordmark height={13} decorative />}
-            </button>
+            <BrandButton expanded={mode === "expanded"} menuOpen={menuOpen === true} onOpenMenu={onOpenMenu} />
           )}
           {mode !== "focus" && (
             <>

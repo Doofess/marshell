@@ -3,6 +3,8 @@ import { useAnnounceOnce } from "../../lib/useAnnounceOnce";
 import { addressFor, BLANK } from "./address";
 import type { NavAction } from "./browserApi";
 import type { PageState } from "./pageStore";
+import { ViewportChip } from "./ViewportChip";
+import type { ViewportId } from "./viewport";
 
 export type UrlBarHandle = { focusAddress(): void; focusRegion(): void };
 
@@ -32,6 +34,10 @@ export type UrlBarProps = {
   note?: string | null;
   /** Says a message through the window's announcer. */
   announce?: (text: string) => void;
+  /** The tab's fixed viewport and the width of the place it is shown in; the chip shows only for a fixed one. */
+  viewport?: { id: ViewportId; slot: number } | null;
+  /** The chip was pressed: opens the viewport menu at this corner. */
+  onViewport?: (anchor: { x: number; y: number }) => void;
   ref?: Ref<UrlBarHandle>;
 };
 
@@ -53,7 +59,7 @@ export function regionFocusTarget(button: { disabled: boolean; focus(): void } |
 }
 
 /** The browser tab's bar: Back, Forward, Reload or Stop, the address box, and the Select region button. */
-export function UrlBar({ page, fallbackUrl = "", onGo, onNav, onEscape, onRegion, canRegion = false, selecting = false, note = null, announce, ref }: UrlBarProps) {
+export function UrlBar({ page, fallbackUrl = "", onGo, onNav, onEscape, onRegion, canRegion = false, selecting = false, note = null, announce, viewport = null, onViewport, ref }: UrlBarProps) {
   const input = useRef<HTMLInputElement>(null);
   const regionButton = useRef<HTMLButtonElement>(null);
   // What the person has typed since the box took focus; null shows the page's own address.
@@ -139,6 +145,7 @@ export function UrlBar({ page, fallbackUrl = "", onGo, onNav, onEscape, onRegion
             {icon(REGION)}
           </button>
         )}
+        {viewport !== null && onViewport && <ViewportChip id={viewport.id} slot={viewport.slot} onOpen={onViewport} />}
       </div>
       {status !== null && <p className="url-bar__status">{status}</p>}
     </>

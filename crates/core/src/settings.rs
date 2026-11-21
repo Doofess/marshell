@@ -2,7 +2,7 @@
 //! means the defaults, and a broken file is left alone until the next save moves it aside.
 
 use crate::store::{self, Versioned};
-use marshell_protocol::api::{Appearance, NotifySettings, QuietHours, Settings};
+use marshell_protocol::api::{Appearance, BrowserSettings, CookieRule, NotifySettings, QuietHours, Settings};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::Path;
@@ -35,9 +35,42 @@ struct FileDoc {
     /// None is no backup. The folder is checked when it is saved and again at every copy.
     #[serde(default)]
     history_backup_dir: Option<String>,
+    /// Each value that does not read falls back on its own default.
+    #[serde(default, deserialize_with = "lenient_browser")]
+    browser: BrowserSettings,
     /// Read only, to migrate an older file; never written.
     #[serde(default, skip_serializing)]
     sound_off: bool,
+}
+
+/// The browser block, one field at a time: a value of the wrong type reads as its default, and only the field's
+/// name is logged.
+fn lenient_browser<'de, D: serde::Deserializer<'de>>(d: D) -> Result<BrowserSettings, D::Error> {
+    let value = serde_json::Value::deserialize(d)?;
+    let mut out = BrowserSettings::default();
+    let Some(fields) = value.as_object() else {
+        if !value.is_null() {
+            tracing::warn!("settings file has an invalid browser block, using the defaults");
+        }
+        return Ok(out);
+    };
+    for (name, slot) in [
+        ("terminal_links", &mut out.terminal_links),
+        ("open_agent_html", &mut out.open_agent_html),
+    ] {
+        match fields.get(name) {
+            None => {}
+            Some(serde_json::Value::Bool(b)) => *slot = *b,
+            Some(_) => tracing::warn!("settings file has an invalid browser.{name}, using the default"),
+        }
+    }
+    if let Some(v) = fields.get("cookies") {
+        match serde_json::from_value::<CookieRule>(v.clone()) {
+            Ok(rule) => out.cookies = rule,
+            Err(_) => tracing::warn!("settings file has an invalid browser.cookies, using the default"),
+        }
+    }
+    Ok(out)
 }
 
 /// The notifications block, or the defaults when it is not one (a wrong type or `null` where a value goes).
@@ -123,6 +156,7 @@ pub fn load(home: &Path) -> Settings {
         history_limit_gb,
         history_limit_days,
         history_backup_dir: doc.history_backup_dir.filter(|dir| !dir.trim().is_empty()),
+        browser: doc.browser,
     }
 }
 
@@ -170,6 +204,7 @@ pub fn save(home: &Path, s: &Settings) -> anyhow::Result<()> {
             history_limit_gb: s.history_limit_gb,
             history_limit_days: s.history_limit_days,
             history_backup_dir: s.history_backup_dir.clone(),
+            browser: s.browser.clone(),
             sound_off: false,
         },
     )
@@ -282,7 +317,56 @@ fn repair(a: &mut Appearance) -> Vec<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use marshell_protocol::api::{ImportedTheme, TerminalColors};
+    use marshell_protocol::api::{BrowserSettings, CookieRule, ImportedTheme, TerminalColors};
+
+    fn write_settings(home: &Path, json: &str) {
+        std::fs::write(crate::paths::settings_file(home), json).unwrap();
+    }
+
+    #[test]
+    fn browser_settings_default_to_links_here_auto_open_and_cookies_kept() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(
+            load(home.path()).browser,
+            BrowserSettings {
+                terminal_links: true,
+                open_agent_html: true,
+                cookies: CookieRule::Always
+            }
+        );
+    }
+
+    #[test]
+    fn browser_settings_round_trip() {
+        let home = tempfile::tempdir().unwrap();
+        let s = Settings {
+            browser: BrowserSettings {
+                terminal_links: false,
+                open_agent_html: false,
+                cookies: CookieRule::UntilQuit,
+            },
+            ..Settings::default()
+        };
+        save(home.path(), &s).unwrap();
+        assert_eq!(load(home.path()).browser, s.browser);
+    }
+
+    #[test]
+    fn one_unreadable_browser_value_reads_as_its_default_and_the_rest_is_kept() {
+        let home = tempfile::tempdir().unwrap();
+        write_settings(
+            home.path(),
+            r#"{"browser": {"terminal_links": false, "open_agent_html": "yes", "cookies": "nevr"}}"#,
+        );
+        assert_eq!(
+            load(home.path()).browser,
+            BrowserSettings {
+                terminal_links: false,
+                open_agent_html: true,
+                cookies: CookieRule::Always
+            }
+        );
+    }
 
     fn colors() -> TerminalColors {
         TerminalColors {

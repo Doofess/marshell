@@ -24,4 +24,8 @@ opened_by: string | null,
 /**
  * True until the tab is first selected after `marshell open` added or marked it.
  */
-unseen: boolean, };
+unseen: boolean, 
+/**
+ * A browser tab's chosen viewport: "phone", "tablet", "laptop" or "desktop". None is Responsive.
+ */
+viewport?: string, };

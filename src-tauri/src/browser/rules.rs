@@ -2,7 +2,7 @@
 //! pages exist. Nothing here touches a webview, so all of it is tested (slice 6q-3a).
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
 use tauri::Url;
 
@@ -533,6 +533,349 @@ pub struct Report {
     pub win: Size,
     pub rule: Option<Rule>,
     pub moving: bool,
+    /// The key of the page the slot belongs to.
+    #[serde(default)]
+    pub page: Option<String>,
+    /// That page's tab's viewport width, in CSS pixels; None for a tab that follows its panel.
+    #[serde(default)]
+    pub viewport: Option<u32>,
+}
+
+/// The widths a tab's viewport can have, in CSS pixels: phone, tablet, laptop, desktop (6r-1b decision 15). The app
+/// sends one of these or nothing; any other number is no viewport.
+pub const VIEWPORTS: [u32; 4] = [390, 768, 1024, 1440];
+
+/// A page laid out `width` CSS pixels wide and drawn at `scale`, so the whole width shows in a narrower slot.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Emulate {
+    pub width: u32,
+    /// Rounded to four places, so a slot that moves by less than the page can show asks for nothing new.
+    pub scale: f64,
+}
+
+/// Where a page sits in its slot, and how it is laid out there.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fit {
+    pub rect: Rect,
+    pub emulate: Option<Emulate>,
+}
+
+/// Where a page with `viewport` sits in `slot`: centred at its own width when it fits, the whole slot with an
+/// emulation when it doesn't. A width not in `VIEWPORTS`, and a slot with no width, is no viewport.
+pub fn fit(slot: Rect, viewport: Option<u32>) -> Fit {
+    let whole_slot = Fit {
+        rect: slot,
+        emulate: None,
+    };
+    let Some(width) = viewport.filter(|w| VIEWPORTS.contains(w)) else {
+        return whole_slot;
+    };
+    if !slot.width.is_finite() || slot.width <= 0.0 {
+        return whole_slot;
+    }
+    let w = f64::from(width);
+    if w == slot.width {
+        return whole_slot;
+    }
+    if w < slot.width {
+        return Fit {
+            rect: Rect {
+                x: slot.x + ((slot.width - w) / 2.0).floor(),
+                width: w,
+                ..slot
+            },
+            emulate: None,
+        };
+    }
+    Fit {
+        rect: slot,
+        emulate: Some(Emulate {
+            width,
+            scale: (slot.width / w * 10_000.0).round() / 10_000.0,
+        }),
+    }
+}
+
+/// The parameters of `Emulation.setDeviceMetricsOverride` for `e`: the height, the pixel ratio and the kind of device
+/// stay the page's own (S14, result 2).
+pub fn emulate_params(e: Emulate) -> String {
+    format!(
+        r#"{{"width":{},"height":0,"deviceScaleFactor":0,"mobile":false,"scale":{}}}"#,
+        e.width, e.scale
+    )
+}
+
+/// What each page was last asked to emulate, by its webview's label. A label is never used again, so an answer
+/// that comes late for a page that is gone can't be taken for the page made after it.
+#[derive(Default)]
+pub struct Emulated {
+    by_label: HashMap<String, Emulate>,
+    /// A page with a call in flight has an entry: None when nothing waits behind it, else the newest want.
+    in_flight: HashMap<String, Option<Option<Emulate>>>,
+}
+
+impl Emulated {
+    /// Records that the page is asked for `want`. Some(what it had) when that is a change to send, None when the
+    /// page was already asked for it.
+    pub fn ask(&mut self, label: &str, want: Option<Emulate>) -> Option<Option<Emulate>> {
+        let had = self.by_label.get(label).copied();
+        if had == want {
+            return None;
+        }
+        self.set(label, want);
+        Some(had)
+    }
+
+    /// The page refused `asked` or never answered: it is taken to have what it had `before`, so the next look asks
+    /// again. Nothing changes when something newer was asked since.
+    pub fn failed(&mut self, label: &str, asked: Option<Emulate>, before: Option<Emulate>) {
+        if self.by_label.get(label).copied() == asked {
+            self.set(label, before);
+        }
+    }
+
+    fn set(&mut self, label: &str, to: Option<Emulate>) {
+        match to {
+            Some(e) => {
+                self.by_label.insert(label.to_string(), e);
+            }
+            None => {
+                self.by_label.remove(label);
+            }
+        }
+    }
+
+    /// A call for `want` is to go out. True when the page has none in flight, and the caller sends it now; false when
+    /// one is, and `want` waits behind it, in place of any older want that waited: a drag asks for a new scale at
+    /// nearly every pixel, and a page that is slow to answer must not be handed all of them one by one.
+    pub fn begin(&mut self, label: &str, want: Option<Emulate>) -> bool {
+        match self.in_flight.get_mut(label) {
+            Some(parked) => {
+                *parked = Some(want);
+                false
+            }
+            None => {
+                self.in_flight.insert(label.to_string(), None);
+                true
+            }
+        }
+    }
+
+    /// The call in flight is over and the page has `applied`. The newest want that waited, when it is not what the
+    /// page has: the caller sends it, and it is now the one in flight. None leaves the page free.
+    pub fn finish(&mut self, label: &str, applied: Option<Emulate>) -> Option<Option<Emulate>> {
+        let next = self.in_flight.get_mut(label)?.take().filter(|want| *want != applied);
+        if next.is_none() {
+            self.in_flight.remove(label);
+        }
+        next
+    }
+
+    pub fn forget(&mut self, label: &str) {
+        self.by_label.remove(label);
+        self.in_flight.remove(label);
+    }
+
+    pub fn clear(&mut self) {
+        self.by_label.clear();
+        self.in_flight.clear();
+    }
+}
+
+/// The longest side of one picture of a page, in device pixels: below it WebView2 repeats the page's top (S14,
+/// result 4, the second run).
+pub const SHOT_MAX_PX: f64 = 16384.0;
+
+/// A page's size in CSS pixels from `Page.getLayoutMetrics`' answer (`cssContentSize`); None when it isn't there or
+/// isn't two numbers.
+pub fn content_size(metrics: &str) -> Option<Size> {
+    let answer: serde_json::Value = serde_json::from_str(metrics).ok()?;
+    let size = answer.get("cssContentSize")?;
+    Some(Size {
+        width: size.get("width")?.as_f64()?,
+        height: size.get("height")?.as_f64()?,
+    })
+}
+
+/// The clip for a picture of a whole page at display `scale`, and whether the page was cut: whole CSS pixels, each
+/// side at most `SHOT_MAX_PX` device pixels and never more than the page. None for a page with no size. A clip is
+/// made from nothing else: one far wider than its page ends the page (S14).
+pub fn shot_clip(content: Size, scale: f64) -> Option<(Rect, bool)> {
+    if !scale.is_finite() || scale <= 0.0 {
+        return None;
+    }
+    let most = (SHOT_MAX_PX / scale).floor();
+    let side = |n: f64| (n.is_finite() && n >= 1.0 && most >= 1.0).then(|| n.floor());
+    let (width, height) = (side(content.width)?, side(content.height)?);
+    let clip = Rect {
+        x: 0.0,
+        y: 0.0,
+        width: width.min(most),
+        height: height.min(most),
+    };
+    Some((clip, width > most || height > most))
+}
+
+/// The parameters of `Page.captureScreenshot`: the part on screen with no clip, and with one that part of the page
+/// at full size, beyond what the panel shows.
+pub fn shot_params(clip: Option<Rect>) -> String {
+    match clip {
+        None => r#"{"format":"png"}"#.to_string(),
+        Some(c) => format!(
+            r#"{{"format":"png","captureBeyondViewport":true,"clip":{{"x":0,"y":0,"width":{},"height":{},"scale":1}}}}"#,
+            c.width, c.height
+        ),
+    }
+}
+
+/// The PNG, base64, from `Page.captureScreenshot`'s answer.
+pub fn shot_png(answer: &str) -> Option<String> {
+    let answer: serde_json::Value = serde_json::from_str(answer).ok()?;
+    let data = answer.get("data")?.as_str()?;
+    (!data.is_empty()).then(|| data.to_string())
+}
+
+/// How long the pages keep cookies and site data (6r-1b decisions 18 to 20).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CookieRule {
+    /// Until the person clears them.
+    Always,
+    /// Until Marshell quits: cleared at quit, and at the next start for a run that ended without its quit.
+    UntilQuit,
+    /// Never on disk: every page is a private one.
+    Never,
+}
+
+impl CookieRule {
+    /// The rule as settings.json writes it.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "always" => Some(Self::Always),
+            "until-quit" => Some(Self::UntilQuit),
+            "never" => Some(Self::Never),
+            _ => None,
+        }
+    }
+}
+
+/// What the page commands share about cookies: the rule the app told, and which pages keep data on disk.
+#[derive(Default)]
+pub struct Cookies {
+    rule: Option<CookieRule>,
+    /// Each open page by its key: whether it is private.
+    pages: BTreeMap<String, bool>,
+    /// A page that keeps data was made in this run.
+    kept_made: bool,
+    /// A page that keeps data was made in this run while the rule was UntilQuit, and "Keep always" was not chosen
+    /// since.
+    until_quit_made: bool,
+    /// What the last run left was cleared, or is being cleared.
+    start_taken: bool,
+}
+
+impl Cookies {
+    pub fn tell(&mut self, rule: CookieRule) {
+        self.rule = Some(rule);
+        // Choosing "Keep always" is choosing to keep what "until quit" stored in this run.
+        if rule == CookieRule::Always {
+            self.until_quit_made = false;
+        }
+    }
+
+    /// Whether the next page is private: an error until a rule was told, so no page is made on a guess.
+    pub fn private(&self) -> Result<bool, &'static str> {
+        match self.rule {
+            None => Err("the cookie rule isn't known yet"),
+            Some(rule) => Ok(rule == CookieRule::Never),
+        }
+    }
+
+    /// Asked as a page that keeps data is about to be made: true once in a run, when the rule is UntilQuit and no
+    /// such page was made before. What the last run left goes before that page loads.
+    pub fn take_start_clear(&mut self) -> bool {
+        let clear = self.rule == Some(CookieRule::UntilQuit) && !self.kept_made && !self.start_taken;
+        if clear {
+            self.start_taken = true;
+        }
+        clear
+    }
+
+    pub fn made(&mut self, key: &str, private: bool) {
+        self.pages.insert(key.to_string(), private);
+        if !private {
+            self.kept_made = true;
+            if self.rule == Some(CookieRule::UntilQuit) {
+                self.until_quit_made = true;
+            }
+        }
+    }
+
+    pub fn gone(&mut self, key: &str) {
+        self.pages.remove(key);
+    }
+
+    /// Every page is gone at once.
+    pub fn none_left(&mut self) {
+        self.pages.clear();
+    }
+
+    /// A page that keeps data, to clear the profile through: None when every open page is private.
+    pub fn kept_page(&self) -> Option<&str> {
+        self.pages
+            .iter()
+            .find(|(_, private)| !**private)
+            .map(|(key, _)| key.as_str())
+    }
+
+    /// The keys of the pages that keep data, the ones a clear of the profile reaches. A private page is made again
+    /// by the app instead.
+    pub fn kept_keys(&self) -> Vec<String> {
+        self.pages
+            .iter()
+            .filter(|(_, private)| !**private)
+            .map(|(key, _)| key.clone())
+            .collect()
+    }
+
+    /// Whether quitting clears the profile (6r-1b decision 17): under UntilQuit once a page that keeps data was made
+    /// in this run; and under Never when a page was made under UntilQuit in this run and no switch to Always chose
+    /// to keep it, since that page's cookies are on disk.
+    pub fn clears_at_quit(&self) -> bool {
+        match self.rule {
+            Some(CookieRule::UntilQuit) => self.kept_made,
+            Some(CookieRule::Never) => self.until_quit_made,
+            _ => false,
+        }
+    }
+}
+
+/// Each page's tab's viewport width, by the app's key for the page. A tab's viewport outlives its page: a page that
+/// is loaded again in the same place gets no new report from the app.
+#[derive(Default)]
+pub struct Viewports {
+    by_key: HashMap<String, u32>,
+}
+
+impl Viewports {
+    /// Keeps the key's width; None, and a width that is not one of `VIEWPORTS`, forgets it.
+    pub fn set(&mut self, key: &str, viewport: Option<u32>) {
+        match viewport.filter(|w| VIEWPORTS.contains(w)) {
+            Some(width) => {
+                self.by_key.insert(key.to_string(), width);
+            }
+            None => {
+                self.by_key.remove(key);
+            }
+        }
+    }
+
+    pub fn of(&self, key: &str) -> Option<u32> {
+        self.by_key.get(key).copied()
+    }
+
+    pub fn clear(&mut self) {
+        self.by_key.clear();
+    }
 }
 
 /// How long the placer leaves the page to the app's reports after a motion's last sign.
@@ -656,6 +999,17 @@ impl Registry {
 
     pub fn shown(&self) -> Option<&str> {
         self.shown.as_deref()
+    }
+
+    /// The label of the page a picture is taken of: only the shown page answers a capture (S14), so a key whose
+    /// page is behind another is "hidden".
+    pub fn shot_target(&self, key: &str) -> Result<&str, &'static str> {
+        let label = self.label(key).ok_or("The page isn't open.")?;
+        if self.shown() == Some(key) {
+            Ok(label)
+        } else {
+            Err("hidden")
+        }
     }
 
     /// Every page's label, in the order the pages were opened.
@@ -1318,6 +1672,8 @@ mod tests {
             win,
             rule,
             moving,
+            page: None,
+            viewport: None,
         }
     }
 
@@ -1819,5 +2175,408 @@ mod tests {
         }
         assert_eq!(gate.take(&Url::parse("https://a.example/0").unwrap(), 10), None);
         assert_eq!(gate.take(&Url::parse("https://a.example/99").unwrap(), 10), Some(false));
+    }
+
+    #[test]
+    fn a_viewport_that_fits_is_centred_at_its_own_width() {
+        let f = fit(rect(100.0, 40.0, 801.0, 600.0), Some(390));
+        assert_eq!(
+            f,
+            Fit {
+                rect: rect(305.0, 40.0, 390.0, 600.0),
+                emulate: None
+            }
+        );
+    }
+
+    #[test]
+    fn a_viewport_as_wide_as_the_slot_is_the_slot() {
+        let slot = rect(0.0, 0.0, 390.0, 600.0);
+        assert_eq!(
+            fit(slot, Some(390)),
+            Fit {
+                rect: slot,
+                emulate: None
+            }
+        );
+    }
+
+    #[test]
+    fn a_viewport_wider_than_the_slot_is_emulated_and_scaled() {
+        let slot = rect(10.0, 0.0, 317.0, 672.0);
+        assert_eq!(
+            fit(slot, Some(1440)),
+            Fit {
+                rect: slot,
+                emulate: Some(Emulate {
+                    width: 1440,
+                    scale: 0.2201
+                })
+            }
+        );
+    }
+
+    #[test]
+    fn no_viewport_an_unknown_width_and_an_empty_slot_are_the_slot() {
+        let slot = rect(0.0, 0.0, 500.0, 500.0);
+        for v in [None, Some(0), Some(1280), Some(100_000)] {
+            assert_eq!(
+                fit(slot, v),
+                Fit {
+                    rect: slot,
+                    emulate: None
+                }
+            );
+        }
+        let none = rect(0.0, 0.0, 0.0, 0.0);
+        assert_eq!(
+            fit(none, Some(1440)),
+            Fit {
+                rect: none,
+                emulate: None
+            }
+        );
+    }
+
+    #[test]
+    fn viewport_is_kept_per_page() {
+        let mut v = Viewports::default();
+        v.set("s/a", Some(390));
+        v.set("s/b", None);
+        assert_eq!((v.of("s/a"), v.of("s/b"), v.of("s/c")), (Some(390), None, None));
+        v.set("s/a", None);
+        assert_eq!(v.of("s/a"), None);
+        v.set("s/b", Some(768));
+        v.clear();
+        assert_eq!(v.of("s/b"), None);
+    }
+
+    #[test]
+    fn a_viewport_that_is_not_a_size_is_not_kept() {
+        let mut v = Viewports::default();
+        v.set("s/a", Some(390));
+        v.set("s/a", Some(1280));
+        assert_eq!(v.of("s/a"), None);
+    }
+
+    #[test]
+    fn viewport_emulation_is_asked_for_once_per_change() {
+        let (a, b) = (
+            Emulate {
+                width: 1440,
+                scale: 0.2201,
+            },
+            Emulate {
+                width: 1440,
+                scale: 0.25,
+            },
+        );
+        let mut e = Emulated::default();
+        // Nothing to clear on a page that was never emulated.
+        assert_eq!(e.ask("page-1", None), None);
+        assert_eq!(e.ask("page-1", Some(a)), Some(None));
+        assert_eq!(e.ask("page-1", Some(a)), None);
+        assert_eq!(e.ask("page-1", Some(b)), Some(Some(a)));
+        assert_eq!(e.ask("page-1", None), Some(Some(b)));
+        assert_eq!(e.ask("page-1", None), None);
+        // Each page has its own.
+        assert_eq!(e.ask("page-2", Some(a)), Some(None));
+        e.forget("page-2");
+        assert_eq!(e.ask("page-2", Some(a)), Some(None));
+        e.clear();
+        assert_eq!(e.ask("page-2", Some(a)), Some(None));
+    }
+
+    #[test]
+    fn viewport_emulation_that_failed_is_asked_for_again() {
+        let a = Emulate {
+            width: 1024,
+            scale: 0.5,
+        };
+        let mut e = Emulated::default();
+        let before = e.ask("page-1", Some(a)).unwrap();
+        e.failed("page-1", Some(a), before);
+        assert_eq!(e.ask("page-1", Some(a)), Some(None));
+        // A clear that failed leaves the page as it was, so the next look clears again.
+        let before = e.ask("page-1", None).unwrap();
+        e.failed("page-1", None, before);
+        assert_eq!(e.ask("page-1", None), Some(Some(a)));
+        // A failure that comes after a newer ask changes nothing.
+        let b = Emulate { width: 768, scale: 0.5 };
+        let before = e.ask("page-1", Some(a)).unwrap();
+        e.ask("page-1", Some(b));
+        e.failed("page-1", Some(a), before);
+        assert_eq!(e.ask("page-1", Some(b)), None);
+    }
+
+    #[test]
+    fn only_the_latest_wanted_emulation_waits_behind_the_one_in_flight() {
+        let at = |scale: f64| Emulate { width: 1440, scale };
+        let mut e = Emulated::default();
+        // The first call goes out; the ones a drag makes while it is unanswered are parked, newest over older.
+        assert!(e.begin("page-1", Some(at(0.30))));
+        assert!(!e.begin("page-1", Some(at(0.29))));
+        assert!(!e.begin("page-1", Some(at(0.28))));
+        // Another page has its own call in flight.
+        assert!(e.begin("page-2", Some(at(0.5))));
+        // The answer comes: only the newest is sent next, and it is the one in flight until it answers.
+        assert_eq!(e.finish("page-1", Some(at(0.30))), Some(Some(at(0.28))));
+        assert!(!e.begin("page-1", None));
+        assert_eq!(e.finish("page-1", Some(at(0.28))), Some(None));
+        // Nothing is parked: the page is free for the next call.
+        assert_eq!(e.finish("page-1", None), None);
+        assert!(e.begin("page-1", Some(at(0.27))));
+        // A parked want that is what the page already has is not sent.
+        assert!(!e.begin("page-1", Some(at(0.26))));
+        assert!(!e.begin("page-1", Some(at(0.27))));
+        assert_eq!(e.finish("page-1", Some(at(0.27))), None);
+        assert!(e.begin("page-1", None));
+        // A page that is gone leaves nothing in flight.
+        e.forget("page-1");
+        assert_eq!(e.finish("page-1", None), None);
+        assert!(e.begin("page-1", None));
+        e.clear();
+        assert_eq!(e.finish("page-2", None), None);
+    }
+
+    #[test]
+    fn viewport_emulation_is_sent_as_the_devtools_call_s14_measured() {
+        let e = Emulate {
+            width: 1440,
+            scale: 0.2201,
+        };
+        assert_eq!(
+            emulate_params(e),
+            r#"{"width":1440,"height":0,"deviceScaleFactor":0,"mobile":false,"scale":0.2201}"#
+        );
+        let v: serde_json::Value = serde_json::from_str(&emulate_params(Emulate { width: 390, scale: 1.0 })).unwrap();
+        assert_eq!(v["scale"], 1.0);
+    }
+
+    #[test]
+    fn reads_the_three_rules_and_nothing_else() {
+        assert_eq!(
+            ["always", "until-quit", "never", "Never", ""].map(CookieRule::parse),
+            [
+                Some(CookieRule::Always),
+                Some(CookieRule::UntilQuit),
+                Some(CookieRule::Never),
+                None,
+                None
+            ]
+        );
+    }
+
+    #[test]
+    fn reads_a_pages_size_from_the_metrics() {
+        let m = r#"{"cssContentSize":{"height":5164,"width":1425,"x":0,"y":0},"cssVisualViewport":{"clientHeight":3053,"clientWidth":1425,"pageX":0,"pageY":1000}}"#;
+        assert_eq!(content_size(m), Some(size(1425.0, 5164.0)));
+        assert_eq!(content_size("{}"), None);
+        assert_eq!(content_size(r#"{"cssContentSize":{"height":"tall","width":1}}"#), None);
+        assert_eq!(content_size("not json"), None);
+    }
+
+    #[test]
+    fn a_page_that_fits_is_clipped_to_its_own_size() {
+        assert_eq!(
+            shot_clip(size(1425.0, 5164.0), 1.0),
+            Some((rect(0.0, 0.0, 1425.0, 5164.0), false))
+        );
+    }
+
+    #[test]
+    fn a_page_taller_than_one_picture_is_cut_at_the_limit() {
+        assert_eq!(
+            shot_clip(size(302.0, 40021.0), 1.0),
+            Some((rect(0.0, 0.0, 302.0, 16384.0), true))
+        );
+    }
+
+    #[test]
+    fn the_limit_is_in_device_pixels() {
+        assert_eq!(
+            shot_clip(size(1440.0, 20000.0), 1.5),
+            Some((rect(0.0, 0.0, 1440.0, 10922.0), true))
+        );
+    }
+
+    #[test]
+    fn a_page_wider_than_one_picture_is_cut_too_and_a_page_with_no_size_has_no_clip() {
+        assert_eq!(
+            shot_clip(size(100000.0, 100.0), 1.0),
+            Some((rect(0.0, 0.0, 16384.0, 100.0), true))
+        );
+        for bad in [
+            size(0.0, 10.0),
+            size(f64::NAN, 10.0),
+            size(10.0, f64::INFINITY),
+            size(-5.0, 10.0),
+        ] {
+            assert_eq!(shot_clip(bad, 1.0), None);
+        }
+        for scale in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(shot_clip(size(10.0, 10.0), scale), None);
+        }
+    }
+
+    #[test]
+    fn a_clip_is_whole_pixels_and_is_sent_as_the_call_s14_measured() {
+        // A page's measured size can carry a fraction; the clip never holds more than the page.
+        let (clip, cut) = shot_clip(size(302.6, 5164.4), 1.0).unwrap();
+        assert_eq!((clip, cut), (rect(0.0, 0.0, 302.0, 5164.0), false));
+        assert_eq!(
+            shot_params(Some(clip)),
+            r#"{"format":"png","captureBeyondViewport":true,"clip":{"x":0,"y":0,"width":302,"height":5164,"scale":1}}"#
+        );
+        assert_eq!(shot_params(None), r#"{"format":"png"}"#);
+    }
+
+    #[test]
+    fn reads_the_picture_from_the_answer() {
+        assert_eq!(shot_png(r#"{"data":"iVBORw0KGgo="}"#).as_deref(), Some("iVBORw0KGgo="));
+        assert_eq!(shot_png(r#"{"data":""}"#), None);
+        assert_eq!(shot_png(r#"{"data":7}"#), None);
+        assert_eq!(shot_png("not json"), None);
+    }
+
+    #[test]
+    fn open_waits_for_the_rule() {
+        let mut c = Cookies::default();
+        assert_eq!(c.private(), Err("the cookie rule isn't known yet"));
+        c.tell(CookieRule::Never);
+        assert_eq!(c.private(), Ok(true));
+        c.tell(CookieRule::Always);
+        assert_eq!(c.private(), Ok(false));
+        c.tell(CookieRule::UntilQuit);
+        assert_eq!(c.private(), Ok(false));
+    }
+
+    #[test]
+    fn the_first_kept_page_under_until_quit_clears_what_the_last_run_left_once() {
+        let mut c = Cookies::default();
+        c.tell(CookieRule::UntilQuit);
+        assert!(c.take_start_clear());
+        c.made("s/a", false);
+        assert!(!c.take_start_clear());
+    }
+
+    #[test]
+    fn a_run_that_was_told_never_first_still_clears_at_its_first_kept_page() {
+        // The app tells "never" when it can't read the settings, and the real rule when it can.
+        let mut c = Cookies::default();
+        c.tell(CookieRule::Never);
+        c.made("s/a", true);
+        c.tell(CookieRule::UntilQuit);
+        assert!(c.take_start_clear());
+    }
+
+    #[test]
+    fn a_run_that_made_a_kept_page_under_always_does_not_clear_at_the_next_page() {
+        let mut c = Cookies::default();
+        c.tell(CookieRule::Always);
+        assert!(!c.take_start_clear());
+        c.made("s/a", false);
+        c.tell(CookieRule::UntilQuit);
+        assert!(!c.take_start_clear());
+        assert!(c.clears_at_quit());
+    }
+
+    #[test]
+    fn quit_clears_under_until_quit_after_a_kept_page() {
+        let mut c = Cookies::default();
+        c.tell(CookieRule::UntilQuit);
+        assert!(!c.clears_at_quit());
+        c.made("s/a", false);
+        c.gone("s/a");
+        assert!(c.clears_at_quit());
+    }
+
+    #[test]
+    fn quit_still_clears_what_until_quit_stored_after_a_switch_to_never() {
+        let mut c = Cookies::default();
+        c.tell(CookieRule::UntilQuit);
+        c.made("s/a", false);
+        c.tell(CookieRule::Never);
+        c.gone("s/a");
+        c.made("s/a", true);
+        assert!(c.clears_at_quit());
+    }
+
+    #[test]
+    fn quit_keeps_what_the_person_chose_to_keep_always() {
+        let mut c = Cookies::default();
+        c.tell(CookieRule::UntilQuit);
+        c.made("s/a", false);
+        c.tell(CookieRule::Always);
+        assert!(!c.clears_at_quit());
+        // The choice to keep stands through a later switch to never.
+        c.tell(CookieRule::Never);
+        assert!(!c.clears_at_quit());
+    }
+
+    #[test]
+    fn quit_does_not_clear_under_never_or_always_when_until_quit_stored_nothing() {
+        let mut c = Cookies::default();
+        c.tell(CookieRule::Always);
+        c.made("s/a", false);
+        c.tell(CookieRule::Never);
+        assert!(!c.clears_at_quit());
+        let mut c = Cookies::default();
+        c.tell(CookieRule::Never);
+        c.made("s/a", true);
+        assert!(!c.clears_at_quit());
+    }
+
+    #[test]
+    fn a_clear_reloads_only_the_pages_that_keep_data() {
+        let mut c = Cookies::default();
+        c.tell(CookieRule::Never);
+        c.made("s/a", true);
+        assert!(c.kept_keys().is_empty());
+        c.tell(CookieRule::Always);
+        c.made("s/b", false);
+        c.made("s/c", false);
+        c.made("s/d", true);
+        assert_eq!(c.kept_keys(), ["s/b", "s/c"]);
+        c.gone("s/b");
+        assert_eq!(c.kept_keys(), ["s/c"]);
+    }
+
+    #[test]
+    fn the_profile_is_cleared_through_a_page_that_keeps_data() {
+        let mut c = Cookies::default();
+        c.tell(CookieRule::Never);
+        c.made("s/a", true);
+        assert_eq!(c.kept_page(), None);
+        c.made("s/b", false);
+        assert_eq!(c.kept_page(), Some("s/b"));
+        c.gone("s/b");
+        assert_eq!(c.kept_page(), None);
+        c.made("s/c", false);
+        c.none_left();
+        assert_eq!(c.kept_page(), None);
+    }
+
+    #[test]
+    fn a_page_that_is_not_shown_is_refused() {
+        let mut r = Registry::default();
+        let a = r.open("a").unwrap();
+        r.open("b").unwrap();
+        r.show(Some("a"));
+        assert_eq!(r.shot_target("a"), Ok(a.as_str()));
+        assert_eq!(r.shot_target("b"), Err("hidden"));
+        assert_eq!(r.shot_target("c"), Err("The page isn't open."));
+        r.show(None);
+        assert_eq!(r.shot_target("a"), Err("hidden"));
+    }
+
+    #[test]
+    fn a_report_without_the_new_fields_still_reads() {
+        let old = r#"{"rect":{"x":1,"y":2,"width":3,"height":4},"win":{"width":800,"height":600},"rule":null,"moving":false}"#;
+        let r: Report = serde_json::from_str(old).unwrap();
+        assert_eq!((r.page, r.viewport), (None, None));
+        let new = r#"{"rect":{"x":1,"y":2,"width":3,"height":4},"win":{"width":800,"height":600},"rule":null,"moving":false,"page":"s/a","viewport":390}"#;
+        let r: Report = serde_json::from_str(new).unwrap();
+        assert_eq!((r.page.as_deref(), r.viewport), (Some("s/a"), Some(390)));
     }
 }

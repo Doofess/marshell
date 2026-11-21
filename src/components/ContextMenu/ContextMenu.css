@@ -4,7 +4,9 @@
  */
 .context-menu {
   z-index: 10;
+  inline-size: max-content;
   min-inline-size: 180px;
+  max-inline-size: calc(100vw - 2 * var(--space-2));
   margin: 0;
   padding: var(--space-1);
   list-style: none;
@@ -18,10 +20,9 @@
 .context-menu:focus {
   outline: 2px solid transparent;
 }
-.context-menu [role="menuitem"] {
+.context-menu [role^="menuitem"] {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-4);
   box-sizing: border-box;
   block-size: 28px;
@@ -32,12 +33,12 @@
   user-select: none;
 }
 /* Transparent outline, not none, so Windows high contrast still draws focus. */
-.context-menu [role="menuitem"]:focus {
+.context-menu [role^="menuitem"]:focus {
   background: var(--selected);
   border-inline-start-color: var(--accent);
   outline: 2px solid transparent;
 }
-.context-menu [role="menuitem"]:active {
+.context-menu [role^="menuitem"]:active {
   background: var(--selected);
 }
 .context-menu__shortcut {
@@ -45,16 +46,21 @@
   color: var(--text-2);
   text-align: end;
 }
-/* An item that cannot run stays in the list, so the reason under it can be read. */
-.context-menu [role="menuitem"][aria-disabled="true"] {
+/*
+ * An item that cannot run stays in the list, so the reason under it can be read. A reason or a note has no width of its own
+ * and is as wide as its row: it takes a line to itself and wraps there, and the menu is as wide as its labels.
+ */
+.context-menu [role^="menuitem"][aria-disabled="true"] {
   flex-wrap: wrap;
+  row-gap: 0;
   block-size: auto;
   padding-block: var(--space-1);
   color: var(--text-2);
 }
 .context-menu__reason {
-  flex-basis: 100%;
-  max-inline-size: 30ch;
+  box-sizing: border-box;
+  inline-size: 0;
+  min-inline-size: 100%;
   font-size: var(--text-12);
   line-height: 1.35;
   text-wrap: pretty;
@@ -64,20 +70,80 @@
   margin-block: var(--space-1);
   background: var(--hairline);
 }
+/*
+ * The mark before a checked, radio or plain row of a menu that has such rows: a check, a dot or an empty space of the same
+ * width, so the labels line up. It is drawn in the row's own text color, so focus and a disabled row recolor it.
+ * The row's gap is --space-4 (label to shortcut); the negative end margin narrows the mark to its label to --space-2.
+ */
+.context-menu {
+  --menu-mark: 16px;
+}
+.context-menu__mark {
+  flex: none;
+  inline-size: var(--menu-mark);
+  block-size: var(--menu-mark);
+  margin-inline-end: calc(var(--space-2) - var(--space-4));
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.context-menu__mark circle {
+  fill: currentColor;
+  stroke: none;
+}
+/* A note stays under the label whether or not the row can run; in a marked row it lines up with the label, not with the mark. */
+.context-menu [role^="menuitem"]:has(> .context-menu__note) {
+  flex-wrap: wrap;
+  row-gap: 0;
+  block-size: auto;
+  padding-block: var(--space-1);
+}
+.context-menu__note {
+  box-sizing: border-box;
+  inline-size: 0;
+  min-inline-size: 100%;
+  color: var(--text-2);
+  font-size: var(--text-12);
+  line-height: 1.35;
+  text-wrap: pretty;
+}
+.context-menu__item--marked > .context-menu__reason,
+.context-menu__item--marked > .context-menu__note {
+  padding-inline-start: calc(var(--menu-mark) + var(--space-2));
+}
+.context-menu__more {
+  margin-inline-start: auto;
+  color: var(--text-2);
+}
 
 @media (forced-colors: active) {
   .context-menu {
     outline: 1px solid CanvasText;
   }
-  .context-menu [role="menuitem"]:focus {
+  .context-menu [role^="menuitem"]:focus {
     background: Highlight;
     color: HighlightText;
     forced-color-adjust: none;
   }
-  .context-menu [role="menuitem"][aria-disabled="true"]:not(:focus) {
+  .context-menu [role^="menuitem"][aria-disabled="true"]:not(:focus) {
     color: GrayText;
   }
-  .context-menu [role="menuitem"]:focus .context-menu__shortcut {
+  .context-menu [role^="menuitem"]:focus .context-menu__shortcut {
+    color: HighlightText;
+  }
+  .context-menu__mark {
+    color: CanvasText;
+  }
+  .context-menu__note,
+  .context-menu__more {
+    color: CanvasText;
+  }
+  .context-menu [role^="menuitem"][aria-disabled="true"]:not(:focus) :is(.context-menu__mark, .context-menu__note) {
+    color: GrayText;
+  }
+  .context-menu [role^="menuitem"]:focus :is(.context-menu__mark, .context-menu__note, .context-menu__more) {
     color: HighlightText;
   }
 }

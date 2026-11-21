@@ -73,10 +73,12 @@ function ErrorAt({ at, error }: { at: ErrorPlace; error: AppearanceViewState["er
 }
 
 /** A native radio group drawn as chips; the chosen one carries the selected mark. */
-function Choice<T extends string>({ legend, help, name, value, options, onPick }: { legend: string; help?: string; name: string; value: T; options: readonly (readonly [T, string])[]; onPick: (v: T) => void }) {
+export function Choice<T extends string>({ legend, help, name, value, options, onPick, disabled, lines }: { legend: string; help?: string; name: string; value: T | null; options: readonly (readonly [T, string])[]; onPick: (v: T) => void; disabled?: string; lines?: Partial<Record<T, string>> }) {
   const helpId = useId();
+  const whyId = useId();
+  const describedBy = [help ? helpId : null, disabled ? whyId : null].filter((x) => x !== null).join(" ");
   return (
-    <fieldset className="appearance__group" aria-describedby={help ? helpId : undefined}>
+    <fieldset className="appearance__group" aria-describedby={describedBy || undefined} data-disabled={disabled ? "true" : undefined}>
       <legend className="field__label">{legend}</legend>
       {help && (
         <p id={helpId} className="field__help">
@@ -86,11 +88,27 @@ function Choice<T extends string>({ legend, help, name, value, options, onPick }
       <div className="appearance__chips">
         {options.map(([v, label]) => (
           <label key={v} className="appearance__chip is-selected-mark" data-selected={v === value ? "true" : undefined}>
-            <input type="radio" name={name} value={v} checked={v === value} onChange={() => onPick(v)} />
+            <input type="radio" name={name} value={v} checked={v === value} disabled={disabled !== undefined} onChange={() => onPick(v)} />
             <span>{label}</span>
           </label>
         ))}
       </div>
+      {lines && (
+        <ul className="appearance__lines">
+          {options.map(([v, label]) => (
+            <li key={v} className="field__help">
+              <strong>{label}</strong>
+              {": "}
+              {lines[v]}
+            </li>
+          ))}
+        </ul>
+      )}
+      {disabled && (
+        <p id={whyId} className="field__help">
+          {disabled}
+        </p>
+      )}
     </fieldset>
   );
 }

@@ -1,5 +1,8 @@
 import type { PaneView } from "../../generated/PaneView";
+import { VIEWPORTS } from "../browser/viewport";
 import { PANELS, isPanelId, panelOf } from "./panels";
+
+const VIEWPORT_IDS: readonly string[] = VIEWPORTS.map((v) => v.id);
 
 /**
  * A test helper: what the core accepts of a pane, in TypeScript. Returns the name of the first field that breaks a rule, or null.
@@ -14,6 +17,7 @@ export function paneProblem(pane: PaneView): string | null {
     if (new Set(st.tabs.map((t) => t.id)).size !== st.tabs.length) return "tabs";
     const files = st.tabs.filter((_, i) => panels[i] === "files");
     const browser = st.tabs.filter((_, i) => panels[i] === "browser");
+    if (st.tabs.some((t) => t.viewport !== undefined && !VIEWPORT_IDS.includes(t.viewport))) return "viewport";
     if ("active_browser" in st && typeof st.active_browser !== "string") return "active_browser";
     if (st.tabs.length > 0) {
       const named = st.tabs.find((t) => t.id === st.active);

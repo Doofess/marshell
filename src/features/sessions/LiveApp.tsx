@@ -65,6 +65,7 @@ import { dropDraft, listDrafts } from "../editor/editorApi";
 import { SaveDialog, type SaveChoice } from "../editor/SaveDialog";
 import type { SaveCommands, TextTabCommands } from "../editor/TextTab";
 import type { PaneTab } from "../../generated/PaneTab";
+import type { CookieRule } from "../../generated/CookieRule";
 import { PaneContext, PagePaneContext, type OpenPageInPane } from "../pane/PaneContext";
 import { dropCover, modalOnScreen } from "../pane/dropCover";
 import { EmptyBrowser, PAGES_UNAVAILABLE } from "../pane/EmptyBrowser";
@@ -72,21 +73,29 @@ import { EmptyFiles } from "../pane/EmptyFiles";
 import { PanelStack } from "../pane/PanelStack";
 import { KeptTabs } from "../pane/KeptTabs";
 import { useBrowserKeys } from "../browser/useBrowserKeys";
-import { useCoverPage } from "../browser/pageCover";
-import { useFocusedPage } from "../browser/pageStore";
+import { uncovered, useCoverPage } from "../browser/pageCover";
+import { useFocusedPage, usePage } from "../browser/pageStore";
 import { BrowserTab } from "../browser/BrowserTab";
 import { ClearDataDialog } from "../browser/ClearDataDialog";
 import { BLANK, isPageUrl, ownOrigins as ownOriginsOf, shellRefuses } from "../browser/address";
 import { browserTabs } from "../browser/available";
-import { browserMenuChoice, browserMenuItems, menuTarget } from "../browser/browserMenu";
+import { browserMenuChoice, browserMenuItems, menuTarget, toggledText } from "../browser/browserMenu";
+import { useBrowserSettings } from "../browser/browserSettings";
+import { viewportReturn } from "../browser/viewportFocus";
+import { autoOpenNote } from "../browser/autoOpen";
+import { cookiesSaid, needsReload } from "../browser/cookies";
+import { saveShot, shotReason, type ShotTarget } from "../browser/screenshot";
+import { nextPaint } from "../browser/usePageSlot";
+import { saveScreenshot } from "../../lib/api/screenshots";
 import { browser, pageKey } from "../browser/browserApi";
 import type { UrlBarHandle } from "../browser/UrlBar";
 import { useBrowserPages } from "../browser/useBrowserPages";
 import { askedFrom, focusPane, panelOfElement } from "../pane/focusPane";
 import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, PANE_BESIDE_SESSION, closeNothingText, noTabText, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, commandPanel, firstWith, hideFocus, landingPanel, panelButtonsFor, panelOrder, unseenPanels, panelHiddenText, panelToggleOutcome, shouldPin, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, receiptWithPaneHidden, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf } from "../pane/paneCommands";
 import { isPanelId, onScreen, PANEL_COMMAND, PANEL_LABEL, panelOf, panelOfPath, panelTabs, activeIn, stackOf, stackPanels, type PanelId } from "../pane/panels";
+import { viewportOf, viewportRows, viewportChoice, viewportSaid, type ViewportId } from "../browser/viewport";
 import { activeTab, currentEntry, isBrowserTab, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
-import { dropPlan, takeOpens } from "../pane/opens";
+import { dropPlan, limitNews, takeOpens } from "../pane/opens";
 import { newsReducer } from "../pane/paneNews";
 import { plusChoice, plusMenuItems } from "../pane/plusMenu";
 import { SidePane } from "../pane/SidePane";
@@ -134,7 +143,7 @@ import { adminCommandHidden, launcherFromPalette, launcherOpens, passesLauncher,
 import { REOPEN_AS_ADMIN } from "../../lib/adminCopy";
 import { LiveLauncher } from "./LiveLauncher";
 import { AppMenu } from "../appMenu/AppMenuPopup";
-import { pressMenuButton, toggleMenu, type AppMenuRun, type MenuState } from "../appMenu/appMenu";
+import { isMenuTrigger, menuAnchor, pressMenuButton, toggleMenu, type AppMenuRun, type MenuState } from "../appMenu/appMenu";
 import { LivePalette } from "./LivePalette";
 import { recordsRecent, sessionRowTarget } from "../palette/paletteList";
 import { cannotRun } from "../palette/runnable";
@@ -162,8 +171,8 @@ const SIDEBAR_NEEDS_WIDTH = "Widen the window to open the sidebar.";
 /** What the announcer says when the shell panel is asked for where it is not drawn: the rail, focus mode, or a window under 960 px. */
 const SHELL_PANEL_ELSEWHERE = "The shell panel is in the expanded sidebar.";
 // The footer's and the rail's Menu buttons: a press on one is the toggle's own, so it doesn't count as leaving the menu.
+// The menu key opens from the sidebar's or the rail's button, above it; the title bar's brand button opens the same menu under itself.
 const MENU_BUTTONS = ".sidebar__menu, .rail__menu";
-const isMenuButton = (n: object) => n instanceof Element && n.closest(MENU_BUTTONS) !== null;
 
 /** Wait for the core's command before opening the bar; a failed request still opens it with the local text. */
 function SessionResumeBar({ endpoint, info, profileName, ...props }: Omit<ComponentProps<typeof ResumeBar>, "command" | "folder"> & { endpoint: Endpoint | null; info: SessionInfo; profileName: string }) {
@@ -774,7 +783,7 @@ export function LiveApp() {
     shellPanel: sidebarExpanded,
     sidebarToggle: sidebarToggleFor(sidebarPref, sidebarMode(width, sidebarPref)) !== null,
   });
-  const hiddenCommands = useMemo(() => [...baseHidden, ...idle, ...(adminCommandHidden(os) ? ["new-session-admin"] : []), ...(browserTabs(os) ? [] : ["new-browser-tab", "open-url", "clear-browser-data"]), ...(scriptControl?.kind === "run" ? [] : ["run-script"]), ...(scriptControl?.kind === "stop" ? [] : ["stop-script"])], [baseHidden, idle, scriptControl?.kind, os]);
+  const hiddenCommands = useMemo(() => [...baseHidden, ...idle, ...(adminCommandHidden(os) ? ["new-session-admin"] : []), ...(browserTabs(os) ? [] : ["new-browser-tab", "open-url", "clear-browser-data", "save-screenshot", "save-full-screenshot"]), ...(scriptControl?.kind === "run" ? [] : ["run-script"]), ...(scriptControl?.kind === "stop" ? [] : ["stop-script"])], [baseHidden, idle, scriptControl?.kind, os]);
   // An Ended administrator row's Resume reads "Reopen as administrator" in the palette too.
   const liveLabels = useMemo(() => (focusedRow?.elevated ? { ...paletteLabels, resume: REOPEN_AS_ADMIN } : paletteLabels), [paletteLabels, focusedRow?.elevated]);
 
@@ -938,8 +947,16 @@ export function LiveApp() {
   // local API.
   const ownOrigins = (): [string, number][] => ownOriginsOf(window.location, endpointRef.current?.port ?? null, import.meta.env.DEV);
   const answered = useRef(new Map<number, PaneOpenDone>());
+  // The sessions told that their tabs are full, so a hook's files meeting the limit are said once, not once per file.
+  const limitTold = useRef(new Set<string>());
   // The sessions with a tab `marshell open` added that nobody has looked at yet: the title bar's pane button shows a dot for them.
   const [paneNews, newsDispatch] = useReducer(newsReducer, new Set<string>() as ReadonlySet<string>);
+  // A session that has room is no longer told, on every pane change and not only on a frame that carries opens: a session told, then
+  // given room, then refilled and refused within one frame must hear the line again.
+  useEffect(() => {
+    if (!settled || !loaded) return;
+    limitTold.current = limitNews(limitTold.current, [], view.pane).told;
+  }, [view.pane, settled, loaded]);
   useEffect(() => {
     const waiting = new Set(opens.map((o) => o.id));
     for (const id of answered.current.keys()) if (!waiting.has(id)) answered.current.delete(id);
@@ -956,7 +973,12 @@ export function LiveApp() {
     if (taken.news.length > 0) newsDispatch({ type: "add", items: taken.news });
     for (const d of taken.done) answered.current.set(d.id, d);
     // The announcer holds one notice at a time, so a frame's tabs are said together.
-    if (taken.said.length > 0) announce(taken.said.join(" "));
+    // The limit is said once per session, and only for the session on screen; another session isn't marked told, so it hears the line
+    // when a later frame meets its limit while it is on screen.
+    const limit = limitNews(limitTold.current, taken.full, taken.view, (s) => s === focusedId);
+    limitTold.current = limit.told;
+    const said = limit.say.length > 0 ? [...taken.said, TAB_LIMIT] : taken.said;
+    if (said.length > 0) announce(said.join(" "));
     const reply = [...taken.done, ...repeat];
     if (reply.length > 0) void opensApi.done(ep, reply).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps -- a frame is applied when it arrives; the rest is read as it stands.
@@ -1033,6 +1055,8 @@ export function LiveApp() {
     setClearData("busy");
     try {
       await browser.clearData();
+      // Under "Never keep" the pages' cookies live in memory: the pages are made again, with no line of their own.
+      reloadPrivate();
       announce("Cleared the browser's data.");
     } catch {
       announce("Couldn't clear the browser's data.");
@@ -1616,7 +1640,77 @@ export function LiveApp() {
   // The page on screen: Browser is on screen and its selected tab is a browser tab.
   const shownTab = panelsOn.includes("browser") ? activeTab(view.pane, focusedId, "browser") : undefined;
   const shownPage = browserTabs(os) && focusedId && shownTab && isBrowserTab(shownTab) ? pageKey(focusedId, shownTab.id) : null;
-  useBrowserPages(view.pane, shownPage, { sessions: loaded ? rows.map((r) => r.id) : null, dispatch: paneDispatch, browserSession: () => (onNow.current.panelsOn.includes("browser") ? onNow.current.session : null), news: (session) => newsDispatch({ type: "add", items: [{ session, panel: "browser" }] }), own: ownOrigins, announce });
+  const { reloadPrivate } = useBrowserPages(view.pane, shownPage, { sessions: loaded ? rows.map((r) => r.id) : null, dispatch: paneDispatch, browserSession: () => (onNow.current.panelsOn.includes("browser") ? onNow.current.session : null), news: (session) => newsDispatch({ type: "add", items: [{ session, panel: "browser" }] }), own: ownOrigins, announce });
+
+  // The Browser menu's acts, one function each: the menu, the viewport chip's menu and the palette all run these on the Browser panel's
+  // front tab of the session on screen.
+  const { settings: browserSettings, failed: browserSettingsFailed, set: setBrowserSetting } = useBrowserSettings();
+  const frontTab = activeTab(view.pane, focusedId, "browser");
+  const frontKey = focusedId && frontTab && isBrowserTab(frontTab) ? pageKey(focusedId, frontTab.id) : null;
+  const frontLive = usePage(frontKey)?.live === true;
+  const shotTarget = (): ShotTarget => {
+    const target = menuTarget(frontTab);
+    if (target.kind === "page" && frontKey !== null) return { kind: "page", key: frontKey, url: target.url, loaded: frontLive };
+    // A blank tab has no page to take a picture of.
+    return target.kind === "file" ? { kind: "file" } : { kind: "none" };
+  };
+  const shotWhy = (): string | null => shotReason(shotTarget(), browserTabs(os), panelsOn.includes("browser"));
+  const takeShot = (full: boolean): void => {
+    const target = shotTarget();
+    const why = shotWhy();
+    if (why !== null) return announce(why);
+    const ep = endpointRef.current;
+    if (target.kind !== "page" || !ep) return;
+    void saveShot(
+      { uncovered, paint: nextPaint, shoot: browser.screenshot, save: (host, at, png) => saveScreenshot(ep, host, at, png), now: () => new Date() },
+      { key: target.key, url: target.url },
+      full,
+    ).then((line) => announce(line));
+  };
+  const setViewport = (viewport: ViewportId | null): void => {
+    if (focusedId === undefined || !frontTab) return announce("No tab is open in Browser.");
+    paneDispatch({ type: "viewport", session: focusedId, paneTab: frontTab.id, viewport });
+    announce(viewportSaid(viewport));
+  };
+  const toggleBrowserSetting = (key: "terminal_links" | "open_agent_html"): void => {
+    if (browserSettings === null) return;
+    const on = !browserSettings[key];
+    const label = key === "terminal_links" ? "Open terminal links here" : "Open HTML files agents write";
+    setBrowserSetting({ [key]: on }).then(
+      () => announce(toggledText(label, on)),
+      () => announce("The setting wasn't saved."),
+    );
+  };
+  const setCookieRule = (rule: CookieRule): void => {
+    if (browserSettings === null) return;
+    const was = browserSettings.cookies;
+    // A change to or from "Never" is announced by the pages' own reload (useBrowserPages), with the count.
+    setBrowserSetting({ cookies: rule }).then(
+      () => needsReload(was, rule) || announce(cookiesSaid(rule, 0)),
+      () => announce("The setting wasn't saved."),
+    );
+  };
+  const shotRef = useRef(takeShot);
+  shotRef.current = takeShot;
+  const viewportRef = useRef(setViewport);
+  viewportRef.current = setViewport;
+  // The viewport chip's own menu: where it opened and the chip that opened it.
+  const [viewportMenu, setViewportMenu] = useState<{ anchor: { x: number; y: number }; opener: HTMLElement | null } | null>(null);
+  const openViewportMenu = (anchor: { x: number; y: number }): void => setViewportMenu({ anchor, opener: document.activeElement instanceof HTMLElement ? document.activeElement : null });
+  // The focus goes back after the pick is on screen: Responsive removes the chip, so it can't be focused before the commit. It
+  // goes to the chip, or to the Browser menu's ⋯ button when none is left, and only the front tab's panel is searched (the tabs
+  // behind it stay mounted but hidden).
+  const viewportBack = useRef<{ picked: ViewportId | null | undefined; opener: HTMLElement | null } | null>(null);
+  useEffect(() => {
+    const back = viewportBack.current;
+    if (back === null) return;
+    viewportBack.current = null;
+    const panel = frontTab ? document.getElementById(`pane-panel-${frontTab.id}`) : null;
+    viewportReturn<HTMLElement>(back.picked, back.opener, {
+      chip: () => panel?.querySelector<HTMLElement>(".viewport-chip") ?? null,
+      menu: () => document.querySelector<HTMLElement>('button[aria-label="Browser menu"]'),
+    })?.focus();
+  });
 
   // The window's shortcuts and commands (side pane, shell panel, history, menu, next waiting). True when it was one of them.
   const windowCommand = useCallback(
@@ -1643,6 +1737,13 @@ export function LiveApp() {
           return true;
         case "clearBrowserData":
           setClearData("ask");
+          return true;
+        // The Browser panel's front tab: a picture of its page, and its viewport. The answer is announced.
+        case "screenshot":
+          shotRef.current(shortcut.full);
+          return true;
+        case "viewport":
+          viewportRef.current(shortcut.viewport);
           return true;
         // A box on the shown tab's page, PDF or image; any other tab has nothing to mark.
         case "selectRegion": {
@@ -2157,6 +2258,8 @@ export function LiveApp() {
                   announce={announce}
                   regionTarget={deliveryFor(focusedRow ?? null)}
                   onRegion={addRegion}
+                  viewport={viewportOf(tab)}
+                  onViewport={openViewportMenu}
                   ref={(bar) => {
                     // The address box of a new blank tab takes the keyboard through this (openPageInPane); the palette's "Select region" the region.
                     const key = pageKey(paneSession ?? "", tab.id);
@@ -2192,6 +2295,8 @@ export function LiveApp() {
                   announce={announce}
                   regionTarget={deliveryFor(focusedRow ?? null)}
                   onRegion={addRegion}
+                  viewport={panel === "browser" ? viewportOf(tab) : null}
+                  onViewport={panel === "browser" ? openViewportMenu : undefined}
                   ref={(preview) => {
                     const key = pageKey(paneSession ?? "", tab.id);
                     if (preview) {
@@ -2218,7 +2323,7 @@ export function LiveApp() {
   // The stack is the window's: its panels whether or not the pane is open, so nothing inside changes while the pane holds and folds.
   const paneNode =
     os ? (
-      <PanelStack panels={stackPanels(stack)} weights={stack.weights} render={renderPanel} onWeights={(weights) => paneDispatch({ type: "weights", weights })} onDividerGone={() => focusPane(currentPanel() ?? "files")} />
+      <PanelStack panels={stackPanels(stack)} weights={stack.weights} render={renderPanel} onWeights={(weights) => paneDispatch({ type: "weights", session: focusedId, weights })} onDividerGone={() => focusPane(currentPanel() ?? "files")} />
     ) : undefined;
   // The core decides whether a banner is worth showing from this: whether the window has focus and which sessions are on screen.
   // Under the History view the terminals stay mounted but none is on screen, so none is reported (or marked in the sidebar) as seen.
@@ -2288,7 +2393,7 @@ export function LiveApp() {
           onOpenDoctor={() => setOverlay("doctor")}
           onOpenMenu={(button) => {
             const r = button.getBoundingClientRect();
-            const next = pressMenuButton(menu, { anchor: { left: r.left, top: r.top }, back: button });
+            const next = pressMenuButton(menu, { anchor: menuAnchor(r, button.closest(".window__brand") !== null), back: button });
             setMenu(next.menu);
             next.focus?.focus();
           }}
@@ -2366,29 +2471,54 @@ export function LiveApp() {
       {browserMenu && (
         <ContextMenu
           label="Browser menu"
-          items={browserMenuItems(menuTarget(activeTab(view.pane, focusedId, "browser")), browserTabs(os))}
+          items={browserMenuItems(menuTarget(frontTab), { pages: browserTabs(os), settings: browserSettings, failed: browserSettingsFailed, viewport: viewportOf(frontTab), shot: shotWhy(), autoNote: autoOpenNote(focusedInfo?.agent ?? null, hooks) })}
           anchor={browserMenu.anchor}
           onRun={(itemId) => {
             const { opener } = browserMenu;
             const choice = browserMenuChoice(itemId);
-            const target = menuTarget(activeTab(view.pane, focusedId, "browser"));
+            const target = menuTarget(frontTab);
             setBrowserMenu(null);
             // Focus goes back to the ⋯ button first, so a dialog that closes without a pick returns it there.
             opener.focus();
-            if (choice === "copy" && target.kind === "page") {
+            if (choice === null) return;
+            if (choice.kind === "copy" && target.kind === "page") {
               navigator.clipboard.writeText(target.url).then(
                 () => announce("Copied the link."),
                 () => announce("Couldn't copy the link."),
               );
-            } else if (choice === "outside" && target.kind === "page") {
+            } else if (choice.kind === "outside" && target.kind === "page") {
               if (isPageUrl(target.url) && target.url !== BLANK) void openUrl(target.url).catch(() => {});
-            } else if (choice === "html") openHtmlFile();
-            else if (choice === "clear") setClearData("ask");
+            } else if (choice.kind === "html") openHtmlFile();
+            else if (choice.kind === "clear") setClearData("ask");
+            else if (choice.kind === "shot") takeShot(choice.full);
+            else if (choice.kind === "viewport") setViewport(choice.viewport);
+            else if (choice.kind === "links") toggleBrowserSetting("terminal_links");
+            else if (choice.kind === "auto") toggleBrowserSetting("open_agent_html");
+            else if (choice.kind === "cookies") setCookieRule(choice.rule);
           }}
           onClose={({ refocus }) => {
             const { opener } = browserMenu;
             setBrowserMenu(null);
             if (refocus) opener.focus();
+          }}
+        />
+      )}
+      {viewportMenu && (
+        <ContextMenu
+          label="Viewport"
+          items={viewportRows(viewportOf(frontTab))}
+          anchor={viewportMenu.anchor}
+          onRun={(itemId) => {
+            const { opener } = viewportMenu;
+            const viewport = viewportChoice(itemId);
+            viewportBack.current = { picked: viewport, opener };
+            setViewportMenu(null);
+            if (viewport !== undefined) setViewport(viewport);
+          }}
+          onClose={({ refocus }) => {
+            const { opener } = viewportMenu;
+            setViewportMenu(null);
+            if (refocus) viewportBack.current = { picked: undefined, opener };
           }}
         />
       )}
@@ -2452,7 +2582,7 @@ export function LiveApp() {
           os={os}
           anchor={menu.anchor}
           doctorIssues={doctorIssues}
-          isTrigger={isMenuButton}
+          isTrigger={isMenuTrigger}
           onRun={(item: AppMenuRun) => {
             const { back } = menu;
             setMenu(null);
@@ -2549,6 +2679,7 @@ export function LiveApp() {
           accountsRefresh={accountsRefresh}
           companyRefresh={companyRefresh}
           running={runningTabs}
+          hooks={hooks}
           onSignIn={(agent) => void openCliTask(agent, "sign_in")}
           onUpdate={(agent) => void openCliTask(agent, "update")}
           onNotifications={() => {

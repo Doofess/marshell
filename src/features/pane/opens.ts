@@ -4,7 +4,7 @@ import type { PaneView } from "../../generated/PaneView";
 import { addressFor, isPageUrl, pageTitle } from "../browser/address";
 import { agentLabel } from "../sessions/sessionActions";
 import { openedByText, openedText } from "./paneCommands";
-import { lastSegment, openRefused, paneReducer, type PaneAction } from "./paneState";
+import { lastSegment, openRefused, PANE_LIMITS, paneReducer, tabsOf, type PaneAction } from "./paneState";
 import { panelOfPath, type PanelId } from "./panels";
 
 /** What the window knows when a frame of requests arrives. */
@@ -30,6 +30,8 @@ export type TakenOpens = {
   said: string[];
   /** The panels of the sessions that got a tab while the panel was not in front of the person, each once. */
   news: { session: string; panel: PanelId }[];
+  /** The sessions where an open a hook asked for met the 32-tab limit, each once. */
+  full: string[];
 };
 
 /**
@@ -42,6 +44,7 @@ export function takeOpens(view: PaneView, opens: readonly PaneOpen[], seen: Read
   const done: PaneOpenDone[] = [];
   const said: string[] = [];
   const news: { session: string; panel: PanelId }[] = [];
+  const full: string[] = [];
   let now = view;
   const answer = (id: number, refused: PaneOpenDone["refused"]) => done.push({ id, refused });
 
@@ -72,6 +75,7 @@ export function takeOpens(view: PaneView, opens: readonly PaneOpen[], seen: Read
     }
     if (openRefused(now, open.tab_id, target)) {
       answer(open.id, "limit");
+      if (open.auto && !full.includes(open.tab_id)) full.push(open.tab_id);
       continue;
     }
     const panel = panelOfPath(target);
@@ -85,7 +89,21 @@ export function takeOpens(view: PaneView, opens: readonly PaneOpen[], seen: Read
     said.push(open.by === "shell" ? openedText(title, panel) : openedByText(agentLabel(open.by), title, panel));
     if (!onScreen && !news.some((n) => n.session === open.tab_id && n.panel === panel)) news.push({ session: open.tab_id, panel });
   }
-  return { view: now, actions, done, said, news };
+  return { view: now, actions, done, said, news, full };
+}
+
+/**
+ * Which of `full` to say the 32-tab limit for: a session is told once, and again only after it has had room. `told` is the sessions
+ * told so far; the returned set is the one to keep. Pass an empty `full` when a frame refused nothing, so room is noticed.
+ * `canSay` names the sessions the line can be announced for (the one on screen; every one when omitted): a full session it
+ * refuses is neither said nor marked told, so it is heard when that session is on screen.
+ */
+export function limitNews(told: ReadonlySet<string>, full: readonly string[], pane: PaneView, canSay: (session: string) => boolean = () => true): { say: string[]; told: Set<string> } {
+  const say = full.filter((s) => !told.has(s) && canSay(s));
+  const next = new Set<string>();
+  for (const s of told) if (full.includes(s) || tabsOf(pane, s).tabs.length >= PANE_LIMITS.tabs) next.add(s);
+  for (const s of say) next.add(s);
+  return { say, told: next };
 }
 
 /** What a drop on the side pane comes to: the actions to dispatch, the last file opened, and whether the 32-tab limit stopped it. */

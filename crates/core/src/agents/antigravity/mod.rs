@@ -7,6 +7,7 @@ pub mod policy;
 pub mod request;
 pub mod status;
 pub mod usage;
+pub mod writes;
 
 use serde_json::Value;
 use std::path::Path;

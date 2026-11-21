@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GRID_CONTEXT, GRID_LAYOUT, NAMES } from "./fixtures";
+import { GRID_CONTEXT, GRID_LAYOUT, GRID_WITH_PANEL_BUTTONS, NAMES } from "./fixtures";
 import { reduce, run } from "./machine";
 import { INITIAL_NAV, type NavContext, type NavEffect, type NavEvent, type NavState } from "./types";
 
@@ -255,6 +255,23 @@ describe("each panel of the side pane is a stop after the terminals", () => {
   it("Esc deselects a selected panel; one that left the screen is nothing to deselect", () => {
     expect(without(run(at(null, { selectedSide: "files" }), [{ type: "escape" }], both).effects)).toEqual([{ type: "deselect" }]);
     expect(run(at(null, { selectedSide: "browser" }), [{ type: "escape" }], filesOnly).effects).toEqual([]);
+  });
+});
+
+describe("the cursor and a choice speak a title-bar target's name", () => {
+  it("the cursor speaks a title-bar target's name, not its id", () => {
+    const withButtons: NavContext = { ...GRID_CONTEXT, layout: GRID_WITH_PANEL_BUTTONS };
+    let state = at(null, { cursor: { kind: "top", id: "brand" } });
+    for (const [id, name] of [["palette", "Command palette"], ["sidebar", "Sidebar"], ["panel-browser", "Browser"], ["panel-files", "Files"]] as const) {
+      const r = run(state, [DOWN, arrow("right")], withButtons);
+      expect(r.state.cursor).toEqual({ kind: "top", id });
+      expect(announced(r.effects)).toEqual([`Cursor on ${name}`]);
+      state = r.state;
+    }
+  });
+  it("activating a title-bar target speaks its name", () => {
+    for (const [id, name] of [["palette", "Command palette"], ["sidebar", "Sidebar"], ["panel-browser", "Browser"], ["panel-files", "Files"]] as const)
+      expect(announced(run(at(0), [{ type: "choose", target: { kind: "top", id } }], GRID_CONTEXT).effects)).toEqual([`Activated ${name}`]);
   });
 });
 
