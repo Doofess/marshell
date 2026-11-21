@@ -34,8 +34,8 @@ describe("sessionShortcut", () => {
     expect(sessionShortcut(ev("PageUp", cs), "windows")).toEqual({ kind: "prompt", by: -1 });
     expect(sessionShortcut(ev("PageDown", { metaKey: true }), "mac")).toEqual({ kind: "prompt", by: 1 });
   });
-  it("Ctrl+Shift+P is no shortcut", () => {
-    expect(sessionShortcut(ev("KeyP", cs), "windows")).toBeNull();
+  it("Ctrl+Shift+P is Go to file…", () => {
+    expect(sessionShortcut(ev("KeyP", cs), "windows")).toEqual({ kind: "openFile" });
   });
   it("Ctrl+Shift+A is the Browser panel and Ctrl+Shift+D the Files panel", () => {
     expect(sessionShortcut(ev("KeyA", cs), "windows")).toEqual({ kind: "panel", panel: "browser" });
@@ -143,6 +143,8 @@ describe("side pane commands", () => {
     expect(commandShortcut("browse-file")).toEqual({ kind: "browse" });
     expect(commandShortcut("preview")).toEqual({ kind: "preview" });
     expect(commandShortcut("open-file")).toEqual({ kind: "openFile" });
+    expect(commandShortcut("files-tree")).toEqual({ kind: "filesTree" });
+    expect(commandShortcut("files-collapse")).toEqual({ kind: "filesCollapse" });
   });
 });
 

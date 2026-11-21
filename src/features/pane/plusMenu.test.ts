@@ -4,10 +4,10 @@ import { plusChoice, plusMenuItems } from "./plusMenu";
 const recent = ["C:\\work\\app\\README.md", "/home/me/notes.txt"];
 
 describe("plusMenuItems", () => {
-  it("has no browser row, and Open file and Browse come first", () => {
+  it("has no browser row, and Go to file and Browse come first", () => {
     const items = plusMenuItems(recent);
     expect(items.some((i) => "label" in i && i.label === "New browser tab")).toBe(false);
-    expect(items[0]).toMatchObject({ label: "Open file…" });
+    expect(items[0]).toMatchObject({ label: "Go to file…" });
     expect(items[1]).toMatchObject({ label: "Browse…" });
   });
   it("has the two items only when nothing was opened lately", () => {

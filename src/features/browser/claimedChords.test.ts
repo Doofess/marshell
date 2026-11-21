@@ -61,6 +61,6 @@ describe("claimedChords", () => {
 
   it("the perf overlay's chord is claimed, as the terminal claims it", () => {
     expect(appClaims("windows", "terminal")(event("KeyP", { ctrl: true, shift: true, alt: true }))).toBe(true);
-    expect(appClaims("windows", "terminal")(event("KeyP", { ctrl: true, shift: true }))).toBe(false);
+    expect(appClaims("windows", "terminal")(event("KeyP", { ctrl: true, shift: true }))).toBe(true);
   });
 });

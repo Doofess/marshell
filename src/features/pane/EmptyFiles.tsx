@@ -9,7 +9,7 @@ export function EmptyFiles({ recent, onOpenFile, onBrowse, onRecent }: { recent:
       title="No files open"
       line="Open a file from this project, or drop one here."
       actions={[
-        { label: "Open file…", icon: SearchIcon, onClick: onOpenFile },
+        { label: "Go to file…", icon: SearchIcon, onClick: onOpenFile },
         { label: "Browse…", icon: FolderOpenIcon, onClick: onBrowse },
       ]}
     >

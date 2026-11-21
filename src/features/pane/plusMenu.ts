@@ -6,12 +6,12 @@ const BROWSE = "browse";
 const RECENT = "recent:";
 
 /**
- * What the + menu offers: "Open file…",
+ * What the + menu offers: "Go to file…",
  * "Browse…", then one row per recent file, named by the file and its folder.
  */
 export function plusMenuItems(recent: readonly string[]): MenuItem[] {
   return [
-    { id: OPEN_FILE, label: "Open file…" },
+    { id: OPEN_FILE, label: "Go to file…" },
     { id: BROWSE, label: "Browse…" },
     ...recent.map((path): MenuItem => {
       const { name, folder } = splitPath(path);

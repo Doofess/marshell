@@ -741,7 +741,7 @@ describe("LiveApp: the side pane", () => {
     expect(next.open).toBe(true);
     const h = paneNode(next, "t1");
     expect(h).toContain("No files open");
-    expect(h).toContain("Open file…");
+    expect(h).toContain("Go to file…");
   });
   it("a session with no tabs shows the empty state while the pane is open", () => {
     const pane = paneReducer(closedPane, { type: "open", session: "t2", project: "C:\\dev\\my-app", target: { path: "C:\\dev\\my-app\\a.md" } });

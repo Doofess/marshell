@@ -55,7 +55,7 @@ export function LivePalette({
   moved?: readonly string[];
   /** The focused session, whose files and output quick open lists. */
   tab?: string | null;
-  /** "Open file…": only files are listed. */
+  /** "Go to file…": only files are listed. */
   filesOnly?: boolean;
   /** A file row was chosen: the path to preview. */
   onOpenFile?: (path: string) => void;

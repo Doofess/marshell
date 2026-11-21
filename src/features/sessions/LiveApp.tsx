@@ -387,7 +387,7 @@ export function LiveApp() {
       live = false;
     };
   }, [endpoint, sync]);
-  // "Open file…" opens the palette with files only; any other way of opening it lists everything.
+  // "Go to file…" opens the palette with files only; any other way of opening it lists everything.
   const [filesOnly, setFilesOnly] = useState(false);
   useEffect(() => {
     if (overlay !== "palette") setFilesOnly(false);

@@ -108,12 +108,12 @@ describe("COMMANDS", () => {
     expect(commandById("nav-next-pane").label).toBe("Go to the next terminal or panel");
     expect(win("cheatsheet")).toBe("Ctrl+Shift+O");
   });
-  it("the freed keys run no command, but Ctrl+Shift+D is the Files panel now", () => {
+  it("Ctrl+Shift+P and ⌘P run Go to file…, and Ctrl+Shift+D is the Files panel now", () => {
     const e = (code: string, m: object): KeyEventLike => ({ code, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, ...m });
     expect(findCommand(e("KeyD", { ctrlKey: true, shiftKey: true }), "windows")?.id).toBe("files-panel");
-    expect(findCommand(e("KeyP", { ctrlKey: true, shiftKey: true }), "windows")).toBeUndefined();
+    expect(findCommand(e("KeyP", { ctrlKey: true, shiftKey: true }), "windows")?.id).toBe("open-file");
     expect(findCommand(e("KeyD", { metaKey: true }), "mac")?.id).toBe("files-panel");
-    expect(findCommand(e("KeyP", { metaKey: true }), "mac")).toBeUndefined();
+    expect(findCommand(e("KeyP", { metaKey: true }), "mac")?.id).toBe("open-file");
   });
 
   it("binds the shell panel under Window", () => {
