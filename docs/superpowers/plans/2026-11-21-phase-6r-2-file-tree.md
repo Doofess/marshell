@@ -8,9 +8,9 @@
 
 **Tech Stack:** Rust (`marshell-protocol`, `marshell-core`), React 19 and TypeScript, CodeMirror 6, Vitest (node, `renderToStaticMarkup`), ts-rs, Tauri's opener plugin.
 
-**Spec:** `docs/PLAN.md` §9, "Slice 6r decisions" 1, 3, 12 and 13, and "Slice 6r-2 decisions" 1 to 23. Reference screenshots (mechanics only, not the look): `C:\Users\Home Office\OneDrive\Projects\Marshell\screenshots\Screenshot 2026-11-20 233234.png` (the menu), `233740.png` and `232822.png` (the tree and path bar).
+**Spec:** `docs/PLAN.md` §9, "Slice 6r decisions" 1, 3, 12 and 13, and "Slice 6r-2 decisions" 1 to 24. Reference screenshots (mechanics only, not the look): `C:\Users\Home Office\OneDrive\Projects\Marshell\screenshots\Screenshot 2026-11-20 233234.png` (the menu), `233740.png` and `232822.png` (the tree and path bar).
 
-**Who does what:** the main thread writes Task 11's capability line and Task 15 (the plan's text and the live check), and checks every worker's diff and tests before ticking a task. Every other task goes to a `worker` (Sonnet) with the task's text, this header, the Global Constraints and the exact test command; `effort: high` is marked on the task. Each worker is told: touch only the task's files, never `git checkout`, `git restore` or `git stash`, and report the test command's last lines.
+**Who does what:** the main thread writes Task 11's capability line, decides any copy or rule the plan doesn't fix, and does Task 15 (the plan's text and the live check), and checks every worker's diff and tests before ticking a task. Every other task goes to a `worker` (Sonnet) with the task's text, this header, the Global Constraints and the exact test command; `effort: high` is marked on the task. Each worker is told: touch only the task's files, never `git checkout`, `git restore` or `git stash`, and report the test command's last lines.
 
 ## Global Constraints
 
@@ -23,16 +23,16 @@
 - No new crate or package (indent guides are our own extension). The one capability change is `"opener:allow-reveal-item-in-dir"` (decision 21).
 - Rust: `cargo fmt --all` before each Rust commit; `cargo test ... -j 4`; clippy with `-D warnings` stays clean. A hook reformats edited Rust files: read the file again after it says so.
 - Commit messages: `type(scope): what changed, as a sentence.` One commit per task unless a task says otherwise.
-- Numbers, everywhere: tree folder cap 5,000 entries; at most 64 folders per tree request; at most 500 open folders saved per session; tree width 240 px at first, 160 px at least, 2,048 at most, the file keeps 240 px; narrow below 480 px of panel width; poll every 2,000 ms, a full re-read every 30,000 ms; search text 2 to 200 characters, 300 ms after the last key, at most 1,000 lines, files over 1,048,576 bytes skipped, a line cut to 240 characters, a 3,000 ms budget; name filter at most 500 matches; auto save 1,000 ms after the last key.
+- Numbers, everywhere: tree folder cap 5,000 entries; at most 64 folders per tree request; at most 500 open folders saved per session; tree width 240 px at first, 160 px at least, 2,048 at most, the file keeps 240 px; narrow below 480 px of panel width; poll every 2,000 ms, a full re-read every 30,000 ms; search text 2 to 200 characters, 300 ms after the last key, at most 1,000 lines, files over 1,048,576 bytes skipped, a line cut to 240 characters, a 3,000 ms budget; name filter at most 500 matches; auto save 1,000 ms after the last key, with a file-history copy only when the newest is 300,000 ms old (decision 24).
 
 ## Review Focus
 
 1. **A huge folder, or a slow one** (`node_modules` with 30,000 entries, a drive that answers slowly). Expected: the tree shows 5,000 entries and "And 25,000 more", stays scrollable without lag (virtualized rows), and polls never overlap. Pinned by Task 2's `cuts_a_folder_at_5000_and_counts_the_rest`, Task 7's `visible_rows_put_a_more_row_after_a_cut_folder` and Task 8's `a_poll_waits_for_the_one_in_flight`.
-2. **Links and junctions** (pnpm's `node_modules`, a junction to `C:\`, a symlink loop). Expected: a folder link is listed as a link and never entered; asking for a path through one is refused; nothing outside the project folder is listed. Pinned by Task 2's link and junction tests.
-3. **The root changes or vanishes under the tree** (a `cd` outside git, a removed worktree, a deleted folder that was open). Expected: a new root starts with every folder closed; a gone folder closes and leaves the saved list; no error is said twice. Pinned by Task 8's `a_new_root_closes_every_folder` and `a_gone_folder_is_dropped`.
+2. **Links and junctions** (pnpm's `node_modules`, a junction to `C:\`, a junction loop inside the project). Expected: a folder link is listed as a link and never entered, wherever it points; asking for a path through one is refused; nothing outside the project folder is listed; a folder of 5,000 ignored files answers without hanging git. Pinned by Task 2's link, junction and `a_folder_of_5000_ignored_files_answers` tests.
+3. **The root changes or vanishes under the tree** (a `cd` outside git, a removed worktree, a deleted folder that was open). Expected: a new root starts with every folder closed; a gone folder closes and leaves the saved list; no error is said twice. The tree's open folders survive closing the session's last tab, and a reply or save meant for the session just left never lands on the next one. Pinned by Task 8's `a_new_root_closes_every_folder`, `a_gone_folder_is_dropped` and `a reply that comes after the session changed is dropped`, and Task 6's `closing a session's last tab keeps its tree`.
 4. **A preview tab meets an edit, an agent's write or `marshell open`.** Expected: an edit keeps the tab before anything can replace it; a tab with unsaved edits is never replaced; an open by any other way keeps it. Pinned by Task 6's reducer tests.
-5. **Auto save against an agent writing the same file.** Expected: a changed-on-disk conflict stops auto save and nothing on disk is overwritten; a read-only file is never auto-saved. Pinned by Task 5's `auto_save_stops_at_a_conflict` and `never_auto_saves_read_only`.
-6. **A content search over minified or binary files, or one typed fast.** Expected: a 5 MB one-line bundle and a PNG are skipped, a long line is cut around its hit, and every older search's `git grep` is killed. Pinned by Task 3's tests and Task 9's `an_older_search_is_aborted`.
+5. **Auto save against an agent writing the same file, a merge left with conflicts, and file history.** Expected: a changed-on-disk conflict stops auto save and nothing on disk is overwritten; text with conflict markers and a read-only file are never auto-saved; auto saves don't push older history copies out. Pinned by Task 5's `auto_save_stops_at_a_conflict`, `never_auto_saves_text_that_still_holds_conflict_markers`, `never_auto_saves_read_only` and the `an_auto_save_takes_no_copy…` tests.
+6. **A content search over minified or binary files, or one typed fast.** Expected: a 5 MB one-line bundle and a PNG are skipped, a long line is cut around its hit, and every older search's `git grep` is killed, even one that prints nothing. Pinned by Task 3's tests (`stream_kills_the_child_when_cancelled`, `stream_kills_a_child_that_prints_nothing_at_the_deadline`) and Task 9's `an_older_search_is_aborted`.
 
 ---
 
@@ -43,7 +43,7 @@
 | `crates/protocol/src/api.rs` | `FilesSettings`, `TreePosition`, `TreeState`, `TreeView`, the tree and search request and reply types; `preview` on `PaneTab`, `tree` on `SessionTabs` and `PaneView`. |
 | `crates/core/src/settings.rs`, `layout.rs` | Reading and checking the new fields. |
 | `crates/core/src/server/tree.rs` (new) | `POST /v1/sessions/{tab}/tree`. |
-| `crates/core/src/server/search.rs` (new) | `GET /v1/sessions/{tab}/search`. |
+| `crates/core/src/server/search.rs` (new) | `POST /v1/sessions/{tab}/search`. |
 | `crates/core/src/server/files.rs` | `project_root` shared by `list`, `tree` and `search`. |
 | `src/features/files/` (new folder) | Everything the tree, the path bar, the filter, the search, the Files menu and Settings → Files draw or decide. |
 | `src/features/editor/editorPrefs.ts`, `indentGuides.ts` (new) | The editor settings as CodeMirror extensions. |
@@ -94,6 +94,7 @@ pub struct TreeView { pub hidden: bool, pub width: Option<u32> }
     // {"files": {"auto_save": true, "tab_size": 3, "tree_position": "top", "word_wrap": "yes"}}
     // → auto_save true, tab_size 4, tree_position Automatic, word_wrap false, the rest default
 }
+#[test] fn validate_refuses_a_tab_size_other_than_2_4_or_8() { /* settings::validate at 284: tab_size 3 → Err("files.tab_size must be 2, 4 or 8") */ }
 // layout.rs
 #[test] fn a_tab_keeps_preview_and_drops_an_unreadable_one() { /* "preview": true kept; "preview": "yes" → None, the tab kept */ }
 #[test] fn a_session_keeps_its_tree_and_drops_bad_folders() {
@@ -102,17 +103,21 @@ pub struct TreeView { pub hidden: bool, pub width: Option<u32> }
 #[test] fn a_session_tree_keeps_at_most_500_folders() { /* 600 in, 500 out, the first 500 */ }
 #[test] fn an_unreadable_session_tree_is_dropped_and_the_tabs_kept() { /* "tree": 5 and "tree": {"root": 3} */ }
 #[test] fn the_window_tree_width_outside_160_to_2048_is_dropped() { /* 100 and 5000 → width None, hidden kept */ }
-#[test] fn validate_pane_refuses_a_bad_tree() { /* 501 folders: "tree.expanded holds at most 500 folders"; width 100: "tree width must be 160 to 2048" */ }
+#[test] fn a_session_with_a_tree_and_no_tabs_is_kept() { /* repair_pane keeps {"tabs": [], "active": null, "tree": {..}}; drops {"tabs": [], "active": null} */ }
+#[test] fn validate_pane_refuses_a_bad_tree() {
+    // 501 folders: "pane.sessions.{s}.tree.expanded holds at most 500 folders"; a folder "a/../b": "pane.sessions.{s}.tree.expanded holds a folder that isn't relative";
+    // width 100: "pane.tree.width must be 160 to 2048"; a session with no tabs and a tree passes
+}
 ```
 
 ```ts
-// paneRules.test.ts
-it("refuses what validate_pane refuses for the tree", () => { /* the same two messages as the Rust test */ });
+// paneRules.test.ts: paneProblem returns the field's name, as it does for "tabs"
+it("names the tree's field validate_pane refuses", () => { /* 501 folders → "tree.expanded"; "a/../b" → "tree.expanded"; width 100 → "tree.width" */ });
 ```
 
 - [ ] **Step 2: Run and see them fail.** Run: `cargo test -p marshell-core -j 4 files_settings` (does not compile: `FilesSettings` is unknown).
 
-- [ ] **Step 3: Implement.** `FilesSettings` has a hand-written `Default` (several fields are on). `lenient_files` takes each field alone like `lenient_browser`: a wrong type, a `tab_size` that isn't 2, 4 or 8, or an unknown position reads as the default with a `tracing::warn!` naming the field, never the value. A folder in `expanded` is kept when it is non-empty, at most 4,096 characters, has no `\`, no `:`, doesn't start with `/`, and no component is empty, `.` or `..`. `lenient_session` drops a non-bool `preview` and an unreadable `tree` before the session is parsed; `lenient_pane` does the same for `PaneView.tree`; `repair_pane` filters and truncates `expanded` and drops a width outside 160 to 2048; `validate_pane` refuses with `"{at}: tree.expanded holds at most 500 folders"` and `"tree width must be 160 to 2048"`. Every `PaneTab { .. }`, `SessionTabs { .. }` and `PaneView { .. }` literal in the crates gets the new field.
+- [ ] **Step 3: Implement.** `FilesSettings` has a hand-written `Default` (several fields are on). `lenient_files` takes each field alone like `lenient_browser`: a wrong type, a `tab_size` that isn't 2, 4 or 8, or an unknown position reads as the default with a `tracing::warn!` naming the field, never the value. A folder in `expanded` is kept when it is non-empty, at most 4,096 characters, has no `\`, no `:`, doesn't start with `/`, and no component is empty, `.` or `..` (`pub fn tree_folder_ok(f: &str) -> bool` in `layout.rs`, mirrored as `treeFolderOk` in `paneRules.ts` for Task 6). `lenient_session` drops a non-bool `preview`; for `tree` it drops the non-string items of `expanded` first, then drops the whole `tree` if it still doesn't parse (a non-string `root`, a non-object), before the session is parsed. `lenient_pane` does the same for `PaneView.tree`. `repair_pane` filters `expanded` with `tree_folder_ok`, keeps the first 500, drops a width outside 160 to 2048, and its `sessions.retain` at 361 keeps a session whose `tree` is set even with no tabs (`active` then None). `validate_pane` refuses with the messages in the test (its comment at 455 asks it to mirror `repair_pane`), and its active-tab rule at 563 already accepts no tabs with `active` null. Every `PaneTab { .. }`, `SessionTabs { .. }` and `PaneView { .. }` literal in the crates gets the new field.
 
 - [ ] **Step 4: Regenerate and run.** Run: `cargo test -p marshell-protocol -j 4`, then `pnpm check:generated`, then `cargo test -p marshell-core -j 4 settings::` and `cargo test -p marshell-core -j 4 layout::`, then `pnpm test src/features/appearance src/features/pane`, then `pnpm build`. Expected: all PASS.
 
@@ -130,9 +135,9 @@ it("refuses what validate_pane refuses for the tree", () => { /* the same two me
 
 ```rust
 pub struct TreeRequest { pub dirs: Vec<TreeAsk> }                         // 1 to 64
-pub struct TreeAsk { pub dir: String, pub stamp: Option<u64> }           // "" is the root
+pub struct TreeAsk { pub dir: String, #[ts(type = "number | null")] pub stamp: Option<u64> }   // "" is the root
 pub struct TreeReply { pub root: String, pub dirs: Vec<TreeDir> }         // one per ask, in order
-pub struct TreeDir { pub dir: String, pub state: TreeDirState, pub stamp: u64, pub entries: Vec<TreeEntry>, pub more: u32 }
+pub struct TreeDir { pub dir: String, pub state: TreeDirState, #[ts(type = "number")] pub stamp: u64, pub entries: Vec<TreeEntry>, pub more: u32 }   // u64 as number, or check:generated fails on bigint
 #[serde(rename_all = "kebab-case")] pub enum TreeDirState { Listed, Same, Gone, Refused }
 pub struct TreeEntry { pub name: String, pub kind: TreeEntryKind, pub ignored: bool }
 #[serde(rename_all = "kebab-case")] pub enum TreeEntryKind { File, Folder, Link }
@@ -153,7 +158,12 @@ pub struct TreeEntry { pub name: String, pub kind: TreeEntryKind, pub ignored: b
 #[test] fn cuts_a_folder_at_5000_and_counts_the_rest() { /* 5,003 files → 5,000 entries, more == 3 */ }
 #[test] fn a_symlink_to_a_folder_is_a_link_and_asking_through_it_is_refused() { /* skipped where the test can't make a symlink */ }
 #[cfg(windows)] #[test] fn a_junction_to_outside_the_root_is_a_link_and_refused_when_asked() { /* mklink /J made with std::process::Command("cmd", ["/C", "mklink", "/J", ..]) */ }
+#[cfg(windows)] #[test] fn a_junction_inside_the_root_is_never_entered() { /* root/a → root/b: "a" listed as a link; asking "a" and "a/x" is Refused; asking "b" lists */ }
+#[test] fn dot_git_in_any_case_is_refused() { /* ".GIT", "x/.Git" → Refused */ }
 #[test] fn a_link_to_a_file_is_a_file() {}
+#[test] fn a_folder_of_5000_ignored_files_answers() { /* 5,000 "*.log" files: the reply comes (no pipe deadlock) and all are ignored */ }
+#[test] fn git_runs_only_when_a_folder_was_listed() { /* every ask Same → no check-ignore run (a counter on the runner, or the reply time) */ }
+#[test] fn natural_cmp_orders_digits_as_numbers() {}
 #[tokio::test] async fn more_than_64_asks_is_a_bad_request() {}
 #[tokio::test] async fn a_session_with_no_folder_is_not_found() {}
 #[tokio::test] async fn the_tree_is_refused_without_the_bearer() {}
@@ -161,7 +171,7 @@ pub struct TreeEntry { pub name: String, pub kind: TreeEntryKind, pub ignored: b
 
 - [ ] **Step 2: Run and see them fail.** Run: `cargo test -p marshell-core -j 4 server::tree`. Expected: does not compile.
 
-- [ ] **Step 3: Implement.** A dir is checked as text first (the rules in the test's name), then `root.join(dir)`: `refused`, `links_refused`, and `crate::projects::canonical(path)` must start with the canonical root, else `Refused`; not a folder is `Gone`. `stamp` is `modified_ms` of the folder; an equal `stamp` in the ask answers `Same`. Entries come from `read_dir`: a name that isn't UTF-8 or is `.git` is left out; a symlink or junction (`file_type().is_symlink()`, which covers both on Windows) is left out when `links_refused`, else `Link` when its target is a folder and `File` when it is a file. The sort is folders and links first, then files, by a natural, case-insensitive compare (`natural_cmp(a: &str, b: &str) -> Ordering`, digits compared as numbers, with its own unit test). In a checkout, one `git check-ignore -z --stdin` run (through a new `crate::git::run_input(dir, args, stdin: &[u8])`, which keeps `run`'s no-window flag) gets every listed entry's relative path, folders with a trailing `/`, plus each asked folder itself; exit code 1 means none is ignored. An asked folder that is ignored marks all its entries ignored without asking git. Without git on PATH, nothing is ignored.
+- [ ] **Step 3: Implement.** A dir is checked as text first (the rules in the test's name, with `.git` compared ignoring case), then walked from the root one component at a time with `symlink_metadata`: a component that is a link or a junction (`file_type().is_symlink()`), a missing one (`Gone`) or a file (`Gone`) stops it, so no folder is ever entered through a link, inside the root or out. Then `refused` and `crate::projects::canonical(path)` must start with the canonical root and have no `.git` component in any case (which also catches a short name such as `GIT~1`), else `Refused`. `stamp` is `modified_ms` of the folder; an equal `stamp` in the ask answers `Same`. Entries come from `read_dir`: a name that isn't UTF-8 or is `.git` is left out; a symlink or junction (`file_type().is_symlink()`, which covers both on Windows) is left out when `links_refused`, else `Link` when its target is a folder and `File` when it is a file. The sort is folders and links first, then files, by a natural, case-insensitive compare (`natural_cmp(a: &str, b: &str) -> Ordering`, digits compared as numbers, with its own unit test). In a checkout, and only when at least one folder came back `Listed`, one `git check-ignore -z --stdin` run gets every listed entry's relative path (folders with a trailing `/`) plus each listed folder itself. It goes through a new `crate::git::run_input(dir, args, stdin: Vec<u8>) -> anyhow::Result<std::process::Output>`, which keeps `run`'s no-window flag, pipes stdin, stdout and stderr, writes stdin from its own thread and drains the output with `wait_with_output`, so a long list can't fill a pipe and hang both sides. Exit code 1 means none is ignored. Exit code 128 (a path inside a submodule) runs it again once per listed folder, and a folder whose run still fails gets no marks. An asked folder that is ignored marks all its entries ignored without asking git. Without git on PATH, nothing is ignored.
 
 - [ ] **Step 4: Run them.** Run: `cargo test -p marshell-protocol -j 4`, `pnpm check:generated`, `cargo test -p marshell-core -j 4 server::tree`, `cargo test -p marshell-core -j 4 server::files`. Expected: PASS (`files` unchanged).
 
@@ -179,13 +189,24 @@ pub struct TreeEntry { pub name: String, pub kind: TreeEntryKind, pub ignored: b
 - Produces (protocol):
 
 ```rust
-pub struct SearchReply { pub root: String, pub files: Vec<SearchFile>, pub truncated: bool }
+pub struct SearchRequest { pub q: String }
+pub struct SearchReply { pub root: String, pub files: Vec<SearchFile>, pub cut: Option<SearchCut> }
+#[serde(rename_all = "kebab-case")] pub enum SearchCut { Lines, Time }   // stopped at 1,000 lines, or at 3,000 ms
 pub struct SearchFile { pub path: String, pub lines: Vec<SearchLine> }        // relative, "/" separators, sorted by path
 pub struct SearchLine { pub line: u32, pub parts: Vec<SearchPart> }           // line from 1
 pub struct SearchPart { pub text: String, pub hit: bool }
 ```
 
-- Produces (core): `POST /v1/sessions/{tab}/search` with the body `SearchRequest { q: String }` (a body, so the text stays out of URLs and logs); 400 "Search for 2 to 200 characters." outside 2..=200 characters; 404 "This session has no folder."; `pub fn stream(dir: &Path, args: &[&str], each: impl FnMut(&[u8]) -> bool) -> anyhow::Result<bool>` in `git.rs` (calls `each` per NUL- or newline-ended record as `git grep -z` writes them, kills the child when `each` returns false, returns whether it stopped early).
+- Produces (core): `POST /v1/sessions/{tab}/search` with the body `SearchRequest { q: String }` (a body, so the text stays out of URLs and logs); 400 "Search for 2 to 200 characters." outside 2..=200 characters, and "Search for text on one line." when `q` holds `\n`, `\r` or `\0`; 404 "This session has no folder."; in `git.rs`:
+
+```rust
+pub enum Stopped { Done, Asked, Deadline, Cancelled }
+/// Runs git and hands `each` its stdout in chunks as they come. A watchdog thread kills the child at `deadline` or as soon as
+/// `cancel` is set, even while git prints nothing; `each` returning false kills it too.
+pub fn stream(dir: &Path, args: &[&str], deadline: Instant, cancel: &AtomicBool, each: impl FnMut(&[u8]) -> bool) -> anyhow::Result<Stopped>;
+```
+
+`search.rs` parses the chunks with a small state machine for `git grep -n -z`'s `path\0line\0text\n` records (a NUL inside the text, past git's 8,000-byte binary check, is text), and keeps at most 4,096 bytes of a record's text, so a 500 MB minified line is never held whole.
 
 - [ ] **Step 1: Write the failing tests** in `search.rs` (temp repos made by the test):
 
@@ -195,7 +216,14 @@ pub struct SearchPart { pub text: String, pub hit: bool }
 #[test] fn a_regex_character_is_plain_text() { /* "a.b" finds "a.b", not "axb" */ }
 #[test] fn skips_ignored_binary_and_big_files() { /* dist/ ignored, a PNG, a 1,048,577-byte text file: none in the reply */ }
 #[test] fn finds_untracked_files_that_are_not_ignored() {}
-#[test] fn stops_at_1000_lines_and_says_so() { /* 1,200 matching lines → 1,000 lines, truncated */ }
+#[test] fn stops_at_1000_lines_and_says_so() { /* 1,200 matching lines → 1,000 lines, cut Some(Lines) */ }
+#[test] fn a_record_parser_takes_a_nul_inside_the_text() { /* b"a.txt\x0012\x00x\x00y\n" → path a.txt, line 12, text "x\0y" lossily */ }
+#[test] fn a_record_parser_keeps_4096_bytes_of_a_huge_line() {}
+#[test] fn a_query_starting_with_a_dash_is_text() { /* "--help" and "-e" are searched for, not read as options */ }
+// git.rs gets its first tests module:
+#[test] fn stream_stops_when_each_says_so() {}
+#[test] fn stream_kills_a_child_that_prints_nothing_at_the_deadline() { /* through `stream`'s inner `stream_cmd(cmd: Command, ..)`, with `powershell -NoProfile -Command Start-Sleep 10` on Windows and `sleep 10` elsewhere: returns Deadline within deadline + 500 ms */ }
+#[test] fn stream_kills_the_child_when_cancelled() {}
 #[test] fn outside_git_walks_and_skips_node_modules() {}
 #[test] fn long_lines_are_cut_around_the_first_hit() { /* a 5,000-char line → text ≤ 241 chars, starts with "…", the hit part present */ }
 #[test] fn parts_split_at_every_hit() { /* "a foo b foo" with "foo" → [a ][foo][ b ][foo] */ }
@@ -205,7 +233,7 @@ pub struct SearchPart { pub text: String, pub hit: bool }
 
 - [ ] **Step 2: Run and see them fail.** Run: `cargo test -p marshell-core -j 4 server::search`.
 
-- [ ] **Step 3: Implement.** Case-sensitive when the text has a character for which `char::is_uppercase` holds. In a checkout: `git grep -I -n -z --no-color --untracked -F [-i] -e <q>` through `stream`, which stops at 1,000 lines or 3,000 ms. A file over 1,048,576 bytes (one `metadata` per file, remembered) gives no lines. Outside a checkout: the walk of `walk_files` (its `SKIPPED_DIRS` and link rule, factored into a shared iterator if needed), each file at most 1,048,576 bytes with no NUL byte in its first 8,000, read as UTF-8 lossily. `hits(line: &str, q: &str, sensitive: bool) -> Vec<(usize, usize)>` compares char by char (lower-casing each char when not sensitive) and returns byte ranges on char boundaries; a line git found but `hits` doesn't gives one part with `hit: false`. The text drops leading whitespace; over 240 characters it becomes the 240 from 40 before the first hit, with "…" at each cut end. Runs in `spawn_blocking`; the child is killed if the request is dropped (`kill_on_drop` or the stop flag).
+- [ ] **Step 3: Implement.** Case-sensitive when the text has a character for which `char::is_uppercase` holds. In a checkout: `git grep -I -n -z --no-color --untracked -F [-i] -e <q> --` through `stream` (`-e` makes a text that starts with `-` a pattern, and `--` ends the options), which stops at 1,000 lines (`cut: Lines`) or 3,000 ms (`cut: Time`). A file over 1,048,576 bytes (one `metadata` per file, remembered) gives no lines. Outside a checkout: the walk of `walk_files` (its `SKIPPED_DIRS` and link rule, factored into a shared iterator if needed), each file at most 1,048,576 bytes with no NUL byte in its first 8,000, read as UTF-8 lossily. `hits(line: &str, q: &str, sensitive: bool) -> Vec<(usize, usize)>` compares char by char (lower-casing each char when not sensitive) and returns byte ranges on char boundaries; a line git found but `hits` doesn't gives one part with `hit: false`. The text drops leading whitespace; over 240 characters it becomes the 240 from 40 before the first hit, with "…" at each cut end. The walk also stops at 3,000 ms and 1,000 lines. Runs in `spawn_blocking` with an `Arc<AtomicBool>` cancel flag that a drop guard in the handler sets, so a request the app aborts (a newer search) kills its `git grep` at once; `spawn_blocking` alone would let it run on.
 
 - [ ] **Step 4: Run them.** Run: `cargo test -p marshell-protocol -j 4`, `pnpm check:generated`, `cargo test -p marshell-core -j 4 server::search`, `cargo test -p marshell-core -j 4 git::`. Expected: PASS.
 
@@ -215,7 +243,7 @@ pub struct SearchPart { pub text: String, pub hit: bool }
 
 **Files:**
 - Create: `src/features/files/filesApi.ts`, `filesApi.test.ts`, `src/features/files/filesSettings.tsx`, `filesSettings.test.ts`
-- Modify: `src/features/appearance/settingsSync.ts`, `settingsSync.test.ts`
+- Modify: `src/features/appearance/settingsSync.ts`, `settingsSync.test.ts`, `src/lib/api/client.ts` (`coreFetch` at 38 and `api` at 54 take an optional last `signal?: AbortSignal`, passed to `fetch`; every caller unchanged)
 
 **Interfaces:**
 - Consumes: Tasks 1 to 3's types.
@@ -247,8 +275,8 @@ export function useFilesSettings(): { settings: FilesSettings | null; failed: bo
 
 **Files:**
 - Create: `src/features/editor/editorPrefs.ts`, `editorPrefs.test.ts`, `src/features/editor/indentGuides.ts`, `indentGuides.test.ts`, `src/features/editor/autoSave.ts`, `autoSave.test.ts`
-- Modify: `src/features/editor/setup.ts` (`extensions` at 186, `bindings` at 139, `indentOf` at 56), `Editor.tsx` (reconfigure on change, as `wrap` is at 143), `TextTab.tsx` (`wrapAtStart` at 68; props), `Editor.css` (guides, whitespace, forced colors), `src/features/preview/Preview.tsx` (passes the props through to `TextTab`)
-- Test: `setup.test.ts`, `TextTab.test.tsx`
+- Modify: `src/features/editor/setup.ts` (`extensions` at 186, `bindings` at 139, `indentOf` at 56), `Editor.tsx` (`indentUnit.of(indentOf(..))` at 110 takes the tab size; reconfigure on change, as `wrap` is), `TextTab.tsx` (`wrapAtStart` at 68; props; the timer), `editorDoc.ts` (the quiet save), `useEditorFile.ts` (`runSave` passes `auto`), `editorApi.ts` (`saveFile` at 33), `Editor.css` (guides, whitespace, forced colors), `src/features/preview/Preview.tsx` (passes the props through to `TextTab`), `crates/core/src/server/save.rs` (`SaveQuery` at 35, `replace_with` at 215), `crates/core/src/userfiles/history.rs` (decision 24)
+- Test: `setup.test.ts`, `TextTab.test.tsx`, `editorDoc.test.ts`, `editorApi.test.ts`, the `mod tests` of `save.rs` and `history.rs`
 
 **Interfaces:**
 - Consumes: `FilesSettings` (Task 1).
@@ -265,12 +293,23 @@ export function reconfigurePrefs(view: EditorView, prefs: EditorPrefs, appChord:
 export function guideLevels(lines: readonly string[], tabSize: number, unit: number): number[];
 export function indentGuides(): Extension;
 // autoSave.ts
-export type AutoSaveFacts = { on: boolean; dirty: boolean; conflict: boolean; readOnly: boolean; saving: boolean };
+export type AutoSaveFacts = { on: boolean; dirty: boolean; conflict: boolean; markers: boolean; readOnly: boolean; saving: boolean };   // markers: countConflicts(text) > 0 (conflicts.ts:43)
 export function autoSaveDue(f: AutoSaveFacts): boolean;
 export const AUTO_SAVE_MS = 1000;
-// TextTab / Preview props: prefs: EditorPrefs; autoSave: boolean
+// TextTab / Preview props, optional so the build stays green until Task 14 passes them: prefs?: EditorPrefs (EDITOR_DEFAULTS); autoSave?: boolean (false)
 // PreviewHandle (and TextTab's handle) gains autoSave(): void   // saves now when autoSaveDue; Task 14 calls it before the session on screen changes
-// TextTab.tsx: wrapAtStart(kind, path, firstLine, all: boolean)   // all → true
+// TextTab.tsx: wrapAtStart(kind, path, firstLine, all = false)   // all → true
+// setup.ts: indentOf(text, language?, tabSize = 4)   // a file with no indent yet gets tabSize spaces
+// editorDoc.ts: DocEvent { type: "save"; auto?: true }; Effect { type: "save"; expect; auto?: true }; DocState.sentAuto: boolean
+// editorApi.ts: saveFile(path, bytes, expect, auto = false)   // adds "&auto=1"
+```
+
+```rust
+// save.rs: SaveQuery gains `auto: Option<bool>`; replace_with takes `copy: Copy`
+enum Copy { Always, IfOlderThan(u64) }   // the save route passes IfOlderThan(AUTO_COPY_MS) when auto
+pub const AUTO_COPY_MS: u64 = 300_000;
+// history.rs
+pub fn newest_ms(&self, path: &Path) -> anyhow::Result<Option<u64>>;   // created_ms of the newest copy of `path` (same_path), None with none
 ```
 
 - [ ] **Step 1: Write the failing tests**
@@ -278,7 +317,7 @@ export const AUTO_SAVE_MS = 1000;
 ```ts
 // editorPrefs.test.ts / setup.test.ts
 it("tab size sets how wide a tab is drawn", () => { /* extensions({...prefs, tab_size: 2}) → state.tabSize === 2 */ });
-it("a file whose indent can't be told takes the tab size in spaces", () => { /* indentOf("", "x.ts", 2) === "  "; a file indented with 4 spaces keeps "    " */ });
+it("a file whose indent can't be told takes the tab size in spaces", () => { /* indentOf("", undefined, 2) === "  "; indentOf("a\n    b", undefined, 2) === "    "; indentOf("", "go", 2) === "\t" */ });
 it("Tab key indents off leaves Tab unbound", () => { /* bindings with tab_indents false hold no "Tab" binding; true holds indentWithTab */ });
 it("indent guides, whitespace and scroll past end are on only when asked", () => { /* each extension is present or absent */ });
 // indentGuides.test.ts
@@ -287,16 +326,33 @@ it("a blank line takes the smaller of its neighbours", () => { /* ["  a", "", " 
 // autoSave.test.ts
 it("is due only when on, dirty, not saving, not in conflict and not read-only", () => {});
 it("auto_save_stops_at_a_conflict", () => { /* conflict true → false */ });
+it("never_auto_saves_text_that_still_holds_conflict_markers", () => { /* markers true → false: a merge that left conflicts is saved only by Ctrl+S */ });
 it("never_auto_saves_read_only", () => {});
+// editorDoc.test.ts
+it("an auto save that works says nothing and offers no undo", () => { /* save {auto} → effect save {auto: true}; saved → no announce effect, undoOffered false, lastSave null */ });
+it("an auto save that fails or meets a conflict says what Ctrl+S would", () => { /* saveFailed / saveConflict after an auto save → the same announce as after a manual one */ });
+it("an auto save with the changed-on-disk bar up does nothing and says nothing", () => {});
+it("Ctrl+S still says Saved and offers undo", () => {});
+// editorApi.test.ts
+it("an auto save sends auto=1", () => {});
 // TextTab.test.tsx
 it("word wrap on wraps code too", () => { /* wrapAtStart("code", "a.ts", undefined, true) === true; false → false; markdown → true either way */ });
 ```
 
-- [ ] **Step 2: Run and see them fail.** Run: `pnpm test src/features/editor`.
+```rust
+// save.rs / history.rs
+#[test] fn an_auto_save_takes_no_copy_when_the_newest_is_under_5_minutes_old() { /* a copy taken at now − 299,999 ms → reply snapshot None, the file written, the index unchanged */ }
+#[test] fn an_auto_save_takes_a_copy_when_the_newest_is_5_minutes_old() { /* now − 300,000 ms → snapshot Some */ }
+#[test] fn an_auto_save_of_a_file_with_no_copies_takes_one() {}
+#[test] fn a_save_without_auto_always_takes_a_copy() { /* a copy 1 s old → snapshot Some */ }
+#[test] fn newest_ms_reads_the_newest_copy_of_that_file_only() {}
+```
 
-- [ ] **Step 3: Implement.** Compartments for tab size, the keymap (rebuilt without `indentWithTab` when `tab_indents` is off), guides, whitespace (`highlightWhitespace()` from `@codemirror/view`) and `scrollPastEnd()`. `indentGuides()` is a `ViewPlugin` that puts a line decoration with `style="--guides: N"` on visible lines from `guideLevels` (unit from `indentOf`'s detected indent, else `tab_size`), and `Editor.css` draws N one-pixel lines `1ch × unit` apart in a `::before`, from a muted token; in forced colors they use `GrayText` with `forced-color-adjust: none`, as do the whitespace marks. Auto save in `TextTab`: a 1,000 ms timer restarted by every change, and a save on `active` turning false, on the window's `blur` and on `visibilitychange` to hidden, each when `autoSaveDue`. An auto save that works says nothing; one that fails or meets a conflict says what Ctrl+S's would. Closing a tab with unsaved edits still asks. Nothing saves on unmount: an unmount may follow "Don't save" in the close dialog, so leaving a session goes through the handle's `autoSave()` instead.
+- [ ] **Step 2: Run and see them fail.** Run: `pnpm test src/features/editor` and `cargo test -p marshell-core -j 4 server::save`.
 
-- [ ] **Step 4: Run them.** Run: `pnpm test src/features/editor src/features/preview`. Expected: PASS.
+- [ ] **Step 3: Implement.** The core first: an auto save reads `newest_ms` and takes its copy only when there is none or it is at least `AUTO_COPY_MS` old, so twenty copies reach back at least 100 minutes of auto saves; a save without `auto` takes one every time, as today. The unsave route and every other caller of `replace_with` pass `Copy::Always`. Then the editor: compartments for tab size, the keymap (rebuilt without `indentWithTab` when `tab_indents` is off), guides, whitespace (`highlightWhitespace()` from `@codemirror/view`) and `scrollPastEnd()`. `indentGuides()` is a `ViewPlugin` that puts a line decoration with `style="--guides: N"` on visible lines from `guideLevels` (unit from `indentOf`'s detected indent, else `tab_size`), and `Editor.css` draws N one-pixel lines `1ch × unit` apart in a `::before`, from a muted token; in forced colors they use `GrayText` with `forced-color-adjust: none`, as do the whitespace marks. Auto save in `TextTab`: a 1,000 ms timer restarted by every change and again when `saving` turns false while the tab is still dirty (keys typed during a save), and a save on `active` turning false, on the window's `blur` and on `visibilitychange` to hidden, each when `autoSaveDue`; each dispatches `{ type: "save", auto: true }`. In `editorDoc.ts`, an auto save with the bar up returns `unchanged` (the bar already says it), `sentAuto` remembers which kind is in flight, and `saved` after an auto save announces nothing and leaves `undoOffered` false and `lastSave` null; `saveFailed` and `saveConflict` read as they do today. A restored draft that makes the tab dirty starts the timer too. Nothing saves on unmount: an unmount may follow "Don't save" in the close dialog, so leaving a session goes through the handle's `autoSave()` instead.
+
+- [ ] **Step 4: Run them.** Run: `pnpm test src/features/editor src/features/preview`, `cargo test -p marshell-core -j 4 server::save`, `cargo test -p marshell-core -j 4 userfiles::history`, then `pnpm build`. Expected: PASS.
 
 - [ ] **Step 5: Commit.** `feat(editor): tab size, the Tab key, word wrap, indent guides, whitespace, scroll past end and auto save follow the Files settings.`
 
@@ -319,7 +375,7 @@ it("word wrap on wraps code too", () => { /* wrapAtStart("code", "a.ts", undefin
 // paneState.ts
 export function previewTab(st: SessionTabs, panel: PanelId): PaneTab | undefined;
 // SidePane.tsx
-StripTab.preview?: boolean;  SidePaneProps.onKeep(id: string): void;
+StripTab.preview?: boolean;  SidePaneProps.onKeep?: (id: string) => void;   // optional until Task 14 passes it
 ```
 
 - [ ] **Step 1: Write the failing tests**
@@ -332,8 +388,12 @@ it("an open without preview of the file in a preview tab keeps the tab", () => {
 it("keep makes a preview tab an ordinary one", () => {});
 it("a preview never replaces a kept tab, and each panel has at most one preview", () => { /* a preview HTML file in Browser and a preview .ts in Files live side by side */ });
 it("a navigation inside a preview tab keeps it a preview", () => {});
-it("marshell open and an agent's file never make a preview", () => { /* openBackground keeps preview absent, and keeps a preview tab of the same path */ });
+it("marshell open and an agent's file never make a preview", () => { /* openBackground adds no preview tab; a preview tab of the same path loses `preview` (it is kept) */ });
 it("tree sets the session's tree; treeView merges the window's", () => {});
+it("tree keeps only relative folders and the first 500", () => { /* treeFolderOk from paneRules.ts: "a/../b", "/x", "" dropped; 600 → 500; paneProblem(next) === null */ });
+it("treeView clamps the width to 160 to 2048", () => { /* 2500 → 2048; 100 → 160; null stays null; paneProblem(next) === null */ });
+it("closing a session's last tab keeps its tree", () => { /* close leaves { tabs: [], active: null, tree } when tree is set, and drops the session when it isn't */ });
+it("a session with a tree and no tabs opens its next tab normally", () => {});
 // SidePane.test.tsx
 it("a preview tab's name is italic and read with \", preview\"", () => { /* class side-pane__tab--preview; text ", preview" */ });
 it("a preview tab's tooltip says how to keep it", () => { /* tabTitle → "src/a.ts · Preview: double-click to keep" */ });
@@ -341,7 +401,7 @@ it("a preview tab's tooltip says how to keep it", () => { /* tabTitle → "src/a
 
 - [ ] **Step 2: Run and see them fail.** Run: `pnpm test src/features/pane`.
 
-- [ ] **Step 3: Implement.** A preview open replaces the panel's preview tab by setting its `history` to `[entry]`, `index` 0 and a new `id` (so the viewer remounts), at the same place in `tabs`. The strip's `onDoubleClick` on a tab calls `onKeep`. A tab with unsaved edits is never a preview, because the first edit keeps it: `LiveApp`'s `noteDirty(true)` dispatches `keep` (Task 14 wires it), so the reducer needs no dirty set of its own.
+- [ ] **Step 3: Implement.** A preview open replaces the panel's preview tab by setting its `history` to `[entry]`, `index` 0 and a new `id` (so the viewer remounts), at the same place in `tabs`. An open without `preview` of a path shown in a preview tab, and `openBackground` of it, delete that tab's `preview`. The strip's `onDoubleClick` on a tab calls `onKeep`. `close` at 395 keeps the session's entry with `tabs: []` and `active: null` when it has a `tree`, and every reader of `st.tabs` copes with an empty list. A tab with unsaved edits is never replaced: the first edit keeps it (Task 14's per-tab `onDirty` dispatches `keep`), and Task 14 also dispatches `keep` before a preview open when the preview tab's path is unsaved, which covers a draft still loading; the reducer needs no dirty set of its own. Every action here leaves a pane `paneProblem` accepts, so a save of the layout is never refused (the comment at 239 says why that matters).
 
 - [ ] **Step 4: Run them.** Run: `pnpm test src/features/pane`. Expected: PASS.
 
@@ -363,6 +423,8 @@ export type TreeRow = { path: string; name: string; kind: "file" | "folder" | "l
 export function childPath(dir: string, name: string): string;                 // ("", "a") → "a"; ("a", "b") → "a/b"
 export function ancestors(path: string): string[];                             // "a/b/c.ts" → ["a", "a/b"]
 export function relativeTo(root: string, abs: string, windows: boolean): string | null;   // case-insensitive and either separator on Windows; null outside root
+export function absoluteOf(root: string, rel: string, windows: boolean): string;          // ("C:\\p", "src/a.ts", true) → "C:\\p\\src\\a.ts"; "" → root; "/" joins elsewhere. Every path the tree opens, pastes, copies or reveals goes through it, so tabs and recent files never mix separators
+export function openFolders(rows: readonly TreeRow[]): string[];                         // the open folders now drawn (every ancestor open), in row order
 export function visibleRows(listings: ReadonlyMap<string, Listing>, expanded: ReadonlySet<string>): TreeRow[];
 export type TreeMove = { type: "focus"; index: number } | { type: "expand" | "collapse"; path: string } | { type: "open"; path: string; keep: boolean } | { type: "filter" } | { type: "menu" } | null;
 export function treeKey(e: { key: string; ctrlKey: boolean; altKey: boolean; metaKey: boolean; shiftKey: boolean }, rows: readonly TreeRow[], index: number, rtl: boolean): TreeMove;
@@ -380,6 +442,8 @@ it("visible_rows_put_a_more_row_after_a_cut_folder", () => { /* more: 25000 → 
 it("an open empty folder shows one empty row", () => {});
 it("set size and position count only real entries", () => {});
 it("relativeTo is case-insensitive on Windows and null outside the root", () => {});
+it("absoluteOf joins with the system's separator", () => { /* Windows "\\", elsewhere "/", "" gives the root, a root ending in a separator gets no second one */ });
+it("openFolders lists only open folders whose parents are open, in row order", () => {});
 it("Right opens a closed folder, then moves to its first child; Left closes, then moves to the parent", () => {});
 it("in right-to-left Left and Right swap", () => {});
 it("Enter opens a file kept and Space opens it as a preview; both toggle a folder", () => {});
@@ -403,13 +467,17 @@ it("the filter stops at 500 matches and says it was capped", () => {});
 ### Task 8: The tree on screen, its icons and its polling (worker `effort: high`)
 
 **Files:**
-- Create: `src/features/files/FileTree.tsx`, `FileTree.css`, `FileTree.test.tsx`, `FileTree.css.test.ts`, `src/features/files/fileIcons.tsx`, `fileIcons.test.ts`, `src/features/files/useTree.ts`, `useTree.test.ts`, `src/features/files/treeMenu.ts`, `treeMenu.test.ts`
+- Create: `src/features/files/FileTree.tsx`, `FileTree.css`, `FileTree.test.tsx`, `FileTree.css.test.ts`, `src/features/files/fileIcons.tsx`, `fileIcons.test.ts`, `src/features/files/useTree.ts`, `useTree.test.ts`, `src/features/files/treeMenu.ts`, `treeMenu.test.ts`, `src/features/files/reveal.ts`, `reveal.test.ts` (moved here from Task 11, since the menu's last row needs its label)
 
 **Interfaces:**
 - Consumes: Task 4's `listTree`, Task 7's model.
 - Produces:
 
 ```ts
+// reveal.ts
+export function revealLabel(os: Os): string;   // "Show in File Explorer", "Show in Finder", "Show in file manager"
+export function revealRefused(path: string): boolean;   // a path that starts with "\\\\" or "//" (a network share): the opener plugin checks no scope and touches the path, so a hand-edited layout.json could make Explorer reach a share
+export async function revealFile(path: string, announce: (t: string) => void, reveal = revealItemInDir): Promise<void>;   // refused → "Couldn't show the file: it's on a network share."; a failure → "Couldn't show the file: {reason}"
 // fileIcons.tsx
 export type IconKind = "folder" | "folder-open" | "code" | "markdown" | "text" | "image" | "pdf" | "web" | "data" | "config" | "archive" | "other" | "link";
 export function iconKind(name: string, kind: TreeRow["kind"], expanded: boolean): IconKind;
@@ -417,11 +485,11 @@ export function FileIcon({ kind }: { kind: IconKind }): JSX.Element;   // 14 px,
 // useTree.ts
 export const TREE_POLL_MS = 2000, TREE_FULL_MS = 30000;
 export type TreeSource = { list(asks: TreeAsk[]): Promise<TreeReply | "no-folder"> };
-export function useTree(o: { source: TreeSource | null; saved: TreeState | undefined; drawn: boolean; onSaved(next: TreeState): void }): {
+export function useTree(o: { session: string; source: TreeSource | null; saved: TreeState | undefined; drawn: boolean; onSaved(session: string, next: TreeState): void }): {
   root: string | null; noFolder: boolean; rows: TreeRow[];
   expand(path: string): void; collapse(path: string): void; collapseAll(): void; reveal(path: string): void;   // reveal opens ancestors of a root-relative path
 };
-export function nextAsks(listings: ReadonlyMap<string, Listing>, expanded: ReadonlySet<string>, full: boolean): TreeAsk[];   // pure, for the tests
+export function nextAsks(listings: ReadonlyMap<string, Listing>, rows: readonly TreeRow[], full: boolean): TreeAsk[][];   // pure: the root and openFolders(rows), in row order, never-listed first, cut into requests of at most 64
 // treeMenu.ts
 export function treeMenuItems(row: TreeRow, o: { pasteTo: { name: string; refused?: string } | null; os: Os }): MenuItem[];
 export type TreeChoice = "open" | "paste" | "copy-path" | "copy-relative" | "reveal";
@@ -435,11 +503,17 @@ export function FileTree(p: { rows: TreeRow[]; rootName: string; noFolder: boole
 // fileIcons.test.ts
 it("names map to icons", () => { /* main.ts code, README.md markdown, a.png image, b.pdf pdf, i.html web, d.json data, e.csv data, .gitignore config, x.toml config, z.zip archive, notes.txt text, a.bin other */ });
 // useTree.test.ts (the pure parts)
-it("nextAsks asks the root and every open folder, with stamps unless full", () => {});
-it("nextAsks never asks more than 64 folders", () => {});
-it("a_poll_waits_for_the_one_in_flight", () => { /* the scheduler function takes `inFlight` and returns no ask */ });
-it("a_new_root_closes_every_folder", () => { /* a reply whose root differs from saved.root → onSaved({ root, expanded: [] }) */ });
+it("nextAsks asks the root and every drawn open folder, with stamps unless full", () => {});
+it("nextAsks cuts 200 open folders into requests of 64, 64, 64 and 8", () => {});
+it("an open folder under a closed one is not asked", () => {});
+it("a_poll_waits_for_the_one_in_flight", () => { /* the scheduler function takes `inFlight` and returns no ask; a poll's requests go one after another */ });
+it("a_new_root_closes_every_folder", () => { /* a reply whose root differs from saved.root → onSaved(session, { root, expanded: [] }) and every listing cleared */ });
 it("a_gone_folder_is_dropped", () => { /* state gone → removed from expanded and from listings */ });
+it("a reply that comes after the session changed is dropped", () => { /* the reducer takes replies tagged with the session and root they were asked for */ });
+// reveal.test.ts
+it("revealLabel per system", () => {});
+it("revealFile calls reveal with the path and announces a failure", () => {});
+it("revealFile refuses a network path without calling reveal", () => { /* "\\\\server\\share\\a.txt" and "//server/a.txt" */ });
 // treeMenu.test.ts
 it("a file's menu reads Open, Paste path into api-server, Copy path, Copy relative path, Show in File Explorer", () => {});
 it("a folder's menu has no Open", () => {});
@@ -455,11 +529,12 @@ it("no folder reads This session has no folder the tree can show.", () => {});
 // FileTree.css.test.ts
 it("rows are 24 px and the tree draws no scrollbar", () => {});
 it("forced colors give the selected row Highlight and HighlightText", () => {});
+it("forced colors draw an ignored row in GrayText", () => {});
 ```
 
 - [ ] **Step 2: Run and see them fail.** Run: `pnpm test src/features/files`.
 
-- [ ] **Step 3: Implement.** `useTree` asks once when drawn, then every 2,000 ms while `drawn`, the document is visible and the window has focus; immediately on window focus and on `expand`; every 30,000 ms and on window focus without stamps. One request at a time. A `Same` folder keeps its listing. A `Gone` or `Refused` folder leaves `expanded` (saved through `onSaved`, debounced 500 ms). `FileTree` renders only the rows in view plus 10 above and below, and always the row with the keyboard, between two spacers, with a roving `tabIndex`. A row: indent of 12 px per level, a chevron for a folder, the icon, the name as `splitName`'s head and tail (`side-pane__name-head` style, middle-shortened), the tooltip the root-relative path. A click on a file calls `onMove({ type: "open", keep: false })`, a double-click `onDoubleOpen`, a click on a folder toggles it, a right-click and Shift+F10 open the menu. A letter typed within 500 ms of the last extends the type-ahead. The "more" and "empty" rows are `aria-disabled`.
+- [ ] **Step 3: Implement.** `useTree` asks once when drawn, then every 2,000 ms while `drawn`, the document is visible and the window has focus; immediately on window focus and on `expand`; every 30,000 ms and on window focus without stamps. One request at a time; a poll's requests (64 folders each) go one after another. A `Same` folder keeps its listing. A `Gone` or `Refused` folder leaves `expanded` (saved through `onSaved`, debounced 500 ms). The hook holds `session` in each request and each save: a reply or a save for a session that is no longer the hook's is dropped, the debounce is flushed (for its own session) on unmount and when `session` changes, and nothing is set after unmount. Task 14 keys the panel by session as well. `FileTree` renders only the rows in view plus 10 above and below, and always the row with the keyboard, between two spacers, with a roving `tabIndex`. A row: indent of 12 px per level, a chevron for a folder, the icon, the name as `splitName`'s head and tail (`side-pane__name-head` style, middle-shortened), the tooltip the root-relative path. A click on a file calls `onMove({ type: "open", keep: false })`, a double-click `onDoubleOpen`, a click on a folder toggles it, a right-click and Shift+F10 open the menu. A letter typed within 500 ms of the last extends the type-ahead. The "more" and "empty" rows are `aria-disabled`.
 
 - [ ] **Step 4: Run them.** Run: `pnpm test src/features/files`. Expected: PASS.
 
@@ -481,10 +556,14 @@ export function filterMode(text: string): FilterMode;
 export const SEARCH_DEBOUNCE_MS = 300;
 export function useSearch(o: { tab: string | null; query: string | null; run: typeof searchFiles }): { reply: SearchReply | null; busy: boolean; failed: boolean };
 export function searchSaid(reply: SearchReply): string;   // "12 matching lines in 4 files." / "1 matching line in 1 file." / "No matches."
+export type SearchRow = { kind: "file"; path: string; expanded: boolean; count: number } | { kind: "line"; path: string; line: number; parts: SearchPart[] };
+export function searchRows(reply: SearchReply, closed: ReadonlySet<string>): SearchRow[];   // every file open unless closed
+type KeyLike = Parameters<typeof treeKey>[0];
+export function searchKey(e: KeyLike, rows: readonly SearchRow[], index: number, rtl: boolean): TreeMove;   // the results' keys: Up, Down, Home, End, Right/Left to open and close a file's lines, Enter, Space as in the tree; one roving tabIndex
 export function namesNote(r: { matches: number; capped: boolean; listCut: boolean }, query: string): string | null;
 ```
 
-Copy: placeholder "Filter, or ? to search in files"; the box's name "Filter files"; "Type at least 2 characters to search."; "No file has “{q}”."; "Showing the first 1,000 matching lines."; "No file or folder name has “{q}”."; "Showing 500 matches. Type more to narrow them."; "Only the first 20,000 files are filtered." when the list was cut; "The search failed. Try again." on an error.
+Copy: placeholder "Filter, or ? to search in files"; the box's name "Filter files"; "Type at least 2 characters to search."; "No file has “{q}”."; "Showing the first 1,000 matching lines." (`cut: lines`); "The search stopped after 3 seconds. Showing what it found." (`cut: time`); "No file or folder name has “{q}”."; "Showing 500 matches. Type more to narrow them."; "Only the first 20,000 files are filtered." when the list was cut; "The search failed. Try again." on an error.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -493,8 +572,9 @@ it("filterMode reads names, ? with text, and ? alone", () => { /* "abc" names; "
 it("an_older_search_is_aborted", () => { /* a second query aborts the first's signal (useSearch's pure scheduler) */ });
 it("a search runs 300 ms after the last key", () => {});
 it("searchSaid counts lines and files, singular and plural", () => {});
-it("results are a tree of files and their lines, hits in bold", () => { /* role="tree"; file rows aria-level 1, line rows aria-level 2 with "12" and <b> parts */ });
-it("the notes read as the plan says", () => {});
+it("results are a tree of files and their lines, hits in bold", () => { /* role="tree"; file rows aria-level 1, line rows aria-level 2 with "12" and <b> parts; one row has tabIndex 0 */ });
+it("the results' keys move, open and close like the tree's", () => { /* searchKey: Down, Up, Home, End; Left on a line goes to its file; Enter on a line opens a preview at that line; Enter on a file keeps it */ });
+it("the notes read as the plan says", () => { /* both cuts, both empties, the short text, the failure */ });
 ```
 
 - [ ] **Step 2: Run and see them fail.** Run: `pnpm test src/features/files`.
@@ -523,6 +603,7 @@ export const TREE = { min: 160, start: 240, max: 2048, fileMin: 240, step: 16, n
 export function treeSide(position: TreePosition, rtl: boolean): "left" | "right";   // automatic: right in LTR, left in RTL
 export function treeWidth(saved: number | null | undefined, panelWidth: number): number;   // clamped to [min, panel − fileMin], at least min
 export function dividerKey(key: string, width: number, panelWidth: number, side: "left" | "right"): number | null;
+export function narrowAfterOpen(how: "click" | "enter" | "double" | "space"): boolean;   // whether the tree stays over the file: only Space, which leaves the keyboard in the tree (decision 9 against 6)
 // FilesBody.tsx
 export function FilesBody(p: { tree: ReactNode; filter: ReactNode; file: ReactNode; pathBar: ReactNode; shown: boolean; position: TreePosition; width: number | null; panelWidth: number; rtl: boolean; overlayOpen: boolean; onWidth(w: number | null): void; onOverlay(open: boolean): void }): JSX.Element;
 // PathBar.tsx
@@ -543,13 +624,15 @@ it("automatic puts the tree at the window's edge", () => { /* treeSide("automati
 it("treeWidth keeps the file 240 px and the tree 160 px", () => {});
 it("the divider moves 16 px, Home and End go to the limits, toward the file grows the tree", () => {});
 it("under 480 px the tree is drawn over the file", () => { /* data-narrow; overlayOpen false hides the tree */ });
+it("the divider says its width", () => { /* role separator, aria-valuenow the width, aria-valuemin 160, aria-valuemax panel − 240 */ });
+it("in the narrow layout a click, Enter or a double-click hides the tree, and Space keeps it", () => { /* narrowAfterOpen({ keep, space }) → false for click/Enter/double-click, true for Space */ });
 it("the DOM order follows the visual order", () => { /* tree first when on the left */ });
 it("the toggle is pressed while the tree shows", () => {});
 ```
 
 - [ ] **Step 2: Run and see them fail.** Run: `pnpm test src/features/files`.
 
-- [ ] **Step 3: Implement.** The divider is a `role="separator"` with `aria-orientation="vertical"`, `aria-valuemin` 160, `aria-valuemax` panel − 240, dragged with pointer capture as `PanelStack`'s is, and a double-click goes back to 240 (`onWidth(null)`). In the narrow mode the tree is absolutely placed over the file on its side, Esc in it closes it (`onOverlay(false)`), and it has the same width rule capped at the panel's width less 40 px.
+- [ ] **Step 3: Implement.** The divider is a focusable `role="separator"` with `aria-orientation="vertical"`, `aria-valuenow` the width, `aria-valuemin` 160, `aria-valuemax` panel − 240, dragged with pointer capture as `PanelStack`'s is, and a double-click goes back to 240 (`onWidth(null)`). In the narrow mode the tree is absolutely placed over the file on its side, Esc in it closes it (`onOverlay(false)`), and it has the same width rule capped at the panel's width less 40 px.
 
 - [ ] **Step 4: Run them.** Same command. Expected: PASS.
 
@@ -558,16 +641,16 @@ it("the toggle is pressed while the tree shows", () => {});
 ### Task 11: A file the pane can't show, and Show in File Explorer (main thread does the capability line)
 
 **Files:**
-- Modify: `src/features/preview/Preview.tsx` (the `"binary"` case at 236), `src-tauri/capabilities/default.json`
-- Create: `src/features/files/reveal.ts`, `reveal.test.ts`
+- Modify: `src/features/preview/Preview.tsx` (the `"tooLarge"` case at 234, the `"binary"` case at 236, the header at 546), `src-tauri/capabilities/default.json`
 - Test: `src/features/preview/Preview.test.tsx`
 
 **Interfaces:**
-- Produces: `export function revealLabel(os: Os): string` ("Show in File Explorer", "Show in Finder", "Show in file manager"); `export async function revealFile(path: string, announce: (t: string) => void, reveal = revealItemInDir): Promise<void>` (announces "Couldn't show the file: {reason}" on a failure).
+- Consumes: `revealLabel`, `revealFile` (Task 8).
+- Produces: Preview props `os?: Os`, `onReveal?: (path: string) => void` (the button shows only when given) and `pathShown?: boolean` (default false: the Files panel passes true because its path bar shows the name and folder, so the header leaves both out and keeps back, forward and the rest; the Browser panel's HTML viewer passes nothing and its header, with Rendered/Source, the viewport chip and Select region, is unchanged).
 
-- [ ] **Step 1: Write the failing tests:** the binary tab reads "report.docx can't be shown here." with a "Show in File Explorer" button on Windows; `revealLabel` per system; `revealFile` calls `reveal` with the path and announces a failure.
+- [ ] **Step 1: Write the failing tests:** the binary tab reads "report.docx can't be shown here." with a "Show in File Explorer" button on Windows; the too-large tab keeps its sentence and gets the same button; without `onReveal` neither has a button; with `pathShown` the header has no name or folder; without it the header is as today.
 
-- [ ] **Step 2: Run and see them fail.** Run: `pnpm test src/features/preview/Preview.test.tsx src/features/files/reveal.test.ts`.
+- [ ] **Step 2: Run and see them fail.** Run: `pnpm test src/features/preview/Preview.test.tsx`.
 
 - [ ] **Step 3: Implement**, and add `"opener:allow-reveal-item-in-dir"` after the `opener:allow-open-url` block in `default.json` (main thread).
 
@@ -579,8 +662,8 @@ it("the toggle is pressed while the tree shows", () => {});
 
 **Files:**
 - Create: `src/features/files/filesMenu.ts`, `filesMenu.test.ts`
-- Modify: `src/lib/keymap.ts` (`open-file` at 95: label "Go to file…", `binding: { code: "KeyP" }`; two new commands after `browse-file`), `src/lib/appShortcuts.ts` (the two new kinds), `src/features/pane/plusMenu.ts` ("Go to file…"), `src/features/pane/EmptyFiles.tsx` ("Go to file…"), every test that pins "Open file…" for this command (`rg -n "Open file…" src`)
-- Test: `src/lib/keymap.test.ts`, `src/lib/bindings.test.ts`, `src/features/pane/plusMenu.test.ts`, `EmptyPanel.test.tsx`
+- Modify: `src/lib/keymap.ts` (`open-file` at 95: label "Go to file…", `binding: { code: "KeyP" }`; two new commands after `browse-file`), `src/lib/appShortcuts.ts` (the two new kinds), `src/features/pane/plusMenu.ts` ("Go to file…"), `src/features/pane/EmptyFiles.tsx` ("Go to file…"), and the comments that name the command (`Palette.tsx` 44 and 201, `LivePalette.tsx` 58, `LiveApp.tsx` 390, `appShortcuts.ts` 31, which also loses "Has no key of its own")
+- Test: `src/lib/keymap.test.ts` (111 to 117 pin Ctrl+Shift+P and ⌘P as running no command: they now run `open-file`; the test's name changes with it), `src/lib/bindings.test.ts` (152), `src/features/pane/plusMenu.test.ts` (10), `src/features/pane/EmptyPanel.test.tsx` (60 to 65), `src/features/sessions/LiveApp.test.tsx` (744)
 
 **Interfaces:**
 - Consumes: `FilesSettings` (Task 1).
@@ -637,8 +720,15 @@ Copy (each a title, then its line):
 
 **Files:**
 - Create: `src/features/files/FilesPanel.tsx`, `FilesPanel.test.tsx`, `src/features/files/filesActions.ts`, `filesActions.test.ts`
-- Modify: `src/features/sessions/LiveApp.tsx` (`renderPanel`'s Files branch around 2241 to 2319; `noteDirty`; the menu state beside `plusMenu` at 1186; `dropPaths` at 1190: its terminal branch becomes `pasteInto(tabId, paths)`, used by the tree too; the palette's `case` list beside `"panel-files"` at 1604), `src/features/pane/focusPane.ts` (`paneFocusTarget`: Files with no tab and the tree shown → the tree's tabbable row), `src/features/pane/SidePane.tsx` (Files gets `menu: { label: "Files menu" }`)
-- Test: `focusPane.test.ts`
+- Modify: `src/features/sessions/LiveApp.tsx`:
+  - `renderPanel`'s Files branch, around 2241 to 2319: the `FilesPanel`, keyed by `paneSession`.
+  - The per-tab `onDirty` closure in `renderPanel`, which knows the tab's id (`noteDirty` at 876 takes only `(path, dirty)`): dirty → `keep` for that tab.
+  - The strip's `menu` and `onMenu` at 2215 to 2219, where `onMenu` now always calls `setBrowserMenu`: it picks the panel's menu, and Files gets `menu: { label: "Files menu" }` and a `filesMenu` state beside `plusMenu` at 1186.
+  - `dropPaths` at 1190: its terminal branch becomes `pasteInto(tabId, paths)`, which the tree uses too.
+  - `windowCommand` at 1716 to 1733, beside `case "openFile"`: the two new commands. Their kinds go in `appShortcuts.ts` (Task 12).
+  - A `leaveSession` wrapper around the view's `dispatch` (from `useViewState` at 251). A `select` of a session other than `view.panes[0]` first calls `autoSave()` on that session's text tabs, through `textTabs`. Every way to another session goes through it: `pick` at 267, the sidebar, `focus-session-N`, `next-waiting`. A closed session's tabs are gone, so its drafts keep the edits, as they do today.
+- Modify: `src/features/pane/focusPane.ts` (`paneFocusTarget`: Files with no tab and the tree shown → the tree's tabbable row)
+- Test: `focusPane.test.ts`, `src/features/sessions/LiveApp.test.tsx`
 
 **Interfaces:**
 - Consumes: everything above.
@@ -647,13 +737,21 @@ Copy (each a title, then its line):
 ```ts
 export function treeOpen(o: { previewTabs: boolean; keep: boolean }): { preview?: true };   // the open action's preview flag
 export function followTarget(root: string | null, activePath: string | null, windows: boolean): string | null;   // the root-relative path to reveal, or null
+export function keepFirst(previewTab: PaneTab | undefined, unsaved: (path: string) => boolean): boolean;
+export function leavingSession(action: ViewAction, onScreen: string | undefined): boolean;
 ```
 
-- [ ] **Step 1: Write the failing tests:** `treeOpen` (setting off → never preview; keep → never preview); `followTarget` (inside the root → relative path; outside → null); `paneFocusTarget` finds the tree's row in Files with no tab; `FilesPanel` renders the path bar, the filter and the tree with the file beside it, and the Files menu button in the strip.
+- [ ] **Step 1: Write the failing tests:**
+  - `treeOpen`: the setting off → never preview; keep → never preview.
+  - `keepFirst(previewTab, unsaved)`: true when the preview tab's path is unsaved, so `keep` is dispatched before the preview open.
+  - `followTarget`: inside the root → the relative path; outside → null.
+  - `leavingSession(action, onScreen)`: true only for a `select` of another session.
+  - `paneFocusTarget` finds the tree's row in Files with no tab.
+  - `FilesPanel` renders the path bar, the filter, and the tree with the file beside it. The strip shows the Files menu button. The Preview gets `pathShown`.
 
 - [ ] **Step 2: Run and see them fail.** Run: `pnpm test src/features/files src/features/pane/focusPane.test.ts`.
 
-- [ ] **Step 3: Implement the wiring.** A tree open dispatches `open` with `treeOpen`'s flag; `Enter` and a double-click move the keyboard to the file (`focusPane("files")`), Space and a click leave it in the tree. `noteDirty(true)` dispatches `keep` for that tab. A tab's double-click keeps it. When the Files panel's selected tab changes, `reveal(followTarget(...))` runs and the row scrolls into view. The tree's state goes through `paneDispatch({ type: "tree", ... })` for the session on screen and the width and hidden flag through `treeView`. "Paste path into <session>" calls `pasteInto`, which says "Pasted main.ts into api-server." and moves the keyboard to that terminal, as a drop does. Copy path and Copy relative path write to the clipboard and say "Copied the path." and "Copied the relative path.". Esc in the tree returns the keyboard to the terminal; in the narrow mode it first closes the tree over the file and the keyboard goes to the file. Before the session on screen changes, every text tab of the session being left gets `autoSave()` (through `textTabs`), so auto save covers leaving the session. The palette's "Show file tree" and "Collapse all folders" act on the Files panel, showing it first when hidden. The Files ⋯ menu and Settings → Files write through `useFilesSettings().set`.
+- [ ] **Step 3: Implement the wiring.** A tree open dispatches `keep` first when `keepFirst` says so, then `open` with `treeOpen`'s flag and the path from `absoluteOf`. `Enter` and a double-click move the keyboard to the file (`focusPane("files")`), and Space and a click leave it in the tree. In the narrow layout, `narrowAfterOpen` decides whether the tree stays. The keyboard's way to keep an image or PDF preview is Enter on its row in the tree. The per-tab `onDirty(true)` dispatches `keep` for that tab, and a tab's double-click keeps it (`onKeep`). The Files panel passes `prefs`, `autoSave`, `os`, `onReveal` and `pathShown` to its Preview; the Browser panel passes none of them. When the Files panel's selected tab changes, `reveal(followTarget(...))` runs and the row scrolls into view. The tree's state goes through `paneDispatch({ type: "tree", ... })` for the session on screen and the width and hidden flag through `treeView`. "Paste path into <session>" calls `pasteInto`, which says "Pasted main.ts into api-server." and moves the keyboard to that terminal, as a drop does. Copy path and Copy relative path write to the clipboard and say "Copied the path." and "Copied the relative path.". Esc in the tree returns the keyboard to the terminal. In the narrow layout, Esc first closes the tree over the file, and the keyboard goes to the file. `leaveSession` auto-saves before the session on screen changes. The palette's "Show file tree" and "Collapse all folders" act on the Files panel, showing it first when hidden. The Files ⋯ menu and Settings → Files write through `useFilesSettings().set`.
 
 - [ ] **Step 4: Run them**, then `pnpm test` and `pnpm build`. Expected: PASS.
 
@@ -665,7 +763,7 @@ export function followTarget(root: string | null, activePath: string | null, win
 - Modify: `docs/PLAN.md` (the Side pane row at 140, the Files panel's menu and the commands wherever §4 to §7 list them, the announcer examples)
 - Create: `docs/research/2026-11-21-file-tree-live-check.md`
 
-- [ ] **Step 1: Bring `docs/PLAN.md`'s running text in line** with decisions 1 to 23. Commit: `docs(plan): the file tree, the path bar and the Files menu are described where the plan describes the pane.`
+- [ ] **Step 1: Bring `docs/PLAN.md`'s running text in line** with decisions 1 to 24. Commit: `docs(plan): the file tree, the path bar and the Files menu are described where the plan describes the pane.`
 
 - [ ] **Step 2: Run what CI runs**, one command per call, in the foreground: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace -j 4`, `pnpm test`, `pnpm check:generated`, `pnpm build`. Expected: all pass; the counts go in the PR body.
 
@@ -680,7 +778,7 @@ export function followTarget(root: string | null, activePath: string | null, win
 | 5 | Filter "butt" shows the matches in opened folders, bold; "?todo" lists lines, "?TODO" fewer; the 2 MB file and a PNG are absent; Enter on a line opens a preview at that line. |
 | 6 | A click opens an italic preview; a second click replaces it; typing in it keeps it; a double-click on its tab keeps it; `marshell open` of a previewed file keeps it. |
 | 7 | Each menu row changes what it says, survives a restart and matches Settings → Files; Tab size 2 draws tabs 2 wide; Tab key indents off lets Tab leave; indent guides and whitespace draw. |
-| 8 | Auto save on: an edit is on disk 1 s later; an agent-side write meanwhile gives the changed-on-disk bar and nothing is overwritten. |
+| 8 | Auto save on: an edit is on disk 1 s later, with nothing said; an agent-side write meanwhile gives the changed-on-disk bar and nothing is overwritten; ten auto saves in a minute add one file-history copy; switching session and switching window save first. |
 | 9 | Ctrl+Shift+P opens the palette's file list from the terminal and from a page; the path bar's folder reveals itself; Copy path; Paste path into the session (no Enter). |
 | 10 | "Show in File Explorer" opens Explorer with the file selected (the user checks it by eye; no desktop input from the check); a `.docx` tab says it can't be shown. |
 | 11 | The tree's open folders and width come back after `restart`; `~/.claude/settings.json`'s modified time is unchanged; only what the check started was stopped. |
