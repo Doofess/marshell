@@ -71,6 +71,8 @@ Still requires a real installed Codex CLI and versioned fixtures before adapter 
 
 Checked against the installed `codex-cli 0.162.1` on 2026-10-15 (`docs/research/2026-10-15-local-install-check.md`, from `--help` and strings in the binary): the twelve event names, the common payload fields, the `PermissionRequest` wire and its rejection of `updatedPermissions` and `interrupt`, `commandWindows`, trust by hash (plus `--dangerously-bypass-hook-trust`), `AGENTS.override.md` precedence, the 32 KiB default and `CODEX_HOME` all match this note. New in that build: an `mcp_tool` hook handler and `async`, `statusMessage` and `additionalContextLimit` handler fields; Windows managed config moved to `%ProgramData%\OpenAI\Codex\requirements.toml`; rollout JSONL is being migrated into `thread_history_1.sqlite` (`codex migrate-rollouts`), so transcript reading is version-fragile. The desktop app already uses `notify` in `config.toml` for its computer-use helper; Marshell must leave that key alone.
 
+Still unverified: whether `PostToolUse` fires for an `apply_patch` that failed, and what `tool_response` holds then. Marshell drops one whose text starts with a non-zero `Exit code:`.
+
 ## Official references
 
 - [Codex CLI hooks](https://learn.chatgpt.com/docs/hooks)

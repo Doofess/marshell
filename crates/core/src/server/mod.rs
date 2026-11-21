@@ -1039,6 +1039,15 @@ impl AppState {
             .notifications
             .clone()
     }
+    /// Whether an HTML file an agent wrote opens in the side pane, from memory and without copying the settings.
+    pub(crate) fn open_agent_html(&self) -> bool {
+        self.0
+            .settings
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .browser
+            .open_agent_html
+    }
     /// A copy of the current settings.
     pub(crate) fn settings_snapshot(&self) -> Settings {
         self.0.settings.lock().unwrap_or_else(|e| e.into_inner()).clone()

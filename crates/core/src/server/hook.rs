@@ -183,7 +183,7 @@ pub async fn post(
         && matches!(agent.as_str(), "claude" | "codex" | "antigravity" | "qwen" | "copilot")
         && let Some(tab) = tab.as_deref()
         && st.registry().is_open(tab)
-        && let Some(job) = super::auto_open::pending(st.settings_snapshot().browser.open_agent_html, &agent, &json)
+        && let Some(job) = super::auto_open::pending(st.open_agent_html(), &agent, &json)
     {
         // Only the written paths and the folder move into the task: with the setting off or nothing written there is
         // no task and no copy of the body.

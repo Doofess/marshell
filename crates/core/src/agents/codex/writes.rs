@@ -5,8 +5,18 @@ use serde_json::Value;
 
 /// The files this event says the CLI's file tool wrote, as the CLI gave them. Empty for any other event. A patch names
 /// each file on a `*** Add File:`, `*** Update File:` or `*** Move to:` line; a `*** Delete File:` line names nothing.
+/// Empty too when `tool_response` is a string whose first line is `Exit code: <n>` with n other than 0; any other shape
+/// of it (absent, not a string, no such first line) counts as a success, since what a failed patch sends isn't verified.
 pub fn written(body: &Value) -> Vec<String> {
     if str_at(body, "/hook_event_name") != Some("PostToolUse") || str_at(body, "/tool_name") != Some("apply_patch") {
+        return Vec::new();
+    }
+    if str_at(body, "/tool_response")
+        .and_then(|text| text.lines().next())
+        .and_then(|first| first.strip_prefix("Exit code:"))
+        .and_then(|code| code.trim().parse::<i64>().ok())
+        .is_some_and(|code| code != 0)
+    {
         return Vec::new();
     }
     let Some(patch) = str_at(body, "/tool_input/command") else {
@@ -53,6 +63,32 @@ mod tests {
     #[test]
     fn the_recorded_patch_reports_its_file() {
         assert_eq!(written(&fixture("PostToolUse-apply_patch.json")), ["notes.md"]);
+    }
+
+    #[test]
+    fn a_patch_whose_response_starts_with_a_failed_exit_code_reports_nothing() {
+        let mut body = fixture("PostToolUse-apply_patch.json");
+        let response = body["tool_response"]
+            .as_str()
+            .unwrap()
+            .replacen("Exit code: 0", "Exit code: 1", 1);
+        assert!(response.starts_with("Exit code: 1\n"));
+        body["tool_response"] = Value::String(response);
+        assert!(
+            written(&body).is_empty(),
+            "a failed exit code still reported the patch's files"
+        );
+    }
+
+    #[test]
+    fn a_patch_with_no_response_or_no_exit_code_line_still_reports_its_files() {
+        let mut body = fixture("PostToolUse-apply_patch.json");
+        body["tool_response"] = json!({"output": "Exit code: 1"});
+        assert_eq!(written(&body), ["notes.md"]);
+        body["tool_response"] = json!("patch failed");
+        assert_eq!(written(&body), ["notes.md"]);
+        body.as_object_mut().unwrap().remove("tool_response");
+        assert_eq!(written(&body), ["notes.md"]);
     }
 
     #[test]
