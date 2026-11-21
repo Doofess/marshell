@@ -1,4 +1,5 @@
 import { useMemo, useRef, type SyntheticEvent } from "react";
+import { relayFrameFocus } from "./frameFocus";
 import { appKeyInit, forwardsToApp } from "./frameKeys";
 import { buildSrcdoc } from "./htmlDoc";
 import { classifyLink } from "./links";
@@ -69,6 +70,7 @@ export function HtmlView({ text, name, docPath, onLink, onKey }: Props) {
     };
     doc.addEventListener("keydown", pass);
     doc.addEventListener("keyup", pass);
+    relayFrameFocus(win, iframe);
     // A page that has just loaded takes the keyboard when the pane's body had it, so the arrow keys scroll it.
     const body = iframe.closest(".preview__body");
     if (body && iframe.ownerDocument.activeElement === body) iframe.focus({ preventScroll: true });
