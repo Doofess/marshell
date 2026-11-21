@@ -69,7 +69,10 @@ fn lenient_pane(doc: &mut serde_json::Value) {
         .get("panels")
         .is_some_and(|p| serde_json::from_value::<Panels>(p.clone()).is_err())
     {
-        fields.remove("panels");
+        let kept = fields.get_mut("panels").is_some_and(lenient_panels);
+        if !kept {
+            fields.remove("panels");
+        }
     }
 
     if !fields.get("sessions").is_some_and(Value::is_object) {
@@ -85,6 +88,36 @@ fn lenient_pane(doc: &mut serde_json::Value) {
     if let Some(recent) = fields.get_mut("recent").and_then(Value::as_array_mut) {
         recent.retain(|file| serde_json::from_value::<RecentFile>(file.clone()).is_ok());
     }
+}
+
+/// Drops from the saved stack the weights and the fill that can't be read, one by one. False when the stack itself is
+/// unreadable, which is when its `shown` isn't a list of strings.
+fn lenient_panels(panels: &mut serde_json::Value) -> bool {
+    use serde_json::Value;
+
+    let Some(fields) = panels.as_object_mut() else {
+        return false;
+    };
+    let shown_ok = fields
+        .get("shown")
+        .and_then(Value::as_array)
+        .is_some_and(|a| a.iter().all(Value::is_string));
+    if !shown_ok {
+        return false;
+    }
+    match fields.get_mut("weights") {
+        Some(Value::Object(weights)) => {
+            weights.retain(|_, w| w.as_u64().is_some_and(|n| u32::try_from(n).is_ok()));
+        }
+        Some(_) => {
+            fields.remove("weights");
+        }
+        None => {}
+    }
+    if fields.get("filled").is_some_and(|f| !f.is_string()) {
+        fields.remove("filled");
+    }
+    true
 }
 
 /// Keeps the tabs of one session that parse. False when the session itself is unreadable.
@@ -1418,12 +1451,7 @@ mod tests {
 
     #[test]
     fn a_stack_of_the_wrong_type_loses_only_itself() {
-        for bad in [
-            serde_json::json!("files"),
-            serde_json::json!({"shown": "files"}),
-            serde_json::json!({"shown": ["files"], "weights": {"files": 1.5}}),
-            serde_json::json!({"shown": ["files"], "filled": 3}),
-        ] {
+        for bad in [serde_json::json!("files"), serde_json::json!({"shown": "files"})] {
             let pane = serde_json::json!({
                 "open": true, "width": 480, "recent": [], "panels": bad,
                 "sessions": {"ta": {"tabs": [good_file_tab("t1")], "active": "t1", "active_browser": 7}}
@@ -1438,6 +1466,40 @@ mod tests {
             assert_eq!(pane.sessions["ta"].active, some("t1"));
             assert_eq!(pane.sessions["ta"].active_browser, None);
         }
+    }
+
+    #[test]
+    fn a_bad_weight_or_fill_loses_only_itself() {
+        for (bad, weights) in [
+            (
+                serde_json::json!({"shown": ["files"], "weights": {"files": 1.5}}),
+                vec![],
+            ),
+            (serde_json::json!({"shown": ["files"], "filled": 3}), vec![]),
+            (
+                serde_json::json!({"shown": ["browser", "files"], "weights": {"files": -5, "browser": 3}, "filled": 7}),
+                vec![("browser", 3)],
+            ),
+        ] {
+            let shown = bad["shown"].clone();
+            let pane = serde_json::json!({"open": true, "width": 480, "recent": [], "panels": bad, "sessions": {}});
+            let doc = load_with_pane(pane, 304.into());
+            assert_tabs_and_sidebar_kept(&doc);
+            let panels = doc.view.pane.panels.expect("the stack is kept");
+            assert_eq!(serde_json::json!(panels.shown), shown);
+            let want: std::collections::BTreeMap<String, u32> =
+                weights.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+            assert_eq!(panels.weights, want);
+            assert_eq!(panels.filled, None);
+        }
+    }
+
+    #[test]
+    fn a_stack_whose_shown_cannot_be_read_is_dropped() {
+        let pane = serde_json::json!({"open": true, "width": 480, "recent": [], "sessions": {},
+            "panels": {"shown": "browser", "weights": {"browser": 3}}});
+        let doc = load_with_pane(pane, 304.into());
+        assert_eq!(doc.view.pane.panels, None);
     }
 
     #[test]
