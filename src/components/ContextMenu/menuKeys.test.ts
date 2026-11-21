@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { inMenu, leavesMenu, menuKey, placeMenu, type MenuItem } from "./menuKeys";
+import { enteredRow, inMenu, leavesMenu, menuKey, placeMenu, type MenuItem } from "./menuKeys";
 
 const items: MenuItem[] = [
   { id: "a", label: "Rename" },
@@ -134,5 +134,15 @@ describe("menuKey submenus", () => {
   });
   it("right_arrow_on_a_plain_item_does_nothing", () => {
     expect(menuKey("ArrowRight", sub, 1)).toBeNull();
+  });
+});
+
+describe("enteredRow", () => {
+  it("is true on the first move over a row and after the pointer moved to another row", () => {
+    expect(enteredRow(null, 2)).toBe(true);
+    expect(enteredRow(1, 2)).toBe(true);
+  });
+  it("is false for a move over the row the pointer already rests on, so a submenu closed with the keyboard stays closed", () => {
+    expect(enteredRow(2, 2)).toBe(false);
   });
 });

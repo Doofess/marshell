@@ -4,7 +4,7 @@ import type { FoundFile } from "../../generated/FoundFile";
 import { getEndpoint } from "../../lib/api/client";
 import { settings as settingsApi } from "../../lib/api/settings";
 import { applyRootState, contrastMoreOf, DEFAULT_APPEARANCE, rootState } from "./rootState";
-import { SettingsReadError, SettingsSync } from "./settingsSync";
+import { SettingsReadError, SettingsSync, loadWithRetry } from "./settingsSync";
 import { watchWindowBackground } from "./windowBackground";
 import { watchWindowTheme } from "./windowTheme";
 
@@ -41,9 +41,10 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let live = true;
-    // If the settings can't be read the defaults stay: the app never waits on them. A later save reads again before it writes.
-    sync
-      .load()
+    // If the settings can't be read the defaults stay: the app never waits on them. A later save reads again before it writes. The
+    // start-up read is tried again a few times with a growing wait, because a failed read keeps the Browser pages private; once a
+    // read works the Browser pages follow the saved cookie rule.
+    loadWithRetry(() => sync.load(), () => live)
       .then((loaded) => {
         if (!live) return;
         saved.current = loaded;

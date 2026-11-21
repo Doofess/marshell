@@ -2,7 +2,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties
 import { useCoverPage } from "../../features/browser/pageCover";
 import { usePopupFocus } from "../../lib/usePopupFocus";
 import "./ContextMenu.css";
-import { isAction, leavesMenu, menuKey, opensSubmenu, placeMenu, type MenuItem, type MenuRow } from "./menuKeys";
+import { enteredRow, isAction, leavesMenu, menuKey, opensSubmenu, placeMenu, type MenuItem, type MenuRow } from "./menuKeys";
 import { submenuPlace } from "./submenuPlace";
 
 export type { MenuItem, MenuRow } from "./menuKeys";
@@ -63,6 +63,8 @@ type ListProps = {
 /** The rows of a menu or of one of its submenus: the part the menu and its submenu share. */
 export function MenuList({ items, label, active, openId, onActive, onRun, onOpen, listRef, className, style, onKeyDown, onBlur }: ListProps) {
   const uid = useId();
+  // The row the pointer last moved over, null once it left it.
+  const rest = useRef<number | null>(null);
   // A menu with any checkable row gives every row the width of the mark, so the labels line up.
   const marked = items.some((i) => isAction(i) && i.checked !== undefined);
   return (
@@ -101,9 +103,15 @@ export function MenuList({ items, label, active, openId, onActive, onRun, onOpen
               else onRun(it.id);
             }}
             onPointerMove={() => {
+              const entered = enteredRow(rest.current, i);
+              rest.current = i;
               if (active !== i) onActive(i);
-              // A pointer resting on a row that opens a submenu opens it, once.
-              if (it.rows && it.disabled === undefined && openId !== it.id) onOpen(i);
+              // A pointer coming to a row that opens a submenu opens it, once: a move over the row it already rests on leaves a
+              // submenu closed with Left or Esc closed.
+              if (entered && it.rows && it.disabled === undefined && openId !== it.id) onOpen(i);
+            }}
+            onPointerLeave={() => {
+              if (rest.current === i) rest.current = null;
             }}
           >
             {marked && (checkable ? <Mark row={it} /> : <span className="context-menu__mark" aria-hidden="true" />)}

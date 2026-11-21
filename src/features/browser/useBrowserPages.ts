@@ -2,7 +2,7 @@ import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useSyncExterna
 import type { PaneView } from "../../generated/PaneView";
 import { appScheme } from "../terminal/terminalTheme";
 import type { CookieRule } from "../../generated/CookieRule";
-import { PANE_LIMITS, currentEntry, isBrowserTab, paneReducer, tabsOf, type PaneAction } from "../pane/paneState";
+import { currentEntry, isBrowserTab, openRefused, paneReducer, tabsOf, type PaneAction } from "../pane/paneState";
 import { PAGE_REFUSED, TAB_LIMIT } from "../pane/paneCommands";
 import { passingBlank, shellRefuses } from "./address";
 import { browser, onBrowser, pageKey } from "./browserApi";
@@ -44,13 +44,13 @@ export function popupActions(pane: PaneView, session: string, url: string, onScr
 }
 
 /**
- * What a popup does and what the app says about it: a session at the tab limit gets the limit line, an address the shell would
+ * What a popup does and what the app says about it: a session at the tab limit gets the limit line when the popup would add a tab (an address already open is selected instead), an address the shell would
  * refuse gets the refusal, and a popup that opens says nothing.
  */
 export function popupOutcome(pane: PaneView, session: string, url: string, onScreen: boolean, own: readonly (readonly [string, number])[]): { actions: PaneAction[]; say: string | null } {
   const actions = popupActions(pane, session, url, onScreen, own);
   if (actions.length === 0) return { actions, say: PAGE_REFUSED };
-  if (tabsOf(pane, session).tabs.length >= PANE_LIMITS.tabs) return { actions: [], say: TAB_LIMIT };
+  if (openRefused(pane, session, url)) return { actions: [], say: TAB_LIMIT };
   return { actions, say: null };
 }
 

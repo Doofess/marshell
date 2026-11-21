@@ -951,6 +951,12 @@ export function LiveApp() {
   const limitTold = useRef(new Set<string>());
   // The sessions with a tab `marshell open` added that nobody has looked at yet: the title bar's pane button shows a dot for them.
   const [paneNews, newsDispatch] = useReducer(newsReducer, new Set<string>() as ReadonlySet<string>);
+  // A session that has room is no longer told, on every pane change and not only on a frame that carries opens: a session told, then
+  // given room, then refilled and refused within one frame must hear the line again.
+  useEffect(() => {
+    if (!settled || !loaded) return;
+    limitTold.current = limitNews(limitTold.current, [], view.pane).told;
+  }, [view.pane, settled, loaded]);
   useEffect(() => {
     const waiting = new Set(opens.map((o) => o.id));
     for (const id of answered.current.keys()) if (!waiting.has(id)) answered.current.delete(id);

@@ -86,6 +86,13 @@ export function menuKey(key: string, items: MenuItem[], active: number, mods: Mo
   return null;
 }
 
+/**
+ * Whether a pointer move over row `index` is the pointer coming to the row: `rest` is the row it last moved over (null after it
+ * left the list). Only coming to a row opens its submenu, so a move over the row the pointer already rests on doesn't open again
+ * a submenu the person just closed with Left or Esc.
+ */
+export const enteredRow = (rest: number | null, index: number): boolean => rest !== index;
+
 /** True for a target inside an open context menu, which owns its keys: the window's capture-phase key listeners skip it. */
 export function inMenu(target: object | null): boolean {
   // The target is any DOM node here; only elements have `closest`.

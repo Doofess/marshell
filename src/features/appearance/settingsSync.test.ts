@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { Settings } from "../../generated/Settings";
 import { DEFAULT_APPEARANCE } from "./rootState";
-import { READ_FAILED, SettingsReadError, SettingsSync } from "./settingsSync";
+import { READ_FAILED, SettingsReadError, SettingsSync, loadWithRetry } from "./settingsSync";
 
 const ep: Endpoint = { port: 1, token: "t", platform: "windows" };
 const teal = { ...DEFAULT_APPEARANCE, accent: "teal" };
@@ -258,6 +258,34 @@ describe("SettingsSync: browser", () => {
     await sync.setBrowser({ terminal_links: false });
     expect(listener).toHaveBeenCalledTimes(1);
   });
+  it("two quick changes go out one after the other, the second built from the first's result", async () => {
+    const { api, sync } = setup(read);
+    await sync.load();
+    const releases: (() => void)[] = [];
+    api.put.mockImplementation((_ep: Endpoint, s: Settings) => new Promise<Settings>((resolve) => releases.push(() => resolve(s))));
+    const a = sync.setBrowser({ cookies: "until-quit" });
+    const b = sync.setBrowser({ open_agent_html: false });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(api.put).toHaveBeenCalledTimes(1);
+    releases[0]!();
+    await a;
+    await new Promise((r) => setTimeout(r, 0));
+    expect(api.put).toHaveBeenCalledTimes(2);
+    releases[1]!();
+    await b;
+    expect(api.put.mock.calls[1]![1].browser).toEqual({ terminal_links: false, open_agent_html: false, cookies: "until-quit" });
+    expect(sync.browser).toEqual({ terminal_links: false, open_agent_html: false, cookies: "until-quit" });
+  });
+  it("a change that fails doesn't stop the next one", async () => {
+    const { api, sync } = setup(read);
+    await sync.load();
+    api.put.mockRejectedValueOnce(new Error("down"));
+    const a = sync.setBrowser({ cookies: "never" });
+    const b = sync.setBrowser({ open_agent_html: false });
+    await expect(a).rejects.toThrow("down");
+    await b;
+    expect(sync.browser).toEqual({ terminal_links: false, open_agent_html: false, cookies: "never" });
+  });
   it("says a failed read", async () => {
     const { sync } = setup(async () => {
       throw new Error("no core");
@@ -268,5 +296,55 @@ describe("SettingsSync: browser", () => {
     expect(sync.readFailed).toBe(true);
     expect(sync.browser).toBeNull();
     expect(listener).toHaveBeenCalled();
+  });
+});
+
+describe("loadWithRetry", () => {
+  const sleeps = () => {
+    const waited: number[] = [];
+    return { waited, sleep: async (ms: number) => void waited.push(ms) };
+  };
+  it("stops at the first success, after the waits that came before it", async () => {
+    let calls = 0;
+    const { waited, sleep } = sleeps();
+    const got = await loadWithRetry(async () => (++calls < 3 ? Promise.reject(new Error("no core")) : "ok"), () => true, [10, 20, 40], sleep);
+    expect(got).toBe("ok");
+    expect(calls).toBe(3);
+    expect(waited).toEqual([10, 20]);
+  });
+  it("rejects with the last error once every attempt failed", async () => {
+    let calls = 0;
+    const { waited, sleep } = sleeps();
+    await expect(loadWithRetry(async () => Promise.reject(new Error(`try ${++calls}`)), () => true, [10, 20], sleep)).rejects.toThrow("try 3");
+    expect(waited).toEqual([10, 20]);
+  });
+  it("tries no more once the caller is gone", async () => {
+    let calls = 0;
+    let live = true;
+    const { sleep } = sleeps();
+    await expect(
+      loadWithRetry(
+        async () => {
+          calls++;
+          live = false;
+          throw new Error("no core");
+        },
+        () => live,
+        [10, 20],
+        sleep,
+      ),
+    ).rejects.toThrow("no core");
+    expect(calls).toBe(1);
+  });
+  it("leaves the store read after a failed first read, so the rule can arrive later", async () => {
+    let calls = 0;
+    const { api, sync } = setup(async () => {
+      if (++calls === 1) throw new Error("not yet");
+      return { appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: { ...BR, cookies: "until-quit" as const } };
+    });
+    await loadWithRetry(() => sync.load(), () => true, [0], async () => {});
+    expect(api.get).toHaveBeenCalledTimes(2);
+    expect(sync.readFailed).toBe(false);
+    expect(sync.browser?.cookies).toBe("until-quit");
   });
 });

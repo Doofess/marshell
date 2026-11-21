@@ -56,6 +56,8 @@ export class SettingsSync {
   private backupDir: string | null = null;
   /** The Browser panel settings. Kept from the last read, so every save sends them back unchanged. */
   private browserValue: BrowserSettings = DEFAULT_BROWSER;
+  /** The browser changes in order: the last one's end. Never rejects. */
+  private browserQueue: Promise<void> = Promise.resolve();
   /** True after a read that failed, until one works. */
   private failed = false;
   private listeners = new Set<() => void>();
@@ -113,10 +115,18 @@ export class SettingsSync {
     };
   }
 
-  /** Saves the changed browser fields. Reads first, like `save`, and sends every other field back unchanged. */
-  async setBrowser(change: Partial<BrowserSettings>): Promise<void> {
-    await this.readFirst();
-    await this.writeFlags({ browser: { ...this.browserValue, ...change } });
+  /**
+   * Saves the changed browser fields. Reads first, like `save`, and sends every other field back unchanged. One change is in flight
+   * at a time, and each is built from the value the one before it stored, so two quick changes never put each other's field back.
+   * A change that fails doesn't stop the next.
+   */
+  setBrowser(change: Partial<BrowserSettings>): Promise<void> {
+    const run = this.browserQueue.then(async () => {
+      await this.readFirst();
+      await this.writeFlags({ browser: { ...this.browserValue, ...change } });
+    });
+    this.browserQueue = run.catch(() => {});
+    return run;
   }
 
   private emit(): void {
@@ -282,5 +292,31 @@ export class SettingsSync {
     this.setBrowserValue(s.browser);
     this.appearance = s.appearance;
     this.emit();
+  }
+}
+
+/** The waits, in milliseconds, between a failed start-up read of the settings and each new attempt: five attempts over about 15 seconds. */
+export const LOAD_RETRY_WAITS: readonly number[] = [1000, 2000, 4000, 8000];
+
+/**
+ * Runs `load`, and after a failure runs it again after each wait in `waits`, stopping at the first success or once `live()` is
+ * false. Resolves with the first success; rejects with the last error when every attempt failed, or with the failure in hand when
+ * `live()` went false. A failed read keeps the Browser pages private (decision 28 of slice 6r-1b), so a core that is only slow to
+ * start must not pin that for the whole run.
+ */
+export async function loadWithRetry<T>(
+  load: () => Promise<T>,
+  live: () => boolean,
+  waits: readonly number[] = LOAD_RETRY_WAITS,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await load();
+    } catch (e) {
+      if (i >= waits.length || !live()) throw e;
+      await sleep(waits[i]!);
+      if (!live()) throw e;
+    }
   }
 }

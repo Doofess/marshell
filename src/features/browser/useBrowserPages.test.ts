@@ -133,6 +133,13 @@ describe("popupOutcome", () => {
     for (let i = 0; i < 32; i++) full = page(full, "s1", `https://example.com/${i}`);
     expect(popupOutcome(full, "s1", "https://example.com/", true, [])).toEqual({ actions: [], say: TAB_LIMIT });
   });
+  it("keeps the actions for an address already open in a session with 32 tabs", () => {
+    let full = empty;
+    for (let i = 0; i < 32; i++) full = page(full, "s1", `https://example.com/${i}`);
+    const r = popupOutcome(full, "s1", "https://example.com/5", true, []);
+    expect(r.say).toBeNull();
+    expect(r.actions).toEqual([{ type: "openPage", session: "s1", url: "https://example.com/5" }]);
+  });
   it("says the refusal for an address the shell would not open", () => {
     expect(popupOutcome(page(empty, "s1", "https://one.example/"), "s1", "file:///c:/x.html", true, []).say).toBe(PAGE_REFUSED);
   });
