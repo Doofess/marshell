@@ -34,6 +34,23 @@ describe("filterRows", () => {
     expect(r.rows.filter((x) => x.kind === "file")).toHaveLength(500);
   });
 
+  it("the filter's rows keep the tree's order: folders first, digits as numbers, case ignored", () => {
+    // git lists files in byte order (capitals first, "b10" before "b2"); the tree doesn't.
+    const files = ["Z/b.ts", "a/b.ts", "src/B2.ts", "src/a.ts", "src/b10.ts", "src/util/b.ts"];
+    const r = filterRows(files, "b", new Set());
+    expect(r.rows.map((x) => x.path)).toEqual([
+      "a",
+      "a/b.ts",
+      "src",
+      "src/util",
+      "src/util/b.ts",
+      "src/B2.ts",
+      "src/b10.ts",
+      "Z",
+      "Z/b.ts",
+    ]);
+  });
+
   it("an empty query or no match gives no rows", () => {
     expect(filterRows(["a.ts"], "", new Set()).rows).toEqual([]);
     expect(filterRows(["a.ts"], "zz", new Set())).toEqual({ rows: [], matches: 0, capped: false });

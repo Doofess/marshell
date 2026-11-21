@@ -2,6 +2,9 @@ import { nameParts, type TreeRow } from "./treeModel";
 
 const CAP = 500;
 
+/** The tree's order for names, as the core sorts a folder: digits as numbers, case ignored. */
+const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" }).compare;
+
 type Node = { path: string; name: string; folder: boolean; children: Node[]; open: boolean };
 
 /**
@@ -88,7 +91,7 @@ export function filterRows(
 
   const rows: TreeRow[] = [];
   const walk = (node: Node, level: number) => {
-    const sorted = [...node.children.filter((c) => c.folder), ...node.children.filter((c) => !c.folder)];
+    const sorted = [...node.children].sort((x, y) => Number(y.folder) - Number(x.folder) || byName(x.name, y.name));
     sorted.forEach((child, i) => {
       rows.push({
         path: child.path,
