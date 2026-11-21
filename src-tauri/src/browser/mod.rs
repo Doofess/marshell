@@ -9,7 +9,7 @@
 mod com;
 pub mod rules;
 
-use rules::{Chord, Own, Placer, PopupGate, Rect, Registry, Report, Size};
+use rules::{Chord, Emulated, Own, Placer, PopupGate, Rect, Registry, Report, Size, Viewports, fit};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -39,6 +39,10 @@ pub struct BrowserState {
     dev_url: Option<String>,
     registry: Mutex<Registry>,
     placer: Mutex<Placer>,
+    /// Each tab's viewport width, by its page's key, as the app last reported it.
+    viewports: Mutex<Viewports>,
+    /// What each page was last asked to emulate, by its webview's label.
+    emulated: Mutex<Emulated>,
     /// The key the app last asked to show, which may not have its page yet.
     wanted: Mutex<Option<String>>,
     /// The chords the app's keymap claims: pressed in a page, they are the app's.
@@ -71,6 +75,8 @@ impl BrowserState {
             dev_url: dev_url.map(Url::to_string),
             registry: Mutex::default(),
             placer: Mutex::default(),
+            viewports: Mutex::default(),
+            emulated: Mutex::default(),
             wanted: Mutex::default(),
             claimed: Mutex::default(),
             dark: Mutex::default(),
@@ -283,13 +289,15 @@ fn page(app: &AppHandle, key: &str) -> Option<Webview> {
     app.get_webview(&label)
 }
 
-fn shown_page(app: &AppHandle) -> Option<Webview> {
+/// The page that is shown, and its key.
+fn shown_page(app: &AppHandle) -> Option<(String, Webview)> {
     let state = app.state::<BrowserState>();
-    let label = {
+    let (key, label) = {
         let registry = lock(&state.registry);
-        registry.shown().and_then(|key| registry.label(key))?.to_string()
+        let key = registry.shown()?;
+        (key.to_string(), registry.label(key)?.to_string())
     };
-    app.get_webview(&label)
+    Some((key, app.get_webview(&label)?))
 }
 
 /// Logical position and size, never negative.
@@ -300,6 +308,34 @@ fn set_bounds(page: &Webview, to: Rect) {
     };
     if let Err(e) = page.set_bounds(bounds) {
         eprintln!("Marshell: a browser page was not placed: {e}");
+    }
+}
+
+/// Puts the key's page where its tab's viewport says it goes in `slot`, the page's whole place: centred at its own
+/// width when that fits, and laid out at its width and drawn smaller when it doesn't (6r-1b decisions 15 to 17).
+/// The page is asked to change its layout only when that differs from what it was last asked for, so a drag's
+/// many calls send one request per change; a request that fails is forgotten, and the next call asks again.
+fn settle(app: &AppHandle, key: &str, page: &Webview, slot: Rect) {
+    let state = app.state::<BrowserState>();
+    let fit = fit(slot, lock(&state.viewports).of(key));
+    set_bounds(page, fit.rect);
+    #[cfg(windows)]
+    {
+        let label = page.label().to_string();
+        let Some(before) = lock(&state.emulated).ask(&label, fit.emulate) else {
+            return;
+        };
+        let on_failure = app.clone();
+        com::emulate(page, fit.emulate, move || {
+            let there = on_failure.get_webview(&label).is_some();
+            let state = on_failure.state::<BrowserState>();
+            let mut emulated = lock(&state.emulated);
+            if there {
+                emulated.failed(&label, fit.emulate, before);
+            } else {
+                emulated.forget(&label);
+            }
+        });
     }
 }
 
@@ -316,8 +352,8 @@ pub fn on_resized(window: &tauri::Window, size: tauri::PhysicalSize<u32>) {
         height: size.height,
     };
     let to = lock(&state.placer).on_resize(win, state.now_ms());
-    if let (Some(to), Some(page)) = (to, shown_page(app)) {
-        set_bounds(&page, to);
+    if let (Some(to), Some((key, page))) = (to, shown_page(app)) {
+        settle(app, &key, &page, to);
     }
 }
 
@@ -337,9 +373,13 @@ fn place(app: &AppHandle, report: Report) {
         width: size.width,
         height: size.height,
     };
+    // The report's viewport is its own page's, which is the shown page's unless the app has just changed tabs.
+    if let Some(key) = &report.page {
+        lock(&state.viewports).set(key, report.viewport);
+    }
     let to = lock(&state.placer).on_report(report, win, scale, state.now_ms());
-    if let Some(page) = shown_page(app) {
-        set_bounds(&page, to);
+    if let Some((key, page)) = shown_page(app) {
+        settle(app, &key, &page, to);
     }
 }
 
@@ -362,8 +402,9 @@ fn show(app: &AppHandle, key: Option<&str>) {
     let Some(page) = show.and_then(|label| app.get_webview(&label)) else {
         return;
     };
-    if let Some(to) = lock(&state.placer).last() {
-        set_bounds(&page, to);
+    let slot = lock(&state.placer).last();
+    if let (Some(key), Some(slot)) = (key, slot) {
+        settle(app, key, &page, slot);
     }
     if let Err(e) = page.show() {
         eprintln!("Marshell: a browser page was not shown: {e}");
@@ -392,6 +433,8 @@ fn browser_gone(app: &AppHandle) {
     if labels.is_empty() {
         return;
     }
+    // The tabs keep their viewports: the app sends no new report for a page that is loaded again in its place.
+    lock(&state.emulated).clear();
     state.browser_pid.store(0, Ordering::SeqCst);
     for label in labels {
         if let Some(page) = app.get_webview(&label) {
@@ -408,6 +451,8 @@ pub fn close_all(app: &AppHandle) {
         return;
     };
     let labels = lock(&state.registry).clear();
+    lock(&state.viewports).clear();
+    lock(&state.emulated).clear();
     if labels.is_empty() {
         return;
     }
@@ -507,9 +552,10 @@ fn create(app: &AppHandle, key: &str, label: &str, url: Url) -> Result<(), Strin
         let _ = page.close();
         return Ok(());
     }
-    // Hidden, at the size it will be shown at, so the site lays out once.
-    if let Some(to) = lock(&state.placer).last() {
-        set_bounds(&page, to);
+    // Hidden, at the size and the viewport it will be shown at, so the site lays out once.
+    let slot = lock(&state.placer).last();
+    if let Some(slot) = slot {
+        settle(app, key, &page, slot);
     }
     if lock(&state.wanted).as_deref() == Some(key) {
         let (on_main, key) = (app.clone(), key.to_string());
@@ -595,6 +641,11 @@ pub async fn browser_close(app: AppHandle, key: String) -> Result<(), String> {
         if wanted.as_deref() == Some(key.as_str()) {
             *wanted = None;
         }
+    }
+    // The tab keeps its viewport (its page may be loaded again in its place); what the page was asked to emulate
+    // goes with the page.
+    if let Some(label) = &label {
+        lock(&state.emulated).forget(label);
     }
     // A page still being created has no webview yet: `create` closes it when it sees the key is gone.
     match label.and_then(|label| app.get_webview(&label)) {

@@ -533,6 +533,152 @@ pub struct Report {
     pub win: Size,
     pub rule: Option<Rule>,
     pub moving: bool,
+    /// The key of the page the slot belongs to.
+    #[serde(default)]
+    pub page: Option<String>,
+    /// That page's tab's viewport width, in CSS pixels; None for a tab that follows its panel.
+    #[serde(default)]
+    pub viewport: Option<u32>,
+}
+
+/// The widths a tab's viewport can have, in CSS pixels: phone, tablet, laptop, desktop (6r-1b decision 15). The app
+/// sends one of these or nothing; any other number is no viewport.
+pub const VIEWPORTS: [u32; 4] = [390, 768, 1024, 1440];
+
+/// A page laid out `width` CSS pixels wide and drawn at `scale`, so the whole width shows in a narrower slot.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Emulate {
+    pub width: u32,
+    /// Rounded to four places, so a slot that moves by less than the page can show asks for nothing new.
+    pub scale: f64,
+}
+
+/// Where a page sits in its slot, and how it is laid out there.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fit {
+    pub rect: Rect,
+    pub emulate: Option<Emulate>,
+}
+
+/// Where a page with `viewport` sits in `slot`: centred at its own width when it fits, the whole slot with an
+/// emulation when it doesn't. A width not in `VIEWPORTS`, and a slot with no width, is no viewport.
+pub fn fit(slot: Rect, viewport: Option<u32>) -> Fit {
+    let whole_slot = Fit {
+        rect: slot,
+        emulate: None,
+    };
+    let Some(width) = viewport.filter(|w| VIEWPORTS.contains(w)) else {
+        return whole_slot;
+    };
+    if !slot.width.is_finite() || slot.width <= 0.0 {
+        return whole_slot;
+    }
+    let w = f64::from(width);
+    if w == slot.width {
+        return whole_slot;
+    }
+    if w < slot.width {
+        return Fit {
+            rect: Rect {
+                x: slot.x + ((slot.width - w) / 2.0).floor(),
+                width: w,
+                ..slot
+            },
+            emulate: None,
+        };
+    }
+    Fit {
+        rect: slot,
+        emulate: Some(Emulate {
+            width,
+            scale: (slot.width / w * 10_000.0).round() / 10_000.0,
+        }),
+    }
+}
+
+/// The parameters of `Emulation.setDeviceMetricsOverride` for `e`: the height, the pixel ratio and the kind of device
+/// stay the page's own (S14, result 2).
+pub fn emulate_params(e: Emulate) -> String {
+    format!(
+        r#"{{"width":{},"height":0,"deviceScaleFactor":0,"mobile":false,"scale":{}}}"#,
+        e.width, e.scale
+    )
+}
+
+/// What each page was last asked to emulate, by its webview's label. A label is never used again, so an answer
+/// that comes late for a page that is gone can't be taken for the page made after it.
+#[derive(Default)]
+pub struct Emulated {
+    by_label: HashMap<String, Emulate>,
+}
+
+impl Emulated {
+    /// Records that the page is asked for `want`. Some(what it had) when that is a change to send, None when the
+    /// page was already asked for it.
+    pub fn ask(&mut self, label: &str, want: Option<Emulate>) -> Option<Option<Emulate>> {
+        let had = self.by_label.get(label).copied();
+        if had == want {
+            return None;
+        }
+        self.set(label, want);
+        Some(had)
+    }
+
+    /// The page refused `asked` or never answered: it is taken to have what it had `before`, so the next look asks
+    /// again. Nothing changes when something newer was asked since.
+    pub fn failed(&mut self, label: &str, asked: Option<Emulate>, before: Option<Emulate>) {
+        if self.by_label.get(label).copied() == asked {
+            self.set(label, before);
+        }
+    }
+
+    fn set(&mut self, label: &str, to: Option<Emulate>) {
+        match to {
+            Some(e) => {
+                self.by_label.insert(label.to_string(), e);
+            }
+            None => {
+                self.by_label.remove(label);
+            }
+        }
+    }
+
+    pub fn forget(&mut self, label: &str) {
+        self.by_label.remove(label);
+    }
+
+    pub fn clear(&mut self) {
+        self.by_label.clear();
+    }
+}
+
+/// Each page's tab's viewport width, by the app's key for the page. A tab's viewport outlives its page: a page that
+/// is loaded again in the same place gets no new report from the app.
+#[derive(Default)]
+pub struct Viewports {
+    by_key: HashMap<String, u32>,
+}
+
+impl Viewports {
+    /// Keeps the key's width; None, and a width that is not one of `VIEWPORTS`, forgets it.
+    pub fn set(&mut self, key: &str, viewport: Option<u32>) {
+        match viewport.filter(|w| VIEWPORTS.contains(w)) {
+            Some(width) => {
+                self.by_key.insert(key.to_string(), width);
+            }
+            None => {
+                self.by_key.remove(key);
+            }
+        }
+    }
+
+    pub fn of(&self, key: &str) -> Option<u32> {
+        self.by_key.get(key).copied()
+    }
+
+    pub fn clear(&mut self) {
+        self.by_key.clear();
+    }
 }
 
 /// How long the placer leaves the page to the app's reports after a motion's last sign.
@@ -1318,6 +1464,8 @@ mod tests {
             win,
             rule,
             moving,
+            page: None,
+            viewport: None,
         }
     }
 
@@ -1819,5 +1967,161 @@ mod tests {
         }
         assert_eq!(gate.take(&Url::parse("https://a.example/0").unwrap(), 10), None);
         assert_eq!(gate.take(&Url::parse("https://a.example/99").unwrap(), 10), Some(false));
+    }
+
+    #[test]
+    fn a_viewport_that_fits_is_centred_at_its_own_width() {
+        let f = fit(rect(100.0, 40.0, 801.0, 600.0), Some(390));
+        assert_eq!(
+            f,
+            Fit {
+                rect: rect(305.0, 40.0, 390.0, 600.0),
+                emulate: None
+            }
+        );
+    }
+
+    #[test]
+    fn a_viewport_as_wide_as_the_slot_is_the_slot() {
+        let slot = rect(0.0, 0.0, 390.0, 600.0);
+        assert_eq!(
+            fit(slot, Some(390)),
+            Fit {
+                rect: slot,
+                emulate: None
+            }
+        );
+    }
+
+    #[test]
+    fn a_viewport_wider_than_the_slot_is_emulated_and_scaled() {
+        let slot = rect(10.0, 0.0, 317.0, 672.0);
+        assert_eq!(
+            fit(slot, Some(1440)),
+            Fit {
+                rect: slot,
+                emulate: Some(Emulate {
+                    width: 1440,
+                    scale: 0.2201
+                })
+            }
+        );
+    }
+
+    #[test]
+    fn no_viewport_an_unknown_width_and_an_empty_slot_are_the_slot() {
+        let slot = rect(0.0, 0.0, 500.0, 500.0);
+        for v in [None, Some(0), Some(1280), Some(100_000)] {
+            assert_eq!(
+                fit(slot, v),
+                Fit {
+                    rect: slot,
+                    emulate: None
+                }
+            );
+        }
+        let none = rect(0.0, 0.0, 0.0, 0.0);
+        assert_eq!(
+            fit(none, Some(1440)),
+            Fit {
+                rect: none,
+                emulate: None
+            }
+        );
+    }
+
+    #[test]
+    fn viewport_is_kept_per_page() {
+        let mut v = Viewports::default();
+        v.set("s/a", Some(390));
+        v.set("s/b", None);
+        assert_eq!((v.of("s/a"), v.of("s/b"), v.of("s/c")), (Some(390), None, None));
+        v.set("s/a", None);
+        assert_eq!(v.of("s/a"), None);
+        v.set("s/b", Some(768));
+        v.clear();
+        assert_eq!(v.of("s/b"), None);
+    }
+
+    #[test]
+    fn a_viewport_that_is_not_a_size_is_not_kept() {
+        let mut v = Viewports::default();
+        v.set("s/a", Some(390));
+        v.set("s/a", Some(1280));
+        assert_eq!(v.of("s/a"), None);
+    }
+
+    #[test]
+    fn viewport_emulation_is_asked_for_once_per_change() {
+        let (a, b) = (
+            Emulate {
+                width: 1440,
+                scale: 0.2201,
+            },
+            Emulate {
+                width: 1440,
+                scale: 0.25,
+            },
+        );
+        let mut e = Emulated::default();
+        // Nothing to clear on a page that was never emulated.
+        assert_eq!(e.ask("page-1", None), None);
+        assert_eq!(e.ask("page-1", Some(a)), Some(None));
+        assert_eq!(e.ask("page-1", Some(a)), None);
+        assert_eq!(e.ask("page-1", Some(b)), Some(Some(a)));
+        assert_eq!(e.ask("page-1", None), Some(Some(b)));
+        assert_eq!(e.ask("page-1", None), None);
+        // Each page has its own.
+        assert_eq!(e.ask("page-2", Some(a)), Some(None));
+        e.forget("page-2");
+        assert_eq!(e.ask("page-2", Some(a)), Some(None));
+        e.clear();
+        assert_eq!(e.ask("page-2", Some(a)), Some(None));
+    }
+
+    #[test]
+    fn viewport_emulation_that_failed_is_asked_for_again() {
+        let a = Emulate {
+            width: 1024,
+            scale: 0.5,
+        };
+        let mut e = Emulated::default();
+        let before = e.ask("page-1", Some(a)).unwrap();
+        e.failed("page-1", Some(a), before);
+        assert_eq!(e.ask("page-1", Some(a)), Some(None));
+        // A clear that failed leaves the page as it was, so the next look clears again.
+        let before = e.ask("page-1", None).unwrap();
+        e.failed("page-1", None, before);
+        assert_eq!(e.ask("page-1", None), Some(Some(a)));
+        // A failure that comes after a newer ask changes nothing.
+        let b = Emulate { width: 768, scale: 0.5 };
+        let before = e.ask("page-1", Some(a)).unwrap();
+        e.ask("page-1", Some(b));
+        e.failed("page-1", Some(a), before);
+        assert_eq!(e.ask("page-1", Some(b)), None);
+    }
+
+    #[test]
+    fn viewport_emulation_is_sent_as_the_devtools_call_s14_measured() {
+        let e = Emulate {
+            width: 1440,
+            scale: 0.2201,
+        };
+        assert_eq!(
+            emulate_params(e),
+            r#"{"width":1440,"height":0,"deviceScaleFactor":0,"mobile":false,"scale":0.2201}"#
+        );
+        let v: serde_json::Value = serde_json::from_str(&emulate_params(Emulate { width: 390, scale: 1.0 })).unwrap();
+        assert_eq!(v["scale"], 1.0);
+    }
+
+    #[test]
+    fn a_report_without_the_new_fields_still_reads() {
+        let old = r#"{"rect":{"x":1,"y":2,"width":3,"height":4},"win":{"width":800,"height":600},"rule":null,"moving":false}"#;
+        let r: Report = serde_json::from_str(old).unwrap();
+        assert_eq!((r.page, r.viewport), (None, None));
+        let new = r#"{"rect":{"x":1,"y":2,"width":3,"height":4},"win":{"width":800,"height":600},"rule":null,"moving":false,"page":"s/a","viewport":390}"#;
+        let r: Report = serde_json::from_str(new).unwrap();
+        assert_eq!((r.page.as_deref(), r.viewport), (Some("s/a"), Some(390)));
     }
 }

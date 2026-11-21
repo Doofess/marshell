@@ -2,8 +2,8 @@
 //! reads its event and queues what follows with `post`, and never calls back into a webview from inside the callback.
 
 use super::rules::{
-    HOLD_LOOK, HoldLook, KeyEvent, KeyRoute, MAX_ICON_BYTES, PopupGate, TAB_HOLD, TabHold, clipped_title,
-    focus_out_direction, icon_src, key_event, reported_address, route_key, unparsed_address,
+    Emulate, HOLD_LOOK, HoldLook, KeyEvent, KeyRoute, MAX_ICON_BYTES, PopupGate, TAB_HOLD, TabHold, clipped_title,
+    emulate_params, focus_out_direction, icon_src, key_event, reported_address, route_key, unparsed_address,
 };
 use super::{
     BrowserState, FocusOut, Job, PageFocus, PageIcon, PageKey, PageKeyEvent, PageState, emit, focus_app, lock, post,
@@ -26,16 +26,16 @@ use webview2_com::Microsoft::Web::WebView2::Win32::{
     ICoreWebView2Controller, ICoreWebView2Profile2,
 };
 use webview2_com::{
-    AcceleratorKeyPressedEventHandler, CapturePreviewCompletedHandler, ClearBrowsingDataCompletedHandler,
-    DocumentTitleChangedEventHandler, FaviconChangedEventHandler, FocusChangedEventHandler, GetFaviconCompletedHandler,
-    HistoryChangedEventHandler, MoveFocusRequestedEventHandler, NavigationCompletedEventHandler,
-    NavigationStartingEventHandler, NewWindowRequestedEventHandler, ProcessFailedEventHandler,
-    SourceChangedEventHandler, take_pwstr,
+    AcceleratorKeyPressedEventHandler, CallDevToolsProtocolMethodCompletedHandler, CapturePreviewCompletedHandler,
+    ClearBrowsingDataCompletedHandler, DocumentTitleChangedEventHandler, FaviconChangedEventHandler,
+    FocusChangedEventHandler, GetFaviconCompletedHandler, HistoryChangedEventHandler, MoveFocusRequestedEventHandler,
+    NavigationCompletedEventHandler, NavigationStartingEventHandler, NewWindowRequestedEventHandler,
+    ProcessFailedEventHandler, SourceChangedEventHandler, take_pwstr,
 };
 use windows::Win32::Foundation::HGLOBAL;
 use windows::Win32::System::Com::StructuredStorage::CreateStreamOnHGlobal;
 use windows::Win32::System::Com::{IStream, STREAM_SEEK_SET};
-use windows_core::Interface;
+use windows_core::{HSTRING, Interface};
 use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
 use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
@@ -689,6 +689,57 @@ pub async fn capture(page: &Webview) -> Result<Vec<u8>, String> {
     })
     .map_err(|e| e.to_string())?;
     answer(rx, Duration::from_secs(5), "the page's picture was not ready in 5 s").await
+}
+
+/// Starts a DevTools-protocol call on the page (S14: the in-process call works where no DevTools port is open) and
+/// returns where its answer will arrive: the result as JSON, or what the page said instead. The sender is dropped
+/// with no answer when the page goes away first. `method` is a `&'static str`: only this module names one, and no
+/// caller passes a method on from the app.
+fn call(
+    page: &Webview,
+    method: &'static str,
+    params: String,
+) -> Result<mpsc::Receiver<Result<String, String>>, String> {
+    let (tx, rx) = mpsc::channel::<Result<String, String>>();
+    page.with_webview(move |pv| {
+        let done = tx.clone();
+        let handler = CallDevToolsProtocolMethodCompletedHandler::create(Box::new(move |result, json| {
+            let _ = done.send(result.map(|()| json).map_err(|e| hr_text(&e)));
+            Ok(())
+        }));
+        // SAFETY: COM calls on the live controller, on the webview's own thread; the handler is owned by the
+        // webview until it has run.
+        let started = unsafe {
+            pv.controller()
+                .CoreWebView2()
+                .and_then(|w| w.CallDevToolsProtocolMethod(&HSTRING::from(method), &HSTRING::from(params), &handler))
+        };
+        if let Err(e) = started {
+            let _ = tx.send(Err(hr_text(&e)));
+        }
+    })
+    .map_err(|e| e.to_string())?;
+    Ok(rx)
+}
+
+/// How long a page has to answer a change of its viewport before the change counts as not made.
+const EMULATE_WAIT: Duration = Duration::from_secs(5);
+
+/// Lays the page out `to.width` wide and draws it at `to.scale`, or with None gives it back its own width. Nothing
+/// waits for it: `failed` runs, on another thread, when the page refuses or has not answered in `EMULATE_WAIT`.
+pub fn emulate(page: &Webview, to: Option<Emulate>, failed: impl FnOnce() + Send + 'static) {
+    let started = match to {
+        Some(e) => call(page, "Emulation.setDeviceMetricsOverride", emulate_params(e)),
+        None => call(page, "Emulation.clearDeviceMetricsOverride", "{}".to_string()),
+    };
+    let Ok(rx) = started else {
+        return failed();
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        if !matches!(rx.recv_timeout(EMULATE_WAIT), Ok(Ok(_))) {
+            failed();
+        }
+    });
 }
 
 /// Clears everything the profile holds: cookies and sign-ins, storage, the cache, history, saved permissions.
