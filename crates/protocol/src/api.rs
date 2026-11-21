@@ -1045,6 +1045,79 @@ pub struct FileList {
     pub truncated: bool,
 }
 
+/// POST /v1/sessions/{tab}/tree body: the folders of the session's project to list, one level each.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TreeRequest {
+    /// 1 to 64 folders.
+    pub dirs: Vec<TreeAsk>,
+}
+
+/// One folder asked for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TreeAsk {
+    /// Relative to the project root, with `/` separators. "" is the root.
+    pub dir: String,
+    /// The stamp of the last reply for this folder. An equal stamp answers `same`.
+    #[ts(type = "number | null")]
+    pub stamp: Option<u64>,
+}
+
+/// POST /v1/sessions/{tab}/tree reply.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TreeReply {
+    /// The project root the folders are relative to.
+    pub root: String,
+    /// One per ask, in order.
+    pub dirs: Vec<TreeDir>,
+}
+
+/// The answer for one asked folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TreeDir {
+    pub dir: String,
+    pub state: TreeDirState,
+    /// The folder's modification time in milliseconds. 0 when it was not listed.
+    #[ts(type = "number")]
+    pub stamp: u64,
+    /// Folders and links first, then files. Empty unless `state` is `listed`.
+    pub entries: Vec<TreeEntry>,
+    /// How many entries the 5,000 cap left out.
+    pub more: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum TreeDirState {
+    Listed,
+    Same,
+    Gone,
+    Refused,
+}
+
+/// One entry of a listed folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TreeEntry {
+    pub name: String,
+    pub kind: TreeEntryKind,
+    /// True when git ignores it, or its folder is ignored.
+    pub ignored: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum TreeEntryKind {
+    File,
+    Folder,
+    Link,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct RenameRequest {

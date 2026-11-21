@@ -48,7 +48,9 @@ pub fn display(step: &GitStep) -> String {
     text
 }
 
-pub fn run(dir: &Path, args: &[&str]) -> anyhow::Result<GitOutput> {
+/// `git -C dir -c core.quotepath=off args`, with the environment and window flag every run uses.
+/// The caller sets stdin.
+fn command(dir: &Path, args: &[&str]) -> Command {
     let mut cmd = Command::new("git");
     cmd.arg("-C")
         .arg(dir)
@@ -65,18 +67,47 @@ pub fn run(dir: &Path, args: &[&str]) -> anyhow::Result<GitOutput> {
         // CREATE_NO_WINDOW: no console window flashes.
         cmd.creation_flags(0x0800_0000);
     }
-    let output = cmd.output().map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
-            anyhow::anyhow!(NOT_INSTALLED)
-        } else {
-            anyhow::Error::new(e).context("Couldn't start git.")
-        }
-    })?;
+    cmd
+}
+
+fn start_error(e: std::io::Error) -> anyhow::Error {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        anyhow::anyhow!(NOT_INSTALLED)
+    } else {
+        anyhow::Error::new(e).context("Couldn't start git.")
+    }
+}
+
+pub fn run(dir: &Path, args: &[&str]) -> anyhow::Result<GitOutput> {
+    let output = command(dir, args).output().map_err(start_error)?;
     Ok(GitOutput {
         ok: output.status.success(),
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
     })
+}
+
+/// Like `run`, with `stdin` written to git and the raw output returned (its exit code, and bytes
+/// that need not be UTF-8). The input is written from its own thread while the output is drained,
+/// so a long list can't fill a pipe and leave both sides waiting.
+pub fn run_input(dir: &Path, args: &[&str], stdin: Vec<u8>) -> anyhow::Result<std::process::Output> {
+    use std::io::Write;
+    let mut child = command(dir, args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(start_error)?;
+    let pipe = child.stdin.take();
+    let writer = std::thread::spawn(move || {
+        if let Some(mut pipe) = pipe {
+            // Git may exit before it reads everything; the exit code says what happened.
+            let _ = pipe.write_all(&stdin);
+        }
+    });
+    let output = child.wait_with_output().map_err(anyhow::Error::new);
+    let _ = writer.join();
+    output
 }
 
 /// Runs the steps in order and stops at the first one that fails. A step whose

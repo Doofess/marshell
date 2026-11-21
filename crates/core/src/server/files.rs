@@ -112,7 +112,7 @@ fn reserved_name(component: &str) -> bool {
 }
 
 /// `\\?\C:\x` as `C:\x`. None for `\\?\UNC\...`, which is a network path.
-fn strip_verbatim(path: &std::path::Path) -> Option<String> {
+pub(super) fn strip_verbatim(path: &std::path::Path) -> Option<String> {
     let text = path.to_str()?;
     if text.starts_with(r"\\?\UNC\") {
         return None;
@@ -305,7 +305,7 @@ fn bases_of(row: Option<&SessionInfo>, reported: Option<PathBuf>) -> Vec<PathBuf
     bases
 }
 
-fn row_of(st: &AppState, tab: &str) -> Option<SessionInfo> {
+pub(super) fn row_of(st: &AppState, tab: &str) -> Option<SessionInfo> {
     st.registry().snapshot().sessions.into_iter().find(|s| s.tab_id == tab)
 }
 
@@ -605,6 +605,18 @@ fn first_folder(candidates: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf
         .filter(|p| p.to_str().is_some_and(|s| !refused(s)))
 }
 
+/// The project folder of a session and whether it is a git checkout. In a repo the root is the
+/// checkout the session was launched in, which for a task is its worktree (`project` is the launch
+/// folder itself outside git, so it is not used). Outside git it is the folder the shell last
+/// reported, else the launch folder. Each goes through `first_folder`.
+pub(super) fn project_root(row: Option<&SessionInfo>, reported: Option<PathBuf>) -> Option<(PathBuf, bool)> {
+    if let Some(root) = row.and_then(checkout_of).and_then(|c| first_folder([c])) {
+        return Some((root, true));
+    }
+    let launch = row.iter().map(|r| PathBuf::from(&r.cwd));
+    first_folder(reported.into_iter().chain(launch)).map(|root| (root, false))
+}
+
 /// GET /v1/sessions/{tab}/files
 pub async fn list(State(st): State<AppState>, Path(tab): Path<String>) -> Response {
     let row = row_of(&st, &tab);
@@ -614,16 +626,13 @@ pub async fn list(State(st): State<AppState>, Path(tab): Path<String>) -> Respon
     }
     let reported = session.and_then(|s| s.current_cwd());
     let done = tokio::task::spawn_blocking(move || {
-        // In a repo the root is the checkout the session was launched in, which for a task is its
-        // worktree. `project` is the launch folder itself outside git, so it is not used here.
-        if let Some(root) = row.as_ref().and_then(checkout_of).and_then(|c| first_folder([c])) {
+        let (root, is_git) = project_root(row.as_ref(), reported)?;
+        let (files, truncated) = if is_git {
             // Without git on PATH the walk still gives a list, though it lists ignored files.
-            let (files, truncated) = git_files(&root).unwrap_or_else(|| walk_files(&root));
-            return Some((root, files, truncated));
-        }
-        let launch = row.iter().map(|r| PathBuf::from(&r.cwd));
-        let root = first_folder(reported.into_iter().chain(launch))?;
-        let (files, truncated) = walk_files(&root);
+            git_files(&root).unwrap_or_else(|| walk_files(&root))
+        } else {
+            walk_files(&root)
+        };
         Some((root, files, truncated))
     })
     .await;
