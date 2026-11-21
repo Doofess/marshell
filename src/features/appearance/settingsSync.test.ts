@@ -229,3 +229,44 @@ describe("SettingsSync: notifications", () => {
     expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: ["codex"], notifications: N_OFF, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR });
   });
 });
+
+describe("SettingsSync: browser", () => {
+  const stored = { terminal_links: false, open_agent_html: true, cookies: "never" as const };
+  const read = async () => ({ appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: ["codex"], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: stored });
+  it("is null before the first read, then what the core holds", async () => {
+    const { sync } = setup(read);
+    expect(sync.browser).toBeNull();
+    expect(sync.readFailed).toBe(false);
+    await sync.load();
+    expect(sync.browser).toEqual(stored);
+  });
+  it("writes one changed field and keeps the others", async () => {
+    const { api, sync } = setup(read);
+    await sync.setBrowser({ cookies: "until-quit" });
+    expect(api.put).toHaveBeenLastCalledWith(ep, { appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: ["codex"], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: { terminal_links: false, open_agent_html: true, cookies: "until-quit" } });
+    expect(sync.browser).toEqual({ terminal_links: false, open_agent_html: true, cookies: "until-quit" });
+  });
+  it("keeps the same object between changes and tells subscribers after a write", async () => {
+    const { sync } = setup(read);
+    await sync.load();
+    expect(sync.browser).toBe(sync.browser);
+    const listener = vi.fn();
+    const off = sync.subscribe(listener);
+    await sync.setBrowser({ terminal_links: true });
+    expect(listener).toHaveBeenCalledTimes(1);
+    off();
+    await sync.setBrowser({ terminal_links: false });
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+  it("says a failed read", async () => {
+    const { sync } = setup(async () => {
+      throw new Error("no core");
+    });
+    const listener = vi.fn();
+    sync.subscribe(listener);
+    await expect(sync.load()).rejects.toThrow();
+    expect(sync.readFailed).toBe(true);
+    expect(sync.browser).toBeNull();
+    expect(listener).toHaveBeenCalled();
+  });
+});

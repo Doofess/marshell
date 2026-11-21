@@ -55,7 +55,10 @@ export class SettingsSync {
   /** The backup folder for the history. Kept from the last read, so every save sends it back unchanged. */
   private backupDir: string | null = null;
   /** The Browser panel settings. Kept from the last read, so every save sends them back unchanged. */
-  private browser: BrowserSettings = DEFAULT_BROWSER;
+  private browserValue: BrowserSettings = DEFAULT_BROWSER;
+  /** True after a read that failed, until one works. */
+  private failed = false;
+  private listeners = new Set<() => void>();
   /** The appearance the core last stored, which a pause-warning write sends back unchanged. */
   private appearance: Appearance | null = null;
 
@@ -67,8 +70,16 @@ export class SettingsSync {
   /** Reads the settings from the core. Rejects if it can't be reached. */
   async load(): Promise<Appearance> {
     // Asked each time: a restarted core listens on a new endpoint.
-    const s = await this.api.get(await this.getEndpoint());
+    let s: Settings;
+    try {
+      s = await this.api.get(await this.getEndpoint());
+    } catch (e) {
+      this.failed = true;
+      this.emit();
+      throw e;
+    }
     this.hasRead = true;
+    this.failed = false;
     this.warned = s.pause_warned;
     this.seen = s.onboarded;
     this.tray = s.close_to_tray;
@@ -78,9 +89,45 @@ export class SettingsSync {
     this.limitGb = s.history_limit_gb;
     this.limitDays = s.history_limit_days;
     this.backupDir = s.history_backup_dir;
-    this.browser = s.browser;
+    this.setBrowserValue(s.browser);
     this.appearance = s.appearance;
+    this.emit();
     return s.appearance;
+  }
+
+  /** The browser settings, as of the last read or write: null until a read has worked. The same object until it changes. */
+  get browser(): BrowserSettings | null {
+    return this.hasRead ? this.browserValue : null;
+  }
+
+  /** True after a read that failed, until one works. */
+  get readFailed(): boolean {
+    return this.failed;
+  }
+
+  /** Calls `listener` after every read and write, a failed read too. Returns the function that stops it. */
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  /** Saves the changed browser fields. Reads first, like `save`, and sends every other field back unchanged. */
+  async setBrowser(change: Partial<BrowserSettings>): Promise<void> {
+    await this.readFirst();
+    await this.writeFlags({ browser: { ...this.browserValue, ...change } });
+  }
+
+  private emit(): void {
+    for (const l of [...this.listeners]) l();
+  }
+
+  /** Keeps the current object when the fields are equal, so a store snapshot stays stable. */
+  private setBrowserValue(next: BrowserSettings): void {
+    const cur = this.browserValue;
+    if (cur.terminal_links === next.terminal_links && cur.open_agent_html === next.open_agent_html && cur.cookies === next.cookies) return;
+    this.browserValue = next;
   }
 
   /** Whether conversations run outside Marshell are copied, as of the last read or write. True until a read works. */
@@ -132,7 +179,7 @@ export class SettingsSync {
         throw new SettingsReadError();
       }
     }
-    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, close_to_tray: this.tray, status_off: this.off, notifications: this.notify, history_import: this.importOn, history_limit_gb: this.limitGb, history_limit_days: this.limitDays, history_backup_dir: this.backupDir, browser: this.browser });
+    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, close_to_tray: this.tray, status_off: this.off, notifications: this.notify, history_import: this.importOn, history_limit_gb: this.limitGb, history_limit_days: this.limitDays, history_backup_dir: this.backupDir, browser: this.browserValue });
     this.warned = s.pause_warned;
     this.seen = s.onboarded;
     this.tray = s.close_to_tray;
@@ -142,8 +189,9 @@ export class SettingsSync {
     this.limitGb = s.history_limit_gb;
     this.limitDays = s.history_limit_days;
     this.backupDir = s.history_backup_dir;
-    this.browser = s.browser;
+    this.setBrowserValue(s.browser);
     this.appearance = s.appearance;
+    this.emit();
     return s.appearance;
   }
 
@@ -219,7 +267,7 @@ export class SettingsSync {
       history_limit_gb: this.limitGb,
       history_limit_days: this.limitDays,
       history_backup_dir: this.backupDir,
-      browser: this.browser,
+      browser: this.browserValue,
       ...change,
     });
     this.warned = s.pause_warned;
@@ -231,7 +279,8 @@ export class SettingsSync {
     this.limitGb = s.history_limit_gb;
     this.limitDays = s.history_limit_days;
     this.backupDir = s.history_backup_dir;
-    this.browser = s.browser;
+    this.setBrowserValue(s.browser);
     this.appearance = s.appearance;
+    this.emit();
   }
 }
