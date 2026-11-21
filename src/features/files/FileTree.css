@@ -1,0 +1,165 @@
+/*
+ * The file tree: rows of 24 px, drawn flat with an indent of 12 px a level, in a list that scrolls with no scrollbar
+ * (the wheel, touch and keys still scroll it). FileTree.tsx draws only the rows in view, between spacers of the same height.
+ */
+.file-tree {
+  box-sizing: border-box;
+  block-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 0;
+  overflow-x: clip;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  color: var(--text-2);
+  font-size: var(--text-13);
+}
+.file-tree::-webkit-scrollbar {
+  display: none;
+}
+
+.file-tree__spacer {
+  flex: none;
+}
+
+.file-tree__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  box-sizing: border-box;
+  block-size: 24px;
+  padding-inline: calc(var(--level) * 12px + var(--space-1)) var(--space-2);
+  cursor: default;
+  user-select: none;
+  white-space: nowrap;
+}
+.file-tree__row:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+.file-tree__row:not([aria-disabled="true"]):active {
+  background: var(--fill);
+}
+
+.file-tree__twisty {
+  display: grid;
+  flex: none;
+  place-items: center;
+  inline-size: 14px;
+  block-size: 14px;
+  color: var(--text-3);
+}
+.file-tree__chevron {
+  rotate: 0deg;
+}
+.file-tree[data-rtl="true"] .file-tree__chevron {
+  rotate: 180deg;
+}
+.file-tree__row[aria-expanded="true"] .file-tree__chevron {
+  rotate: 90deg;
+}
+
+.file-tree__icon {
+  flex: none;
+  color: var(--text-2);
+}
+
+/* A name: the head shortens with an ellipsis and the tail (the extension) never shrinks. */
+.file-tree__name {
+  display: flex;
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  color: var(--text-1);
+}
+.file-tree__head {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-tree__tail {
+  flex: none;
+  white-space: nowrap;
+}
+.file-tree__hit {
+  font-weight: 700;
+}
+
+/* What git ignores is dimmed, and still reads. */
+.file-tree__row[data-ignored="true"] .file-tree__name,
+.file-tree__row[data-ignored="true"] .file-tree__icon {
+  color: var(--text-3);
+}
+
+/* "And 1,234 more" and the empty folder's note: text, not rows to open. */
+.file-tree__row--note .file-tree__name {
+  color: var(--text-3);
+}
+
+.file-tree--none {
+  display: grid;
+  place-items: start center;
+  padding: var(--space-6) var(--space-4);
+}
+.file-tree__none {
+  max-inline-size: 28ch;
+  margin: 0;
+  color: var(--text-2);
+  line-height: var(--leading);
+  text-align: center;
+  text-wrap: balance;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .file-tree__row:not([aria-disabled="true"]):hover {
+    background: var(--hover);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .file-tree__chevron {
+    transition: rotate var(--dur-peek) var(--ease-out);
+  }
+}
+
+@media (forced-colors: active) {
+  /* The selected row is the system's selection pair; `none` keeps the system from painting a Canvas backplate behind the name. */
+  .file-tree__row[aria-selected="true"] {
+    background: Highlight;
+    color: HighlightText;
+    forced-color-adjust: none;
+  }
+  .file-tree__row[aria-selected="true"] .file-tree__name,
+  .file-tree__row[aria-selected="true"] .file-tree__icon,
+  .file-tree__row[aria-selected="true"] .file-tree__twisty {
+    color: HighlightText;
+  }
+  .file-tree__name,
+  .file-tree__icon,
+  .file-tree__twisty {
+    color: CanvasText;
+  }
+  .file-tree__row[data-ignored="true"] {
+    color: GrayText;
+  }
+  .file-tree__row[data-ignored="true"] .file-tree__name,
+  .file-tree__row[data-ignored="true"] .file-tree__icon {
+    color: GrayText;
+  }
+  .file-tree__row[aria-selected="true"][data-ignored="true"],
+  .file-tree__row[aria-selected="true"][data-ignored="true"] .file-tree__name,
+  .file-tree__row[aria-selected="true"][data-ignored="true"] .file-tree__icon {
+    color: HighlightText;
+  }
+  .file-tree__row--note .file-tree__name {
+    color: GrayText;
+  }
+  .file-tree__row:focus-visible {
+    outline-color: CanvasText;
+  }
+  /* The ring sits inside the selected row's Highlight fill, where CanvasText may not show. */
+  .file-tree__row[aria-selected="true"]:focus-visible {
+    outline-color: HighlightText;
+  }
+}
