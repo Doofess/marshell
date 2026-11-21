@@ -3,13 +3,14 @@ import type { PaneOpen } from "../../generated/PaneOpen";
 import type { PaneView } from "../../generated/PaneView";
 import { takeOpens } from "./opens";
 import { paneReducer, tabsOf, type PaneAction } from "./paneState";
+import { PANELS } from "./panels";
 
 const EMPTY: PaneView = { open: false, width: null, sessions: {}, recent: [] };
 const sessions = new Map([
   ["s1", { project: "p1" }],
   ["s2", { project: "p2" }],
 ]);
-const ctx = (o: Partial<Parameters<typeof takeOpens>[3]> = {}): Parameters<typeof takeOpens>[3] => ({ sessions, shown: "s1", paneOpen: false, refuses: () => false, ...o });
+const ctx = (o: Partial<Parameters<typeof takeOpens>[3]> = {}): Parameters<typeof takeOpens>[3] => ({ sessions, shown: "s1", onScreen: [], refuses: () => false, ...o });
 const req = (id: number, target: string, o: Partial<PaneOpen> = {}): PaneOpen => ({ id, tab_id: "s1", kind: "file", target, by: "claude", ...o });
 const none = new Set<number>();
 const open = (path: string): PaneAction => ({ type: "open", session: "s1", project: "p1", target: { path } });
@@ -98,22 +99,36 @@ describe("takeOpens", () => {
       none,
       ctx(),
     );
-    expect(r.said).toEqual(["Claude Code opened a.md in the side pane.", "Codex opened a.dev in the side pane.", "Opened b.md in the side pane.", "mystery-cli opened c.md in the side pane."]);
+    expect(r.said).toEqual(["Claude Code opened a.md in Files.", "Codex opened a.dev in Browser.", "Opened b.md in Files.", "mystery-cli opened c.md in Files."]);
   });
 
   it("takeOpens_lists_news_only_for_a_hidden_pane_or_another_session", () => {
     const one = [req(1, "/a.md")];
-    expect(takeOpens(EMPTY, one, none, ctx({ paneOpen: false, shown: "s1" })).news).toEqual(["s1"]);
-    expect(takeOpens(EMPTY, one, none, ctx({ paneOpen: true, shown: "s2" })).news).toEqual(["s1"]);
-    expect(takeOpens(EMPTY, one, none, ctx({ paneOpen: true, shown: null })).news).toEqual(["s1"]);
-    expect(takeOpens(EMPTY, one, none, ctx({ paneOpen: true, shown: "s1" })).news).toEqual([]);
+    const f = { session: "s1", panel: "files" };
+    expect(takeOpens(EMPTY, one, none, ctx({ onScreen: [], shown: "s1" })).news).toEqual([f]);
+    expect(takeOpens(EMPTY, one, none, ctx({ onScreen: PANELS, shown: "s2" })).news).toEqual([f]);
+    expect(takeOpens(EMPTY, one, none, ctx({ onScreen: PANELS, shown: null })).news).toEqual([f]);
+    expect(takeOpens(EMPTY, one, none, ctx({ onScreen: PANELS, shown: "s1" })).news).toEqual([]);
     const two = takeOpens(EMPTY, [req(1, "/a.md"), req(2, "/b.md"), req(3, "/c.md", { tab_id: "s2" })], none, ctx());
-    expect(two.news).toEqual(["s1", "s2"]);
+    expect(two.news).toEqual([f, { session: "s2", panel: "files" }]);
+  });
+
+  it("news names the panel", () => {
+    const r = takeOpens(EMPTY, [req(1, "/a.html"), req(2, "/b.md"), req(3, "https://a.dev/", { kind: "browser" })], none, ctx());
+    expect(r.news).toEqual([
+      { session: "s1", panel: "browser" },
+      { session: "s1", panel: "files" },
+    ]);
+  });
+
+  it("a request for a panel in front of the person makes no news, one for the other panel does", () => {
+    const r = takeOpens(EMPTY, [req(1, "/a.md"), req(2, "/b.html")], none, ctx({ onScreen: ["files"], shown: "s1" }));
+    expect(r.news).toEqual([{ session: "s1", panel: "browser" }]);
   });
 
   it("takeOpens_leaves_the_tab_on_screen_unmarked_and_unannounced", () => {
     const view = paneReducer(EMPTY, open("/a.md"));
-    const r = takeOpens(view, [req(1, "/a.md")], none, ctx({ paneOpen: true, shown: "s1" }));
+    const r = takeOpens(view, [req(1, "/a.md")], none, ctx({ onScreen: PANELS, shown: "s1" }));
     expect(r.view).toBe(view);
     expect(r.done).toEqual([{ id: 1, refused: null }]);
     expect(r.said).toEqual([]);

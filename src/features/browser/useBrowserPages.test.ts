@@ -78,12 +78,8 @@ describe("popupActions", () => {
   it("opens a tab in the popup's own session and keeps it selected when that session is on screen", () => {
     expect(popupActions(base, "a", "https://pop.example/", true, [])).toEqual([{ type: "openPage", session: "a", url: "https://pop.example/" }]);
   });
-  it("leaves the selected tab and the pane as they were when the session is not on screen", () => {
-    expect(popupActions(base, "a", "https://pop.example/", false, [])).toEqual([
-      { type: "openPage", session: "a", url: "https://pop.example/" },
-      { type: "select", session: "a", paneTab: "t2" },
-      { type: "hide" },
-    ]);
+  it("a popup from a session that isn't on screen opens in the background", () => {
+    expect(popupActions(base, "a", "https://pop.example/", false, [])).toEqual([{ type: "openPage", session: "a", url: "https://pop.example/", background: true }]);
   });
   it("a_popup_to_an_own_origin_opens_no_tab", () => {
     const own = [["localhost", 1420], ["127.0.0.1", 49152]] as const;
@@ -92,11 +88,8 @@ describe("popupActions", () => {
     }
     expect(popupActions(base, "a", "http://localhost:3000/", true, own)).toEqual([{ type: "openPage", session: "a", url: "http://localhost:3000/" }]);
   });
-  it("keeps the pane open when it was open", () => {
-    expect(popupActions(open, "a", "https://pop.example/", false, [])).toEqual([
-      { type: "openPage", session: "a", url: "https://pop.example/" },
-      { type: "select", session: "a", paneTab: "t2" },
-    ]);
+  it("a background popup is the same whether the pane was open or hidden", () => {
+    expect(popupActions(open, "a", "https://pop.example/", false, [])).toEqual(popupActions(base, "a", "https://pop.example/", false, []));
   });
 });
 

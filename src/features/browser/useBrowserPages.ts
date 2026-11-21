@@ -31,18 +31,13 @@ export function owners(pane: PaneView, sessions: ReadonlySet<string> | null): Ma
 export const openKeys = (pane: PaneView, sessions: ReadonlySet<string> | null): Set<string> => new Set(owners(pane, sessions).keys());
 
 /**
- * What a page's popup does to the pane: a new browser tab in the popup's own session, selected only when that session is on screen
- * (6q second round 5). A session that is not on screen keeps its selected tab, and the pane its state. Nothing for an address the shell
+ * What a page's popup does to the pane: a new browser tab in the popup's own session, selected when that session is on screen, and
+ * a background tab otherwise (it never selects, shows or hides anything). Nothing for an address the shell
  * would refuse (one of the app's own origins, in `own`).
  */
 export function popupActions(pane: PaneView, session: string, url: string, onScreen: boolean, own: readonly (readonly [string, number])[]): PaneAction[] {
   if (shellRefuses(url, own)) return [];
-  const actions: PaneAction[] = [{ type: "openPage", session, url }];
-  if (onScreen) return actions;
-  const before = tabsOf(pane, session).active;
-  if (before !== null) actions.push({ type: "select", session, paneTab: before });
-  if (!pane.open) actions.push({ type: "hide" });
-  return actions;
+  return onScreen ? [{ type: "openPage", session, url }] : [{ type: "openPage", session, url, background: true }];
 }
 
 /**

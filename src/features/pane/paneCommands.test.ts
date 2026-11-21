@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { PaneView } from "../../generated/PaneView";
-import { closeAsk, closeTabOutcome, leavePaneOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneBody, paneHiddenText, paneTabFocus, receiptWithPaneHidden, paneTabOutcome, projectKeyOf, toggleOutcome, PAGE_REFUSED, TAB_LIMIT } from "./paneCommands";
+import { closeAsk, closeTabOutcome, commandPanel, firstWith, hideFocus, noTabsText, openedByText, panelButtonsFor, panelHiddenText, panelOrder, panelToggleOutcome, leavePaneOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneBody, paneHiddenText, paneTabFocus, receiptWithPaneHidden, paneTabOutcome, projectKeyOf, toggleOutcome, PAGE_REFUSED, TAB_LIMIT } from "./paneCommands";
 import { paneReducer, recentFor } from "./paneState";
+import type { PanelId } from "./panels";
 
 const EMPTY: PaneView = { open: false, width: null, sessions: {}, recent: [] };
 const withTabs = (session: string, paths: string[], open = true): PaneView => {
@@ -12,7 +13,11 @@ const withTabs = (session: string, paths: string[], open = true): PaneView => {
 
 describe("the announcements", () => {
   it("use the plan's words", () => {
-    expect(openedText("a.md")).toBe("Opened a.md in the side pane.");
+    expect(openedText("a.md", "files")).toBe("Opened a.md in Files.");
+    expect(openedText("localhost:3000", "browser")).toBe("Opened localhost:3000 in Browser.");
+    expect(openedByText("Claude Code", "report.html", "browser")).toBe("Claude Code opened report.html in Browser.");
+    expect(noTabsText("browser")).toBe("No tabs open in Browser.");
+    expect(panelHiddenText("browser")).toBe("Browser is hidden.");
     expect(closedText("a.md")).toBe("Closed a.md.");
     expect(movedText("a.md", 0, 3)).toBe("Moved a.md to position 1 of 3.");
     expect(coverText("the launcher")).toBe("Close the launcher to open a file.");
@@ -59,9 +64,107 @@ describe("paneBody", () => {
 
 describe("paneTabOutcome", () => {
   it("does nothing with no tabs, shows a hidden pane first, and steps an open one", () => {
-    expect(paneTabOutcome(EMPTY, "s1")).toBe("none");
-    expect(paneTabOutcome(withTabs("s1", ["/a", "/b"], false), "s1")).toBe("show");
-    expect(paneTabOutcome(withTabs("s1", ["/a", "/b"]), "s1")).toBe("step");
+    expect(paneTabOutcome(EMPTY, "s1", "files")).toBe("none");
+    expect(paneTabOutcome(withTabs("s1", ["/a", "/b"], false), "s1", "files")).toBe("show");
+    expect(paneTabOutcome(withTabs("s1", ["/a", "/b"]), "s1", "files")).toBe("step");
+  });
+  it("is none with an open pane when the panel is null or holds no tabs", () => {
+    const s = withTabs("s1", ["/a", "/b"]);
+    expect(paneTabOutcome(s, "s1", null)).toBe("none");
+    expect(paneTabOutcome(s, "s1", "browser")).toBe("none");
+  });
+  it("shows a hidden pane when the session has a tab in any panel", () => {
+    expect(paneTabOutcome(withTabs("s1", ["/a"], false), "s1", null)).toBe("show");
+    expect(paneTabOutcome(withTabs("s1", ["/a"], false), "s1", "browser")).toBe("show");
+    expect(paneTabOutcome({ ...EMPTY, open: false }, "s1", "files")).toBe("none");
+  });
+});
+
+describe("commandPanel", () => {
+  const holds = (p: PanelId) => p === "files";
+  it("is null with nothing on screen", () => {
+    expect(commandPanel([], "files", "files", holds)).toBeNull();
+  });
+  it("is the panel with the keyboard", () => {
+    expect(commandPanel(["browser", "files"], "browser", "files", holds)).toBe("browser");
+  });
+  it("else the last one that had it, when it is on screen and holds tabs", () => {
+    expect(commandPanel(["browser", "files"], null, "files", holds)).toBe("files");
+  });
+  it("else the first on screen that holds tabs", () => {
+    expect(commandPanel(["browser", "files"], null, "browser", holds)).toBe("files");
+    expect(commandPanel(["browser", "files"], null, null, holds)).toBe("files");
+  });
+  it("else the first on screen", () => {
+    expect(commandPanel(["browser", "files"], null, null, () => false)).toBe("browser");
+  });
+  it("skips a last panel that is not on screen", () => {
+    expect(commandPanel(["files"], null, "browser", () => true)).toBe("files");
+  });
+});
+
+describe("panelToggleOutcome", () => {
+  const two = (open = true): PaneView => ({ ...EMPTY, open, panels: { shown: ["browser", "files"], weights: {}, filled: null } });
+  it("shows a panel that is not on screen", () => {
+    const s: PaneView = { ...EMPTY, open: true, panels: { shown: ["files"], weights: {}, filled: null } };
+    expect(panelToggleOutcome(s, "s1", "browser")).toEqual({ shows: true, paneHides: false });
+  });
+  it("hides one of two and keeps the pane", () => {
+    expect(panelToggleOutcome(two(), "s1", "browser")).toEqual({ shows: false, paneHides: false });
+  });
+  it("hides the last one and the pane", () => {
+    const s: PaneView = { ...EMPTY, open: true, panels: { shown: ["files"], weights: {}, filled: null } };
+    expect(panelToggleOutcome(s, "s1", "files")).toEqual({ shows: false, paneHides: true });
+  });
+  it("shows a panel of a hidden pane", () => {
+    expect(panelToggleOutcome(two(false), "s1", "files").shows).toBe(true);
+  });
+});
+
+describe("hideFocus", () => {
+  it("a hide from inside the panel gives the terminal the keyboard", () => {
+    expect(hideFocus("browser", "browser", false, ["files"])).toEqual({ to: "terminal" });
+  });
+  it("a hide from elsewhere leaves the keyboard alone", () => {
+    expect(hideFocus("browser", null, true, ["files"])).toEqual({ to: "stay" });
+    expect(hideFocus("browser", "files", true, ["files"])).toEqual({ to: "stay" });
+  });
+  it("a hide in a pane that covers the terminal gives the other panel the keyboard", () => {
+    expect(hideFocus("browser", "browser", true, ["files"])).toEqual({ to: "panel", panel: "files" });
+  });
+  it("and the terminal when no panel stays", () => {
+    expect(hideFocus("files", "files", true, [])).toEqual({ to: "terminal" });
+  });
+});
+
+describe("panelOrder and firstWith", () => {
+  it("puts the current panel first, then the others in order", () => {
+    expect(panelOrder(["browser", "files"], "files")).toEqual(["files", "browser"]);
+    expect(panelOrder(["browser", "files"], "browser")).toEqual(["browser", "files"]);
+    expect(panelOrder(["browser", "files"], null)).toEqual(["browser", "files"]);
+    expect(panelOrder(["files"], "browser")).toEqual(["files"]);
+  });
+  it("the editor's commands fall to the other panel on screen", () => {
+    const editor = (p: PanelId) => (p === "files" ? "editor" : null);
+    expect(firstWith(panelOrder(["browser", "files"], "browser"), editor)).toBe("editor");
+    expect(firstWith(["browser"], editor)).toBeNull();
+  });
+});
+
+describe("panelButtonsFor", () => {
+  const keys = (p: PanelId) => (p === "browser" ? "Ctrl+Shift+A" : "Ctrl+Shift+D");
+  it("a button is shown for a panel on screen", () => {
+    expect(panelButtonsFor(["files"], new Set(), keys)).toEqual([
+      { id: "browser", label: "Browser", shown: false, news: false, keys: "Ctrl+Shift+A" },
+      { id: "files", label: "Files", shown: true, news: false, keys: "Ctrl+Shift+D" },
+    ]);
+  });
+  it("news is per panel", () => {
+    const b = panelButtonsFor(["files"], new Set(["browser:s1"]), keys);
+    expect(b.map((x) => x.news)).toEqual([true, false]);
+  });
+  it("with nothing on screen no button is shown", () => {
+    expect(panelButtonsFor([], new Set(), keys).every((b) => !b.shown)).toBe(true);
   });
 });
 
@@ -102,9 +205,11 @@ describe("projectKeyOf", () => {
 
 describe("closeTabOutcome", () => {
   it("is the selected tab, or null with none", () => {
-    expect(closeTabOutcome(EMPTY, "s1")).toBeNull();
+    expect(closeTabOutcome(EMPTY, "s1", "files")).toBeNull();
     const s = withTabs("s1", ["/a/x.md", "/a/y.md"]);
-    expect(closeTabOutcome(s, "s1")).toEqual({ paneTab: "t2", path: "/a/y.md" });
+    expect(closeTabOutcome(s, "s1", "files")).toEqual({ paneTab: "t2", path: "/a/y.md" });
+    expect(closeTabOutcome(s, "s1", null)).toBeNull();
+    expect(closeTabOutcome(s, "s1", "browser")).toBeNull();
   });
 });
 
@@ -139,9 +244,9 @@ describe("pageOpenCheck", () => {
 describe("the page announcements", () => {
   it("use the plan's words", () => {
     expect(PAGE_REFUSED).toBe("That address can't be opened in the side pane.");
-    expect(pageOpenedText("https://example.com/a")).toBe("Opened example.com in the side pane.");
-    expect(pageOpenedText("http://localhost:3000/")).toBe("Opened localhost:3000 in the side pane.");
-    expect(pageOpenedText("about:blank")).toBe("Opened New tab in the side pane.");
+    expect(pageOpenedText("https://example.com/a")).toBe("Opened example.com in Browser.");
+    expect(pageOpenedText("http://localhost:3000/")).toBe("Opened localhost:3000 in Browser.");
+    expect(pageOpenedText("about:blank")).toBe("Opened New tab in Browser.");
   });
 });
 

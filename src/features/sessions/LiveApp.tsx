@@ -81,6 +81,7 @@ import type { UrlBarHandle } from "../browser/UrlBar";
 import { useBrowserPages } from "../browser/useBrowserPages";
 import { askedFrom, focusPane } from "../pane/focusPane";
 import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, PANE_BESIDE_SESSION, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, receiptWithPaneHidden, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf, toggleOutcome } from "../pane/paneCommands";
+import { PANELS, panelOfPath } from "../pane/panels";
 import { activeTab, currentEntry, isBrowserTab, openRefused, paneReducer, recentFor, selectedPanel, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
 import { takeOpens } from "../pane/opens";
 import { newsReducer } from "../pane/paneNews";
@@ -920,12 +921,12 @@ export function LiveApp() {
     const taken = takeOpens(viewRef.current.pane, opens, new Set(answered.current.keys()), {
       sessions: new Map(rows.map((r) => [r.id, { project: r.projectKey }])),
       shown: focusedId ?? null,
-      paneOpen: viewRef.current.pane.open && mainView === "sessions",
+      onScreen: viewRef.current.pane.open && mainView === "sessions" ? PANELS : [], // 6r-1a: replaced in Task 10 or 11.
       refuses: (url) => shellRefuses(url, ownOrigins()),
     });
     const repeat = opens.flatMap((o) => answered.current.get(o.id) ?? []);
     for (const a of taken.actions) paneDispatch(a);
-    if (taken.news.length > 0) newsDispatch({ type: "add", sessions: taken.news });
+    if (taken.news.length > 0) newsDispatch({ type: "add", items: taken.news }); // 6r-1a: replaced in Task 10 or 11.
     for (const d of taken.done) answered.current.set(d.id, d);
     // The announcer holds one notice at a time, so a frame's tabs are said together.
     if (taken.said.length > 0) announce(taken.said.join(" "));
@@ -938,7 +939,7 @@ export function LiveApp() {
   const shownTabUnseen = focusedId != null && Boolean(activeTab(view.pane, focusedId, selectedPanel(view.pane, focusedId))?.unseen); // 6r-1a: replaced in Task 10 or 11.
   useEffect(() => {
     if (!view.pane.open || mainView !== "sessions" || focusedId == null) return;
-    newsDispatch({ type: "seen", session: focusedId });
+    for (const panel of PANELS) newsDispatch({ type: "seen", session: focusedId, panel }); // 6r-1a: replaced in Task 10 or 11.
     if (shownTabUnseen) paneDispatch({ type: "seen", session: focusedId, panel: selectedPanel(view.pane, focusedId) }); // 6r-1a: replaced in Task 10 or 11.
   }, [view.pane.open, mainView, focusedId, shownTabUnseen, paneNews, paneDispatch]);
   // A session that is gone from the list is forgotten (derived from `rows`; the core's closed list is a different thing).
@@ -956,7 +957,7 @@ export function LiveApp() {
       return false;
     }
     paneDispatch({ type: "open", session, project: paneProject(), target });
-    announce(openedText(lastSegment(target.path)));
+    announce(openedText(lastSegment(target.path), panelOfPath(target.path))); // 6r-1a: replaced in Task 10 or 11.
     focusPane();
     return true;
   };
@@ -1036,7 +1037,7 @@ export function LiveApp() {
         return;
       }
       case "paneTab": {
-        const outcome = paneTabOutcome(pane, session);
+        const outcome = paneTabOutcome(pane, session, selectedPanel(pane, session)); // 6r-1a: replaced in Task 10 or 11.
         if (outcome === "none" || session === undefined) return announce(NO_TABS_OPEN);
         const from = document.activeElement?.closest('[data-nav-side] [role="tabpanel"]') != null ? "panel" : "elsewhere";
         if (outcome === "show") paneDispatch({ type: "show", session: session ?? null }); // 6r-1a: replaced in Task 10 or 11.
@@ -1049,7 +1050,7 @@ export function LiveApp() {
         return;
       }
       case "closePaneTab": {
-        const closing = closeTabOutcome(pane, session);
+        const closing = closeTabOutcome(pane, session, selectedPanel(pane, session)); // 6r-1a: replaced in Task 10 or 11.
         if (!closing || session === undefined) return announce(NO_TABS_OPEN);
         const asked = tabsOf(pane, session).tabs.find((t) => t.id === closing.paneTab);
         if (asked && askToClose(session, asked)) return;
@@ -1115,7 +1116,7 @@ export function LiveApp() {
         last = path;
       }
       if (refused) announce(TAB_LIMIT);
-      else if (last !== null) announce(openedText(lastSegment(last)));
+      else if (last !== null) announce(openedText(lastSegment(last), panelOfPath(last))); // 6r-1a: replaced in Task 10 or 11.
       else announce(FOLDER_REFUSED);
       if (last !== null) focusPane();
       return;
@@ -2279,7 +2280,7 @@ export function LiveApp() {
       {plusMenu && (
         <ContextMenu
           label="New tab"
-          items={plusMenuItems(paneRecent, browserTabs(os))}
+          items={plusMenuItems(paneRecent)}
           anchor={plusMenu.anchor}
           onRun={(itemId) => {
             const { opener } = plusMenu;
@@ -2289,8 +2290,7 @@ export function LiveApp() {
             if (choice.kind === "recent") return void openInPane({ path: choice.path });
             // Focus goes back to the + button first, so a palette or a dialog that closes without a pick returns it there.
             opener.focus();
-            if (choice.kind === "browserTab") openPageInPane(BLANK, { focus: "address" });
-            else if (choice.kind === "openFile") openFromPane();
+            if (choice.kind === "openFile") openFromPane();
             else browseFile();
           }}
           onClose={({ refocus }) => {
