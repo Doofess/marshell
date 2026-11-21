@@ -96,9 +96,22 @@ describe("popupActions", () => {
 describe("popupNews", () => {
   it("a popup opened in the background reports news for its session", () => {
     const base = paneReducer(page(empty, "a", "https://one.example/"), { type: "hide" });
-    expect(popupNews(popupActions(base, "a", "https://pop.example/", false, []))).toEqual(["a"]);
-    expect(popupNews(popupActions(base, "a", "https://pop.example/", true, []))).toEqual([]);
-    expect(popupNews(popupActions(base, "a", "file:///C:/x", false, []))).toEqual([]);
+    expect(popupNews(popupActions(base, "a", "https://pop.example/", false, []), base)).toEqual(["a"]);
+    expect(popupNews(popupActions(base, "a", "https://pop.example/", true, []), base)).toEqual([]);
+    expect(popupNews(popupActions(base, "a", "file:///C:/x", false, []), base)).toEqual([]);
+  });
+  it("reports nothing for an address its session already has open: no tab is added", () => {
+    const base = paneReducer(page(empty, "a", "https://one.example/"), { type: "hide" });
+    expect(popupNews(popupActions(base, "a", "https://one.example/", false, []), base)).toEqual([]);
+    // The same address in another session is a new tab there.
+    expect(popupNews(popupActions(base, "b", "https://one.example/", false, []), base)).toEqual(["b"]);
+  });
+  it("reports nothing when its session is at the tab limit: no tab is added", () => {
+    let full = empty;
+    for (let i = 0; i < 32; i++) full = page(full, "a", `https://example.com/${i}`);
+    full = paneReducer(full, { type: "hide" });
+    expect(full.sessions.a?.tabs.length).toBe(32);
+    expect(popupNews(popupActions(full, "a", "https://pop.example/", false, []), full)).toEqual([]);
   });
 });
 

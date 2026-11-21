@@ -1,7 +1,7 @@
 import { useEffect, useEffectEvent, useMemo, useRef, useSyncExternalStore } from "react";
 import type { PaneView } from "../../generated/PaneView";
 import { appScheme } from "../terminal/terminalTheme";
-import { isBrowserTab, tabsOf, type PaneAction } from "../pane/paneState";
+import { isBrowserTab, paneReducer, tabsOf, type PaneAction } from "../pane/paneState";
 import { PAGE_REFUSED } from "../pane/paneCommands";
 import { passingBlank, shellRefuses } from "./address";
 import { browser, onBrowser, pageKey } from "./browserApi";
@@ -40,9 +40,14 @@ export function popupActions(pane: PaneView, session: string, url: string, onScr
   return onScreen ? [{ type: "openPage", session, url }] : [{ type: "openPage", session, url, background: true }];
 }
 
-/** The sessions a popup's actions leave a tab in the background of: their Browser panel gets its dot. */
-export function popupNews(actions: readonly PaneAction[]): string[] {
-  return actions.flatMap((a) => (a.type === "openPage" && a.background === true ? [a.session] : []));
+/**
+ * The sessions a popup's actions leave a new tab in the background of: their Browser panel gets its dot. A session gets none when
+ * the action adds no tab to `pane` (the address is already open there, or the session is at its tab limit): the dot says a tab is
+ * waiting, and none would be.
+ */
+export function popupNews(actions: readonly PaneAction[], pane: PaneView): string[] {
+  const count = (s: PaneView, session: string) => tabsOf(s, session).tabs.length;
+  return actions.flatMap((a) => (a.type === "openPage" && a.background === true && count(paneReducer(pane, a), a.session) > count(pane, a.session) ? [a.session] : []));
 }
 
 /**
@@ -119,10 +124,11 @@ export function useBrowserPages(pane: PaneView, shownKey: string | null, { sessi
       onBrowser("popup", (p) => {
         const owner = ownersRef.current.get(p.key);
         if (!owner) return;
-        const actions = popupActions(paneRef.current, owner.session, p.url, onScreen() === owner.session, ownOrigins());
+        const pane = paneRef.current;
+        const actions = popupActions(pane, owner.session, p.url, onScreen() === owner.session, ownOrigins());
         if (actions.length === 0) say(PAGE_REFUSED);
         for (const action of actions) send(action);
-        for (const session of popupNews(actions)) tell(session);
+        for (const session of popupNews(actions, pane)) tell(session);
       }),
     ];
     return () => stops.forEach((stop) => stop());
