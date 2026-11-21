@@ -261,13 +261,14 @@ fn agent_homes_as(
         if !usable {
             continue;
         }
-        // 1. The profile itself adds nothing and stays open: the guard opens the whole profile whatever a variable says.
-        let is_profile = profiles.iter().any(|p| is_folder(&folder, resolve, p));
-        let holds = if is_profile {
-            None
-        } else if profiles.iter().any(|p| holds_folder(&folder, resolve, p)) {
-            // 2.
+        // 2 comes first: one spelling of the profile can hold the other (a `USERPROFILE` above the profile the OS
+        // reports), and a folder that holds a profile is wide whatever else it is.
+        let holds = if profiles.iter().any(|p| holds_folder(&folder, resolve, p)) {
             Some(Holds::Profile)
+        } else if profiles.iter().any(|p| is_folder(&folder, resolve, p)) {
+            // 1. The profile itself adds nothing and stays open: the guard opens the whole profile whatever a
+            // variable says.
+            None
         } else if marshell_home.is_some_and(|m| holds_folder(&folder, resolve, m)) {
             // 3.
             Some(Holds::MarshellHome)
@@ -1016,6 +1017,24 @@ mod tests {
             vec![PathBuf::from(r"D:\u\me\.copilot"), PathBuf::from(r"D:\u\me")]
         );
         assert!(homes.wide.is_empty());
+    }
+
+    /// `USERPROFILE` can name a folder that holds the profile the OS reports. A home variable naming that folder
+    /// still holds a profile, so it opens nothing, although it is "a profile" by the other spelling.
+    #[cfg(windows)]
+    #[test]
+    fn a_profile_spelling_that_holds_the_other_profile_opens_nothing() {
+        for name in HOME_VARIABLES {
+            let homes = homes_of(&[(name, r"D:\u")], &[r"D:\u\me", r"D:\u"]);
+            assert!(homes.open.is_empty(), "{name}");
+            assert_eq!(homes.wide, vec![wide(name, r"D:\u", Holds::Profile)], "{name}");
+        }
+        // The inner profile itself still opens, whichever spelling comes first.
+        for profiles in [[r"D:\u\me", r"D:\u"], [r"D:\u", r"D:\u\me"]] {
+            let homes = homes_of(&[("CODEX_HOME", r"D:\u\me")], &profiles);
+            assert_eq!(homes.open, vec![PathBuf::from(r"D:\u\me")]);
+            assert!(homes.wide.is_empty());
+        }
     }
 
     #[cfg(windows)]
