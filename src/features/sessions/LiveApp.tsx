@@ -87,7 +87,7 @@ import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, PANE_BESID
 import { isPanelId, onScreen, PANEL_COMMAND, PANEL_LABEL, panelOf, panelOfPath, panelTabs, activeIn, stackOf, stackPanels, type PanelId } from "../pane/panels";
 import { viewportOf } from "../browser/viewport";
 import { activeTab, currentEntry, isBrowserTab, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
-import { dropPlan, takeOpens } from "../pane/opens";
+import { dropPlan, limitNews, takeOpens } from "../pane/opens";
 import { newsReducer } from "../pane/paneNews";
 import { plusChoice, plusMenuItems } from "../pane/plusMenu";
 import { SidePane } from "../pane/SidePane";
@@ -939,6 +939,8 @@ export function LiveApp() {
   // local API.
   const ownOrigins = (): [string, number][] => ownOriginsOf(window.location, endpointRef.current?.port ?? null, import.meta.env.DEV);
   const answered = useRef(new Map<number, PaneOpenDone>());
+  // The sessions told that their tabs are full, so a hook's files meeting the limit are said once, not once per file.
+  const limitTold = useRef(new Set<string>());
   // The sessions with a tab `marshell open` added that nobody has looked at yet: the title bar's pane button shows a dot for them.
   const [paneNews, newsDispatch] = useReducer(newsReducer, new Set<string>() as ReadonlySet<string>);
   useEffect(() => {
@@ -957,7 +959,11 @@ export function LiveApp() {
     if (taken.news.length > 0) newsDispatch({ type: "add", items: taken.news });
     for (const d of taken.done) answered.current.set(d.id, d);
     // The announcer holds one notice at a time, so a frame's tabs are said together.
-    if (taken.said.length > 0) announce(taken.said.join(" "));
+    // The limit is said once per session, and only for the session on screen: another session's limit has no line.
+    const limit = limitNews(limitTold.current, taken.full, taken.view);
+    limitTold.current = limit.told;
+    const said = limit.say.some((s) => s === focusedId) ? [...taken.said, TAB_LIMIT] : taken.said;
+    if (said.length > 0) announce(said.join(" "));
     const reply = [...taken.done, ...repeat];
     if (reply.length > 0) void opensApi.done(ep, reply).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps -- a frame is applied when it arrives; the rest is read as it stands.

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PaneOpen } from "../../generated/PaneOpen";
 import type { PaneView } from "../../generated/PaneView";
-import { dropPlan, takeOpens } from "./opens";
+import { dropPlan, limitNews, takeOpens } from "./opens";
 import { paneReducer, tabsOf, type PaneAction } from "./paneState";
 import { PANELS, panelTabs } from "./panels";
 
@@ -150,6 +150,54 @@ describe("takeOpens", () => {
     const r = takeOpens(view, [req(1, "/b.md")], none, ctx());
     expect(r.view.open).toBe(false);
     expect(tabsOf(r.view, "s1").active).toBe("t1");
+  });
+});
+
+const full32 = (): PaneView => {
+  let view = EMPTY;
+  for (let i = 0; i < 32; i++) view = paneReducer(view, open(`/f${i}`));
+  return view;
+};
+
+describe("auto opens", () => {
+  it("an agent's own write reloads an open file in place and marks it, unless it is in front", () => {
+    const view = paneReducer(EMPTY, open("/a.html"));
+    const hidden = takeOpens(view, [req(1, "/a.html", { auto: true })], none, ctx({ onScreen: [], shown: "s1" }));
+    expect(tabsOf(hidden.view, "s1").tabs).toHaveLength(1);
+    expect(hidden.done).toEqual([{ id: 1, refused: null }]);
+    expect(hidden.news).toEqual([{ session: "s1", panel: "browser" }]);
+    const front = takeOpens(view, [req(1, "/a.html", { auto: true })], none, ctx({ onScreen: PANELS, shown: "s1" }));
+    expect(front.view).toBe(view);
+    expect(front.said).toEqual([]);
+    expect(front.news).toEqual([]);
+  });
+
+  it("lists a session whose auto open met the limit, once, and answers every request", () => {
+    const taken = takeOpens(full32(), [req(1, "/a.html", { auto: true }), req(2, "/b.html", { auto: true }), req(3, "/c.html")], none, ctx());
+    expect(taken.full).toEqual(["s1"]);
+    expect(taken.done).toEqual([
+      { id: 1, refused: "limit" },
+      { id: 2, refused: "limit" },
+      { id: 3, refused: "limit" },
+    ]);
+    expect(taken.said).toEqual([]);
+  });
+
+  it("does not list a session for an open by hand that met the limit", () => {
+    expect(takeOpens(full32(), [req(1, "/c.html")], none, ctx()).full).toEqual([]);
+  });
+
+  it("says the limit once per session until it has had room", () => {
+    const fullView = full32();
+    let roomyView = EMPTY;
+    for (let i = 0; i < 31; i++) roomyView = paneReducer(roomyView, open(`/f${i}`));
+    const first = limitNews(new Set(), ["s1"], fullView);
+    expect(first.say).toEqual(["s1"]);
+    expect(limitNews(first.told, ["s1"], fullView).say).toEqual([]);
+    expect(limitNews(first.told, [], fullView).told.has("s1")).toBe(true);
+    const roomy = limitNews(first.told, [], roomyView);
+    expect(roomy.told.has("s1")).toBe(false);
+    expect(limitNews(roomy.told, ["s1"], fullView).say).toEqual(["s1"]);
   });
 });
 
