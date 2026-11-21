@@ -30,6 +30,23 @@ export function subscribeCover(listener: () => void): () => void {
   return () => void listeners.delete(listener);
 }
 
+/** True at once when nothing covers the page, true when the last cover goes, false when `limitMs` passes first. */
+export function uncovered(limitMs: number): Promise<boolean> {
+  if (covers === 0) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const off = subscribeCover(() => {
+      if (covers > 0) return;
+      off();
+      clearTimeout(timer);
+      resolve(true);
+    });
+    const timer = setTimeout(() => {
+      off();
+      resolve(false);
+    }, limitMs);
+  });
+}
+
 /** True while anything (a menu, a dialog, a drag) is drawn over the page. */
 export function usePageCovered(): boolean {
   return useSyncExternalStore(subscribeCover, pageCovered, () => false);

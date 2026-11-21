@@ -56,6 +56,12 @@ export const browser = {
   focus: (key: string, reason: FocusReason) => call<void>("browser_focus", { key, reason }, undefined),
   /** The page as a `data:image/png;base64,` URL; an empty string outside Tauri. */
   capture: (key: string) => call<string>("browser_capture", { key }, ""),
+  /** Waits for the calls asked so far (so the page's show has run), then asks outside the queue: a capture can take seconds, and a show, a place or a close must not wait behind it. */
+  screenshot: async (key: string, full: boolean): Promise<{ png: string; cut: boolean }> => {
+    if (!inTauri()) return { png: "", cut: false };
+    await tail;
+    return invoke<{ png: string; cut: boolean }>("browser_screenshot", { key, full });
+  },
   theme: (dark: boolean) => call<void>("browser_theme", { dark }, undefined),
   clearData: () => call<void>("browser_clear_data", {}, undefined),
 };
