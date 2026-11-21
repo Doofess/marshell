@@ -974,8 +974,7 @@ export function LiveApp() {
   // A session that is gone from the list is forgotten (derived from `rows`; the core's closed list is a different thing).
   useEffect(() => {
     if (!loaded) return;
-    const ids = new Set(rows.map((r) => r.id));
-    for (const id of paneNews) if (!ids.has(id)) newsDispatch({ type: "closed", session: id });
+    newsDispatch({ type: "only", sessions: new Set(rows.map((r) => r.id)) });
   }, [rows, loaded, paneNews]);
   // A new tab, or the file's own tab; shows the pane and moves focus into it. False when it was refused (and said so).
   const openInPane = (target: OpenTarget): boolean => {

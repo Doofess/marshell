@@ -5,7 +5,8 @@ export type NewsAction =
   | { type: "add"; items: readonly { session: string; panel: PanelId }[] }
   /** The panel is on screen for the session. */
   | { type: "seen"; session: string; panel: PanelId }
-  | { type: "closed"; session: string };
+  /** The sessions still in the list: a pair of any other session is forgotten, since nobody can look at its panel any more. */
+  | { type: "only"; sessions: ReadonlySet<string> };
 
 /** A key of the set: the panel id never holds ":", so the session is what follows the first one. */
 const keyOf = (panel: PanelId, session: string) => `${panel}:${session}`;
@@ -25,8 +26,8 @@ export function newsReducer(news: ReadonlySet<string>, a: NewsAction): ReadonlyS
       next.delete(k);
       return next;
     }
-    case "closed": {
-      const gone = [...news].filter((k) => k.slice(k.indexOf(":") + 1) === a.session);
+    case "only": {
+      const gone = [...news].filter((k) => !a.sessions.has(k.slice(k.indexOf(":") + 1)));
       if (gone.length === 0) return news;
       const next = new Set(news);
       for (const k of gone) next.delete(k);

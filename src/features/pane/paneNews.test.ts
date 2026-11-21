@@ -21,15 +21,18 @@ describe("newsReducer", () => {
     expect([...newsReducer(s, { type: "seen", session: "a", panel: "files" })]).toEqual(["browser:a"]);
     expect(newsReducer(newsReducer(none, { type: "add", items: [item("a", "files")] }), { type: "seen", session: "a", panel: "browser" }).size).toBe(1);
   });
-  it("closed_forgets_the_session", () => {
-    const s = newsReducer(none, { type: "add", items: [item("a", "files"), item("a", "browser"), item("b", "files")] });
-    expect([...newsReducer(s, { type: "closed", session: "a" })]).toEqual(["files:b"]);
-    expect(newsReducer(s, { type: "closed", session: "x" })).toBe(s);
+  it("only the sessions still in the list keep their news, for every panel", () => {
+    const s = newsReducer(none, { type: "add", items: [item("a", "files"), item("a", "browser"), item("b", "files"), item("c:d", "browser")] });
+    expect([...newsReducer(s, { type: "only", sessions: new Set(["b", "c:d"]) })]).toEqual(["files:b", "browser:c:d"]);
+    expect(newsReducer(s, { type: "only", sessions: new Set<string>() }).size).toBe(0);
+    // Nothing gone: the same set, so a window that asks on every render doesn't draw again.
+    expect(newsReducer(s, { type: "only", sessions: new Set(["a", "b", "c:d", "z"]) })).toBe(s);
   });
   it("a session id with a colon keeps its own keys", () => {
     const s = newsReducer(none, { type: "add", items: [item("a:b", "browser")] });
     expect([...s]).toEqual(["browser:a:b"]);
-    expect(newsReducer(s, { type: "closed", session: "a:b" }).size).toBe(0);
+    expect(newsReducer(s, { type: "only", sessions: new Set(["a:b"]) })).toBe(s);
+    expect(newsReducer(s, { type: "only", sessions: new Set(["a", "b"]) }).size).toBe(0);
   });
 });
 
