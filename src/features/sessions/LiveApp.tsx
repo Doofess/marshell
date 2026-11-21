@@ -78,6 +78,7 @@ import { BrowserTab } from "../browser/BrowserTab";
 import { ClearDataDialog } from "../browser/ClearDataDialog";
 import { BLANK, isPageUrl, ownOrigins as ownOriginsOf, shellRefuses } from "../browser/address";
 import { browserTabs } from "../browser/available";
+import { browserMenuChoice, browserMenuItems, menuTarget } from "../browser/browserMenu";
 import { browser, pageKey } from "../browser/browserApi";
 import type { UrlBarHandle } from "../browser/UrlBar";
 import { useBrowserPages } from "../browser/useBrowserPages";
@@ -1052,6 +1053,17 @@ export function LiveApp() {
       () => announce("Couldn't open the file dialog."),
     );
   };
+  // "Open HTML file…": the same dialog as Browse…, filtered to HTML files; the file opens in the Browser panel's viewer.
+  const openHtmlFile = (): void => {
+    const s = stateRef.current;
+    if (s.focusedId === undefined) return announce(NO_SESSION_TO_OPEN);
+    pickFile(s.infos.find((i) => i.tab_id === s.focusedId)?.cwd ?? null, "html").then(
+      (path) => {
+        if (path !== null) openInPaneRef.current({ path });
+      },
+      () => announce("Couldn't open the file dialog."),
+    );
+  };
   // A layout with no stack saved gets the one its tabs imply written down once a session is on screen with the pane open.
   useEffect(() => {
     if (focusedId != null && shouldPin(view.pane, focusedId, settled && loaded)) paneDispatch({ type: "pin", session: focusedId });
@@ -1147,6 +1159,7 @@ export function LiveApp() {
   const togglePanelRef = useRef(togglePanel);
   togglePanelRef.current = togglePanel;
   // The + menu: where it opened and the button that opened it.
+  const [browserMenu, setBrowserMenu] = useState<{ anchor: { x: number; y: number }; opener: HTMLElement } | null>(null);
   const [plusMenu, setPlusMenu] = useState<{ anchor: { x: number; y: number }; opener: HTMLElement } | null>(null);
   // Files dropped from the system: on a terminal each path is pasted into that session (never Enter); on the side pane every file opens
   // as a tab, in order. A paused or an ended session is refused before anything is pasted. A window covered by the launcher or a dialog
@@ -2104,7 +2117,7 @@ export function LiveApp() {
         fill={{ on: stack.filled === panel, disabled: stack.shown.length < 2 ? "No other panel is shown" : undefined }}
         hideKeys={keysOf(panel)}
         onFill={() => paneDispatch({ type: "fill", panel, session: paneSession ?? null })}
-        onMenu={() => {}} // 6r-1a: replaced in Task 12.
+        onMenu={(anchor, opener) => setBrowserMenu({ anchor, opener })}
         tabs={tabsHere.map((t) => ({ id: t.id, title: paneTitles.get(t.id) ?? "", path: currentEntry(t).path, kind: tabKind(isBrowserTab(t), currentEntry(t).path), openedBy: t.opened_by, unseen: t.unseen, unsaved: !isBrowserTab(t) && isUnsaved(unsaved, currentEntry(t).path, osName) }))}
         activeId={paneActive}
         onSelect={(id) => paneSession !== undefined && paneDispatch({ type: "select", session: paneSession, paneTab: id })}
@@ -2196,7 +2209,7 @@ export function LiveApp() {
             }
           />
         ) : panel === "browser" ? (
-          <EmptyBrowser available={browserTabs(os)} ports={focusedRow?.ports ?? []} onNewTab={newBrowserTab} onPort={(url) => void openPageInPane(url)} onOpenHtml={() => {}} /> // 6r-1a: replaced in Task 12.
+          <EmptyBrowser available={browserTabs(os)} ports={focusedRow?.ports ?? []} onNewTab={newBrowserTab} onPort={(url) => void openPageInPane(url)} onOpenHtml={openHtmlFile} />
         ) : (
           <EmptyFiles recent={paneRecent} onOpenFile={openFromPane} onBrowse={browseFile} onRecent={(path) => void openInPane({ path })} />
         )}
@@ -2348,6 +2361,35 @@ export function LiveApp() {
           onClose={({ refocus }) => {
             setModeMenu(null);
             if (refocus) returnFromModeMenu(modeMenu);
+          }}
+        />
+      )}
+      {browserMenu && (
+        <ContextMenu
+          label="Browser menu"
+          items={browserMenuItems(menuTarget(activeTab(view.pane, focusedId, "browser")), browserTabs(os))}
+          anchor={browserMenu.anchor}
+          onRun={(itemId) => {
+            const { opener } = browserMenu;
+            const choice = browserMenuChoice(itemId);
+            const target = menuTarget(activeTab(view.pane, focusedId, "browser"));
+            setBrowserMenu(null);
+            // Focus goes back to the ⋯ button first, so a dialog that closes without a pick returns it there.
+            opener.focus();
+            if (choice === "copy" && target.kind === "page") {
+              navigator.clipboard.writeText(target.url).then(
+                () => announce("Copied the link."),
+                () => announce("Couldn't copy the link."),
+              );
+            } else if (choice === "outside" && target.kind === "page") {
+              if (isPageUrl(target.url) && target.url !== BLANK) void openUrl(target.url).catch(() => {});
+            } else if (choice === "html") openHtmlFile();
+            else if (choice === "clear") setClearData("ask");
+          }}
+          onClose={({ refocus }) => {
+            const { opener } = browserMenu;
+            setBrowserMenu(null);
+            if (refocus) opener.focus();
           }}
         />
       )}

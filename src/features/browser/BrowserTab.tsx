@@ -127,7 +127,6 @@ export function BrowserTabView({ page, url, available, frozen, keys, slotRef, ba
         fallbackUrl={url}
         onGo={onGo}
         onNav={onNav}
-        onOpenOutside={onOpenOutside}
         onEscape={onEscape}
         onRegion={onRegion}
         canRegion={canRegion}

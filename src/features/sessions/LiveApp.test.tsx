@@ -666,7 +666,7 @@ describe("LiveApp: what counts as a text box", () => {
     expect(source.split('keepsOwnKeys(e.target as HTMLElement | null, e.getModifierState("AltGraph"))')).toHaveLength(3);
   });
   it("draws the Address box with the class the keys are read by", () => {
-    const html = renderToStaticMarkup(<UrlBar page={undefined} onGo={() => {}} onNav={() => {}} onOpenOutside={() => {}} onEscape={() => {}} />);
+    const html = renderToStaticMarkup(<UrlBar page={undefined} onGo={() => {}} onNav={() => {}} onEscape={() => {}} />);
     expect(html).toContain(`class="${ADDRESS_BOX}" aria-label="Address"`);
   });
 });
