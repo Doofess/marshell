@@ -1118,6 +1118,66 @@ pub enum TreeEntryKind {
     Link,
 }
 
+/// POST /v1/sessions/{tab}/search body: plain text to find in the session's project files. A body, so
+/// the text stays out of URLs and logs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SearchRequest {
+    /// 2 to 200 characters on one line.
+    pub q: String,
+}
+
+/// POST /v1/sessions/{tab}/search reply.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SearchReply {
+    /// The project root the paths are relative to.
+    pub root: String,
+    /// Files with a match, sorted by path.
+    pub files: Vec<SearchFile>,
+    /// Why the search stopped before it had read everything. Null when it finished.
+    pub cut: Option<SearchCut>,
+}
+
+/// What stopped a search early.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum SearchCut {
+    /// It stopped at 1,000 matching lines.
+    Lines,
+    /// It stopped after 3,000 ms.
+    Time,
+}
+
+/// A file with matching lines.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SearchFile {
+    /// Relative to the root, with `/` separators.
+    pub path: String,
+    pub lines: Vec<SearchLine>,
+}
+
+/// A matching line, cut to a readable length.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SearchLine {
+    /// The line's number, from 1.
+    pub line: u32,
+    /// The line's text in order, split at every match.
+    pub parts: Vec<SearchPart>,
+}
+
+/// A piece of a matching line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SearchPart {
+    pub text: String,
+    /// True for the text that matched.
+    pub hit: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct RenameRequest {

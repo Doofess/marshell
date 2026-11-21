@@ -33,6 +33,7 @@ mod reports;
 mod save;
 mod screenshots;
 mod scripts;
+mod search;
 mod sessions;
 mod settings;
 mod shell_panel;
@@ -1350,6 +1351,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{tab}/resolve", post(files::resolve))
         .route("/v1/sessions/{tab}/files", get(files::list))
         .route("/v1/sessions/{tab}/tree", post(tree::tree))
+        .route("/v1/sessions/{tab}/search", post(search::search))
         .route(
             "/v1/sessions/{tab}/attachments",
             post(attachments::save).layer(DefaultBodyLimit::max(files::IMAGE_CAP as usize + 1)),
