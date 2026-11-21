@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PaneView } from "../../generated/PaneView";
-import { closeAsk, closeTabOutcome, commandPanel, firstWith, hideFocus, noTabsText, openedByText, panelButtonsFor, panelHiddenText, panelOrder, panelToggleOutcome, leavePaneOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneBody, paneHiddenText, paneTabFocus, receiptWithPaneHidden, paneTabOutcome, projectKeyOf, shouldPin, PAGE_REFUSED, TAB_LIMIT } from "./paneCommands";
+import { closeAsk, closeTabOutcome, commandPanel, firstWith, hideFocus, noTabsText, openedByText, panelButtonsFor, panelHiddenText, panelOrder, panelToggleOutcome, leavePaneOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneBody, paneHiddenText, paneTabFocus, receiptWithPaneHidden, paneTabOutcome, projectKeyOf, shouldPin, noTabText, PAGE_REFUSED, TAB_LIMIT } from "./paneCommands";
 import { paneReducer, recentFor } from "./paneState";
 import type { PanelId } from "./panels";
 import { landingPanel, unseenPanels } from "./paneCommands";
@@ -328,5 +328,17 @@ describe("landingPanel", () => {
     expect(landingPanel(tab, 1)).toBeNull();
     expect(landingPanel({ ...tab, index: 0 }, 1)).toBe("browser");
     expect(landingPanel({ ...tab, index: 0 }, -1)).toBeNull();
+  });
+});
+
+describe("noTabText", () => {
+  it("names the panel that has no tabs, or says no tabs are open", () => {
+    expect(noTabText("files", false)).toBe(noTabsText("files"));
+    expect(noTabText("browser", false)).toBe(noTabsText("browser"));
+    expect(noTabText(null, false)).toBe("No tabs open.");
+  });
+  it("says where the pane shows while a view replaces the terminal: the session may have tabs", () => {
+    expect(noTabText(null, true)).toBe("The side pane shows beside a session.");
+    expect(noTabText("files", true)).toBe("The side pane shows beside a session.");
   });
 });

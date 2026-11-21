@@ -12,6 +12,11 @@ import type { TabKind } from "./tabType";
 export const NO_SESSION_TO_OPEN = "No session to open it in.";
 export const NO_TABS_OPEN = "No tabs open.";
 export const noTabsText = (panel: PanelId) => `No tabs open in ${PANEL_LABEL[panel]}.`;
+/**
+ * What a tab command (next, previous, close) says when it has no tab to act on: the panel that is empty, or that no tabs are open.
+ * While a view replaces the terminal no panel is on screen though the session may hold tabs, so it says where the pane shows instead.
+ */
+export const noTabText = (panel: PanelId | null, replaced: boolean): string => (replaced ? PANE_BESIDE_SESSION : panel ? noTabsText(panel) : NO_TABS_OPEN);
 export const panelHiddenText = (panel: PanelId) => `${PANEL_LABEL[panel]} is hidden.`;
 export const PANE_BESIDE_SESSION = "The side pane shows beside a session.";
 

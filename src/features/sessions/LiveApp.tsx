@@ -42,7 +42,7 @@ import { ContextMenu } from "../../components/ContextMenu/ContextMenu";
 import { opensApi } from "../../lib/api/opens";
 import { tasksApi } from "../../lib/api/tasks";
 import { findCommand } from "../../lib/bindings";
-import { cancelsCloseBar, commandShortcut, sessionShortcut, type SessionShortcut } from "../../lib/appShortcuts";
+import { cancelsCloseBar, commandShortcut, sessionShortcut, waitsForPalette, type SessionShortcut } from "../../lib/appShortcuts";
 import { nextWaiting } from "../lane/laneLayout";
 import { focusPendingCard } from "../approval/focusPendingCard";
 import { commandById, MOVED_COMMANDS, osOfPlatform, shortcutLabel } from "../../lib/keymap";
@@ -83,7 +83,7 @@ import { browser, pageKey } from "../browser/browserApi";
 import type { UrlBarHandle } from "../browser/UrlBar";
 import { useBrowserPages } from "../browser/useBrowserPages";
 import { askedFrom, focusPane, panelOfElement } from "../pane/focusPane";
-import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, NO_TABS_OPEN, PANE_BESIDE_SESSION, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, commandPanel, firstWith, hideFocus, landingPanel, noTabsText, panelButtonsFor, panelOrder, unseenPanels, panelHiddenText, panelToggleOutcome, shouldPin, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, receiptWithPaneHidden, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf } from "../pane/paneCommands";
+import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, PANE_BESIDE_SESSION, noTabText, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, commandPanel, firstWith, hideFocus, landingPanel, panelButtonsFor, panelOrder, unseenPanels, panelHiddenText, panelToggleOutcome, shouldPin, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, receiptWithPaneHidden, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf } from "../pane/paneCommands";
 import { isPanelId, onScreen, PANEL_COMMAND, PANEL_LABEL, panelOf, panelOfPath, panelTabs, activeIn, stackOf, stackPanels, type PanelId } from "../pane/panels";
 import { activeTab, currentEntry, isBrowserTab, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
 import { dropPlan, takeOpens } from "../pane/opens";
@@ -1106,7 +1106,7 @@ export function LiveApp() {
       case "paneTab": {
         const panel = currentPanel();
         const outcome = paneTabOutcome(pane, session, panel);
-        if (outcome === "none" || session === undefined) return announce(panel ? noTabsText(panel) : NO_TABS_OPEN);
+        if (outcome === "none" || session === undefined) return announce(noTabText(panel, session !== undefined && mainViewRef.current !== "sessions"));
         const from = document.activeElement?.closest('[data-nav-side] [role="tabpanel"]') != null ? "panel" : "elsewhere";
         // Where the keyboard goes: into the panel that stepped, or into the one a shown pane opens on (the one that has the keyboard, else the last that had it).
         let into: PanelId | null = panel;
@@ -1126,7 +1126,7 @@ export function LiveApp() {
       case "closePaneTab": {
         const panel = currentPanel();
         const closing = closeTabOutcome(pane, session, panel);
-        if (!closing || session === undefined || panel === null) return announce(panel ? noTabsText(panel) : NO_TABS_OPEN);
+        if (!closing || session === undefined || panel === null) return announce(noTabText(panel, session !== undefined && mainViewRef.current !== "sessions"));
         const asked = tabsOf(pane, session).tabs.find((t) => t.id === closing.paneTab);
         if (asked && askToClose(session, asked)) return;
         const inside = panelFocusRef.current === panel;
@@ -1864,7 +1864,7 @@ export function LiveApp() {
     }
     const shortcut = commandShortcut(id);
     // These move the focus (or open a panel that takes it), so they wait for the palette to hand it back first.
-    if (shortcut?.kind === "nonePane" || shortcut?.kind === "shellPanel" || shortcut?.kind === "preview" || shortcut?.kind === "openFile" || shortcut?.kind === "history" || shortcut?.kind === "menu" || shortcut?.kind === "paneTab" || shortcut?.kind === "closePaneTab" || shortcut?.kind === "browse" || shortcut?.kind === "newBrowserTab" || shortcut?.kind === "clearBrowserData" || shortcut?.kind === "selectRegion" || shortcut?.kind === "paneSave" || shortcut?.kind === "paneUndoSave" || shortcut?.kind === "paneGoToLine" || shortcut?.kind === "paneFind" || shortcut?.kind === "paneOutline" || shortcut?.kind === "panePages" || shortcut?.kind === "paneNotes" || shortcut?.kind === "paneWordWrap") return void setTimeout(() => windowCommand(shortcut), 0);
+    if (waitsForPalette(shortcut)) return void setTimeout(() => windowCommand(shortcut), 0);
     if (windowCommand(shortcut)) return;
     if (shortcut?.kind === "launcher") setLauncherOpen(true);
     else if (shortcut?.kind === "prompt") jumpPrompt(shortcut.by);

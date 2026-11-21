@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cancelsCloseBar, commandShortcut, sessionShortcut } from "./appShortcuts";
+import { cancelsCloseBar, commandShortcut, sessionShortcut, waitsForPalette } from "./appShortcuts";
 import type { KeyEventLike } from "./bindings";
 import { DEFAULT_NAV_MODIFIER } from "./navigation/modifier";
 
@@ -177,5 +177,20 @@ describe("browser tab commands", () => {
     expect(commandShortcut("new-browser-tab")).toEqual({ kind: "newBrowserTab" });
     expect(commandShortcut("open-url")).toEqual({ kind: "newBrowserTab" });
     expect(commandShortcut("clear-browser-data")).toEqual({ kind: "clearBrowserData" });
+  });
+});
+
+describe("waitsForPalette", () => {
+  it("a palette command that moves the keyboard waits for the palette to hand it back", () => {
+    for (const id of ["browser-panel", "files-panel"]) expect(waitsForPalette(commandShortcut(id)), id).toBe(true);
+    expect(waitsForPalette({ kind: "preview" })).toBe(true);
+    expect(waitsForPalette({ kind: "paneTab", by: 1 })).toBe(true);
+    expect(waitsForPalette({ kind: "closePaneTab" })).toBe(true);
+    expect(waitsForPalette({ kind: "newBrowserTab" })).toBe(true);
+  });
+  it("the other commands run at once", () => {
+    expect(waitsForPalette({ kind: "focusMode" })).toBe(false);
+    expect(waitsForPalette({ kind: "launcher" })).toBe(false);
+    expect(waitsForPalette(null)).toBe(false);
   });
 });

@@ -76,6 +76,36 @@ export function sessionShortcut(e: KeyEventLike, os: Os): SessionShortcut | null
   return id === undefined ? null : commandShortcut(id);
 }
 
+const AFTER_PALETTE: ReadonlySet<SessionShortcut["kind"]> = new Set<SessionShortcut["kind"]>([
+  "nonePane",
+  "shellPanel",
+  "preview",
+  "panel",
+  "openFile",
+  "history",
+  "menu",
+  "paneTab",
+  "closePaneTab",
+  "browse",
+  "newBrowserTab",
+  "clearBrowserData",
+  "selectRegion",
+  "paneSave",
+  "paneUndoSave",
+  "paneGoToLine",
+  "paneFind",
+  "paneOutline",
+  "panePages",
+  "paneNotes",
+  "paneWordWrap",
+]);
+
+/**
+ * Whether a command run from the palette waits for the palette to hand the focus back first: the ones that move the keyboard, or
+ * open something that takes it. Run at once, the palette's own return of the focus would land after theirs and undo it.
+ */
+export const waitsForPalette = (shortcut: SessionShortcut | null | undefined): boolean => shortcut != null && AFTER_PALETTE.has(shortcut.kind);
+
 /** The shortcut a palette command id stands for, or null for a command the live window does not run yet. */
 export function commandShortcut(id: string): SessionShortcut | null {
   switch (id) {
