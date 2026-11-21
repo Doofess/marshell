@@ -61,9 +61,11 @@ function rulePiecesFor(inputs: ColumnInputs, start: number, end: number): Piece[
 /**
  * The report for a slot's box. `slot` is in window coordinates (the window's own top left is 0, 0). The rule is the pane's column
  * at any window width, less the slot's distance from the column's two edges, with the slot's distance from the window's top and
- * foot. A slot with no size reports a zero box and no rule: there is nothing for the page to follow.
+ * foot. `bottomPerPx` is how much that distance grows for each pixel the window grows (the share of a pixel that goes to the panels
+ * below the slot's); the rule also names the window height it was measured at. A slot with no size reports a zero box and no rule:
+ * there is nothing for the page to follow.
  */
-export function slotReport(slot: DOMRectLike, win: DOMRectLike, inputs: ColumnInputs | null, moving: boolean): Report {
+export function slotReport(slot: DOMRectLike, win: DOMRectLike, inputs: ColumnInputs | null, moving: boolean, bottomPerPx = 0): Report {
   const size = { width: finite(win.width), height: finite(win.height) };
   const x = finite(slot.x);
   const y = finite(slot.y);
@@ -75,7 +77,8 @@ export function slotReport(slot: DOMRectLike, win: DOMRectLike, inputs: ColumnIn
   const col = paneColumn(size.width, inputs);
   const start = x - col.x;
   const end = col.x + col.width - (x + width);
-  return { rect, win: size, rule: { pieces: rulePiecesFor(inputs, start, end), top: y, bottom: size.height - (y + height) }, moving };
+  const rule = { pieces: rulePiecesFor(inputs, start, end), top: y, bottom: size.height - (y + height), bottomPerPx: finite(bottomPerPx), atHeight: size.height };
+  return { rect, win: size, rule, moving };
 }
 
 /** The gutter, in px, between the slot's edge and its page. The slot draws the page's focus ring there while the page has the keys. */
@@ -98,7 +101,7 @@ function measure(el: HTMLElement, layout: Layout | null): Report {
   const top = w?.top ?? 0;
   const win = { x: 0, y: 0, width: w?.width ?? window.innerWidth, height: w?.height ?? window.innerHeight, right: w?.width ?? window.innerWidth, bottom: w?.height ?? window.innerHeight };
   const slot = { x: r.left - left, y: r.top - top, width: r.width, height: r.height, right: r.right - left, bottom: r.bottom - top };
-  return slotReport(insetRect(slot, PAGE_GUTTER), win, layout?.inputs ?? null, layout?.moving ?? false);
+  return slotReport(insetRect(slot, PAGE_GUTTER), win, layout?.inputs ?? null, layout?.moving ?? false, layout?.bottomPerPx ?? 0);
 }
 
 /** Resolves after the next frame has been painted: a timeout queued from the frame's callback runs after that paint (S12). */

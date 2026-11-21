@@ -83,6 +83,26 @@ describe("slotReport", () => {
     expect(r.rect).toEqual({ x: 0, y: 0, width: 0, height: 0 });
     expect(r.rule).toBeNull();
   });
+  it("the rule carries the stack's slope and the height it was measured at", () => {
+    const col = paneColumn(1400, inputs);
+    const r = slotReport(rect(col.x, 70, col.width, 400), win, inputs, false, 0.5);
+    expect(r.rule!.bottomPerPx).toBe(0.5);
+    expect(r.rule!.atHeight).toBe(900);
+    expect(r.rule!.bottom).toBe(900 - 470);
+    // A slope that isn't a number is no slope.
+    expect(slotReport(rect(col.x, 70, col.width, 400), win, inputs, false, Number.NaN).rule!.bottomPerPx).toBe(0);
+  });
+  it("with no slope the rule is as before", () => {
+    const col = paneColumn(1400, inputs);
+    const r = slotReport(rect(col.x, 70, col.width, 800), win, inputs, false);
+    expect(r.rule!.bottomPerPx).toBe(0);
+    expect(r.rule!.atHeight).toBe(900);
+    expect(r.rule!.top).toBe(70);
+    expect(r.rule!.bottom).toBe(30);
+  });
+  it("a slot with no size still reports no rule", () => {
+    expect(slotReport(rect(10, 10, 0, 0), win, inputs, false, 0.5).rule).toBeNull();
+  });
 });
 
 describe("the page's gutter", () => {

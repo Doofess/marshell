@@ -467,12 +467,20 @@ pub struct Piece {
 
 /// The app's own layout as straight pieces over the window's width (S12 finding 21), so the page lands where the app
 /// will lay it out at every width, the jumps included. The page's top stays put and its bottom keeps its distance
-/// from the window's bottom.
+/// from the window's bottom, a distance that grows by `bottom_per_px` for each pixel the window is taller than
+/// `at_height` (the share of a pixel that goes to the panels below the page's).
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Rule {
     pub pieces: Vec<Piece>,
     pub top: f64,
     pub bottom: f64,
+    /// How much the distance from the window's foot grows for each pixel the window is taller than `at_height`.
+    #[serde(default)]
+    pub bottom_per_px: f64,
+    /// The window height `bottom` was measured at.
+    #[serde(default)]
+    pub at_height: f64,
 }
 
 impl Rule {
@@ -489,11 +497,13 @@ impl Rule {
     pub fn place(&self, win: Size) -> Option<Rect> {
         let p = self.pieces[self.piece_at(win.width)?];
         let d = win.width - p.from;
+        let finite = |n: f64| if n.is_finite() { n } else { 0.0 };
+        let bottom = self.bottom + finite(self.bottom_per_px) * (win.height - finite(self.at_height));
         Some(whole(Rect {
             x: p.x + p.x_per_px * d,
             y: self.top,
             width: p.width + p.width_per_px * d,
-            height: win.height - self.top - self.bottom,
+            height: win.height - self.top - bottom,
         }))
     }
 }
@@ -1289,6 +1299,8 @@ mod tests {
             ],
             top: 80.0,
             bottom: 24.0,
+            bottom_per_px: 0.0,
+            at_height: 0.0,
         }
     }
 
@@ -1316,6 +1328,84 @@ mod tests {
         let measured = two_pieces().place(win).unwrap();
         p.on_report(report(measured, win, Some(two_pieces()), false), win, 1.0, 0);
         p
+    }
+
+    fn one_piece() -> Vec<Piece> {
+        vec![Piece {
+            from: 0.0,
+            x: 10.0,
+            x_per_px: 0.0,
+            width: 400.0,
+            width_per_px: 0.0,
+        }]
+    }
+
+    #[test]
+    fn a_rule_without_a_slope_places_as_before() {
+        let rule = two_pieces();
+        assert_eq!(rule.bottom_per_px, 0.0);
+        assert_eq!(rule.at_height, 0.0);
+        assert_eq!(rule.place(size(900.0, 600.0)), Some(rect(474.0, 80.0, 426.0, 496.0)));
+        assert_eq!(rule.place(size(1200.0, 700.0)), Some(rect(740.0, 80.0, 460.0, 596.0)));
+    }
+
+    #[test]
+    fn a_rule_with_a_slope_keeps_the_page_in_its_panel() {
+        let rule = Rule {
+            pieces: one_piece(),
+            top: 40.0,
+            bottom: 300.0,
+            bottom_per_px: 0.5,
+            at_height: 800.0,
+        };
+        assert_eq!(rule.place(size(1000.0, 800.0)).unwrap().height, 460.0);
+        assert_eq!(rule.place(size(1000.0, 900.0)).unwrap().height, 510.0);
+        assert_eq!(rule.place(size(1000.0, 700.0)).unwrap().height, 410.0);
+    }
+
+    #[test]
+    fn a_slope_never_gives_a_negative_height() {
+        // Measured in a 200 px window with a panel 60 px tall, half of each pixel going to the panel above.
+        let rule = Rule {
+            pieces: one_piece(),
+            top: 40.0,
+            bottom: 100.0,
+            bottom_per_px: 0.5,
+            at_height: 200.0,
+        };
+        assert_eq!(rule.place(size(1000.0, 200.0)).unwrap().height, 60.0);
+        assert_eq!(rule.place(size(1000.0, 50.0)).unwrap().height, 0.0);
+        // A number that isn't one counts as 0.
+        let broken = Rule {
+            bottom_per_px: f64::NAN,
+            at_height: f64::INFINITY,
+            ..rule
+        };
+        assert_eq!(broken.place(size(1000.0, 200.0)).unwrap().height, 60.0);
+        assert_eq!(broken.place(size(1000.0, 300.0)).unwrap().height, 160.0);
+    }
+
+    #[test]
+    fn a_report_without_the_new_fields_parses() {
+        let rule: Rule = serde_json::from_str(
+            r#"{"pieces":[{"from":0,"x":10,"xPerPx":0,"width":400,"widthPerPx":0}],"top":40,"bottom":300}"#,
+        )
+        .unwrap();
+        assert_eq!(rule.bottom_per_px, 0.0);
+        assert_eq!(rule.at_height, 0.0);
+        assert_eq!(rule.place(size(1000.0, 800.0)).unwrap().height, 460.0);
+        assert_eq!(rule.place(size(1000.0, 900.0)).unwrap().height, 560.0);
+    }
+
+    #[test]
+    fn the_rule_reads_camel_case() {
+        let rule: Rule = serde_json::from_str(
+            r#"{"pieces":[{"from":0,"x":10,"xPerPx":0,"width":400,"widthPerPx":0}],"top":40,"bottom":300,"bottomPerPx":0.5,"atHeight":800}"#,
+        )
+        .unwrap();
+        assert_eq!(rule.bottom_per_px, 0.5);
+        assert_eq!(rule.at_height, 800.0);
+        assert_eq!(rule.place(size(1000.0, 900.0)).unwrap().height, 510.0);
     }
 
     #[test]
