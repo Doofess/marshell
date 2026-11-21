@@ -47,6 +47,8 @@
     "allow-browser-focus",
     "allow-browser-capture",
     "allow-browser-theme",
-    "allow-browser-clear-data"
+    "allow-browser-clear-data",
+    "allow-browser-screenshot",
+    "allow-browser-cookies"
   ]
 }

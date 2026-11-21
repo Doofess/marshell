@@ -37,6 +37,8 @@ const COMMANDS: &[&str] = &[
     "browser_capture",
     "browser_theme",
     "browser_clear_data",
+    "browser_screenshot",
+    "browser_cookies",
 ];
 
 fn main() {

@@ -2,7 +2,7 @@
 //! pages exist. Nothing here touches a webview, so all of it is tested (slice 6q-3a).
 
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
 use tauri::Url;
 
@@ -652,6 +652,147 @@ impl Emulated {
     }
 }
 
+/// The longest side of one picture of a page, in device pixels: below it WebView2 repeats the page's top (S14,
+/// result 4, the second run).
+pub const SHOT_MAX_PX: f64 = 16384.0;
+
+/// A page's size in CSS pixels from `Page.getLayoutMetrics`' answer (`cssContentSize`); None when it isn't there or
+/// isn't two numbers.
+pub fn content_size(metrics: &str) -> Option<Size> {
+    let answer: serde_json::Value = serde_json::from_str(metrics).ok()?;
+    let size = answer.get("cssContentSize")?;
+    Some(Size {
+        width: size.get("width")?.as_f64()?,
+        height: size.get("height")?.as_f64()?,
+    })
+}
+
+/// The clip for a picture of a whole page at display `scale`, and whether the page was cut: whole CSS pixels, each
+/// side at most `SHOT_MAX_PX` device pixels and never more than the page. None for a page with no size. A clip is
+/// made from nothing else: one far wider than its page ends the page (S14).
+pub fn shot_clip(content: Size, scale: f64) -> Option<(Rect, bool)> {
+    if !scale.is_finite() || scale <= 0.0 {
+        return None;
+    }
+    let most = (SHOT_MAX_PX / scale).floor();
+    let side = |n: f64| (n.is_finite() && n >= 1.0 && most >= 1.0).then(|| n.floor());
+    let (width, height) = (side(content.width)?, side(content.height)?);
+    let clip = Rect {
+        x: 0.0,
+        y: 0.0,
+        width: width.min(most),
+        height: height.min(most),
+    };
+    Some((clip, width > most || height > most))
+}
+
+/// The parameters of `Page.captureScreenshot`: the part on screen with no clip, and with one that part of the page
+/// at full size, beyond what the panel shows.
+pub fn shot_params(clip: Option<Rect>) -> String {
+    match clip {
+        None => r#"{"format":"png"}"#.to_string(),
+        Some(c) => format!(
+            r#"{{"format":"png","captureBeyondViewport":true,"clip":{{"x":0,"y":0,"width":{},"height":{},"scale":1}}}}"#,
+            c.width, c.height
+        ),
+    }
+}
+
+/// The PNG, base64, from `Page.captureScreenshot`'s answer.
+pub fn shot_png(answer: &str) -> Option<String> {
+    let answer: serde_json::Value = serde_json::from_str(answer).ok()?;
+    let data = answer.get("data")?.as_str()?;
+    (!data.is_empty()).then(|| data.to_string())
+}
+
+/// How long the pages keep cookies and site data (6r-1b decisions 18 to 20).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CookieRule {
+    /// Until the person clears them.
+    Always,
+    /// Until Marshell quits: cleared at quit, and at the next start for a run that ended without its quit.
+    UntilQuit,
+    /// Never on disk: every page is a private one.
+    Never,
+}
+
+impl CookieRule {
+    /// The rule as settings.json writes it.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "always" => Some(Self::Always),
+            "until-quit" => Some(Self::UntilQuit),
+            "never" => Some(Self::Never),
+            _ => None,
+        }
+    }
+}
+
+/// What the page commands share about cookies: the rule the app told, and which pages keep data on disk.
+#[derive(Default)]
+pub struct Cookies {
+    rule: Option<CookieRule>,
+    /// Each open page by its key: whether it is private.
+    pages: BTreeMap<String, bool>,
+    /// A page that keeps data was made in this run.
+    kept_made: bool,
+    /// What the last run left was cleared, or is being cleared.
+    start_taken: bool,
+}
+
+impl Cookies {
+    pub fn tell(&mut self, rule: CookieRule) {
+        self.rule = Some(rule);
+    }
+
+    /// Whether the next page is private: an error until a rule was told, so no page is made on a guess.
+    pub fn private(&self) -> Result<bool, &'static str> {
+        match self.rule {
+            None => Err("the cookie rule isn't known yet"),
+            Some(rule) => Ok(rule == CookieRule::Never),
+        }
+    }
+
+    /// Asked as a page that keeps data is about to be made: true once in a run, when the rule is UntilQuit and no
+    /// such page was made before. What the last run left goes before that page loads.
+    pub fn take_start_clear(&mut self) -> bool {
+        let clear = self.rule == Some(CookieRule::UntilQuit) && !self.kept_made && !self.start_taken;
+        if clear {
+            self.start_taken = true;
+        }
+        clear
+    }
+
+    pub fn made(&mut self, key: &str, private: bool) {
+        self.pages.insert(key.to_string(), private);
+        if !private {
+            self.kept_made = true;
+        }
+    }
+
+    pub fn gone(&mut self, key: &str) {
+        self.pages.remove(key);
+    }
+
+    /// Every page is gone at once.
+    pub fn none_left(&mut self) {
+        self.pages.clear();
+    }
+
+    /// A page that keeps data, to clear the profile through: None when every open page is private.
+    pub fn kept_page(&self) -> Option<&str> {
+        self.pages
+            .iter()
+            .find(|(_, private)| !**private)
+            .map(|(key, _)| key.as_str())
+    }
+
+    /// UntilQuit now, and a page that keeps data was made in this run.
+    pub fn clears_at_quit(&self) -> bool {
+        self.rule == Some(CookieRule::UntilQuit) && self.kept_made
+    }
+}
+
 /// Each page's tab's viewport width, by the app's key for the page. A tab's viewport outlives its page: a page that
 /// is loaded again in the same place gets no new report from the app.
 #[derive(Default)]
@@ -802,6 +943,17 @@ impl Registry {
 
     pub fn shown(&self) -> Option<&str> {
         self.shown.as_deref()
+    }
+
+    /// The label of the page a picture is taken of: only the shown page answers a capture (S14), so a key whose
+    /// page is behind another is "hidden".
+    pub fn shot_target(&self, key: &str) -> Result<&str, &'static str> {
+        let label = self.label(key).ok_or("The page isn't open.")?;
+        if self.shown() == Some(key) {
+            Ok(label)
+        } else {
+            Err("hidden")
+        }
     }
 
     /// Every page's label, in the order the pages were opened.
@@ -2113,6 +2265,174 @@ mod tests {
         );
         let v: serde_json::Value = serde_json::from_str(&emulate_params(Emulate { width: 390, scale: 1.0 })).unwrap();
         assert_eq!(v["scale"], 1.0);
+    }
+
+    #[test]
+    fn reads_the_three_rules_and_nothing_else() {
+        assert_eq!(
+            ["always", "until-quit", "never", "Never", ""].map(CookieRule::parse),
+            [
+                Some(CookieRule::Always),
+                Some(CookieRule::UntilQuit),
+                Some(CookieRule::Never),
+                None,
+                None
+            ]
+        );
+    }
+
+    #[test]
+    fn reads_a_pages_size_from_the_metrics() {
+        let m = r#"{"cssContentSize":{"height":5164,"width":1425,"x":0,"y":0},"cssVisualViewport":{"clientHeight":3053,"clientWidth":1425,"pageX":0,"pageY":1000}}"#;
+        assert_eq!(content_size(m), Some(size(1425.0, 5164.0)));
+        assert_eq!(content_size("{}"), None);
+        assert_eq!(content_size(r#"{"cssContentSize":{"height":"tall","width":1}}"#), None);
+        assert_eq!(content_size("not json"), None);
+    }
+
+    #[test]
+    fn a_page_that_fits_is_clipped_to_its_own_size() {
+        assert_eq!(
+            shot_clip(size(1425.0, 5164.0), 1.0),
+            Some((rect(0.0, 0.0, 1425.0, 5164.0), false))
+        );
+    }
+
+    #[test]
+    fn a_page_taller_than_one_picture_is_cut_at_the_limit() {
+        assert_eq!(
+            shot_clip(size(302.0, 40021.0), 1.0),
+            Some((rect(0.0, 0.0, 302.0, 16384.0), true))
+        );
+    }
+
+    #[test]
+    fn the_limit_is_in_device_pixels() {
+        assert_eq!(
+            shot_clip(size(1440.0, 20000.0), 1.5),
+            Some((rect(0.0, 0.0, 1440.0, 10922.0), true))
+        );
+    }
+
+    #[test]
+    fn a_page_wider_than_one_picture_is_cut_too_and_a_page_with_no_size_has_no_clip() {
+        assert_eq!(
+            shot_clip(size(100000.0, 100.0), 1.0),
+            Some((rect(0.0, 0.0, 16384.0, 100.0), true))
+        );
+        for bad in [
+            size(0.0, 10.0),
+            size(f64::NAN, 10.0),
+            size(10.0, f64::INFINITY),
+            size(-5.0, 10.0),
+        ] {
+            assert_eq!(shot_clip(bad, 1.0), None);
+        }
+        for scale in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(shot_clip(size(10.0, 10.0), scale), None);
+        }
+    }
+
+    #[test]
+    fn a_clip_is_whole_pixels_and_is_sent_as_the_call_s14_measured() {
+        // A page's measured size can carry a fraction; the clip never holds more than the page.
+        let (clip, cut) = shot_clip(size(302.6, 5164.4), 1.0).unwrap();
+        assert_eq!((clip, cut), (rect(0.0, 0.0, 302.0, 5164.0), false));
+        assert_eq!(
+            shot_params(Some(clip)),
+            r#"{"format":"png","captureBeyondViewport":true,"clip":{"x":0,"y":0,"width":302,"height":5164,"scale":1}}"#
+        );
+        assert_eq!(shot_params(None), r#"{"format":"png"}"#);
+    }
+
+    #[test]
+    fn reads_the_picture_from_the_answer() {
+        assert_eq!(shot_png(r#"{"data":"iVBORw0KGgo="}"#).as_deref(), Some("iVBORw0KGgo="));
+        assert_eq!(shot_png(r#"{"data":""}"#), None);
+        assert_eq!(shot_png(r#"{"data":7}"#), None);
+        assert_eq!(shot_png("not json"), None);
+    }
+
+    #[test]
+    fn open_waits_for_the_rule() {
+        let mut c = Cookies::default();
+        assert_eq!(c.private(), Err("the cookie rule isn't known yet"));
+        c.tell(CookieRule::Never);
+        assert_eq!(c.private(), Ok(true));
+        c.tell(CookieRule::Always);
+        assert_eq!(c.private(), Ok(false));
+        c.tell(CookieRule::UntilQuit);
+        assert_eq!(c.private(), Ok(false));
+    }
+
+    #[test]
+    fn the_first_kept_page_under_until_quit_clears_what_the_last_run_left_once() {
+        let mut c = Cookies::default();
+        c.tell(CookieRule::UntilQuit);
+        assert!(c.take_start_clear());
+        c.made("s/a", false);
+        assert!(!c.take_start_clear());
+    }
+
+    #[test]
+    fn a_run_that_was_told_never_first_still_clears_at_its_first_kept_page() {
+        // The app tells "never" when it can't read the settings, and the real rule when it can.
+        let mut c = Cookies::default();
+        c.tell(CookieRule::Never);
+        c.made("s/a", true);
+        c.tell(CookieRule::UntilQuit);
+        assert!(c.take_start_clear());
+    }
+
+    #[test]
+    fn a_run_that_made_a_kept_page_under_always_does_not_clear_at_the_next_page() {
+        let mut c = Cookies::default();
+        c.tell(CookieRule::Always);
+        assert!(!c.take_start_clear());
+        c.made("s/a", false);
+        c.tell(CookieRule::UntilQuit);
+        assert!(!c.take_start_clear());
+        assert!(c.clears_at_quit());
+    }
+
+    #[test]
+    fn quit_clears_only_under_until_quit_after_a_kept_page() {
+        let mut c = Cookies::default();
+        c.tell(CookieRule::UntilQuit);
+        assert!(!c.clears_at_quit());
+        c.made("s/a", false);
+        c.gone("s/a");
+        assert!(c.clears_at_quit());
+        c.tell(CookieRule::Never);
+        assert!(!c.clears_at_quit());
+    }
+
+    #[test]
+    fn the_profile_is_cleared_through_a_page_that_keeps_data() {
+        let mut c = Cookies::default();
+        c.tell(CookieRule::Never);
+        c.made("s/a", true);
+        assert_eq!(c.kept_page(), None);
+        c.made("s/b", false);
+        assert_eq!(c.kept_page(), Some("s/b"));
+        c.gone("s/b");
+        assert_eq!(c.kept_page(), None);
+        c.made("s/c", false);
+        c.none_left();
+        assert_eq!(c.kept_page(), None);
+    }
+
+    #[test]
+    fn a_page_that_is_not_shown_is_refused() {
+        let mut r = Registry::default();
+        let a = r.open("a").unwrap();
+        r.open("b").unwrap();
+        r.show(Some("a"));
+        assert_eq!(r.shot_target("a"), Ok(a.as_str()));
+        assert_eq!(r.shot_target("b"), Err("hidden"));
+        assert_eq!(r.shot_target("c"), Err("The page isn't open."));
+        r.show(None);
+        assert_eq!(r.shot_target("a"), Err("hidden"));
     }
 
     #[test]

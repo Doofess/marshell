@@ -2,8 +2,9 @@
 //! reads its event and queues what follows with `post`, and never calls back into a webview from inside the callback.
 
 use super::rules::{
-    Emulate, HOLD_LOOK, HoldLook, KeyEvent, KeyRoute, MAX_ICON_BYTES, PopupGate, TAB_HOLD, TabHold, clipped_title,
-    emulate_params, focus_out_direction, icon_src, key_event, reported_address, route_key, unparsed_address,
+    Emulate, HOLD_LOOK, HoldLook, KeyEvent, KeyRoute, MAX_ICON_BYTES, PopupGate, Rect, TAB_HOLD, TabHold,
+    clipped_title, emulate_params, focus_out_direction, icon_src, key_event, reported_address, route_key, shot_params,
+    unparsed_address,
 };
 use super::{
     BrowserState, FocusOut, Job, PageFocus, PageIcon, PageKey, PageKeyEvent, PageState, emit, focus_app, lock, post,
@@ -15,15 +16,15 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, Webview};
 use webview2_com::Microsoft::Web::WebView2::Win32::{
-    COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG, COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG, COREWEBVIEW2_KEY_EVENT_KIND,
-    COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_KEY_UP,
-    COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_UP,
-    COREWEBVIEW2_MOVE_FOCUS_REASON, COREWEBVIEW2_MOVE_FOCUS_REASON_NEXT, COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS,
-    COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC, COREWEBVIEW2_PHYSICAL_KEY_STATUS,
-    COREWEBVIEW2_PREFERRED_COLOR_SCHEME_DARK, COREWEBVIEW2_PREFERRED_COLOR_SCHEME_LIGHT,
-    COREWEBVIEW2_PROCESS_FAILED_KIND, COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED,
-    COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED, ICoreWebView2, ICoreWebView2_13, ICoreWebView2_15,
-    ICoreWebView2Controller, ICoreWebView2Profile2,
+    COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_SITE, COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_PNG,
+    COREWEBVIEW2_FAVICON_IMAGE_FORMAT_PNG, COREWEBVIEW2_KEY_EVENT_KIND, COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN,
+    COREWEBVIEW2_KEY_EVENT_KIND_KEY_UP, COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
+    COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_UP, COREWEBVIEW2_MOVE_FOCUS_REASON, COREWEBVIEW2_MOVE_FOCUS_REASON_NEXT,
+    COREWEBVIEW2_MOVE_FOCUS_REASON_PREVIOUS, COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC,
+    COREWEBVIEW2_PHYSICAL_KEY_STATUS, COREWEBVIEW2_PREFERRED_COLOR_SCHEME_DARK,
+    COREWEBVIEW2_PREFERRED_COLOR_SCHEME_LIGHT, COREWEBVIEW2_PROCESS_FAILED_KIND,
+    COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED, COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED,
+    ICoreWebView2, ICoreWebView2_13, ICoreWebView2_15, ICoreWebView2Controller, ICoreWebView2Profile2,
 };
 use webview2_com::{
     AcceleratorKeyPressedEventHandler, CallDevToolsProtocolMethodCompletedHandler, CapturePreviewCompletedHandler,
@@ -742,9 +743,39 @@ pub fn emulate(page: &Webview, to: Option<Emulate>, failed: impl FnOnce() + Send
     });
 }
 
+/// The page's size, as `Page.getLayoutMetrics` answers (JSON).
+pub async fn page_metrics(page: &Webview) -> Result<String, String> {
+    let rx = call(page, "Page.getLayoutMetrics", "{}".to_string())?;
+    answer(rx, Duration::from_secs(5), "the page's size was not ready in 5 s").await
+}
+
+/// A picture of the page, as `Page.captureScreenshot` answers (JSON holding the PNG): the part on screen, or with
+/// `clip` that part of the whole page. Only the shown page answers (S14), so the caller asks only that one.
+pub async fn screenshot(page: &Webview, clip: Option<Rect>) -> Result<String, String> {
+    let rx = call(page, "Page.captureScreenshot", shot_params(clip))?;
+    answer(rx, Duration::from_secs(10), "the page's picture was not ready in 10 s").await
+}
+
 /// Clears everything the profile holds: cookies and sign-ins, storage, the cache, history, saved permissions.
 /// Asked of one page, done for the profile every page shares.
 pub async fn clear_data(page: &Webview) -> Result<(), String> {
+    clear(
+        page,
+        false,
+        Duration::from_secs(30),
+        "the pages' data was not cleared in 30 s",
+    )
+    .await
+}
+
+/// Clears what sites stored in the profile, the cookies and every kind of site storage, and leaves the rest: the
+/// "until quit" cookie rule's clear (6r-1b decision 19). Asked of a page that keeps data, never of a private one,
+/// whose profile is the one in memory.
+pub async fn clear_site_data(page: &Webview, limit: Duration) -> Result<(), String> {
+    clear(page, true, limit, "the pages' cookies were not cleared in time").await
+}
+
+async fn clear(page: &Webview, site_only: bool, limit: Duration, late: &'static str) -> Result<(), String> {
     let (tx, rx) = mpsc::channel::<Result<(), String>>();
     page.with_webview(move |pv| {
         let done = tx.clone();
@@ -761,7 +792,11 @@ pub async fn clear_data(page: &Webview) -> Result<(), String> {
                         let _ = done.send(result.map_err(|e| hr_text(&e)));
                         Ok(())
                     }));
-                    profile.ClearBrowsingDataAll(&handler)
+                    if site_only {
+                        profile.ClearBrowsingData(COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_SITE, &handler)
+                    } else {
+                        profile.ClearBrowsingDataAll(&handler)
+                    }
                 })
         };
         if let Err(e) = started {
@@ -769,7 +804,7 @@ pub async fn clear_data(page: &Webview) -> Result<(), String> {
         }
     })
     .map_err(|e| e.to_string())?;
-    answer(rx, Duration::from_secs(30), "the pages' data was not cleared in 30 s").await
+    answer(rx, limit, late).await
 }
 
 /// Back, Forward, Reload and Stop, on the page's own history. Back and Forward pass the allow-list like any other

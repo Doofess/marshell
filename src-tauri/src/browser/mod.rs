@@ -9,7 +9,9 @@
 mod com;
 pub mod rules;
 
-use rules::{Chord, Emulated, Own, Placer, PopupGate, Rect, Registry, Report, Size, Viewports, fit};
+use rules::{
+    Chord, CookieRule, Cookies, Emulated, Own, Placer, PopupGate, Rect, Registry, Report, Size, Viewports, fit,
+};
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -43,6 +45,14 @@ pub struct BrowserState {
     viewports: Mutex<Viewports>,
     /// What each page was last asked to emulate, by its webview's label.
     emulated: Mutex<Emulated>,
+    /// The cookie rule the app told, and which pages keep data on disk.
+    cookies: Mutex<Cookies>,
+    /// Held while what the last run left is cleared ("until quit"): a page that keeps data is made after it.
+    start_clear: tauri::async_runtime::Mutex<()>,
+    /// The blank pages made so far: each gets a label of its own.
+    blanks: AtomicU32,
+    /// Marshell is quitting: a second ask to quit starts nothing.
+    quitting: AtomicBool,
     /// The key the app last asked to show, which may not have its page yet.
     wanted: Mutex<Option<String>>,
     /// The chords the app's keymap claims: pressed in a page, they are the app's.
@@ -77,6 +87,10 @@ impl BrowserState {
             placer: Mutex::default(),
             viewports: Mutex::default(),
             emulated: Mutex::default(),
+            cookies: Mutex::default(),
+            start_clear: tauri::async_runtime::Mutex::new(()),
+            blanks: AtomicU32::new(0),
+            quitting: AtomicBool::new(false),
             wanted: Mutex::default(),
             claimed: Mutex::default(),
             dark: Mutex::default(),
@@ -435,6 +449,7 @@ fn browser_gone(app: &AppHandle) {
     }
     // The tabs keep their viewports: the app sends no new report for a page that is loaded again in its place.
     lock(&state.emulated).clear();
+    lock(&state.cookies).none_left();
     state.browser_pid.store(0, Ordering::SeqCst);
     for label in labels {
         if let Some(page) = app.get_webview(&label) {
@@ -453,6 +468,7 @@ pub fn close_all(app: &AppHandle) {
     let labels = lock(&state.registry).clear();
     lock(&state.viewports).clear();
     lock(&state.emulated).clear();
+    lock(&state.cookies).none_left();
     if labels.is_empty() {
         return;
     }
@@ -479,8 +495,9 @@ fn supported() -> Result<(), String> {
     }
 }
 
-/// Creates the key's page under `label`, hidden, loading `url`.
-fn create(app: &AppHandle, key: &str, label: &str, url: Url) -> Result<(), String> {
+/// Creates the key's page under `label`, hidden, loading `url`. A `private` page keeps nothing on disk: its cookies
+/// and storage live in memory, shared with the other private pages, and end with the last of them (S14, result 3).
+fn create(app: &AppHandle, key: &str, label: &str, url: Url, private: bool) -> Result<(), String> {
     let state = app.state::<BrowserState>();
     let window = crate::main_window(app).ok_or("Marshell's window is gone.")?;
     // Whether a navigation is running. The builder's own handlers keep it, since they hear the first navigation
@@ -494,6 +511,7 @@ fn create(app: &AppHandle, key: &str, label: &str, url: Url) -> Result<(), Strin
         .focused(false)
         .data_directory(state.profile.clone())
         .additional_browser_args(BROWSER_ARGS)
+        .incognito(private)
         // Every top-level navigation: a link, a redirect, a script, Back and Forward.
         .on_navigation({
             let (app, key, loading) = (app.clone(), key.to_string(), loading.clone());
@@ -552,6 +570,7 @@ fn create(app: &AppHandle, key: &str, label: &str, url: Url) -> Result<(), Strin
         let _ = page.close();
         return Ok(());
     }
+    lock(&state.cookies).made(key, private);
     // Hidden, at the size and the viewport it will be shown at, so the site lays out once.
     let slot = lock(&state.placer).last();
     if let Some(slot) = slot {
@@ -572,18 +591,66 @@ pub async fn browser_open(app: AppHandle, key: String, url: String) -> Result<()
     let Some(url) = checked(&app, &key, &url) else {
         return Err(REFUSED.to_string());
     };
+    // No page is made before the app has told the cookie rule: a page made on a guess could keep what it shouldn't.
+    let private = lock(&app.state::<BrowserState>().cookies).private()?;
     let label = lock(&app.state::<BrowserState>().registry).open(&key);
     let Some(label) = label else {
         let page = page(&app, &key).ok_or("The page is still opening.")?;
         return page.navigate(url).map_err(|e| e.to_string());
     };
+    // Held until the page exists, so the pages' browser process doesn't end and start again in between.
+    #[cfg(windows)]
+    let _cleared_through = if private { None } else { start_clear(&app).await };
     let (on_runtime, made) = (app.clone(), key.clone());
-    off_the_runtime(move || create(&on_runtime, &made, &label, url))
+    off_the_runtime(move || create(&on_runtime, &made, &label, url, private))
         .await
         .and_then(|created| created)
         .inspect_err(|_| {
             lock(&app.state::<BrowserState>().registry).close(&key);
         })
+}
+
+/// A blank page that closes when it is let go.
+#[cfg(windows)]
+struct Blank(Webview);
+
+#[cfg(windows)]
+impl Drop for Blank {
+    fn drop(&mut self) {
+        let _ = self.0.close();
+    }
+}
+
+/// How long the first page of a run waits for what the last run left to be cleared.
+#[cfg(windows)]
+const START_CLEAR_WAIT: Duration = Duration::from_secs(5);
+
+/// Before a page that keeps data is made: under "until quit", the first one in a run waits here while the cookies
+/// and site data the last run left are cleared (a run that ended without its quit leaves them), and a page asked
+/// for in the meantime waits for the same clear. The clear goes through a blank page, which is given back so the
+/// caller keeps it until its own page exists. The page is made whether the clear answered or not.
+#[cfg(windows)]
+async fn start_clear(app: &AppHandle) -> Option<Blank> {
+    let state = app.state::<BrowserState>();
+    let _one_at_a_time = state.start_clear.lock().await;
+    if !lock(&state.cookies).take_start_clear() {
+        return None;
+    }
+    let on_runtime = app.clone();
+    let blank = match off_the_runtime(move || blank_page(&on_runtime))
+        .await
+        .and_then(|made| made)
+    {
+        Ok(page) => Blank(page),
+        Err(e) => {
+            eprintln!("Marshell: the last run's cookies were not cleared: {e}");
+            return None;
+        }
+    };
+    if let Err(e) = com::clear_site_data(&blank.0, START_CLEAR_WAIT).await {
+        eprintln!("Marshell: the last run's cookies were not cleared: {e}");
+    }
+    Some(blank)
 }
 
 /// Shows the key's page and hides every other; `None` hides them all.
@@ -647,6 +714,7 @@ pub async fn browser_close(app: AppHandle, key: String) -> Result<(), String> {
     if let Some(label) = &label {
         lock(&state.emulated).forget(label);
     }
+    lock(&state.cookies).gone(&key);
     // A page still being created has no webview yet: `create` closes it when it sees the key is gone.
     match label.and_then(|label| app.get_webview(&label)) {
         Some(page) => page.close().map_err(|e| e.to_string()),
@@ -725,19 +793,17 @@ pub async fn browser_clear_data(app: AppHandle) -> Result<(), String> {
     supported()?;
     #[cfg(windows)]
     {
-        let open = pages(&app);
-        if let Some(first) = open.first() {
-            com::clear_data(first).await?;
-            for page in &open {
-                com::nav(page, "reload")?;
-            }
-            return Ok(());
+        // The profile on disk is reached through a page that keeps data. A private page's profile is the one in
+        // memory, and clearing through it would leave the disk as it was; so with no page that keeps data open, one
+        // is made for the moment, blank and hidden. The private pages' own data ends when the app loads them again.
+        match kept_page(&app) {
+            Some(page) => com::clear_data(&page).await?,
+            None => com::clear_data(&Blank(blank_page(&app)?).0).await?,
         }
-        // The profile is reached through a page, so with none open one is made for the moment, blank and hidden.
-        let page = blank_page(&app)?;
-        let cleared = com::clear_data(&page).await;
-        let _ = page.close();
-        cleared
+        for page in pages(&app) {
+            com::nav(&page, "reload")?;
+        }
+        Ok(())
     }
     #[cfg(not(windows))]
     {
@@ -745,13 +811,130 @@ pub async fn browser_clear_data(app: AppHandle) -> Result<(), String> {
     }
 }
 
-/// A hidden page that stays on `about:blank`, on the pages' profile; the app never hears of it.
+/// A picture of a page for "Save screenshot": the PNG in base64, and whether the page was longer than one picture
+/// holds.
+#[derive(Serialize)]
+pub struct Shot {
+    png: String,
+    cut: bool,
+}
+
+/// A picture of the key's page: the part on screen, or with `full` the whole page from its top, cut at 16,384
+/// pixels a side. `Err("hidden")` at once for a page that is not the shown one, which never answers a capture.
+/// Nothing but the key and the choice comes from the app: the page's size is measured here.
+#[tauri::command]
+pub async fn browser_screenshot(app: AppHandle, key: String, full: bool) -> Result<Shot, String> {
+    supported()?;
+    let label = lock(&app.state::<BrowserState>().registry)
+        .shot_target(&key)
+        .map(str::to_string)?;
+    let page = app.get_webview(&label).ok_or(NO_PAGE)?;
+    #[cfg(windows)]
+    {
+        let (clip, cut) = if full {
+            let metrics = com::page_metrics(&page).await?;
+            let scale = crate::main_window(&app)
+                .and_then(|window| window.scale_factor().ok())
+                .unwrap_or(1.0);
+            let (clip, cut) = rules::content_size(&metrics)
+                .and_then(|size| rules::shot_clip(size, scale))
+                .ok_or("the page has no size")?;
+            (Some(clip), cut)
+        } else {
+            (None, false)
+        };
+        let answer = com::screenshot(&page, clip).await?;
+        let png = rules::shot_png(&answer).ok_or("the page gave no picture")?;
+        Ok(Shot { png, cut })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (page, full);
+        Err(UNAVAILABLE.to_string())
+    }
+}
+
+/// The cookie rule from the app's settings: "always", "until-quit" or "never". It decides the pages made from now
+/// on; the app loads the open ones again when that changes what they keep.
+#[tauri::command]
+pub async fn browser_cookies(app: AppHandle, rule: String) -> Result<(), String> {
+    let rule = CookieRule::parse(&rule).ok_or("no such cookie rule")?;
+    lock(&app.state::<BrowserState>().cookies).tell(rule);
+    Ok(())
+}
+
+/// A page that keeps data on disk, to clear the profile through.
+#[cfg(windows)]
+fn kept_page(app: &AppHandle) -> Option<Webview> {
+    let key = lock(&app.state::<BrowserState>().cookies)
+        .kept_page()
+        .map(str::to_string)?;
+    page(app, &key)
+}
+
+/// How long quitting waits for the cookies to be cleared.
+#[cfg(windows)]
+const QUIT_CLEAR_WAIT: Duration = Duration::from_secs(3);
+
+/// Before Marshell quits: under "until quit", once a page that kept data was made in this run, the cookies and site
+/// data are cleared, through such a page or a blank one made for it, and `then` runs on the main thread when the
+/// clear has answered or `QUIT_CLEAR_WAIT` has passed, whichever is first; otherwise `then` runs at once. A second
+/// call while the first is waiting does nothing. A run that ends another way leaves the clear to the next start.
+pub fn before_quit(app: &AppHandle, then: impl FnOnce(&AppHandle) + Send + 'static) {
+    let Some(state) = app.try_state::<BrowserState>() else {
+        return then(app);
+    };
+    if state.quitting.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    if !cfg!(windows) || !lock(&state.cookies).clears_at_quit() {
+        return then(app);
+    }
+    #[cfg(windows)]
+    {
+        // Whichever comes first, the clear's end or the limit, takes `then` and runs it; the other finds it gone.
+        fn finish<F: FnOnce(&AppHandle) + Send + 'static>(app: &AppHandle, then: &Mutex<Option<F>>) {
+            let Some(then) = lock(then).take() else {
+                return;
+            };
+            let on_main = app.clone();
+            if app.run_on_main_thread(move || then(&on_main)).is_err() {
+                eprintln!("Marshell: quitting could not go on after the cookies were cleared");
+            }
+        }
+        let then = Arc::new(Mutex::new(Some(then)));
+        let (late_app, late_then) = (app.clone(), then.clone());
+        std::thread::spawn(move || {
+            std::thread::sleep(QUIT_CLEAR_WAIT);
+            finish(&late_app, &late_then);
+        });
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let cleared = match kept_page(&app) {
+                Some(page) => com::clear_site_data(&page, QUIT_CLEAR_WAIT).await,
+                None => match blank_page(&app) {
+                    Ok(page) => com::clear_site_data(&Blank(page).0, QUIT_CLEAR_WAIT).await,
+                    Err(e) => Err(e),
+                },
+            };
+            if let Err(e) = cleared {
+                eprintln!("Marshell: the cookies were not cleared at quit; the next start clears them: {e}");
+            }
+            finish(&app, &then);
+        });
+    }
+}
+
+/// A hidden page that stays on `about:blank`, on the pages' profile; the app never hears of it. It keeps data, as
+/// the profile on disk is what it is made to reach.
 #[cfg(windows)]
 fn blank_page(app: &AppHandle) -> Result<Webview, String> {
     let state = app.state::<BrowserState>();
     let window = crate::main_window(app).ok_or("Marshell's window is gone.")?;
     let blank = Url::parse("about:blank").map_err(|e| e.to_string())?;
-    let builder = WebviewBuilder::new("page-blank", WebviewUrl::External(blank))
+    // A label of its own each time: two clears can meet (a start's and the person's), and a label is one page's.
+    let label = format!("blank-{}", state.blanks.fetch_add(1, Ordering::SeqCst) + 1);
+    let builder = WebviewBuilder::new(label, WebviewUrl::External(blank))
         .focused(false)
         .data_directory(state.profile.clone())
         .additional_browser_args(BROWSER_ARGS)
