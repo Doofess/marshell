@@ -108,7 +108,7 @@ describe("focusPane", () => {
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => (queue.push(cb), 0));
     vi.stubGlobal("document", {
       querySelector: (sel: string) => {
-        const f = frames[Math.min(frame, frames.length - 1)];
+        const f = frames[Math.min(frame, frames.length - 1)] ?? { tree: false, row: false };
         if (sel.includes("treeitem")) return f.row ? el("row") : null;
         if (sel.includes('[role="tree"]')) return f.tree ? el("tree") : null;
         if (sel.includes("empty-panel__button")) return el("empty");

@@ -1,4 +1,4 @@
-import { Annotation, Compartment, EditorSelection, EditorState, Transaction, type TransactionSpec } from "@codemirror/state";
+import { Annotation, Compartment, EditorSelection, EditorState, Transaction, type Text, type TransactionSpec } from "@codemirror/state";
 import { isolateHistory } from "@codemirror/commands";
 import { EditorView, keymap } from "@codemirror/view";
 import { indentUnit } from "@codemirror/language";
@@ -23,8 +23,8 @@ export type EditorHandle = {
   /** Opens the go-to-line box. */
   goToLine(): void;
   toggleWrap(): void;
-  /** Scrolls a line (1-based) to about a third from the top. */
-  reveal(line: number): void;
+  /** Scrolls a line (1-based) to about a third from the top and puts the cursor on it, at its column (from 1) when given. */
+  reveal(line: number, col?: number | null): void;
   /** Puts the cursor on a conflict: the first, or the next or previous one from the cursor. */
   toConflict(which: "first" | "next" | "previous"): void;
 };
@@ -40,8 +40,11 @@ type Props = {
   wrap: boolean;
   /** The Files settings the editor reads; a change reconfigures the open view. Absent: the defaults. */
   prefs?: EditorPrefs;
-  /** A line to scroll to a third from the top; scrolls again when it changes. */
-  target?: number;
+  /**
+   * A line (and column, from 1) to scroll to a third from the top with the cursor on it, once the view is made and again when
+   * either number changes. The editor does it itself, so a view React makes again (its dev double mount) still gets it.
+   */
+  target?: { line: number; col: number | null };
   /** The text after a change the person made: typing, paste, cut, undo, redo, replace. */
   onEdit: (text: string) => void;
   /** The cursor's line and column, both from 1. */
@@ -57,6 +60,12 @@ type Props = {
 
 /** Marks a transaction as `setText`'s, which is not an edit by the person. */
 const FROM_OUTSIDE = Annotation.define<boolean>();
+
+/** Where a line open puts the cursor: the line's start, or its column (from 1) clamped to the line, with the line clamped to the text. */
+export function lineOffset(doc: Text, line: number, col: number | null): number {
+  const at = doc.line(Math.min(Math.max(1, Math.floor(line)), doc.lines));
+  return at.from + (col === null ? 0 : Math.min(Math.max(0, Math.floor(col) - 1), at.length));
+}
 
 /**
  * The change that replaces the whole text with one that came from outside the editor (a reload, a merge, Take disk), with the
@@ -156,17 +165,20 @@ export function Editor({ name, path, initial, firstLine, readOnly, wrap, prefs =
     given.current = { name, readOnly, wrap, language, prefs };
   }, [name, readOnly, wrap, language, prefs, appChord]);
 
-  const reveal = (line: number) => {
+  const reveal = (line: number, col: number | null = null) => {
     const v = view.current;
     if (!v) return;
-    const at = v.state.doc.line(Math.min(Math.max(1, Math.floor(line)), v.state.doc.lines)).from;
+    const at = lineOffset(v.state.doc, line, col);
     // Aligned to the top with a margin of a third of the height, so the line sits about a third from the top, as the read-only view puts it.
-    v.dispatch({ effects: EditorView.scrollIntoView(at, { y: "start", yMargin: v.scrollDOM.clientHeight / 3 }) });
+    v.dispatch({ selection: { anchor: at }, effects: EditorView.scrollIntoView(at, { y: "start", yMargin: v.scrollDOM.clientHeight / 3 }) });
   };
 
+  // By value: a view switch that remakes the entry at the same line leaves the cursor where the person put it.
+  const targetLine = target?.line;
+  const targetCol = target?.col ?? null;
   useEffect(() => {
-    if (target !== undefined) reveal(target);
-  }, [target]);
+    if (targetLine !== undefined) reveal(targetLine, targetCol);
+  }, [targetLine, targetCol]);
 
   useImperativeHandle(
     ref,

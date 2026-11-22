@@ -215,6 +215,8 @@ export function TextTabView(p: TextTabViewProps) {
               path={entry.path}
               initial={doc.text}
               firstLine={p.firstLine}
+              // The line the pane was opened at, which the editor goes to; a refetch keeps the reader's place.
+              target={entry.line === null ? undefined : { line: entry.line, col: entry.col }}
               readOnly={p.readOnly !== null}
               wrap={p.wrap}
               prefs={p.prefs}
@@ -436,12 +438,6 @@ export function TextTab({ entry, file, kind, active, os, onDirty, commands, anno
     if (conflict !== null && conflict !== told.current) announce(`${name} changed on disk.`);
     told.current = conflict;
   }, [conflict, name, announce]);
-
-  // A line the pane was opened at is scrolled to once for each entry; a refetch keeps the reader's place.
-  const line = entry.line;
-  useEffect(() => {
-    if (ready && line !== null) editor.current?.reveal(line);
-  }, [entry, ready]);
 
   // Each of the three buttons goes away once it is pressed, so the keyboard moves to the text first.
   const pressed = (event: DocEvent) => {
