@@ -642,17 +642,15 @@ fn first_folder(candidates: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf
 /// The project folder of a session and whether it is a git checkout. In a repo the root is the
 /// checkout the session was launched in, which for a task is its worktree (`project` is the launch
 /// folder itself outside git, so it is not used). Outside git it is the folder the shell last
-/// reported, else the launch folder. Each goes through `first_folder`. That folder counts as a
-/// checkout when it is inside one, as after a `cd` into a repo, so git's ignore rules apply to it.
+/// reported, else the launch folder. Each goes through `first_folder`. A reported folder never
+/// counts as a checkout, even inside one: it is learned from what the terminal printed, and git run
+/// in a folder nobody chose would run the commands a hostile `.git/config` names (`core.fsmonitor`).
 pub(super) fn project_root(row: Option<&SessionInfo>, reported: Option<PathBuf>) -> Option<(PathBuf, bool)> {
     if let Some(root) = row.and_then(checkout_of).and_then(|c| first_folder([c])) {
         return Some((root, true));
     }
     let launch = row.iter().map(|r| PathBuf::from(&r.cwd));
-    first_folder(reported.into_iter().chain(launch)).map(|root| {
-        let is_git = root.ancestors().any(|d| d.join(".git").exists());
-        (root, is_git)
-    })
+    first_folder(reported.into_iter().chain(launch)).map(|root| (root, false))
 }
 
 /// GET /v1/sessions/{tab}/files
@@ -689,6 +687,28 @@ pub async fn list(State(st): State<AppState>, Path(tab): Path<String>) -> Respon
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Review 6r-2: a shell that `cd`s into a checkout gets its folder walked, not listed by git.
+    /// The folder comes from the terminal's output, and git there could run a hostile repo's
+    /// configured commands, so git runs only in the checkout the session was launched in.
+    #[test]
+    fn git_never_runs_in_a_folder_learned_only_from_the_shell() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = crate::projects::canonical(tmp.path()).join("repo");
+        std::fs::create_dir_all(repo.join("sub")).unwrap();
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["init", "-q"])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        for reported in [repo.clone(), repo.join("sub")] {
+            let (root, is_git) = project_root(None, Some(reported.clone())).unwrap();
+            assert_eq!(root, crate::projects::canonical(&reported));
+            assert!(!is_git, "{reported:?}");
+        }
+    }
 
     #[test]
     fn a_pdf_saved_with_its_notes_can_be_opened_again() {

@@ -474,23 +474,6 @@ mod tests {
         assert_eq!(ignored(&dirs[0]), ["c.txt"]);
     }
 
-    /// Review 6r-2: a shell that moved into a subfolder of a checkout has that subfolder as its root,
-    /// and git's rules from the checkout's top still mark what it ignores.
-    #[test]
-    fn a_root_inside_a_checkout_marks_what_the_checkout_ignores() {
-        let (_tmp, top) = temp();
-        git(&top, &["init", "-q"]);
-        std::fs::write(top.join(".gitignore"), "dist/\n*.log").unwrap();
-        touch(&top.join("sub/dist/a.txt"));
-        touch(&top.join("sub/x.log"));
-        touch(&top.join("sub/main.rs"));
-        let root = top.join("sub");
-        assert!(super::project_root(None, Some(root.clone())).is_some_and(|(_, is_git)| is_git));
-        let dirs = list(&root, true, &["", "dist"]);
-        assert_eq!(ignored(&dirs[0]), ["dist", "x.log"]);
-        assert_eq!(ignored(&dirs[1]), ["a.txt"]);
-    }
-
     #[test]
     fn outside_git_nothing_is_ignored() {
         let (_tmp, root) = temp();
