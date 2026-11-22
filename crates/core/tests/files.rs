@@ -520,6 +520,37 @@ async fn the_file_list_in_a_repo_follows_gitignore() {
     assert_eq!(list["root"], canon(root));
 }
 
+/// A junction, which git for Windows walks into as if it were a folder.
+#[cfg(windows)]
+fn junction(target: &Path, link: &Path) {
+    let out = std::process::Command::new("cmd")
+        .args(["/C", "mklink", "/J"])
+        .arg(link)
+        .arg(target)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
+}
+
+/// Live check 6r-2: git's list went through a junction to the folder above the checkout, and back
+/// into it, so Go to file listed 4,174 entries from the scratch home. A folder link is never entered,
+/// wherever it points, as the walk outside a repo and the tree already do.
+#[cfg(windows)]
+#[tokio::test]
+async fn the_file_list_in_a_repo_never_goes_through_a_folder_link() {
+    let s = setup("reported");
+    let root = s.dir.path();
+    git(root, &["init", "-q"]);
+    write(&root.join("src/a.rs"), "a");
+    let other = tempfile::tempdir().unwrap();
+    write(&other.path().join("secret.rs"), "s");
+    junction(other.path(), &root.join("up"));
+    junction(&root.join("src"), &root.join("again"));
+    let tab = session(&s.app, "sleeper", root).await;
+    let files = names(&files_of(&s.app, &tab).await);
+    assert_eq!(files, ["src/a.rs"]);
+}
+
 #[tokio::test]
 async fn the_file_list_outside_a_repo_skips_build_folders() {
     let s = setup("reported");

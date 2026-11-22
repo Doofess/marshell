@@ -8,6 +8,7 @@ import type { SetupStart } from "../agents/agentsState";
 import { AccountsSection } from "../accounts/AccountsSection";
 import { BrowserSection } from "../browser/BrowserSection";
 import { browserTabs } from "../browser/available";
+import { FilesSection } from "../files/FilesSection";
 import type { HookInstall } from "../../generated/HookInstall";
 import type { HookAgent } from "../../lib/api/agents";
 import { osOfPlatform } from "../../lib/keymap";
@@ -145,6 +146,8 @@ export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, 
         const platform = endpoint?.platform ?? "windows";
         return <BrowserSection announce={announce} pages={browserTabs(osOfPlatform(platform))} platform={platform} found={[...found]} hooks={hooks} />;
       }
+      case "files":
+        return <FilesSection announce={announce} />;
       case "notifications":
         return <NotificationsSection sync={sync} announce={announce} />;
       case "profiles":

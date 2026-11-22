@@ -92,8 +92,11 @@ export const COMMANDS: Command[] = [
   // The side pane's panels. Cmd+A is Select all on macOS, so the Browser panel takes Cmd+Alt+A there.
   { id: "browser-panel", label: "Browser panel", group: "Window", binding: { code: "KeyA", mac: { code: "KeyA", alt: true } } },
   { id: "files-panel", label: "Files panel", group: "Window", binding: { code: "KeyD" } },
-  { id: "open-file", label: "Open file…", group: "Window" },
+  { id: "open-file", label: "Go to file…", group: "Window", binding: { code: "KeyP" } },
   { id: "browse-file", label: "Browse…", group: "Window" },
+  // The Files panel's tree: shown or hidden, and every folder folded. No default key.
+  { id: "files-tree", label: "Show file tree", group: "Window" },
+  { id: "files-collapse", label: "Collapse all folders", group: "Window" },
   // The browser tab (Windows only for now: the window hides them elsewhere). None has a default key.
   { id: "new-browser-tab", label: "New browser tab", group: "Window" },
   { id: "open-url", label: "Open URL…", group: "Window" },

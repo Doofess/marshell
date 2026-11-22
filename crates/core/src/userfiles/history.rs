@@ -140,6 +140,20 @@ impl History {
         Ok(())
     }
 
+    /// When the newest copy of `path` was taken, None when the file has no copy. Only the index is read, under its lock, which is
+    /// not held past the read.
+    pub fn newest_ms(&self, path: &Path) -> anyhow::Result<Option<u64>> {
+        let _guard = INDEX_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let index = store::read::<Index>(&self.index_path())?.unwrap_or_default();
+        let path = path.to_string_lossy();
+        Ok(index
+            .saves
+            .iter()
+            .filter(|e| same_path(&e.path, &path))
+            .map(|e| e.created_ms)
+            .max())
+    }
+
     /// What the save `id` replaced. None for an id that is malformed, unknown or whose copy is gone.
     pub fn get(&self, id: &str) -> anyhow::Result<Option<Saved>> {
         if !valid_id(id) {
@@ -246,6 +260,29 @@ mod tests {
         let history = History::new(home.path());
         let id = history.take(&a(), b"", "h", 1).unwrap();
         assert_eq!(history.get(&id).unwrap().unwrap().before, Vec::<u8>::new());
+    }
+
+    #[test]
+    fn newest_ms_reads_the_newest_copy_of_that_file_only() {
+        let home = tempfile::tempdir().unwrap();
+        let history = History::new(home.path());
+        assert_eq!(history.newest_ms(&a()).unwrap(), None);
+        history.take(&a(), b"a1", "h", 100).unwrap();
+        history.take(&b(), b"b1", "h", 500).unwrap();
+        history.take(&a(), b"a2", "h", 300).unwrap();
+        assert_eq!(history.newest_ms(&a()).unwrap(), Some(300));
+        assert_eq!(history.newest_ms(&b()).unwrap(), Some(500));
+        let c = PathBuf::from(if cfg!(windows) { r"C:\proj\c.txt" } else { "/proj/c.txt" });
+        assert_eq!(history.newest_ms(&c).unwrap(), None);
+    }
+
+    #[test]
+    fn newest_ms_matches_the_path_as_the_os_compares_it() {
+        let home = tempfile::tempdir().unwrap();
+        let history = History::new(home.path());
+        history.take(&a(), b"x", "h", 7).unwrap();
+        let upper = PathBuf::from(a().to_string_lossy().to_uppercase());
+        assert_eq!(history.newest_ms(&upper).unwrap().is_some(), cfg!(windows));
     }
 
     #[test]

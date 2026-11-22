@@ -9,6 +9,12 @@ const editor = (panel: PanelId) => `${nav(panel)} [role="tabpanel"]:not([hidden]
 const body = (panel: PanelId) => `${nav(panel)} [role="tabpanel"]:not([hidden]) .preview__body`;
 /** A browser tab's slot: the tab has no body to scroll. Focusing the slot enters the page (BrowserTab). */
 const slot = (panel: PanelId) => `${nav(panel)} [role="tabpanel"]:not([hidden]) .browser-tab__slot`;
+/** The Files panel's tree (or the search results in its place): the one row that is a tab stop. With no tab open the keyboard goes there. */
+const treeRow = (panel: PanelId) => `${nav(panel)} [role="tree"] [role="treeitem"][tabindex="0"]`;
+/** The Files panel's tree itself. Its rows are drawn a frame or two after it (once it is measured), or after its first read. */
+const tree = (panel: PanelId) => `${nav(panel)} [role="tree"]`;
+/** How many frames focus waits for the tree's rows before the empty state takes it: about half a second. */
+const TREE_FRAMES = 30;
 /** The empty panel's first usable button, and the strip's + button: where focus goes when there is no body. */
 const emptyFirst = (panel: PanelId) => `${nav(panel)} .empty-panel__button:not([aria-disabled="true"])`;
 const plusOf = (panel: PanelId) => `${nav(panel)} button[data-pane-plus]`;
@@ -29,13 +35,17 @@ export function askedFrom(el: Element | null): "strip" | "pane" | null {
 }
 
 /** The element focus should reach when a panel takes it: a text tab's editor (so typing goes on where the cursor was), else the selected tab's body or a browser tab's slot, else the empty pane's first button, else the strip's "New tab" button. Null when the panel isn't drawn. */
-export function paneFocusTarget(root: ParentNode, panel: PanelId, closing?: string, where: "pane" | "strip" = "pane"): HTMLElement | null {
+export function paneFocusTarget(root: ParentNode, panel: PanelId, closing?: string, where: "pane" | "strip" = "pane", waitForTree = false): HTMLElement | null {
   // A tab that is closing is still drawn: its editor would take the focus and go away with it.
   if (closing !== undefined && root.querySelector(`${nav(panel)} [role="tab"][id="pane-tab-${closing}"]`)) return null;
   // A close asked from the strip leaves the keyboard on the strip, as a close that asks nothing does: the next Delete closes the
   // next tab, and types nothing into its file.
   if (where === "strip") return root.querySelector<HTMLElement>(selectedTab(panel)) ?? root.querySelector<HTMLElement>(plusOf(panel));
-  return root.querySelector<HTMLElement>(editor(panel)) ?? root.querySelector<HTMLElement>(body(panel)) ?? root.querySelector<HTMLElement>(slot(panel)) ?? root.querySelector<HTMLElement>(emptyFirst(panel)) ?? root.querySelector<HTMLElement>(plusOf(panel));
+  const first = root.querySelector<HTMLElement>(editor(panel)) ?? root.querySelector<HTMLElement>(body(panel)) ?? root.querySelector<HTMLElement>(slot(panel)) ?? root.querySelector<HTMLElement>(treeRow(panel));
+  if (first) return first;
+  // The tree is drawn and its rows aren't yet: wait for them, rather than put the keyboard on the empty state's button beside it.
+  if (waitForTree && root.querySelector(tree(panel))) return null;
+  return root.querySelector<HTMLElement>(emptyFirst(panel)) ?? root.querySelector<HTMLElement>(plusOf(panel));
 }
 
 /**
@@ -48,7 +58,7 @@ export function paneFocusTarget(root: ParentNode, panel: PanelId, closing?: stri
 export function focusPane(panel: PanelId, closing?: string, where: "pane" | "strip" = "pane"): void {
   let frames = 0;
   const attempt = () => {
-    const target = paneFocusTarget(document, panel, closing, where);
+    const target = paneFocusTarget(document, panel, closing, where, frames < TREE_FRAMES - 1);
     if (target) {
       const page = target.dataset.pageKey;
       if (page === undefined) return void target.focus({ preventScroll: true });
@@ -56,8 +66,9 @@ export function focusPane(panel: PanelId, closing?: string, where: "pane" | "str
       quietly(() => target.focus({ preventScroll: true }));
       return void browser.focus(page, entryReason(page)).catch(() => {});
     }
-    // The pane may take a second frame to be laid out when the same click shows it.
-    if (++frames < 3) requestAnimationFrame(attempt);
+    // The pane may take a second frame to be laid out when the same click shows it, and the Files tree its rows a little longer.
+    const waiting = where === "pane" && document.querySelector(tree(panel)) !== null;
+    if (++frames < (waiting ? TREE_FRAMES : 3)) requestAnimationFrame(attempt);
   };
   requestAnimationFrame(attempt);
 }

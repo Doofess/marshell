@@ -130,6 +130,15 @@ describe("runEffect", () => {
     expect(f.events).toEqual([{ type: "saved", hash: "h", snapshot: "s" }]);
   });
 
+  it("an auto save is sent as one, and a save by hand is not", async () => {
+    const autos: boolean[] = [];
+    const save: EffectDeps["api"]["saveFile"] = async (_path, _bytes, _expect, auto = false) => (autos.push(auto), { kind: "saved", saved: { size: 1, modified_ms: 1, hash: "h", snapshot: null } });
+    const { deps } = setup({ save, doc: () => ({ ...start, base: { text: "x", hash: H1 }, text: "y", sent: "y", saving: true }) });
+    await runEffect({ type: "save", expect: H1, auto: true }, deps);
+    await runEffect({ type: "save", expect: H1 }, deps);
+    expect(autos).toEqual([true, false]);
+  });
+
   it("each_save_answer_becomes_its_event", async () => {
     const answer = async (r: Awaited<ReturnType<EffectDeps["api"]["saveFile"]>>) => {
       const { f, deps } = setup({ save: async () => r, doc: () => ({ ...start, text: "x", sent: "x", saving: true }) });

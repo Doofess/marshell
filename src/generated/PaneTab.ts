@@ -28,4 +28,8 @@ unseen: boolean,
 /**
  * A browser tab's chosen viewport: "phone", "tablet", "laptop" or "desktop". None is Responsive.
  */
-viewport?: string, };
+viewport?: string, 
+/**
+ * Some(true) for a preview tab, which the next file opened from the tree replaces. The app never writes false.
+ */
+preview?: boolean, };

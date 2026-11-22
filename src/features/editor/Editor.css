@@ -57,6 +57,37 @@
   padding-inline: var(--space-2) var(--space-4);
 }
 
+/* Indent guides (indentGuides.ts): a line that is indented carries --guides (how many levels) and --guide-unit (columns in one). The
+   lines are one pixel wide, one level of 1ch × unit apart, drawn in the line's own padding box so they sit under the text and
+   take no room from it. */
+.editor {
+  --guide: color-mix(in oklch, var(--ink) 16%, transparent);
+}
+.editor .cm-line.editor__guided {
+  position: relative;
+}
+.editor .cm-line.editor__guided::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: var(--space-2);
+  inline-size: calc(var(--guides) * var(--guide-unit) * 1ch);
+  background-image: repeating-linear-gradient(to right, var(--guide) 0 1px, transparent 1px calc(var(--guide-unit) * 1ch));
+  pointer-events: none;
+}
+
+/* Whitespace marks (the "Whitespace" setting): CodeMirror draws them with a grey of its own, which is replaced here by the muted
+   ink. A space is a dot, a tab a line along its width. */
+.editor .cm-highlightSpace {
+  background-image: radial-gradient(circle at 50% 55%, var(--quiet) 20%, transparent 5%);
+}
+.editor .cm-highlightTab {
+  background-image: linear-gradient(var(--quiet), var(--quiet));
+  background-size: calc(100% - 2px) 1px;
+  background-position: center 55%;
+  background-repeat: no-repeat;
+}
+
 /* Line numbers sit on the paper with no rule beside them, as in the read-only view. */
 .editor .cm-gutters {
   border-inline-end: 0;
@@ -286,6 +317,19 @@
   }
   .editor .cm-editor:focus-within {
     outline-color: Highlight;
+  }
+  /* The guides and the whitespace marks are backgrounds, which forced colors would drop: they keep a system colour. */
+  .editor .cm-line.editor__guided::before {
+    background-image: repeating-linear-gradient(to right, GrayText 0 1px, transparent 1px calc(var(--guide-unit) * 1ch));
+    forced-color-adjust: none;
+  }
+  .editor .cm-highlightSpace {
+    background-image: radial-gradient(circle at 50% 55%, GrayText 20%, transparent 5%);
+    forced-color-adjust: none;
+  }
+  .editor .cm-highlightTab {
+    background-image: linear-gradient(GrayText, GrayText);
+    forced-color-adjust: none;
   }
   .editor .cm-activeLine {
     background: transparent;

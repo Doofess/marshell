@@ -4,8 +4,11 @@ import type { PaneView } from "../../generated/PaneView";
 import type { Panels } from "../../generated/Panels";
 import type { RecentFile } from "../../generated/RecentFile";
 import type { SessionTabs } from "../../generated/SessionTabs";
+import type { TreeState } from "../../generated/TreeState";
+import type { TreeView } from "../../generated/TreeView";
 import { BLANK, isPageUrl, pageTitle, sameUrl } from "../browser/address";
 import type { ViewportId } from "../browser/viewport";
+import { treeFolderOk } from "./paneRules";
 import { type PanelId, PANELS, type Stack, type Weights, activeIn, isPanelId, onScreen, panelOf, panelOfPath, panelTabs, stackOf, stackPanels } from "./panels";
 
 export type { PaneEntry };
@@ -22,8 +25,17 @@ export type View = "rendered" | "source";
 export type Place = { page: number; top: number };
 export type OpenTarget = { path: string; line?: number; col?: number; view?: View; place?: Place };
 export type PaneAction =
-  /** A new tab, or its existing tab; shows the pane. */
-  | { type: "open"; session: string; project: string; target: OpenTarget }
+  /**
+   * A new tab, or its existing tab; shows the pane. With `preview` (from the file tree) a new tab is the panel's preview tab and
+   * replaces the one it has; an existing tab is selected as it is. Without it, a tab shown as a preview is kept.
+   */
+  | { type: "open"; session: string; project: string; target: OpenTarget; preview?: true }
+  /** A preview tab becomes an ordinary one. */
+  | { type: "keep"; session: string; paneTab: string }
+  /** The session's file tree: its root and open folders (relative folders only, at most 500). */
+  | { type: "tree"; session: string; tree: TreeState }
+  /** The window's tree view, merged: the width is clamped to 160 to 2048. */
+  | { type: "treeView"; view: Partial<TreeView> }
   /** A link inside a tab: pushes its history. */
   | { type: "navigate"; session: string; paneTab: string; project: string; target: OpenTarget }
   | { type: "back" | "forward"; session: string; paneTab: string }
@@ -96,6 +108,18 @@ export function samePath(a: string, b: string): boolean {
 
 /** A browser tab: its one history entry holds the page's address. */
 export const isBrowserTab = (t: PaneTab): boolean => t.kind === "browser";
+
+/** The panel's preview tab, if it has one. */
+export function previewTab(st: SessionTabs, panel: PanelId): PaneTab | undefined {
+  return st.tabs.find((t) => t.preview === true && panelOf(t) === panel);
+}
+
+/** The tab as an ordinary one: no `preview` property. */
+function kept(t: PaneTab): PaneTab {
+  if (t.preview === undefined) return t;
+  const { preview: _p, ...rest } = t;
+  return rest;
+}
 
 /** A file tab showing this path; a browser tab never matches a path. */
 const tabHas = (t: PaneTab, path: string) => !isBrowserTab(t) && samePath(currentEntry(t).path, path);
@@ -310,12 +334,14 @@ function pageMoved(s: PaneView, session: string, paneTab: string, url: string, t
   });
 }
 
-function open(s: PaneView, session: string, project: string, target: OpenTarget): PaneView {
+function open(s: PaneView, session: string, project: string, target: OpenTarget, preview = false): PaneView {
   const cur = settle(tabsOf(s, session));
   const existing = cur.tabs.find((t) => tabHas(t, target.path));
   let next: PaneView;
   if (existing) {
     let tab = existing.unseen ? { ...existing, unseen: false } : existing;
+    // Only the tree previews; any other open of a file in a preview tab keeps it.
+    if (!preview) tab = kept(tab);
     const line = place(target.line);
     if (line !== null) {
       const e = currentEntry(existing);
@@ -332,10 +358,14 @@ function open(s: PaneView, session: string, project: string, target: OpenTarget)
       next = setTabs(reveal(s, session, panel), session, pick({ ...cur, tabs }, panel, existing.id));
     }
   } else {
-    if (cur.tabs.length >= PANE_LIMITS.tabs) return s;
-    const tab: PaneTab = { id: nextId(cur.tabs), kind: "file", history: [entryOf(target)], index: 0, title: null, opened_by: null, unseen: false };
-    const panel = panelOf(tab);
-    next = setTabs(reveal(s, session, panel), session, pick({ ...cur, tabs: [...cur.tabs, tab] }, panel, tab.id));
+    const made: PaneTab = { id: nextId(cur.tabs), kind: "file", history: [entryOf(target)], index: 0, title: null, opened_by: null, unseen: false };
+    const panel = panelOf(made);
+    const old = preview ? previewTab(cur, panel) : undefined;
+    // A preview replaces the panel's preview tab in place, under a new id so the viewer remounts.
+    if (!old && cur.tabs.length >= PANE_LIMITS.tabs) return s;
+    const tab = preview ? { ...made, preview: true } : made;
+    const tabs = old ? cur.tabs.map((t) => (t === old ? tab : t)) : [...cur.tabs, tab];
+    next = setTabs(reveal(s, session, panel), session, pick({ ...cur, tabs }, panel, tab.id));
   }
   return withRecent(next, project, target.path);
 }
@@ -349,7 +379,9 @@ function openBackground(s: PaneView, a: Extract<PaneAction, { type: "openBackgro
     // The tab in front of the person needs no mark.
     const front = a.onScreen && activeIn(cur, panelOf(existing)) === existing.id;
     const marked = front ? existing : existing.opened_by === by && existing.unseen ? existing : { ...existing, opened_by: by, unseen: true };
-    next = marked === existing ? s : setTabs(s, session, { ...cur, tabs: cur.tabs.map((t) => (t === existing ? marked : t)) });
+    // A file the agent or `marshell open` shows is kept, even from a preview tab.
+    const shown = kind === "file" ? kept(marked) : marked;
+    next = shown === existing ? s : setTabs(s, session, { ...cur, tabs: cur.tabs.map((t) => (t === existing ? shown : t)) });
   } else {
     if (cur.tabs.length >= PANE_LIMITS.tabs) return s;
     const tab: PaneTab = { id: nextId(cur.tabs), kind, history: [entryOf({ path: target })], index: 0, title: null, opened_by: by, unseen: true };
@@ -393,6 +425,8 @@ function close(s: PaneView, session: string, paneTab: string): PaneView {
   const panel = panelOf(cur.tabs[at]!);
   const tabs = cur.tabs.filter((_, i) => i !== at);
   if (tabs.length === 0) {
+    // A session with a tree keeps it, with no tabs.
+    if (cur.tree) return { ...s, sessions: { ...s.sessions, [session]: { tabs: [], active: null, tree: cur.tree } } };
     const { [session]: _gone, ...sessions } = s.sessions;
     return { ...s, sessions };
   }
@@ -403,6 +437,28 @@ function close(s: PaneView, session: string, paneTab: string): PaneView {
   const next = mine[from + 1] ?? mine[from - 1];
   if (!next) return setTabs(s, session, { ...was, tabs });
   return setTabs(s, session, pick(seenTab({ ...was, tabs }, next.id), panel, next.id));
+}
+
+const TREE_FOLDERS_MAX = 500;
+const TREE_WIDTH_MIN = 160;
+const TREE_WIDTH_MAX = 2048;
+
+/** Sets the session's tree, keeping only the folders the core accepts and the first 500; the session's tabs are untouched. */
+function setTree(s: PaneView, session: string, tree: TreeState): PaneView {
+  const expanded = tree.expanded.filter(treeFolderOk).slice(0, TREE_FOLDERS_MAX);
+  const cur = tabsOf(s, session);
+  const was = cur.tree;
+  if (was && was.root === tree.root && was.expanded.length === expanded.length && was.expanded.every((f, i) => f === expanded[i])) return s;
+  return setTabs(s, session, { ...cur, tree: { root: tree.root, expanded } });
+}
+
+function setTreeView(s: PaneView, view: Partial<TreeView>): PaneView {
+  const was: TreeView = s.tree ?? { hidden: false, width: null };
+  const hidden = typeof view.hidden === "boolean" ? view.hidden : was.hidden;
+  let width = was.width;
+  if (view.width === null) width = null;
+  else if (typeof view.width === "number" && Number.isFinite(view.width)) width = Math.round(Math.min(TREE_WIDTH_MAX, Math.max(TREE_WIDTH_MIN, view.width)));
+  return hidden === was.hidden && width === was.width && s.tree ? s : { ...s, tree: { hidden, width } };
 }
 
 /** The stack as `show` and `toggle` leave it: the saved one, or the one the session's tabs imply, written down. */
@@ -450,7 +506,13 @@ function mergeWeights(s: PaneView, weights: Weights, session: string | null): Pa
 export function paneReducer(s: PaneView, a: PaneAction): PaneView {
   switch (a.type) {
     case "open":
-      return open(s, a.session, a.project, a.target);
+      return open(s, a.session, a.project, a.target, a.preview === true);
+    case "keep":
+      return editFileTab(s, a.session, a.paneTab, kept);
+    case "tree":
+      return setTree(s, a.session, a.tree);
+    case "treeView":
+      return setTreeView(s, a.view);
     case "navigate":
       return navigate(s, a.session, a.paneTab, a.project, a.target);
     case "openPage":

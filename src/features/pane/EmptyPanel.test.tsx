@@ -57,12 +57,12 @@ describe("EmptyBrowser", () => {
 });
 
 describe("EmptyFiles", () => {
-  it("the Files block says there are no files and offers Open file… and Browse…", () => {
+  it("the Files block says there are no files and offers Go to file… and Browse…", () => {
     const out = files([]);
     expect(out).toContain('<h2 class="empty-panel__title">No files open</h2>');
     expect(out).toContain("Open a file from this project, or drop one here.");
     const [first, second] = buttons(out);
-    expect(first).toContain("Open file…");
+    expect(first).toContain("Go to file…");
     expect(first).toContain("empty-panel__button--primary");
     expect(second).toContain("Browse…");
     expect(second).not.toContain("empty-panel__button--primary");

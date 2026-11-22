@@ -459,6 +459,10 @@ pub struct PaneTab {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub viewport: Option<String>,
+    /// Some(true) for a preview tab, which the next file opened from the tree replaces. The app never writes false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub preview: Option<bool>,
 }
 
 /// The body of a `marshell open` request: one address or file for a session's side pane.
@@ -520,6 +524,27 @@ pub struct SessionTabs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub active_browser: Option<String>,
+    /// The file tree's saved state for this session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tree: Option<TreeState>,
+}
+
+/// A session's file tree: its root and the open folders.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TreeState {
+    pub root: String,
+    /// Open folders relative to `root`, with "/" separators.
+    pub expanded: Vec<String>,
+}
+
+/// The file tree's size and visibility, per window.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TreeView {
+    pub hidden: bool,
+    pub width: Option<u32>,
 }
 
 /// A file opened lately in a project.
@@ -558,6 +583,10 @@ pub struct PaneView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub panels: Option<Panels>,
+    /// The file tree's visibility and width.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tree: Option<TreeView>,
 }
 
 /// How the window was laid out: the selected tab, the sidebar and the side pane.
@@ -1016,6 +1045,139 @@ pub struct FileList {
     pub truncated: bool,
 }
 
+/// POST /v1/sessions/{tab}/tree body: the folders of the session's project to list, one level each.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TreeRequest {
+    /// 1 to 64 folders.
+    pub dirs: Vec<TreeAsk>,
+}
+
+/// One folder asked for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TreeAsk {
+    /// Relative to the project root, with `/` separators. "" is the root.
+    pub dir: String,
+    /// The stamp of the last reply for this folder. An equal stamp answers `same`.
+    #[ts(type = "number | null")]
+    pub stamp: Option<u64>,
+}
+
+/// POST /v1/sessions/{tab}/tree reply.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TreeReply {
+    /// The project root the folders are relative to.
+    pub root: String,
+    /// One per ask, in order.
+    pub dirs: Vec<TreeDir>,
+}
+
+/// The answer for one asked folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TreeDir {
+    pub dir: String,
+    pub state: TreeDirState,
+    /// The folder's modification time in milliseconds. 0 when it was not listed.
+    #[ts(type = "number")]
+    pub stamp: u64,
+    /// Folders and links first, then files. Empty unless `state` is `listed`.
+    pub entries: Vec<TreeEntry>,
+    /// How many entries the 5,000 cap left out.
+    pub more: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum TreeDirState {
+    Listed,
+    Same,
+    Gone,
+    Refused,
+}
+
+/// One entry of a listed folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TreeEntry {
+    pub name: String,
+    pub kind: TreeEntryKind,
+    /// True when git ignores it, or its folder is ignored.
+    pub ignored: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum TreeEntryKind {
+    File,
+    Folder,
+    Link,
+}
+
+/// POST /v1/sessions/{tab}/search body: plain text to find in the session's project files. A body, so
+/// the text stays out of URLs and logs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SearchRequest {
+    /// 2 to 200 characters on one line.
+    pub q: String,
+}
+
+/// POST /v1/sessions/{tab}/search reply.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SearchReply {
+    /// The project root the paths are relative to.
+    pub root: String,
+    /// Files with a match, sorted by path.
+    pub files: Vec<SearchFile>,
+    /// Why the search stopped before it had read everything. Null when it finished.
+    pub cut: Option<SearchCut>,
+}
+
+/// What stopped a search early.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum SearchCut {
+    /// It stopped at 1,000 matching lines.
+    Lines,
+    /// It stopped after 3,000 ms.
+    Time,
+}
+
+/// A file with matching lines.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SearchFile {
+    /// Relative to the root, with `/` separators.
+    pub path: String,
+    pub lines: Vec<SearchLine>,
+}
+
+/// A matching line, cut to a readable length.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SearchLine {
+    /// The line's number, from 1.
+    pub line: u32,
+    /// The line's text in order, split at every match.
+    pub parts: Vec<SearchPart>,
+}
+
+/// A piece of a matching line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SearchPart {
+    pub text: String,
+    /// True for the text that matched.
+    pub hit: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct RenameRequest {
@@ -1268,6 +1430,8 @@ pub struct Settings {
     pub history_backup_dir: Option<String>,
     /// The Browser panel's settings.
     pub browser: BrowserSettings,
+    /// The Files panel's settings.
+    pub files: FilesSettings,
 }
 
 /// How long a page keeps its cookies.
@@ -1320,6 +1484,51 @@ impl Default for Settings {
             history_limit_days: None,
             history_backup_dir: None,
             browser: BrowserSettings::default(),
+            files: FilesSettings::default(),
+        }
+    }
+}
+
+/// Where the file tree sits beside the open file.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export)]
+pub enum TreePosition {
+    #[default]
+    Automatic,
+    Left,
+    Right,
+}
+
+/// The Files panel's settings, in `settings.json` under `files`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct FilesSettings {
+    pub preview_tabs: bool,
+    pub auto_save: bool,
+    pub tab_indents: bool,
+    pub word_wrap: bool,
+    pub indent_guides: bool,
+    pub whitespace: bool,
+    pub scroll_past_end: bool,
+    /// 2, 4 or 8.
+    pub tab_size: u8,
+    pub tree_position: TreePosition,
+}
+
+impl Default for FilesSettings {
+    fn default() -> Self {
+        Self {
+            preview_tabs: true,
+            auto_save: false,
+            tab_indents: true,
+            word_wrap: false,
+            indent_guides: true,
+            whitespace: false,
+            scroll_past_end: false,
+            tab_size: 4,
+            tree_position: TreePosition::default(),
         }
     }
 }

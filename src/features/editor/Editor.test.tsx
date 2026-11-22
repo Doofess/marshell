@@ -1,9 +1,10 @@
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { history, redo, undo } from "@codemirror/commands";
 import { EditorState, type Transaction } from "@codemirror/state";
 import type { Encoding, Eol } from "./textFile";
-import { Editor, outsideText } from "./Editor";
+import { Editor, lineOffset, outsideText } from "./Editor";
 import { EditorFooter } from "./EditorFooter";
 
 describe("outsideText", () => {
@@ -71,5 +72,34 @@ describe("Editor", () => {
     expect(footer("lf", "utf-16le")).toContain("UTF-16 LE");
     expect(footer("lf", "utf-16be")).toContain("UTF-16 BE");
     expect(footer("lf", "utf-8")).toContain(">LF<");
+  });
+});
+
+describe("lineOffset", () => {
+  const doc = EditorState.create({ doc: "one\ntwo words\nthree" }).doc;
+
+  it("puts the cursor at the start of the line, or at its column clamped to the line", () => {
+    expect(lineOffset(doc, 2, null)).toBe(4);
+    expect(lineOffset(doc, 2, 5)).toBe(8);
+    expect(lineOffset(doc, 2, 99)).toBe(13);
+    expect(lineOffset(doc, 2, 0)).toBe(4);
+  });
+
+  it("clamps a line past either end of the text", () => {
+    expect(lineOffset(doc, 0, null)).toBe(0);
+    expect(lineOffset(doc, 40, null)).toBe(14);
+  });
+});
+
+describe("a line a tab was opened at", () => {
+  const editor = readFileSync(new URL("./Editor.tsx", import.meta.url), "utf8");
+  const textTab = readFileSync(new URL("./TextTab.tsx", import.meta.url), "utf8");
+
+  // Live check 6r-2: the editor mounts a render after the tab, so React's dev double mount made a second view the tab's own
+  // effect never revealed, and a search result opened at line 1. The editor reveals its target itself, after making its view.
+  it("goes to the editor, which scrolls to it and puts the cursor on it", () => {
+    expect(textTab).toContain("target={entry.line === null ? undefined : { line: entry.line, col: entry.col }}");
+    expect(textTab).not.toContain("editor.current?.reveal(");
+    expect(editor).toContain("selection: { anchor: at }");
   });
 });

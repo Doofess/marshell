@@ -3,7 +3,8 @@
 
 use crate::store::{self, Versioned};
 use marshell_protocol::api::{
-    LauncherChoice, LayoutDoc, PaneTab, PaneView, Panels, RecentFile, SavedTab, SessionMode, ViewLayout,
+    LauncherChoice, LayoutDoc, PaneTab, PaneView, Panels, RecentFile, SavedTab, SessionMode, TreeState, TreeView,
+    ViewLayout,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -75,6 +76,21 @@ fn lenient_pane(doc: &mut serde_json::Value) {
         }
     }
 
+    if let Some(tree) = fields.get_mut("tree")
+        && serde_json::from_value::<TreeView>(tree.clone()).is_err()
+    {
+        // A width that can't be read is dropped alone; a tree that is still unreadable goes whole.
+        if let Some(t) = tree.as_object_mut()
+            && t.get("width")
+                .is_some_and(|w| !w.as_u64().is_some_and(|n| u32::try_from(n).is_ok()))
+        {
+            t.insert("width".into(), Value::Null);
+        }
+        if serde_json::from_value::<TreeView>(tree.clone()).is_err() {
+            fields.remove("tree");
+        }
+    }
+
     if !fields.get("sessions").is_some_and(Value::is_object) {
         fields.insert("sessions".into(), Value::Object(Map::new()));
     }
@@ -132,10 +148,13 @@ fn lenient_session(session: &mut serde_json::Value) -> bool {
     };
     for tab in tabs.iter_mut() {
         // A viewport that is not a known size is dropped alone; the tab stays.
-        if let Some(t) = tab.as_object_mut()
-            && t.get("viewport").is_some_and(|v| !v.as_str().is_some_and(is_viewport))
-        {
-            t.remove("viewport");
+        if let Some(t) = tab.as_object_mut() {
+            if t.get("viewport").is_some_and(|v| !v.as_str().is_some_and(is_viewport)) {
+                t.remove("viewport");
+            }
+            if t.get("preview").is_some_and(|p| !p.is_boolean()) {
+                t.remove("preview");
+            }
         }
     }
     tabs.retain(|tab| serde_json::from_value::<PaneTab>(tab.clone()).is_ok());
@@ -145,7 +164,31 @@ fn lenient_session(session: &mut serde_json::Value) -> bool {
     if fields.get("active_browser").is_some_and(|a| !a.is_string()) {
         fields.remove("active_browser");
     }
+    if let Some(tree) = fields.get_mut("tree")
+        && !lenient_tree_state(tree)
+    {
+        fields.remove("tree");
+    }
     true
+}
+
+/// Drops the non-string folders of a saved tree. False when the tree still can't be read.
+fn lenient_tree_state(tree: &mut serde_json::Value) -> bool {
+    use serde_json::Value;
+
+    if let Some(Value::Array(expanded)) = tree.get_mut("expanded") {
+        expanded.retain(Value::is_string);
+    }
+    serde_json::from_value::<TreeState>(tree.clone()).is_ok()
+}
+
+/// A folder of a saved tree: relative to the root, "/" separated, no `..`.
+pub fn tree_folder_ok(f: &str) -> bool {
+    !f.is_empty()
+        && f.chars().count() <= MAX_PATH_CHARS
+        && !f.contains(['\\', ':'])
+        && !f.starts_with('/')
+        && f.split('/').all(|c| !matches!(c, "" | "." | ".."))
 }
 
 impl Versioned for FileDoc {
@@ -159,6 +202,8 @@ pub(crate) const MAX_PANE_TABS: usize = 32;
 const MAX_PANE_HISTORY: usize = 50;
 const MAX_RECENT_FILES: usize = 200;
 const MAX_PATH_CHARS: usize = 4096;
+const MAX_TREE_FOLDERS: usize = 500;
+const TREE_WIDTH: std::ops::RangeInclusive<u32> = 160..=2048;
 const PANE_VIEWS: [&str; 2] = ["rendered", "source"];
 /// The side pane's panels, top to bottom.
 const PANEL_IDS: [&str; 2] = ["browser", "files"];
@@ -358,7 +403,18 @@ fn repair_pane(pane: &mut PaneView, tabs: &[SavedTab]) {
             st.active = st.tabs.first().map(|t| t.id.clone());
         }
     }
-    pane.sessions.retain(|_, st| !st.tabs.is_empty());
+    for st in pane.sessions.values_mut() {
+        if let Some(tree) = &mut st.tree {
+            tree.expanded.retain(|f| tree_folder_ok(f));
+            tree.expanded.truncate(MAX_TREE_FOLDERS);
+        }
+    }
+    pane.sessions.retain(|_, st| !st.tabs.is_empty() || st.tree.is_some());
+    if let Some(tree) = &mut pane.tree
+        && tree.width.is_some_and(|w| !TREE_WIDTH.contains(&w))
+    {
+        tree.width = None;
+    }
     pane.recent.retain(|r| path_ok(&r.path));
     pane.recent.truncate(MAX_RECENT_FILES);
 }
@@ -464,7 +520,31 @@ pub fn validate_pane(p: &PaneView) -> Result<(), String> {
     if let Some(panels) = &p.panels {
         validate_panels(panels)?;
     }
+    if let Some(w) = p
+        .tree
+        .as_ref()
+        .and_then(|t| t.width)
+        .filter(|w| !TREE_WIDTH.contains(w))
+    {
+        return Err(format!(
+            "pane.tree.width must be {} to {}, not {w}",
+            TREE_WIDTH.start(),
+            TREE_WIDTH.end()
+        ));
+    }
     for (session, st) in &p.sessions {
+        if let Some(tree) = &st.tree {
+            if tree.expanded.len() > MAX_TREE_FOLDERS {
+                return Err(format!(
+                    "pane.sessions.{session}.tree.expanded holds at most {MAX_TREE_FOLDERS} folders"
+                ));
+            }
+            if tree.expanded.iter().any(|f| !tree_folder_ok(f)) {
+                return Err(format!(
+                    "pane.sessions.{session}.tree.expanded holds a folder that isn't relative"
+                ));
+            }
+        }
         if st.tabs.len() > MAX_PANE_TABS {
             return Err(format!(
                 "pane.sessions.{session}.tabs holds at most {MAX_PANE_TABS}, not {}",
@@ -865,6 +945,7 @@ mod tests {
             opened_by: None,
             unseen: false,
             viewport: None,
+            preview: None,
         }
     }
 
@@ -936,6 +1017,7 @@ mod tests {
             tabs,
             active,
             active_browser: None,
+            tree: None,
         }
     }
 
@@ -1665,6 +1747,135 @@ mod tests {
                 ..PaneView::default()
             })
             .is_ok()
+        );
+    }
+
+    fn pane_json_with_session(session: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({"open": true, "width": 480, "recent": [], "sessions": {"ta": session}})
+    }
+
+    #[test]
+    fn a_tab_keeps_preview_and_drops_an_unreadable_one() {
+        let mut keep = good_file_tab("t1");
+        keep["preview"] = serde_json::json!(true);
+        let mut bad = good_file_tab("t2");
+        bad["preview"] = serde_json::json!("yes");
+        let doc = load_with_pane(
+            pane_json_with_session(serde_json::json!({"tabs": [keep, bad], "active": "t1"})),
+            serde_json::json!(304),
+        );
+        let tabs = &doc.view.pane.sessions["ta"].tabs;
+        assert_eq!(tabs.len(), 2);
+        assert_eq!(tabs[0].preview, Some(true));
+        assert_eq!(tabs[1].preview, None);
+    }
+
+    #[test]
+    fn a_session_keeps_its_tree_and_drops_bad_folders() {
+        let doc = load_with_pane(
+            pane_json_with_session(serde_json::json!({
+                "tabs": [good_file_tab("t1")], "active": "t1",
+                "tree": {"root": "C:\\p", "expanded": ["src", "src/a", "", "/abs", "a/../b", "a\\b", 7]}
+            })),
+            serde_json::json!(304),
+        );
+        let tree = doc.view.pane.sessions["ta"].tree.clone().unwrap();
+        assert_eq!(tree.root, "C:\\p");
+        assert_eq!(tree.expanded, vec!["src".to_string(), "src/a".to_string()]);
+    }
+
+    #[test]
+    fn a_session_tree_keeps_at_most_500_folders() {
+        let folders: Vec<String> = (0..600).map(|i| format!("d{i}")).collect();
+        let doc = load_with_pane(
+            pane_json_with_session(serde_json::json!({
+                "tabs": [good_file_tab("t1")], "active": "t1",
+                "tree": {"root": "C:\\p", "expanded": folders}
+            })),
+            serde_json::json!(304),
+        );
+        let expanded = &doc.view.pane.sessions["ta"].tree.as_ref().unwrap().expanded;
+        assert_eq!(expanded.len(), 500);
+        assert_eq!(expanded[0], "d0");
+        assert_eq!(expanded[499], "d499");
+    }
+
+    #[test]
+    fn an_unreadable_session_tree_is_dropped_and_the_tabs_kept() {
+        for tree in [serde_json::json!(5), serde_json::json!({"root": 3})] {
+            let doc = load_with_pane(
+                pane_json_with_session(serde_json::json!({
+                    "tabs": [good_file_tab("t1")], "active": "t1", "tree": tree
+                })),
+                serde_json::json!(304),
+            );
+            let st = &doc.view.pane.sessions["ta"];
+            assert_eq!(st.tabs.len(), 1);
+            assert_eq!(st.tree, None);
+        }
+    }
+
+    #[test]
+    fn the_window_tree_width_outside_160_to_2048_is_dropped() {
+        for width in [100, 5000] {
+            let mut pane = pane_json_with_session(serde_json::json!({"tabs": [good_file_tab("t1")], "active": "t1"}));
+            pane["tree"] = serde_json::json!({"hidden": true, "width": width});
+            let doc = load_with_pane(pane, serde_json::json!(304));
+            assert_eq!(
+                doc.view.pane.tree,
+                Some(TreeView {
+                    hidden: true,
+                    width: None
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn a_session_with_a_tree_and_no_tabs_is_kept() {
+        let tree = serde_json::json!({"root": "C:\\p", "expanded": []});
+        let doc = load_with_pane(
+            pane_json_with_session(serde_json::json!({"tabs": [], "active": null, "tree": tree})),
+            serde_json::json!(304),
+        );
+        assert!(doc.view.pane.sessions["ta"].tree.is_some());
+        let doc = load_with_pane(
+            pane_json_with_session(serde_json::json!({"tabs": [], "active": null})),
+            serde_json::json!(304),
+        );
+        assert!(doc.view.pane.sessions.is_empty());
+    }
+
+    #[test]
+    fn validate_pane_refuses_a_bad_tree() {
+        let with_tree = |expanded: Vec<String>| {
+            let mut st = session(vec![]);
+            st.tree = Some(TreeState {
+                root: "C:\\p".into(),
+                expanded,
+            });
+            pane_with("s", st)
+        };
+        let many: Vec<String> = (0..501).map(|i| format!("d{i}")).collect();
+        assert_eq!(
+            validate_pane(&with_tree(many)).unwrap_err(),
+            "pane.sessions.s.tree.expanded holds at most 500 folders"
+        );
+        assert_eq!(
+            validate_pane(&with_tree(vec!["a/../b".into()])).unwrap_err(),
+            "pane.sessions.s.tree.expanded holds a folder that isn't relative"
+        );
+        assert!(validate_pane(&with_tree(vec!["src".into()])).is_ok());
+        let pane = PaneView {
+            tree: Some(TreeView {
+                hidden: false,
+                width: Some(100),
+            }),
+            ..PaneView::default()
+        };
+        assert_eq!(
+            validate_pane(&pane).unwrap_err(),
+            "pane.tree.width must be 160 to 2048, not 100"
         );
     }
 }

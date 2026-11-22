@@ -41,7 +41,7 @@ export type QuickFiles = {
   truncated?: boolean;
   /** The folder's list: still being fetched, failed, or here. Left out means ready. The seen paths do not wait for it. */
   status?: "loading" | "error" | "ready";
-  /** "Open file…": file groups only. */
+  /** "Go to file…": file groups only. */
   only?: boolean;
 };
 
@@ -198,7 +198,7 @@ export function Palette({
   const box = lean ? emptyBox(pool, recent ?? [], moved ?? []) : null;
   const asHits = (cs: Command[], head: (c: Command) => string): Item[] => cs.map((item) => ({ type: "command", hit: { item, ranges: [] }, head: head(item) }));
   const commandHits = only || wanted !== null || box ? [] : filterCommands(query, pool);
-  // One character matches too much to be worth a group; "Open file…" starts at one, and shows the seen paths before any.
+  // One character matches too much to be worth a group; "Go to file…" starts at one, and shows the seen paths before any.
   const fileGroups: Array<{ title: string; hits: FileHit[] }> = [];
   if (files && !second && (only || query.trim().length >= 2)) {
     // A seen path leaves the Files group only once that group exists.

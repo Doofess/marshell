@@ -288,6 +288,15 @@ describe("wrapAtStart", () => {
     expect(wrapAtStart("code", "C:\p\a.ts", "const a = 1;")).toBe(false);
     expect(wrapAtStart("html", "C:\p\a.html", "<!doctype html>")).toBe(false);
   });
+  it("word wrap on wraps code too", () => {
+    expect(wrapAtStart("code", "C:\p\a.ts", undefined, true)).toBe(true);
+    expect(wrapAtStart("code", "C:\p\a.ts", undefined, false)).toBe(false);
+    expect(wrapAtStart("html", "C:\p\a.html", "<!doctype html>", true)).toBe(true);
+    expect(wrapAtStart("text", "C:\p\script", "#!/usr/bin/env python3", true)).toBe(true);
+    // Prose is wrapped either way.
+    expect(wrapAtStart("markdown", "C:\p\a.md", "# A", true)).toBe(true);
+    expect(wrapAtStart("markdown", "C:\p\a.md", "# A", false)).toBe(true);
+  });
   it("is off for a file whose first line says it is code, though its name does not", () => {
     expect(wrapAtStart("text", "C:\p\script", "#!/usr/bin/env python3")).toBe(false);
   });

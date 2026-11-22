@@ -148,9 +148,10 @@ describe("preview", () => {
     }
     for (const os of OSES) expect(problemsIn(COMMANDS, os), os).toEqual([]);
   });
-  it("has the open-file command with no default binding", () => {
-    expect(commandById("open-file").label).toBe("Open file…");
-    expect(commandById("open-file").binding).toBeUndefined();
+  it("has the open-file command on P, with no conflict on any system", () => {
+    expect(commandById("open-file").label).toBe("Go to file…");
+    expect(commandById("open-file").binding).toEqual({ code: "KeyP" });
+    for (const os of OSES) expect(problemsIn(COMMANDS, os), os).toEqual([]);
   });
 });
 

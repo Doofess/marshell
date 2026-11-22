@@ -30,6 +30,8 @@ export type DocState = {
   line: string | null;
   undoOffered: boolean;
   sent: string | null;
+  /** The save in flight (`sent`) is an auto save: its answer says nothing when it works. */
+  sentAuto: boolean;
   replaced: { hash: string | null } | null;
   held: Extract<DocEvent, { type: "disk" | "gone" }> | null;
   merging: boolean;
@@ -42,7 +44,7 @@ export type DocEvent =
   | { type: "edited"; text: string }
   | { type: "disk"; disk: Disk }
   | { type: "gone" }
-  | { type: "save" }
+  | { type: "save"; /** The timer or a leaving, not a key press: it never says it did not save, and does nothing with the bar up. */ auto?: true }
   | { type: "saved"; hash: string; snapshot: string | null }
   | { type: "saveConflict"; hash: string | null }
   | { type: "saveFailed"; line: string }
@@ -67,7 +69,7 @@ export type Effect =
   | { type: "setText"; text: string; marks: number[] }
   | { type: "putDraft" }
   | { type: "dropDraft" }
-  | { type: "save"; expect: string | null }
+  | { type: "save"; expect: string | null; auto?: true }
   | { type: "unsave"; snapshot: string }
   | { type: "refetch" }
   | { type: "merge"; id: number; base: string; mine: string; disk: Disk }
@@ -88,6 +90,7 @@ export const start: DocState = {
   line: null,
   undoOffered: false,
   sent: null,
+  sentAuto: false,
   replaced: null,
   held: null,
   merging: false,
@@ -254,12 +257,21 @@ function disk(s: DocState, d: Disk, name: string): Out {
   return reload(s, d, name);
 }
 
-function save(s: DocState, name: string): Out {
-  if (s.saving) return unchanged(s);
+function save(s: DocState, name: string, auto: boolean): Out {
+  if (s.saving) {
+    // A key press while an auto save is out: its answer is the one the person asked for, and says so.
+    return unchanged(!auto && s.sentAuto ? { ...s, sentAuto: false } : s);
+  }
+  if (auto) {
+    // The bar already says the file changed, so an auto save stops there without a word. It never makes a file that is gone either:
+    // that is Ctrl+S's, as the notice says.
+    if (s.conflict !== null || !s.dirty || s.base.hash === null) return unchanged(s);
+    return { state: { ...s, saving: true, sent: s.text, sentAuto: true }, effects: [{ type: "save", expect: s.base.hash, auto: true }] };
+  }
   // The bar is up: nothing is written until it is answered, and the person who pressed the key is told so.
   if (s.conflict !== null) return said(s, `${name} changed on disk, so it wasn't saved.`);
   if (!s.dirty && s.base.hash !== null) return unchanged(s);
-  return { state: { ...s, saving: true, sent: s.text }, effects: [{ type: "save", expect: s.base.hash }] };
+  return { state: { ...s, saving: true, sent: s.text, sentAuto: false }, effects: [{ type: "save", expect: s.base.hash }] };
 }
 
 function saved(s: DocState, hash: string, snapshot: string | null, name: string): Out {
@@ -273,12 +285,16 @@ function saved(s: DocState, hash: string, snapshot: string | null, name: string)
     deleted: false,
     saving: false,
     sent: null,
+    sentAuto: false,
     dirty,
-    lastSave: snapshot === null ? null : { snapshot, hash },
-    undoOffered: snapshot !== null,
+    lastSave: snapshot === null || s.sentAuto ? null : { snapshot, hash },
+    undoOffered: snapshot !== null && !s.sentAuto,
     replaced: s.base.hash === hash ? null : { hash: s.base.hash },
     merge: null,
   };
+  // An auto save that works says nothing and offers no undo: the person pressed nothing, and an Undo button under text they are
+  // still typing would put back a file they have since changed.
+  if (s.sentAuto) return { state: { ...state, line: null }, effects: [draftEffect(dirty), { type: "refetch" }] };
   // A text that still holds conflicts is saved as it is, and the line says how many are left.
   const left = countConflicts(s.sent);
   const rest = left === 0 ? "" : left === 1 ? " 1 conflict left." : ` ${left} conflicts left.`;
@@ -327,15 +343,15 @@ function apply(s: DocState, e: DocEvent, name: string): Out {
     case "gone":
       return gone(s);
     case "save":
-      return save(s, name);
+      return save(s, name, e.auto === true);
     case "saved":
       return saved(s, e.hash, e.snapshot, name);
     case "saveConflict":
-      return said({ ...s, saving: false, sent: null }, `${name} changed on disk, so it wasn't saved.`, { type: "refetch" });
+      return said({ ...s, saving: false, sent: null, sentAuto: false }, `${name} changed on disk, so it wasn't saved.`, { type: "refetch" });
     case "saveFailed":
-      return said({ ...s, saving: false, sent: null }, `${name} couldn't be saved. ${e.line}`);
+      return said({ ...s, saving: false, sent: null, sentAuto: false }, `${name} couldn't be saved. ${e.line}`);
     case "saveTooLarge":
-      return said({ ...s, saving: false, sent: null }, `${name} is over 2 MB, so it can't be saved.`);
+      return said({ ...s, saving: false, sent: null, sentAuto: false }, `${name} is over 2 MB, so it can't be saved.`);
     case "keepMine": {
       if (s.conflict === null || s.saving) return unchanged(s);
       const next = edit({ ...s, base: s.conflict, conflict: null, merge: null }, s.text);

@@ -15,6 +15,7 @@
       "identifier": "opener:allow-open-url",
       "allow": [{ "url": "http://*" }, { "url": "https://*" }]
     },
+    "opener:allow-reveal-item-in-dir",
     "allow-save-diagnostics",
     "allow-save-conversation",
     "allow-pick-file",

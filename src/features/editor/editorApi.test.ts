@@ -43,6 +43,19 @@ describe("saveFile", () => {
     expect(await saveFile("a.txt", new Uint8Array(), null)).toEqual({ kind: "saved", saved: { ...saved, snapshot: null } });
     expect(urlOf().searchParams.get("expect")).toBe("none");
   });
+  it("an auto save sends auto=1, and a save by hand sends no auto", async () => {
+    arrange(new Response(JSON.stringify({ ...saved, snapshot: null }), { status: 200 }));
+    await saveFile("a.txt", new Uint8Array(), "f".repeat(64), true);
+    expect(urlOf().searchParams.get("auto")).toBe("1");
+    expect(urlOf().searchParams.get("path")).toBe("a.txt");
+    expect(urlOf().searchParams.get("expect")).toBe("f".repeat(64));
+    fetchMock.mockClear();
+    await saveFile("a.txt", new Uint8Array(), "f".repeat(64));
+    expect(urlOf().searchParams.has("auto")).toBe(false);
+    fetchMock.mockClear();
+    await saveFile("a.txt", new Uint8Array(), "f".repeat(64), false);
+    expect(urlOf().searchParams.has("auto")).toBe(false);
+  });
   it("says conflict with the disk's hash on a 409", async () => {
     arrange(new Response(JSON.stringify({ hash: "c".repeat(64) }), { status: 409 }));
     expect(await saveFile("a.txt", new Uint8Array(), "f".repeat(64))).toEqual({ kind: "conflict", hash: "c".repeat(64) });

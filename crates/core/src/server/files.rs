@@ -43,7 +43,7 @@ pub const MAX_LIST_FILES: usize = 20_000;
 /// The folder list also stops after this long, so a huge folder can't hang the palette.
 const LIST_BUDGET: Duration = Duration::from_secs(2);
 /// Folders the walk outside a repo does not enter.
-const SKIPPED_DIRS: [&str; 5] = ["node_modules", ".git", "target", "dist", "build"];
+pub(super) const SKIPPED_DIRS: [&str; 5] = ["node_modules", ".git", "target", "dist", "build"];
 
 const MODIFIED_MS: HeaderName = HeaderName::from_static("x-modified-ms");
 /// The SHA-256 of the bytes `content` serves. A save names it, so it writes only over what the tab loaded.
@@ -112,7 +112,7 @@ fn reserved_name(component: &str) -> bool {
 }
 
 /// `\\?\C:\x` as `C:\x`. None for `\\?\UNC\...`, which is a network path.
-fn strip_verbatim(path: &std::path::Path) -> Option<String> {
+pub(super) fn strip_verbatim(path: &std::path::Path) -> Option<String> {
     let text = path.to_str()?;
     if text.starts_with(r"\\?\UNC\") {
         return None;
@@ -305,7 +305,7 @@ fn bases_of(row: Option<&SessionInfo>, reported: Option<PathBuf>) -> Vec<PathBuf
     bases
 }
 
-fn row_of(st: &AppState, tab: &str) -> Option<SessionInfo> {
+pub(super) fn row_of(st: &AppState, tab: &str) -> Option<SessionInfo> {
     st.registry().snapshot().sessions.into_iter().find(|s| s.tab_id == tab)
 }
 
@@ -517,6 +517,35 @@ fn relative(root: &std::path::Path, path: &std::path::Path) -> Option<String> {
     Some(parts?.join("/"))
 }
 
+/// Whether every folder between `root` and the file `rel` names (relative, `/` or `\` separated) is a
+/// plain folder: never a symlink or junction, wherever it points. Git for Windows walks into
+/// junctions, so its lists are filtered here, as the walk and the tree never enter one. `folders`
+/// remembers each folder's answer, so a big list costs one check per folder.
+pub(super) fn under_plain_folders(
+    root: &std::path::Path,
+    rel: &str,
+    folders: &mut std::collections::HashMap<PathBuf, bool>,
+) -> bool {
+    let rel = std::path::Path::new(rel);
+    let Some(parent) = rel.parent() else {
+        return false;
+    };
+    let mut folder = root.to_path_buf();
+    for part in parent.components() {
+        let std::path::Component::Normal(name) = part else {
+            return false;
+        };
+        folder.push(name);
+        let plain = *folders.entry(folder.clone()).or_insert_with(|| {
+            std::fs::symlink_metadata(&folder).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
+        });
+        if !plain {
+            return false;
+        }
+    }
+    true
+}
+
 /// Whether `path` is a regular file the list may show. A link is followed only after its target is
 /// checked, and the folders above the file are checked once each (`safe_folders` remembers them).
 fn is_listable(path: &std::path::Path, safe_folders: &mut std::collections::HashSet<PathBuf>) -> bool {
@@ -538,7 +567,8 @@ fn is_listable(path: &std::path::Path, safe_folders: &mut std::collections::Hash
 }
 
 /// Tracked and untracked files, minus the ignored ones. None when `root` is not in a repo or git
-/// is not installed. Files the index lists but the disk lacks, and submodule folders, are left out.
+/// is not installed. Files the index lists but the disk lacks, submodule folders, and files under a
+/// folder link are left out.
 fn git_files(root: &std::path::Path) -> Option<(Vec<String>, bool)> {
     let out = crate::git::run(root, &["ls-files", "--cached", "--others", "--exclude-standard", "-z"]).ok()?;
     if !out.ok {
@@ -548,12 +578,16 @@ fn git_files(root: &std::path::Path) -> Option<(Vec<String>, bool)> {
     let mut seen = std::collections::HashSet::new();
     // Folders already read link by link, so a big repo costs one check per folder.
     let mut safe_folders = std::collections::HashSet::new();
+    let mut plain = std::collections::HashMap::new();
     let mut files = Vec::new();
     for name in out.stdout.split('\0').filter(|n| !n.is_empty()) {
         if files.len() >= MAX_LIST_FILES || started.elapsed() > LIST_BUDGET {
             return Some((files, true));
         }
-        if seen.insert(name) && is_listable(&root.join(name), &mut safe_folders) {
+        if seen.insert(name)
+            && under_plain_folders(root, name, &mut plain)
+            && is_listable(&root.join(name), &mut safe_folders)
+        {
             files.push(name.to_string());
         }
     }
@@ -605,6 +639,20 @@ fn first_folder(candidates: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf
         .filter(|p| p.to_str().is_some_and(|s| !refused(s)))
 }
 
+/// The project folder of a session and whether it is a git checkout. In a repo the root is the
+/// checkout the session was launched in, which for a task is its worktree (`project` is the launch
+/// folder itself outside git, so it is not used). Outside git it is the folder the shell last
+/// reported, else the launch folder. Each goes through `first_folder`. A reported folder never
+/// counts as a checkout, even inside one: it is learned from what the terminal printed, and git run
+/// in a folder nobody chose would run the commands a hostile `.git/config` names (`core.fsmonitor`).
+pub(super) fn project_root(row: Option<&SessionInfo>, reported: Option<PathBuf>) -> Option<(PathBuf, bool)> {
+    if let Some(root) = row.and_then(checkout_of).and_then(|c| first_folder([c])) {
+        return Some((root, true));
+    }
+    let launch = row.iter().map(|r| PathBuf::from(&r.cwd));
+    first_folder(reported.into_iter().chain(launch)).map(|root| (root, false))
+}
+
 /// GET /v1/sessions/{tab}/files
 pub async fn list(State(st): State<AppState>, Path(tab): Path<String>) -> Response {
     let row = row_of(&st, &tab);
@@ -614,16 +662,13 @@ pub async fn list(State(st): State<AppState>, Path(tab): Path<String>) -> Respon
     }
     let reported = session.and_then(|s| s.current_cwd());
     let done = tokio::task::spawn_blocking(move || {
-        // In a repo the root is the checkout the session was launched in, which for a task is its
-        // worktree. `project` is the launch folder itself outside git, so it is not used here.
-        if let Some(root) = row.as_ref().and_then(checkout_of).and_then(|c| first_folder([c])) {
+        let (root, is_git) = project_root(row.as_ref(), reported)?;
+        let (files, truncated) = if is_git {
             // Without git on PATH the walk still gives a list, though it lists ignored files.
-            let (files, truncated) = git_files(&root).unwrap_or_else(|| walk_files(&root));
-            return Some((root, files, truncated));
-        }
-        let launch = row.iter().map(|r| PathBuf::from(&r.cwd));
-        let root = first_folder(reported.into_iter().chain(launch))?;
-        let (files, truncated) = walk_files(&root);
+            git_files(&root).unwrap_or_else(|| walk_files(&root))
+        } else {
+            walk_files(&root)
+        };
         Some((root, files, truncated))
     })
     .await;
@@ -642,6 +687,28 @@ pub async fn list(State(st): State<AppState>, Path(tab): Path<String>) -> Respon
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Review 6r-2: a shell that `cd`s into a checkout gets its folder walked, not listed by git.
+    /// The folder comes from the terminal's output, and git there could run a hostile repo's
+    /// configured commands, so git runs only in the checkout the session was launched in.
+    #[test]
+    fn git_never_runs_in_a_folder_learned_only_from_the_shell() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = crate::projects::canonical(tmp.path()).join("repo");
+        std::fs::create_dir_all(repo.join("sub")).unwrap();
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["init", "-q"])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        for reported in [repo.clone(), repo.join("sub")] {
+            let (root, is_git) = project_root(None, Some(reported.clone())).unwrap();
+            assert_eq!(root, crate::projects::canonical(&reported));
+            assert!(!is_git, "{reported:?}");
+        }
+    }
 
     #[test]
     fn a_pdf_saved_with_its_notes_can_be_opened_again() {
