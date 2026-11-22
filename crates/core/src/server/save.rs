@@ -221,6 +221,11 @@ fn write_failed(e: io::Error) -> Done {
 fn saved(path: &Path, hash: String, snapshot: Option<String>) -> Done {
     // Every write that completes ends here, so the file's bytes are Marshell's own last write.
     remember_written(path, &hash);
+    answer(path, hash, snapshot)
+}
+
+/// What a save answers, from the file as it is now.
+fn answer(path: &Path, hash: String, snapshot: Option<String>) -> Done {
     match std::fs::metadata(path) {
         Ok(meta) => Done::Saved(FileSaved {
             size: meta.len(),
@@ -262,7 +267,9 @@ fn save_checked(path: &Path, expect: &Expect, body: &[u8], home: &Path, copy: Co
         }
         (Ok(Disk::File(bytes, read_only)), Expect::Hash(expected)) if hash_bytes(&bytes) == *expected => {
             if bytes == body {
-                return saved(path, new_hash, None);
+                // Nothing is written, so the bytes stay whoever's they were: an auto save over another
+                // program's write still takes its copy.
+                return answer(path, new_hash, None);
             }
             if read_only {
                 return Done::ReadOnly;
@@ -579,6 +586,20 @@ mod tests {
         assert_eq!(copies(home.path()), 1);
         // Another program writes the file; the next auto save replaces bytes Marshell never wrote.
         std::fs::write(&path, "theirs").unwrap();
+        assert!(snapshot_of(save_over(&path, home.path(), b"mine again", AUTO)).is_some());
+        assert_eq!(copies(home.path()), 2);
+    }
+
+    #[test]
+    fn a_save_that_writes_nothing_leaves_another_programs_bytes_theirs() {
+        // PR review of 6t: a save whose text the disk already holds writes nothing, so the next auto
+        // save still replaces bytes Marshell never wrote.
+        let (home, _dir, path) = file_made_directly();
+        assert!(snapshot_of(save_over(&path, home.path(), b"mine", Copy::Always)).is_some());
+        std::fs::write(&path, "theirs").unwrap();
+        // The tab reloaded "theirs"; saving that same text writes nothing and takes no copy.
+        assert_eq!(snapshot_of(save_over(&path, home.path(), b"theirs", AUTO)), None);
+        assert_eq!(copies(home.path()), 1);
         assert!(snapshot_of(save_over(&path, home.path(), b"mine again", AUTO)).is_some());
         assert_eq!(copies(home.path()), 2);
     }
