@@ -1,0 +1,40 @@
+/* The wait area (FilesPanel's `.files-wait`) centres the ring and its line. */
+.files-wait {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  block-size: 100%;
+  gap: var(--space-2);
+}
+.files-busy__ring {
+  color: var(--text-3);
+}
+.files-busy__track {
+  stroke: color-mix(in oklch, currentColor 25%, transparent);
+}
+.files-busy__text {
+  margin: 0;
+  font-size: var(--text-13);
+  color: var(--text-2);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  :root:not([data-motion="reduce"]) .files-busy__ring {
+    animation: files-busy-spin 1s linear infinite;
+  }
+}
+@keyframes files-busy-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (forced-colors: active) {
+  .files-busy__ring {
+    color: CanvasText;
+  }
+  .files-busy__track {
+    stroke: GrayText;
+  }
+  .files-busy__text {
+    color: CanvasText;
+  }
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterMode, namesNote, searchNote, SHORT_NOTE } from "./filterText";
+import { filterMode, LONG_NOTE, namesNote, searchNote, SHORT_NOTE } from "./filterText";
 
 describe("filterText", () => {
   it("filterMode reads names, ? with text, and ? alone", () => {
@@ -28,5 +28,14 @@ describe("filterText", () => {
     expect(namesNote({ matches: 500, capped: true, listCut: false }, "q")).toBe("Showing 500 matches. Type more to narrow them.");
     expect(namesNote({ matches: 3, capped: false, listCut: true }, "q")).toBe("Only the first 20,000 files are filtered.");
     expect(namesNote({ matches: 3, capped: false, listCut: false }, "q")).toBeNull();
+  });
+});
+
+describe("the search's length", () => {
+  it("counts characters, not UTF-16 units, and says the 200 limit", () => {
+    expect(filterMode("?😀")).toEqual({ kind: "short" });
+    expect(filterMode("?" + "a".repeat(200))).toEqual({ kind: "search", query: "a".repeat(200) });
+    expect(filterMode("?" + "a".repeat(201))).toEqual({ kind: "long" });
+    expect(LONG_NOTE).toBe("Search for 200 characters or fewer.");
   });
 });

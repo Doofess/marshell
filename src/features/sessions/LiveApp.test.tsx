@@ -861,3 +861,10 @@ describe("LiveApp: the Files panel's wiring", () => {
     expect(source).toContain("home={home}");
   });
 });
+
+describe("LiveApp: collapse through the saved tree", () => {
+  it("a collapse through the saved tree announces Collapsed all folders.", () => {
+    const source = readFileSync(join(__dirname, "LiveApp.tsx"), "utf8");
+    expect(source).toContain("expanded: [] } });\n        announce(COLLAPSED);");
+  });
+});

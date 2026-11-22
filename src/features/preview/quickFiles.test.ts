@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildQuickFiles, cachedFileList, fileListFor, folderName } from "./quickFiles";
+import { buildQuickFiles, cachedFileList, cachedFileListNow, fileListFor, folderName } from "./quickFiles";
 
 const list = (root: string) => ({ root, files: ["a.ts"], truncated: false });
 
@@ -73,5 +73,20 @@ describe("buildQuickFiles", () => {
     expect(q.files).toMatchObject({ status: "ready", folder: "r", list: ["a.ts"], truncated: true });
     expect(q.files.seen[0]).toBe("sub/a.ts");
     expect(q.pathOf("sub/a.ts")).toBe(seenAbs[0]);
+  });
+});
+
+describe("cachedFileListNow", () => {
+  it("gives a fresh cached list for the same root without a request, and nothing otherwise", async () => {
+    const fetch = vi.fn(async () => list("/r/a"));
+    const cache = new Map();
+    let t = 0;
+    await fileListFor("t", "/r/a", fetch, () => t, cache);
+    expect(cachedFileListNow("t", "/r/a", () => t, cache)?.root).toBe("/r/a");
+    expect(cachedFileListNow("t", "/r/b", () => t, cache)).toBeNull();
+    expect(cachedFileListNow("other", "/r/a", () => t, cache)).toBeNull();
+    t = 10_000;
+    expect(cachedFileListNow("t", "/r/a", () => t, cache)).toBeNull();
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 });

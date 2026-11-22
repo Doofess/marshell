@@ -92,3 +92,35 @@ describe("rows listed for an older root", () => {
     expect(panel).toContain('id === "copy-relative" && selected !== null');
   });
 });
+
+describe("what Files waits for", () => {
+  const panel = readFileSync(new URL("./FilesPanel.tsx", import.meta.url), "utf8");
+  it("hides the old note and the old rows at once while Files waits, and draws the ring after 150 ms", () => {
+    expect(panel).toContain("filesWait({ mode, names: namesState, searchBusy })");
+    expect(panel).toContain('<div className="files-wait" aria-busy="true"');
+    expect(panel).toContain("useShownAfter(wait !== null)");
+    expect(panel).toContain("<FilesBusy text={wait} />");
+    expect(panel).toContain("wait !== null");
+    expect(panel).toContain("LONG_NOTE");
+    expect(panel).toContain('mode.kind === "search" ? mode.query : null');
+  });
+  it("says a failed name list in the palette's words and keeps the tree", () => {
+    expect(panel).toContain('namesState === "error"');
+    expect(panel).toContain("listFailed(root === null ? null : folderName(root))");
+  });
+  it("moves focus from the rows to the filter box when the wait replaces them", () => {
+    expect(panel).toContain("onFocusCapture");
+    expect(panel).toContain("onBlurCapture");
+    expect(panel).toContain("focusToFilter({ waitBegan");
+    expect(panel).toContain("filterBox.current?.focus()");
+  });
+  it("lists the names again when the root moves and starts from the cached list", () => {
+    expect(panel).toContain('setNames("loading")');
+    expect(panel).toContain("cachedFileListNow(session, root)");
+  });
+  it("announces Collapsed all folders. from the menu and the handle", () => {
+    expect(panel).toContain("announce(COLLAPSED)");
+    expect(panel).toContain("collapseAll }));");
+    expect(panel).toContain("onCollapseAll={collapseAll}");
+  });
+});

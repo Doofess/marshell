@@ -1,8 +1,9 @@
 import type { SearchReply } from "../../generated/SearchReply";
 
-export type FilterMode = { kind: "none" } | { kind: "names"; query: string } | { kind: "search"; query: string } | { kind: "short" };
+export type FilterMode = { kind: "none" } | { kind: "names"; query: string } | { kind: "search"; query: string } | { kind: "short" } | { kind: "long" };
 
 export const SHORT_NOTE = "Type at least 2 characters to search.";
+export const LONG_NOTE = "Search for 200 characters or fewer.";
 
 /** What the box's text asks for: names, "?" and the text to search, a "?" with too little text, or nothing. */
 export function filterMode(text: string): FilterMode {
@@ -10,7 +11,9 @@ export function filterMode(text: string): FilterMode {
   if (t === "") return { kind: "none" };
   if (t.startsWith("?")) {
     const query = t.slice(1).trim();
-    return query.length < 2 ? { kind: "short" } : { kind: "search", query };
+    // Counted in characters, as the core counts them.
+    const chars = [...query].length;
+    return chars < 2 ? { kind: "short" } : chars > 200 ? { kind: "long" } : { kind: "search", query };
   }
   return { kind: "names", query: t };
 }

@@ -135,7 +135,7 @@ import type { Notice } from "../window/announce";
 import { sidebarMode } from "../window/layout";
 import { MainWindow } from "../window/MainWindow";
 import { useViewState } from "../window/useViewState";
-import { editorPrefsOf, filesCommandSteps, keepFirst, leavingSession, previewExtras, treeOpen } from "../files/filesActions";
+import { COLLAPSED, editorPrefsOf, filesCommandSteps, keepFirst, leavingSession, previewExtras, treeOpen } from "../files/filesActions";
 import { FilesPanel, type FilesPanelHandle } from "../files/FilesPanel";
 import { filesMenuChoice, filesMenuItems, filesSaid } from "../files/filesMenu";
 import { FILES_DEFAULTS, useFilesSettings } from "../files/filesSettings";
@@ -1805,7 +1805,10 @@ export function LiveApp() {
     } else if (what === "tree") paneDispatch({ type: "treeView", view: { hidden: false } });
     else if (session !== undefined) {
       const saved = tabsOf(viewRef.current.pane, session).tree;
-      if (saved) paneDispatch({ type: "tree", session, tree: { root: saved.root, expanded: [] } });
+      if (saved) {
+        paneDispatch({ type: "tree", session, tree: { root: saved.root, expanded: [] } });
+        announce(COLLAPSED);
+      }
     }
     if (steps.showPanel) togglePanelRef.current("files");
   };
