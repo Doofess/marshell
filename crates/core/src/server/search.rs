@@ -8,8 +8,9 @@
 
 use super::AppState;
 use super::files::{
-    Root, SKIPPED_DIRS, links_refused, open_regular, project_root, row_of, strip_verbatim, under_plain_folders,
+    Root, SKIPPED_DIRS, Tracked, git_tracked, open_regular, project_root, row_of, strip_verbatim, under_plain_folders,
 };
+use super::ignores::{Ignores, walk_unignored};
 use crate::git::{self, Stopped};
 use axum::Json;
 use axum::extract::{Path, State};
@@ -359,6 +360,18 @@ fn small_enough(root: &FsPath, rel: &str, folders: &mut HashMap<PathBuf, bool>) 
         && std::fs::symlink_metadata(root.join(path)).is_ok_and(|m| m.is_file() && m.len() <= FILE_CAP)
 }
 
+/// What `git grep` is given. It searches the index's files only (no `--untracked`: the untracked ones
+/// are walked by the core, which never walks a folder link and reads the ignore rules itself).
+fn grep_args(q: &str) -> Vec<&str> {
+    let mut args = vec!["grep", "-I", "-n", "-z", "--no-color", "-F"];
+    if !is_sensitive(q) {
+        args.push("-i");
+    }
+    // `-e` makes a text that starts with a dash a pattern, and `--` ends the options.
+    args.extend(["-e", q, "--"]);
+    args
+}
+
 /// `git grep` in a checkout, through `git::stream`. Err when git can't run or fails.
 fn grep_git(
     root: &FsPath,
@@ -367,12 +380,7 @@ fn grep_git(
     cancel: &AtomicBool,
     found: &mut Found,
 ) -> anyhow::Result<Stopped> {
-    let mut args = vec!["grep", "-I", "-n", "-z", "--no-color", "--untracked", "-F"];
-    if !found.sensitive {
-        args.push("-i");
-    }
-    // `-e` makes a text that starts with a dash a pattern, and `--` ends the options.
-    args.extend(["-e", q, "--"]);
+    let args = grep_args(q);
     let mut parser = Parser::new();
     // Git prints a file's lines together, so one remembered answer per file is enough.
     let mut last: Option<(String, bool)> = None;
@@ -456,10 +464,8 @@ fn walk(root: &FsPath, deadline: Instant, cancel: &AtomicBool, found: &mut Found
                 if !skipped {
                     folders.push(path);
                 }
-            } else if (kind.is_file()
-                || (kind.is_symlink() && !links_refused(&path) && std::fs::metadata(&path).is_ok_and(|m| m.is_file())))
-                && !search_file(root, &path, found)
-            {
+            } else if kind.is_file() && !search_file(root, &path, found) {
+                // A link of any kind is never read.
                 return Stopped::Asked;
             }
         }
@@ -467,23 +473,83 @@ fn walk(root: &FsPath, deadline: Instant, cancel: &AtomicBool, found: &mut Found
     Stopped::Done
 }
 
-/// The search. Blocking. In a checkout it asks `git grep`; when git can't run, or outside one, it
-/// walks the folders.
-fn run_search(root: &FsPath, is_git: bool, q: &str, cancel: &AtomicBool) -> SearchReply {
+/// The search of the files in a checkout that git's index does not hold: the walk with the checkout's
+/// ignore rules, leaving out the files `skip` names. A file link is never read.
+fn walk_checkout(
+    ignores: &mut Ignores,
+    root: &FsPath,
+    deadline: Instant,
+    cancel: &AtomicBool,
+    skip: &dyn Fn(&str) -> bool,
+    found: &mut Found,
+) -> Stopped {
+    walk_unignored(ignores, root, deadline, cancel, skip, &mut |rel, is_link| {
+        is_link || search_file(root, &root.join(rel), found)
+    })
+}
+
+/// How `run_search_with` asks git to search the index's files.
+type Grep<'a> = &'a dyn Fn(&FsPath, &str, Instant, &AtomicBool, &mut Found) -> anyhow::Result<Stopped>;
+
+/// The search. Blocking. In the launch checkout `git grep` reads the tracked files and the core's walk
+/// the rest, with the checkout's ignore rules; in a folder the shell reported inside a checkout the
+/// walk reads them all, with the same rules and no git; outside a checkout the walk reads every
+/// file but those in the skipped folders.
+fn run_search(root: &Root, q: &str, cancel: &AtomicBool) -> SearchReply {
+    run_search_with(root, q, cancel, &grep_git, &git_tracked)
+}
+
+/// `run_search` with git's two runs given, so the tests can pass ones that panic or fail.
+fn run_search_with(
+    root: &Root,
+    q: &str,
+    cancel: &AtomicBool,
+    grep: Grep,
+    tracked: &dyn Fn(&FsPath, Instant) -> Option<Arc<Tracked>>,
+) -> SearchReply {
     let deadline = Instant::now() + BUDGET;
     let mut found = Found::new(q, is_sensitive(q));
-    let stopped = if is_git {
-        match grep_git(root, q, deadline, cancel, &mut found) {
+    let stopped = match root {
+        Root::Plain(top) => walk(top, deadline, cancel, &mut found),
+        Root::InCheckout { root: top, checkout } => walk_checkout(
+            &mut Ignores::new(checkout, top),
+            top,
+            deadline,
+            cancel,
+            &|_| false,
+            &mut found,
+        ),
+        Root::Checkout(top) => match grep(top, q, deadline, cancel, &mut found) {
+            Ok(Stopped::Done) => {
+                // What git searched is not searched again: the index's files, and when the list is
+                // missing or cut, the files that already gave lines.
+                let index = tracked(top, deadline).filter(|t| !t.cut);
+                let held: std::collections::HashSet<String> = if index.is_some() {
+                    Default::default()
+                } else {
+                    found.files.keys().cloned().collect()
+                };
+                let skip = |rel: &str| match &index {
+                    Some(index) => index.has(rel),
+                    None => held.contains(rel),
+                };
+                walk_checkout(&mut Ignores::new(top, top), top, deadline, cancel, &skip, &mut found)
+            }
             Ok(stopped) => stopped,
             Err(_) => {
                 found.clear();
-                walk(root, deadline, cancel, &mut found)
+                walk_checkout(
+                    &mut Ignores::new(top, top),
+                    top,
+                    deadline,
+                    cancel,
+                    &|_| false,
+                    &mut found,
+                )
             }
-        }
-    } else {
-        walk(root, deadline, cancel, &mut found)
+        },
     };
-    found.reply(root, stopped)
+    found.reply(root.path(), stopped)
 }
 
 /// Sets the flag when it is dropped. The handler holds one while it waits, so a request the app
@@ -508,9 +574,7 @@ pub async fn search(State(st): State<AppState>, Path(tab): Path<String>, Json(re
     let _stop = CancelOnDrop(cancel.clone());
     let done = tokio::task::spawn_blocking(move || {
         let found = project_root(row.as_ref(), reported)?;
-        let is_git = matches!(found, Root::Checkout(_));
-        let root = found.path().to_path_buf();
-        Some(run_search(&root, is_git, &req.q, &cancel))
+        Some(run_search(&found, &req.q, &cancel))
     })
     .await;
     match done {
@@ -565,8 +629,16 @@ mod tests {
         (tmp, root)
     }
 
+    fn root_of(root: &FsPath, is_git: bool) -> Root {
+        if is_git {
+            Root::Checkout(root.to_path_buf())
+        } else {
+            Root::Plain(root.to_path_buf())
+        }
+    }
+
     fn find(root: &FsPath, is_git: bool, q: &str) -> SearchReply {
-        run_search(root, is_git, q, &AtomicBool::new(false))
+        run_search(&root_of(root, is_git), q, &AtomicBool::new(false))
     }
 
     fn paths(reply: &SearchReply) -> Vec<&str> {
@@ -840,6 +912,151 @@ mod tests {
     }
 
     #[test]
+    fn in_a_checkout_an_ignored_untracked_file_is_not_searched() {
+        let (_tmp, root) = repo();
+        write(
+            &root,
+            ".gitignore",
+            "*.log
+",
+        );
+        write(
+            &root, "a.log", "needle
+",
+        );
+        write(
+            &root, "b.txt", "needle
+",
+        );
+        let reply = find(&root, true, "needle");
+        assert_eq!(paths(&reply), ["b.txt"]);
+    }
+
+    /// A junction below an untracked folder: the walk gives git nothing to follow it with.
+    #[cfg(windows)]
+    #[test]
+    fn in_a_checkout_a_junction_in_an_untracked_folder_is_not_searched_through() {
+        let (_tmp, root) = repo();
+        let (_other_tmp, other) = temp();
+        write(
+            &other,
+            "secret.txt",
+            "needle
+",
+        );
+        write(
+            &root,
+            "new/real.txt",
+            "needle
+",
+        );
+        junction(&other, &root.join("new").join("link"));
+        let reply = find(&root, true, "needle");
+        assert_eq!(paths(&reply), ["new/real.txt"]);
+    }
+
+    #[test]
+    fn a_reported_folder_in_a_checkout_skips_ignored_files_and_runs_no_git() {
+        let (_tmp, root) = repo();
+        write(
+            &root,
+            ".gitignore",
+            "*.log
+",
+        );
+        write(
+            &root,
+            "sub/a.txt",
+            "needle
+",
+        );
+        write(
+            &root,
+            "sub/b.log",
+            "needle
+",
+        );
+        write(
+            &root, "top.txt", "needle
+",
+        );
+        let grep = |_: &FsPath, _: &str, _: Instant, _: &AtomicBool, _: &mut Found| -> anyhow::Result<Stopped> {
+            panic!("git ran")
+        };
+        let tracked = |_: &FsPath, _: Instant| -> Option<Arc<Tracked>> { panic!("git ran") };
+        let at = Root::InCheckout {
+            root: root.join("sub"),
+            checkout: root.clone(),
+        };
+        let reply = run_search_with(&at, "needle", &AtomicBool::new(false), &grep, &tracked);
+        assert_eq!(paths(&reply), ["a.txt"]);
+        assert_eq!(reply.root, strip_verbatim(&root.join("sub")).unwrap());
+    }
+
+    #[test]
+    fn git_grep_searches_only_tracked_files() {
+        let args = grep_args("needle");
+        assert!(args.contains(&"grep"));
+        assert!(!args.contains(&"--untracked"));
+        assert!(args.contains(&"-i"));
+        assert!(!grep_args("Needle").contains(&"-i"));
+        // The text follows `-e`, and `--` ends the options after it.
+        assert_eq!(args[args.len() - 3..], ["-e", "needle", "--"]);
+    }
+
+    #[test]
+    fn a_failed_git_grep_falls_back_to_the_walk() {
+        let (_tmp, root) = repo();
+        write(
+            &root,
+            ".gitignore",
+            "*.log
+",
+        );
+        write(
+            &root, "a.txt", "needle
+",
+        );
+        write(
+            &root, "b.log", "needle
+",
+        );
+        let grep = |_: &FsPath, _: &str, _: Instant, _: &AtomicBool, found: &mut Found| -> anyhow::Result<Stopped> {
+            found.add("half.txt", 1, "needle");
+            Err(anyhow::anyhow!("Git stopped."))
+        };
+        let tracked = |_: &FsPath, _: Instant| -> Option<Arc<Tracked>> { panic!("no list after a failed grep") };
+        let at = Root::Checkout(root.clone());
+        let reply = run_search_with(&at, "needle", &AtomicBool::new(false), &grep, &tracked);
+        assert_eq!(paths(&reply), ["a.txt"]);
+    }
+
+    #[test]
+    fn the_walk_search_never_reads_a_file_link() {
+        let (_tmp, root) = temp();
+        let (_other_tmp, other) = temp();
+        write(
+            &other,
+            "secret.txt",
+            "needle
+",
+        );
+        write(
+            &root, "ok.txt", "needle
+",
+        );
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_file(other.join("secret.txt"), root.join("link.txt")).is_ok();
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(other.join("secret.txt"), root.join("link.txt")).is_ok();
+        if !made {
+            return;
+        }
+        let reply = find(&root, false, "needle");
+        assert_eq!(paths(&reply), ["ok.txt"]);
+    }
+
+    #[test]
     fn long_lines_are_cut_around_the_first_hit() {
         let line = format!("{}needle{}", "a".repeat(2_000), "b".repeat(3_000));
         let parts = make_parts(&line, "needle", true);
@@ -973,7 +1190,7 @@ mod tests {
         write(&root, "a.txt", "needle\n");
         for is_git in [true, false] {
             let cancel = AtomicBool::new(true);
-            let reply = run_search(&root, is_git, "needle", &cancel);
+            let reply = run_search(&root_of(&root, is_git), "needle", &cancel);
             assert!(reply.files.is_empty(), "git {is_git}");
         }
     }
