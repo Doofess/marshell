@@ -706,16 +706,31 @@ fn run_git_tracked(checkout: &FsPath, deadline: Instant) -> Option<Tracked> {
     reader.finish(stopped)
 }
 
-/// The index file's length and modified time, or None when there is none.
+/// The index file's length and modified time, or None while there is no index yet (its arrival is a
+/// change).
 type IndexStamp = Option<(u64, Option<std::time::SystemTime>)>;
 
-fn index_stamp(checkout: &FsPath) -> IndexStamp {
-    let meta = std::fs::metadata(super::ignores::git_dir(checkout)?.join("index")).ok()?;
-    Some((meta.len(), meta.modified().ok()))
+/// The checkout's index stamp, or None when its git folder can't be followed: then nothing says when
+/// the index changes.
+fn index_stamp(checkout: &FsPath) -> Option<IndexStamp> {
+    let index = super::ignores::git_dir(checkout)?.join("index");
+    Some(
+        std::fs::metadata(index)
+            .ok()
+            .map(|meta| (meta.len(), meta.modified().ok())),
+    )
 }
 
 /// The most checkouts whose tracked list is kept.
 const TRACKED_KEPT: usize = 8;
+
+/// How much time a tracked read was given: a request's whole budget (the list's, the tree's), or what
+/// was left of one (the search's, after `git grep`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Budget {
+    Whole,
+    Leftover,
+}
 
 /// The tracked lists of the last checkouts asked for, each with the index stamp it was read under.
 /// Least recently used first.
@@ -726,19 +741,21 @@ impl TrackedCache {
         TrackedCache(Mutex::new(Vec::new()))
     }
 
-    /// The kept list while the index is unchanged, else the answer of `run`, which is kept (a cut
-    /// answer too). The stamp is read before `run`, so an answer is never filed under a newer index
-    /// than it read. The lock is never held while `run` works.
+    /// The kept list while the index is unchanged, else the answer of `run`. The answer is kept when
+    /// the index can be watched, and a cut answer only when it was read with a whole budget (a huge
+    /// repo then runs git once per index, not once per request). The stamp is read before `run`, so an
+    /// answer is never filed under a newer index than it read. The lock is never held while `run` works.
     fn get_or_run(
         &self,
         checkout: &FsPath,
         deadline: Instant,
+        budget: Budget,
         run: &dyn Fn(&FsPath, Instant) -> Option<Tracked>,
     ) -> Option<Arc<Tracked>> {
         let stamp = index_stamp(checkout);
-        {
+        if let Some(stamp) = &stamp {
             let mut kept = self.0.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(at) = kept.iter().position(|(p, s, _)| p == checkout && *s == stamp) {
+            if let Some(at) = kept.iter().position(|(p, s, _)| p == checkout && s == stamp) {
                 let entry = kept.remove(at);
                 let found = entry.2.clone();
                 kept.push(entry);
@@ -746,6 +763,9 @@ impl TrackedCache {
             }
         }
         let answer = Arc::new(run(checkout, deadline)?);
+        let Some(stamp) = stamp.filter(|_| budget == Budget::Whole || !answer.cut) else {
+            return Some(answer);
+        };
         let mut kept = self.0.lock().unwrap_or_else(|e| e.into_inner());
         kept.retain(|(p, _, _)| p != checkout);
         kept.push((checkout.to_path_buf(), stamp, answer.clone()));
@@ -758,20 +778,18 @@ impl TrackedCache {
 
 static TRACKED: TrackedCache = TrackedCache::new();
 
-/// `git_tracked` with the runner chosen by the caller.
-fn tracked_with(
-    checkout: &FsPath,
-    deadline: Instant,
-    run: &dyn Fn(&FsPath, Instant) -> Option<Tracked>,
-) -> Option<Arc<Tracked>> {
-    TRACKED.get_or_run(checkout, deadline, run)
+/// The paths in `checkout`'s index, read with a request's whole budget and kept until the index file's
+/// length or modified time changes (on FAT or exFAT, 2 s time resolution, two writes in one tick with
+/// the same length keep the older answer until the next write). None when git can't run or fails;
+/// `cut` when the deadline stopped it.
+pub(super) fn git_tracked(checkout: &FsPath, deadline: Instant) -> Option<Arc<Tracked>> {
+    TRACKED.get_or_run(checkout, deadline, Budget::Whole, &run_git_tracked)
 }
 
-/// The paths in `checkout`'s index, kept until the index file's length or modified time changes (on
-/// FAT or exFAT, 2 s time resolution, two writes in one tick with the same length keep the older answer
-/// until the next write). None when git can't run or fails; `cut` when the deadline stopped it.
-pub(super) fn git_tracked(checkout: &FsPath, deadline: Instant) -> Option<Arc<Tracked>> {
-    tracked_with(checkout, deadline, &run_git_tracked)
+/// `git_tracked` for a caller with only what is left of its budget: a cut answer is used once and not
+/// kept, so a short read never stands in for a whole one.
+pub(super) fn git_tracked_leftover(checkout: &FsPath, deadline: Instant) -> Option<Arc<Tracked>> {
+    TRACKED.get_or_run(checkout, deadline, Budget::Leftover, &run_git_tracked)
 }
 
 /// What `walk_unignored` finds under `root`, as the list shows it. A file link is kept only when its
@@ -1176,7 +1194,7 @@ mod tests {
         let runs = std::cell::Cell::new(0);
         let ask = || {
             cache
-                .get_or_run(&root, far(), &|dir, deadline| {
+                .get_or_run(&root, far(), Budget::Whole, &|dir, deadline| {
                     runs.set(runs.get() + 1);
                     run_git_tracked(dir, deadline)
                 })
@@ -1200,7 +1218,7 @@ mod tests {
         let runs = std::cell::Cell::new(0);
         let ask = || {
             cache
-                .get_or_run(&root, far(), &|_, _| {
+                .get_or_run(&root, far(), Budget::Whole, &|_, _| {
                     runs.set(runs.get() + 1);
                     Some(Tracked::new(vec!["a.txt".into()], true))
                 })
@@ -1216,13 +1234,79 @@ mod tests {
     }
 
     #[test]
+    fn a_cut_tracked_list_read_in_leftover_time_is_used_once() {
+        // PR review of 6t: the search reads the list with what `git grep` left of its 3 s, so a cut
+        // answer from it must not stand in for the file list's whole 2 s read.
+        let (_tmp, root) = fake_repo();
+        let cache = TrackedCache::new();
+        let runs = std::cell::Cell::new(0);
+        let ask = |budget, cut| {
+            cache
+                .get_or_run(&root, far(), budget, &|_, _| {
+                    runs.set(runs.get() + 1);
+                    Some(Tracked::new(vec!["a.txt".into()], cut))
+                })
+                .unwrap()
+        };
+        assert!(ask(Budget::Leftover, true).cut);
+        assert!(ask(Budget::Leftover, true).cut);
+        assert_eq!(runs.get(), 2, "a leftover cut answer is not kept");
+        assert!(!ask(Budget::Whole, false).cut);
+        assert!(
+            !ask(Budget::Leftover, true).cut,
+            "a kept whole answer serves the search"
+        );
+        assert_eq!(runs.get(), 3);
+    }
+
+    #[test]
+    fn a_whole_tracked_list_read_in_leftover_time_is_kept() {
+        let (_tmp, root) = fake_repo();
+        let cache = TrackedCache::new();
+        let runs = std::cell::Cell::new(0);
+        let ask = || {
+            cache
+                .get_or_run(&root, far(), Budget::Leftover, &|_, _| {
+                    runs.set(runs.get() + 1);
+                    Some(Tracked::new(vec!["a.txt".into()], false))
+                })
+                .unwrap()
+        };
+        ask();
+        ask();
+        assert_eq!(runs.get(), 1);
+    }
+
+    #[test]
+    fn a_checkout_whose_git_folder_cant_be_followed_is_read_every_time() {
+        // PR review of 6t: with no git folder there is no index to watch, so a kept list would never go
+        // stale. A `gitdir:` naming a network path is not followed (6t decision 10), and is never touched.
+        let (_tmp, root) = temp();
+        put(&root, ".git", "gitdir: //srv/share/x.git\n");
+        assert!(super::super::ignores::git_dir(&root).is_none());
+        let cache = TrackedCache::new();
+        let runs = std::cell::Cell::new(0);
+        let ask = || {
+            cache
+                .get_or_run(&root, far(), Budget::Whole, &|_, _| {
+                    runs.set(runs.get() + 1);
+                    Some(Tracked::new(vec!["a.txt".into()], false))
+                })
+                .unwrap()
+        };
+        assert_eq!(ask().files, ["a.txt"]);
+        assert_eq!(ask().files, ["a.txt"]);
+        assert_eq!(runs.get(), 2);
+    }
+
+    #[test]
     fn the_tracked_cache_keeps_8_checkouts() {
         let checkouts: Vec<_> = (0..9).map(|_| fake_repo()).collect();
         let cache = TrackedCache::new();
         let runs = std::cell::Cell::new(0);
         let ask = |root: &std::path::Path| {
             cache
-                .get_or_run(root, far(), &|_, _| {
+                .get_or_run(root, far(), Budget::Whole, &|_, _| {
                     runs.set(runs.get() + 1);
                     Some(Tracked::default())
                 })

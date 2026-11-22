@@ -8,7 +8,8 @@
 
 use super::AppState;
 use super::files::{
-    Root, SKIPPED_DIRS, Tracked, git_tracked, open_regular, project_root, row_of, strip_verbatim, under_plain_folders,
+    Root, SKIPPED_DIRS, Tracked, git_tracked_leftover, open_regular, project_root, row_of, strip_verbatim,
+    under_plain_folders,
 };
 use super::ignores::{Ignores, walk_unignored};
 use crate::git::{self, Stopped};
@@ -496,7 +497,7 @@ type Grep<'a> = &'a dyn Fn(&FsPath, &str, Instant, &AtomicBool, &mut Found) -> a
 /// walk reads them all, with the same rules and no git; outside a checkout the walk reads every
 /// file but those in the skipped folders.
 fn run_search(root: &Root, q: &str, cancel: &AtomicBool) -> SearchReply {
-    run_search_with(root, q, cancel, &grep_git, &git_tracked)
+    run_search_with(root, q, cancel, &grep_git, &git_tracked_leftover)
 }
 
 /// `run_search` with git's two runs given, so the tests can pass ones that panic or fail.
