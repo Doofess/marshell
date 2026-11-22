@@ -2406,7 +2406,7 @@ export function LiveApp() {
         onFill={() => paneDispatch({ type: "fill", panel, session: paneSession ?? null })}
         onMenu={(anchor, opener) => (panel === "browser" ? setBrowserMenu : setFilesMenu)({ anchor, opener })}
         onKeep={(id) => paneSession !== undefined && paneDispatch({ type: "keep", session: paneSession, paneTab: id })}
-        tabs={tabsHere.map((t) => ({ id: t.id, title: paneTitles.get(t.id) ?? "", path: currentEntry(t).path, kind: tabKind(isBrowserTab(t), currentEntry(t).path), openedBy: t.opened_by, unseen: t.unseen, unsaved: !isBrowserTab(t) && isUnsaved(unsaved, currentEntry(t).path, osName) }))}
+        tabs={tabsHere.map((t) => ({ id: t.id, title: paneTitles.get(t.id) ?? "", path: currentEntry(t).path, kind: tabKind(isBrowserTab(t), currentEntry(t).path), openedBy: t.opened_by, unseen: t.unseen, unsaved: !isBrowserTab(t) && isUnsaved(unsaved, currentEntry(t).path, osName), preview: t.preview === true }))}
         activeId={paneActive}
         onSelect={(id) => paneSession !== undefined && paneDispatch({ type: "select", session: paneSession, paneTab: id })}
         onClose={(id) => {

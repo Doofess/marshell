@@ -830,6 +830,8 @@ describe("LiveApp: the Files panel's wiring", () => {
   it("the strip's Files menu opens the Files menu, and a tab's double-click keeps it", () => {
     expect(source).toContain('label: panel === "browser" ? "Browser menu" : "Files menu"');
     expect(source).toContain("onKeep={(id)");
+    // A preview tab is drawn in italics and read with ", preview" only when the strip is told (live check 6r-2, finding 1).
+    expect(source).toContain("preview: t.preview === true");
     expect(source).toMatch(/<ContextMenu\s+label="Files menu"/);
   });
   it("runs Show file tree and Collapse all folders from the window's commands", () => {
