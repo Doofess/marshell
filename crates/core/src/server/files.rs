@@ -5,6 +5,7 @@
 //! a UNC path would send the person's NTLM hash to whoever the server name points at.
 
 use super::AppState;
+use super::ignores::{Ignores, walk_unignored};
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderName, StatusCode, header};
@@ -12,7 +13,8 @@ use axum::response::{IntoResponse, Response};
 use marshell_protocol::api::{FileList, FileStat, ResolveRequest, ResolveResponse, SessionInfo};
 use serde::Deserialize;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path as FsPath, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 /// The most bytes `content` serves for a text file.
@@ -613,34 +615,226 @@ fn is_listable(path: &std::path::Path, safe_folders: &mut std::collections::Hash
     meta.is_file()
 }
 
-/// Tracked and untracked files, minus the ignored ones. None when `root` is not in a repo or git
-/// is not installed. Files the index lists but the disk lacks, submodule folders, and files under a
-/// folder link are left out.
-fn git_files(root: &std::path::Path) -> Option<(Vec<String>, bool)> {
-    let out = crate::git::run(root, &["ls-files", "--cached", "--others", "--exclude-standard", "-z"]).ok()?;
-    if !out.ok {
-        return None;
+/// The paths in a checkout's index, in git's (byte) order.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub(super) struct Tracked {
+    pub files: Vec<String>,
+    /// The deadline stopped git before it finished, so `files` is only the start of the index.
+    pub cut: bool,
+}
+
+impl Tracked {
+    /// Whether the index holds `rel` (`/`-separated, relative to the checkout).
+    pub(super) fn has(&self, rel: &str) -> bool {
+        self.files.binary_search_by(|f| f.as_str().cmp(rel)).is_ok()
     }
-    let started = Instant::now();
-    let mut seen = std::collections::HashSet::new();
-    // Folders already read link by link, so a big repo costs one check per folder.
-    let mut safe_folders = std::collections::HashSet::new();
-    let mut plain = std::collections::HashMap::new();
-    let mut files = Vec::new();
-    for name in out.stdout.split('\0').filter(|n| !n.is_empty()) {
-        if files.len() >= MAX_LIST_FILES || started.elapsed() > LIST_BUDGET {
-            return Some((files, true));
+}
+
+/// What the tracked list asks git, and nothing else: no `--others`, no `--exclude-standard`.
+const TRACKED_ARGS: [&str; 3] = ["ls-files", "--cached", "-z"];
+
+/// Reads `ls-files -z` output as it arrives, in chunks that may end inside a path.
+#[derive(Default)]
+struct TrackedReader {
+    files: Vec<String>,
+    pending: Vec<u8>,
+}
+
+impl TrackedReader {
+    fn push(&mut self, chunk: &[u8]) {
+        self.pending.extend_from_slice(chunk);
+        let mut start = 0;
+        while let Some(n) = self.pending[start..].iter().position(|b| *b == 0) {
+            Self::add(&mut self.files, &self.pending[start..start + n]);
+            start += n + 1;
         }
-        if seen.insert(name)
-            && under_plain_folders(root, name, &mut plain)
-            && is_listable(&root.join(name), &mut safe_folders)
-        {
+        self.pending.drain(..start);
+    }
+
+    /// A path listed twice in a row (a conflicted file, once per stage) is kept once. A path that is not
+    /// UTF-8 can't be listed, so it is left out.
+    fn add(files: &mut Vec<String>, name: &[u8]) {
+        let Ok(name) = std::str::from_utf8(name) else {
+            return;
+        };
+        if !name.is_empty() && files.last().is_none_or(|last| last != name) {
             files.push(name.to_string());
         }
     }
-    Some((files, false))
+
+    /// The list, or None when git did not run to the end or the deadline.
+    fn finish(mut self, stopped: crate::git::Stopped) -> Option<Tracked> {
+        match stopped {
+            crate::git::Stopped::Done => {
+                let rest = std::mem::take(&mut self.pending);
+                Self::add(&mut self.files, &rest);
+                Some(Tracked {
+                    files: self.files,
+                    cut: false,
+                })
+            }
+            // A half-read path at the end is dropped.
+            crate::git::Stopped::Deadline => Some(Tracked {
+                files: self.files,
+                cut: true,
+            }),
+            _ => None,
+        }
+    }
 }
 
+/// Runs git for the index's paths. None when git can't run or exits with an error.
+fn run_git_tracked(checkout: &FsPath, deadline: Instant) -> Option<Tracked> {
+    let mut reader = TrackedReader::default();
+    let never = std::sync::atomic::AtomicBool::new(false);
+    let stopped = crate::git::stream(checkout, &TRACKED_ARGS, deadline, &never, |chunk| {
+        reader.push(chunk);
+        true
+    })
+    .ok()?;
+    reader.finish(stopped)
+}
+
+/// The index file's length and modified time, or None when there is none.
+type IndexStamp = Option<(u64, Option<std::time::SystemTime>)>;
+
+fn index_stamp(checkout: &FsPath) -> IndexStamp {
+    let meta = std::fs::metadata(super::ignores::git_dir(checkout)?.join("index")).ok()?;
+    Some((meta.len(), meta.modified().ok()))
+}
+
+/// The most checkouts whose tracked list is kept.
+const TRACKED_KEPT: usize = 8;
+
+/// The tracked lists of the last checkouts asked for, each with the index stamp it was read under.
+/// Least recently used first.
+struct TrackedCache(Mutex<Vec<(PathBuf, IndexStamp, Arc<Tracked>)>>);
+
+impl TrackedCache {
+    const fn new() -> Self {
+        TrackedCache(Mutex::new(Vec::new()))
+    }
+
+    /// The kept list while the index is unchanged, else the answer of `run`, which is kept (a cut
+    /// answer too). The stamp is read before `run`, so an answer is never filed under a newer index
+    /// than it read. The lock is never held while `run` works.
+    fn get_or_run(
+        &self,
+        checkout: &FsPath,
+        deadline: Instant,
+        run: &dyn Fn(&FsPath, Instant) -> Option<Tracked>,
+    ) -> Option<Arc<Tracked>> {
+        let stamp = index_stamp(checkout);
+        {
+            let mut kept = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(at) = kept.iter().position(|(p, s, _)| p == checkout && *s == stamp) {
+                let entry = kept.remove(at);
+                let found = entry.2.clone();
+                kept.push(entry);
+                return Some(found);
+            }
+        }
+        let answer = Arc::new(run(checkout, deadline)?);
+        let mut kept = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        kept.retain(|(p, _, _)| p != checkout);
+        kept.push((checkout.to_path_buf(), stamp, answer.clone()));
+        if kept.len() > TRACKED_KEPT {
+            kept.remove(0);
+        }
+        Some(answer)
+    }
+}
+
+static TRACKED: TrackedCache = TrackedCache::new();
+
+/// `git_tracked` with the runner chosen by the caller.
+fn tracked_with(
+    checkout: &FsPath,
+    deadline: Instant,
+    run: &dyn Fn(&FsPath, Instant) -> Option<Tracked>,
+) -> Option<Arc<Tracked>> {
+    TRACKED.get_or_run(checkout, deadline, run)
+}
+
+/// The paths in `checkout`'s index, kept until the index file's length or modified time changes (on
+/// FAT or exFAT, 2 s time resolution, two writes in one tick with the same length keep the older answer
+/// until the next write). None when git can't run or fails; `cut` when the deadline stopped it.
+pub(super) fn git_tracked(checkout: &FsPath, deadline: Instant) -> Option<Arc<Tracked>> {
+    tracked_with(checkout, deadline, &run_git_tracked)
+}
+
+/// What `walk_unignored` finds under `root`, as the list shows it. A file link is kept only when its
+/// target is listable. Stops, with `capped`, at the first file beyond `room`.
+fn walk_listed(
+    ignores: &mut Ignores,
+    root: &FsPath,
+    deadline: Instant,
+    skip: &dyn Fn(&str) -> bool,
+    room: usize,
+) -> (Vec<String>, bool) {
+    let mut files = Vec::new();
+    let mut capped = false;
+    let mut safe_folders = std::collections::HashSet::new();
+    let never = std::sync::atomic::AtomicBool::new(false);
+    let stopped = walk_unignored(ignores, root, deadline, &never, skip, &mut |rel, is_link| {
+        if is_link && !is_listable(&root.join(rel), &mut safe_folders) {
+            return true;
+        }
+        if files.len() >= room {
+            capped = true;
+            return false;
+        }
+        files.push(rel.to_string());
+        true
+    });
+    (files, capped || stopped == crate::git::Stopped::Deadline)
+}
+
+/// The files of a project folder, sorted, and whether the list was cut short. In a checkout git's
+/// index gives the tracked files and the walk, with the checkout's ignore rules, the rest; where git
+/// can't run the walk gives them all. Git runs only for `Root::Checkout`.
+fn list_root(root: &Root, tracked: &dyn Fn(&FsPath, Instant) -> Option<Arc<Tracked>>) -> (Vec<String>, bool) {
+    let deadline = Instant::now() + LIST_BUDGET;
+    let (mut files, truncated) = match root {
+        Root::Plain(root) => walk_files(root),
+        Root::InCheckout { root, checkout } => walk_listed(
+            &mut Ignores::new(checkout, root),
+            root,
+            deadline,
+            &|_| false,
+            MAX_LIST_FILES,
+        ),
+        Root::Checkout(root) => {
+            let found = tracked(root, deadline);
+            let mut files = Vec::new();
+            let mut cut = false;
+            if let Some(found) = &found {
+                cut = found.cut;
+                // Folders already read link by link, so a big repo costs one check per folder.
+                let mut safe_folders = std::collections::HashSet::new();
+                let mut plain = std::collections::HashMap::new();
+                for name in &found.files {
+                    if files.len() >= MAX_LIST_FILES || Instant::now() >= deadline {
+                        cut = true;
+                        break;
+                    }
+                    // Files the index lists but the disk lacks, submodule folders and files under a
+                    // folder link are left out.
+                    if under_plain_folders(root, name, &mut plain) && is_listable(&root.join(name), &mut safe_folders) {
+                        files.push(name.clone());
+                    }
+                }
+            }
+            let room = MAX_LIST_FILES.saturating_sub(files.len());
+            let skip = |rel: &str| found.as_ref().is_some_and(|f| f.has(rel));
+            let (untracked, walk_cut) = walk_listed(&mut Ignores::new(root, root), root, deadline, &skip, room);
+            files.extend(untracked);
+            (files, cut || walk_cut)
+        }
+    };
+    files.sort();
+    (files, truncated)
+}
 /// The files under `root` outside a repo. Symlinked and junctioned folders are not entered, and a
 /// linked file is listed only when its target passes `links_refused` and is a file.
 fn walk_files(root: &std::path::Path) -> (Vec<String>, bool) {
@@ -715,14 +909,8 @@ pub async fn list(State(st): State<AppState>, Path(tab): Path<String>) -> Respon
     let reported = session.and_then(|s| s.current_cwd());
     let done = tokio::task::spawn_blocking(move || {
         let found = project_root(row.as_ref(), reported)?;
-        let is_git = matches!(found, Root::Checkout(_));
         let root = found.path().to_path_buf();
-        let (files, truncated) = if is_git {
-            // Without git on PATH the walk still gives a list, though it lists ignored files.
-            git_files(&root).unwrap_or_else(|| walk_files(&root))
-        } else {
-            walk_files(&root)
-        };
+        let (files, truncated) = list_root(&found, &git_tracked);
         Some((root, files, truncated))
     })
     .await;
@@ -869,6 +1057,198 @@ mod tests {
                 .output()
                 .is_ok_and(|o| o.status.success())
         }
+    }
+
+    fn git(root: &std::path::Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn put(root: &std::path::Path, rel: &str, text: &str) {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+
+    /// A temp folder (canonical, as the core's roots are) and the guard that removes it.
+    fn temp() -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = crate::projects::canonical(tmp.path());
+        (tmp, root)
+    }
+
+    /// A temp checkout made by git.
+    fn repo() -> (tempfile::TempDir, PathBuf) {
+        let (tmp, root) = temp();
+        git(&root, &["init", "-q"]);
+        (tmp, root)
+    }
+
+    /// A temp folder with an empty `.git` folder: a checkout to the core, and no git is run in it.
+    fn fake_repo() -> (tempfile::TempDir, PathBuf) {
+        let (tmp, root) = temp();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        (tmp, root)
+    }
+
+    fn far() -> Instant {
+        Instant::now() + Duration::from_secs(60)
+    }
+
+    #[test]
+    fn in_a_checkout_untracked_files_follow_gitignore() {
+        let (_tmp, root) = repo();
+        put(&root, "keep.log", "");
+        git(&root, &["add", "-f", "keep.log"]);
+        put(&root, ".gitignore", "*.log\n");
+        put(&root, "a.log", "");
+        put(&root, "b.txt", "");
+        let (files, truncated) = list_root(&Root::Checkout(root), &git_tracked);
+        assert_eq!(files, [".gitignore", "b.txt", "keep.log"]);
+        assert!(!truncated);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn in_a_checkout_a_junction_in_an_untracked_folder_is_never_walked() {
+        let (_tmp, root) = repo();
+        let (_other, elsewhere) = temp();
+        for i in 0..50 {
+            put(&elsewhere, &format!("f{i}.txt"), "");
+        }
+        put(&root, "new/real.txt", "");
+        if !link_dir(&elsewhere, &root.join("new/link")) {
+            eprintln!("skipped: this OS refused the link");
+            return;
+        }
+        let (files, truncated) = list_root(&Root::Checkout(root), &git_tracked);
+        assert_eq!(files, ["new/real.txt"]);
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn a_reported_folder_in_a_checkout_lists_without_its_ignored_files() {
+        let (_tmp, repo) = fake_repo();
+        put(&repo, ".gitignore", "*.log\n");
+        put(&repo, "sub/a.txt", "");
+        put(&repo, "sub/b.log", "");
+        put(&repo, "top.txt", "");
+        let root = Root::InCheckout {
+            root: repo.join("sub"),
+            checkout: repo,
+        };
+        let (files, truncated) = list_root(&root, &|_, _| panic!("git ran"));
+        assert_eq!(files, ["a.txt"]);
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn the_tracked_list_reads_only_the_index() {
+        assert_eq!(TRACKED_ARGS, ["ls-files", "--cached", "-z"]);
+    }
+
+    #[test]
+    fn the_tracked_list_is_read_again_only_when_the_index_changes() {
+        let (_tmp, root) = repo();
+        put(&root, "a.txt", "");
+        git(&root, &["add", "a.txt"]);
+        let cache = TrackedCache::new();
+        let runs = std::cell::Cell::new(0);
+        let ask = || {
+            cache
+                .get_or_run(&root, far(), &|dir, deadline| {
+                    runs.set(runs.get() + 1);
+                    run_git_tracked(dir, deadline)
+                })
+                .unwrap()
+        };
+        assert_eq!(ask().files, ["a.txt"]);
+        assert_eq!(ask().files, ["a.txt"]);
+        assert_eq!(runs.get(), 1);
+        put(&root, "b.txt", "");
+        git(&root, &["add", "b.txt"]);
+        let third = ask();
+        assert_eq!(runs.get(), 2);
+        assert_eq!(third.files, ["a.txt", "b.txt"]);
+        assert!(third.has("b.txt") && !third.has("c.txt"));
+    }
+
+    #[test]
+    fn a_cut_tracked_list_is_kept_until_the_index_changes() {
+        let (_tmp, root) = fake_repo();
+        let cache = TrackedCache::new();
+        let runs = std::cell::Cell::new(0);
+        let ask = || {
+            cache
+                .get_or_run(&root, far(), &|_, _| {
+                    runs.set(runs.get() + 1);
+                    Some(Tracked {
+                        files: vec!["a.txt".into()],
+                        cut: true,
+                    })
+                })
+                .unwrap()
+        };
+        assert!(ask().cut);
+        assert!(ask().cut);
+        assert_eq!(runs.get(), 1);
+        // The index appears: a new key, so git is asked again.
+        put(&root, ".git/index", "x");
+        assert!(ask().cut);
+        assert_eq!(runs.get(), 2);
+    }
+
+    #[test]
+    fn the_tracked_cache_keeps_8_checkouts() {
+        let checkouts: Vec<_> = (0..9).map(|_| fake_repo()).collect();
+        let cache = TrackedCache::new();
+        let runs = std::cell::Cell::new(0);
+        let ask = |root: &std::path::Path| {
+            cache
+                .get_or_run(root, far(), &|_, _| {
+                    runs.set(runs.get() + 1);
+                    Some(Tracked::default())
+                })
+                .unwrap();
+        };
+        for (_, root) in &checkouts {
+            ask(root);
+        }
+        assert_eq!(runs.get(), 9);
+        ask(&checkouts[8].1);
+        assert_eq!(runs.get(), 9, "the ninth is kept");
+        ask(&checkouts[0].1);
+        assert_eq!(runs.get(), 10, "the first was dropped");
+    }
+
+    #[test]
+    fn a_conflicted_file_is_listed_once() {
+        let mut reader = TrackedReader::default();
+        reader.push(b"a.txt\0a.txt\0a.");
+        reader.push(b"txt\0b.txt\0");
+        let tracked = reader.finish(crate::git::Stopped::Done).unwrap();
+        assert_eq!(tracked.files, ["a.txt", "b.txt"]);
+        assert!(!tracked.cut);
+    }
+
+    #[test]
+    fn without_git_a_checkout_is_listed_by_its_rules() {
+        let (_tmp, root) = fake_repo();
+        put(&root, ".gitignore", "*.log\n");
+        put(&root, "a.log", "");
+        put(&root, "b.txt", "");
+        let (files, truncated) = list_root(&Root::Checkout(root), &|_, _| None);
+        assert_eq!(files, [".gitignore", "b.txt"]);
+        assert!(!truncated);
     }
 
     #[test]
