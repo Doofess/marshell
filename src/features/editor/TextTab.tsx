@@ -67,8 +67,8 @@ export function dirtyNews(told: boolean | null, ready: boolean, dirty: boolean):
 }
 
 /** What decides an auto save, from a document's state. */
-function factsOf(d: DocState, on: boolean, readOnly: boolean): AutoSaveFacts {
-  return { on, dirty: d.dirty, conflict: d.conflict !== null, markers: on && d.dirty && countConflicts(d.text) > 0, readOnly, saving: d.saving };
+export function factsOf(d: DocState, on: boolean, readOnly: boolean, scan: boolean): AutoSaveFacts {
+  return { on, dirty: d.dirty, conflict: d.conflict !== null, markers: scan && on && d.dirty && countConflicts(d.text) > 0, readOnly, saving: d.saving };
 }
 
 /** How long the rendered view waits after the last key. */
@@ -368,7 +368,7 @@ export function TextTab({ entry, file, kind, active, os, onDirty, commands, anno
   autoOn.current = autoSave;
   const saveIfDue = useCallback(() => {
     const { doc: d, readOnly: ro } = latest.current;
-    if (autoSaveDue(factsOf(d, autoOn.current, ro !== null))) dispatch({ type: "save", auto: true });
+    if (autoSaveDue(factsOf(d, autoOn.current, ro !== null, true))) dispatch({ type: "save", auto: true });
   }, [dispatch]);
   // The text of the last save sent, so a refused one is not tried again each second (see `autoSaveTimer`).
   const lastSent = useRef<string | null>(null);
@@ -377,7 +377,7 @@ export function TextTab({ entry, file, kind, active, os, onDirty, commands, anno
   // from a draft starts it too.
   useEffect(() => {
     if (doc.text !== lastSent.current) lastSent.current = null;
-    if (!autoSaveTimer({ ...factsOf(doc, autoSave, readOnly !== null), text: doc.text, lastSent: lastSent.current })) return;
+    if (!autoSaveTimer({ ...factsOf(doc, autoSave, readOnly !== null, false), text: doc.text, lastSent: lastSent.current })) return;
     const timer = setTimeout(saveIfDue, AUTO_SAVE_MS);
     return () => clearTimeout(timer);
   }, [autoSave, doc, readOnly, saveIfDue]);

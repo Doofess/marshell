@@ -1118,4 +1118,14 @@ describe("preview tabs and the tree", () => {
     expect(s.sessions.s!.tree).toEqual(tree);
     expect(paneProblem(s)).toBeNull();
   });
+  it("at 32 tabs with no preview tab a preview open changes nothing", () => {
+    const full = run(EMPTY, ...Array.from({ length: 32 }, (_, i) => open(`/f${i}.ts`)));
+    const next = paneReducer(full, { type: "open", session: "s", project: "p", target: { path: "/new.ts" }, preview: true });
+    expect(next).toBe(full);
+  });
+  it("a tree root over 4,096 characters is not kept", () => {
+    const tree = (root: string) => run(EMPTY, { type: "tree", session: "s", tree: { root, expanded: [] } });
+    expect(tabsOf(tree("a".repeat(4097)), "s").tree).toBeUndefined();
+    expect(tabsOf(tree("a".repeat(4096)), "s").tree).toEqual({ root: "a".repeat(4096), expanded: [] });
+  });
 });

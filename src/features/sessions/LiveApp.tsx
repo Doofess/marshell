@@ -1034,14 +1034,13 @@ export function LiveApp() {
   const openFromTree = ({ path, line, keep }: { path: string; line?: number; keep: boolean }): void => {
     const session = stateRef.current.focusedId;
     const pane = viewRef.current.pane;
-    const check = openCheck(pane, session, path);
-    if (check !== "ok" || session === undefined) return announce(check === "refused" ? TAB_LIMIT : NO_SESSION_TO_OPEN);
     const flag = treeOpen({ previewTabs: (filesSettings ?? FILES_DEFAULTS).preview_tabs, keep });
     const panel = panelOfPath(path);
-    if (flag.preview) {
-      const current = previewTab(tabsOf(pane, session), panel);
-      if (current && keepFirst(current, (p) => isUnsaved(unsavedRef.current, p, osName))) paneDispatch({ type: "keep", session, paneTab: current.id });
-    }
+    const current = session == null || !flag.preview ? undefined : previewTab(tabsOf(pane, session), panel);
+    const kept = current !== undefined && keepFirst(current, (p) => isUnsaved(unsavedRef.current, p, osName));
+    const check = openCheck(pane, session, path, flag.preview && current !== undefined && !kept);
+    if (check !== "ok" || session === undefined) return announce(check === "refused" ? TAB_LIMIT : NO_SESSION_TO_OPEN);
+    if (current !== undefined && kept) paneDispatch({ type: "keep", session, paneTab: current.id });
     paneDispatch({ type: "open", session, project: paneProject(), target: line === undefined ? { path } : { path, line }, ...flag });
     announce(openedText(lastSegment(path), panel));
   };
@@ -2445,7 +2444,9 @@ export function LiveApp() {
               return to ? { name: to.name, ...(to.refused === undefined ? {} : { refused: to.refused }) } : null;
             })()}
             file={tabsBody ?? <EmptyFiles recent={paneRecent} onOpenFile={openFromPane} onBrowse={browseFile} onRecent={(path) => void openInPane({ path })} />}
-            onSaved={(session, tree) => paneDispatch({ type: "tree", session, tree })}
+            onSaved={(session, tree) => {
+              if (stateRef.current.infos.some((i) => i.tab_id === session)) paneDispatch({ type: "tree", session, tree });
+            }}
             onTreeView={(v) => paneDispatch({ type: "treeView", view: v })}
             onOpen={openFromTree}
             onPaste={(path) => void pasteInto(paneSession, [path])}

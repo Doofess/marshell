@@ -44,9 +44,10 @@ export function pageOpenCheck(pane: PaneView, session: string | null | undefined
   return openRefused(pane, session, url) ? "limit" : "ok";
 }
 
-/** Whether an open of this path can go ahead: it needs a session on screen, and a session with room (or already showing the path). */
-export function openCheck(pane: PaneView, session: string | null | undefined, path: string): "no-session" | "refused" | "ok" {
+/** Whether an open of this path can go ahead: it needs a session on screen, and a session with room (or already showing the path, or replacing the panel's preview tab in place). */
+export function openCheck(pane: PaneView, session: string | null | undefined, path: string, replacesPreview = false): "no-session" | "refused" | "ok" {
   if (session == null) return "no-session";
+  if (replacesPreview) return "ok";
   return openRefused(pane, session, path) ? "refused" : "ok";
 }
 
