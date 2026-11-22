@@ -13,7 +13,7 @@ export function revealLabel(os: Os): string {
  * make Explorer reach a share; the tree never shows one, so none is ever revealed.
  */
 export function revealRefused(path: string): boolean {
-  return path.startsWith("\\\\") || path.startsWith("//");
+  return /^[\\/]{2}/.test(path);
 }
 
 /** Selects the file in the system's file manager. Says why when it can't. */

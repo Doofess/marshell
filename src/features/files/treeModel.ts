@@ -65,7 +65,8 @@ export function visibleRows(listings: ReadonlyMap<string, Listing>, expanded: Re
   const walk = (dir: string, level: number) => {
     const listing = listings.get(dir);
     if (!listing || listing.state !== "listed") return;
-    const size = listing.entries.length;
+    // A "more" row is the last item of the set.
+    const size = listing.entries.length + (listing.more > 0 ? 1 : 0);
     listing.entries.forEach((entry, i) => {
       const path = childPath(dir, entry.name);
       const isFolder = entry.kind === "folder";
@@ -109,8 +110,8 @@ export function visibleRows(listings: ReadonlyMap<string, Listing>, expanded: Re
         level,
         expanded: false,
         loading: false,
-        setSize: 1,
-        posInSet: 1,
+        setSize: size,
+        posInSet: size,
         more: listing.more,
       });
     }

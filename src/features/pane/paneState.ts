@@ -440,11 +440,13 @@ function close(s: PaneView, session: string, paneTab: string): PaneView {
 }
 
 const TREE_FOLDERS_MAX = 500;
+const TREE_ROOT_MAX = 4096;
 const TREE_WIDTH_MIN = 160;
 const TREE_WIDTH_MAX = 2048;
 
 /** Sets the session's tree, keeping only the folders the core accepts and the first 500; the session's tabs are untouched. */
 function setTree(s: PaneView, session: string, tree: TreeState): PaneView {
+  if ([...tree.root].length > TREE_ROOT_MAX) return s;
   const expanded = tree.expanded.filter(treeFolderOk).slice(0, TREE_FOLDERS_MAX);
   const cur = tabsOf(s, session);
   const was = cur.tree;

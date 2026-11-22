@@ -20,10 +20,11 @@ use axum::response::{IntoResponse, Response};
 use marshell_protocol::api::{FileConflict, FileSaved, FileUnsave};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
 const BAD_PATH: &str = "That path can't be saved.";
 const READ_ONLY: &str = "The file is read-only or in use by another program.";
@@ -34,6 +35,39 @@ static SAVE_LOCK: Mutex<()> = Mutex::new(());
 /// How old the newest copy of a file may be before an auto save takes another: five minutes, so the file history's twenty copies
 /// reach back at least 100 minutes of auto saves (6r-2 decision 24).
 pub const AUTO_COPY_MS: u64 = 300_000;
+
+/// The hash of the bytes Marshell last wrote to each file, by `written_key`. It lives in memory, so after a restart the first auto
+/// save of each file takes a copy.
+static WRITTEN: LazyLock<Mutex<HashMap<String, String>>> = LazyLock::new(Mutex::default);
+
+/// A path's key in `WRITTEN`: its trailing separators trimmed and, on Windows, ASCII-lowercased, so two paths share a key exactly
+/// when `same_path` calls them the same.
+fn written_key(path: &str) -> String {
+    let trimmed = path.trim_end_matches(['/', '\\']);
+    // All separators (a root), or just a drive letter ("C:"): one separator stays, as `same_path` keeps it.
+    let key = if trimmed.len() != path.len() && (trimmed.is_empty() || (trimmed.len() == 2 && trimmed.ends_with(':'))) {
+        &path[..trimmed.len() + 1]
+    } else {
+        trimmed
+    };
+    if cfg!(windows) {
+        key.to_ascii_lowercase()
+    } else {
+        key.to_string()
+    }
+}
+
+/// The hash of the bytes Marshell last wrote to `path` in this run, if it wrote any. The lock is held for the lookup only.
+fn last_written(path: &Path) -> Option<String> {
+    let map = WRITTEN.lock().unwrap_or_else(|e| e.into_inner());
+    map.get(&written_key(&path.to_string_lossy())).cloned()
+}
+
+/// Notes that `path` now holds the bytes of `hash`, written by Marshell. The lock is held for the insert only.
+fn remember_written(path: &Path, hash: &str) {
+    let mut map = WRITTEN.lock().unwrap_or_else(|e| e.into_inner());
+    map.insert(written_key(&path.to_string_lossy()), hash.to_string());
+}
 
 /// Whether a save takes a copy of the old bytes before it writes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,6 +219,13 @@ fn write_failed(e: io::Error) -> Done {
 
 /// The answer to a save that left `path` holding bytes of `hash`.
 fn saved(path: &Path, hash: String, snapshot: Option<String>) -> Done {
+    // Every write that completes ends here, so the file's bytes are Marshell's own last write.
+    remember_written(path, &hash);
+    answer(path, hash, snapshot)
+}
+
+/// What a save answers, from the file as it is now.
+fn answer(path: &Path, hash: String, snapshot: Option<String>) -> Done {
     match std::fs::metadata(path) {
         Ok(meta) => Done::Saved(FileSaved {
             size: meta.len(),
@@ -226,7 +267,9 @@ fn save_checked(path: &Path, expect: &Expect, body: &[u8], home: &Path, copy: Co
         }
         (Ok(Disk::File(bytes, read_only)), Expect::Hash(expected)) if hash_bytes(&bytes) == *expected => {
             if bytes == body {
-                return saved(path, new_hash, None);
+                // Nothing is written, so the bytes stay whoever's they were: an auto save over another
+                // program's write still takes its copy.
+                return answer(path, new_hash, None);
             }
             if read_only {
                 return Done::ReadOnly;
@@ -263,6 +306,12 @@ fn replace_with(
     let now = super::doctor::now_ms();
     // An auto save skips its copy while the file's newest is fresh. A history that can't be read is no reason to skip: the copy is
     // taken, and fails the save, as it always has, if the history can't be written.
+    // A file that isn't what Marshell last wrote there (another program or an agent wrote it, or Marshell never has in this run) is
+    // copied whatever the newest copy's age, as a save by hand would.
+    let copy = match copy {
+        Copy::IfOlderThan(_) if last_written(path).as_deref() != Some(hash_bytes(old).as_str()) => Copy::Always,
+        other => other,
+    };
     let due = copy_due(&copy, history.newest_ms(path).unwrap_or(None), now);
     let snapshot = if due {
         match history.take(path, old, &new_hash, now) {
@@ -411,7 +460,9 @@ mod tests {
     fn saved_with_copy_aged(age_ms: Option<u64>, copy: Copy) -> (Done, tempfile::TempDir, tempfile::TempDir, PathBuf) {
         let (home, dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         let path = dir.path().join("a.txt");
-        std::fs::write(&path, "old").unwrap();
+        // Marshell made the file, so what it holds is Marshell's own last write.
+        let made = save_checked(&path, &Expect::NoFile, b"old", home.path(), Copy::Always);
+        assert!(matches!(made, Done::Saved(_)));
         if let Some(age) = age_ms {
             let at = super::super::doctor::now_ms() - age;
             History::new(home.path()).take(&path, b"older", "h", at).unwrap();
@@ -475,7 +526,8 @@ mod tests {
         let (home, dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         let path = dir.path().join("a.txt");
         let (old, new) = (b"the old text".as_slice(), b"a new text that is longer".as_slice());
-        std::fs::write(&path, old).unwrap();
+        let made = save_checked(&path, &Expect::NoFile, old, home.path(), Copy::Always);
+        assert!(matches!(made, Done::Saved(_)));
         let at = super::super::doctor::now_ms() - 1_000;
         History::new(home.path()).take(&path, b"older", "h", at).unwrap();
         // Every write stops half-way, so the old bytes can't be put back either.
@@ -494,7 +546,8 @@ mod tests {
         let (home, dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
         let path = dir.path().join("a.txt");
         let (old, new) = (b"the old text".as_slice(), b"a new text that is longer".as_slice());
-        std::fs::write(&path, old).unwrap();
+        let made = save_checked(&path, &Expect::NoFile, old, home.path(), Copy::Always);
+        assert!(matches!(made, Done::Saved(_)));
         let at = super::super::doctor::now_ms() - 1_000;
         History::new(home.path()).take(&path, b"older", "h", at).unwrap();
         let calls = Cell::new(0);
@@ -510,6 +563,103 @@ mod tests {
         assert!(matches!(done, Done::Failed(_)));
         assert_eq!(std::fs::read(&path).unwrap(), old);
         assert_eq!(copies(home.path()), 1);
+    }
+
+    /// A save of `body` over the file's current bytes, as a tab that loaded those bytes would send it.
+    fn save_over(path: &Path, home: &Path, body: &[u8], copy: Copy) -> Done {
+        let on_disk = std::fs::read(path).unwrap();
+        save_checked(path, &Expect::Hash(hash_bytes(&on_disk)), body, home, copy)
+    }
+
+    /// A fresh home and folder, with the file made directly (not by a save) and holding "old".
+    fn file_made_directly() -> (tempfile::TempDir, tempfile::TempDir, PathBuf) {
+        let (home, dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let path = dir.path().join("a.txt");
+        std::fs::write(&path, "old").unwrap();
+        (home, dir, path)
+    }
+
+    #[test]
+    fn an_auto_save_over_another_programs_write_takes_a_copy_within_5_minutes() {
+        let (home, _dir, path) = file_made_directly();
+        assert!(snapshot_of(save_over(&path, home.path(), b"mine", Copy::Always)).is_some());
+        assert_eq!(copies(home.path()), 1);
+        // Another program writes the file; the next auto save replaces bytes Marshell never wrote.
+        std::fs::write(&path, "theirs").unwrap();
+        assert!(snapshot_of(save_over(&path, home.path(), b"mine again", AUTO)).is_some());
+        assert_eq!(copies(home.path()), 2);
+    }
+
+    #[test]
+    fn a_save_that_writes_nothing_leaves_another_programs_bytes_theirs() {
+        // PR review of 6t: a save whose text the disk already holds writes nothing, so the next auto
+        // save still replaces bytes Marshell never wrote.
+        let (home, _dir, path) = file_made_directly();
+        assert!(snapshot_of(save_over(&path, home.path(), b"mine", Copy::Always)).is_some());
+        std::fs::write(&path, "theirs").unwrap();
+        // The tab reloaded "theirs"; saving that same text writes nothing and takes no copy.
+        assert_eq!(snapshot_of(save_over(&path, home.path(), b"theirs", AUTO)), None);
+        assert_eq!(copies(home.path()), 1);
+        assert!(snapshot_of(save_over(&path, home.path(), b"mine again", AUTO)).is_some());
+        assert_eq!(copies(home.path()), 2);
+    }
+
+    #[test]
+    fn an_auto_save_over_its_own_last_write_keeps_the_5_minute_rule() {
+        let (home, _dir, path) = file_made_directly();
+        assert!(snapshot_of(save_over(&path, home.path(), b"one", Copy::Always)).is_some());
+        assert_eq!(snapshot_of(save_over(&path, home.path(), b"two", AUTO)), None);
+        assert_eq!(snapshot_of(save_over(&path, home.path(), b"three", AUTO)), None);
+        assert_eq!(std::fs::read(&path).unwrap(), b"three");
+        assert_eq!(copies(home.path()), 1);
+    }
+
+    #[test]
+    fn the_first_auto_save_of_a_file_marshell_never_wrote_takes_a_copy() {
+        let (home, _dir, path) = file_made_directly();
+        let at = super::super::doctor::now_ms() - 60_000;
+        History::new(home.path()).take(&path, b"older", "h", at).unwrap();
+        assert!(snapshot_of(save_over(&path, home.path(), b"new", AUTO)).is_some());
+        assert_eq!(copies(home.path()), 2);
+    }
+
+    #[test]
+    fn two_tabs_auto_saving_one_file_keep_the_5_minute_rule() {
+        let (home, _dir, path) = file_made_directly();
+        // Tab A saves by hand.
+        assert!(snapshot_of(save_over(&path, home.path(), b"from tab A", Copy::Always)).is_some());
+        // Tab B loaded A's bytes and auto saves over them: Marshell's own last write, so no extra copy.
+        let done = save_checked(
+            &path,
+            &Expect::Hash(hash_bytes(b"from tab A")),
+            b"from tab B",
+            home.path(),
+            AUTO,
+        );
+        assert_eq!(snapshot_of(done), None);
+        assert_eq!(copies(home.path()), 1);
+    }
+
+    #[test]
+    fn a_file_marshell_made_counts_as_its_own_write() {
+        let (home, dir) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let path = dir.path().join("a.txt");
+        let made = save_checked(&path, &Expect::NoFile, b"made", home.path(), Copy::Always);
+        assert!(matches!(made, Done::Saved(_)));
+        let at = super::super::doctor::now_ms() - 60_000;
+        History::new(home.path()).take(&path, b"older", "h", at).unwrap();
+        assert_eq!(snapshot_of(save_over(&path, home.path(), b"next", AUTO)), None);
+        assert_eq!(copies(home.path()), 1);
+    }
+
+    #[test]
+    fn the_written_key_ignores_trailing_separators_and_on_windows_case() {
+        assert_eq!(written_key("/tmp/a/b.txt"), written_key("/tmp/a/b.txt/"));
+        assert_eq!(written_key("/tmp/a/b.txt"), written_key("/tmp/a/b.txt\\"));
+        assert_eq!(
+            written_key("/tmp/A/b.txt") == written_key("/tmp/a/B.txt"),
+            cfg!(windows)
+        );
     }
 
     #[test]

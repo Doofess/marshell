@@ -7,12 +7,14 @@ import type { TreeView } from "../../generated/TreeView";
 import type { Os } from "../../lib/keymap";
 import { focusPane } from "../pane/focusPane";
 import { panelOfPath } from "../pane/panels";
-import { fileListFor, folderName } from "../preview/quickFiles";
+import { cachedFileListNow, fileListFor, folderName } from "../preview/quickFiles";
 import { listTree, searchFiles } from "./filesApi";
-import { afterOpen, followTarget, keyboardToFile, openHow, rowOpens } from "./filesActions";
+import { afterOpen, COLLAPSED, followTarget, keyboardToFile, openHow, rowOpens } from "./filesActions";
 import { FileTree } from "./FileTree";
+import { FilesBusy } from "./FilesBusy";
+import { filesWait, focusToFilter, listFailed, useShownAfter } from "./filesWait";
 import { FilesBody } from "./FilesBody";
-import { filterMode, namesNote, searchNote, SHORT_NOTE } from "./filterText";
+import { filterMode, LONG_NOTE, namesNote, searchNote, SHORT_NOTE } from "./filterText";
 import { PathBar } from "./PathBar";
 import { pathSegments } from "./pathSegments";
 import { revealFile } from "./reveal";
@@ -110,7 +112,19 @@ export function FilesPanel(p: FilesPanelProps) {
 
   const mode = filterMode(text);
   const search = useSearch({ tab: session, root, query: mode.kind === "search" ? mode.query : null, run: searchFiles });
-  const [names, setNames] = useState<{ files: string[]; truncated: boolean; root: string } | "loading" | "error">("loading");
+  const [names, setNames] = useState<{ files: string[]; truncated: boolean; root: string } | "loading" | "error">(() => {
+    // Starts from the cached list, so the first key after a mount does not blank the tree when the list is already there.
+    const cached = cachedFileListNow(session, root);
+    return cached ? { files: cached.files, truncated: cached.truncated, root: cached.root } : "loading";
+  });
+  const namesState = names === "loading" || names === "error" ? names : "ready";
+  // When the tree's root moves (not when the mode flips) the old folder's rows are not the new one's: listed again.
+  const rootSeen = useRef(root);
+  useEffect(() => {
+    if (rootSeen.current === root) return;
+    rootSeen.current = root;
+    setNames("loading");
+  }, [root]);
   useEffect(() => {
     if (mode.kind !== "names") return;
     let live = true;
@@ -153,7 +167,11 @@ export function FilesPanel(p: FilesPanelProps) {
     p.onTreeView({ hidden: !treeView.hidden });
     return treeView.hidden;
   };
-  useImperativeHandle(p.ref, () => ({ toggleTree, collapseAll: () => tree.collapseAll() }));
+  const collapseAll = () => {
+    tree.collapseAll();
+    announce(COLLAPSED);
+  };
+  useImperativeHandle(p.ref, () => ({ toggleTree, collapseAll }));
 
   /** Opens the file at `path`, from a tree row, a menu or a search result. */
   const openAt = (path: string, how: "click" | "enter" | "double" | "space", line?: number) => {
@@ -242,14 +260,36 @@ export function FilesPanel(p: FilesPanelProps) {
   };
   const toRows = () => box.current?.querySelector<HTMLElement>('[role="tree"] [role="treeitem"][tabindex="0"]')?.focus();
 
+  // What Files waits for: the old note and the old rows are gone at once, the ring comes after 150 ms.
+  const searchBusy = search.busy && !tree.noFolder;
+  const wait = filesWait({ mode, names: namesState, searchBusy });
+  const ringShown = useShownAfter(wait !== null);
+  const focusInTree = useRef(false);
+  const waited = useRef(false);
+  // React removes the focused row before any effect runs, so the ref (not `document.activeElement`) says focus was in the rows.
+  useLayoutEffect(() => {
+    const waitBegan = wait !== null && !waited.current;
+    waited.current = wait !== null;
+    if (focusToFilter({ waitBegan, focusWasInTree: focusInTree.current })) {
+      filterBox.current?.focus();
+      focusInTree.current = false;
+    }
+  }, [wait !== null]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const note =
-    mode.kind === "short"
-      ? SHORT_NOTE
-      : mode.kind === "search"
-        ? searchNote(search.reply, mode.query, search.failed)
-        : filtered
-          ? namesNote({ matches: filtered.matches, capped: filtered.capped, listCut: filtered.listCut }, namesQuery ?? "")
-          : null;
+    wait !== null
+      ? null
+      : mode.kind === "short"
+        ? SHORT_NOTE
+        : mode.kind === "long"
+          ? LONG_NOTE
+          : mode.kind === "search"
+            ? searchNote(search.reply, mode.query, search.failed)
+            : mode.kind === "names" && namesState === "error"
+              ? listFailed(root === null ? null : folderName(root))
+              : filtered
+                ? namesNote({ matches: filtered.matches, capped: filtered.capped, listCut: filtered.listCut }, namesQuery ?? "")
+                : null;
 
   const filter = (
     <div onKeyDown={onFilterKey}>
@@ -264,7 +304,11 @@ export function FilesPanel(p: FilesPanelProps) {
 
   const reply = search.reply;
   const body =
-    mode.kind === "search" && !tree.noFolder ? (
+    wait !== null ? (
+      <div className="files-wait" aria-busy="true">
+        {ringShown && <FilesBusy text={wait} />}
+      </div>
+    ) : mode.kind === "search" && !tree.noFolder ? (
       reply ? (
         <SearchResults
           reply={reply}
@@ -291,7 +335,18 @@ export function FilesPanel(p: FilesPanelProps) {
       />
     );
   const treeNode = (
-    <div style={{ display: "contents" }} onClickCapture={() => (pointer.current = true)} onKeyDownCapture={() => (pointer.current = false)} onKeyDown={onTreeKey}>
+    <div
+      style={{ display: "contents" }}
+      onClickCapture={() => (pointer.current = true)}
+      onKeyDownCapture={() => (pointer.current = false)}
+      onKeyDown={onTreeKey}
+      onFocusCapture={() => (focusInTree.current = true)}
+      onBlurCapture={(e) => {
+        // A row removed with focus on it blurs with nothing to receive it and is gone from the page: that is not focus leaving.
+        const to = e.relatedTarget as Node | null;
+        if (to !== null ? !e.currentTarget.contains(to) : (e.target as Node).isConnected) focusInTree.current = false;
+      }}
+    >
       {body}
     </div>
   );
@@ -303,7 +358,7 @@ export function FilesPanel(p: FilesPanelProps) {
       windows={windows}
       treeShown={shown}
       onReveal={revealFolder}
-      onCollapseAll={() => tree.collapseAll()}
+      onCollapseAll={collapseAll}
       onToggleTree={toggleTree}
       onMenu={(anchor, opener) => setBarMenu({ anchor, opener })}
     />

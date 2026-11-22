@@ -556,7 +556,10 @@ async fn the_file_list_outside_a_repo_skips_build_folders() {
     let s = setup("reported");
     let root = s.dir.path();
     for skipped in ["node_modules", ".git", "target", "dist", "build"] {
-        write(&root.join(skipped).join("x.txt"), "x");
+        // A `.git` folder in the root would make it a checkout, which lists what git would list.
+        if skipped != ".git" {
+            write(&root.join(skipped).join("x.txt"), "x");
+        }
         write(&root.join("src").join(skipped).join("y.txt"), "y");
     }
     write(&root.join("keep/deep/z.txt"), "z");

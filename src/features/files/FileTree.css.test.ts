@@ -51,6 +51,9 @@ describe("FileTree.css", () => {
       for (const c of colours) expect(SYSTEM).toContain(c);
     }
   });
+  it("the filter box has an edge in forced colours", () => {
+    expect(rule(".file-tree-filter", forced())).toContain("outline: 1px solid CanvasText");
+  });
   it("forced colors give the selected row Highlight and HighlightText", () => {
     const selected = rule('.file-tree__row[aria-selected="true"]', forced());
     expect(selected).toContain("background: Highlight");

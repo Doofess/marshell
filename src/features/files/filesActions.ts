@@ -7,6 +7,9 @@ import type { ViewAction } from "../window/viewState";
 import { narrowAfterOpen } from "./treeLayout";
 import { relativeTo, type TreeRow } from "./treeModel";
 
+/** What the announcer says after Collapse all folders. */
+export const COLLAPSED = "Collapsed all folders.";
+
 /** The `open` action's preview flag for an open from the tree: a preview tab only when the setting is on and the open isn't a keep (Enter, a double-click). */
 export function treeOpen(o: { previewTabs: boolean; keep: boolean }): { preview?: true } {
   return o.previewTabs && !o.keep ? { preview: true } : {};

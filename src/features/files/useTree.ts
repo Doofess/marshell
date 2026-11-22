@@ -85,7 +85,7 @@ const parentOf = (path: string) => path.slice(0, Math.max(0, path.lastIndexOf("/
 const saveOf = (root: string, expanded: ReadonlySet<string>): TreeState => ({ root, expanded: [...expanded].slice(0, MAX_SAVED) });
 
 /** A reply is tagged with the session and the root it was asked under. */
-export type ReplyTag = { session: string; root: string | null };
+export type ReplyTag = { session: string; root: string | null; expanded: ReadonlySet<string> };
 
 /**
  * Folds a reply into the data. A reply for another session, or asked under a root that is no longer the data's, changes
@@ -136,7 +136,7 @@ export function applyReply(data: TreeData, tag: ReplyTag, reply: TreeReply | "no
         // A folder that left its parent's listing leaves `expanded`, with what was open under it.
         const folders = new Set(d.entries.filter((e) => e.kind === "folder").map((e) => e.name));
         for (const e of [...expanded]) {
-          if (parentOf(e) === d.dir && !folders.has(e.slice(d.dir === "" ? 0 : d.dir.length + 1)) && expanded.has(e)) {
+          if (parentOf(e) === d.dir && !folders.has(e.slice(d.dir === "" ? 0 : d.dir.length + 1)) && expanded.has(e) && tag.expanded.has(e)) {
             dropTree(expanded, e);
             stateChanged = true;
           }
@@ -253,7 +253,7 @@ export function createTreeEngine(deps: EngineDeps): TreeEngine {
       if (chunks.length === 0) return;
       for (const chunk of chunks) {
         if (disposed || source !== src) return;
-        const tag: ReplyTag = { session: deps.session, root: data.root };
+        const tag: ReplyTag = { session: deps.session, root: data.root, expanded: new Set(data.expanded) };
         // The root moved under this round: what is left of it was asked under the old one.
         if (rootAtStart !== null && tag.root !== rootAtStart) return;
         let reply: TreeReply | "no-folder";

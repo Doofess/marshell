@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { Draft } from "../../generated/Draft";
 import { start, step, type DocEvent, type DocState } from "./editorDoc";
-import { TextTabView, readOnlyLine, type TextTabViewProps, conflictJump, dirtyNews, firstConflict, inBodyNow, isSaveKey, keyboardTo, sourceShown, wrapAtStart } from "./TextTab";
+import { TextTabView, factsOf, readOnlyLine, type TextTabViewProps, conflictJump, dirtyNews, firstConflict, inBodyNow, isSaveKey, keyboardTo, sourceShown, wrapAtStart } from "./TextTab";
 import { keyboardOnRemoval, mergeWent } from "./ChangedBar";
 
 // The rendered Markdown needs the DOM, which these tests run without: the stand-in shows the text it was given.
@@ -339,5 +339,13 @@ describe("keyboardOnRemoval", () => {
     keyboardOnRemoval(had, () => "terminal")(button)?.();
     expect(had.current).toBe(false);
     expect(keyboardOnRemoval(had, () => button)(null)).toBeUndefined();
+  });
+});
+
+describe("factsOf", () => {
+  it("the timer's facts skip the marker scan and the save's facts do it", () => {
+    const d: DocState = { ...after(), text: "<<<<<<< a\nx\n=======\ny\n>>>>>>> b\n", dirty: true };
+    expect(factsOf(d, true, false, false).markers).toBe(false);
+    expect(factsOf(d, true, false, true).markers).toBe(true);
   });
 });

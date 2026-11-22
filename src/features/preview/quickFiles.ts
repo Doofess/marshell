@@ -9,7 +9,8 @@ import { listFiles } from "./previewApi";
 /** A fetched list is reused this long: opening the palette twice in a row should not walk the folder twice. */
 const TTL_MS = 10_000;
 
-type Entry = { at: number; list: Promise<FileList> };
+/** `value` is set once the request has answered, so a fresh list can be read without waiting. */
+export type Entry = { at: number; list: Promise<FileList>; value?: FileList };
 const shared = new Map<string, Entry>();
 
 /** The session's file list, from the core at most once per 10 s. Keyed by tab, because the root is only known once the core has answered. */
@@ -17,7 +18,9 @@ export function cachedFileList(tab: string, fetch: (tab: string) => Promise<File
   const hit = cache.get(tab);
   if (hit && now() - hit.at < TTL_MS) return hit.list;
   const list = fetch(tab);
-  cache.set(tab, { at: now(), list });
+  const entry: Entry = { at: now(), list };
+  cache.set(tab, entry);
+  list.then((v) => (entry.value = v), () => {});
   // A failed request is not remembered.
   list.catch(() => cache.get(tab)?.list === list && cache.delete(tab));
   return list;
@@ -29,6 +32,13 @@ export async function fileListFor(tab: string, root: string | null, fetch: (tab:
   if (root === null || list.root === root) return list;
   cache.delete(tab);
   return cachedFileList(tab, fetch, now, cache);
+}
+
+/** The cached list for the tab, when it is still fresh and for this root; no request is made. */
+export function cachedFileListNow(tab: string, root: string | null, now: () => number = Date.now, cache: Map<string, Entry> = shared): FileList | null {
+  const hit = cache.get(tab);
+  if (!hit || hit.value === undefined || now() - hit.at >= TTL_MS) return null;
+  return root === null || hit.value.root === root ? hit.value : null;
 }
 
 /** The last part of a folder path, for "Files in <folder>". */

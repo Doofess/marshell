@@ -247,7 +247,7 @@ function Row(p: {
   const style = { "--level": row.level } as CSSProperties;
   if (row.kind === "more" || row.kind === "empty") {
     return (
-      <div role="treeitem" className="file-tree__row file-tree__row--note" data-path={row.path} aria-disabled="true" aria-selected={false} aria-level={row.level + 1} aria-setsize={row.setSize} aria-posinset={row.posInSet} tabIndex={p.tabStop ? 0 : -1} style={style}>
+      <div role="treeitem" {...selectedProps(false, "selected", "file-tree__row file-tree__row--note")} data-path={row.path} aria-disabled="true" aria-level={row.level + 1} aria-setsize={row.setSize} aria-posinset={row.posInSet} tabIndex={p.tabStop ? 0 : -1} style={style}>
         <span className="file-tree__twisty" aria-hidden="true" />
         <span className="file-tree__name">{row.kind === "more" ? `And ${(row.more ?? 0).toLocaleString("en-US")} more` : "Empty"}</span>
       </div>

@@ -861,3 +861,22 @@ describe("LiveApp: the Files panel's wiring", () => {
     expect(source).toContain("home={home}");
   });
 });
+
+describe("LiveApp: collapse through the saved tree", () => {
+  it("a collapse through the saved tree announces Collapsed all folders.", () => {
+    const source = readFileSync(join(__dirname, "LiveApp.tsx"), "utf8");
+    expect(source).toContain("expanded: [] } });\n        announce(COLLAPSED);");
+  });
+});
+
+describe("LiveApp: tree opens and saves", () => {
+  const source = readFileSync(join(__dirname, "LiveApp.tsx"), "utf8");
+  it("a tree open works out whether it replaces a preview before the tab-limit check", () => {
+    const body = source.slice(source.indexOf("const openFromTree ="));
+    expect(body.indexOf("const flag = treeOpen(")).toBeLessThan(body.indexOf("openCheck("));
+    expect(body).toContain("flag.preview && current !== undefined && !kept");
+  });
+  it("a tree save from a session that has closed is dropped", () => {
+    expect(source).toContain("stateRef.current.infos.some((i) => i.tab_id === session)");
+  });
+});

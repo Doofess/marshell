@@ -87,29 +87,6 @@ pub fn run(dir: &Path, args: &[&str]) -> anyhow::Result<GitOutput> {
     })
 }
 
-/// Like `run`, with `stdin` written to git and the raw output returned (its exit code, and bytes
-/// that need not be UTF-8). The input is written from its own thread while the output is drained,
-/// so a long list can't fill a pipe and leave both sides waiting.
-pub fn run_input(dir: &Path, args: &[&str], stdin: Vec<u8>) -> anyhow::Result<std::process::Output> {
-    use std::io::Write;
-    let mut child = command(dir, args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(start_error)?;
-    let pipe = child.stdin.take();
-    let writer = std::thread::spawn(move || {
-        if let Some(mut pipe) = pipe {
-            // Git may exit before it reads everything; the exit code says what happened.
-            let _ = pipe.write_all(&stdin);
-        }
-    });
-    let output = child.wait_with_output().map_err(anyhow::Error::new);
-    let _ = writer.join();
-    output
-}
-
 /// Why `stream` returned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stopped {
@@ -159,6 +136,27 @@ pub fn stream(
     stream_cmd(command(dir, args), deadline, cancel, each)
 }
 
+/// Reads `r` to its end and sends each chunk. A read error is sent too (an interrupted read is
+/// retried), and ends the reading, so the receiver can tell a failed read from the end of the output.
+fn pump(mut r: impl std::io::Read, tx: std::sync::mpsc::SyncSender<std::io::Result<Vec<u8>>>) {
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        match r.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                if tx.send(Ok(buf[..n].to_vec())).is_err() {
+                    break;
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) => {
+                let _ = tx.send(Err(e));
+                break;
+            }
+        }
+    }
+}
+
 /// `stream` for any command, so the tests can run one that prints nothing.
 fn stream_cmd(
     mut cmd: Command,
@@ -166,7 +164,6 @@ fn stream_cmd(
     cancel: &std::sync::atomic::AtomicBool,
     mut each: impl FnMut(&[u8]) -> bool,
 ) -> anyhow::Result<Stopped> {
-    use std::io::Read;
     use std::sync::atomic::Ordering;
     use std::sync::mpsc::{RecvTimeoutError, sync_channel};
     use std::time::Instant;
@@ -181,25 +178,11 @@ fn stream_cmd(
             .spawn()
             .map_err(start_error)?,
     );
-    let mut out = child.0.stdout.take().expect("stdout is piped");
+    let out = child.0.stdout.take().expect("stdout is piped");
     // The pipe is read on its own thread, so this one can watch the clock and the flag while git is
     // silent. The small queue holds the reader back when `each` is slow.
-    let (tx, rx) = sync_channel::<Vec<u8>>(4);
-    std::thread::spawn(move || {
-        let mut buf = vec![0u8; 64 * 1024];
-        loop {
-            match out.read(&mut buf) {
-                Ok(0) => break,
-                Ok(n) => {
-                    if tx.send(buf[..n].to_vec()).is_err() {
-                        break;
-                    }
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(_) => break,
-            }
-        }
-    });
+    let (tx, rx) = sync_channel::<std::io::Result<Vec<u8>>>(4);
+    std::thread::spawn(move || pump(out, tx));
     loop {
         if cancel.load(Ordering::Relaxed) {
             return Ok(Stopped::Cancelled);
@@ -209,7 +192,9 @@ fn stream_cmd(
             return Ok(Stopped::Deadline);
         }
         match rx.recv_timeout(STREAM_TICK.min(deadline - now)) {
-            Ok(chunk) => {
+            // A failed read is not the end of git's output: what came before it is only part of it.
+            Ok(Err(e)) => return Err(anyhow::Error::new(e).context("Git's output could not be read.")),
+            Ok(Ok(chunk)) => {
                 if !each(&chunk) {
                     return Ok(Stopped::Asked);
                 }
@@ -296,6 +281,29 @@ mod tests {
             cmd.arg("10");
             cmd
         }
+    }
+
+    /// A reader that gives some bytes, then fails.
+    struct Failing(bool);
+
+    impl std::io::Read for Failing {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.0 {
+                return Err(std::io::Error::other("x"));
+            }
+            self.0 = true;
+            buf[..2].copy_from_slice(b"a\0");
+            Ok(2)
+        }
+    }
+
+    #[test]
+    fn a_read_error_ends_the_stream_as_an_error() {
+        let (tx, rx) = std::sync::mpsc::sync_channel(4);
+        pump(Failing(false), tx);
+        assert_eq!(rx.recv().unwrap().unwrap(), b"a\0");
+        assert_eq!(rx.recv().unwrap().unwrap_err().to_string(), "x");
+        assert!(rx.recv().is_err());
     }
 
     #[test]

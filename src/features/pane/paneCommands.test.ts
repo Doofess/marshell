@@ -39,6 +39,12 @@ describe("openCheck", () => {
     expect(openCheck(full, "s1", "/f3")).toBe("ok");
     expect(openCheck(full, "s2", "/new")).toBe("ok");
   });
+  it("at 32 tabs an open that replaces the panel's preview tab is not refused", () => {
+    const paths = Array.from({ length: 32 }, (_, i) => `/f${i}`);
+    const full = withTabs("s1", paths);
+    expect(openCheck(full, "s1", "/new.ts")).toBe("refused");
+    expect(openCheck(full, "s1", "/new.ts", true)).toBe("ok");
+  });
 });
 
 describe("Ctrl+Shift+Q", () => {

@@ -6,23 +6,30 @@
 //! symlink or a junction), inside the root or out. `.git` is never listed or entered.
 
 use super::AppState;
-use super::files::{links_refused, modified_ms, project_root, refused, row_of, strip_verbatim};
+use super::files::{
+    Root, Tracked, git_tracked, links_refused, modified_ms, project_root, refused, row_of, strip_verbatim,
+};
+use super::ignores::Ignores;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use marshell_protocol::api::{TreeAsk, TreeDir, TreeDirState, TreeEntry, TreeEntryKind, TreeReply, TreeRequest};
 use std::cmp::Ordering;
-use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 /// The most folders one request may ask for.
 const MAX_ASKS: usize = 64;
 /// A folder lists at most this many entries; the rest are counted in `more`.
 const MAX_ENTRIES: usize = 5_000;
 
-/// Runs git with `args` in a folder, giving it `stdin`. Swapped in tests to count the runs.
-type RunGit<'a> = &'a dyn Fn(&std::path::Path, &[&str], Vec<u8>) -> anyhow::Result<std::process::Output>;
+/// How long the tracked list may take; past it the marks come from the rules alone.
+const TREE_GIT_BUDGET: Duration = Duration::from_secs(2);
+
+/// Reads a checkout's tracked list before a deadline. Swapped in tests to count the runs.
+type TrackedFn<'a> = &'a dyn Fn(&std::path::Path, Instant) -> Option<Arc<Tracked>>;
 
 /// Digits compare as numbers, everything else without regard to case. Equal in that sense, the plain
 /// text order decides, so the order is total.
@@ -194,96 +201,55 @@ fn rel_of(dir: &str, name: &str) -> String {
     }
 }
 
-/// The lines to ask git about for one listed folder: the folder itself (unless it is the root) and
-/// every entry, folders with a trailing `/`.
-fn lines_of(d: &TreeDir) -> Vec<String> {
-    let mut lines = Vec::with_capacity(d.entries.len() + 1);
-    if !d.dir.is_empty() {
-        lines.push(format!("{}/", d.dir));
-    }
-    for e in &d.entries {
-        let rel = rel_of(&d.dir, &e.name);
-        lines.push(if e.kind == TreeEntryKind::Folder {
-            format!("{rel}/")
-        } else {
-            rel
-        });
-    }
-    lines
-}
-
-enum Checked {
-    /// Git answered: the ignored paths, without a trailing `/`.
-    Set(HashSet<String>),
-    /// Git ran and failed, as it does for a path inside a submodule.
-    Failed,
-    /// Git could not be started.
-    NoGit,
-}
-
-fn check_ignore(root: &std::path::Path, lines: &[String], run: RunGit) -> Checked {
-    let mut stdin = Vec::new();
-    for line in lines {
-        stdin.extend_from_slice(line.as_bytes());
-        stdin.push(0);
-    }
-    let Ok(out) = run(root, &["check-ignore", "-z", "--stdin"], stdin) else {
-        return Checked::NoGit;
+/// Marks the ignored entries of the listed folders from the checkout's rules. Git is asked only in the
+/// launch checkout, once, and only when the rules marked a file: git never calls a tracked file
+/// ignored, so the tracked ones lose their mark. A folder is never unmarked this way.
+fn mark_ignored(root: &Root, dirs: &mut [TreeDir], tracked: TrackedFn<'_>) {
+    let mut ignores = match root {
+        Root::Plain(_) => return,
+        Root::Checkout(top) => Ignores::new(top, top),
+        Root::InCheckout { root, checkout } => Ignores::new(checkout, root),
     };
-    match out.status.code() {
-        // 1: none of them is ignored.
-        Some(1) => Checked::Set(HashSet::new()),
-        Some(0) => Checked::Set(
-            out.stdout
-                .split(|b| *b == 0)
-                .filter(|p| !p.is_empty())
-                .map(|p| String::from_utf8_lossy(p).trim_end_matches('/').to_string())
-                .collect(),
-        ),
-        _ => Checked::Failed,
+    let mut any_file = false;
+    for d in dirs.iter_mut().filter(|d| d.state == TreeDirState::Listed) {
+        let folder = root.path().join(&d.dir);
+        for e in &mut d.entries {
+            let is_file = e.kind == TreeEntryKind::File;
+            // A folder link counts as a folder for a `dir/` pattern.
+            e.ignored = ignores.ignored(&folder.join(&e.name), !is_file);
+            any_file |= e.ignored && is_file;
+        }
     }
-}
-
-fn apply_marks(d: &mut TreeDir, ignored: &HashSet<String>) {
-    let folder_ignored = !d.dir.is_empty() && ignored.contains(&d.dir);
-    for e in &mut d.entries {
-        e.ignored = folder_ignored || ignored.contains(&rel_of(&d.dir, &e.name));
+    let Root::Checkout(checkout) = root else {
+        return;
+    };
+    if !any_file {
+        return;
     }
-}
-
-/// Marks the ignored entries of the listed folders with one git run, or one per folder when git
-/// refuses the whole list.
-fn mark_ignored(root: &std::path::Path, dirs: &mut [TreeDir], run: RunGit) {
-    let all: Vec<String> = dirs
-        .iter()
-        .filter(|d| d.state == TreeDirState::Listed)
-        .flat_map(lines_of)
-        .collect();
-    match check_ignore(root, &all, run) {
-        Checked::Set(set) => dirs
-            .iter_mut()
-            .filter(|d| d.state == TreeDirState::Listed)
-            .for_each(|d| apply_marks(d, &set)),
-        Checked::NoGit => {}
-        Checked::Failed => {
-            for d in dirs.iter_mut().filter(|d| d.state == TreeDirState::Listed) {
-                match check_ignore(root, &lines_of(d), run) {
-                    Checked::Set(set) => apply_marks(d, &set),
-                    Checked::Failed => {}
-                    Checked::NoGit => return,
-                }
+    let Some(found) = tracked(checkout, Instant::now() + TREE_GIT_BUDGET) else {
+        return;
+    };
+    if found.cut {
+        return;
+    }
+    for d in dirs.iter_mut().filter(|d| d.state == TreeDirState::Listed) {
+        let dir = d.dir.clone();
+        for e in &mut d.entries {
+            if e.ignored && e.kind == TreeEntryKind::File && found.has(&rel_of(&dir, &e.name)) {
+                e.ignored = false;
             }
         }
     }
 }
 
 /// The answers to the asks. Blocking.
-fn tree_with(root: &std::path::Path, is_git: bool, asks: &[TreeAsk], run: RunGit) -> Vec<TreeDir> {
-    let canonical_root = crate::projects::canonical(root);
+fn tree_with(root: &Root, asks: &[TreeAsk], tracked: TrackedFn<'_>) -> Vec<TreeDir> {
+    let root_path = root.path();
+    let canonical_root = crate::projects::canonical(root_path);
     let mut dirs: Vec<TreeDir> = asks
         .iter()
         .map(|ask| {
-            let folder = match find(root, &canonical_root, &ask.dir) {
+            let folder = match find(root_path, &canonical_root, &ask.dir) {
                 Found::Dir(folder) => folder,
                 Found::Gone => return reply(&ask.dir, TreeDirState::Gone, 0),
                 Found::Refused => return reply(&ask.dir, TreeDirState::Refused, 0),
@@ -305,8 +271,8 @@ fn tree_with(root: &std::path::Path, is_git: bool, asks: &[TreeAsk], run: RunGit
             }
         })
         .collect();
-    if is_git && dirs.iter().any(|d| d.state == TreeDirState::Listed) {
-        mark_ignored(root, &mut dirs, run);
+    if dirs.iter().any(|d| d.state == TreeDirState::Listed) {
+        mark_ignored(root, &mut dirs, tracked);
     }
     dirs
 }
@@ -320,10 +286,10 @@ pub async fn tree(State(st): State<AppState>, Path(tab): Path<String>, Json(req)
     let session = st.session(&tab);
     let reported = session.and_then(|s| s.current_cwd());
     let done = tokio::task::spawn_blocking(move || {
-        let (root, is_git) = project_root(row.as_ref(), reported)?;
-        let dirs = tree_with(&root, is_git, &req.dirs, &crate::git::run_input);
+        let found = project_root(row.as_ref(), reported)?;
+        let dirs = tree_with(&found, &req.dirs, &git_tracked);
         Some(TreeReply {
-            root: strip_verbatim(&root).unwrap_or_default(),
+            root: strip_verbatim(found.path()).unwrap_or_default(),
             dirs,
         })
     })
@@ -381,9 +347,27 @@ mod tests {
         std::fs::write(path, "x").unwrap();
     }
 
+    /// No tracked list: git isn't there, or didn't answer.
+    fn none(_: &FsPath, _: Instant) -> Option<Arc<Tracked>> {
+        None
+    }
+
+    fn tracked_of(files: &[&str], cut: bool) -> Option<Arc<Tracked>> {
+        Some(Arc::new(Tracked::new(
+            files.iter().map(|f| f.to_string()).collect(),
+            cut,
+        )))
+    }
+
+    /// The launch checkout's tree (`is_git`) or a plain folder's, with no tracked list.
     fn list(root: &FsPath, is_git: bool, dirs: &[&str]) -> Vec<TreeDir> {
         let asks: Vec<TreeAsk> = dirs.iter().map(|d| ask(d)).collect();
-        tree_with(root, is_git, &asks, &crate::git::run_input)
+        let root = if is_git {
+            Root::Checkout(root.to_path_buf())
+        } else {
+            Root::Plain(root.to_path_buf())
+        };
+        tree_with(&root, &asks, &none)
     }
 
     fn names(d: &TreeDir) -> Vec<&str> {
@@ -457,14 +441,12 @@ mod tests {
     #[test]
     fn marks_ignored_entries_and_everything_in_an_ignored_folder() {
         let (_tmp, root) = temp();
-        git(&root, &["init", "-q"]);
-        std::fs::write(root.join(".gitignore"), "dist/\n*.log").unwrap();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        std::fs::write(root.join(".gitignore"), "*.log\ndist/\n").unwrap();
         touch(&root.join("dist/a.txt"));
         touch(&root.join("dist/b/c.txt"));
         touch(&root.join("x.log"));
-        touch(&root.join("tracked.log"));
         touch(&root.join("src/main.rs"));
-        git(&root, &["add", "-f", "tracked.log"]);
         let dirs = list(&root, true, &["", "dist"]);
         assert_eq!(ignored(&dirs[0]), ["dist", "x.log"]);
         assert_eq!(names(&dirs[1]), ["b", "a.txt"]);
@@ -472,6 +454,91 @@ mod tests {
         // A folder under an ignored one is ignored as well.
         let dirs = list(&root, true, &["dist/b"]);
         assert_eq!(ignored(&dirs[0]), ["c.txt"]);
+    }
+
+    #[test]
+    fn a_file_git_tracks_is_never_marked_in_the_launch_checkout() {
+        let (_tmp, root) = temp();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        std::fs::write(root.join(".gitignore"), "*.log").unwrap();
+        touch(&root.join("a.log"));
+        touch(&root.join("keep.log"));
+        let tracked = |_: &FsPath, _: Instant| tracked_of(&["keep.log"], false);
+        let dirs = tree_with(&Root::Checkout(root.clone()), &[ask("")], &tracked);
+        assert_eq!(ignored(&dirs[0]), ["a.log"]);
+    }
+
+    #[test]
+    fn a_reported_folder_in_a_checkout_gets_marks_and_runs_no_git() {
+        let (_tmp, root) = temp();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        std::fs::write(root.join(".gitignore"), "*.log").unwrap();
+        touch(&root.join("sub/b.log"));
+        touch(&root.join("sub/c.txt"));
+        let reported = Root::InCheckout {
+            root: root.join("sub"),
+            checkout: root.clone(),
+        };
+        let tracked = |_: &FsPath, _: Instant| -> Option<Arc<Tracked>> { panic!("git ran") };
+        let dirs = tree_with(&reported, &[ask("")], &tracked);
+        assert_eq!(ignored(&dirs[0]), ["b.log"]);
+    }
+
+    #[test]
+    fn git_runs_only_when_a_listed_folder_has_an_ignored_file() {
+        let (_tmp, root) = temp();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        std::fs::write(root.join(".gitignore"), "*.log").unwrap();
+        touch(&root.join("a.txt"));
+        let runs = Cell::new(0);
+        let counted = |_: &FsPath, _: Instant| {
+            runs.set(runs.get() + 1);
+            None
+        };
+        let checkout = Root::Checkout(root.clone());
+        // A listed folder with nothing ignored in it.
+        let first = tree_with(&checkout, &[ask("")], &counted);
+        assert_eq!(runs.get(), 0);
+        // A `same` answer, a missing folder and a refused one.
+        let same = TreeAsk {
+            dir: String::new(),
+            stamp: Some(first[0].stamp),
+        };
+        let again = tree_with(&checkout, &[same, ask("nope"), ask("..")], &counted);
+        assert_eq!(again[0].state, TreeDirState::Same);
+        assert_eq!(runs.get(), 0);
+        // Ignored files in two listed folders: one run for the request.
+        touch(&root.join("a.log"));
+        touch(&root.join("sub/b.log"));
+        let dirs = tree_with(&checkout, &[ask(""), ask("sub")], &counted);
+        assert_eq!(runs.get(), 1);
+        assert_eq!(ignored(&dirs[0]), ["a.log"]);
+        assert_eq!(ignored(&dirs[1]), ["b.log"]);
+    }
+
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    fn a_tracked_file_renamed_only_in_case_is_not_marked() {
+        // Final review of 6t: the index holds `Keep.log`, the disk `keep.log`.
+        let (_tmp, root) = temp();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        std::fs::write(root.join(".gitignore"), "*.log").unwrap();
+        touch(&root.join("a.log"));
+        touch(&root.join("keep.log"));
+        let tracked = |_: &FsPath, _: Instant| tracked_of(&["Keep.log"], false);
+        let dirs = tree_with(&Root::Checkout(root.clone()), &[ask("")], &tracked);
+        assert_eq!(ignored(&dirs[0]), ["a.log"]);
+    }
+
+    #[test]
+    fn a_cut_tracked_list_leaves_the_rules_alone() {
+        let (_tmp, root) = temp();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        std::fs::write(root.join(".gitignore"), "*.log").unwrap();
+        touch(&root.join("a.log"));
+        let tracked = |_: &FsPath, _: Instant| tracked_of(&["a.log"], true);
+        let dirs = tree_with(&Root::Checkout(root.clone()), &[ask("")], &tracked);
+        assert_eq!(ignored(&dirs[0]), ["a.log"]);
     }
 
     #[test]
@@ -489,27 +556,26 @@ mod tests {
         touch(&root.join("a.txt"));
         let first = list(&root, false, &[""]);
         assert!(first[0].stamp > 0);
+        let plain = Root::Plain(root.clone());
         let again = tree_with(
-            &root,
-            false,
+            &plain,
             &[TreeAsk {
                 dir: String::new(),
                 stamp: Some(first[0].stamp),
             }],
-            &crate::git::run_input,
+            &none,
         );
         assert_eq!(again[0].state, TreeDirState::Same);
         assert_eq!(again[0].stamp, first[0].stamp);
         assert!(again[0].entries.is_empty());
         // A different stamp lists again.
         let other = tree_with(
-            &root,
-            false,
+            &plain,
             &[TreeAsk {
                 dir: String::new(),
                 stamp: Some(first[0].stamp + 1),
             }],
-            &crate::git::run_input,
+            &none,
         );
         assert_eq!(other[0].state, TreeDirState::Listed);
     }
@@ -635,66 +701,6 @@ mod tests {
     }
 
     #[test]
-    fn git_runs_only_when_a_folder_was_listed() {
-        let (_tmp, root) = temp();
-        git(&root, &["init", "-q"]);
-        touch(&root.join("a.txt"));
-        let runs = Cell::new(0);
-        let counted = |dir: &FsPath, args: &[&str], stdin: Vec<u8>| {
-            runs.set(runs.get() + 1);
-            crate::git::run_input(dir, args, stdin)
-        };
-        let first = tree_with(&root, true, &[ask("")], &counted);
-        assert_eq!(runs.get(), 1);
-        let same = TreeAsk {
-            dir: String::new(),
-            stamp: Some(first[0].stamp),
-        };
-        let again = tree_with(&root, true, &[same.clone(), ask("nope"), ask("..")], &counted);
-        assert_eq!(again[0].state, TreeDirState::Same);
-        assert_eq!(runs.get(), 1);
-    }
-
-    #[test]
-    fn a_path_git_refuses_falls_back_to_one_run_per_folder() {
-        let (_tmp, root) = temp();
-        git(&root, &["init", "-q"]);
-        std::fs::write(root.join(".gitignore"), "*.log").unwrap();
-        touch(&root.join("a.log"));
-        touch(&root.join("sub/b.log"));
-        let runs = Cell::new(0);
-        // The first run, over every folder, fails as one in a submodule does; the ones per folder work.
-        let flaky = |dir: &FsPath, args: &[&str], stdin: Vec<u8>| {
-            runs.set(runs.get() + 1);
-            if runs.get() == 1 {
-                let mut out = crate::git::run_input(dir, &["check-ignore", "--bogus-flag"], Vec::new())?;
-                assert_eq!(out.status.code(), Some(129));
-                // Report it as the fatal 128.
-                out.status = failing_status(128);
-                return Ok(out);
-            }
-            crate::git::run_input(dir, args, stdin)
-        };
-        let dirs = tree_with(&root, true, &[ask(""), ask("sub")], &flaky);
-        assert_eq!(runs.get(), 3);
-        assert_eq!(ignored(&dirs[0]), ["a.log"]);
-        assert_eq!(ignored(&dirs[1]), ["b.log"]);
-    }
-
-    fn failing_status(code: i32) -> std::process::ExitStatus {
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::ExitStatusExt;
-            std::process::ExitStatus::from_raw(code as u32)
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::ExitStatusExt;
-            std::process::ExitStatus::from_raw(code << 8)
-        }
-    }
-
-    #[test]
     fn natural_cmp_orders_digits_as_numbers() {
         use std::cmp::Ordering::*;
         assert_eq!(natural_cmp("file2", "file10"), Less);
@@ -707,7 +713,8 @@ mod tests {
     }
 
     async fn post(dirs: usize, tab: &str, bearer: bool) -> (StatusCode, Vec<u8>) {
-        let home = tempfile::tempdir().unwrap().keep();
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().to_path_buf();
         let st = AppState::new(TOKEN.into(), PORT, Vec::new(), home, Vec::new());
         let body = serde_json::json!({ "dirs": (0..dirs).map(|_| serde_json::json!({"dir": "", "stamp": null})).collect::<Vec<_>>() });
         let mut req = Request::builder()
