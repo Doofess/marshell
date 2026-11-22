@@ -1218,7 +1218,8 @@ mod tests {
     }
 
     async fn post(q: &str, tab: &str, bearer: bool) -> (StatusCode, Vec<u8>) {
-        let home = tempfile::tempdir().unwrap().keep();
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().to_path_buf();
         let st = AppState::new(TOKEN.into(), PORT, Vec::new(), home, Vec::new());
         let body = serde_json::json!({ "q": q });
         let mut req = Request::builder()

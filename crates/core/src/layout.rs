@@ -405,6 +405,11 @@ fn repair_pane(pane: &mut PaneView, tabs: &[SavedTab]) {
     }
     for st in pane.sessions.values_mut() {
         if let Some(tree) = &mut st.tree {
+            if tree.root.chars().count() > MAX_PATH_CHARS {
+                // The expanded folders were relative to it.
+                tree.root.clear();
+                tree.expanded.clear();
+            }
             tree.expanded.retain(|f| tree_folder_ok(f));
             tree.expanded.truncate(MAX_TREE_FOLDERS);
         }
@@ -534,6 +539,11 @@ pub fn validate_pane(p: &PaneView) -> Result<(), String> {
     }
     for (session, st) in &p.sessions {
         if let Some(tree) = &st.tree {
+            if tree.root.chars().count() > MAX_PATH_CHARS {
+                return Err(format!(
+                    "pane.sessions.{session}.tree.root is longer than {MAX_PATH_CHARS} characters"
+                ));
+            }
             if tree.expanded.len() > MAX_TREE_FOLDERS {
                 return Err(format!(
                     "pane.sessions.{session}.tree.expanded holds at most {MAX_TREE_FOLDERS} folders"
@@ -1877,5 +1887,28 @@ mod tests {
             validate_pane(&pane).unwrap_err(),
             "pane.tree.width must be 160 to 2048, not 100"
         );
+    }
+
+    #[test]
+    fn a_saved_tree_root_over_4096_characters_is_refused_and_repaired() {
+        let with_root = |root: String| {
+            let mut st = session(vec![]);
+            st.tree = Some(TreeState {
+                root,
+                expanded: vec!["src".into()],
+            });
+            pane_with("s", st)
+        };
+        assert!(validate_pane(&with_root("a".repeat(4096))).is_ok());
+        assert!(validate_pane(&with_root(String::new())).is_ok());
+        let mut pane = with_root("a".repeat(4097));
+        assert_eq!(
+            validate_pane(&pane).unwrap_err(),
+            "pane.sessions.s.tree.root is longer than 4096 characters"
+        );
+        repair_pane(&mut pane, &[tab("s")]);
+        let tree = pane.sessions["s"].tree.as_ref().unwrap();
+        assert_eq!(tree.root, "");
+        assert!(tree.expanded.is_empty());
     }
 }

@@ -705,7 +705,8 @@ dist/
     }
 
     async fn post(dirs: usize, tab: &str, bearer: bool) -> (StatusCode, Vec<u8>) {
-        let home = tempfile::tempdir().unwrap().keep();
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().to_path_buf();
         let st = AppState::new(TOKEN.into(), PORT, Vec::new(), home, Vec::new());
         let body = serde_json::json!({ "dirs": (0..dirs).map(|_| serde_json::json!({"dir": "", "stamp": null})).collect::<Vec<_>>() });
         let mut req = Request::builder()
