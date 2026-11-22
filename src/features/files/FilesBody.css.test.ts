@@ -15,6 +15,11 @@ const forced = () => {
 };
 
 describe("FilesBody.css", () => {
+  it("the file's cell is a grid, so the tab panel inside fills it (live check 6r-2: a block let the preview's body collapse to 0 px)", () => {
+    const rule = css.slice(css.indexOf(".files-body__content {"), css.indexOf("}", css.indexOf(".files-body__content {")));
+    expect(rule).toContain("display: grid");
+    expect(rule).toContain("grid-template-rows: minmax(0, 1fr)");
+  });
   it("has no hex colour", () => {
     expect(css).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
   });

@@ -113,7 +113,11 @@
   min-block-size: 0;
 }
 .files-body__content {
+  /* One cell the tab panel fills, as `.side-pane__body` does: a block would let the preview's body collapse. */
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
   flex: 1;
+  min-inline-size: 0;
   min-block-size: 0;
   overflow: clip;
 }
