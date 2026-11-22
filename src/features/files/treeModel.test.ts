@@ -112,12 +112,24 @@ describe("visibleRows", () => {
     ]);
   });
 
-  it("set size and position count only real entries", () => {
-    const rows = visibleRows(new Map([["", listing([e("a"), e("b"), e("c")], 9)]]), new Set());
-    expect(rows.slice(0, 3).map((r) => [r.setSize, r.posInSet])).toEqual([
-      [3, 1],
-      [3, 2],
-      [3, 3],
+  it("a more row is the last of its folder's set", () => {
+    const rows = visibleRows(new Map([["", listing([e("a"), e("b"), e("c")], 10)]]), new Set());
+    expect(rows.map((r) => [r.kind, r.setSize, r.posInSet])).toEqual([
+      ["file", 4, 1],
+      ["file", 4, 2],
+      ["file", 4, 3],
+      ["more", 4, 4],
+    ]);
+    const empty = visibleRows(
+      new Map([
+        ["", listing([e("d", "folder")])],
+        ["d", listing([])],
+      ]),
+      new Set(["d"]),
+    );
+    expect(empty.map((r) => [r.kind, r.setSize, r.posInSet])).toEqual([
+      ["folder", 1, 1],
+      ["empty", 1, 1],
     ]);
   });
 

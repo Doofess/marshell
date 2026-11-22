@@ -80,6 +80,13 @@ describe("FileTree", () => {
     expect(out).toContain('aria-disabled="true"');
   });
 
+  it("a note row's selected state comes from selectedProps", () => {
+    const out = render([row({ path: "\u0000more", name: "", kind: "more", more: 3 })]);
+    expect(out).toContain("is-selected-mark");
+    expect(out).toContain('aria-selected="false"');
+    expect(readFileSync(new URL("./FileTree.tsx", import.meta.url), "utf8")).not.toContain("aria-selected={false}");
+  });
+
   it("an empty row is disabled and says so", () => {
     const out = render([row({ path: "a/\u0000empty", name: "", kind: "empty", level: 1 })]);
     expect(out).toContain("Empty");

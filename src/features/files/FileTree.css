@@ -209,6 +209,7 @@
   .file-tree-filter {
     background: Canvas;
     color: CanvasText;
+    outline: 1px solid CanvasText;
   }
   .file-tree-filter::placeholder,
   .search-results__count,
@@ -219,6 +220,6 @@
     color: CanvasText;
   }
   .file-tree-filter:focus-visible {
-    outline-color: Highlight;
+    outline: 2px solid Highlight;
   }
 }

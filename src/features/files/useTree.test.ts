@@ -101,7 +101,7 @@ describe("applyReply", () => {
   it("a_new_root_closes_every_folder", () => {
     const data = initialData("s1", saved);
     const withListings = { ...data, listings: new Map<string, Listing>([["a", listed([entry("x.txt")])]]) };
-    const out = applyReply(withListings, { session: "s1", root: "C:\\p" }, replyOf("C:\\q", [dirOf("", [entry("a", "folder")]), dirOf("a", [entry("y.txt")])]));
+    const out = applyReply(withListings, { session: "s1", root: "C:\\p", expanded: new Set(withListings.expanded) }, replyOf("C:\\q", [dirOf("", [entry("a", "folder")]), dirOf("a", [entry("y.txt")])]));
     expect(out.save).toEqual({ root: "C:\\q", expanded: [] });
     expect(out.data.root).toBe("C:\\q");
     expect([...out.data.expanded]).toEqual([]);
@@ -111,7 +111,7 @@ describe("applyReply", () => {
   it("learns the root and saves it, keeping the saved folders", () => {
     const data = initialData("s1", { root: "", expanded: ["a"] });
     const none = initialData("s1", undefined);
-    const out = applyReply(none, { session: "s1", root: null }, replyOf("C:\\p", [dirOf("", [entry("a", "folder")])]));
+    const out = applyReply(none, { session: "s1", root: null, expanded: new Set(none.expanded) }, replyOf("C:\\p", [dirOf("", [entry("a", "folder")])]));
     expect(out.data.root).toBe("C:\\p");
     expect(out.save).toEqual({ root: "C:\\p", expanded: [] });
     expect(data.root).toBe("");
@@ -119,7 +119,7 @@ describe("applyReply", () => {
 
   it("a same root with listings saves nothing", () => {
     const data = initialData("s1", saved);
-    const out = applyReply(data, { session: "s1", root: "C:\\p" }, replyOf("C:\\p", [dirOf("", [entry("a", "folder"), entry("b", "folder")]), dirOf("a", []), dirOf("b", [])]));
+    const out = applyReply(data, { session: "s1", root: "C:\\p", expanded: new Set(data.expanded) }, replyOf("C:\\p", [dirOf("", [entry("a", "folder"), entry("b", "folder")]), dirOf("a", []), dirOf("b", [])]));
     expect(out.save).toBeNull();
     expect(out.data.listings.get("a")?.state).toBe("listed");
     expect(rowsOf(new Map(out.data.listings), [...out.data.expanded]).map((r) => r.path)).toEqual(["a", "a/\u0000empty", "b", "b/\u0000empty"]);
@@ -128,7 +128,7 @@ describe("applyReply", () => {
   it("a_gone_folder_is_dropped", () => {
     const data0 = initialData("s1", saved);
     const data = { ...data0, listings: new Map<string, Listing>([["", listed([entry("a", "folder"), entry("b", "folder")])], ["a", listed([entry("x.txt")])]]) };
-    const out = applyReply(data, { session: "s1", root: "C:\\p" }, replyOf("C:\\p", [{ dir: "a", state: "gone", stamp: 0, entries: [], more: 0 }]));
+    const out = applyReply(data, { session: "s1", root: "C:\\p", expanded: new Set(data.expanded) }, replyOf("C:\\p", [{ dir: "a", state: "gone", stamp: 0, entries: [], more: 0 }]));
     expect([...out.data.expanded]).toEqual(["b"]);
     expect(out.data.listings.has("a")).toBe(false);
     expect(out.save).toEqual({ root: "C:\\p", expanded: ["b"] });
@@ -136,7 +136,7 @@ describe("applyReply", () => {
 
   it("a refused folder is dropped like a gone one", () => {
     const data = initialData("s1", saved);
-    const out = applyReply(data, { session: "s1", root: "C:\\p" }, replyOf("C:\\p", [{ dir: "b", state: "refused", stamp: 0, entries: [], more: 0 }]));
+    const out = applyReply(data, { session: "s1", root: "C:\\p", expanded: new Set(data.expanded) }, replyOf("C:\\p", [{ dir: "b", state: "refused", stamp: 0, entries: [], more: 0 }]));
     expect([...out.data.expanded]).toEqual(["a"]);
   });
 
@@ -144,27 +144,27 @@ describe("applyReply", () => {
     const data0 = initialData("s1", saved);
     const kept = listed([entry("x.txt")], 9);
     const data = { ...data0, listings: new Map<string, Listing>([["a", kept]]) };
-    const out = applyReply(data, { session: "s1", root: "C:\\p" }, replyOf("C:\\p", [{ dir: "a", state: "same", stamp: 9, entries: [], more: 0 }]));
+    const out = applyReply(data, { session: "s1", root: "C:\\p", expanded: new Set(data.expanded) }, replyOf("C:\\p", [{ dir: "a", state: "same", stamp: 9, entries: [], more: 0 }]));
     expect(out.data.listings.get("a")).toBe(kept);
   });
 
   it("a reply that comes after the session changed is dropped", () => {
     const data = initialData("s2", saved);
-    const out = applyReply(data, { session: "s1", root: "C:\\p" }, replyOf("C:\\p", [dirOf("", [entry("a", "folder")])]));
+    const out = applyReply(data, { session: "s1", root: "C:\\p", expanded: new Set(data.expanded) }, replyOf("C:\\p", [dirOf("", [entry("a", "folder")])]));
     expect(out.data).toBe(data);
     expect(out.save).toBeNull();
   });
 
   it("a reply asked under another root is dropped", () => {
     const data = initialData("s1", saved);
-    const out = applyReply(data, { session: "s1", root: "C:\\old" }, replyOf("C:\\p", [dirOf("", [])]));
+    const out = applyReply(data, { session: "s1", root: "C:\\old", expanded: new Set(data.expanded) }, replyOf("C:\\p", [dirOf("", [])]));
     expect(out.data).toBe(data);
     expect(out.save).toBeNull();
   });
 
   it("no folder shows the message and keeps the saved state", () => {
     const data = initialData("s1", saved);
-    const out = applyReply(data, { session: "s1", root: "C:\\p" }, "no-folder");
+    const out = applyReply(data, { session: "s1", root: "C:\\p", expanded: new Set(data.expanded) }, "no-folder");
     expect(out.data.noFolder).toBe(true);
     expect(out.save).toBeNull();
     expect([...out.data.expanded]).toEqual(["a", "b"]);
@@ -172,9 +172,15 @@ describe("applyReply", () => {
 
   it("a folder that left its parent's listing leaves expanded, with what was under it", () => {
     const data0 = initialData("s1", { root: "C:\\p", expanded: ["a", "a/b", "c"] });
-    const out = applyReply(data0, { session: "s1", root: "C:\\p" }, replyOf("C:\\p", [dirOf("", [entry("c", "folder")])]));
+    const out = applyReply(data0, { session: "s1", root: "C:\\p", expanded: new Set(data0.expanded) }, replyOf("C:\\p", [dirOf("", [entry("c", "folder")])]));
     expect([...out.data.expanded]).toEqual(["c"]);
     expect(out.save).toEqual({ root: "C:\\p", expanded: ["c"] });
+  });
+
+  it("a folder opened while a reply was out is kept", () => {
+    const data0 = initialData("s1", { root: "C:\\p", expanded: ["src", "src/new"] });
+    const out = applyReply(data0, { session: "s1", root: "C:\\p", expanded: new Set(["src"]) }, replyOf("C:\\p", [dirOf("", [entry("src", "folder")]), dirOf("src", [entry("a.ts")])]));
+    expect([...out.data.expanded]).toContain("src/new");
   });
 
   it("saves at most 500 open folders", () => {

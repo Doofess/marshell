@@ -20,6 +20,11 @@ describe("reveal", () => {
     await revealFile("C:\\p\\c.txt", say, vi.fn().mockRejectedValue("denied"));
     expect(say).toHaveBeenLastCalledWith("Couldn't show the file: denied");
   });
+  it("refuses mixed slashes at the start", () => {
+    expect(revealRefused("/\\srv/x")).toBe(true);
+    expect(revealRefused("\\/srv/x")).toBe(true);
+    expect(revealRefused("C:/x")).toBe(false);
+  });
   it("revealFile refuses a network path without calling reveal", async () => {
     for (const path of ["\\\\server\\share\\a.txt", "//server/a.txt"]) {
       const reveal = vi.fn();
