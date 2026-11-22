@@ -517,6 +517,35 @@ fn relative(root: &std::path::Path, path: &std::path::Path) -> Option<String> {
     Some(parts?.join("/"))
 }
 
+/// Whether every folder between `root` and the file `rel` names (relative, `/` or `\` separated) is a
+/// plain folder: never a symlink or junction, wherever it points. Git for Windows walks into
+/// junctions, so its lists are filtered here, as the walk and the tree never enter one. `folders`
+/// remembers each folder's answer, so a big list costs one check per folder.
+pub(super) fn under_plain_folders(
+    root: &std::path::Path,
+    rel: &str,
+    folders: &mut std::collections::HashMap<PathBuf, bool>,
+) -> bool {
+    let rel = std::path::Path::new(rel);
+    let Some(parent) = rel.parent() else {
+        return false;
+    };
+    let mut folder = root.to_path_buf();
+    for part in parent.components() {
+        let std::path::Component::Normal(name) = part else {
+            return false;
+        };
+        folder.push(name);
+        let plain = *folders.entry(folder.clone()).or_insert_with(|| {
+            std::fs::symlink_metadata(&folder).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
+        });
+        if !plain {
+            return false;
+        }
+    }
+    true
+}
+
 /// Whether `path` is a regular file the list may show. A link is followed only after its target is
 /// checked, and the folders above the file are checked once each (`safe_folders` remembers them).
 fn is_listable(path: &std::path::Path, safe_folders: &mut std::collections::HashSet<PathBuf>) -> bool {
@@ -538,7 +567,8 @@ fn is_listable(path: &std::path::Path, safe_folders: &mut std::collections::Hash
 }
 
 /// Tracked and untracked files, minus the ignored ones. None when `root` is not in a repo or git
-/// is not installed. Files the index lists but the disk lacks, and submodule folders, are left out.
+/// is not installed. Files the index lists but the disk lacks, submodule folders, and files under a
+/// folder link are left out.
 fn git_files(root: &std::path::Path) -> Option<(Vec<String>, bool)> {
     let out = crate::git::run(root, &["ls-files", "--cached", "--others", "--exclude-standard", "-z"]).ok()?;
     if !out.ok {
@@ -548,12 +578,16 @@ fn git_files(root: &std::path::Path) -> Option<(Vec<String>, bool)> {
     let mut seen = std::collections::HashSet::new();
     // Folders already read link by link, so a big repo costs one check per folder.
     let mut safe_folders = std::collections::HashSet::new();
+    let mut plain = std::collections::HashMap::new();
     let mut files = Vec::new();
     for name in out.stdout.split('\0').filter(|n| !n.is_empty()) {
         if files.len() >= MAX_LIST_FILES || started.elapsed() > LIST_BUDGET {
             return Some((files, true));
         }
-        if seen.insert(name) && is_listable(&root.join(name), &mut safe_folders) {
+        if seen.insert(name)
+            && under_plain_folders(root, name, &mut plain)
+            && is_listable(&root.join(name), &mut safe_folders)
+        {
             files.push(name.to_string());
         }
     }

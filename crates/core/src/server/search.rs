@@ -7,16 +7,18 @@
 //! Nothing keeps more than 4,096 bytes of a line.
 
 use super::AppState;
-use super::files::{SKIPPED_DIRS, links_refused, open_regular, project_root, row_of, strip_verbatim};
+use super::files::{
+    SKIPPED_DIRS, links_refused, open_regular, project_root, row_of, strip_verbatim, under_plain_folders,
+};
 use crate::git::{self, Stopped};
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use marshell_protocol::api::{SearchCut, SearchFile, SearchLine, SearchPart, SearchReply, SearchRequest};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Read;
-use std::path::Path as FsPath;
+use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -348,11 +350,13 @@ fn empty(root: &FsPath) -> SearchReply {
     }
 }
 
-/// Whether a file git found may give lines: a regular file (not a link) of at most 1,048,576 bytes.
-fn small_enough(root: &FsPath, rel: &str) -> bool {
-    let rel = FsPath::new(rel);
-    rel.components().all(|c| matches!(c, std::path::Component::Normal(_)))
-        && std::fs::symlink_metadata(root.join(rel)).is_ok_and(|m| m.is_file() && m.len() <= FILE_CAP)
+/// Whether a file git found may give lines: a regular file (not a link) of at most 1,048,576 bytes,
+/// under no folder link (git for Windows walks into junctions). `folders` is `under_plain_folders`'s.
+fn small_enough(root: &FsPath, rel: &str, folders: &mut HashMap<PathBuf, bool>) -> bool {
+    let path = FsPath::new(rel);
+    path.components().all(|c| matches!(c, std::path::Component::Normal(_)))
+        && under_plain_folders(root, rel, folders)
+        && std::fs::symlink_metadata(root.join(path)).is_ok_and(|m| m.is_file() && m.len() <= FILE_CAP)
 }
 
 /// `git grep` in a checkout, through `git::stream`. Err when git can't run or fails.
@@ -372,12 +376,13 @@ fn grep_git(
     let mut parser = Parser::new();
     // Git prints a file's lines together, so one remembered answer per file is enough.
     let mut last: Option<(String, bool)> = None;
+    let mut folders = HashMap::new();
     git::stream(root, &args, deadline, cancel, |chunk| {
         parser.feed(chunk, &mut |record| {
             let allowed = match &last {
                 Some((path, ok)) if *path == record.path => *ok,
                 _ => {
-                    let ok = small_enough(root, &record.path);
+                    let ok = small_enough(root, &record.path, &mut folders);
                     last = Some((record.path.clone(), ok));
                     ok
                 }
@@ -803,6 +808,33 @@ mod tests {
         }
         let reply = find(&root, false, "needle");
         assert_eq!(paths(&reply), ["ok.txt"]);
+    }
+
+    /// A junction, which git for Windows walks into as if it were a folder.
+    #[cfg(windows)]
+    fn junction(target: &FsPath, link: &FsPath) {
+        let out = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
+    }
+
+    /// Live check 6r-2: `git grep --untracked` went through a junction to the folder above the
+    /// checkout, and back into it, and showed lines from the scratch home.
+    #[cfg(windows)]
+    #[test]
+    fn in_a_checkout_a_folder_link_is_not_searched_through() {
+        let (_tmp, root) = repo();
+        let (_other_tmp, other) = temp();
+        write(&other, "secret.txt", "needle\n");
+        write(&root, "src/ok.txt", "needle\n");
+        junction(&other, &root.join("up"));
+        junction(&root.join("src"), &root.join("again"));
+        let reply = find(&root, true, "needle");
+        assert_eq!(paths(&reply), ["src/ok.txt"]);
     }
 
     #[test]
