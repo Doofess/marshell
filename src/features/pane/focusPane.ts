@@ -9,6 +9,8 @@ const editor = (panel: PanelId) => `${nav(panel)} [role="tabpanel"]:not([hidden]
 const body = (panel: PanelId) => `${nav(panel)} [role="tabpanel"]:not([hidden]) .preview__body`;
 /** A browser tab's slot: the tab has no body to scroll. Focusing the slot enters the page (BrowserTab). */
 const slot = (panel: PanelId) => `${nav(panel)} [role="tabpanel"]:not([hidden]) .browser-tab__slot`;
+/** The Files panel's tree (or the search results in its place): the one row that is a tab stop. With no tab open the keyboard goes there. */
+const treeRow = (panel: PanelId) => `${nav(panel)} [role="tree"] [role="treeitem"][tabindex="0"]`;
 /** The empty panel's first usable button, and the strip's + button: where focus goes when there is no body. */
 const emptyFirst = (panel: PanelId) => `${nav(panel)} .empty-panel__button:not([aria-disabled="true"])`;
 const plusOf = (panel: PanelId) => `${nav(panel)} button[data-pane-plus]`;
@@ -35,7 +37,7 @@ export function paneFocusTarget(root: ParentNode, panel: PanelId, closing?: stri
   // A close asked from the strip leaves the keyboard on the strip, as a close that asks nothing does: the next Delete closes the
   // next tab, and types nothing into its file.
   if (where === "strip") return root.querySelector<HTMLElement>(selectedTab(panel)) ?? root.querySelector<HTMLElement>(plusOf(panel));
-  return root.querySelector<HTMLElement>(editor(panel)) ?? root.querySelector<HTMLElement>(body(panel)) ?? root.querySelector<HTMLElement>(slot(panel)) ?? root.querySelector<HTMLElement>(emptyFirst(panel)) ?? root.querySelector<HTMLElement>(plusOf(panel));
+  return root.querySelector<HTMLElement>(editor(panel)) ?? root.querySelector<HTMLElement>(body(panel)) ?? root.querySelector<HTMLElement>(slot(panel)) ?? root.querySelector<HTMLElement>(treeRow(panel)) ?? root.querySelector<HTMLElement>(emptyFirst(panel)) ?? root.querySelector<HTMLElement>(plusOf(panel));
 }
 
 /**

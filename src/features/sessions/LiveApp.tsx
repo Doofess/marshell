@@ -94,7 +94,7 @@ import { askedFrom, focusPane, panelOfElement } from "../pane/focusPane";
 import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, PANE_BESIDE_SESSION, closeNothingText, noTabText, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, commandPanel, firstWith, hideFocus, landingPanel, panelButtonsFor, panelOrder, unseenPanels, panelHiddenText, panelToggleOutcome, shouldPin, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, receiptWithPaneHidden, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf } from "../pane/paneCommands";
 import { isPanelId, onScreen, PANEL_COMMAND, PANEL_LABEL, panelOf, panelOfPath, panelTabs, activeIn, stackOf, stackPanels, type PanelId } from "../pane/panels";
 import { viewportOf, viewportRows, viewportChoice, viewportSaid, type ViewportId } from "../browser/viewport";
-import { activeTab, currentEntry, isBrowserTab, paneReducer, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
+import { activeTab, currentEntry, isBrowserTab, paneReducer, previewTab, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
 import { dropPlan, limitNews, takeOpens } from "../pane/opens";
 import { newsReducer } from "../pane/paneNews";
 import { plusChoice, plusMenuItems } from "../pane/plusMenu";
@@ -113,6 +113,7 @@ import { catalogApi } from "../../lib/api/catalog";
 import { offeredModes } from "../modes/sessionModes";
 import { useAppearance } from "../appearance/AppearanceProvider";
 import { listen } from "@tauri-apps/api/event";
+import { homeDir } from "@tauri-apps/api/path";
 import { needsYouCount } from "../attention/attention";
 import { useAttention } from "../attention/useAttention";
 import { useRowFlash } from "../attention/rowFlash";
@@ -130,11 +131,15 @@ import { jumpWords } from "../terminal/promptMarks";
 import { terminalFocusProps } from "../terminal/terminalFocus";
 import { resolveTerminalFont } from "../terminal/terminalFont";
 import { TerminalView, type TerminalThemeProp } from "../terminal/TerminalView";
-import { appScheme, resolveTerminalTheme } from "../terminal/terminalTheme";
 import type { Notice } from "../window/announce";
 import { sidebarMode } from "../window/layout";
 import { MainWindow } from "../window/MainWindow";
 import { useViewState } from "../window/useViewState";
+import { editorPrefsOf, filesCommandSteps, keepFirst, leavingSession, previewExtras, treeOpen } from "../files/filesActions";
+import { FilesPanel, type FilesPanelHandle } from "../files/FilesPanel";
+import { filesMenuChoice, filesMenuItems, filesSaid } from "../files/filesMenu";
+import { FILES_DEFAULTS, useFilesSettings } from "../files/filesSettings";
+import { revealFile } from "../files/reveal";
 import { fillsEmptyPane, sidebarPrefOf, sidebarToggleFor, viewReducer, type ViewState } from "../window/viewState";
 import { CloseBar } from "./CloseBar";
 import { PauseBar } from "./PauseBar";
@@ -248,9 +253,21 @@ export function LiveApp() {
   const [maximized, setMaximized] = useState(false);
   useEffect(() => onMaximizedChange(setMaximized), []);
   // The window's saved layout: which session is on screen. `undefined` until the list has answered, so an empty first list is never "everything closed".
-  const [view, dispatch, , settled] = useViewState(endpoint, loaded ? infos.map((i) => i.tab_id) : undefined);
+  const [view, dispatchView, , settled] = useViewState(endpoint, loaded ? infos.map((i) => i.tab_id) : undefined);
   const viewRef = useRef(view);
   viewRef.current = view;
+  // Every way to another session ends in a `select` of the view. Before the session on screen changes, its text tabs auto-save (when
+  // that setting is on, a tab saves only then): a tab of a session that was closed is gone, and its draft keeps the edits.
+  const dispatch = useCallback<typeof dispatchView>(
+    (action) => {
+      const left = viewRef.current.panes[0] ?? undefined;
+      if (left !== undefined && leavingSession(action, left)) {
+        for (const tab of tabsOf(viewRef.current.pane, left).tabs) if (!isBrowserTab(tab)) textTabs.current.get(pageKey(left, tab.id))?.autoSave();
+      }
+      dispatchView(action);
+    },
+    [dispatchView],
+  );
   // The session the window is about is the one on screen; the store's choice only stands in when none is.
   const focusedId = view.panes[0] ?? selectedId;
   // Going to a session is two things: the store's selection and the view's, which puts it on screen.
@@ -274,7 +291,7 @@ export function LiveApp() {
     [dispatch],
   );
   const { ref, width, height } = useElementSize();
-  const { appearance, highContrast, wtFiles, sync } = useAppearance();
+  const { appearance, wtFiles, sync } = useAppearance();
   // A session's theme is the setting with its profile's override. One object per override, kept until the setting changes,
   // so a terminal restyles only when its theme really does (the session list updates far more often).
   const themeFor = useMemo(() => {
@@ -745,7 +762,7 @@ export function LiveApp() {
   const currentPanel = (): PanelId | null => commandPanel(onNow.current.panelsOn, panelFocusRef.current, lastPanel.current, (p) => panelTabs(viewRef.current.pane, onNow.current.session, p).length > 0);
   // The side pane's preview tabs, by key: each hands over the commands the palette and the close question call on it, a text tab's
   // editor commands, and what saves the tab (a text tab's editor, or a PDF tab's notes).
-  const textTabs = useRef(new Map<string, Pick<PreviewHandle, "text" | "saving">>());
+  const textTabs = useRef(new Map<string, Pick<PreviewHandle, "text" | "saving" | "autoSave">>());
   // The selected tab of each panel on screen, in the order the commands look: the current panel's first, then the other. `get` is
   // asked with the tab's key; the first answer that is not null wins. Null when the pane is hidden or covered.
   const shownTabAnswer = <T,>(get: (key: string) => T | null): T | null =>
@@ -1012,6 +1029,48 @@ export function LiveApp() {
     focusPane(panel);
     return true;
   };
+  // An open from the file tree or its search results: a preview tab (the panel's own, which the next preview replaces) unless the
+  // person kept it (Enter, a double-click) or the setting is off. A preview tab holding unsaved edits is kept first, so nothing replaces it.
+  const openFromTree = ({ path, line, keep }: { path: string; line?: number; keep: boolean }): void => {
+    const session = stateRef.current.focusedId;
+    const pane = viewRef.current.pane;
+    const check = openCheck(pane, session, path);
+    if (check !== "ok" || session === undefined) return announce(check === "refused" ? TAB_LIMIT : NO_SESSION_TO_OPEN);
+    const flag = treeOpen({ previewTabs: (filesSettings ?? FILES_DEFAULTS).preview_tabs, keep });
+    const panel = panelOfPath(path);
+    if (flag.preview) {
+      const current = previewTab(tabsOf(pane, session), panel);
+      if (current && keepFirst(current, (p) => isUnsaved(unsavedRef.current, p, osName))) paneDispatch({ type: "keep", session, paneTab: current.id });
+    }
+    paneDispatch({ type: "open", session, project: paneProject(), target: line === undefined ? { path } : { path, line }, ...flag });
+    announce(openedText(lastSegment(path), panel));
+  };
+  // The Files menu's choices. Every setting writes through `useFilesSettings`, as Settings → Files does.
+  const runFilesMenu = (itemId: string): void => {
+    const choice = filesMenuChoice(itemId);
+    if (choice === null) return;
+    if (choice.kind === "goToFile") return openFromPane();
+    if (choice.kind === "collapse") return filesPanel.current?.collapseAll();
+    if (choice.kind === "tree") return announce(filesSaid(choice, filesPanel.current?.toggleTree() ?? false));
+    const settings = filesSettings ?? FILES_DEFAULTS;
+    if (choice.kind === "position") {
+      return void setFilesSetting({ tree_position: choice.position }).then(
+        () => announce(filesSaid(choice)),
+        () => announce("The setting wasn't saved."),
+      );
+    }
+    if (choice.kind === "tabSize") {
+      return void setFilesSetting({ tab_size: choice.size }).then(
+        () => announce(filesSaid(choice)),
+        () => announce("The setting wasn't saved."),
+      );
+    }
+    const on = !settings[choice.key];
+    void setFilesSetting({ [choice.key]: on }).then(
+      () => announce(filesSaid(choice, on)),
+      () => announce("The setting wasn't saved."),
+    );
+  };
   // What the terminal's Ctrl+click and the viewers get: one stable function that calls the latest `openInPane`.
   const openInPaneRef = useRef(openInPane);
   openInPaneRef.current = openInPane;
@@ -1184,6 +1243,23 @@ export function LiveApp() {
   // The + menu: where it opened and the button that opened it.
   const [browserMenu, setBrowserMenu] = useState<{ anchor: { x: number; y: number }; opener: HTMLElement } | null>(null);
   const [plusMenu, setPlusMenu] = useState<{ anchor: { x: number; y: number }; opener: HTMLElement } | null>(null);
+  // The Files menu (the strip's ⋯ button), the Files panel's handle and the Files settings (Settings → Files writes the same values).
+  const [filesMenu, setFilesMenu] = useState<{ anchor: { x: number; y: number }; opener: HTMLElement } | null>(null);
+  const filesPanel = useRef<FilesPanelHandle | null>(null);
+  const { settings: filesSettings, failed: filesSettingsFailed, set: setFilesSetting } = useFilesSettings();
+  const filesPrefs = useMemo(() => editorPrefsOf(filesSettings), [filesSettings]);
+  // The home folder, so the Files panel's path bar starts a file under it and outside the project at `~`; null until the system answers.
+  const [home, setHome] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    homeDir().then(
+      (h) => live && setHome(h),
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
   // Files dropped from the system: on a terminal each path is pasted into that session (never Enter); on the side pane every file opens
   // as a tab, in order. A paused or an ended session is refused before anything is pasted. A window covered by the launcher or a dialog
   // takes no drop at all.
@@ -1207,17 +1283,22 @@ export function LiveApp() {
       if (panel !== null) focusPane(panel);
       return;
     }
+    return pasteInto(target.tabId, paths);
+  };
+  // Pastes the paths into that session (never Enter), says so and moves the keyboard to it: a drop on a terminal, and the tree's
+  // "Paste path into <session>".
+  const pasteInto = async (tabId: string, paths: string[]): Promise<void> => {
     const ep = endpointRef.current;
-    const delivery = ep ? deliveryTo(target.tabId, stateRef.current.rows, panelIdRef.current) : null;
+    const delivery = ep ? deliveryTo(tabId, stateRef.current.rows, panelIdRef.current) : null;
     if (!ep || !delivery) return announce("No session to add it to.");
     if (delivery.refused !== undefined) return announce(delivery.refused);
     try {
-      await pastePaths(ep, target.tabId, paths);
+      await pastePaths(ep, tabId, paths);
     } catch (e) {
       return announce(`Couldn't paste the path: ${addFailure(e)}`);
     }
     announce(paths.length === 1 ? `Pasted ${lastSegment(paths[0] ?? "")} into ${delivery.name}.` : `Pasted ${paths.length} paths into ${delivery.name}.`);
-    focusDelivered(target.tabId, delivery);
+    focusDelivered(tabId, delivery);
   };
   // The shell panel's tab has no row to select, and focusTerminal would move the keys to the selected session, so the panel's own terminal is focused instead.
   const panelIdRef = useRef<string | undefined>(undefined);
@@ -1712,6 +1793,24 @@ export function LiveApp() {
     })?.focus();
   });
 
+  // "Show file tree" and "Collapse all folders": on the Files panel, which is shown first when it is hidden (the panel takes the keyboard;
+  // a hidden panel shows its tree). The panel's own state answers when it is mounted; before it is, the saved state is changed.
+  const filesCommand = (what: "tree" | "collapse"): void => {
+    const session = stateRef.current.focusedId;
+    const panel = filesPanel.current;
+    const steps = filesCommandSteps(what, { mounted: panel !== null, shown: onNow.current.panelsOn.includes("files") });
+    if (steps.via === "panel" && panel !== null) {
+      if (what === "collapse") panel.collapseAll();
+      else announce(filesSaid({ kind: "tree" }, panel.toggleTree()));
+    } else if (what === "tree") paneDispatch({ type: "treeView", view: { hidden: false } });
+    else if (session !== undefined) {
+      const saved = tabsOf(viewRef.current.pane, session).tree;
+      if (saved) paneDispatch({ type: "tree", session, tree: { root: saved.root, expanded: [] } });
+    }
+    if (steps.showPanel) togglePanelRef.current("files");
+  };
+  const filesCommandRef = useRef(filesCommand);
+  filesCommandRef.current = filesCommand;
   // The window's shortcuts and commands (side pane, shell panel, history, menu, next waiting). True when it was one of them.
   const windowCommand = useCallback(
     (shortcut: SessionShortcut | null): boolean => {
@@ -1730,6 +1829,13 @@ export function LiveApp() {
         case "openFile":
           setFilesOnly(true);
           setOverlay("palette");
+          return true;
+        // The Files panel's tree commands: they act on the panel and show it first when it is hidden.
+        case "filesTree":
+          filesCommandRef.current("tree");
+          return true;
+        case "filesCollapse":
+          filesCommandRef.current("collapse");
           return true;
         // The browser tab's commands: a blank tab with the keyboard in its address box, and the profile's data cleared after a question.
         case "newBrowserTab":
@@ -2187,9 +2293,7 @@ export function LiveApp() {
   const paneSession = focusedId;
   const paneTabs = tabsOf(view.pane, paneSession);
   const paneProjectNow = focusedRow?.projectKey ?? "";
-  // From the settings, not the root's attributes: the root gets those in an effect, after the render that a change causes.
-  const paneScheme = appearance.theme === "follow-system" ? appScheme() : appearance.theme;
-  const paneTheme = paneTabs.tabs.length > 0 ? resolveTerminalTheme({ ...themeFor(overrideOf(focusedId ?? "")), app: paneScheme, highContrast }).theme : undefined;
+  // The side pane draws whether or not the session has a tab: a session with the file tree and no tab still draws the Files panel.
   const paneRecent = recentFor(view.pane, paneProjectNow, paneSession ?? "");
   const openFromPane = () => {
     setFilesOnly(true);
@@ -2209,15 +2313,99 @@ export function LiveApp() {
     const paneActive = activeIn(paneTabs, panel);
     const paneTitles = tabTitles(tabsHere);
     const newBrowserTab = () => void openPageInPane(BLANK, { focus: "address" });
+    const extras = previewExtras(panel, { prefs: filesPrefs, autoSave: filesSettings?.auto_save ?? false, onReveal: (path) => void revealFile(path, announce) });
+    const activeTabHere = paneActive === null ? undefined : tabsHere.find((t) => t.id === paneActive);
+    const tabsBody =
+      paneActive !== null ? (
+        <KeptTabs
+          key={`${paneSession}:${panel}`}
+          tabs={tabsHere}
+          activeId={paneActive}
+          render={(tab, active) =>
+            isBrowserTab(tab) ? (
+              <BrowserTab
+                pageKey={pageKey(paneSession ?? "", tab.id)}
+                url={currentEntry(tab).path}
+                active={active}
+                available={browserTabs(os)}
+                onPage={(url, title) => paneSession !== undefined && paneDispatch({ type: "page", session: paneSession, paneTab: tab.id, url, title: title === "" ? null : title })}
+                onOpenOutside={(url) => {
+                  if (isPageUrl(url) && url !== BLANK) void openUrl(url).catch(() => {});
+                }}
+                onEscape={toTerminalFromPane}
+                announce={announce}
+                regionTarget={deliveryFor(focusedRow ?? null)}
+                onRegion={addRegion}
+                viewport={viewportOf(tab)}
+                onViewport={openViewportMenu}
+                ref={(bar) => {
+                  // The address box of a new blank tab takes the keyboard through this (openPageInPane); the palette's "Select region" the region.
+                  const key = pageKey(paneSession ?? "", tab.id);
+                  if (bar) {
+                    addressBars.current.set(key, bar);
+                    regionTabs.current.set(key, bar);
+                  }
+                  return () => {
+                    addressBars.current.delete(key);
+                    regionTabs.current.delete(key);
+                  };
+                }}
+              />
+            ) : (
+              <Preview
+                entry={currentEntry(tab)}
+                os={os}
+                canBack={tab.index > 0}
+                canForward={tab.index < tab.history.length - 1}
+                onBack={() => stepHistory(tab, panel, -1)}
+                onForward={() => stepHistory(tab, panel, 1)}
+                onOpen={(target) => {
+                  if (paneSession === undefined) return;
+                  // A link to a file of the other panel is an open there, which says the tab limit and where it opened.
+                  if (panelOfPath(target.path) !== panel) void openInPane(target);
+                  else paneDispatch({ type: "navigate", session: paneSession, paneTab: tab.id, project: paneProjectNow, target });
+                }}
+                onView={(v) => paneSession !== undefined && paneDispatch({ type: "setView", session: paneSession, paneTab: tab.id, view: v })}
+                onPlace={(place) => paneSession !== undefined && paneDispatch({ type: "place", session: paneSession, paneTab: tab.id, place })}
+                onDirty={(path, dirty) => {
+                  noteDirty(path, dirty);
+                  // An edit keeps a preview tab before anything can replace it.
+                  if (dirty && tab.preview === true && paneSession !== undefined) paneDispatch({ type: "keep", session: paneSession, paneTab: tab.id });
+                }}
+                {...extras}
+                active={active}
+                onEscape={toTerminalFromPane}
+                announce={announce}
+                regionTarget={deliveryFor(focusedRow ?? null)}
+                onRegion={addRegion}
+                viewport={panel === "browser" ? viewportOf(tab) : null}
+                onViewport={panel === "browser" ? openViewportMenu : undefined}
+                ref={(preview) => {
+                  const key = pageKey(paneSession ?? "", tab.id);
+                  if (preview) {
+                    regionTabs.current.set(key, preview);
+                    textTabs.current.set(key, preview);
+                  }
+                  return () => {
+                    regionTabs.current.delete(key);
+                    textTabs.current.delete(key);
+                  };
+                }}
+              />
+            )
+          }
+        />
+      ) : null;
     return (
       <SidePane
         panel={panel}
         plus={panel === "browser" ? { label: "New tab", menu: false, disabled: browserTabs(os) ? undefined : PAGES_UNAVAILABLE } : { label: "Open a file", menu: true }}
-        menu={panel === "browser" ? { label: "Browser menu" } : undefined}
+        menu={{ label: panel === "browser" ? "Browser menu" : "Files menu" }}
         fill={{ on: stack.filled === panel, disabled: stack.shown.length < 2 ? "No other panel is shown" : undefined }}
         hideKeys={keysOf(panel)}
         onFill={() => paneDispatch({ type: "fill", panel, session: paneSession ?? null })}
-        onMenu={(anchor, opener) => setBrowserMenu({ anchor, opener })}
+        onMenu={(anchor, opener) => (panel === "browser" ? setBrowserMenu : setFilesMenu)({ anchor, opener })}
+        onKeep={(id) => paneSession !== undefined && paneDispatch({ type: "keep", session: paneSession, paneTab: id })}
         tabs={tabsHere.map((t) => ({ id: t.id, title: paneTitles.get(t.id) ?? "", path: currentEntry(t).path, kind: tabKind(isBrowserTab(t), currentEntry(t).path), openedBy: t.opened_by, unseen: t.unseen, unsaved: !isBrowserTab(t) && isUnsaved(unsaved, currentEntry(t).path, osName) }))}
         activeId={paneActive}
         onSelect={(id) => paneSession !== undefined && paneDispatch({ type: "select", session: paneSession, paneTab: id })}
@@ -2238,82 +2426,33 @@ export function LiveApp() {
         onHide={() => togglePanel(panel)}
         onPlus={panel === "browser" ? newBrowserTab : (anchor, opener) => setPlusMenu({ anchor, opener })}
       >
-        {paneActive !== null && paneTheme ? (
-          <KeptTabs
-            key={`${paneSession}:${panel}`}
-            tabs={tabsHere}
-            activeId={paneActive}
-            render={(tab, active) =>
-              isBrowserTab(tab) ? (
-                <BrowserTab
-                  pageKey={pageKey(paneSession ?? "", tab.id)}
-                  url={currentEntry(tab).path}
-                  active={active}
-                  available={browserTabs(os)}
-                  onPage={(url, title) => paneSession !== undefined && paneDispatch({ type: "page", session: paneSession, paneTab: tab.id, url, title: title === "" ? null : title })}
-                  onOpenOutside={(url) => {
-                    if (isPageUrl(url) && url !== BLANK) void openUrl(url).catch(() => {});
-                  }}
-                  onEscape={toTerminalFromPane}
-                  announce={announce}
-                  regionTarget={deliveryFor(focusedRow ?? null)}
-                  onRegion={addRegion}
-                  viewport={viewportOf(tab)}
-                  onViewport={openViewportMenu}
-                  ref={(bar) => {
-                    // The address box of a new blank tab takes the keyboard through this (openPageInPane); the palette's "Select region" the region.
-                    const key = pageKey(paneSession ?? "", tab.id);
-                    if (bar) {
-                      addressBars.current.set(key, bar);
-                      regionTabs.current.set(key, bar);
-                    }
-                    return () => {
-                      addressBars.current.delete(key);
-                      regionTabs.current.delete(key);
-                    };
-                  }}
-                />
-              ) : (
-                <Preview
-                  entry={currentEntry(tab)}
-                  os={os}
-                  canBack={tab.index > 0}
-                  canForward={tab.index < tab.history.length - 1}
-                  onBack={() => stepHistory(tab, panel, -1)}
-                  onForward={() => stepHistory(tab, panel, 1)}
-                  onOpen={(target) => {
-                    if (paneSession === undefined) return;
-                    // A link to a file of the other panel is an open there, which says the tab limit and where it opened.
-                    if (panelOfPath(target.path) !== panel) void openInPane(target);
-                    else paneDispatch({ type: "navigate", session: paneSession, paneTab: tab.id, project: paneProjectNow, target });
-                  }}
-                  onView={(v) => paneSession !== undefined && paneDispatch({ type: "setView", session: paneSession, paneTab: tab.id, view: v })}
-                  onPlace={(place) => paneSession !== undefined && paneDispatch({ type: "place", session: paneSession, paneTab: tab.id, place })}
-                  onDirty={noteDirty}
-                  active={active}
-                  onEscape={toTerminalFromPane}
-                  announce={announce}
-                  regionTarget={deliveryFor(focusedRow ?? null)}
-                  onRegion={addRegion}
-                  viewport={panel === "browser" ? viewportOf(tab) : null}
-                  onViewport={panel === "browser" ? openViewportMenu : undefined}
-                  ref={(preview) => {
-                    const key = pageKey(paneSession ?? "", tab.id);
-                    if (preview) {
-                      regionTabs.current.set(key, preview);
-                      textTabs.current.set(key, preview);
-                    }
-                    return () => {
-                      regionTabs.current.delete(key);
-                      textTabs.current.delete(key);
-                    };
-                  }}
-                />
-              )
-            }
+        {panel === "files" && paneSession !== undefined ? (
+          <FilesPanel
+            key={paneSession}
+            ref={filesPanel}
+            session={paneSession}
+            saved={paneTabs.tree}
+            treeView={view.pane.tree ?? { hidden: false, width: null }}
+            position={filesSettings?.tree_position ?? FILES_DEFAULTS.tree_position}
+            os={os}
+            home={home}
+            activePath={activeTabHere && !isBrowserTab(activeTabHere) ? currentEntry(activeTabHere).path : null}
+            pasteTo={(() => {
+              const to = deliveryTo(paneSession, rows, panelIdRef.current);
+              return to ? { name: to.name, ...(to.refused === undefined ? {} : { refused: to.refused }) } : null;
+            })()}
+            file={tabsBody ?? <EmptyFiles recent={paneRecent} onOpenFile={openFromPane} onBrowse={browseFile} onRecent={(path) => void openInPane({ path })} />}
+            onSaved={(session, tree) => paneDispatch({ type: "tree", session, tree })}
+            onTreeView={(v) => paneDispatch({ type: "treeView", view: v })}
+            onOpen={openFromTree}
+            onPaste={(path) => void pasteInto(paneSession, [path])}
+            onEscape={() => void toTerminalFromPane()}
+            announce={announce}
           />
-        ) : panel === "browser" ? (
+        ) : panel === "browser" && tabsBody === null ? (
           <EmptyBrowser available={browserTabs(os)} ports={focusedRow?.ports ?? []} onNewTab={newBrowserTab} onPort={(url) => void openPageInPane(url)} onOpenHtml={openHtmlFile} />
+        ) : tabsBody !== null ? (
+          tabsBody
         ) : (
           <EmptyFiles recent={paneRecent} onOpenFile={openFromPane} onBrowse={browseFile} onRecent={(path) => void openInPane({ path })} />
         )}
@@ -2499,6 +2638,25 @@ export function LiveApp() {
           onClose={({ refocus }) => {
             const { opener } = browserMenu;
             setBrowserMenu(null);
+            if (refocus) opener.focus();
+          }}
+        />
+      )}
+      {filesMenu && os && (
+        <ContextMenu
+          label="Files menu"
+          items={filesMenuItems({ settings: filesSettings, failed: filesSettingsFailed, treeShown: !view.pane.tree?.hidden, os })}
+          anchor={filesMenu.anchor}
+          onRun={(itemId) => {
+            const { opener } = filesMenu;
+            setFilesMenu(null);
+            // Focus goes back to the ⋯ button first, so a palette that closes without a pick returns it there.
+            opener.focus();
+            runFilesMenu(itemId);
+          }}
+          onClose={({ refocus }) => {
+            const { opener } = filesMenu;
+            setFilesMenu(null);
             if (refocus) opener.focus();
           }}
         />

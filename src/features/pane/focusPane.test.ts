@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { askedFrom, paneFocusTarget, panelOfElement } from "./focusPane";
 
 // A stand-in for the document: it answers a selector by what it names.
-const root = (has: { tab?: string; selected?: boolean; editor?: boolean; body?: boolean; slot?: boolean; empty?: boolean; plus?: boolean }) =>
+const root = (has: { tab?: string; selected?: boolean; editor?: boolean; body?: boolean; slot?: boolean; row?: boolean; empty?: boolean; plus?: boolean }) =>
   ({
     querySelector: (sel: string) => {
       if (sel.includes("aria-selected")) return has.selected ? "selected tab" : null;
@@ -10,6 +10,7 @@ const root = (has: { tab?: string; selected?: boolean; editor?: boolean; body?: 
       if (sel.includes("cm-content")) return has.editor ? "editor" : null;
       if (sel.includes("preview__body")) return has.body ? "body" : null;
       if (sel.includes("browser-tab__slot")) return has.slot ? "slot" : null;
+      if (sel.includes("treeitem")) return has.row ? "row" : null;
       if (sel.includes("empty-panel__button")) return has.empty ? "empty" : null;
       if (sel.includes("data-pane-plus")) return has.plus ? "plus" : null;
       return null;
@@ -30,6 +31,13 @@ describe("paneFocusTarget", () => {
   it("is a browser tab's slot, which enters the page, when the selected tab has no body", () => {
     expect(paneFocusTarget(root({ slot: true, empty: true, plus: true }), "files")).toBe("slot");
     expect(paneFocusTarget(root({ body: true, slot: true }), "files")).toBe("body");
+  });
+  it("is the tree's tabbable row in Files with no tab, before the empty state's buttons", () => {
+    expect(paneFocusTarget(root({ row: true, empty: true, plus: true }), "files")).toBe("row");
+    expect(paneFocusTarget(root({ row: true, body: true }), "files")).toBe("body");
+    const seen: string[] = [];
+    paneFocusTarget({ querySelector: (s: string) => (seen.push(s), null) } as unknown as ParentNode, "files");
+    expect(seen).toContain('[data-nav-side="files"] [role="tree"] [role="treeitem"][tabindex="0"]');
   });
   it("is the empty pane's first button with no body", () => {
     expect(paneFocusTarget(root({ empty: true, plus: true }), "files")).toBe("empty");
