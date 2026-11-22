@@ -87,29 +87,6 @@ pub fn run(dir: &Path, args: &[&str]) -> anyhow::Result<GitOutput> {
     })
 }
 
-/// Like `run`, with `stdin` written to git and the raw output returned (its exit code, and bytes
-/// that need not be UTF-8). The input is written from its own thread while the output is drained,
-/// so a long list can't fill a pipe and leave both sides waiting.
-pub fn run_input(dir: &Path, args: &[&str], stdin: Vec<u8>) -> anyhow::Result<std::process::Output> {
-    use std::io::Write;
-    let mut child = command(dir, args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(start_error)?;
-    let pipe = child.stdin.take();
-    let writer = std::thread::spawn(move || {
-        if let Some(mut pipe) = pipe {
-            // Git may exit before it reads everything; the exit code says what happened.
-            let _ = pipe.write_all(&stdin);
-        }
-    });
-    let output = child.wait_with_output().map_err(anyhow::Error::new);
-    let _ = writer.join();
-    output
-}
-
 /// Why `stream` returned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Stopped {
