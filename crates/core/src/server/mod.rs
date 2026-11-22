@@ -19,6 +19,7 @@ pub mod frames;
 mod guard;
 mod history;
 mod hook;
+mod ignores;
 mod layout;
 mod merge;
 pub mod opens;
