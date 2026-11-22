@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildQuickFiles, cachedFileList, folderName } from "./quickFiles";
+import { buildQuickFiles, cachedFileList, fileListFor, folderName } from "./quickFiles";
 
 const list = (root: string) => ({ root, files: ["a.ts"], truncated: false });
 
@@ -22,6 +22,30 @@ describe("cachedFileList", () => {
     const cache = new Map();
     await expect(cachedFileList("a", fetch, () => 0, cache)).rejects.toThrow("down");
     expect((await cachedFileList("a", fetch, () => 0, cache)).root).toBe("/r");
+  });
+});
+
+describe("fileListFor", () => {
+  // Review 6r-2: after a `cd` the tree has a new root, and a list cached for the old one must not be filtered against it.
+  it("is the cached list while its root is the tree's", async () => {
+    const fetch = vi.fn(async () => list("/r/a"));
+    const cache = new Map();
+    await cachedFileList("t", fetch, () => 0, cache);
+    expect((await fileListFor("t", "/r/a", fetch, () => 0, cache)).root).toBe("/r/a");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+  it("fetches again when the cached list is for another root, and keeps the new one", async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(list("/r/a")).mockResolvedValue(list("/r/b"));
+    const cache = new Map();
+    await cachedFileList("t", fetch, () => 0, cache);
+    expect((await fileListFor("t", "/r/b", fetch, () => 0, cache)).root).toBe("/r/b");
+    expect((await cachedFileList("t", fetch, () => 0, cache)).root).toBe("/r/b");
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+  it("takes the list as it comes while the tree's root isn't known", async () => {
+    const fetch = vi.fn(async () => list("/r/a"));
+    expect((await fileListFor("t", null, fetch, () => 0, new Map())).root).toBe("/r/a");
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 });
 

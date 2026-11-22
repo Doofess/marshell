@@ -23,6 +23,14 @@ export function cachedFileList(tab: string, fetch: (tab: string) => Promise<File
   return list;
 }
 
+/** The session's file list for the tree's `root`: a list cached for another root, from before the shell moved, is fetched again. */
+export async function fileListFor(tab: string, root: string | null, fetch: (tab: string) => Promise<FileList> = listFiles, now: () => number = Date.now, cache: Map<string, Entry> = shared): Promise<FileList> {
+  const list = await cachedFileList(tab, fetch, now, cache);
+  if (root === null || list.root === root) return list;
+  cache.delete(tab);
+  return cachedFileList(tab, fetch, now, cache);
+}
+
 /** The last part of a folder path, for "Files in <folder>". */
 export const folderName = (root: string): string => root.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || root;
 

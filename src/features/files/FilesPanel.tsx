@@ -7,7 +7,7 @@ import type { TreeView } from "../../generated/TreeView";
 import type { Os } from "../../lib/keymap";
 import { focusPane } from "../pane/focusPane";
 import { panelOfPath } from "../pane/panels";
-import { cachedFileList, folderName } from "../preview/quickFiles";
+import { fileListFor, folderName } from "../preview/quickFiles";
 import { listTree, searchFiles } from "./filesApi";
 import { afterOpen, followTarget, keyboardToFile, openHow, rowOpens } from "./filesActions";
 import { FileTree } from "./FileTree";
@@ -64,6 +64,9 @@ const BAR_ITEMS: MenuItem[] = [
   { id: "copy-relative" satisfies TreeChoice, label: "Copy relative path" },
 ];
 
+/** The path bar's menu: Copy relative path only for a file inside the project folder, as nothing else has one. */
+export const barItems = (relative: string | null): MenuItem[] => (relative === null ? BAR_ITEMS.slice(0, 1) : BAR_ITEMS);
+
 type Anchor = { x: number; y: number };
 
 /**
@@ -106,19 +109,20 @@ export function FilesPanel(p: FilesPanelProps) {
   const root = tree.root;
 
   const mode = filterMode(text);
-  const search = useSearch({ tab: session, query: mode.kind === "search" ? mode.query : null, run: searchFiles });
-  const [names, setNames] = useState<{ files: string[]; truncated: boolean } | "loading" | "error">("loading");
+  const search = useSearch({ tab: session, root, query: mode.kind === "search" ? mode.query : null, run: searchFiles });
+  const [names, setNames] = useState<{ files: string[]; truncated: boolean; root: string } | "loading" | "error">("loading");
   useEffect(() => {
     if (mode.kind !== "names") return;
     let live = true;
-    cachedFileList(session).then(
-      (l) => live && setNames({ files: l.files, truncated: l.truncated }),
+    // Listed again when the tree's root moves, so the rows are the new folder's.
+    fileListFor(session, root).then(
+      (l) => live && setNames({ files: l.files, truncated: l.truncated, root: l.root }),
       () => live && setNames("error"),
     );
     return () => {
       live = false;
     };
-  }, [session, mode.kind]);
+  }, [session, mode.kind, root]);
   const namesQuery = mode.kind === "names" ? mode.query : null;
   const filtered = useMemo(
     () => (namesQuery !== null && typeof names !== "string" ? { ...filterRows(names.files, namesQuery, filterOpen), listCut: names.truncated } : null),
@@ -134,7 +138,9 @@ export function FilesPanel(p: FilesPanelProps) {
     setFocusedPath(selected);
   }, [selected]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const abs = (rel: string) => (root === null ? rel : absoluteOf(root, rel, windows));
+  // A name list's rows are relative to the root they were listed under: the tree's, except for the moment after a `cd`.
+  const base = filtered && typeof names !== "string" ? names.root : root;
+  const abs = (rel: string) => (base === null ? rel : absoluteOf(base, rel, windows));
   const sepOf = (rel: string) => (windows ? rel.replace(/\//g, "\\") : rel);
 
   const toggleTree = (): boolean => {
@@ -149,15 +155,15 @@ export function FilesPanel(p: FilesPanelProps) {
   };
   useImperativeHandle(p.ref, () => ({ toggleTree, collapseAll: () => tree.collapseAll() }));
 
-  /** Opens the file at `rel`, from a tree row, a menu or a search result. */
-  const openFile = (rel: string, how: "click" | "enter" | "double" | "space", line?: number) => {
-    const path = abs(rel);
+  /** Opens the file at `path`, from a tree row, a menu or a search result. */
+  const openAt = (path: string, how: "click" | "enter" | "double" | "space", line?: number) => {
     p.onOpen({ path, keep: keyboardToFile(how), ...(line === undefined ? {} : { line }) });
     // An HTML file opens in Browser: the keyboard goes there on Enter, and the tree over the file stays.
     const after = afterOpen(how, { narrow, panel: panelOfPath(path) });
     if (after.close) setOverlay(false);
     if (after.focus !== null) focusPane(after.focus);
   };
+  const openFile = (rel: string, how: "click" | "enter" | "double" | "space") => openAt(abs(rel), how);
   /** Opens a row of the tree. Only a file row opens: a link row is never opened, whichever way the open came. */
   const open = (rel: string, how: "click" | "enter" | "double" | "space") => {
     if (rowOpens(rows.find((r) => r.path === rel))) openFile(rel, how);
@@ -211,7 +217,7 @@ export function FilesPanel(p: FilesPanelProps) {
     const target = activePath ?? root;
     if (target === null) return;
     if (id === "copy-path") copyPath(target);
-    else if (id === "copy-relative") copyRelative(followTarget(root, target, windows) ?? "");
+    else if (id === "copy-relative" && selected !== null) copyRelative(selected);
   };
 
   const revealFolder = (folder: string) => {
@@ -256,13 +262,15 @@ export function FilesPanel(p: FilesPanelProps) {
     </div>
   );
 
+  const reply = search.reply;
   const body =
     mode.kind === "search" && !tree.noFolder ? (
-      search.reply ? (
+      reply ? (
         <SearchResults
-          reply={search.reply}
+          reply={reply}
           rtl={size.rtl}
-          onOpen={(path, line, keep) => openFile(path, openHow(keep, pointer.current), line)}
+          // A result's path is relative to the root it was found under, which a `cd` can have moved since.
+          onOpen={(path, line, keep) => openAt(absoluteOf(reply.root, path, windows), openHow(keep, pointer.current), line)}
           onFilter={() => filterBox.current?.focus()}
           announce={announce}
           keyboardHere={() => box.current?.contains(document.activeElement) ?? false}
@@ -337,7 +345,7 @@ export function FilesPanel(p: FilesPanelProps) {
       {barMenu && (
         <ContextMenu
           label="Path menu"
-          items={BAR_ITEMS}
+          items={barItems(selected)}
           anchor={barMenu.anchor}
           onRun={runBarMenu}
           onClose={({ refocus }) => {

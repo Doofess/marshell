@@ -2,7 +2,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { EmptyFiles } from "../pane/EmptyFiles";
 import { SidePane } from "../pane/SidePane";
-import { FilesPanel, type FilesPanelProps } from "./FilesPanel";
+import { readFileSync } from "node:fs";
+import { barItems, FilesPanel, type FilesPanelProps } from "./FilesPanel";
 
 const noop = () => {};
 const base: FilesPanelProps = {
@@ -61,5 +62,33 @@ describe("FilesPanel", () => {
     );
     expect(out).toContain('aria-label="Files menu"');
     expect(out).toContain('aria-haspopup="menu"');
+  });
+});
+
+describe("the path bar's menu", () => {
+  // Review 6r-2: with no file inside the project folder there is no relative path, and the menu said it had copied one.
+  it("offers Copy relative path only for a file inside the project folder", () => {
+    const copyPath = { id: "copy-path", label: "Copy path" };
+    expect(barItems("src/a.ts")).toEqual([copyPath, { id: "copy-relative", label: "Copy relative path" }]);
+    expect(barItems(null)).toEqual([copyPath]);
+  });
+});
+
+describe("rows listed for an older root", () => {
+  const panel = readFileSync(new URL("./FilesPanel.tsx", import.meta.url), "utf8");
+  const search = readFileSync(new URL("./useSearch.ts", import.meta.url), "utf8");
+  // Review 6r-2: after a `cd` the name list and a search's results were opened against the tree's new root.
+  it("open against the root they were listed under, and are listed again for the new one", () => {
+    expect(panel).toContain("fileListFor(session, root)");
+    expect(panel).toContain("}, [session, mode.kind, root]);");
+    expect(panel).toContain("const base = filtered && typeof names !== \"string\" ? names.root : root;");
+    expect(panel).toContain("openAt(absoluteOf(reply.root, path, windows)");
+    expect(panel).toContain("useSearch({ tab: session, root, query:");
+    expect(search).toContain("}, [o.tab, o.root, o.query, o.run]);");
+  });
+  it("the bar's menu copies a relative path only when there is one", () => {
+    expect(panel).toContain("items={barItems(");
+    expect(panel).not.toContain('copyRelative(followTarget(root, target, windows) ?? "")');
+    expect(panel).toContain('id === "copy-relative" && selected !== null');
   });
 });

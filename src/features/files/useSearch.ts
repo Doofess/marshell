@@ -61,8 +61,8 @@ export function createSearchScheduler(run: typeof searchFiles, set: (s: SearchSt
   };
 }
 
-/** The content search for `query` in the session's project; a null `query` is no search. */
-export function useSearch(o: { tab: string | null; query: string | null; run: typeof searchFiles }): SearchState {
+/** The content search for `query` in the session's project, run again when the project's `root` moves; a null `query` is no search. */
+export function useSearch(o: { tab: string | null; root: string | null; query: string | null; run: typeof searchFiles }): SearchState {
   const [state, setState] = useState<SearchState>(IDLE);
   const scheduler = useRef<SearchScheduler | null>(null);
   useEffect(() => {
@@ -75,6 +75,6 @@ export function useSearch(o: { tab: string | null; query: string | null; run: ty
   }, [o.run]);
   useEffect(() => {
     scheduler.current?.schedule(o.tab, o.query);
-  }, [o.tab, o.query, o.run]);
+  }, [o.tab, o.root, o.query, o.run]);
   return state;
 }
