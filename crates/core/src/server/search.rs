@@ -8,7 +8,7 @@
 
 use super::AppState;
 use super::files::{
-    SKIPPED_DIRS, links_refused, open_regular, project_root, row_of, strip_verbatim, under_plain_folders,
+    Root, SKIPPED_DIRS, links_refused, open_regular, project_root, row_of, strip_verbatim, under_plain_folders,
 };
 use crate::git::{self, Stopped};
 use axum::Json;
@@ -507,7 +507,9 @@ pub async fn search(State(st): State<AppState>, Path(tab): Path<String>, Json(re
     let cancel = Arc::new(AtomicBool::new(false));
     let _stop = CancelOnDrop(cancel.clone());
     let done = tokio::task::spawn_blocking(move || {
-        let (root, is_git) = project_root(row.as_ref(), reported)?;
+        let found = project_root(row.as_ref(), reported)?;
+        let is_git = matches!(found, Root::Checkout(_));
+        let root = found.path().to_path_buf();
         Some(run_search(&root, is_git, &req.q, &cancel))
     })
     .await;

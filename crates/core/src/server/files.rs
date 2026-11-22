@@ -283,10 +283,57 @@ fn checkout_of(row: &SessionInfo) -> Option<PathBuf> {
     if row.cwd.is_empty() || refused(&row.cwd) || links_refused(std::path::Path::new(&row.cwd)) {
         return None;
     }
-    let root = std::path::Path::new(&row.cwd)
-        .ancestors()
-        .find(|d| d.join(".git").exists())?;
-    Some(crate::projects::canonical(root))
+    checkout_above(std::path::Path::new(&row.cwd))
+}
+
+/// The checkout `folder` is in, with the user's home folder as `dirs` names it.
+fn checkout_above(folder: &std::path::Path) -> Option<PathBuf> {
+    checkout_above_with(folder, dirs::home_dir().as_deref())
+}
+
+/// The first folder from `folder` upward that holds `.git` (a folder or a file), canonical. File
+/// system checks only, never git. Two cases end the walk with no checkout: a `.git` that is a link
+/// (it may point anywhere, as `ignores::git_dir` rules), and the home folder's own `.git` when
+/// `folder` is below home (6t decision 11: a dotfiles repo is not every project's checkout).
+fn checkout_above_with(folder: &std::path::Path, home: Option<&std::path::Path>) -> Option<PathBuf> {
+    let home = home.map(crate::projects::canonical);
+    for dir in folder.ancestors() {
+        let Ok(meta) = std::fs::symlink_metadata(dir.join(".git")) else {
+            continue;
+        };
+        let kind = meta.file_type();
+        if kind.is_symlink() {
+            return None;
+        }
+        if !(kind.is_dir() || kind.is_file()) {
+            continue;
+        }
+        let found = crate::projects::canonical(dir);
+        if home.as_ref() == Some(&found) && crate::projects::canonical(folder) != found {
+            return None;
+        }
+        return Some(found);
+    }
+    None
+}
+
+/// Where a session's project folder is, and whether git may run there.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) enum Root {
+    /// The launch folder's checkout: the only place git runs.
+    Checkout(PathBuf),
+    /// A folder inside a checkout that git must not run in (the shell reported it); its rules come from `Ignores`.
+    InCheckout { root: PathBuf, checkout: PathBuf },
+    /// A folder in no checkout.
+    Plain(PathBuf),
+}
+
+impl Root {
+    pub(super) fn path(&self) -> &std::path::Path {
+        match self {
+            Root::Checkout(root) | Root::Plain(root) | Root::InCheckout { root, .. } => root,
+        }
+    }
 }
 
 /// The folders a session's relative paths are tried against, most specific first: the folder the
@@ -643,14 +690,19 @@ fn first_folder(candidates: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf
 /// checkout the session was launched in, which for a task is its worktree (`project` is the launch
 /// folder itself outside git, so it is not used). Outside git it is the folder the shell last
 /// reported, else the launch folder. Each goes through `first_folder`. A reported folder never
-/// counts as a checkout, even inside one: it is learned from what the terminal printed, and git run
-/// in a folder nobody chose would run the commands a hostile `.git/config` names (`core.fsmonitor`).
-pub(super) fn project_root(row: Option<&SessionInfo>, reported: Option<PathBuf>) -> Option<(PathBuf, bool)> {
+/// is a `Root::Checkout`, even inside one (`InCheckout`): it is learned from what the terminal
+/// printed, and git run in a folder nobody chose would run the commands a hostile `.git/config`
+/// names (`core.fsmonitor`).
+pub(super) fn project_root(row: Option<&SessionInfo>, reported: Option<PathBuf>) -> Option<Root> {
     if let Some(root) = row.and_then(checkout_of).and_then(|c| first_folder([c])) {
-        return Some((root, true));
+        return Some(Root::Checkout(root));
     }
     let launch = row.iter().map(|r| PathBuf::from(&r.cwd));
-    first_folder(reported.into_iter().chain(launch)).map(|root| (root, false))
+    let root = first_folder(reported.into_iter().chain(launch))?;
+    Some(match checkout_above(&root) {
+        Some(checkout) => Root::InCheckout { root, checkout },
+        None => Root::Plain(root),
+    })
 }
 
 /// GET /v1/sessions/{tab}/files
@@ -662,7 +714,9 @@ pub async fn list(State(st): State<AppState>, Path(tab): Path<String>) -> Respon
     }
     let reported = session.and_then(|s| s.current_cwd());
     let done = tokio::task::spawn_blocking(move || {
-        let (root, is_git) = project_root(row.as_ref(), reported)?;
+        let found = project_root(row.as_ref(), reported)?;
+        let is_git = matches!(found, Root::Checkout(_));
+        let root = found.path().to_path_buf();
         let (files, truncated) = if is_git {
             // Without git on PATH the walk still gives a list, though it lists ignored files.
             git_files(&root).unwrap_or_else(|| walk_files(&root))
@@ -692,10 +746,13 @@ mod tests {
     /// The folder comes from the terminal's output, and git there could run a hostile repo's
     /// configured commands, so git runs only in the checkout the session was launched in.
     #[test]
-    fn git_never_runs_in_a_folder_learned_only_from_the_shell() {
+    fn a_folder_learned_from_the_shell_is_never_a_checkout_git_runs_in() {
         let tmp = tempfile::tempdir().unwrap();
-        let repo = crate::projects::canonical(tmp.path()).join("repo");
+        let base = crate::projects::canonical(tmp.path());
+        let repo = base.join("repo");
+        let plain = base.join("plain");
         std::fs::create_dir_all(repo.join("sub")).unwrap();
+        std::fs::create_dir_all(&plain).unwrap();
         let out = std::process::Command::new("git")
             .arg("-C")
             .arg(&repo)
@@ -703,10 +760,114 @@ mod tests {
             .output()
             .unwrap();
         assert!(out.status.success());
-        for reported in [repo.clone(), repo.join("sub")] {
-            let (root, is_git) = project_root(None, Some(reported.clone())).unwrap();
-            assert_eq!(root, crate::projects::canonical(&reported));
-            assert!(!is_git, "{reported:?}");
+        assert_eq!(
+            project_root(None, Some(repo.join("sub"))),
+            Some(Root::InCheckout {
+                root: repo.join("sub"),
+                checkout: repo.clone()
+            })
+        );
+        assert_eq!(
+            project_root(None, Some(repo.clone())),
+            Some(Root::InCheckout {
+                root: repo.clone(),
+                checkout: repo.clone()
+            })
+        );
+        assert_eq!(project_root(None, Some(plain.clone())), Some(Root::Plain(plain)));
+    }
+
+    #[test]
+    fn the_launch_folders_checkout_wins_over_a_reported_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = crate::projects::canonical(tmp.path());
+        let repo = base.join("repo");
+        let plain = base.join("plain");
+        std::fs::create_dir_all(repo.join("sub")).unwrap();
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(&plain).unwrap();
+        use marshell_protocol::api::{CommandState, SessionState};
+        let row = SessionInfo {
+            tab_id: "t1".into(),
+            number: 1,
+            name: "s1".into(),
+            agent: None,
+            profile_id: "p".into(),
+            cwd: repo.join("sub").to_string_lossy().into_owned(),
+            project: repo.to_string_lossy().into_owned(),
+            mode: None,
+            state: SessionState::Running,
+            command: CommandState::Unknown,
+            paused: false,
+            foreground: None,
+            live: None,
+            activity: None,
+            status_note: None,
+            muted: false,
+            elevated: false,
+            attention: None,
+            stuck: None,
+            preset: None,
+            ports: Vec::new(),
+            script: None,
+            setup: None,
+            references: None,
+        };
+        assert_eq!(project_root(Some(&row), Some(plain)), Some(Root::Checkout(repo)));
+    }
+
+    #[test]
+    fn a_repo_in_the_home_folder_counts_only_for_the_home_folder_itself() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = crate::projects::canonical(tmp.path()).join("home");
+        let x = home.join("projects").join("x");
+        let y = home.join("projects").join("y");
+        std::fs::create_dir_all(&x).unwrap();
+        std::fs::create_dir_all(y.join("src")).unwrap();
+        std::fs::create_dir_all(home.join(".git")).unwrap();
+        std::fs::create_dir_all(y.join(".git")).unwrap();
+        assert_eq!(checkout_above_with(&x, Some(&home)), None);
+        assert_eq!(checkout_above_with(&home, Some(&home)), Some(home.clone()));
+        assert_eq!(checkout_above_with(&y.join("src"), Some(&home)), Some(y));
+        // Without a known home folder the repo above counts, as it did.
+        assert_eq!(checkout_above_with(&x, None), Some(home));
+    }
+
+    #[test]
+    fn a_dot_git_link_ends_the_walk_up_with_no_checkout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = crate::projects::canonical(tmp.path());
+        let outer = base.join("outer");
+        let inner = outer.join("inner");
+        let target = base.join("elsewhere");
+        std::fs::create_dir_all(&inner).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::create_dir_all(outer.join(".git")).unwrap();
+        if !link_dir(&target, &inner.join(".git")) {
+            eprintln!("skipped: this OS refused the link");
+            return;
+        }
+        assert_eq!(checkout_above_with(&inner, None), None);
+        assert_eq!(checkout_above_with(&outer, None), Some(outer));
+    }
+
+    /// A folder link at `link` to `target`: a symlink, else on Windows a junction. False when refused.
+    fn link_dir(target: &std::path::Path, link: &std::path::Path) -> bool {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link).is_ok()
+        }
+        #[cfg(windows)]
+        {
+            if std::os::windows::fs::symlink_dir(target, link).is_ok() {
+                return true;
+            }
+            std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .is_ok_and(|o| o.status.success())
         }
     }
 

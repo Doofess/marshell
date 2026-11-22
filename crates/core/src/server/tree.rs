@@ -6,7 +6,7 @@
 //! symlink or a junction), inside the root or out. `.git` is never listed or entered.
 
 use super::AppState;
-use super::files::{links_refused, modified_ms, project_root, refused, row_of, strip_verbatim};
+use super::files::{Root, links_refused, modified_ms, project_root, refused, row_of, strip_verbatim};
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -320,7 +320,9 @@ pub async fn tree(State(st): State<AppState>, Path(tab): Path<String>, Json(req)
     let session = st.session(&tab);
     let reported = session.and_then(|s| s.current_cwd());
     let done = tokio::task::spawn_blocking(move || {
-        let (root, is_git) = project_root(row.as_ref(), reported)?;
+        let found = project_root(row.as_ref(), reported)?;
+        let is_git = matches!(found, Root::Checkout(_));
+        let root = found.path().to_path_buf();
         let dirs = tree_with(&root, is_git, &req.dirs, &crate::git::run_input);
         Some(TreeReply {
             root: strip_verbatim(&root).unwrap_or_default(),
