@@ -642,13 +642,17 @@ fn first_folder(candidates: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf
 /// The project folder of a session and whether it is a git checkout. In a repo the root is the
 /// checkout the session was launched in, which for a task is its worktree (`project` is the launch
 /// folder itself outside git, so it is not used). Outside git it is the folder the shell last
-/// reported, else the launch folder. Each goes through `first_folder`.
+/// reported, else the launch folder. Each goes through `first_folder`. That folder counts as a
+/// checkout when it is inside one, as after a `cd` into a repo, so git's ignore rules apply to it.
 pub(super) fn project_root(row: Option<&SessionInfo>, reported: Option<PathBuf>) -> Option<(PathBuf, bool)> {
     if let Some(root) = row.and_then(checkout_of).and_then(|c| first_folder([c])) {
         return Some((root, true));
     }
     let launch = row.iter().map(|r| PathBuf::from(&r.cwd));
-    first_folder(reported.into_iter().chain(launch)).map(|root| (root, false))
+    first_folder(reported.into_iter().chain(launch)).map(|root| {
+        let is_git = root.ancestors().any(|d| d.join(".git").exists());
+        (root, is_git)
+    })
 }
 
 /// GET /v1/sessions/{tab}/files

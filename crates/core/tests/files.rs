@@ -520,6 +520,32 @@ async fn the_file_list_in_a_repo_follows_gitignore() {
     assert_eq!(list["root"], canon(root));
 }
 
+/// Review 6r-2: a shell launched outside git that `cd`s into a checkout, here into a subfolder of
+/// one, gets that folder listed the way a checkout is, so what git ignores is left out (decisions 1
+/// and 3) while the root stays the folder the shell reported.
+#[tokio::test]
+async fn a_shell_that_moved_into_a_checkout_lists_it_as_one() {
+    let s = setup("repo/sub");
+    let repo = s.dir.path().join("repo");
+    git(&repo, &["init", "-q"]);
+    write(&repo.join(".gitignore"), "*.log\n");
+    write(&repo.join("sub/a.rs"), "a");
+    write(&repo.join("sub/b.log"), "b");
+    let tab = session(&s.app, "reporter", s.dir.path()).await;
+    let want = canon(&repo.join("sub"));
+    // The mark arrives some time after the process starts.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let list = files_of(&s.app, &tab).await;
+        if list["root"] == want {
+            assert_eq!(names(&list), ["a.rs"]);
+            break;
+        }
+        assert!(Instant::now() < deadline, "still {list}");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 /// A junction, which git for Windows walks into as if it were a folder.
 #[cfg(windows)]
 fn junction(target: &Path, link: &Path) {
