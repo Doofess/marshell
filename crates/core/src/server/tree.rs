@@ -442,13 +442,7 @@ mod tests {
     fn marks_ignored_entries_and_everything_in_an_ignored_folder() {
         let (_tmp, root) = temp();
         std::fs::create_dir(root.join(".git")).unwrap();
-        std::fs::write(
-            root.join(".gitignore"),
-            "*.log
-dist/
-",
-        )
-        .unwrap();
+        std::fs::write(root.join(".gitignore"), "*.log\ndist/\n").unwrap();
         touch(&root.join("dist/a.txt"));
         touch(&root.join("dist/b/c.txt"));
         touch(&root.join("x.log"));

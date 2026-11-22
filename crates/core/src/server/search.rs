@@ -442,7 +442,8 @@ fn search_file(root: &FsPath, path: &FsPath, found: &mut Found) -> bool {
 }
 
 /// The search outside a checkout: the folders under `root` except the skipped ones, and no folder
-/// through a link. A linked file is read only when its target passes `links_refused`.
+/// through a link. A link of any kind is never read, though the list shows a file link whose target is
+/// a local file (6t decision 10).
 fn walk(root: &FsPath, deadline: Instant, cancel: &AtomicBool, found: &mut Found) -> Stopped {
     let mut folders = vec![root.to_path_buf()];
     while let Some(folder) = folders.pop() {
@@ -915,20 +916,9 @@ mod tests {
     #[test]
     fn in_a_checkout_an_ignored_untracked_file_is_not_searched() {
         let (_tmp, root) = repo();
-        write(
-            &root,
-            ".gitignore",
-            "*.log
-",
-        );
-        write(
-            &root, "a.log", "needle
-",
-        );
-        write(
-            &root, "b.txt", "needle
-",
-        );
+        write(&root, ".gitignore", "*.log\n");
+        write(&root, "a.log", "needle\n");
+        write(&root, "b.txt", "needle\n");
         let reply = find(&root, true, "needle");
         assert_eq!(paths(&reply), ["b.txt"]);
     }
@@ -939,18 +929,8 @@ mod tests {
     fn in_a_checkout_a_junction_in_an_untracked_folder_is_not_searched_through() {
         let (_tmp, root) = repo();
         let (_other_tmp, other) = temp();
-        write(
-            &other,
-            "secret.txt",
-            "needle
-",
-        );
-        write(
-            &root,
-            "new/real.txt",
-            "needle
-",
-        );
+        write(&other, "secret.txt", "needle\n");
+        write(&root, "new/real.txt", "needle\n");
         junction(&other, &root.join("new").join("link"));
         let reply = find(&root, true, "needle");
         assert_eq!(paths(&reply), ["new/real.txt"]);
@@ -959,28 +939,10 @@ mod tests {
     #[test]
     fn a_reported_folder_in_a_checkout_skips_ignored_files_and_runs_no_git() {
         let (_tmp, root) = repo();
-        write(
-            &root,
-            ".gitignore",
-            "*.log
-",
-        );
-        write(
-            &root,
-            "sub/a.txt",
-            "needle
-",
-        );
-        write(
-            &root,
-            "sub/b.log",
-            "needle
-",
-        );
-        write(
-            &root, "top.txt", "needle
-",
-        );
+        write(&root, ".gitignore", "*.log\n");
+        write(&root, "sub/a.txt", "needle\n");
+        write(&root, "sub/b.log", "needle\n");
+        write(&root, "top.txt", "needle\n");
         let grep = |_: &FsPath, _: &str, _: Instant, _: &AtomicBool, _: &mut Found| -> anyhow::Result<Stopped> {
             panic!("git ran")
         };
@@ -1008,20 +970,9 @@ mod tests {
     #[test]
     fn a_failed_git_grep_falls_back_to_the_walk() {
         let (_tmp, root) = repo();
-        write(
-            &root,
-            ".gitignore",
-            "*.log
-",
-        );
-        write(
-            &root, "a.txt", "needle
-",
-        );
-        write(
-            &root, "b.log", "needle
-",
-        );
+        write(&root, ".gitignore", "*.log\n");
+        write(&root, "a.txt", "needle\n");
+        write(&root, "b.log", "needle\n");
         let grep = |_: &FsPath, _: &str, _: Instant, _: &AtomicBool, found: &mut Found| -> anyhow::Result<Stopped> {
             found.add("half.txt", 1, "needle");
             Err(anyhow::anyhow!("Git stopped."))
@@ -1036,16 +987,8 @@ mod tests {
     fn the_walk_search_never_reads_a_file_link() {
         let (_tmp, root) = temp();
         let (_other_tmp, other) = temp();
-        write(
-            &other,
-            "secret.txt",
-            "needle
-",
-        );
-        write(
-            &root, "ok.txt", "needle
-",
-        );
+        write(&other, "secret.txt", "needle\n");
+        write(&root, "ok.txt", "needle\n");
         #[cfg(windows)]
         let made = std::os::windows::fs::symlink_file(other.join("secret.txt"), root.join("link.txt")).is_ok();
         #[cfg(unix)]
