@@ -27,7 +27,7 @@ const MAX_PATTERN_BYTES: u64 = 1024 * 1024;
 const MAX_POINTER_BYTES: u64 = 4096;
 
 /// Git sets `core.ignorecase` when it makes a repo on these systems.
-const IGNORE_CASE: bool = cfg!(any(windows, target_os = "macos"));
+pub(super) const IGNORE_CASE: bool = cfg!(any(windows, target_os = "macos"));
 
 /// The whole of a regular file, or None when it is missing, not a regular file or over `cap` bytes.
 fn read_capped(path: &Path, cap: u64) -> Option<Vec<u8>> {

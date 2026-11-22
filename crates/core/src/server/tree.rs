@@ -353,10 +353,10 @@ mod tests {
     }
 
     fn tracked_of(files: &[&str], cut: bool) -> Option<Arc<Tracked>> {
-        Some(Arc::new(Tracked {
-            files: files.iter().map(|f| f.to_string()).collect(),
+        Some(Arc::new(Tracked::new(
+            files.iter().map(|f| f.to_string()).collect(),
             cut,
-        }))
+        )))
     }
 
     /// The launch checkout's tree (`is_git`) or a plain folder's, with no tracked list.
@@ -520,6 +520,20 @@ dist/
         assert_eq!(runs.get(), 1);
         assert_eq!(ignored(&dirs[0]), ["a.log"]);
         assert_eq!(ignored(&dirs[1]), ["b.log"]);
+    }
+
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    fn a_tracked_file_renamed_only_in_case_is_not_marked() {
+        // Final review of 6t: the index holds `Keep.log`, the disk `keep.log`.
+        let (_tmp, root) = temp();
+        std::fs::create_dir(root.join(".git")).unwrap();
+        std::fs::write(root.join(".gitignore"), "*.log").unwrap();
+        touch(&root.join("a.log"));
+        touch(&root.join("keep.log"));
+        let tracked = |_: &FsPath, _: Instant| tracked_of(&["Keep.log"], false);
+        let dirs = tree_with(&Root::Checkout(root.clone()), &[ask("")], &tracked);
+        assert_eq!(ignored(&dirs[0]), ["a.log"]);
     }
 
     #[test]

@@ -5,7 +5,7 @@
 //! a UNC path would send the person's NTLM hash to whoever the server name points at.
 
 use super::AppState;
-use super::ignores::{Ignores, walk_unignored};
+use super::ignores::{IGNORE_CASE, Ignores, walk_unignored};
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderName, StatusCode, header};
@@ -621,12 +621,29 @@ pub(super) struct Tracked {
     pub files: Vec<String>,
     /// The deadline stopped git before it finished, so `files` is only the start of the index.
     pub cut: bool,
+    /// `files` case-folded and sorted, where the file system ignores case; empty elsewhere.
+    folded: Vec<String>,
 }
 
 impl Tracked {
-    /// Whether the index holds `rel` (`/`-separated, relative to the checkout).
+    pub(super) fn new(files: Vec<String>, cut: bool) -> Self {
+        let folded = if IGNORE_CASE {
+            let mut folded: Vec<String> = files.iter().map(|f| f.to_lowercase()).collect();
+            folded.sort_unstable();
+            folded.dedup();
+            folded
+        } else {
+            Vec::new()
+        };
+        Self { files, cut, folded }
+    }
+
+    /// Whether the index holds `rel` (`/`-separated, relative to the checkout). Where the file system
+    /// ignores case, a name renamed only in case on disk still matches the index's spelling, so the
+    /// walk doesn't list it a second time.
     pub(super) fn has(&self, rel: &str) -> bool {
         self.files.binary_search_by(|f| f.as_str().cmp(rel)).is_ok()
+            || (IGNORE_CASE && self.folded.binary_search(&rel.to_lowercase()).is_ok())
     }
 }
 
@@ -668,16 +685,10 @@ impl TrackedReader {
             crate::git::Stopped::Done => {
                 let rest = std::mem::take(&mut self.pending);
                 Self::add(&mut self.files, &rest);
-                Some(Tracked {
-                    files: self.files,
-                    cut: false,
-                })
+                Some(Tracked::new(self.files, false))
             }
             // A half-read path at the end is dropped.
-            crate::git::Stopped::Deadline => Some(Tracked {
-                files: self.files,
-                cut: true,
-            }),
+            crate::git::Stopped::Deadline => Some(Tracked::new(self.files, true)),
             _ => None,
         }
     }
@@ -1191,10 +1202,7 @@ mod tests {
             cache
                 .get_or_run(&root, far(), &|_, _| {
                     runs.set(runs.get() + 1);
-                    Some(Tracked {
-                        files: vec!["a.txt".into()],
-                        cut: true,
-                    })
+                    Some(Tracked::new(vec!["a.txt".into()], true))
                 })
                 .unwrap()
         };
@@ -1248,6 +1256,37 @@ mod tests {
         put(&root, "b.txt", "");
         let (files, truncated) = list_root(&Root::Checkout(root), &|_, _| None);
         assert_eq!(files, [".gitignore", "b.txt"]);
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn the_tracked_check_ignores_case_where_the_file_system_does() {
+        let t = Tracked::new(vec!["Readme.md".into(), "Src/a.rs".into()], false);
+        assert!(t.has("Readme.md") && t.has("Src/a.rs"));
+        assert_eq!(
+            t.has("README.md") && t.has("src/a.rs"),
+            cfg!(any(windows, target_os = "macos"))
+        );
+        assert!(!t.has("Readme.txt") && !t.has("src/b.rs"));
+    }
+
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    fn a_file_renamed_only_in_case_is_listed_once() {
+        // Final review of 6t: the index still holds the old case and the disk the new one, so the walk
+        // must not list the disk's spelling as a second, untracked file.
+        let (_tmp, root) = fake_repo();
+        put(&root, "README.md", "");
+        put(&root, "src/a.rs", "");
+        put(&root, "new.txt", "");
+        let tracked = |_: &FsPath, _: Instant| {
+            Some(Arc::new(Tracked::new(
+                vec!["Readme.md".into(), "Src/a.rs".into()],
+                false,
+            )))
+        };
+        let (files, truncated) = list_root(&Root::Checkout(root), &tracked);
+        assert_eq!(files, ["Readme.md", "Src/a.rs", "new.txt"]);
         assert!(!truncated);
     }
 
