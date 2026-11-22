@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { clickMove, extendTyped, FileTree, visibleRange } from "./FileTree";
+import { readFileSync } from "node:fs";
+import { clickMove, extendTyped, FileTree, scrollsToRow, visibleRange } from "./FileTree";
 import type { TreeRow } from "./treeModel";
 
 const row = (over: Partial<TreeRow>): TreeRow => ({
@@ -149,5 +150,23 @@ describe("clickMove", () => {
     expect(clickMove(row({ path: "current", kind: "link" }))).toBeNull();
     expect(clickMove(row({ path: "d/more", kind: "more" }))).toBeNull();
     expect(clickMove(row({ path: "d/empty", kind: "empty" }))).toBeNull();
+  });
+});
+
+describe("scrollsToRow", () => {
+  // PR review of 6r-2: a file an agent added above the row with the keyboard moved its index, and the tree scrolled back to it
+  // from wherever the person had scrolled to read.
+  it("scrolls when the row becomes the one with the keyboard, or first appears, or after a key move", () => {
+    expect(scrollsToRow("src/a.ts", null, false)).toBe(true);
+    expect(scrollsToRow("src/b.ts", "src/a.ts", false)).toBe(true);
+    expect(scrollsToRow("src/a.ts", "src/a.ts", true)).toBe(true);
+  });
+  it("leaves the view where it is when the same row only moved", () => {
+    expect(scrollsToRow("src/a.ts", "src/a.ts", false)).toBe(false);
+  });
+  it("is what the tree's scroll effect asks, and a row that leaves the tree is shown again when it comes back", () => {
+    const tree = readFileSync(new URL("./FileTree.tsx", import.meta.url), "utf8");
+    expect(tree).toContain("if (!scrollsToRow(p.focusedPath, shown.current, key)) return;");
+    expect(tree).toContain("shown.current = null;");
   });
 });

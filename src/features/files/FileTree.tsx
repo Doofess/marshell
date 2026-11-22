@@ -33,6 +33,14 @@ export function extendTyped(prev: { text: string; at: number }, key: string, now
  * a link to a file as the file) and is never opened, so the tree never leaves the project folder; "more" and "empty" rows do
  * nothing.
  */
+/**
+ * Whether the row with the keyboard is scrolled into view: when it becomes that row, when it first appears (a reveal waits for its
+ * folder's listing), or after a key move. A row that only moved, as when a file is added above it, leaves the view where it is.
+ */
+export function scrollsToRow(path: string | null, shown: string | null, keyMoved: boolean): boolean {
+  return keyMoved || path !== shown;
+}
+
 export function clickMove(r: TreeRow): TreeMove {
   if (r.kind === "folder") return { type: r.expanded ? "collapse" : "expand", path: r.path };
   if (r.kind === "file") return { type: "open", path: r.path, keep: false };
@@ -97,6 +105,8 @@ export function FileTree(p: {
   const box = useRef<HTMLDivElement>(null);
   const typed = useRef({ text: "", at: 0 });
   const keyed = useRef(0);
+  /** The row last scrolled into view, so a poll that moves it doesn't scroll the tree back to it. */
+  const shown = useRef<string | null>(null);
   const [view, setView] = useState({ top: 0, height: 480 });
 
   const found = p.focusedPath === null ? -1 : rows.findIndex((r) => r.path === p.focusedPath);
@@ -114,14 +124,21 @@ export function FileTree(p: {
     return () => ro.disconnect();
   }, [p.noFolder]);
 
-  // The row with the keyboard comes into view; after a key move it also takes the focus.
+  // The row with the keyboard comes into view (see `scrollsToRow`); after a key move it also takes the focus.
   useEffect(() => {
     const el = box.current;
-    if (!el || found < 0) return;
+    if (!el) return;
+    if (found < 0) {
+      shown.current = null;
+      return;
+    }
+    const key = Date.now() - keyed.current < KEY_FOCUS_MS;
+    if (!scrollsToRow(p.focusedPath, shown.current, key)) return;
+    shown.current = p.focusedPath;
     const top = found * ROW;
     if (top < el.scrollTop) el.scrollTop = top;
     else if (top + ROW > el.scrollTop + el.clientHeight) el.scrollTop = top + ROW - el.clientHeight;
-    if (Date.now() - keyed.current < KEY_FOCUS_MS) {
+    if (key) {
       keyed.current = 0;
       rowElement(el, p.focusedPath)?.focus({ preventScroll: true });
     }
