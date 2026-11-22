@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { askedFrom, paneFocusTarget, panelOfElement } from "./focusPane";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { askedFrom, focusPane, paneFocusTarget, panelOfElement } from "./focusPane";
 
 // A stand-in for the document: it answers a selector by what it names.
-const root = (has: { tab?: string; selected?: boolean; editor?: boolean; body?: boolean; slot?: boolean; row?: boolean; empty?: boolean; plus?: boolean }) =>
+const root = (has: { tab?: string; selected?: boolean; editor?: boolean; body?: boolean; slot?: boolean; row?: boolean; tree?: boolean; empty?: boolean; plus?: boolean }) =>
   ({
     querySelector: (sel: string) => {
       if (sel.includes("aria-selected")) return has.selected ? "selected tab" : null;
@@ -11,6 +11,7 @@ const root = (has: { tab?: string; selected?: boolean; editor?: boolean; body?: 
       if (sel.includes("preview__body")) return has.body ? "body" : null;
       if (sel.includes("browser-tab__slot")) return has.slot ? "slot" : null;
       if (sel.includes("treeitem")) return has.row ? "row" : null;
+      if (sel.includes('[role="tree"]')) return has.tree ? "tree" : null;
       if (sel.includes("empty-panel__button")) return has.empty ? "empty" : null;
       if (sel.includes("data-pane-plus")) return has.plus ? "plus" : null;
       return null;
@@ -38,6 +39,15 @@ describe("paneFocusTarget", () => {
     const seen: string[] = [];
     paneFocusTarget({ querySelector: (s: string) => (seen.push(s), null) } as unknown as ParentNode, "files");
     expect(seen).toContain('[data-nav-side="files"] [role="tree"] [role="treeitem"][tabindex="0"]');
+  });
+  it("waits while the Files tree is drawn without its rows, so the keyboard doesn't land on the empty state's button (live check 6r-2)", () => {
+    // The rows come a frame or two after the tree, once it is measured, or after its first read.
+    expect(paneFocusTarget(root({ tree: true, empty: true, plus: true }), "files", undefined, "pane", true)).toBeNull();
+    expect(paneFocusTarget(root({ tree: true, row: true, empty: true }), "files", undefined, "pane", true)).toBe("row");
+    expect(paneFocusTarget(root({ tree: true, body: true, empty: true }), "files", undefined, "pane", true)).toBe("body");
+    // No tree (Browser, or a session with no folder), or the wait is over: the empty state.
+    expect(paneFocusTarget(root({ empty: true, plus: true }), "files", undefined, "pane", true)).toBe("empty");
+    expect(paneFocusTarget(root({ tree: true, empty: true }), "files", undefined, "pane", false)).toBe("empty");
   });
   it("is the empty pane's first button with no body", () => {
     expect(paneFocusTarget(root({ empty: true, plus: true }), "files")).toBe("empty");
@@ -84,6 +94,46 @@ describe("paneFocusTarget", () => {
     const seen: string[] = [];
     paneFocusTarget({ querySelector: (s: string) => (seen.push(s), null) } as unknown as ParentNode, "files");
     expect(seen[1]).toBe('[data-nav-side="files"] [role="tabpanel"]:not([hidden]) .preview__body');
+  });
+});
+
+describe("focusPane", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  /** Runs focusPane("files") over frames that each say whether the tree and its tabbable row are drawn; the last one repeats. */
+  const run = (frames: { tree: boolean; row: boolean }[]) => {
+    const queue: FrameRequestCallback[] = [];
+    const focused: string[] = [];
+    let frame = 0;
+    const el = (name: string) => ({ dataset: {}, focus: () => void focused.push(name) });
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => (queue.push(cb), 0));
+    vi.stubGlobal("document", {
+      querySelector: (sel: string) => {
+        const f = frames[Math.min(frame, frames.length - 1)];
+        if (sel.includes("treeitem")) return f.row ? el("row") : null;
+        if (sel.includes('[role="tree"]')) return f.tree ? el("tree") : null;
+        if (sel.includes("empty-panel__button")) return el("empty");
+        return null;
+      },
+    });
+    focusPane("files");
+    while (queue.length > 0 && frame < 200) {
+      queue.shift()?.(0);
+      frame++;
+    }
+    return { focused, frames: frame };
+  };
+  it("waits for the tree's rows when they come after the tree, and gives them the keyboard", () => {
+    expect(run([{ tree: true, row: false }, { tree: true, row: false }, { tree: true, row: true }]).focused).toEqual(["row"]);
+    expect(run([...Array<{ tree: boolean; row: boolean }>(12).fill({ tree: true, row: false }), { tree: true, row: true }]).focused).toEqual(["row"]);
+  });
+  it("gives the empty state the keyboard when the rows never come, after about half a second of frames", () => {
+    const r = run([{ tree: true, row: false }]);
+    expect(r.focused).toEqual(["empty"]);
+    expect(r.frames).toBeGreaterThan(3);
+    expect(r.frames).toBeLessThanOrEqual(40);
+  });
+  it("gives the empty state the keyboard at once with no tree", () => {
+    expect(run([{ tree: false, row: false }])).toEqual({ focused: ["empty"], frames: 1 });
   });
 });
 
