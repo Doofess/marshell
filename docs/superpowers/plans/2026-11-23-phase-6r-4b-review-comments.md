@@ -776,3 +776,6 @@ Whatever fails is fixed, with a test, before Task 10.
 - Blank characters that draw as a space (a no-break space, a Braille blank, the wide spaces) are kept in a comment.
 - A thread is placed by the rows of the diff it was written on. With "Hide whitespace changes" on, or when the checkout differs from what was pushed on those rows, it reads "The line changed".
 - Not verified live (S18): a thread the sign-in may not resolve, a minimized comment, a bot's or a deleted user's comment, a GitHub Enterprise host. Each is covered by the fixture.
+- A resolved thread isn't sent: its "Add to send" and "Add your note…" rows are off with the reason, and a thread resolved while it waits in the send leaves it, with its note and without a word of its own. (Changed by the live check: the rows used to add it, and GitHub's next answer dropped it.)
+- A reply or note box opened at the list's bottom edge shows its text area, and what is under it (the error line, the button) only after scrolling.
+- Not seen in the live check (`docs/research/2026-11-23-review-comments-live-check.md`): "1 new comment on #1." (one account), a link's click, "Replying…" across a session switch, a send over the budget, a real high-contrast theme and a screen reader.
