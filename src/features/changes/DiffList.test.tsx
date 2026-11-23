@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { ChangesReply } from "../../generated/ChangesReply";
 import { ChangesEmpty, noticesOf } from "./ChangesPanel";
-import { DiffList, listKey } from "./DiffList";
+import { DiffList, chunksOf, listKey, refocusOf } from "./DiffList";
 import { copy } from "./copy";
 import { itemsOf, type Item, type Row, type Section } from "./model";
 
@@ -116,6 +116,33 @@ describe("DiffList", () => {
   it("wraps long lines only when asked", () => {
     expect(draw(items, { wrap: true })).toContain('data-wrap="true"');
     expect(draw(items)).not.toContain('data-wrap="true"');
+  });
+});
+
+describe("DiffList blocks", () => {
+  // A redraw keyed by the items' places would rebuild every block below a file that grew, and drop the keyboard.
+  it("a file's blocks keep their keys when rows are added to a file above it", () => {
+    const big = file("c.ts", ["hunk", ...Array<Row["kind"]>(450).fill("add")]);
+    const grown = file("a.ts", ["hunk", "add", "add", "add", "context", "hunk", "add", "add"]);
+    const before = chunksOf(itemsOf([A, big], [], new Map()));
+    const after = chunksOf(itemsOf([grown, big], [], new Map()));
+    expect(after[1]!.chunks.map((c) => c.key)).toEqual(before[1]!.chunks.map((c) => c.key));
+    expect(after[1]!.chunks.map((c) => c.indices.length)).toEqual([200, 200, 52]);
+    expect(after[1]!.chunks[0]!.indices[0]).toBe(9);
+  });
+});
+
+describe("refocusOf", () => {
+  const body = {} as Element;
+  const other = {} as Element;
+  it("puts the keyboard back where it was when a redraw dropped it on the page", () => {
+    expect(refocusOf("item", body, body)).toBe("item");
+    expect(refocusOf("box", body, body)).toBe("box");
+    expect(refocusOf("box", null, body)).toBe("box");
+  });
+  it("leaves the focus alone when it was elsewhere, or is somewhere now", () => {
+    expect(refocusOf(null, body, body)).toBeNull();
+    expect(refocusOf("item", other, body)).toBeNull();
   });
 });
 

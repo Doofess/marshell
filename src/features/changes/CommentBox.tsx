@@ -22,22 +22,32 @@ export function boxAction(e: { key: string; shiftKey: boolean; isComposing?: boo
   return null;
 }
 
+/** Whether the box takes the focus as it mounts: once, for the open the user asked for, never for a redraw. */
+export function takesFocus(flag: { current: boolean } | undefined): boolean {
+  if (flag?.current !== true) return false;
+  flag.current = false;
+  return true;
+}
+
 export type CommentBoxProps = {
   label: string;
   value: string;
   onChange(text: string): void;
   onAction(action: BoxAction): void;
+  /** Set when the user opened the box; the box takes the focus and clears it. */
+  focus?: { current: boolean };
 };
 
-/** The box under a range's last row: a textarea and its hint. It takes the focus when it opens. */
-export function CommentBox({ label, value, onChange, onAction }: CommentBoxProps) {
+/** The box under a range's last row: a textarea and its hint. It takes the focus when the user opens it. */
+export function CommentBox({ label, value, onChange, onAction, focus }: CommentBoxProps) {
   const text = useRef<HTMLTextAreaElement>(null);
   const hint = useId();
   useEffect(() => {
+    if (!takesFocus(focus)) return;
     const el = text.current;
     el?.focus();
     el?.setSelectionRange(el.value.length, el.value.length);
-  }, []);
+  }, [focus]);
   const onKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
     // The list above takes arrow keys and Enter: none of this reaches it.
     e.stopPropagation();

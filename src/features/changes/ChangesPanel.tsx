@@ -165,10 +165,13 @@ export function ChangesPanel(p: ChangesPanelProps) {
     return at >= lo && at <= hi ? items.slice(lo, hi + 1) : [item];
   };
 
+  // Set when the user opens the box, so it takes the focus once (a redraw that mounts it again doesn't).
+  const focusBox = useRef(false);
   const startBox = (item: Item | undefined) => {
     if (!listed || item === undefined) return;
     if (item.kind === "comment") {
       const { id, text, ...anchor } = item.comment;
+      focusBox.current = true;
       setOpen({ state: { anchor, id }, text });
       return;
     }
@@ -180,6 +183,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
     if (away !== null) return p.announce(away);
     if (count >= MAX_COMMENTS) return p.announce(`A session holds at most ${MAX_COMMENTS} comments.`);
     const ats = held.map((i) => i.at);
+    focusBox.current = true;
     setOpen({ state: { anchor: anchorOf(item.file, Math.min(...ats), Math.max(...ats)), id: null }, text: "" });
   };
 
@@ -387,7 +391,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
     open !== null && boxLines !== null && boxAt >= 0
       ? {
           after: boxAt,
-          node: <CommentBox key={anchorKey(open.state.anchor)} label={boxLabel(boxLines.start, boxLines.end)} value={open.text} onChange={(text) => setOpen((o) => (o === null ? o : { ...o, text }))} onAction={closeBox} />,
+          node: <CommentBox key={anchorKey(open.state.anchor)} label={boxLabel(boxLines.start, boxLines.end)} value={open.text} onChange={(text) => setOpen((o) => (o === null ? o : { ...o, text }))} onAction={closeBox} focus={focusBox} />,
         }
       : undefined;
   return (

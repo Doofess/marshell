@@ -1,4 +1,4 @@
-import { type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, memo, useEffect, useMemo, useRef } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, memo, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { selectedProps } from "../../components/a11y/SelectedMark";
 import type { LineTokens } from "../preview/highlight";
 import { copy } from "./copy";
@@ -270,6 +270,31 @@ export type DiffListProps = {
   box?: { after: number; node: ReactNode };
 };
 
+/** A file's items (header first) in blocks of CHUNK. A block's key is the file's and its number in the file, so rows added above it leave it mounted. */
+export type FileBlocks = { key: string; chunks: { key: string; indices: number[] }[] };
+
+export function chunksOf(items: Item[]): FileBlocks[] {
+  const files: number[][] = [];
+  items.forEach((item, i) => {
+    if (item.kind === "file" || files.length === 0) files.push([]);
+    files[files.length - 1]!.push(i);
+  });
+  return files.map((group) => {
+    const key = items[group[0]!]!.key;
+    const chunks: FileBlocks["chunks"] = [];
+    for (let a = 0; a < group.length; a += CHUNK) chunks.push({ key: `${key}\u0000${a / CHUNK}`, indices: group.slice(a, a + CHUNK) });
+    return { key, chunks };
+  });
+}
+
+/** What had the keyboard in the list as it drew: the comment box, an item, or neither. */
+export type Held = "box" | "item" | null;
+
+/** Where the keyboard goes back to after a draw: where it was, when the draw replaced its element and left it on the page. */
+export function refocusOf(held: Held, active: Element | null, body: Element | null): Held {
+  return held !== null && (active === null || active === body) ? held : null;
+}
+
 /** The whole diff as one tree: a block per file, its rows in blocks of 200, every item a `treeitem`. */
 // A file can hold thousands of rows: a render of the list (a poll, the window's state) redraws only the rows whose props changed.
 const Entry = memo(EntryView);
@@ -291,6 +316,23 @@ export function DiffList({ items, focus, range, wrap, onKey, onClickItem, onOpen
     }),
     [],
   );
+
+  // What has the keyboard as the list draws, so a draw that replaces its element (a block rebuilt, the box moved) can put it back.
+  const held = useRef<{ held: Held; caret: [number, number] }>({ held: null, caret: [0, 0] });
+  const active = box.current?.contains(document.activeElement) ? document.activeElement : null;
+  held.current = active === null ? { held: null, caret: [0, 0] } : active instanceof HTMLTextAreaElement ? { held: "box", caret: [active.selectionStart, active.selectionEnd] } : { held: "item", caret: [0, 0] };
+  useLayoutEffect(() => {
+    const was = held.current;
+    held.current = { held: null, caret: [0, 0] };
+    const to = refocusOf(was.held, document.activeElement, document.body);
+    if (to === "box") {
+      const text = box.current?.querySelector<HTMLTextAreaElement>(".changes__box-text");
+      text?.focus();
+      text?.setSelectionRange(...was.caret);
+    } else if (to === "item") {
+      box.current?.querySelector<HTMLElement>(`[data-changes-index="${focus}"]`)?.focus();
+    }
+  });
 
   // The item with the keyboard takes the focus after a key or a shift-click moved it (never because a poll changed the list).
   useEffect(() => {
@@ -327,12 +369,6 @@ export function DiffList({ items, focus, range, wrap, onKey, onClickItem, onOpen
     );
   };
 
-  // One group per file: from its header to the item before the next header.
-  const files: number[][] = [];
-  items.forEach((item, i) => {
-    if (item.kind === "file" || files.length === 0) files.push([]);
-    files[files.length - 1]!.push(i);
-  });
 
   return (
     <div
@@ -346,19 +382,15 @@ export function DiffList({ items, focus, range, wrap, onKey, onClickItem, onOpen
       // A shift-press must not move the keyboard before the click reads where the range started.
       onMouseDown={(e) => e.shiftKey && e.preventDefault()}
     >
-      {files.map((group) => {
-        const chunks: number[][] = [];
-        for (let a = 0; a < group.length; a += CHUNK) chunks.push(group.slice(a, a + CHUNK));
-        return (
-          <div key={items[group[0]!]!.key} className="changes__section" role="none">
-            {chunks.map((chunk) => (
-              <div key={chunk[0]} className="changes__chunk" role="none">
-                {chunk.flatMap((i) => (openBox !== undefined && openBox.after === i ? [entry(i), openBox.node] : [entry(i)]))}
-              </div>
-            ))}
-          </div>
-        );
-      })}
+      {chunksOf(items).map((file) => (
+        <div key={file.key} className="changes__section" role="none">
+          {file.chunks.map((chunk) => (
+            <div key={chunk.key} className="changes__chunk" role="none">
+              {chunk.indices.flatMap((i) => (openBox !== undefined && openBox.after === i ? [entry(i), openBox.node] : [entry(i)]))}
+            </div>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { ChangesReply } from "../../generated/ChangesReply";
-import { CommentBox, boxAction, boxLabel, cleanChange } from "./CommentBox";
+import { CommentBox, boxAction, boxLabel, cleanChange, takesFocus } from "./CommentBox";
 import { anchorKey, boxAfter } from "./boxModel";
 import { anchorOf, place } from "./comments";
 import { itemsOf, sectionsOf } from "./model";
@@ -31,6 +31,16 @@ describe("CommentBox keys", () => {
   });
   it("the box drops a pasted escape and form feed", () => {
     expect(cleanChange("a\u001b[201~b\fc")).toBe("a[201~bc");
+  });
+});
+
+describe("CommentBox focus", () => {
+  // A redraw that mounts the box again (its block rebuilt, a read that failed for a poll) must not pull the keyboard from the terminal.
+  it("takes the focus once, for the open the user asked for", () => {
+    const flag = { current: true };
+    expect(takesFocus(flag)).toBe(true);
+    expect(takesFocus(flag)).toBe(false);
+    expect(takesFocus(undefined)).toBe(false);
   });
 });
 
