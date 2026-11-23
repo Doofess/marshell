@@ -296,17 +296,35 @@
     color: CanvasText;
     background: Canvas;
   }
+  /* A fill can match the canvas in forced colours, so the box and the buttons keep their edge with a system-colour line. */
   .changes__box-text {
     background: Field;
     color: FieldText;
+    border: 1px solid CanvasText;
   }
   .changes__send-button {
     background: ButtonFace;
     color: ButtonText;
+    border: 1px solid ButtonText;
   }
   .changes__send-button--primary {
     background: Highlight;
     color: HighlightText;
+    border-color: Highlight;
+  }
+  /* The rows that keep their own colours keep the theme's ring, hover, press and selection fill too, unless they are set
+     back here: the ring is CanvasText, and the selection is SelectedMark's Highlight outline alone. */
+  .changes__item:focus-visible {
+    outline-color: CanvasText;
+  }
+  .changes__item:hover {
+    background-image: none;
+  }
+  .changes__item:active {
+    background: Canvas;
+  }
+  .changes__item[aria-selected="true"] {
+    box-shadow: none;
   }
   .changes__send-button[aria-disabled="true"] {
     color: GrayText;

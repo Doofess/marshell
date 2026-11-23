@@ -32,4 +32,19 @@ describe("ChangesPanel.css", () => {
     const rule = forcedRule(".changes");
     for (const name of names) expect(rule, name).toContain(`${name}: initial`);
   });
+
+  // A fill isn't drawn in forced colours: the Send bar's buttons and the comment box keep an edge, in a system colour.
+  it("gives the Send bar's buttons and the comment box an edge in forced colours", () => {
+    expect(forcedRule(".changes__send-button")).toContain("border: 1px solid ButtonText");
+    expect(forcedRule(".changes__send-button--primary")).toContain("border-color: Highlight");
+    expect(forcedRule(".changes__box-text")).toContain("border: 1px solid CanvasText");
+  });
+
+  // The rows that keep their own colours (forced-color-adjust: none) must not keep the theme's ring, hover or selection fill.
+  it("gives the rows' focus ring, hover and selection system colours in forced colours", () => {
+    expect(forcedRule(".changes__item:focus-visible")).toContain("outline-color: CanvasText");
+    expect(forcedRule(".changes__item:hover")).toContain("background-image: none");
+    expect(forcedRule(".changes__item:active")).toContain("background: Canvas");
+    expect(forcedRule('.changes__item[aria-selected="true"]')).toContain("box-shadow: none");
+  });
 });
