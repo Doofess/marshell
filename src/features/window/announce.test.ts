@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { FIXTURES } from "../sidebar/fixtures";
 import { pendingSessionCount } from "../lane/laneLayout";
 import { APPROVALS } from "../approval/fixtures";
-import { coveredByNotice, laneAnnouncement, nextAnnouncement, sessionAnnouncement, statusSentence, switchAnnouncement } from "./announce";
+import { announcementStep, coveredByNotice, laneAnnouncement, nextAnnouncement, sessionAnnouncement, statusSentence, switchAnnouncement } from "./announce";
 
 const row = (id: string) => FIXTURES.find((f) => f.id === id)!;
 
@@ -58,6 +58,23 @@ describe("nextAnnouncement: announce changes, never the first render, never a re
   it("on-request mode says nothing by itself, not even on a switch", () => {
     const first = nextAnnouncement(null, row("working"), "on-request");
     expect(nextAnnouncement(first, row("needs-permission"), "on-request").text).toBe("");
+  });
+});
+
+describe("announcementStep: what the announcer says when the focused row renders again", () => {
+  it("says a switch once: the session going from working to idle afterwards says nothing, even after another notice", () => {
+    const first = announcementStep(null, row("working"));
+    const switched = announcementStep(first.said, { ...row("idle"), status: "working" });
+    expect(switched.text).toBe("Session 10, docs-site");
+    // Codex after a paste: working, then idle. The switch line was said, and a notice ("Pasted 3 comments…") came after it.
+    expect(announcementStep(switched.said, row("idle")).text).toBe("");
+  });
+  it("says the switch to a session that needs you, with what it needs", () => {
+    const first = announcementStep(null, row("working"));
+    expect(announcementStep(first.said, row("needs-permission")).text).toBe("Session 1, billing is waiting for your approval");
+  });
+  it("says nothing on the first render", () => {
+    expect(announcementStep(null, row("needs-permission")).text).toBe("");
   });
 });
 

@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { Announcer, useAnnouncer } from "../../components/a11y/Announcer";
 import type { AnnounceMode } from "../../components/a11y/announce-policy";
 import type { RowModel } from "../sidebar/types";
-import { coveredByNotice, laneAnnouncement, nextAnnouncement, statusSentence, type Announced, type Notice } from "./announce";
+import { announcementStep, coveredByNotice, laneAnnouncement, statusSentence, type Announced, type Notice } from "./announce";
 
 /**
  * The window's single live region (built on the shared Announcer). It is empty on the first render, so nothing is read out
@@ -15,8 +15,9 @@ export function SessionAnnouncer({ row, mode = "needs-you", statusRequest = 0, n
   const said = useRef<Announced | null>(null);
   const heardNotice = useRef(notice?.id);
   useEffect(() => {
-    said.current = nextAnnouncement(said.current, row, mode);
-    if (said.current.text && !coveredByNotice(notice, heardNotice.current)) announcer.say(said.current.text);
+    const step = announcementStep(said.current, row, mode);
+    said.current = step.said;
+    if (step.text && !coveredByNotice(notice, heardNotice.current)) announcer.say(step.text);
   }, [row?.id, row?.status, row?.name, mode]); // eslint-disable-line react-hooks/exhaustive-deps -- the row's other fields never change what is said
   // A request arriving in a session that is not focused still needs you: say how many now do.
   const lane = useRef<number | null>(null);
