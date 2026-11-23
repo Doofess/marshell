@@ -262,10 +262,12 @@ impl Transcript {
 
 /// `git -C <checkout> -c protocol.allow=never -c protocol.https.allow=always -c protocol.ssh.allow=always [-c <extra>]…
 /// push --progress --porcelain -u origin refs/heads/<branch>:refs/heads/<branch>`. Settings on the command line win
-/// over the repository's, so no `file`, `ext` or other helper transport can run. The refspec is always the full one:
+/// over the repository's, and `GIT_ALLOW_PROTOCOL=https:ssh` wins over a `protocol.<name>.allow` in any file, so no
+/// `file`, `ext` or other helper transport can run. The refspec is always the full one:
 /// no force, no tags, no other remote. `env` is Marshell's own environment, less what points git somewhere else
 /// (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`,
-/// `GIT_COMMON_DIR`, `GIT_NAMESPACE`, every `GIT_CONFIG*`), with the prompt for a password off. `extra` is empty
+/// `GIT_COMMON_DIR`, `GIT_NAMESPACE`, every `GIT_CONFIG*`, its own `GIT_ALLOW_PROTOCOL`), with the prompt for a
+/// password off. `extra` is empty
 /// outside tests. Panics for a branch `valid_branch` refuses: callers check it first.
 pub fn push_command(
     git: &Path,
@@ -305,11 +307,16 @@ pub fn push_command(
     cmd.env_clear();
     for (name, value) in env {
         let upper = name.to_string_lossy().to_ascii_uppercase();
-        if !POINTERS.contains(&upper.as_str()) && !upper.starts_with("GIT_CONFIG") {
+        if !POINTERS.contains(&upper.as_str()) && !upper.starts_with("GIT_CONFIG") && upper != "GIT_ALLOW_PROTOCOL" {
             cmd.env(name, value);
         }
     }
     cmd.env("GIT_TERMINAL_PROMPT", "0");
+    // git puts this above every `protocol.*` setting, a repository's `protocol.file.allow` included, which the
+    // settings on the command line don't outrank. A test's settings decide instead: its remote is a folder.
+    if extra.is_empty() {
+        cmd.env("GIT_ALLOW_PROTOCOL", "https:ssh");
+    }
     cmd
 }
 
@@ -901,6 +908,39 @@ mod tests {
             .map(|(_, v)| v.as_str())
             .collect();
         assert_eq!(prompt, ["0"], "{got:?}");
+    }
+
+    /// The command's `GIT_ALLOW_PROTOCOL` values, which git puts above every `protocol.*` setting in any file.
+    fn allowed_protocols(cmd: &Command) -> Vec<String> {
+        cmd.get_envs()
+            .filter(|(k, _)| k.to_string_lossy().eq_ignore_ascii_case("GIT_ALLOW_PROTOCOL"))
+            .filter_map(|(_, v)| Some(v?.to_string_lossy().into_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn the_command_allows_https_and_ssh_whatever_a_configuration_file_or_the_environment_says() {
+        let cmd = push_command(
+            Path::new("git"),
+            Path::new("/work/repo"),
+            "feat/login",
+            env(&[("PATH", "/bin"), ("Git_Allow_Protocol", "file:ext")]),
+            &[],
+        );
+        assert_eq!(allowed_protocols(&cmd), ["https:ssh"]);
+    }
+
+    #[test]
+    fn a_tests_settings_decide_the_protocols_instead() {
+        let extra = vec!["protocol.file.allow=always".to_string()];
+        let cmd = push_command(
+            Path::new("git"),
+            Path::new("/work/repo"),
+            "feat/login",
+            env(&[("GIT_ALLOW_PROTOCOL", "ext")]),
+            &extra,
+        );
+        assert_eq!(allowed_protocols(&cmd), Vec::<String>::new());
     }
 
     #[test]

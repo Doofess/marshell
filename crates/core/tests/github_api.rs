@@ -1814,7 +1814,25 @@ async fn merge_sends_the_head_the_bar_showed() {
         json!([{"match": ["-X", "PUT", "pulls/7/merge", "--input"], "exit": 0,
             "stdout": r#"{"sha":"abc","merged":true,"message":"Pull Request successfully merged"}"#}]),
     );
-    let (app, tab) = seen(&rig).await;
+    let state = rig.state();
+    let (app, tab) = open(&state, &rig.scratch).await;
+    assert_eq!(github(&app, &tab, true).await["pull"]["head"], rig.base);
+    // GitHub's branch moves after the bar showed `rig.base`, and the core reads it. The merge still names the head
+    // the person looked at, so GitHub can refuse commits they never saw: a core that sent its own newest head would
+    // send `moved`.
+    let moved = "f".repeat(40);
+    rig.scratch.script(json!([
+        {"match": ["-X", "PUT", "pulls/7/merge", "--input"], "exit": 0,
+            "stdout": r#"{"sha":"abc","merged":true,"message":"Pull Request successfully merged"}"#},
+        status(&answer_at(OPEN_FAILING, &moved)),
+    ]));
+    state.github().mark_stale(&rig.scratch.repo);
+    let reply = github(&app, &tab, true).await;
+    assert_eq!(reply["pull"]["number"], 7, "{reply}");
+    assert_eq!(
+        reply["pull"]["head"], moved,
+        "the core has read the moved branch: {reply}"
+    );
     let status_calls = rig.scratch.status_calls();
     let (status, body) = merge(&app, &tab, merge_body(&rig, "squash", false)).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
