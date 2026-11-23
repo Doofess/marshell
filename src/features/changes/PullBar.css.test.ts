@@ -36,3 +36,8 @@ describe("PullBar.css", () => {
     expect(forcedRule('.pull-bar__button[aria-disabled="true"]')).toContain("GrayText");
   });
 });
+describe("PullBar.css: forced colours", () => {
+  it("lets the system force the colours of the notes, the reason and the menus inside the bar", () => {
+    expect(css).not.toContain("forced-color-adjust");
+  });
+});

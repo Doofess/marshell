@@ -28,7 +28,7 @@ import { MergeDialog } from "./MergeDialog";
 import { PullBar } from "./PullBar";
 import { PushSheet } from "./PushSheet";
 import { type BarButton, type BarCommand, type BarMenuItem, announcementsOf, barOf, commandOf } from "./pullModel";
-import { useGithub } from "./useGithub";
+import { recountKey, useGithub } from "./useGithub";
 import { type Item, type Row, type Section, cutFiles, focusIndex, itemsOf, sectionsOf } from "./model";
 import { reviewLabel } from "./review";
 import { SendBar } from "./SendBar";
@@ -139,7 +139,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
   const { drafts } = p;
 
   // The pull request bar: what GitHub says about this checkout, and what the bar's buttons do.
-  const github = useGithub(p.session, p.shown, listed?.head ?? null, settings?.pull_requests ?? false);
+  const github = useGithub(p.session, p.shown, recountKey(listed), settings?.pull_requests ?? false);
   const gh = github.reply;
   const ghAgent = p.agent === null ? null : p.agentName;
   const now = Date.now();
@@ -319,6 +319,16 @@ export function ChangesPanel(p: ChangesPanelProps) {
   type Sheet = { kind: "create"; repo: string } | { kind: "push" } | { kind: "output"; id: string } | { kind: "merge"; checkout: string; pull: PullStatus; method: MergeMethod; auto: boolean };
   const [sheet, setSheet] = useState<Sheet | null>(null);
   useEffect(() => setSheet(null), [p.session]);
+  // A merge takes away the button the keyboard came from, at once or with the next reply. Until that reply is drawn, a
+  // keyboard left on nothing goes to the bar.
+  const focusBarAfterMerge = useRef<{ from: typeof gh } | null>(null);
+  useEffect(() => {
+    const f = focusBarAfterMerge.current;
+    if (f === null || sheet !== null) return;
+    const active = document.activeElement;
+    if (active === null || active === document.body) box.current?.querySelector<HTMLElement>(".pull-bar button")?.focus();
+    if (gh !== f.from) focusBarAfterMerge.current = null;
+  }, [sheet, gh]);
   const createPull = () => gh && setSheet({ kind: "create", repo: gh.repo });
   const push = () => setSheet({ kind: "push" });
   const merge = (method?: MergeMethod, auto = false) => {
@@ -424,6 +434,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
   };
   const closeSheet = () => setSheet(null);
   const sheetDone = () => {
+    if (sheet?.kind === "merge") focusBarAfterMerge.current = { from: gh };
     setSheet(null);
     github.refresh();
   };

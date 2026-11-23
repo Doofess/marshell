@@ -356,6 +356,26 @@ describe("SettingsSync: files", () => {
   });
 });
 
+describe("SettingsSync: changes", () => {
+  const read = async (): Promise<Settings> => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR, files: FI, changes: CH });
+
+  it("reads pull requests as off after that switch alone was turned off", async () => {
+    const { api, sync } = setup(read);
+    await sync.load();
+    await sync.setChanges({ pull_requests: false });
+    expect(api.put).toHaveBeenLastCalledWith(ep, expect.objectContaining({ changes: { hide_whitespace: false, wrap: false, pull_requests: false } }));
+    expect(sync.changes).toEqual({ hide_whitespace: false, wrap: false, pull_requests: false });
+  });
+
+  it("keeps the same object when a save changed nothing in them", async () => {
+    const { sync } = setup(read);
+    await sync.load();
+    const before = sync.changes;
+    await sync.setChanges({ wrap: false });
+    expect(sync.changes).toBe(before);
+  });
+});
+
 describe("loadWithRetry", () => {
   const sleeps = () => {
     const waited: number[] = [];

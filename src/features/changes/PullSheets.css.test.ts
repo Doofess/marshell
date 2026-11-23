@@ -33,3 +33,12 @@ describe("where the sheets are drawn", () => {
     expect(panel).toContain('closest(".live-app")');
   });
 });
+
+describe("how the panel asks GitHub", () => {
+  it("recounts when the branch changes, not only the commit", () => {
+    expect(panel).toContain("recountKey(listed)");
+  });
+  it("moves the keyboard to the bar when a merge took the button it was on", () => {
+    expect(panel).toContain("focusBarAfterMerge");
+  });
+});

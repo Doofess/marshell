@@ -36,6 +36,10 @@ describe("CreatePullSheet", () => {
   it("turns the button off with an empty title", () => {
     expect(view(state({ kind: "confirm", plan: plan({ title: "  " }) }))).toMatch(/<button[^>]*aria-disabled="true"[^>]*>Push and create/);
   });
+  it("gives the line that says a pull request is being created the focus", () => {
+    const h = view(state({ kind: "creating", plan: plan({}) }));
+    expect(h).toMatch(/<p class="close-dialog__line pull-sheet__notice" tabindex="-1" data-focus="">Creating the pull request/);
+  });
   it("shows a refusal with Close only", () => {
     const h = view(state({ kind: "refused", reason: "Nothing differs from main." }));
     expect(h).toContain("Nothing differs from main.");

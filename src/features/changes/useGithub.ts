@@ -15,6 +15,16 @@ export function githubSchedule(s: { inFlight: boolean; shown: boolean; focused: 
   return s.headMoved ? "local" : "none";
 }
 
+/** What a local recount watches: the branch and the commit. A new branch at the same commit can have another pull request. */
+export function recountKey(listed: { branch: string | null; head: string | null } | null): string | null {
+  return listed === null ? null : `${listed.branch ?? ""} ${listed.head ?? ""}`;
+}
+
+/** When GitHub was last asked. A local recount leaves it alone, so GitHub is still asked on time while commits keep coming. */
+export function askedAt(mode: "ask" | "local", lastAsk: number, now: number): number {
+  return mode === "ask" ? now : lastAsk;
+}
+
 const focused = () => typeof document === "undefined" || document.hasFocus();
 
 type State = { tab: string | null; reply: GithubReply | null };
@@ -23,6 +33,7 @@ type State = { tab: string | null; reply: GithubReply | null };
  * What GitHub says about one session's checkout. Holds `reply: null` and asks nothing while `on` is false or `tab` is
  * null; a new tab clears the reply at once, and an answer for an earlier tab is dropped. `refresh()` asks GitHub now.
  */
+/** `head` is `recountKey` of what the panel lists: a change in it recounts at once. */
 export function useGithub(tab: string | null, shown: boolean, head: string | null, on: boolean): { reply: GithubReply | null; refresh: () => void } {
   const [state, setState] = useState<State>({ tab, reply: null });
   const live = useRef({ tab, shown, head, on });
@@ -60,7 +71,7 @@ export function useGithub(tab: string | null, shown: boolean, head: string | nul
         .finally(() => {
           if (run.current !== r) return;
           r.inFlight = false;
-          r.lastAsk = Date.now();
+          r.lastAsk = askedAt(mode, r.lastAsk, Date.now());
         });
     };
     const onFocus = () => {

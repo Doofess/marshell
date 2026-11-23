@@ -60,7 +60,7 @@ export function CreatePullSheet(p: { tab: string; repo: string; announce(text: s
             <span>{gc.draftField}</span>
           </label>
           {problem.message && <p className="close-dialog__error">{problem.message}</p>}
-          {creating && <p className="close-dialog__line">{gc.creating}</p>}
+          {creating && <Notice text={gc.creating} />}
         </>
       ),
       foot: (

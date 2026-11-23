@@ -56,7 +56,7 @@ export class SettingsSync {
   /** Keeps the current object when the fields are equal, so a store snapshot stays stable. */
   private setChangesValue(next: ChangesSettings): void {
     const cur = this.changesValue;
-    if (cur.hide_whitespace === next.hide_whitespace && cur.wrap === next.wrap) return;
+    if (cur.hide_whitespace === next.hide_whitespace && cur.wrap === next.wrap && cur.pull_requests === next.pull_requests) return;
     this.changesValue = next;
   }
 

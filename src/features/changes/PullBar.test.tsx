@@ -57,6 +57,22 @@ describe("PullBar", () => {
   });
 });
 
+describe("PullBar: a button that is off", () => {
+  const others = [{ method: "squash" as const, label: "Squash and merge" }];
+  it("offers no method menu while Merge is off", () => {
+    const html = bar(plain("#7 Open", { main: { id: "merge", label: "Merge", disabled: "#7 has conflicts with main. Resolve them in the terminal.", method: "merge", others } }));
+    expect(html).not.toContain("Choose how to merge");
+  });
+  it("draws a sentence that is both a note and the reason once, and the button names it", () => {
+    const why = "origin pushes somewhere other than octo-org/widgets, so push from the terminal.";
+    const html = bar(plain("No pull request · 1 commit to push", { notes: [why, "Another note."], main: { id: "create", label: "Create pull request…", disabled: why } }));
+    expect(html.split(why).length - 1).toBe(1);
+    expect(html).toContain("Another note.");
+    const described = /aria-describedby="([^"]+)"/.exec(html)?.[1];
+    expect(html).toContain(`<p id="${described}" class="pull-bar__note">${why}</p>`);
+  });
+});
+
 describe("ChecksList", () => {
   const mixed = [check({ name: "ok1" }), check({ state: "failed", name: "clippy" }), check({ name: "ok2" }), check({ state: "skipped", name: "lint" })];
   it("lists failed checks first and folds passed ones", () => {

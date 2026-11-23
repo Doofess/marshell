@@ -30,6 +30,8 @@ export function PullBar({ view, agent, now, onMain, onMenu, onCheck, onEscape }:
   const { main } = view;
   const off = main !== null && main.disabled !== null;
   const reasonId = `${uid}-reason`;
+  // A sentence that is already one of the notes is drawn once: the note carries the id the button names.
+  const reasonIsNote = off && view.notes.includes(main.disabled ?? "");
   const listId = `${uid}-checks`;
   // "Hide" stands in the bar for the lines that ask for a setup; the others have it in the ⋯ menu only when it isn't shown here.
   const menu = view.menu.filter((i) => !(view.hide && i.id === "hide"));
@@ -69,7 +71,7 @@ export function PullBar({ view, agent, now, onMain, onMenu, onCheck, onEscape }:
       <p className="pull-bar__line">{view.line}</p>
       {view.second !== null && <p className="pull-bar__second">{view.second}</p>}
       {view.notes.map((t) => (
-        <p key={t} className="pull-bar__note">
+        <p key={t} id={reasonIsNote && t === main.disabled ? reasonId : undefined} className="pull-bar__note">
           {t}
         </p>
       ))}
@@ -92,7 +94,7 @@ export function PullBar({ view, agent, now, onMain, onMenu, onCheck, onEscape }:
             {main.label}
           </button>
         )}
-        {main !== null && (main.others?.length ?? 0) > 0 && (
+        {main !== null && !off && (main.others?.length ?? 0) > 0 && (
           <button type="button" className="pull-bar__button" aria-label={c.methodButton} aria-haspopup="menu" aria-expanded={open?.which === "method"} onClick={(e) => openFrom("method", e)}>
             <span aria-hidden="true">▾</span>
           </button>
@@ -113,7 +115,7 @@ export function PullBar({ view, agent, now, onMain, onMenu, onCheck, onEscape }:
           </button>
         )}
       </div>
-      {off && (
+      {off && !reasonIsNote && (
         <p id={reasonId} className="pull-bar__reason">
           {main.disabled}
         </p>
