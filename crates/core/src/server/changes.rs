@@ -127,14 +127,17 @@ pub(super) fn changes_target(row: &SessionInfo, reported: Option<PathBuf>) -> Re
         moved: moved_from_launch(row, &checkout),
         checkout,
         task_base: None,
+        pr_base: None,
     })
 }
 
-/// `target` with the base the checkout is compared with: the base branch of the task whose worktree it is.
+/// `target` with the bases the checkout may be compared with: the base branch of the task whose worktree it is,
+/// and the base of the open pull request GitHub last reported for it.
 pub(super) fn with_bases(st: &AppState, mut target: Target) -> Target {
     target.task_base = crate::tasks::task_at(st.home(), &target.checkout)
         .map(|t| t.base_branch)
         .filter(|b| !b.is_empty());
+    target.pr_base = st.github().pr_base(&target.checkout);
     target
 }
 
@@ -409,6 +412,7 @@ pub(super) fn tree_marks(st: &AppState, row: Option<&SessionInfo>, root: &Root) 
             checkout: checkout.clone(),
             moved: row.is_some_and(|r| moved_from_launch(r, checkout)),
             task_base: None,
+            pr_base: None,
         },
     );
     match st.changes_arc().marks(st.home().to_path_buf(), target) {

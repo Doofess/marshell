@@ -279,6 +279,120 @@ fn status(answer: &Value) -> Value {
     json!({"match": ["graphql"], "exit": 0, "json": answer})
 }
 
+async fn changes(app: &axum::Router, tab: &str, stamp: Option<&str>) -> Value {
+    let body = json!({"stamp": stamp, "hide_whitespace": false});
+    let res = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            &format!("/v1/sessions/{tab}/changes"),
+            Some(body),
+            true,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    json_of(res).await
+}
+
+/// The marks of the tree's root, as `path:status` texts, once a check has answered (the first reply has none).
+async fn tree_marks(app: &axum::Router, tab: &str) -> Vec<String> {
+    let started = Instant::now();
+    loop {
+        let body = json!({"dirs": [{"dir": "", "stamp": null}]});
+        let res = app
+            .clone()
+            .oneshot(request("POST", &format!("/v1/sessions/{tab}/tree"), Some(body), true))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let reply = json_of(res).await;
+        let mut marks: Vec<String> = reply["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| format!("{}:{}", m["path"].as_str().unwrap(), m["status"].as_str().unwrap()))
+            .collect();
+        marks.sort();
+        if !marks.is_empty() || started.elapsed() > Duration::from_secs(30) {
+            return marks;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// A repository on `feat/login` with two commits after `main`'s, an open pull request there whose base is
+/// `develop`, and `origin/develop` fetched at the first of them when `fetched`. The script answers with it.
+fn on_a_pull_requests_branch(scratch: &Scratch, fetched: bool) {
+    scratch.git(&["switch", "-q", "-c", "feat/login"]);
+    let second = scratch.commit("second");
+    let third = scratch.commit("third");
+    if fetched {
+        scratch.git(&["update-ref", "refs/remotes/origin/develop", &second]);
+    }
+    let reply = answer_at(OPEN_FAILING, &third);
+    let reply = answer(&reply.to_string(), |repo| {
+        repo["pullRequests"]["nodes"][0]["baseRefName"] = json!("develop");
+    });
+    scratch.script(json!([status(&reply)]));
+}
+
+#[tokio::test]
+async fn the_tree_and_the_panel_share_the_pull_requests_base() {
+    let scratch = Scratch::new("https://github.com/octo-org/widgets.git");
+    on_a_pull_requests_branch(&scratch, true);
+    let (app, tab) = open(&state_with_gh(&scratch), &scratch).await;
+    assert_eq!(github(&app, &tab, true).await["pull"]["number"], 7);
+
+    let first = changes(&app, &tab, None).await;
+    assert_eq!(first["base"], "origin/develop", "{first}");
+    assert_eq!(first["ahead"], 1);
+    assert_eq!(first["pr_base_unfetched"], Value::Null);
+    // The same state, asked again with the stamp: one stamp.
+    let stamp = first["stamp"].as_str().unwrap().to_string();
+    let second = changes(&app, &tab, Some(&stamp)).await;
+    assert_eq!(second["kind"], "same");
+    assert_eq!(second["stamp"], stamp.as_str());
+    // The tree marks what differs from that base: only the third commit's file.
+    assert_eq!(tree_marks(&app, &tab).await, ["third.txt:added"]);
+}
+
+#[tokio::test]
+async fn the_diff_moves_to_the_pull_requests_base_after_github_answers() {
+    let scratch = Scratch::new("https://github.com/octo-org/widgets.git");
+    on_a_pull_requests_branch(&scratch, true);
+    let (app, tab) = open(&state_with_gh(&scratch), &scratch).await;
+
+    let before = changes(&app, &tab, None).await;
+    assert_eq!(before["base"], "main", "{before}");
+    assert_eq!(before["ahead"], 2);
+    let old = before["stamp"].as_str().unwrap().to_string();
+
+    assert_eq!(github(&app, &tab, true).await["pull"]["number"], 7);
+    let after = changes(&app, &tab, Some(&old)).await;
+    assert_eq!(after["kind"], "listed", "{after}");
+    assert_ne!(after["stamp"], old.as_str());
+    assert_eq!(after["base"], "origin/develop");
+    assert_eq!(after["ahead"], 1);
+    assert_eq!(after["pr_base_unfetched"], Value::Null);
+}
+
+#[tokio::test]
+async fn an_unfetched_pull_request_base_is_told_in_the_reply() {
+    let scratch = Scratch::new("https://github.com/octo-org/widgets.git");
+    on_a_pull_requests_branch(&scratch, false);
+    let (app, tab) = open(&state_with_gh(&scratch), &scratch).await;
+    let before = changes(&app, &tab, None).await;
+    assert_eq!(before["pr_base_unfetched"], Value::Null);
+    let old = before["stamp"].as_str().unwrap().to_string();
+
+    assert_eq!(github(&app, &tab, true).await["pull"]["number"], 7);
+    let after = changes(&app, &tab, Some(&old)).await;
+    assert_eq!(after["kind"], "listed", "the note moves the stamp: {after}");
+    assert_eq!(after["base"], "main");
+    assert_eq!(after["pr_base_unfetched"], "develop");
+}
+
 #[tokio::test]
 async fn github_off_runs_no_gh() {
     let scratch = Scratch::new("https://github.com/octo-org/widgets.git");

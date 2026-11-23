@@ -38,6 +38,7 @@ export const copy = {
   emptyFailed: (reason: string) => ({ title: "Can't read the changes", line: reason, action: "Try again" }),
   cut: (count: number) => `The diff is cut at 4 MiB. ${n(count)} more ${count === 1 ? "file isn't" : "files aren't"} shown.`,
   moreNew: (count: number) => `And ${n(count)} more new ${count === 1 ? "file isn't" : "files aren't"} shown.`,
+  prBaseUnfetched: (base: string) => `This pull request targets ${base}, which isn't fetched here.`,
   newCut: "Looking for new files took too long, so some may not be shown.",
   notes: {
     binary: "Binary file, not shown.",

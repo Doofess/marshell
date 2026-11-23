@@ -83,6 +83,7 @@ export function noticesOf(reply: ChangesReply): string[] {
     reply.base === null ? copy.noBase : reply.unrelated ? copy.unrelated(reply.base) : null,
     reply.more_new > 0 ? copy.moreNew(reply.more_new) : null,
     reply.new_cut ? copy.newCut : null,
+    reply.pr_base_unfetched !== null ? copy.prBaseUnfetched(reply.pr_base_unfetched) : null,
     cut > 0 ? copy.cut(cut) : null,
   ].filter((t): t is string => t !== null);
 }

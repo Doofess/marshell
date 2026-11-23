@@ -56,6 +56,8 @@ pub struct Target {
     pub moved: bool,
     /// The base branch of the task whose worktree this is.
     pub task_base: Option<String>,
+    /// The branch of the open pull request last seen at this checkout, and that pull request's base branch.
+    pub pr_base: Option<(String, String)>,
 }
 
 /// What a check found out.
@@ -69,6 +71,8 @@ pub struct Check {
     /// Where `origin` points, as the sandbox read it. Not part of the stamp.
     pub origin: Origin,
     pub base: Option<Base>,
+    /// The base of the branch's open pull request, when it isn't fetched here and the base above is another.
+    pub pr_base_unfetched: Option<String>,
     /// What the files are compared with: the merge base, else HEAD, else the empty tree.
     pub from: String,
     /// The base shares no history with HEAD.
@@ -238,7 +242,13 @@ fn compute(
     } = entry;
     let git = git.as_ref().expect("the box was just opened");
     let head = refs::head(git.git_dir(), git.common())?;
-    let base = refs::base(git.git_dir(), git.common(), target.task_base.as_deref())?;
+    // The pull request's base counts only while the checkout is still on the branch the pull request is for.
+    let pr_base = target
+        .pr_base
+        .as_ref()
+        .filter(|(branch, _)| head.branch.as_deref() == Some(branch.as_str()))
+        .map(|(_, base)| base.as_str());
+    let (base, pr_base_unfetched) = refs::base(git.git_dir(), git.common(), target.task_base.as_deref(), pr_base)?;
 
     let (from, unrelated) = match (&head.oid, &base) {
         (None, _) => (git.empty_tree().to_string(), false),
@@ -348,6 +358,7 @@ fn compute(
     base.as_ref()
         .map(|b| (b.label.as_str(), b.oid.as_str()))
         .hash(&mut hasher);
+    pr_base_unfetched.hash(&mut hasher);
     from.hash(&mut hasher);
     unrelated.hash(&mut hasher);
     raw.hash(&mut hasher);
@@ -363,6 +374,7 @@ fn compute(
         origin: git.origin().clone(),
         head,
         base,
+        pr_base_unfetched,
         from,
         unrelated,
         entries,
@@ -567,7 +579,7 @@ fn build_reply(
         new_cut: check.new_cut,
         reason: None,
         head: check.head_oid.clone(),
-        pr_base_unfetched: None,
+        pr_base_unfetched: check.pr_base_unfetched.clone(),
     })
 }
 
@@ -615,6 +627,7 @@ mod tests {
                 checkout: self.repo.clone(),
                 moved: false,
                 task_base: None,
+                pr_base: None,
             }
         }
     }
@@ -695,6 +708,7 @@ mod tests {
             checkout: checkout.clone(),
             moved: false,
             task_base: None,
+            pr_base: None,
         };
         let never = AtomicBool::new(false);
         let ms = |t: Instant| t.elapsed().as_secs_f64() * 1000.0;
@@ -1219,6 +1233,49 @@ mod tests {
     }
 
     #[test]
+    fn the_stamp_changes_when_the_unfetched_note_does() {
+        let scratch = Scratch::new();
+        repo_with_commit(&scratch);
+        let cache = ChangesCache::new();
+        let plain_check = check_of(&cache, &scratch.target());
+        assert_eq!(plain_check.pr_base_unfetched, None);
+        // The pull request's base isn't fetched: the base stays `main`, and only the note differs.
+        let asked = Target {
+            pr_base: Some(("main".to_string(), "develop".to_string())),
+            ..scratch.target()
+        };
+        let noted = check_of(&cache, &asked);
+        assert_eq!(noted.pr_base_unfetched.as_deref(), Some("develop"));
+        assert_eq!(noted.base.as_ref().map(|b| b.label.as_str()), Some("main"));
+        assert_ne!(plain_check.stamp, noted.stamp);
+        let again = check_of(&cache, &asked);
+        assert_eq!(noted.stamp, again.stamp);
+    }
+
+    #[test]
+    fn a_pull_request_base_of_another_branch_is_not_used() {
+        let scratch = Scratch::new();
+        let first = repo_with_commit(&scratch);
+        let git = plain(&scratch);
+        git(&scratch.repo, &["update-ref", "refs/remotes/origin/develop", &first]);
+        let cache = ChangesCache::new();
+        let on_branch = Target {
+            pr_base: Some(("main".to_string(), "develop".to_string())),
+            ..scratch.target()
+        };
+        let used = check_of(&cache, &on_branch);
+        assert_eq!(used.base.as_ref().map(|b| b.label.as_str()), Some("origin/develop"));
+        assert_eq!(used.pr_base_unfetched, None);
+        let elsewhere = Target {
+            pr_base: Some(("other".to_string(), "develop".to_string())),
+            ..scratch.target()
+        };
+        let skipped = check_of(&cache, &elsewhere);
+        assert_eq!(skipped.base.as_ref().map(|b| b.label.as_str()), Some("main"));
+        assert_eq!(skipped.pr_base_unfetched, None);
+    }
+
+    #[test]
     fn a_task_checkout_compares_with_its_base_branch() {
         let scratch = Scratch::new();
         repo_with_commit(&scratch);
@@ -1248,6 +1305,7 @@ mod tests {
             checkout: task.clone(),
             moved: true,
             task_base: Some("dev".to_string()),
+            pr_base: None,
         };
         let cache = ChangesCache::new();
         let reply = cache

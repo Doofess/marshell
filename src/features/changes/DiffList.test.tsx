@@ -213,6 +213,8 @@ describe("noticesOf", () => {
   });
   it("says nothing of a whole diff with a base", () => expect(noticesOf(reply({ files: [f("a.ts")], diff: part("a.ts") }))).toEqual([]));
   it("names a missing base and the new files past 200", () => expect(noticesOf(reply({ base: null, more_new: 3 }))).toEqual([copy.noBase, copy.moreNew(3)]));
+  it("says when a pull request's base isn't fetched", () =>
+    expect(noticesOf(reply({ pr_base_unfetched: "develop" }))).toEqual(["This pull request targets develop, which isn't fetched here."]));
   it("says when the look for new files was cut", () =>
     expect(noticesOf(reply({ new_cut: true }))).toEqual(["Looking for new files took too long, so some may not be shown."]));
 });

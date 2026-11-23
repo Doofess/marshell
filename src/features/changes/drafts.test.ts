@@ -130,9 +130,18 @@ describe("sendMessageOf", () => {
     expect(sendMessageOf({ ...onA, base: null }, showingB, [], new Map())).toMatch(/^Comments on the uncommitted changes in C:\\work\\repoA:\n\n/);
   });
   it("cites the shown checkout's comments at the lines they are on now", () => {
-    const onB: ChangesDrafts = { ...onA, checkout: B };
+    const onB: ChangesDrafts = { ...onA, checkout: B, base: "origin/main" };
     const placements = new Map<string, Placement>([["1", { at: 0, changed: false, start: 40, end: 40 }]]);
     expect(sendMessageOf(onB, showingB, [sectionB], placements)).toBe(["Comments on the changes (compared with origin/main):", "src/a.ts:40\n> x\nnote 1"].join("\n\n"));
+  });
+  it("sends against the base the comments were written on", () => {
+    // The pull request's base arrived after the comment was written: the diff now shows origin/develop.
+    const onB: ChangesDrafts = { ...onA, checkout: B, base: "main" };
+    const placements = new Map<string, Placement>([["1", { at: 0, changed: false, start: 40, end: 40 }]]);
+    const now = { folder: B, base: "origin/develop" };
+    expect(sendMessageOf(onB, now, [sectionB], placements)).toBe(["Comments on the changes (compared with main):", "src/a.ts:40\n> x\nnote 1"].join("\n\n"));
+    // Without comments, the shown base is the one named.
+    expect(sendMessageOf({ ...onB, comments: [] }, now, [sectionB], new Map())).toMatch(/\(compared with origin\/develop\):/);
   });
 });
 

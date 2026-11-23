@@ -36,6 +36,9 @@ describe("copy", () => {
     expect(copy.noBase).toBe("No main branch found. Showing uncommitted work.");
     expect(copy.unrelated("origin/main")).toBe("No common history with origin/main. Showing uncommitted work.");
   });
+  it("holds the sentence for a pull request base that isn't fetched", () => {
+    expect(copy.prBaseUnfetched("develop")).toBe("This pull request targets develop, which isn't fetched here.");
+  });
   it("holds the empty states", () => {
     expect(copy.emptyRepo("C:\\x")).toEqual({ title: "No git repository", line: "C:\\x isn't in a git checkout." });
     expect(copy.emptyNone("origin/main")).toEqual({ title: "No changes", line: "Nothing differs from origin/main." });
