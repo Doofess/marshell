@@ -69,6 +69,14 @@ pub fn find(home: &Path, id: &str) -> Option<Task> {
     list(home).into_iter().find(|t| t.id == id)
 }
 
+/// The task whose worktree is `checkout` (the same folder, whichever way each is spelled).
+pub fn task_at(home: &Path, checkout: &Path) -> Option<Task> {
+    let checkout = checkout.to_string_lossy();
+    list(home)
+        .into_iter()
+        .find(|t| projects::is_inside(&t.path, &checkout) && projects::is_inside(&checkout, &t.path))
+}
+
 fn new_id() -> String {
     let mut bytes = [0u8; 4];
     getrandom::fill(&mut bytes).expect("the OS random number generator failed");
@@ -184,11 +192,11 @@ pub fn create(home: &Path, req: &TaskCreateRequest, now_ms: u64) -> Result<Task,
 }
 
 /// The most diff text one answer carries.
-const MAX_DIFF: usize = 4 * 1024 * 1024;
+pub(crate) const MAX_DIFF: usize = 4 * 1024 * 1024;
 /// An untracked file bigger than this is named, not shown.
-const MAX_UNTRACKED: u64 = 256 * 1024;
+pub(crate) const MAX_UNTRACKED: u64 = 256 * 1024;
 /// An untracked file is binary when these leading bytes hold a NUL.
-const BINARY_SNIFF: usize = 8 * 1024;
+pub(crate) const BINARY_SNIFF: usize = 8 * 1024;
 
 /// Runs a read-only git command in the task folder and gives its output, or one sentence.
 fn read(dir: &Path, args: &[&str]) -> Result<String, String> {
@@ -233,7 +241,7 @@ fn tracked_files(name_status: &str) -> Vec<ChangedFile> {
 
 /// An untracked file written as the diff git would show for a new file. A binary or large file is
 /// only named.
-fn untracked_diff(dir: &Path, path: &str) -> String {
+pub(crate) fn untracked_diff(dir: &Path, path: &str) -> String {
     let full = dir.join(path);
     let Ok(meta) = std::fs::metadata(&full) else {
         return String::new();
@@ -267,14 +275,14 @@ fn untracked_diff(dir: &Path, path: &str) -> String {
 }
 
 /// The header lines that open one file's section of a diff, for a new file.
-fn new_file_header(path: &str) -> String {
+pub(crate) fn new_file_header(path: &str) -> String {
     format!("diff --git a/{path} b/{path}\nnew file mode 100644\n")
 }
 
 /// Cuts the diff to at most `max` bytes without leaving half a file: back to the start of the last
 /// `diff --git` line that begins inside the cap. When that is the first line (one huge file), the
 /// cut is just after the last line break.
-fn cut_diff(text: &mut String, max: usize) {
+pub(crate) fn cut_diff(text: &mut String, max: usize) {
     let head = &text.as_bytes()[..max];
     let marker = b"\ndiff --git ";
     let section = head.windows(marker.len()).rposition(|w| w == marker);
@@ -1494,5 +1502,28 @@ mod tests {
         let note = run_teardown_argv(&["no-such-program-marshell".into()], tmp.path(), SHORT).unwrap();
         assert!(note.starts_with("Teardown couldn't start ("), "{note}");
         assert!(note.ends_with(")."), "{note}");
+    }
+
+    #[test]
+    fn task_at_finds_the_task_whose_worktree_is_that_folder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = projects::canonical(tmp.path());
+        let folder = home.join("worktrees").join("repo").join("one");
+        std::fs::create_dir_all(&folder).unwrap();
+        let task = Task {
+            id: "t1".into(),
+            name: "one".into(),
+            branch: "marshell/one".into(),
+            base_branch: "dev".into(),
+            repo_root: home.join("repo").to_string_lossy().into_owned(),
+            path: folder.to_string_lossy().into_owned(),
+            created_ms: 1,
+            folder_missing: false,
+        };
+        store::write(&file(&home), &FileDoc { tasks: vec![task] }).unwrap();
+        assert_eq!(task_at(&home, &folder).map(|t| t.id), Some("t1".to_string()));
+        // A folder inside the worktree, or beside it, is not the task's checkout.
+        assert!(task_at(&home, &folder.join("src")).is_none());
+        assert!(task_at(&home, &home.join("worktrees").join("repo")).is_none());
     }
 }

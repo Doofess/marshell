@@ -1,6 +1,7 @@
 pub mod agents;
 pub mod auth;
 pub mod bridge;
+pub mod changes;
 pub mod config;
 pub mod crash;
 pub mod diagnostics;
