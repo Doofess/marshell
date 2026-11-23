@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { EmptyBrowser } from "./EmptyBrowser";
 import { EmptyFiles } from "./EmptyFiles";
+import { EmptyPanel } from "./EmptyPanel";
 
 const noop = () => {};
 const browser = (available: boolean, ports: { port: number; url: string }[]) =>
@@ -92,5 +93,20 @@ describe("the empty panels", () => {
       expect(out).not.toContain("tabindex");
       expect(out).not.toContain("<a ");
     }
+  });
+});
+
+describe("EmptyPanel actions", () => {
+  const act = (label: string) => ({ label, icon: null, onClick: noop });
+  it("shows two actions in order", () => {
+    const out = renderToStaticMarkup(<EmptyPanel icon={null} title="T" line="L" actions={[act("One"), act("Two")]} />);
+    const [a, b] = buttons(out);
+    expect(a).toContain("One");
+    expect(a).toContain("empty-panel__button--primary");
+    expect(b).toContain("Two");
+  });
+  it("shows one action, or none", () => {
+    expect(buttons(renderToStaticMarkup(<EmptyPanel icon={null} title="T" line="L" actions={[act("One")]} />))).toHaveLength(1);
+    expect(buttons(renderToStaticMarkup(<EmptyPanel icon={null} title="T" line="L" actions={[]} />))).toHaveLength(0);
   });
 });

@@ -109,6 +109,15 @@ describe("commandPanel", () => {
   it("skips a last panel that is not on screen", () => {
     expect(commandPanel(["files"], null, "browser", () => true)).toBe("files");
   });
+  it("tab commands from Changes act on the last tab panel", () => {
+    expect(commandPanel(["browser", "files", "changes"], "changes", "files", (p) => p !== "changes")).toBe("files");
+  });
+  it("tab commands from Changes fall back to the first panel with tabs", () => {
+    expect(commandPanel(["browser", "files", "changes"], "changes", null, (p) => p === "files")).toBe("files");
+  });
+  it("tab commands do nothing with only Changes shown", () => {
+    expect(commandPanel(["changes"], "changes", null, () => false)).toBeNull();
+  });
 });
 
 describe("panelToggleOutcome", () => {

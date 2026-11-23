@@ -69,6 +69,7 @@ import type { CookieRule } from "../../generated/CookieRule";
 import { PaneContext, PagePaneContext, type OpenPageInPane } from "../pane/PaneContext";
 import { dropCover, modalOnScreen } from "../pane/dropCover";
 import { EmptyBrowser, PAGES_UNAVAILABLE } from "../pane/EmptyBrowser";
+import { EmptyPanel } from "../pane/EmptyPanel";
 import { EmptyFiles } from "../pane/EmptyFiles";
 import { PanelStack } from "../pane/PanelStack";
 import { KeptTabs } from "../pane/KeptTabs";
@@ -744,9 +745,10 @@ export function LiveApp() {
   const panelFocus: PanelId | null = pageHasKeys ? "browser" : panelInDom;
   const panelFocusRef = useRef(panelFocus);
   panelFocusRef.current = panelFocus;
-  // The last panel that had the keyboard: the one a tab command acts on when none has it now.
-  const lastPanel = useRef<PanelId | null>(null);
-  if (panelFocus !== null) lastPanel.current = panelFocus;
+  // The last panel that holds tabs (Browser or Files) to have the keyboard: the one a tab command acts on when none has it now, and when
+  // the keyboard is in Changes, which holds none.
+  const lastTabPanel = useRef<PanelId | null>(null);
+  if (panelFocus !== null && panelFocus !== "changes") lastTabPanel.current = panelFocus;
   useEffect(() => {
     const inside = () => setPanelInDom(panelOfElement(document.activeElement));
     document.addEventListener("focusin", inside);
@@ -759,7 +761,7 @@ export function LiveApp() {
   // What a tab command acts on, read when it runs: the commands are called through refs, long after the render that made them.
   const onNow = useRef({ session: focusedId, panelsOn });
   onNow.current = { session: focusedId, panelsOn };
-  const currentPanel = (): PanelId | null => commandPanel(onNow.current.panelsOn, panelFocusRef.current, lastPanel.current, (p) => panelTabs(viewRef.current.pane, onNow.current.session, p).length > 0);
+  const currentPanel = (): PanelId | null => commandPanel(onNow.current.panelsOn, panelFocusRef.current, lastTabPanel.current, (p) => panelTabs(viewRef.current.pane, onNow.current.session, p).length > 0);
   // The side pane's preview tabs, by key: each hands over the commands the palette and the close question call on it, a text tab's
   // editor commands, and what saves the tab (a text tab's editor, or a PDF tab's notes).
   const textTabs = useRef(new Map<string, Pick<PreviewHandle, "text" | "saving" | "autoSave">>());
@@ -1179,7 +1181,7 @@ export function LiveApp() {
         const next = paneReducer(pane, action);
         paneDispatch(action);
         // Shown: the keyboard goes to the panel a tab command would act on among those now on screen. Hidden: to the terminal.
-        const into = next.open ? commandPanel(onScreen(next, session ?? null), panelFocusRef.current, lastPanel.current, (p) => panelTabs(next, session, p).length > 0) : null;
+        const into = next.open ? commandPanel(onScreen(next, session ?? null), panelFocusRef.current, lastTabPanel.current, (p) => panelTabs(next, session, p).length > 0) : null;
         if (into !== null) focusPane(into);
         else setTimeout(() => actions.focusTerminal(), 0);
         return;
@@ -1194,7 +1196,7 @@ export function LiveApp() {
         if (outcome === "show") {
           const action: PaneAction = { type: "show", session: session ?? null };
           const next = paneReducer(pane, action);
-          into = commandPanel(onScreen(next, session ?? null), panelFocusRef.current, lastPanel.current, (p) => panelTabs(next, session, p).length > 0);
+          into = commandPanel(onScreen(next, session ?? null), panelFocusRef.current, lastTabPanel.current, (p) => panelTabs(next, session, p).length > 0);
           paneDispatch(action);
         } else if (panel !== null) paneDispatch({ type: "step", session, panel, by: shortcut.by });
         // Asked once the change is drawn: whether the pane covers the terminal is the window's to say (`data-pane`).
@@ -2329,12 +2331,7 @@ export function LiveApp() {
           onMove={() => {}}
           onHide={() => togglePanel(panel)}
         >
-          <div className="empty-panel">
-            <div className="empty-panel__column">
-              <h2 className="empty-panel__title">Changes</h2>
-              <p className="empty-panel__line">The session&apos;s changes show here.</p>
-            </div>
-          </div>
+          <EmptyPanel icon={null} title="Changes" line="The session's changes show here." actions={[]} />
         </SidePane>
       );
     }

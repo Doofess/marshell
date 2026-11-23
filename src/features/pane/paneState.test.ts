@@ -174,6 +174,42 @@ describe("paneReducer", () => {
     expect(tabsOf(s, "s")).toEqual({ tabs: [], active: null });
   });
 
+  describe("drafts", () => {
+    const comment = (id: string) => ({ id, path: "a.ts", side: "new", start: 1, end: 1, rows: 1, first: "x", hash: "h", quote: ["+x"], text: "t" }) as unknown as NonNullable<SessionTabs["changes"]>["comments"][number];
+    const drafts = (comments: ReturnType<typeof comment>[], folds: Record<string, boolean> = {}) => ({ checkout: "c", base: null, comments, folds });
+    const put = (d: ReturnType<typeof drafts> | null): PaneAction => ({ type: "drafts", session: "s", drafts: d });
+    it("closing the last tab keeps the drafts", () => {
+      const d = drafts([comment("c1")]);
+      const s = run(EMPTY, open("/a"), put(d), close("t1"));
+      expect(s.sessions.s).toEqual({ tabs: [], active: null, changes: d });
+    });
+    it("drafts with nothing in them delete the session's changes, and an empty session goes", () => {
+      let s = run(EMPTY, open("/a"), put(drafts([comment("c1")])));
+      expect(s.sessions.s?.changes).toBeDefined();
+      s = run(s, put(drafts([])));
+      expect(s.sessions.s?.changes).toBeUndefined();
+      expect(s.sessions.s?.tabs).toHaveLength(1);
+      s = run(EMPTY, put(drafts([comment("c1")])));
+      expect(s.sessions.s?.changes).toBeDefined();
+      expect("s" in run(s, put(null)).sessions).toBe(false);
+      expect("s" in run(s, put(drafts([], {}))).sessions).toBe(false);
+    });
+    it("drafts with only folds are kept", () => {
+      expect(run(EMPTY, put(drafts([], { "a.ts": true }))).sessions.s?.changes?.folds).toEqual({ "a.ts": true });
+    });
+    it("drafts cap at 50 comments and 1,000 folds", () => {
+      const comments = Array.from({ length: 60 }, (_, i) => comment(`c${i}`));
+      const folds: Record<string, boolean> = {};
+      for (let i = 1999; i >= 0; i--) folds[`f${String(i).padStart(4, "0")}`] = true;
+      const got = run(EMPTY, put(drafts(comments, folds))).sessions.s!.changes!;
+      expect(got.comments.map((c) => c.id)).toEqual(comments.slice(0, 50).map((c) => c.id));
+      const keys = Object.keys(got.folds);
+      expect(keys).toHaveLength(1000);
+      expect(keys.sort()[0]).toBe("f0000");
+      expect(keys.sort()[999]).toBe("f0999");
+    });
+  });
+
   it("move puts the tab at the index and keeps the selection", () => {
     const mv = (paneTab: string, to: number): PaneAction => ({ type: "move", session: "s", paneTab, to });
     let s = run(EMPTY, open("/a"), open("/b"), open("/c"));

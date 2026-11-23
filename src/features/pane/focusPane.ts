@@ -18,6 +18,8 @@ const TREE_FRAMES = 30;
 /** The empty panel's first usable button, and the strip's + button: where focus goes when there is no body. */
 const emptyFirst = (panel: PanelId) => `${nav(panel)} .empty-panel__button:not([aria-disabled="true"])`;
 const plusOf = (panel: PanelId) => `${nav(panel)} button[data-pane-plus]`;
+/** The Changes panel's list: the one item that is a tab stop. */
+const changesItem = (panel: PanelId) => `${nav(panel)} [data-changes-item][tabindex="0"]`;
 /** The selected tab in the strip. */
 const selectedTab = (panel: PanelId) => `${nav(panel)} .side-pane__strip [role="tab"][aria-selected="true"]`;
 
@@ -41,6 +43,8 @@ export function paneFocusTarget(root: ParentNode, panel: PanelId, closing?: stri
   // A close asked from the strip leaves the keyboard on the strip, as a close that asks nothing does: the next Delete closes the
   // next tab, and types nothing into its file.
   if (where === "strip") return root.querySelector<HTMLElement>(selectedTab(panel)) ?? root.querySelector<HTMLElement>(plusOf(panel));
+  // Changes holds no tabs: its list's tab stop, else its empty state's button. Its section takes no focus itself, so with neither there is no target.
+  if (panel === "changes") return root.querySelector<HTMLElement>(changesItem(panel)) ?? root.querySelector<HTMLElement>(emptyFirst(panel));
   const first = root.querySelector<HTMLElement>(editor(panel)) ?? root.querySelector<HTMLElement>(body(panel)) ?? root.querySelector<HTMLElement>(slot(panel)) ?? root.querySelector<HTMLElement>(treeRow(panel));
   if (first) return first;
   // The tree is drawn and its rows aren't yet: wait for them, rather than put the keyboard on the empty state's button beside it.

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import "./EmptyPanel.css";
 
-/** One of an empty panel's two buttons. A button that can't be used stays reachable and says why. */
+/** One of an empty panel's buttons (0 to 2). A button that can't be used stays reachable and says why. */
 export type EmptyAction = { label: string; icon: ReactNode; disabled?: string; onClick(): void };
 
 /** A 14 px line icon beside a button's words, drawn in the button's own colour. */
@@ -40,16 +40,17 @@ export const FolderIcon = large(
 );
 
 /**
- * What a panel shows with no tabs: its mark, what is missing, what to do, and the two ways in. The first button that can be used
+ * What a panel shows with no tabs: its mark, what is missing, what to do, and its ways in (none, one or two). The first button that can be used
  * takes focus when the panel does (`focusPane`). Whatever follows the buttons (a list of ports or recent files) is `children`.
  */
-export function EmptyPanel({ icon, title, line, actions, children }: { icon: ReactNode; title: string; line: string; actions: readonly [EmptyAction, EmptyAction]; children?: ReactNode }) {
+export function EmptyPanel({ icon, title, line, actions, children }: { icon: ReactNode; title: string; line: string; actions: readonly EmptyAction[]; children?: ReactNode }) {
   return (
     <div className="empty-panel">
       <div className="empty-panel__column">
         {icon}
         <h2 className="empty-panel__title">{title}</h2>
         <p className="empty-panel__line">{line}</p>
+        {actions.length > 0 && (
         <div className="empty-panel__actions">
           {actions.map((a, i) => (
             <button
@@ -65,6 +66,7 @@ export function EmptyPanel({ icon, title, line, actions, children }: { icon: Rea
             </button>
           ))}
         </div>
+        )}
         {children}
       </div>
     </div>

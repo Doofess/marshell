@@ -1,3 +1,4 @@
+import type { ChangesDrafts } from "../../generated/ChangesDrafts";
 import type { PaneEntry } from "../../generated/PaneEntry";
 import type { PaneTab } from "../../generated/PaneTab";
 import type { PaneView } from "../../generated/PaneView";
@@ -46,6 +47,8 @@ export type PaneAction =
   /** The next or previous tab, wrapping. */
   | { type: "step"; session: string; panel: PanelId; by: 1 | -1 }
   | { type: "close"; session: string; paneTab: string }
+  /** The session's Changes drafts: at most 50 comments and 1,000 folded files (the first in key order). Null, or drafts with nothing in them, remove them. */
+  | { type: "drafts"; session: string; drafts: ChangesDrafts | null }
   /** `to` is the index the tab ends at among its panel's tabs; the other panel's tabs keep their places in the session's list. */
   | { type: "move"; session: string; paneTab: string; to: number }
   /**
@@ -425,8 +428,8 @@ function close(s: PaneView, session: string, paneTab: string): PaneView {
   const panel = panelOf(cur.tabs[at]!);
   const tabs = cur.tabs.filter((_, i) => i !== at);
   if (tabs.length === 0) {
-    // A session with a tree keeps it, with no tabs.
-    if (cur.tree) return { ...s, sessions: { ...s.sessions, [session]: { tabs: [], active: null, tree: cur.tree } } };
+    // A session with a tree or Changes drafts keeps them, with no tabs.
+    if (cur.tree || cur.changes) return { ...s, sessions: { ...s.sessions, [session]: { tabs: [], active: null, ...(cur.tree ? { tree: cur.tree } : {}), ...(cur.changes ? { changes: cur.changes } : {}) } } };
     const { [session]: _gone, ...sessions } = s.sessions;
     return { ...s, sessions };
   }
@@ -443,6 +446,28 @@ const TREE_FOLDERS_MAX = 500;
 const TREE_ROOT_MAX = 4096;
 const TREE_WIDTH_MIN = 160;
 const TREE_WIDTH_MAX = 2048;
+
+const DRAFT_COMMENTS_MAX = 50;
+const DRAFT_FOLDS_MAX = 1000;
+
+/** Sets the session's Changes drafts, capped as the core's repair caps them. Nothing in them removes them, and a session left with no tabs, tree or drafts goes. */
+function setDrafts(s: PaneView, session: string, drafts: ChangesDrafts | null): PaneView {
+  const cur = s.sessions[session];
+  const comments = drafts ? drafts.comments.slice(0, DRAFT_COMMENTS_MAX) : [];
+  const keys = drafts ? Object.keys(drafts.folds).sort() : [];
+  if (!drafts || (comments.length === 0 && keys.length === 0)) {
+    if (!cur || !cur.changes) return s;
+    const { changes: _gone, ...rest } = cur;
+    if (rest.tabs.length === 0 && !rest.tree) {
+      const { [session]: _s, ...sessions } = s.sessions;
+      return { ...s, sessions };
+    }
+    return setTabs(s, session, rest);
+  }
+  const folds: { [key in string]: boolean } = {};
+  for (const k of keys.slice(0, DRAFT_FOLDS_MAX)) folds[k] = drafts.folds[k]!;
+  return setTabs(s, session, { ...(cur ?? { tabs: [], active: null }), changes: { ...drafts, comments, folds } });
+}
 
 /** Sets the session's tree, keeping only the folders the core accepts and the first 500; the session's tabs are untouched. */
 function setTree(s: PaneView, session: string, tree: TreeState): PaneView {
@@ -513,6 +538,8 @@ export function paneReducer(s: PaneView, a: PaneAction): PaneView {
       return editFileTab(s, a.session, a.paneTab, kept);
     case "tree":
       return setTree(s, a.session, a.tree);
+    case "drafts":
+      return setDrafts(s, a.session, a.drafts);
     case "treeView":
       return setTreeView(s, a.view);
     case "navigate":
