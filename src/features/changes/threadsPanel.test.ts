@@ -144,6 +144,15 @@ describe("githubItemsOf", () => {
     expect(g.placements.get("T3")).toBeNull();
     expect(githubItemsOf(r, undefined, { ...base, showOld: true })!.threads.map((x) => x.id)).toEqual(["T1", "T2", "T3"]);
   });
+  it("a picked outdated thread stays in the list with the switch off", () => {
+    const r = reply({ threads: [thread({ id: "T1" }), thread({ id: "T2", outdated: true }), thread({ id: "T3", resolved: true }), thread({ id: "T4", outdated: true })] });
+    const d = drafts({ picked: [{ id: "T2", number: 7, note: "" }, { id: "T3", number: 8, note: "" }, { id: "N1", number: 7, note: "" }] });
+    const g = githubItemsOf(r, d, base)!;
+    expect(g.threads.map((x) => x.id)).toEqual(["T1", "T2"]);
+    expect(g.placements.get("T2")).toMatchObject({ at: 2 });
+    expect(githubItemsOf(r, d, { ...base, showOld: true })!.threads.map((x) => x.id)).toEqual(["T1", "T2", "T3", "T4"]);
+    expect(githubItemsOf(r, undefined, base)!.threads.map((x) => x.id)).toEqual(["T1"]);
+  });
   it("holds the notes only while the list is open, with the lines for what is cut", () => {
     const r = reply({ notes: [note()], more_threads: 3, more_notes: true });
     expect(githubItemsOf(r, undefined, base)!.notes).toEqual([]);

@@ -51,6 +51,28 @@ describe("ChangesPanel.css", () => {
     expect(forcedRule(".changes__thread")).toContain("color: CanvasText");
   });
 
+  // A thread and a talk item keep their own colours (forced-color-adjust: none), which every part of them inherits: the Markdown's paper and ink and each text part are set to system colours.
+  it("gives every part of a GitHub comment system colours in forced colours", () => {
+    for (const body of [".changes__thread .changes__thread-body", ".changes__talk .changes__thread-body"]) {
+      const rule = forcedRule(body);
+      expect(rule, body).toContain("--ink: CanvasText");
+      expect(rule, body).toContain("--paper: Canvas");
+      expect(rule, body).toContain("--accent: LinkText");
+      expect(rule, body).toContain("--hairline: CanvasText");
+    }
+    for (const part of [".changes__thread-chip", '.changes__thread-comment [data-part="meta"]', '.changes__thread-comment [data-part="author"]', '.changes__thread [data-part="place"]', ".changes__thread-note", ".changes__thread-quote", ".changes__list .changes__thread-body .markdown__info"]) {
+      expect(forcedRule(part), part).toContain("color: CanvasText");
+    }
+    expect(forcedRule(".changes__thread-chip")).toContain("border: 1px solid CanvasText");
+  });
+  it("draws the quote of a thread's code in the mono font and wraps its long lines", () => {
+    const rule = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => m[1]!.trim() === ".changes__thread-quote").map((m) => m[2]).join("\n");
+    expect(rule).toContain("font-family: var(--font-mono)");
+    expect(rule).toContain("white-space: pre-wrap");
+    expect(rule).toContain("overflow-wrap: anywhere");
+    expect(rule).not.toMatch(/overflow(-[xy])?:\s*(auto|scroll)/);
+  });
+
   // The rows that keep their own colours (forced-color-adjust: none) must not keep the theme's ring, hover or selection fill.
   it("gives the rows' focus ring, hover and selection system colours in forced colours", () => {
     expect(forcedRule(".changes__item:focus-visible")).toContain("outline-color: CanvasText");

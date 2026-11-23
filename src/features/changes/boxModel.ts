@@ -22,8 +22,13 @@ export const threadBoxAfter = (items: Item[], box: ThreadBox): number => items.f
 /** Whether a reply to `thread` may start: not while one is out for it, whether or not its box is open. */
 export const canPost = (state: ReplyState, thread: string): boolean => !state.out.has(thread);
 
-/** The state with a reply to `thread` out. The panel checks `canPost` and sets this in the same tick, before the request starts. */
-export const startPost = (state: ReplyState, thread: string): ReplyState => ({ ...state, out: new Set(state.out).add(thread) });
+/** The check and the mark of a post in one call: null when a reply to `thread` is out; else the state with it out and, when the open box is that thread's reply box, its error cleared. The panel sets the result in the same tick, before the request starts. */
+export function beginPost(state: ReplyState, thread: string): ReplyState | null {
+  if (!canPost(state, thread)) return null;
+  const b = state.box;
+  const box = b !== null && b.kind === "reply" && b.thread === thread ? { ...b, error: null } : b;
+  return { ...state, box, out: new Set(state.out).add(thread) };
+}
 
 /** What an answer does: the thread leaves `out` either way. A post closes its reply box and forgets the thread's kept text; a refusal keeps the box (when it is that reply's) with its text and the sentence. A box on another thread, or a note box, is left alone. */
 export function afterReply(state: ReplyState, thread: string, result: { ok: true } | { ok: false; reason: string }): ReplyState {

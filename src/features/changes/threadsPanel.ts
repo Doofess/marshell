@@ -69,7 +69,10 @@ export function inDiffOrder(items: PickedItem[], sections: Section[], placements
 /** What the list holds of GitHub's comments: the threads shown, where each sits, the notes when the list is open, and how each id stands in the send. Undefined with no reply. */
 export function githubItemsOf(threads: PullThreads | null, drafts: ChangesDrafts | undefined, o: { showOld: boolean; talkOpen: boolean; sections: Section[]; agent: string | null }): GithubItems | undefined {
   if (threads === null) return undefined;
-  const shown = shownThreads(threads.threads, o.showOld);
+  // The threads the switch shows, and every thread picked for this pull request (so what the Send bar counts and sends is always drawn), in the reply's order.
+  const showing = new Set(shownThreads(threads.threads, o.showOld).map((t) => t.id));
+  const pickedIds = new Set((drafts?.picked ?? []).filter((p) => p.number === threads.number).map((p) => p.id));
+  const shown = threads.threads.filter((t) => showing.has(t.id) || pickedIds.has(t.id));
   const counts = new Map<string, number>([...threads.threads.map((t): [string, number] => [t.id, commentCount(t)]), ...threads.notes.map((n): [string, number] => [n.id, 1])]);
   const picks = new Map((drafts?.picked ?? []).filter((p) => p.number === threads.number).map((p) => [p.id, p.note]));
   const sent = (drafts?.sent ?? []).filter((s) => s.number === threads.number);

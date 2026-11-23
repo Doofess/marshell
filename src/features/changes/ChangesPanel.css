@@ -245,6 +245,18 @@
   font-size: var(--text-11);
 }
 
+/* The code a thread's message quotes, drawn when the diff doesn't show it: the diff's mono at the place line's size; a long line wraps. */
+.changes__thread-quote {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-11);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.changes__thread-quote > span {
+  display: block;
+}
+
 /* A reply is set in from the comment above it. */
 .changes__thread-comment {
   display: grid;
@@ -478,6 +490,32 @@
   }
   .changes__send-button[aria-disabled="true"] {
     color: GrayText;
+  }
+  /* A comment keeps its own colours (forced-color-adjust: none), and so do all its parts: the Markdown's paper, ink, link and
+     rule are the system's, and so is the text of the chips, the meta, the place, the notes, the quote and a fence's info line. A chip
+     is told apart by a line, as a fill isn't drawn. */
+  .changes__thread .changes__thread-body,
+  .changes__talk .changes__thread-body {
+    --ink: CanvasText;
+    --paper: Canvas;
+    --accent: LinkText;
+    --hairline: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
+  .changes__thread-chip {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
+  .changes__thread-comment [data-part="meta"],
+  .changes__thread-comment [data-part="author"],
+  .changes__thread [data-part="place"],
+  .changes__thread-note,
+  .changes__thread-quote,
+  .changes__line,
+  .changes__list .changes__thread-body .markdown__info {
+    color: CanvasText;
   }
   .changes__box-text:focus-visible,
   .changes__send-button:focus-visible {

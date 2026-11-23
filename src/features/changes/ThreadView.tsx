@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type { PullNote } from "../../generated/PullNote";
 import type { ReviewThread } from "../../generated/ReviewThread";
 import "../preview/Preview.css";
-import { citation, type Placement } from "./comments";
+import { QUOTE_LINES, citation, type Placement } from "./comments";
 import { threadCopy } from "./threadCopy";
 import { authorOf, noteMarks, threadAnchor, threadMarks, type SendState } from "./threads";
 
@@ -66,12 +66,20 @@ function placeOf(t: ReviewThread, placed: Placement | null): string | null {
   return anchor === null ? t.path : citation(anchor, true);
 }
 
+/** The quote lines the send writes under a thread's place (`> row`, then `> …` past `QUOTE_LINES` rows), when no row of the diff shows them: the thread isn't placed or its rows changed. Else null. */
+function quoteOf(t: ReviewThread, placed: Placement | null): string[] | null {
+  const anchor = threadAnchor(t);
+  if (anchor === null || (placed !== null && !placed.changed)) return null;
+  return [...anchor.quote.map((q) => `> ${q}`), ...(anchor.rows > QUOTE_LINES ? ["> …"] : [])];
+}
+
 /** The inside of a thread's item. All of it is hidden from a screen reader: the item's label reads it. */
 export function ThreadView(p: { thread: ReviewThread; placed: Placement | null; state: SendState; agent: string | null; html: BodyHtml }): ReactNode {
   const { thread: t, placed, state, agent, html } = p;
   const first = t.comments[0];
   const place = placeOf(t, placed);
   const more = t.more_comments;
+  const quoted = quoteOf(t, placed);
   return (
     <div aria-hidden="true">
       <div className="changes__thread-head">
@@ -79,6 +87,13 @@ export function ThreadView(p: { thread: ReviewThread; placed: Placement | null; 
         <Chips marks={threadMarks(t, placed, state, agent)} />
       </div>
       {place !== null && <p data-part="place">{place}</p>}
+      {quoted !== null && (
+        <div className="changes__thread-quote">
+          {quoted.map((line, i) => (
+            <span key={i}>{line}</span>
+          ))}
+        </div>
+      )}
       {t.comments.map((c, i) => (
         <Comment key={c.id} author={i === 0 ? null : authorOf(c)} day={dayOf(c.created_ms)} ms={c.created_ms} body={c.body} cut={c.cut} html={html} />
       ))}

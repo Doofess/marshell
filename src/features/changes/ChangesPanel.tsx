@@ -12,7 +12,8 @@ import { type ItemRange, DiffList, type ListResult, reach } from "./DiffList";
 import { remembered, safeCommentHtml } from "../preview/markdown";
 import { type ChangesChoice, type CommentItem, addressOf, changesChoice, changesMenuItems, headerMenuItems, lineMenuItems, openLineOf, openOf, settingLabel, threadMenuItems } from "./changesMenu";
 import { type BoxAction, CommentBox, boxLabel } from "./CommentBox";
-import { type BoxState, type ReplyState, type ThreadBox, afterReply, anchorKey, boxAfter, canPost, closedThreadBox, openThreadBox, startPost, threadBoxAfter } from "./boxModel";
+import { type BoxState, type ReplyState, type ThreadBox, afterReply, anchorKey, boxAfter, beginPost, canPost, closedThreadBox, openThreadBox, threadBoxAfter } from "./boxModel";
+import { listen, replyHolder, setHeld } from "./replyStore";
 import { type ReplyAction, ReplyBox, cleanReply } from "./ReplyBox";
 import { MAX_COMMENTS, type Placement, anchorOf, place, renumbered } from "./comments";
 import { type OpenBox, boxAnchor, commentsOf, elsewhere, givesWay, keptBox, sendMessageOf, shownComments, unkept, withFolds } from "./drafts";
@@ -178,14 +179,13 @@ export function ChangesPanel(p: ChangesPanelProps) {
   const [open, setOpen] = useState<OpenBox | null>(null);
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
-  // The box on a GitHub thread (a reply or the user's note), the reply text kept per thread and the threads with a reply out. A ref, so
-  // the check that stops a second post and the mark that a reply is out happen in one tick and outlive the box and a redraw; `setReply` draws.
-  const replyRef = useRef<ReplyState>({ box: null, texts: new Map(), out: new Set() });
+  // The box on a GitHub thread (a reply or the user's note), the reply text kept per thread and the threads with a reply out. Held per session
+  // outside the panel (`replyStore`), so the check that stops a second post and the mark that a reply is out happen in one tick and outlive the box,
+  // a redraw and a remount of the panel (it is keyed by the session); `setReply` sets it, and the listener below draws.
+  const replyRef = replyHolder(p.session);
   const [, drawReply] = useState(0);
-  const setReply = (next: ReplyState) => {
-    replyRef.current = next;
-    drawReply((n) => n + 1);
-  };
+  useEffect(() => listen(p.session, () => drawReply((n) => n + 1)), [p.session]);
+  const setReply = (next: ReplyState) => setHeld(p.session, next);
   const threadBox = replyRef.current.box;
 
   // Another checkout's comments aren't listed against this one's files (the strip says where they are).
@@ -431,19 +431,22 @@ export function ChangesPanel(p: ChangesPanelProps) {
     if (target === null || b === null || b.kind !== "reply") return;
     const body = cleanReply(b.text);
     if (body.trim() === "") return;
-    if (!canPost(first, b.thread)) return;
-    setReply(startPost({ ...first, box: { ...b, error: null } }, b.thread));
+    const started = beginPost(first, b.thread);
+    if (started === null) return;
+    // The session the request is for: its answer lands in this session's holder, whether or not this panel is still mounted.
+    const session = p.session;
+    setHeld(session, started);
     const thread = b.thread;
     let result: Parameters<typeof afterReply>[2];
     try {
-      await threadAction(p.session, { ...target, thread, action: "reply", body });
+      await threadAction(session, { ...target, thread, action: "reply", body });
       result = { ok: true };
     } catch (e) {
       result = { ok: false, reason: failureOf(e).reason };
     }
-    const now = replyRef.current;
+    const now = replyHolder(session).current;
     const there = now.box?.kind === "reply" && now.box.thread === thread;
-    setReply(afterReply(now, thread, result));
+    setHeld(session, afterReply(now, thread, result));
     if (result.ok) {
       p.announce(threadCopy.replied(target.number));
       if (there) focusKey(itemKeyOf(thread));

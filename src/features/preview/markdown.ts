@@ -32,16 +32,34 @@ md.core.ruler.push("heading_ids", (state) => {
 
 // A GitHub comment's Markdown, from a stranger and possibly read by an agent: nothing in its source may go unseen. The rules that
 // would swallow text are off (a link reference definition, a table's cells past its columns, a character entity that decodes to
-// an invisible character), a picture is a link to its address, and a fence's whole info string is shown.
+// an invisible character); an autolink's text is drawn as written; a picture is a link to its https address, or else its alt text
+// and its address as text; any other link has its address on hover (https) or as text; a title is text, its hidden characters as
+// source; and a fence's whole info string is shown.
 const commentMd = new MarkdownIt({ html: false, linkify: true });
 commentMd.disable(["reference", "table", "entity"]);
+commentMd.normalizeLinkText = (text) => text;
 
-/** The text of inline tokens, as a reader sees it: text, code and a nested picture's alt text. */
+/** A title as text a reader sees whole: markdown-it decodes entities in a title even with the entity rule off, so each hidden character (default-ignorable, control, format) is put back as `&#x<HEX>;`, and a line end is a space. */
+function titleText(title: string): string {
+  return title.replace(/[\p{Default_Ignorable_Code_Point}\p{Cc}\p{Cf}]/gu, (c) => (c === "\n" || c === "\r" ? " " : `&#x${c.codePointAt(0)!.toString(16).toUpperCase()};`));
+}
+
+/** The text of inline tokens, as a reader sees it: text, code, and for a link or a picture inside a picture's description its address and title after its words. */
 function textOf(tokens: Token[] | null): string {
   let out = "";
+  const links: Token[] = [];
   for (const t of tokens ?? []) {
-    if (t.type === "image") out += textOf(t.children);
-    else if (t.type === "softbreak" || t.type === "hardbreak") out += " ";
+    if (t.type === "image") {
+      const src = String(t.attrGet("src") ?? "");
+      const title = String(t.attrGet("title") ?? "");
+      out += textOf(t.children) + (src === "" ? "" : ` (${src})`) + (title === "" ? "" : ` (${titleText(title)})`);
+    } else if (t.type === "link_open") links.push(t);
+    else if (t.type === "link_close") {
+      const link = links.pop();
+      const href = String(link?.attrGet("href") ?? "");
+      const title = String(link?.attrGet("title") ?? "");
+      out += (href === "" ? "" : ` (${href})`) + (title === "" ? "" : ` (${titleText(title)})`);
+    } else if (t.type === "softbreak" || t.type === "hardbreak") out += " ";
     else out += t.content;
   }
   return out;
@@ -50,7 +68,16 @@ function textOf(tokens: Token[] | null): string {
 /** Whether a link's inside draws anything: a picture (it always has words), or a letter, number or mark that isn't a blank. */
 const draws = (tokens: Token[]): boolean => tokens.some((t) => t.type === "image") || /[\p{L}\p{N}\p{P}\p{S}]/u.test(textOf(tokens).replace(/⠀/g, ""));
 
-/** A link's title as text after the link (and off its tag), and the address of a link that draws nothing as its text: neither stays unseen. */
+/** Whether `href` is an address that parses with the https scheme. */
+function httpsAddress(href: string): boolean {
+  try {
+    return commentMd.validateLink(href) && new URL(href).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/** A link: an https address goes on its tag as the hover title; any other follows the link's text as ` (address)`, unless the text is the address; its own title follows as text and leaves the tag. A link that draws nothing shows its address as its text. */
 commentMd.core.ruler.push("unseen_links", (state) => {
   const text = (content: string): Token => Object.assign(new state.Token("text", "", 0), { content });
   for (const block of state.tokens) {
@@ -59,37 +86,38 @@ commentMd.core.ruler.push("unseen_links", (state) => {
     const open: { link: Token; from: number }[] = [];
     for (const t of block.children) {
       if (t.type === "link_open") open.push({ link: t, from: out.length + 1 });
-      // A link inside a link isn't HTML: a picture in a link is its words alone.
+      // A link inside a link isn't HTML: a picture in a link is its words and its address.
       if (t.type === "image" && open.length > 0) t.meta = { ...(t.meta as object | null), inLink: true };
       const last = t.type === "link_close" ? open.pop() : undefined;
       if (last === undefined) {
         out.push(t);
         continue;
       }
-      if (!draws(out.slice(last.from))) out.push(text(String(last.link.attrGet("href") ?? "")));
-      out.push(t);
+      const href = String(last.link.attrGet("href") ?? "");
+      if (!draws(out.slice(last.from))) out.push(text(href));
+      const words = textOf(out.slice(last.from));
       const title = String(last.link.attrGet("title") ?? "");
       last.link.attrs = (last.link.attrs ?? []).filter(([name]) => name !== "title");
-      if (title !== "") out.push(text(` (${title})`));
+      const https = httpsAddress(href);
+      if (https) last.link.attrSet("title", href);
+      out.push(t);
+      if (!https && words !== href && words !== href.replace(/^mailto:/, "")) out.push(text(` (${href})`));
+      if (title !== "") out.push(text(` (${titleText(title)})`));
     }
     block.children = out;
   }
 });
 
-/** A picture would load from an address the reader never chose, so it is drawn as a link; with no https address or inside a link, as its alt text. Its title follows as text. */
+/** A picture would load from an address the reader never chose. Alone with an https address it is a link to it (the address on hover); any other picture is its alt text and ` (address)` as text. Its title follows as text. */
 commentMd.renderer.rules.image = (tokens, idx) => {
   const token = tokens[idx]!;
-  const alt = commentMd.utils.escapeHtml(textOf(token.children).trim() || "Picture");
+  const escape = commentMd.utils.escapeHtml;
+  const alt = escape(textOf(token.children).trim() || "Picture");
   const title = String(token.attrGet("title") ?? "");
-  const after = title === "" ? "" : ` (${commentMd.utils.escapeHtml(title)})`;
-  const href = commentMd.normalizeLink(String(token.attrGet("src") ?? ""));
-  let https = false;
-  try {
-    https = commentMd.validateLink(href) && new URL(href).protocol === "https:";
-  } catch {
-    https = false;
-  }
-  return (https && !(token.meta as { inLink?: boolean } | null)?.inLink ? `<a href="${commentMd.utils.escapeHtml(href)}">${alt}</a>` : alt) + after;
+  const after = title === "" ? "" : ` (${escape(titleText(title))})`;
+  const src = String(token.attrGet("src") ?? "");
+  if (httpsAddress(src) && !(token.meta as { inLink?: boolean } | null)?.inLink) return `<a href="${escape(src)}" title="${escape(src)}">${alt}</a>${after}`;
+  return alt + (src === "" ? "" : ` (${escape(src)})`) + after;
 };
 
 const fenceBlock = commentMd.renderer.rules.fence!;
@@ -99,9 +127,12 @@ commentMd.renderer.rules.fence = (tokens, idx, options, env, self) => {
 };
 
 /**
- * A comment's Markdown as HTML, drawn so that nothing in the source is unseen: as `renderMarkdown`, with no heading ids; a picture is a
- * link to its address (its alt text, or "Picture"); a link reference definition, a character entity and a table show as their source
- * text; a code fence shows its whole info string above the code. Not yet safe to insert.
+ * A comment's Markdown as HTML, drawn so that nothing in the source is unseen: as `renderMarkdown`, with no heading ids. A picture alone
+ * with an https address is a link to it (its alt text, or "Picture"; the address on hover); any other picture is its alt text and its
+ * address as text. A link's https address is on hover, any other address follows its text. A title follows as text, its hidden
+ * characters as `&#x…;`; the address and title of a link or picture in a picture's description follow its words. A link reference
+ * definition, a character entity and a table show as their source text; a code fence shows its whole info string above the code.
+ * Not yet safe to insert.
  */
 export function renderCommentMarkdown(src: string): string {
   return commentMd.render(src, {});

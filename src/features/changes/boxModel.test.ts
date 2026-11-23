@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type ReplyState, type ThreadBox, afterReply, canPost, closedThreadBox, openThreadBox, startPost, threadBoxAfter } from "./boxModel";
+import { type ReplyState, type ThreadBox, afterReply, beginPost, canPost, closedThreadBox, openThreadBox, threadBoxAfter } from "./boxModel";
 import type { Item } from "./model";
 
 const box = (over: Partial<ThreadBox> = {}): ThreadBox => ({ kind: "reply", thread: "T1", text: "thanks", error: null, ...over });
@@ -71,23 +71,45 @@ describe("afterReply", () => {
 
 describe("canPost", () => {
   it("a thread with a reply out can't post again", () => {
-    const s = startPost(state(), "T1");
+    const s = beginPost(state(), "T1")!;
     expect(canPost(state(), "T1")).toBe(true);
     expect(canPost(s, "T1")).toBe(false);
     expect(canPost(s, "T2")).toBe(true);
   });
   it("a thread with a reply out can't post again after its box closed and opened", () => {
-    let s = startPost(state(), "T1");
+    let s = beginPost(state(), "T1")!;
     s = closedThreadBox(s);
     expect(s.box).toBeNull();
     s = openThreadBox(s, "reply", "T1", "");
     expect(s.box?.thread).toBe("T1");
     expect(canPost(s, "T1")).toBe(false);
   });
-  it("startPost leaves the state it is given alone", () => {
-    const s = state();
-    startPost(s, "T1");
+});
+
+describe("beginPost", () => {
+  it("beginPost marks the thread and a second one is refused", () => {
+    const first = beginPost(state(), "T1");
+    expect(first).not.toBeNull();
+    expect(first!.out.has("T1")).toBe(true);
+    expect(beginPost(first!, "T1")).toBeNull();
+    expect(beginPost(first!, "T2")?.out.has("T2")).toBe(true);
+    const reopened = openThreadBox(closedThreadBox(first!), "reply", "T1", "");
+    expect(beginPost(reopened, "T1")).toBeNull();
+  });
+  it("beginPost clears the box's old error", () => {
+    const s = state({ box: box({ error: "The pull request changed." }) });
+    expect(beginPost(s, "T1")?.box?.error).toBeNull();
+    expect(beginPost(s, "T1")?.box?.text).toBe("thanks");
+    const other = state({ box: box({ thread: "T2", error: "x" }) });
+    expect(beginPost(other, "T1")?.box?.error).toBe("x");
+    const note = state({ box: box({ kind: "note", error: "y" }) });
+    expect(beginPost(note, "T1")?.box?.error).toBe("y");
+  });
+  it("beginPost leaves the state it is given alone", () => {
+    const s = state({ box: box({ error: "e" }) });
+    beginPost(s, "T1");
     expect(s.out.size).toBe(0);
+    expect(s.box?.error).toBe("e");
   });
 });
 

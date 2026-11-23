@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { PullNote } from "../../generated/PullNote";
 import type { ReviewThread } from "../../generated/ReviewThread";
 import type { ThreadComment } from "../../generated/ThreadComment";
+import { QUOTE_LINES } from "./comments";
 import { NoteView, ThreadView, httpsLink, plainHtml } from "./ThreadView";
 import type { SendState } from "./threads";
 
@@ -59,6 +60,32 @@ describe("ThreadView", () => {
     expect(draw(thread({ file: true, start: null, end: null, rows: [] }), { placed: { at: null, changed: false } })).toContain("On the file");
     expect(draw(thread({ file: true, start: null, end: null, rows: [] }), { placed: null })).toContain("a.txt");
     expect(draw(thread())).not.toContain("a.txt");
+  });
+  it("draws the code a message quotes when the thread is not placed or its rows changed, and not when the diff shows them", () => {
+    const rows = [
+      { kind: "context", text: "alpha" },
+      { kind: "add", text: "<b>beta</b>" },
+    ] as ReviewThread["rows"];
+    const unplaced = draw(thread({ rows, start: 2, end: 3 }), { placed: null });
+    expect(unplaced).toContain('class="changes__thread-quote"');
+    expect(unplaced).toContain("&gt;  alpha");
+    expect(unplaced).toContain("&gt; +&lt;b&gt;beta&lt;/b&gt;");
+    expect(unplaced).not.toContain("<b>");
+    expect(unplaced).not.toContain("…");
+    expect(unplaced.indexOf("changes__thread-quote")).toBeGreaterThan(unplaced.indexOf('data-part="place"'));
+    expect(unplaced.indexOf("changes__thread-quote")).toBeLessThan(unplaced.indexOf("changes__thread-comment"));
+    expect(draw(thread({ rows, start: 2, end: 3 }), { placed: { at: 1, changed: true, start: 2, end: 3 } })).toContain("&gt; +&lt;b&gt;beta&lt;/b&gt;");
+    expect(draw(thread({ rows, start: 2, end: 3 }))).not.toContain("changes__thread-quote");
+    expect(draw(thread({ file: true, start: null, end: null, rows: [] }), { placed: null })).not.toContain("changes__thread-quote");
+  });
+  it("marks the rows a quote leaves out with an ellipsis line", () => {
+    const rows = Array.from({ length: QUOTE_LINES + 1 }, (_, i) => ({ kind: "add" as const, text: `row${i}` }));
+    const out = draw(thread({ rows, start: 2, end: 2 + QUOTE_LINES }), { placed: null });
+    expect(out).toContain("&gt; row0");
+    expect(out).toContain(`&gt; row${QUOTE_LINES - 1}`);
+    expect(out).not.toContain(`row${QUOTE_LINES}`);
+    expect(out).toContain("&gt; …");
+    expect(draw(thread({ rows: rows.slice(0, QUOTE_LINES), start: 2, end: 1 + QUOTE_LINES }), { placed: null })).not.toContain("…");
   });
   it("shows a date left out when there is none", () => {
     const ms = Date.UTC(2026, 10, 3, 12);
