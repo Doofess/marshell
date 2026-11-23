@@ -9,6 +9,7 @@ pub mod query;
 pub mod remote;
 pub mod status;
 pub mod template;
+pub mod threads;
 
 use crate::changes::{Check, Halt, READ_BUDGET, collect};
 use crate::gitbox::GitBox;
@@ -56,26 +57,38 @@ pub fn command_safe(name: &str) -> bool {
     chars.next().is_some_and(plain) && chars.all(|c| plain(c) || c == '-')
 }
 
+/// Whether `c` hides or reorders text, or draws nothing and can carry bytes past a reader: the soft hyphen, the
+/// combining grapheme joiner, the Arabic letter mark, the Hangul and Khmer fillers, the Mongolian selectors,
+/// zero-width and direction marks, line and paragraph separators and embeddings, word joiners and isolates, the
+/// variation selectors (but `\u{fe0f}`, which emoji need), the byte order mark, interlinear annotation marks, and
+/// every tag character.
+pub(crate) fn hides(c: char) -> bool {
+    matches!(
+        c,
+        '\u{ad}'
+            | '\u{34f}'
+            | '\u{61c}'
+            | '\u{115f}'
+            | '\u{1160}'
+            | '\u{17b4}'
+            | '\u{17b5}'
+            | '\u{180b}'..='\u{180f}'
+            | '\u{200b}'..='\u{200f}'
+            | '\u{2028}'..='\u{202e}'
+            | '\u{2060}'..='\u{206f}'
+            | '\u{3164}'
+            | '\u{fe00}'..='\u{fe0e}'
+            | '\u{feff}'
+            | '\u{ffa0}'
+            | '\u{fff9}'..='\u{fffb}'
+            | '\u{e0000}'..='\u{e0fff}'
+    )
+}
+
 /// `text` as one line of plain characters, for anything from GitHub or from git that Marshell shows: every control
-/// character, and every character that hides or reorders text (soft hyphen, Arabic letter mark, zero-width and
-/// direction marks, line and paragraph separators and embeddings, word joiners and isolates, the byte order mark,
-/// interlinear annotation marks, and the tag characters), becomes one space, and the result is cut at `max`
-/// characters (not bytes).
+/// character, and every character `hides` names, becomes one space, and the result is cut at `max` characters (not
+/// bytes).
 pub fn plain(text: &str, max: usize) -> String {
-    let hides = |c: char| {
-        matches!(
-            c,
-            '\u{ad}'
-                | '\u{61c}'
-                | '\u{200b}'..='\u{200f}'
-                | '\u{2028}'..='\u{202e}'
-                | '\u{2060}'..='\u{206f}'
-                | '\u{feff}'
-                | '\u{fff9}'..='\u{fffb}'
-                | '\u{e0001}'
-                | '\u{e0020}'..='\u{e007f}'
-        )
-    };
     text.chars()
         .take(max)
         .map(|c| if c.is_control() || hides(c) { ' ' } else { c })
@@ -727,6 +740,37 @@ mod tests {
             assert!(!valid_branch(bad), "{bad:?}");
         }
         assert!(valid_branch("user@feature"));
+    }
+
+    /// The characters that draw nothing and can carry bytes past a reader are hidden, and the emoji selector isn't.
+    #[test]
+    fn hides_names_the_characters_that_draw_nothing() {
+        for c in [
+            '\u{ad}',
+            '\u{34f}',
+            '\u{115f}',
+            '\u{1160}',
+            '\u{17b4}',
+            '\u{17b5}',
+            '\u{180b}',
+            '\u{180f}',
+            '\u{3164}',
+            '\u{fe00}',
+            '\u{fe01}',
+            '\u{fe0e}',
+            '\u{ffa0}',
+            '\u{e0000}',
+            '\u{e0100}',
+            '\u{e0fff}',
+            '\u{e0141}',
+            '\u{200d}',
+        ] {
+            assert!(hides(c), "{c:?}");
+            assert_eq!(plain(&format!("a{c}b"), 10), "a b", "{c:?}");
+        }
+        for c in ['\u{fe0f}', 'a', '\u{e9}', '\u{180a}', '\u{fe10}', '\u{e1000}'] {
+            assert!(!hides(c), "{c:?}");
+        }
     }
 
     #[test]
