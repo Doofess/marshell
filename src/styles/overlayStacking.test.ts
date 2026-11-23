@@ -43,7 +43,7 @@ describe("window-wide layer order", () => {
   });
   it("puts every dialog over the launcher, so a dialog the tray or the close button opens is the one seen and typed into", () => {
     const launcher = at("<LiveLauncher");
-    for (const dialog of ["<LivePalette", "<LiveDepartures", "<ReviewSheet", "<LiveDoctor", "<LiveSettings", "<LiveShortcuts", "<ScriptsTrustDialog", "<CloseDialog"]) {
+    for (const dialog of ["<LivePalette", "<LiveDepartures", "<ReviewSheet", "<LiveDoctor", "<LiveSettings", "<LiveShortcuts", "<ScriptsTrustDialog", "<CloseDialog", "<QuitDialog"]) {
       expect(at(dialog), dialog).toBeGreaterThan(launcher);
     }
   });

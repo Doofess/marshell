@@ -246,10 +246,44 @@ fn close_once(app: tauri::AppHandle, keep_in_tray: bool) {
     }
 }
 
+/// What a quit does first.
+enum QuitStep {
+    /// This many pushes run: the window asks whether to stop them and quit.
+    Ask(u32),
+    Go,
+}
+
+/// A running push is only ended on purpose: the person is asked first.
+fn quit_step(pushes_running: u32) -> QuitStep {
+    if pushes_running > 0 {
+        QuitStep::Ask(pushes_running)
+    } else {
+        QuitStep::Go
+    }
+}
+
+/// Every quit the person asks for comes through here: the tray's Quit, the close button when it quits, and the close
+/// dialog's fallback. While a push runs the window is shown and asks (`quit-ask`, as `close-choice` is sent); its Quit
+/// stops the pushes and then comes back here with none running. When the window can't be found or can't be told, this
+/// quits as it always did: a quit never becomes impossible.
+pub fn quit(app: &tauri::AppHandle) {
+    let running = app.try_state::<CoreHandle>().map_or(0, |core| core.0.pushes_running());
+    if let QuitStep::Ask(count) = quit_step(running)
+        && main_window(app).is_some()
+    {
+        tray::show_main(app);
+        match app.emit("quit-ask", count) {
+            Ok(()) => return,
+            Err(e) => eprintln!("Marshell: could not ask the window about quitting: {e}"),
+        }
+    }
+    quit_now(app);
+}
+
 /// Ends Marshell. The browser pages are closed first, while the event loop still runs: a page that is killed
 /// with the process loses the sign-ins of its last half minute. Before that, the "until quit" cookie rule clears
 /// what the pages stored, which can take a moment (at most three seconds).
-pub fn quit(app: &tauri::AppHandle) {
+fn quit_now(app: &tauri::AppHandle) {
     browser::before_quit(app, |app| {
         browser::close_all(app);
         app.exit(0);
@@ -572,6 +606,17 @@ mod tests {
         // Quitting while hidden must not start the next run hidden.
         assert!(!super::window_state_flags().contains(StateFlags::VISIBLE));
         assert!(super::window_state_flags().contains(StateFlags::SIZE | StateFlags::POSITION | StateFlags::MAXIMIZED));
+    }
+
+    #[test]
+    fn quit_asks_while_a_push_runs() {
+        assert!(matches!(super::quit_step(1), super::QuitStep::Ask(1)));
+        assert!(matches!(super::quit_step(3), super::QuitStep::Ask(3)));
+    }
+
+    #[test]
+    fn quit_goes_with_no_push() {
+        assert!(matches!(super::quit_step(0), super::QuitStep::Go));
     }
 
     #[test]

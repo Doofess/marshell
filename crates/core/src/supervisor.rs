@@ -81,6 +81,13 @@ impl Supervisor {
             .map(|c| server::Trusted::new(c.state.clone()))
     }
 
+    /// How many `git push` jobs the running core has going; 0 while no core runs. The shell asks before it quits.
+    pub fn pushes_running(&self) -> u32 {
+        // The supervisor's lock is let go before the count is read.
+        let github = lock(&self.current).as_ref().map(|c| c.state.github_arc());
+        github.map_or(0, |g| g.pushes_running())
+    }
+
     /// The app window lost focus: the running core stops counting it as focused, whatever the UI last said.
     pub fn window_blurred(&self) {
         if let Some(core) = lock(&self.current).as_ref() {
@@ -276,6 +283,20 @@ mod tests {
         assert!(trusted.input("none", b"x".to_vec()).is_err());
         sup.shutdown();
         assert!(sup.trusted().is_none());
+    }
+
+    #[tokio::test]
+    async fn pushes_running_is_zero_with_no_core() {
+        let (_home, sup, _events) = started().await;
+        sup.shutdown();
+        assert_eq!(sup.pushes_running(), 0);
+    }
+
+    #[tokio::test]
+    async fn pushes_running_is_zero_while_nothing_pushes() {
+        let (_home, sup, _events) = started().await;
+        assert_eq!(sup.pushes_running(), 0);
+        sup.shutdown();
     }
 
     #[tokio::test]
