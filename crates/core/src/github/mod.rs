@@ -187,6 +187,9 @@ struct Key {
     flight: Option<Flight>,
     /// (node id, number) of the pull request last reported for this branch.
     seen: Option<(String, u32)>,
+    /// The review threads last read for the pull request, and when: `None` once they are stale (`mark_stale`), which
+    /// keeps them for an action on a thread but no longer answers a read.
+    threads: Option<(Option<Instant>, threads::Read)>,
 }
 
 #[derive(Default)]
@@ -230,6 +233,7 @@ impl Inner {
             snapshot: None,
             flight: None,
             seen: None,
+            threads: None,
         });
         self.keys.len() - 1
     }
@@ -240,6 +244,7 @@ impl Inner {
         let key = &mut self.keys[at];
         key.snapshot = None;
         key.seen = None;
+        key.threads = None;
         let (checkout, branch) = (key.checkout.clone(), key.branch.clone());
         self.remove_pr_base(&checkout, &branch)
     }
@@ -249,6 +254,16 @@ impl Inner {
         self.pr_bases.retain(|(c, (b, _))| !(b == branch && same(c, checkout)));
         self.pr_bases.len() != before
     }
+}
+
+/// What the core knows of a thread it read: its first comment's id and what the sign-in may do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SeenThread {
+    pub root: u64,
+    pub resolved: bool,
+    pub can_resolve: bool,
+    pub can_unresolve: bool,
+    pub can_reply: bool,
 }
 
 /// What GitHub said, by (checkout, branch), and what the core keeps around asking it: the path of gh, the hosts it is
@@ -300,11 +315,77 @@ impl GithubState {
 
     /// After a push, a create, a merge or a pull action at `checkout`: what GitHub said for each of its branches is no
     /// longer kept, and an ask that is in flight for one brings an answer that is not kept either.
+    ///
+    /// The review threads kept for a key go stale too: they no longer answer a read (`threads_kept`), but an action
+    /// on a thread is still judged against them (`thread_seen`), so a second action doesn't wait for a new read.
     pub fn mark_stale(&self, checkout: &Path) {
         for key in self.lock().keys.iter_mut().filter(|k| same(&k.checkout, checkout)) {
             key.generation += 1;
             key.snapshot = None;
+            if let Some((at, _)) = &mut key.threads {
+                *at = None;
+            }
         }
+    }
+
+    /// The key's generation now (0 for a key that doesn't exist yet).
+    pub(crate) fn generation(&self, checkout: &Path, branch: &str) -> u64 {
+        let inner = self.lock();
+        inner
+            .position(checkout, branch)
+            .map_or(0, |at| inner.keys[at].generation)
+    }
+
+    /// Keeps `read` for the key. Not kept when the key's generation is no longer `generation`: the read began before
+    /// a `mark_stale`.
+    pub(crate) fn keep_threads(&self, checkout: &Path, branch: &str, generation: u64, read: threads::Read) {
+        let mut inner = self.lock();
+        let at = inner.key(checkout, branch);
+        if inner.keys[at].generation == generation {
+            inner.keys[at].threads = Some((Some(Instant::now()), read));
+        }
+    }
+
+    /// The threads kept for the pull request with node id `pull` and `number`, when they are fresh: read under
+    /// `FRESH_GAP` ago and not marked stale since.
+    pub(crate) fn threads_kept(
+        &self,
+        checkout: &Path,
+        branch: &str,
+        pull: &str,
+        number: u32,
+    ) -> Option<marshell_protocol::api::PullThreads> {
+        let inner = self.lock();
+        let at = inner.position(checkout, branch)?;
+        let (read_at, read) = inner.keys[at].threads.as_ref()?;
+        let fresh = read_at.is_some_and(|t| t.elapsed() < FRESH_GAP);
+        (fresh && read.pull_id == pull && read.threads.number == number).then(|| read.threads.clone())
+    }
+
+    /// The thread `id` of that pull request, from the threads kept, fresh or stale.
+    pub(crate) fn thread_seen(
+        &self,
+        checkout: &Path,
+        branch: &str,
+        pull: &str,
+        number: u32,
+        id: &str,
+    ) -> Option<SeenThread> {
+        let inner = self.lock();
+        let at = inner.position(checkout, branch)?;
+        let (_, read) = inner.keys[at].threads.as_ref()?;
+        if read.pull_id != pull || read.threads.number != number {
+            return None;
+        }
+        let root = read.roots.iter().find(|(thread, _)| thread == id)?.1;
+        let thread = read.threads.threads.iter().find(|t| t.id == id)?;
+        Some(SeenThread {
+            root,
+            resolved: thread.resolved,
+            can_resolve: thread.can_resolve,
+            can_unresolve: thread.can_unresolve,
+            can_reply: thread.can_reply,
+        })
     }
 
     /// (node id, number) of the pull request last reported for `branch` at `checkout`.
@@ -722,6 +803,139 @@ mod tests {
             matches!(state.take(checkout, "b", true), Take::Lead(_)),
             "the key is free"
         );
+    }
+
+    /// A read of pull request `pull` (#`number`) with the threads `T1` (can resolve and reply, first comment 11) and
+    /// `T2` (resolved, can unresolve, first comment 22).
+    fn read_of_pull(pull: &str, number: u32) -> threads::Read {
+        use marshell_protocol::api::{CommentSide, PullThreads, ReviewThread};
+        let thread = |id: &str, resolved: bool| ReviewThread {
+            id: id.to_string(),
+            path: "a.txt".to_string(),
+            side: CommentSide::New,
+            file: false,
+            start: Some(1),
+            end: Some(1),
+            original_start: Some(1),
+            original_end: Some(1),
+            resolved,
+            outdated: false,
+            can_resolve: !resolved,
+            can_unresolve: resolved,
+            can_reply: !resolved,
+            rows: Vec::new(),
+            comments: Vec::new(),
+            more_comments: 0,
+            minimized: 0,
+        };
+        threads::Read {
+            threads: PullThreads {
+                number,
+                viewer: "octocat".to_string(),
+                threads: vec![thread("T1", false), thread("T2", true)],
+                more_threads: 0,
+                notes: Vec::new(),
+                more_notes: false,
+            },
+            pull_id: pull.to_string(),
+            roots: vec![("T1".to_string(), 11), ("T2".to_string(), 22)],
+        }
+    }
+
+    #[test]
+    fn kept_threads_answer_only_for_their_pull_request() {
+        let state = GithubState::default();
+        let checkout = Path::new("/r");
+        assert_eq!(state.generation(checkout, "b"), 0);
+        state.keep_threads(checkout, "b", 0, read_of_pull("PR_a", 7));
+        let kept = state.threads_kept(checkout, "b", "PR_a", 7).expect("kept");
+        assert_eq!(kept.number, 7);
+        assert_eq!(kept.threads.len(), 2);
+        assert!(state.threads_kept(checkout, "b", "PR_a", 8).is_none());
+        assert!(state.threads_kept(checkout, "b", "PR_b", 7).is_none());
+        assert!(state.threads_kept(checkout, "other", "PR_a", 7).is_none());
+        assert!(state.threads_kept(Path::new("/elsewhere"), "b", "PR_a", 7).is_none());
+
+        let seen = state.thread_seen(checkout, "b", "PR_a", 7, "T1").expect("seen");
+        assert_eq!(
+            seen,
+            SeenThread {
+                root: 11,
+                resolved: false,
+                can_resolve: true,
+                can_unresolve: false,
+                can_reply: true
+            }
+        );
+        let seen = state.thread_seen(checkout, "b", "PR_a", 7, "T2").expect("seen");
+        assert!(seen.resolved && !seen.can_resolve && seen.can_unresolve && !seen.can_reply);
+        assert_eq!(seen.root, 22);
+        assert!(state.thread_seen(checkout, "b", "PR_a", 7, "T3").is_none());
+        assert!(state.thread_seen(checkout, "b", "PR_a", 8, "T1").is_none());
+        assert!(state.thread_seen(checkout, "b", "PR_b", 7, "T1").is_none());
+        assert!(state.thread_seen(checkout, "other", "PR_a", 7, "T1").is_none());
+
+        // A read of another pull request replaces it.
+        state.keep_threads(checkout, "b", 0, read_of_pull("PR_b", 9));
+        assert!(state.threads_kept(checkout, "b", "PR_a", 7).is_none());
+        assert!(state.thread_seen(checkout, "b", "PR_a", 7, "T1").is_none());
+        assert!(state.threads_kept(checkout, "b", "PR_b", 9).is_some());
+    }
+
+    #[test]
+    fn kept_threads_are_fresh_for_the_gap_only() {
+        let state = GithubState::default();
+        let checkout = Path::new("/r");
+        state.keep_threads(checkout, "b", 0, read_of_pull("PR_a", 7));
+        {
+            let mut inner = state.lock();
+            let at = inner.position(checkout, "b").unwrap();
+            let old = Instant::now().checked_sub(FRESH_GAP + Duration::from_millis(100));
+            let Some(old) = old else { return };
+            inner.keys[at].threads.as_mut().unwrap().0 = Some(old);
+        }
+        assert!(state.threads_kept(checkout, "b", "PR_a", 7).is_none());
+        assert!(state.thread_seen(checkout, "b", "PR_a", 7, "T1").is_some());
+    }
+
+    #[test]
+    fn mark_stale_keeps_the_threads_for_actions_only() {
+        let state = GithubState::default();
+        let checkout = Path::new("/r");
+        state.note_pull(checkout, "b", Some(("PR_a".to_string(), 7)), None);
+        state.keep_threads(checkout, "b", 0, read_of_pull("PR_a", 7));
+        state.mark_stale(checkout);
+        assert!(state.threads_kept(checkout, "b", "PR_a", 7).is_none());
+        assert!(state.thread_seen(checkout, "b", "PR_a", 7, "T1").is_some());
+        // The pull request the core saw stands.
+        assert_eq!(state.pull_seen(checkout, "b"), Some(("PR_a".to_string(), 7)));
+        // A read after it is kept again, and fresh.
+        let generation = state.generation(checkout, "b");
+        assert_eq!(generation, 1);
+        state.keep_threads(checkout, "b", generation, read_of_pull("PR_a", 7));
+        assert!(state.threads_kept(checkout, "b", "PR_a", 7).is_some());
+
+        // When what GitHub said for the key is dropped, the threads go with it.
+        state.mark_stale(checkout);
+        {
+            let mut inner = state.lock();
+            let at = inner.position(checkout, "b").unwrap();
+            inner.drop_snapshot(at);
+        }
+        assert!(state.threads_kept(checkout, "b", "PR_a", 7).is_none());
+        assert!(state.thread_seen(checkout, "b", "PR_a", 7, "T1").is_none());
+    }
+
+    #[test]
+    fn threads_read_before_a_mark_stale_are_not_kept() {
+        let state = GithubState::default();
+        let checkout = Path::new("/r");
+        state.note_pull(checkout, "b", Some(("PR_a".to_string(), 7)), None);
+        let before = state.generation(checkout, "b");
+        state.mark_stale(checkout);
+        state.keep_threads(checkout, "b", before, read_of_pull("PR_a", 7));
+        assert!(state.threads_kept(checkout, "b", "PR_a", 7).is_none());
+        assert!(state.thread_seen(checkout, "b", "PR_a", 7, "T1").is_none());
     }
 
     #[test]

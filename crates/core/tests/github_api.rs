@@ -2592,3 +2592,525 @@ async fn ask_types_one_line_whatever_the_check_is_called() {
     );
     assert_eq!(common::typed(&log, text.len() + 1).await, text.as_bytes());
 }
+// ---- Review threads: reading them and acting on one -------------------------------------------------------------
+//
+// A threads read and a mutation are both `graphql --input` for the fake gh, which matches on arguments only: a
+// mutation's entry carries `"call": n` (the n-th such call) and sits before the threads entry, which answers the rest.
+
+const THREADS: &str = include_str!("fixtures/github/threads.json");
+const NOT_THIS_THREAD: &str = "That comment isn't on this pull request any more. Look again.";
+
+fn threads_entry() -> Value {
+    json!({"match": ["graphql", "--input"], "exit": 0, "json": serde_json::from_str::<Value>(THREADS).unwrap()})
+}
+
+/// The entry that answers the `n`-th `graphql --input` call (a mutation) as GitHub does for a thread that is gone.
+fn mutation_gone(n: u64) -> Value {
+    json!({"match": ["graphql", "--input"], "call": n, "exit": 1,
+        "stdout": r#"{"message":"Not Found"}"#, "stderr": "gh: Not Found (HTTP 404)\n"})
+}
+
+/// The entry that answers the `n`-th `graphql --input` call (a mutation).
+fn mutation_ok(n: u64) -> Value {
+    json!({"match": ["graphql", "--input"], "call": n, "exit": 0, "stdout": GRAPHQL_OK})
+}
+
+fn threads_request(rig: &Rig) -> Value {
+    json!({"checkout": rig.checkout(), "id": PULL_ID, "number": 7})
+}
+
+fn thread_request(rig: &Rig, thread: &str, action: &str, body: Value) -> Value {
+    json!({"checkout": rig.checkout(), "id": PULL_ID, "number": 7, "thread": thread, "action": action, "body": body})
+}
+
+async fn post(app: &axum::Router, tab: &str, path: &str, body: Value) -> (StatusCode, Value) {
+    call(app, "POST", &format!("/v1/sessions/{tab}/github/{path}"), Some(body)).await
+}
+
+/// The rig's script with `mine` before the threads entry; a router whose bar has shown pull request #7.
+async fn threads_seen(rig: &Rig, mine: Vec<Value>) -> (axum::Router, String) {
+    let mut entries = mine;
+    entries.push(threads_entry());
+    script_with(rig, Value::Array(entries));
+    seen(rig).await
+}
+
+#[tokio::test]
+async fn threads_are_refused_without_the_bearer() {
+    let scratch = Scratch::new("https://github.com/octo-org/widgets.git");
+    let (app, tab) = open(&state_with_gh(&scratch), &scratch).await;
+    let body = json!({"checkout": "x", "id": PULL_ID, "number": 7});
+    let res = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            &format!("/v1/sessions/{tab}/github/threads"),
+            Some(body),
+            false,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    assert!(!scratch.home().join("gh").join("calls.jsonl").exists());
+}
+
+#[tokio::test]
+async fn a_thread_action_is_refused_without_the_bearer() {
+    let scratch = Scratch::new("https://github.com/octo-org/widgets.git");
+    let (app, tab) = open(&state_with_gh(&scratch), &scratch).await;
+    let body =
+        json!({"checkout": "x", "id": PULL_ID, "number": 7, "thread": "PRRT_one", "action": "resolve", "body": null});
+    let res = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            &format!("/v1/sessions/{tab}/github/thread"),
+            Some(body),
+            false,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    assert!(!scratch.home().join("gh").join("calls.jsonl").exists());
+}
+
+#[tokio::test]
+async fn threads_answer_for_the_pull_request_the_bar_saw() {
+    let rig = Rig::new();
+    let (app, tab) = threads_seen(&rig, Vec::new()).await;
+    let (status, body) = post(&app, &tab, "threads", threads_request(&rig)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["threads"].as_array().unwrap().len(), 4, "{body}");
+    assert_eq!(body["notes"].as_array().unwrap().len(), 5, "{body}");
+    assert_eq!(body["viewer"], "octocat");
+    assert_eq!(body["number"], 7);
+    let writes = rig.scratch.writes();
+    let (args, sent) = writes.last().unwrap();
+    assert_eq!(
+        *args,
+        strs(&["api", "--hostname", "github.com", "graphql", "--input", "-"])
+    );
+    assert_eq!(
+        sent["variables"],
+        json!({"o": "octo-org", "n": "widgets", "num": 7}),
+        "{sent}"
+    );
+}
+
+#[tokio::test]
+async fn threads_before_the_bar_has_answered_are_refused() {
+    let rig = Rig::new();
+    script_with(&rig, json!([threads_entry()]));
+    let (app, tab) = open(&rig.state(), &rig.scratch).await;
+    let (status, body) = post(&app, &tab, "threads", threads_request(&rig)).await;
+    assert_eq!((status, &body["reason"]), (StatusCode::CONFLICT, &json!(NOT_THIS_PULL)));
+    assert!(rig.scratch.calls().is_empty(), "{:?}", rig.scratch.calls());
+}
+
+#[tokio::test]
+async fn threads_for_another_pull_request_are_refused() {
+    let rig = Rig::new();
+    let (app, tab) = threads_seen(&rig, Vec::new()).await;
+    let mut body = threads_request(&rig);
+    body["number"] = json!(8);
+    let (status, answer) = post(&app, &tab, "threads", body).await;
+    assert_eq!(
+        (status, &answer["reason"]),
+        (StatusCode::CONFLICT, &json!(NOT_THIS_PULL))
+    );
+    assert!(rig.scratch.writes().is_empty());
+
+    // GitHub answers with another pull request's id than the one the bar showed.
+    let mut other: Value = serde_json::from_str(THREADS).unwrap();
+    other["data"]["repository"]["pullRequest"]["id"] = json!("PR_other");
+    let rig = Rig::new();
+    script_with(
+        &rig,
+        json!([{"match": ["graphql", "--input"], "exit": 0, "json": other}]),
+    );
+    let (app, tab) = seen(&rig).await;
+    let (status, answer) = post(&app, &tab, "threads", threads_request(&rig)).await;
+    assert_eq!(
+        (status, &answer["reason"]),
+        (StatusCode::CONFLICT, &json!(NOT_THIS_PULL))
+    );
+    // It was not kept: an action on one of its threads is refused too.
+    let (status, answer) = post(
+        &app,
+        &tab,
+        "thread",
+        thread_request(&rig, "PRRT_one", "resolve", Value::Null),
+    )
+    .await;
+    assert_eq!(
+        (status, &answer["reason"]),
+        (StatusCode::CONFLICT, &json!(NOT_THIS_THREAD))
+    );
+}
+
+#[tokio::test]
+async fn a_second_threads_read_within_3_s_uses_the_kept_one() {
+    let rig = Rig::new();
+    let (app, tab) = threads_seen(&rig, Vec::new()).await;
+    let (first_status, first) = post(&app, &tab, "threads", threads_request(&rig)).await;
+    let (second_status, second) = post(&app, &tab, "threads", threads_request(&rig)).await;
+    assert_eq!((first_status, second_status), (StatusCode::OK, StatusCode::OK));
+    assert_eq!(first, second);
+    assert_eq!(rig.scratch.writes().len(), 1, "{:?}", rig.scratch.calls());
+}
+
+#[tokio::test]
+async fn threads_say_why_github_gave_none() {
+    let rig = Rig::new();
+    script_with(
+        &rig,
+        json!([{"match": ["graphql", "--input"], "exit": 1, "stdout": r#"{"message":"Not Found"}"#,
+            "stderr": "gh: Not Found (HTTP 404)\n"}]),
+    );
+    let (app, tab) = seen(&rig).await;
+    let (status, body) = post(&app, &tab, "threads", threads_request(&rig)).await;
+    assert_eq!(
+        (status, &body["reason"]),
+        (
+            StatusCode::CONFLICT,
+            &json!("GitHub has no repository octo-org/widgets that this sign-in can see.")
+        )
+    );
+    script_with(
+        &rig,
+        json!([{"match": ["graphql", "--input"], "exit": 4, "stderr": "gh: To get started, run: gh auth login\n"}]),
+    );
+    let (status, body) = post(&app, &tab, "threads", threads_request(&rig)).await;
+    assert_eq!(
+        (status, &body["reason"]),
+        (StatusCode::SERVICE_UNAVAILABLE, &json!(NEED_SIGN_IN))
+    );
+}
+
+#[tokio::test]
+async fn resolve_sends_the_mutation_and_the_next_read_asks_again() {
+    let rig = Rig::new();
+    let (app, tab) = threads_seen(&rig, vec![mutation_ok(2)]).await;
+    let (status, _) = post(&app, &tab, "threads", threads_request(&rig)).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, body) = post(
+        &app,
+        &tab,
+        "thread",
+        thread_request(&rig, "PRRT_one", "resolve", Value::Null),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let writes = rig.scratch.writes();
+    assert_eq!(writes.len(), 2, "{writes:?}");
+    let (args, sent) = &writes[1];
+    assert_eq!(
+        *args,
+        strs(&["api", "--hostname", "github.com", "graphql", "--input", "-"])
+    );
+    let query = sent["query"].as_str().unwrap();
+    assert!(
+        query.starts_with("mutation(") && query.contains("resolveReviewThread"),
+        "{query}"
+    );
+    assert!(!query.contains("PRRT"), "{query}");
+    assert_eq!(sent["variables"], json!({"id": "PRRT_one"}));
+    let (status, body) = post(&app, &tab, "threads", threads_request(&rig)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(rig.scratch.writes().len(), 3, "a new read: {:?}", rig.scratch.calls());
+}
+
+#[tokio::test]
+async fn a_second_action_before_the_next_read_is_taken() {
+    let rig = Rig::new();
+    let reply = json!({"match": ["pulls/7/comments/4671541711/replies", "--input"], "exit": 0,
+        "stdout": r#"{"id":4671541711}"#});
+    let (app, tab) = threads_seen(&rig, vec![mutation_ok(2), reply]).await;
+    let (status, _) = post(&app, &tab, "threads", threads_request(&rig)).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, body) = post(
+        &app,
+        &tab,
+        "thread",
+        thread_request(&rig, "PRRT_one", "resolve", Value::Null),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let (status, body) = post(
+        &app,
+        &tab,
+        "thread",
+        thread_request(&rig, "PRRT_three", "reply", json!("Done.")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(rig.scratch.writes().len(), 3, "{:?}", rig.scratch.calls());
+}
+
+#[tokio::test]
+async fn a_thread_deleted_on_github_reads_as_gone() {
+    let rig = Rig::new();
+    let (app, tab) = threads_seen(&rig, vec![mutation_gone(2)]).await;
+    post(&app, &tab, "threads", threads_request(&rig)).await;
+    let (status, body) = post(
+        &app,
+        &tab,
+        "thread",
+        thread_request(&rig, "PRRT_one", "resolve", Value::Null),
+    )
+    .await;
+    assert_eq!(
+        (status, &body["reason"]),
+        (StatusCode::CONFLICT, &json!(NOT_THIS_THREAD)),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn unresolve_needs_githubs_permission() {
+    let rig = Rig::new();
+    let (app, tab) = threads_seen(&rig, vec![mutation_ok(2)]).await;
+    post(&app, &tab, "threads", threads_request(&rig)).await;
+    let (status, body) = post(
+        &app,
+        &tab,
+        "thread",
+        thread_request(&rig, "PRRT_one", "unresolve", Value::Null),
+    )
+    .await;
+    assert_eq!(
+        (status, &body["reason"]),
+        (
+            StatusCode::CONFLICT,
+            &json!("GitHub doesn't let this sign-in unresolve this thread.")
+        ),
+        "{body}"
+    );
+    assert_eq!(rig.scratch.writes().len(), 1, "no call: {:?}", rig.scratch.calls());
+    let (status, body) = post(
+        &app,
+        &tab,
+        "thread",
+        thread_request(&rig, "PRRT_four", "unresolve", Value::Null),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let writes = rig.scratch.writes();
+    assert!(
+        writes[1].1["query"].as_str().unwrap().contains("unresolveReviewThread"),
+        "{writes:?}"
+    );
+    assert_eq!(writes[1].1["variables"], json!({"id": "PRRT_four"}));
+}
+
+#[tokio::test]
+async fn resolve_and_reply_need_githubs_permission_too() {
+    let rig = Rig::new();
+    let (app, tab) = threads_seen(&rig, Vec::new()).await;
+    post(&app, &tab, "threads", threads_request(&rig)).await;
+    // PRRT_four is resolved: GitHub lets this sign-in neither resolve it again nor reply to it.
+    for (action, text, sentence) in [
+        (
+            "resolve",
+            Value::Null,
+            "GitHub doesn't let this sign-in resolve this thread.",
+        ),
+        (
+            "reply",
+            json!("Thanks."),
+            "GitHub doesn't let this sign-in reply to this thread.",
+        ),
+    ] {
+        let (status, answer) = post(&app, &tab, "thread", thread_request(&rig, "PRRT_four", action, text)).await;
+        assert_eq!(
+            (status, &answer["reason"]),
+            (StatusCode::CONFLICT, &json!(sentence)),
+            "{action}"
+        );
+    }
+    assert_eq!(rig.scratch.writes().len(), 1, "no call: {:?}", rig.scratch.calls());
+}
+
+#[tokio::test]
+async fn a_reply_posts_under_the_threads_first_comment() {
+    let rig = Rig::new();
+    let reply = json!({"match": ["pulls/7/comments/4671541208/replies", "--input"], "exit": 0,
+        "stdout": r#"{"id":4671541208}"#});
+    let (app, tab) = threads_seen(&rig, vec![reply]).await;
+    post(&app, &tab, "threads", threads_request(&rig)).await;
+    let (status, body) = post(
+        &app,
+        &tab,
+        "thread",
+        thread_request(&rig, "PRRT_one", "reply", json!("Thanks.")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let writes = rig.scratch.writes();
+    assert_eq!(writes.len(), 2, "{writes:?}");
+    assert_eq!(
+        writes[1].0,
+        strs(&[
+            "api",
+            "--hostname",
+            "github.com",
+            "-X",
+            "POST",
+            "repos/octo-org/widgets/pulls/7/comments/4671541208/replies",
+            "--input",
+            "-"
+        ])
+    );
+    assert_eq!(writes[1].1, json!({"body": "Thanks."}));
+}
+
+#[tokio::test]
+async fn a_reply_with_a_review_in_progress_says_so() {
+    let rig = Rig::new();
+    let reply = json!({"match": ["pulls/7/comments/4671541208/replies", "--input"], "exit": 1,
+        "stdout": r#"{"message":"Validation Failed","errors":[{"resource":"PullRequestReviewComment","code":"custom","field":"user_id","message":"user_id can only have one pending review per pull request"}]}"#,
+        "stderr": "gh: Validation Failed (HTTP 422)\n"});
+    let (app, tab) = threads_seen(&rig, vec![reply]).await;
+    post(&app, &tab, "threads", threads_request(&rig)).await;
+    let (status, body) = post(
+        &app,
+        &tab,
+        "thread",
+        thread_request(&rig, "PRRT_one", "reply", json!("Thanks.")),
+    )
+    .await;
+    assert_eq!(
+        (status, &body["reason"]),
+        (
+            StatusCode::CONFLICT,
+            &json!("You have a review in progress on #7. Submit or discard it on GitHub, then reply.")
+        ),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn a_thread_the_core_never_read_is_refused() {
+    let rig = Rig::new();
+    let (app, tab) = threads_seen(&rig, vec![mutation_ok(2)]).await;
+    post(&app, &tab, "threads", threads_request(&rig)).await;
+    let (status, body) = post(
+        &app,
+        &tab,
+        "thread",
+        thread_request(&rig, "PRRT_nope", "resolve", Value::Null),
+    )
+    .await;
+    assert_eq!(
+        (status, &body["reason"]),
+        (StatusCode::CONFLICT, &json!(NOT_THIS_THREAD)),
+        "{body}"
+    );
+    assert_eq!(rig.scratch.writes().len(), 1, "no call: {:?}", rig.scratch.calls());
+
+    // No read at all: every action is refused.
+    let rig = Rig::new();
+    let (app, tab) = threads_seen(&rig, vec![mutation_ok(1)]).await;
+    for action in [
+        thread_request(&rig, "PRRT_one", "resolve", Value::Null),
+        thread_request(&rig, "PRRT_one", "reply", json!("Thanks.")),
+    ] {
+        let (status, body) = post(&app, &tab, "thread", action).await;
+        assert_eq!(
+            (status, &body["reason"]),
+            (StatusCode::CONFLICT, &json!(NOT_THIS_THREAD)),
+            "{body}"
+        );
+    }
+    assert!(rig.scratch.writes().is_empty(), "{:?}", rig.scratch.calls());
+}
+
+#[tokio::test]
+async fn a_thread_action_for_another_pull_request_is_refused() {
+    let rig = Rig::new();
+    let (app, tab) = threads_seen(&rig, vec![mutation_ok(2)]).await;
+    post(&app, &tab, "threads", threads_request(&rig)).await;
+    let mut body = thread_request(&rig, "PRRT_one", "resolve", Value::Null);
+    body["number"] = json!(8);
+    let (status, answer) = post(&app, &tab, "thread", body).await;
+    assert_eq!(
+        (status, &answer["reason"]),
+        (StatusCode::CONFLICT, &json!(NOT_THIS_PULL))
+    );
+    let mut body = thread_request(&rig, "PRRT_one", "resolve", Value::Null);
+    body["id"] = json!("PR_kwDOZZZZZZ");
+    let (status, answer) = post(&app, &tab, "thread", body).await;
+    assert_eq!(
+        (status, &answer["reason"]),
+        (StatusCode::CONFLICT, &json!(NOT_THIS_PULL))
+    );
+    let mut body = thread_request(&rig, "PRRT_one", "resolve", Value::Null);
+    body["checkout"] = json!(rig.scratch.root.join("elsewhere").to_string_lossy());
+    let (status, answer) = post(&app, &tab, "thread", body).await;
+    assert_eq!(
+        (status, &answer["reason"]),
+        (StatusCode::CONFLICT, &json!(MOVED_FOLDER))
+    );
+    assert_eq!(rig.scratch.writes().len(), 1, "no call: {:?}", rig.scratch.calls());
+}
+
+#[tokio::test]
+async fn a_blank_reply_is_malformed() {
+    let rig = Rig::new();
+    let (app, tab) = threads_seen(&rig, Vec::new()).await;
+    post(&app, &tab, "threads", threads_request(&rig)).await;
+    for text in [json!(" \n"), json!(""), json!("a\u{7}b"), Value::Null] {
+        let (status, body) = post(
+            &app,
+            &tab,
+            "thread",
+            thread_request(&rig, "PRRT_one", "reply", text.clone()),
+        )
+        .await;
+        assert_eq!(
+            (status, &body),
+            (
+                StatusCode::BAD_REQUEST,
+                &json!("A reply takes 1 to 65,536 characters of text.")
+            ),
+            "{text}"
+        );
+    }
+    let (status, body) = post(
+        &app,
+        &tab,
+        "thread",
+        thread_request(&rig, "PRRT_one", "resolve", json!("text")),
+    )
+    .await;
+    assert_eq!(
+        (status, &body),
+        (StatusCode::BAD_REQUEST, &json!("Only a reply carries text."))
+    );
+    assert_eq!(rig.scratch.writes().len(), 1, "no call: {:?}", rig.scratch.calls());
+}
+
+#[tokio::test]
+async fn threads_run_no_gh_with_pull_requests_switched_off() {
+    let rig = Rig::new();
+    script_with(&rig, json!([threads_entry()]));
+    let (app, tab) = open(&rig.state(), &rig.scratch).await;
+    let (_, mut settings) = call(&app, "GET", "/v1/settings", None).await;
+    settings["changes"]["pull_requests"] = json!(false);
+    assert_eq!(
+        call(&app, "PUT", "/v1/settings", Some(settings)).await.0,
+        StatusCode::OK
+    );
+    let off = "Pull requests from GitHub are switched off in Settings.";
+    let (status, body) = post(&app, &tab, "threads", threads_request(&rig)).await;
+    assert_eq!((status, &body["reason"]), (StatusCode::CONFLICT, &json!(off)), "{body}");
+    let (status, body) = post(
+        &app,
+        &tab,
+        "thread",
+        thread_request(&rig, "PRRT_one", "resolve", Value::Null),
+    )
+    .await;
+    assert_eq!((status, &body["reason"]), (StatusCode::CONFLICT, &json!(off)), "{body}");
+    assert!(rig.scratch.calls().is_empty(), "{:?}", rig.scratch.calls());
+}

@@ -11,7 +11,10 @@ use super::plan::{BODY_MAX, TITLE_MAX};
 use super::remote::RemoteRepo;
 use super::{plain, valid_branch};
 use crate::gitbox::refs::Oid;
-use marshell_protocol::api::{CreatePull, CreatedPull, MergeMethod, PullAction, PullActionKind, PullMergeRequest};
+use marshell_protocol::api::{
+    CreatePull, CreatedPull, MergeMethod, PullAction, PullActionKind, PullMergeRequest, ThreadAction, ThreadActionKind,
+    ThreadsRequest,
+};
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -32,6 +35,16 @@ const CONVERT_TO_DRAFT: &str =
     "mutation($id:ID!){convertPullRequestToDraft(input:{pullRequestId:$id}){clientMutationId}}";
 const DISABLE_AUTO_MERGE: &str =
     "mutation($id:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$id}){clientMutationId}}";
+const RESOLVE_THREAD: &str = "mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){clientMutationId}}";
+const UNRESOLVE_THREAD: &str = "mutation($id:ID!){unresolveReviewThread(input:{threadId:$id}){clientMutationId}}";
+
+/// The most characters of a reply.
+pub const REPLY_MAX: usize = 65_536;
+/// The thread, or its first comment, was deleted on GitHub (or the core never read it).
+pub const NOT_THIS_THREAD: &str = "That comment isn't on this pull request any more. Look again.";
+/// A reply that took too long: GitHub may have taken it.
+const REPLY_UNSURE: &str =
+    "GitHub took too long to answer. The reply may be posted: look at the thread before you send it again.";
 
 /// Why a write didn't happen, once it was asked for.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,8 +123,47 @@ pub fn check_pull(req: &PullAction) -> Option<&'static str> {
     None
 }
 
+/// The sentence for a threads request that is malformed, or `None` when it is fine.
+pub fn check_threads(req: &ThreadsRequest) -> Option<&'static str> {
+    pull_sentence(&req.id, req.number)
+}
+
+fn pull_sentence(id: &str, number: u32) -> Option<&'static str> {
+    if !valid_node_id(id) {
+        return Some("That isn't a pull request id.");
+    }
+    if number < 1 {
+        return Some("That isn't a pull request number.");
+    }
+    None
+}
+
+/// The sentence for a thread action that is malformed, or `None` when it is fine. A reply takes 1 to `REPLY_MAX`
+/// characters that aren't only whitespace and hold no control character but a line break and a tab; the other two
+/// carry no text.
+pub fn check_thread(req: &ThreadAction) -> Option<&'static str> {
+    if let Some(sentence) = pull_sentence(&req.id, req.number) {
+        return Some(sentence);
+    }
+    if !valid_node_id(&req.thread) {
+        return Some("That isn't a comment thread id.");
+    }
+    match (req.action, req.body.as_deref()) {
+        (ThreadActionKind::Reply, Some(body)) => {
+            let length = body.chars().count();
+            if length == 0 || length > REPLY_MAX || body.trim().is_empty() || !plain_body(body) {
+                return Some("A reply takes 1 to 65,536 characters of text.");
+            }
+            None
+        }
+        (ThreadActionKind::Reply, None) => Some("A reply takes 1 to 65,536 characters of text."),
+        (_, Some(_)) => Some("Only a reply carries text."),
+        (_, None) => None,
+    }
+}
+
 /// What a failed gh call is to the caller: GitHub's own sentence for a refusal, or one of Marshell's.
-fn rejection(error: GhError, repo: &RemoteRepo) -> Rejection {
+pub(crate) fn rejection(error: GhError, repo: &RemoteRepo) -> Rejection {
     match error {
         GhError::Missing => Rejection::NoGh,
         GhError::SignedOut => Rejection::Unavailable(NEED_SIGN_IN.to_string()),
@@ -161,10 +213,13 @@ fn mutate(
     query: &str,
     variables: Value,
 ) -> Result<(), Rejection> {
+    graphql(gh, home, host, query, variables).map_err(|e| rejection(e, repo))
+}
+
+/// One GraphQL mutation with its values as variables, with gh's own failure.
+fn graphql(gh: &Path, home: &Path, host: &str, query: &str, variables: Value) -> Result<(), GhError> {
     let body = json!({ "query": query, "variables": variables });
-    gh::api(gh, home, host, &["graphql"], Some(&body))
-        .map(|_| ())
-        .map_err(|e| rejection(e, repo))
+    gh::api(gh, home, host, &["graphql"], Some(&body)).map(|_| ())
 }
 
 /// Opens a pull request from `req.branch` (the checkout's own branch, in this repository) into `req.base`. The
@@ -228,6 +283,55 @@ pub fn pull_action(gh: &Path, home: &Path, host: &str, repo: &RemoteRepo, req: &
         PullActionKind::CancelAutoMerge => DISABLE_AUTO_MERGE,
     };
     mutate(gh, home, host, repo, query, json!({ "id": req.id }))
+}
+
+/// The sentence for a reply refused because the sign-in has a review in progress on the pull request.
+fn pending_review(number: u32) -> String {
+    format!("You have a review in progress on #{number}. Submit or discard it on GitHub, then reply.")
+}
+
+/// What a failed thread action tells the user: its own sentences for a review in progress, a thread GitHub no longer
+/// has and a reply that timed out; `rejection` for the rest.
+fn thread_rejection(error: GhError, repo: &RemoteRepo, number: u32, action: ThreadActionKind) -> Rejection {
+    match error {
+        GhError::NotFound => Rejection::Refused(NOT_THIS_THREAD.to_string()),
+        GhError::Refused {
+            status: Some(422),
+            ref message,
+        } if action == ThreadActionKind::Reply && message.contains("pending review") => {
+            Rejection::Refused(pending_review(number))
+        }
+        GhError::TooLong if action == ThreadActionKind::Reply => Rejection::Unavailable(REPLY_UNSURE.to_string()),
+        other => rejection(other, repo),
+    }
+}
+
+/// Resolves or unresolves the thread `req.thread`, or replies under its first comment `root`. The thread and `root`
+/// are the core's own reading (`GithubState::thread_seen`), and the request is already checked (`check_thread`) and
+/// compared with the pull request the core saw. The thread id travels as a GraphQL variable, the reply's text only as
+/// the body on standard input, and the reply's path is written from the repository, the number and `root`.
+pub fn thread_action(
+    gh: &Path,
+    home: &Path,
+    host: &str,
+    repo: &RemoteRepo,
+    req: &ThreadAction,
+    root: u64,
+) -> Result<(), Rejection> {
+    let done = match req.action {
+        ThreadActionKind::Resolve => graphql(gh, home, host, RESOLVE_THREAD, json!({ "id": req.thread })),
+        ThreadActionKind::Unresolve => graphql(gh, home, host, UNRESOLVE_THREAD, json!({ "id": req.thread })),
+        ThreadActionKind::Reply => {
+            let Some(text) = req.body.as_deref() else {
+                return Err(Rejection::Refused(
+                    "A reply takes 1 to 65,536 characters of text.".to_string(),
+                ));
+            };
+            let path = format!("{}/{}/comments/{root}/replies", pulls_path(repo), req.number);
+            gh::api(gh, home, host, &["-X", "POST", &path], Some(&json!({ "body": text }))).map(|_| ())
+        }
+    };
+    done.map_err(|e| thread_rejection(e, repo, req.number, req.action))
 }
 
 #[cfg(test)]
@@ -312,5 +416,159 @@ mod tests {
             assert!(!text.contains('"'), "{text}");
         }
         assert_eq!(pulls_path(&widgets()), "repos/octo-org/widgets/pulls");
+    }
+
+    fn thread_req(action: ThreadActionKind, body: Option<&str>) -> ThreadAction {
+        ThreadAction {
+            checkout: "/r".to_string(),
+            id: "PR_kwDOAAAAAA".to_string(),
+            number: 7,
+            thread: "PRRT_one".to_string(),
+            action,
+            body: body.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn check_thread_reads_as_the_brief_says() {
+        use ThreadActionKind::{Reply, Resolve, Unresolve};
+        let reply_sentence = "A reply takes 1 to 65,536 characters of text.";
+        assert_eq!(check_thread(&thread_req(Resolve, None)), None);
+        assert_eq!(check_thread(&thread_req(Unresolve, None)), None);
+        assert_eq!(check_thread(&thread_req(Reply, Some("Thanks."))), None);
+        assert_eq!(check_thread(&thread_req(Reply, Some("a\r\n\tb\n"))), None);
+
+        let mut req = thread_req(Resolve, None);
+        req.id = "PR x".to_string();
+        assert_eq!(check_thread(&req), Some("That isn't a pull request id."));
+        let mut req = thread_req(Resolve, None);
+        req.number = 0;
+        assert_eq!(check_thread(&req), Some("That isn't a pull request number."));
+        for bad in ["", "PRRT x", "PRRT\"x", "PRRT_\u{e9}", &"A".repeat(101)] {
+            let mut req = thread_req(Resolve, None);
+            req.thread = bad.to_string();
+            assert_eq!(check_thread(&req), Some("That isn't a comment thread id."), "{bad:?}");
+        }
+
+        // The reply's text: 1 to REPLY_MAX characters (not bytes), not only whitespace, no control character.
+        assert_eq!(REPLY_MAX, 65_536);
+        assert_eq!(check_thread(&thread_req(Reply, Some(&"a".repeat(65_536)))), None);
+        assert_eq!(check_thread(&thread_req(Reply, Some(&"\u{e9}".repeat(65_536)))), None);
+        for bad in [
+            None,
+            Some(""),
+            Some(" \n"),
+            Some("\t"),
+            Some("a\u{0}b"),
+            Some("a\u{1b}[0m"),
+            Some("a\u{7f}"),
+            Some("a\u{85}b"),
+        ] {
+            assert_eq!(check_thread(&thread_req(Reply, bad)), Some(reply_sentence), "{bad:?}");
+        }
+        assert_eq!(
+            check_thread(&thread_req(Reply, Some(&"a".repeat(65_537)))),
+            Some(reply_sentence)
+        );
+
+        // The other two carry no text.
+        for action in [Resolve, Unresolve] {
+            assert_eq!(
+                check_thread(&thread_req(action, Some("text"))),
+                Some("Only a reply carries text.")
+            );
+            assert_eq!(
+                check_thread(&thread_req(action, Some(""))),
+                Some("Only a reply carries text.")
+            );
+        }
+    }
+
+    #[test]
+    fn check_threads_wants_a_pull_request_id_and_a_number() {
+        let req = |id: &str, number| ThreadsRequest {
+            checkout: "/r".to_string(),
+            id: id.to_string(),
+            number,
+        };
+        assert_eq!(check_threads(&req("PR_kwDOAAAAAA", 7)), None);
+        assert_eq!(check_threads(&req("PR x", 7)), Some("That isn't a pull request id."));
+        assert_eq!(
+            check_threads(&req("PR_kwDOAAAAAA", 0)),
+            Some("That isn't a pull request number.")
+        );
+    }
+
+    #[test]
+    fn the_thread_mutations_take_the_id_as_a_variable() {
+        for text in [RESOLVE_THREAD, UNRESOLVE_THREAD] {
+            assert!(text.starts_with("mutation($id:ID!)"), "{text}");
+            assert!(!text.contains("PRRT") && !text.contains('"'), "{text}");
+        }
+        assert!(RESOLVE_THREAD.contains("resolveReviewThread(input:{threadId:$id})"));
+        assert!(UNRESOLVE_THREAD.contains("unresolveReviewThread(input:{threadId:$id})"));
+    }
+
+    #[test]
+    fn a_pending_review_gets_its_own_sentence() {
+        let pending = |status| GhError::Refused {
+            status,
+            message: "user_id can only have one pending review per pull request".into(),
+        };
+        assert_eq!(
+            thread_rejection(pending(Some(422)), &widgets(), 7, ThreadActionKind::Reply),
+            Rejection::Refused(
+                "You have a review in progress on #7. Submit or discard it on GitHub, then reply.".to_string()
+            )
+        );
+        // Another status, or another action, is GitHub's own message.
+        assert_eq!(
+            thread_rejection(pending(Some(403)), &widgets(), 7, ThreadActionKind::Reply),
+            Rejection::Refused("user_id can only have one pending review per pull request".to_string())
+        );
+        assert_eq!(
+            thread_rejection(pending(Some(422)), &widgets(), 7, ThreadActionKind::Resolve),
+            Rejection::Refused("user_id can only have one pending review per pull request".to_string())
+        );
+    }
+
+    #[test]
+    fn a_thread_github_no_longer_has_reads_as_gone() {
+        for action in [
+            ThreadActionKind::Resolve,
+            ThreadActionKind::Unresolve,
+            ThreadActionKind::Reply,
+        ] {
+            assert_eq!(
+                thread_rejection(GhError::NotFound, &widgets(), 7, action),
+                Rejection::Refused(NOT_THIS_THREAD.to_string()),
+                "{action:?}"
+            );
+        }
+        assert_eq!(
+            NOT_THIS_THREAD,
+            "That comment isn't on this pull request any more. Look again."
+        );
+    }
+
+    #[test]
+    fn a_reply_that_timed_out_may_be_posted() {
+        assert_eq!(
+            thread_rejection(GhError::TooLong, &widgets(), 7, ThreadActionKind::Reply),
+            Rejection::Unavailable(REPLY_UNSURE.to_string())
+        );
+        assert_eq!(
+            REPLY_UNSURE,
+            "GitHub took too long to answer. The reply may be posted: look at the thread before you send it again."
+        );
+        assert_eq!(
+            thread_rejection(GhError::TooLong, &widgets(), 7, ThreadActionKind::Resolve),
+            rejection(GhError::TooLong, &widgets())
+        );
+        // The rest goes through `rejection`.
+        assert_eq!(
+            thread_rejection(GhError::SignedOut, &widgets(), 7, ThreadActionKind::Reply),
+            rejection(GhError::SignedOut, &widgets())
+        );
     }
 }
