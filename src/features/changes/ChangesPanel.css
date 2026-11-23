@@ -257,6 +257,22 @@
 }
 
 @media (forced-colors: active) {
+  /* The rows keep their own colours (forced-color-adjust: none), and their token spans with them: every token colour is
+     set back to its empty initial value, so a token takes the row's CanvasText, as in the preview. */
+  .changes {
+    --code-token-keyword: initial;
+    --code-token-string: initial;
+    --code-token-string-expression: initial;
+    --code-token-constant: initial;
+    --code-token-function: initial;
+    --code-token-parameter: initial;
+    --code-token-punctuation: initial;
+    --code-token-link: initial;
+    --code-token-comment: initial;
+    --code-token-inserted: initial;
+    --code-token-deleted: initial;
+    --code-token-changed: initial;
+  }
   .changes__row[data-kind="add"],
   .changes__row[data-kind="del"] {
     forced-color-adjust: none;

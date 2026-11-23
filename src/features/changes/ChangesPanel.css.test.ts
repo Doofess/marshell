@@ -1,0 +1,35 @@
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+
+const css = readFileSync(new URL("./ChangesPanel.css", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+const tokens = readFileSync(new URL("../../styles/tokens.css", import.meta.url), "utf8");
+
+/** The declarations of the rule for `selector` inside the `@media (forced-colors: active)` blocks. */
+function forcedRule(selector: string): string {
+  const out: string[] = [];
+  for (const m of css.matchAll(/@media \(forced-colors: active\) \{/g)) {
+    let depth = 1;
+    let i = m.index! + m[0].length;
+    const from = i;
+    while (depth > 0 && i < css.length) {
+      if (css[i] === "{") depth++;
+      else if (css[i] === "}") depth--;
+      i++;
+    }
+    const block = css.slice(from, i - 1);
+    for (const r of block.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      if (r[1]!.split(",").some((s) => s.trim() === selector)) out.push(r[2]!);
+    }
+  }
+  return out.join("\n");
+}
+
+describe("ChangesPanel.css", () => {
+  it("gives the syntax colours back to the system in forced colours, as the preview does", () => {
+    // The rows set forced-color-adjust: none, which their token spans inherit: each token colour must fall back to the text's.
+    const names = [...new Set([...tokens.matchAll(/(--code-token-[a-z-]+):/g)].map((m) => m[1]!))];
+    expect(names.length).toBeGreaterThan(10);
+    const rule = forcedRule(".changes");
+    for (const name of names) expect(rule, name).toContain(`${name}: initial`);
+  });
+});
