@@ -8,7 +8,7 @@ import type { Section } from "./model";
 const A = "C:\\work\\repoA";
 const B = "C:\\work\\repoB";
 const c = (id: string, start: number): DraftComment => ({ id, path: "src/a.ts", side: "new", start, end: start, rows: 1, first: "f", hash: "h", quote: ["x"], text: `note ${id}` });
-const onA: ChangesDrafts = { checkout: A, base: "main", comments: [c("1", 12)], folds: { "src/a.ts": false } };
+const onA: ChangesDrafts = { checkout: A, base: "main", comments: [c("1", 12)], picked: [], sent: [], folds: { "src/a.ts": false } };
 const showingB = { folder: B, base: "origin/main" };
 // B has a file at the same path, with a row the comment would match by its numbers.
 const sectionB: Section = { path: "src/a.ts", status: "modified", added: 1, removed: 0, folded: false, rows: [{ kind: "add", newNo: 40, text: "x" }] };
@@ -18,8 +18,16 @@ describe("withFolds", () => {
     expect(withFolds(onA, showingB, { "lock.json": true })).toEqual({ ...onA, folds: { "src/a.ts": false, "lock.json": true } });
   });
   it("takes the shown checkout when there are no comments", () => {
-    expect(withFolds({ ...onA, comments: [] }, showingB, { "lock.json": true })).toEqual({ checkout: B, base: "origin/main", comments: [], folds: { "src/a.ts": false, "lock.json": true } });
-    expect(withFolds(undefined, showingB, { x: true })).toEqual({ checkout: B, base: "origin/main", comments: [], folds: { x: true } });
+    expect(withFolds({ ...onA, comments: [] }, showingB, { "lock.json": true })).toEqual({ checkout: B, base: "origin/main", comments: [], picked: [], sent: [], folds: { "src/a.ts": false, "lock.json": true } });
+    expect(withFolds(undefined, showingB, { x: true })).toEqual({ checkout: B, base: "origin/main", comments: [], picked: [], sent: [], folds: { x: true } });
+  });
+  it("carries picked and sent", () => {
+    const had: ChangesDrafts = { ...onA, picked: [{ id: "PRRT_a", number: 7, note: "n" }], sent: [{ id: "PRRT_b", number: 7, count: 2 }] };
+    const got = withFolds(had, showingB, { x: true });
+    expect(got.picked).toEqual(had.picked);
+    expect(got.sent).toEqual(had.sent);
+    expect(withComments(had, showingB, []).picked).toEqual(had.picked);
+    expect(withFolds(undefined, showingB, {}).picked).toEqual([]);
   });
   it("keeps only the folds of files in the diff shown now, so they never pile up to the layout's limit (pre-merge round 3)", () => {
     const inDiff = new Set(["lock.json", "src/b.ts"]);
@@ -37,8 +45,8 @@ describe("withComments", () => {
     expect(withComments(onA, showingA, next)).toEqual({ ...onA, comments: next });
   });
   it("takes the shown checkout and base for the first comment, and keeps the folds", () => {
-    expect(withComments({ ...onA, comments: [] }, showingA, [c("1", 1)])).toEqual({ checkout: A, base: "origin/develop", comments: [c("1", 1)], folds: { "src/a.ts": false } });
-    expect(withComments(undefined, showingA, [c("1", 1)])).toEqual({ checkout: A, base: "origin/develop", comments: [c("1", 1)], folds: {} });
+    expect(withComments({ ...onA, comments: [] }, showingA, [c("1", 1)])).toEqual({ checkout: A, base: "origin/develop", comments: [c("1", 1)], picked: [], sent: [], folds: { "src/a.ts": false } });
+    expect(withComments(undefined, showingA, [c("1", 1)])).toEqual({ checkout: A, base: "origin/develop", comments: [c("1", 1)], picked: [], sent: [], folds: {} });
   });
 });
 
@@ -47,7 +55,7 @@ describe("keptBox", () => {
   const same = (x: DraftComment) => x;
   it("keeps a new comment on the checkout its box was opened on, even when another is shown by now", () => {
     const kept = keptBox(undefined, { state: { anchor, id: null }, text: "typed", on: { folder: A, base: "main" } }, anchor, "n1", same);
-    expect(kept).toEqual({ checkout: A, base: "main", comments: [{ ...anchor, id: "n1", text: "typed" }], folds: {} });
+    expect(kept).toEqual({ checkout: A, base: "main", comments: [{ ...anchor, id: "n1", text: "typed" }], picked: [], sent: [], folds: {} });
   });
   it("adds after the earlier comments, and an edit changes only its own text", () => {
     const added = keptBox(onA, { state: { anchor, id: null }, text: "two", on: { folder: A, base: "main" } }, anchor, "n2", same);

@@ -194,13 +194,13 @@ describe("ChangesEmpty", () => {
 describe("emptyNotices", () => {
   const c = { id: "1", path: "a.ts", side: "new" as const, start: 1, end: 1, rows: 1, first: "f", hash: "h", quote: ["x"], text: "t" };
   it("keeps the comments on another checkout in sight beside an empty diff, so they can still be sent or discarded", () => {
-    const drafts = { checkout: "C:\\other", base: "main", comments: [c], folds: {} };
+    const drafts = { checkout: "C:\\other", base: "main", comments: [c], picked: [], sent: [], folds: {} };
     expect(emptyNotices(reply({ folder: "r", base: null }), drafts)).toEqual([copy.noBase, "Send or discard the 1 comment on other first."]);
   });
   it("is a bare empty state with no comments elsewhere, or no list", () => {
     expect(emptyNotices(reply({ folder: "r" }), undefined)).toBeNull();
-    expect(emptyNotices(reply({ folder: "r" }), { checkout: "r", base: "main", comments: [c], folds: {} })).toBeNull();
-    expect(emptyNotices(null, { checkout: "C:\\other", base: "main", comments: [c], folds: {} })).toBeNull();
+    expect(emptyNotices(reply({ folder: "r" }), { checkout: "r", base: "main", comments: [c], picked: [], sent: [], folds: {} })).toBeNull();
+    expect(emptyNotices(null, { checkout: "C:\\other", base: "main", comments: [c], picked: [], sent: [], folds: {} })).toBeNull();
   });
 });
 

@@ -5,7 +5,7 @@ import { ApiError } from "../../lib/api/client";
 import { afterSend, askNotice, refusalNotice, runReview, runSend } from "./send";
 
 const c = (id: string): DraftComment => ({ id, path: "a.ts", side: "new", start: 1, end: 1, rows: 1, first: "f", hash: "h", quote: ["x"], text: "t" });
-const drafts: ChangesDrafts = { checkout: "r", base: null, comments: [c("1"), c("2")], folds: { "a.ts": true } };
+const drafts: ChangesDrafts = { checkout: "r", base: null, comments: [c("1"), c("2")], picked: [], sent: [], folds: { "a.ts": true } };
 const paste = { name: "Claude", via: "paste" as const };
 const reply = (form: "paste" | "file") => ({ form, path: null });
 const conflict = (reason: string) => new ApiError(409, JSON.stringify({ reason }));

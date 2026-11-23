@@ -9,7 +9,7 @@ import type { TreeState } from "../../generated/TreeState";
 import type { TreeView } from "../../generated/TreeView";
 import { BLANK, isPageUrl, pageTitle, sameUrl } from "../browser/address";
 import type { ViewportId } from "../browser/viewport";
-import { draftBase, draftCommentOk, treeFolderOk } from "./paneRules";
+import { DRAFT_PICKED_MAX, DRAFT_SENT_MAX, draftBase, draftCommentOk, pickedOk, sentOk, treeFolderOk } from "./paneRules";
 import { type PanelId, PANELS, type Stack, type Weights, activeIn, isPanelId, onScreen, panelOf, panelOfPath, panelTabs, stackOf, stackPanels } from "./panels";
 
 export type { PaneEntry };
@@ -459,8 +459,14 @@ function setDrafts(s: PaneView, session: string, drafts: ChangesDrafts | null): 
   const ids = new Set<string>();
   const kept = (c: ChangesDrafts["comments"][number]) => draftCommentOk(c) && !ids.has(c.id) && ids.add(c.id) !== undefined;
   const comments = drafts ? drafts.comments.filter(kept).slice(0, DRAFT_COMMENTS_MAX) : [];
+  const uniq = <T extends { id: string }>(list: T[], ok: (t: T) => boolean, max: number): T[] => {
+    const seen = new Set<string>();
+    return list.filter((t) => ok(t) && !seen.has(t.id) && seen.add(t.id) !== undefined).slice(0, max);
+  };
+  const picked = drafts ? uniq(drafts.picked, pickedOk, DRAFT_PICKED_MAX) : [];
+  const sent = drafts ? uniq(drafts.sent, sentOk, DRAFT_SENT_MAX) : [];
   const keys = drafts ? Object.keys(drafts.folds).filter(treeFolderOk).sort() : [];
-  if (!drafts || (comments.length === 0 && keys.length === 0)) {
+  if (!drafts || (comments.length === 0 && keys.length === 0 && picked.length === 0 && sent.length === 0)) {
     if (!cur || !cur.changes) return s;
     const { changes: _gone, ...rest } = cur;
     if (rest.tabs.length === 0 && !rest.tree) {
@@ -471,7 +477,7 @@ function setDrafts(s: PaneView, session: string, drafts: ChangesDrafts | null): 
   }
   const folds: { [key in string]: boolean } = {};
   for (const k of keys.slice(0, DRAFT_FOLDS_MAX)) folds[k] = drafts.folds[k]!;
-  return setTabs(s, session, { ...(cur ?? { tabs: [], active: null }), changes: { ...drafts, base: drafts.base === null ? null : draftBase(drafts.base), comments, folds } });
+  return setTabs(s, session, { ...(cur ?? { tabs: [], active: null }), changes: { ...drafts, base: drafts.base === null ? null : draftBase(drafts.base), comments, picked, sent, folds } });
 }
 
 /** Sets the session's tree, keeping only the folders the core accepts and the first 500; the session's tabs are untouched. */

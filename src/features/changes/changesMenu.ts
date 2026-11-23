@@ -5,7 +5,7 @@ import { CHANGES_DEFAULTS } from "./changesSettings";
 import type { Item, Row, Section } from "./model";
 
 export type SettingKey = keyof ChangesSettings;
-const SETTING_LABELS: Record<SettingKey, string> = { hide_whitespace: "Hide whitespace changes", wrap: "Wrap long lines", pull_requests: "Show pull requests from GitHub" };
+const SETTING_LABELS: Record<SettingKey, string> = { hide_whitespace: "Hide whitespace changes", wrap: "Wrap long lines", pull_requests: "Show pull requests from GitHub", resolved_comments: "Show resolved and outdated comments" };
 const NO_FILES = "No files are changed";
 const UNREAD = "Your settings couldn't be read";
 const LOADING = "Your settings aren't read yet";
@@ -31,6 +31,7 @@ export function changesMenuItems(o: { settings: ChangesSettings | null; failed: 
     { separator: true },
     setting("hide_whitespace"),
     setting("wrap"),
+    setting("resolved_comments"),
   ];
 }
 
@@ -57,7 +58,7 @@ export function changesChoice(id: string): ChangesChoice | null {
   }
   if (id.startsWith("setting:")) {
     const key = id.slice("setting:".length);
-    if (key === "hide_whitespace" || key === "wrap") return { kind: "setting", key };
+    if (key === "hide_whitespace" || key === "wrap" || key === "resolved_comments") return { kind: "setting", key };
   }
   return null;
 }

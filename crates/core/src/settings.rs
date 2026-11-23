@@ -138,6 +138,7 @@ fn lenient_changes<'de, D: serde::Deserializer<'de>>(d: D) -> Result<ChangesSett
         ("hide_whitespace", &mut out.hide_whitespace),
         ("wrap", &mut out.wrap),
         ("pull_requests", &mut out.pull_requests),
+        ("resolved_comments", &mut out.resolved_comments),
     ] {
         match fields.get(name) {
             None => {}
@@ -484,7 +485,8 @@ mod tests {
             ChangesSettings {
                 hide_whitespace: false,
                 wrap: true,
-                pull_requests: true
+                pull_requests: true,
+                resolved_comments: false,
             }
         );
         let s = Settings {
@@ -492,11 +494,27 @@ mod tests {
                 hide_whitespace: true,
                 wrap: true,
                 pull_requests: false,
+                resolved_comments: true,
             },
             ..Settings::default()
         };
         save(home.path(), &s).unwrap();
         assert_eq!(load(home.path()).changes, s.changes);
+    }
+
+    #[test]
+    fn resolved_comments_is_off_unless_a_boolean_turns_it_on() {
+        let home = tempfile::tempdir().unwrap();
+        write_settings(home.path(), r#"{"changes": {"wrap": true}}"#);
+        assert!(!load(home.path()).changes.resolved_comments);
+        write_settings(home.path(), r#"{"changes": {"resolved_comments": true}}"#);
+        assert!(load(home.path()).changes.resolved_comments);
+        write_settings(
+            home.path(),
+            r#"{"changes": {"resolved_comments": "yes", "wrap": true}}"#,
+        );
+        let changes = load(home.path()).changes;
+        assert!(!changes.resolved_comments && changes.wrap);
     }
 
     #[test]

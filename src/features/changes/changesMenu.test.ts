@@ -9,7 +9,7 @@ const section = (rows: Row[], status: Section["status"] = "modified"): Section =
 const rowItem = (file: Section, at: number): Item => ({ kind: "row", key: `row:${file.path}:${at}`, file, at });
 const rowsOf = (items: MenuItem[]): MenuRow[] => items.filter(isAction);
 const labels = (items: MenuItem[]) => items.map((i) => (isAction(i) ? i.label : "-"));
-const on = { settings: { hide_whitespace: true, wrap: false, pull_requests: true }, failed: false, review: "Ask Claude Code to review (types /code-review)", hasFiles: true, github: [] as BarMenuItem[], main: null as BarButton | null };
+const on = { settings: { hide_whitespace: true, wrap: false, pull_requests: true, resolved_comments: false }, failed: false, review: "Ask Claude Code to review (types /code-review)", hasFiles: true, github: [] as BarMenuItem[], main: null as BarButton | null };
 const replyOf = (o: Partial<GithubReply> = {}): GithubReply => ({
   kind: "ready", checkout: "C:/p", host: "github.com", repo: "octo-org/widgets", branch: "feat", default_branch: "main", fork_of: null, compare_url: null, pull: null, closed: null,
   on_github: true, to_push: 2, github_ahead: false, can_write: true, merge_methods: ["merge"], auto_merge_allowed: true, push: null, push_blocked: null, reason: null, next_ms: 30_000, ...o,
@@ -17,7 +17,7 @@ const replyOf = (o: Partial<GithubReply> = {}): GithubReply => ({
 
 describe("changesMenuItems", () => {
   it("leaves review out for a plain shell", () => {
-    expect(labels(changesMenuItems({ ...on, review: null }))).toEqual(["Refresh", "-", "Fold all files", "Unfold all files", "-", "Hide whitespace changes", "Wrap long lines"]);
+    expect(labels(changesMenuItems({ ...on, review: null }))).toEqual(["Refresh", "-", "Fold all files", "Unfold all files", "-", "Hide whitespace changes", "Wrap long lines", "Show resolved and outdated comments"]);
     expect(labels(changesMenuItems(on))[1]).toBe(on.review);
   });
   it("adds the bar's rows under the review row", () => {
@@ -42,6 +42,12 @@ describe("changesMenuItems", () => {
     const rows = rowsOf(changesMenuItems(on));
     expect(rows.find((r) => r.id === "setting:hide_whitespace")?.checked).toBe(true);
     expect(rows.find((r) => r.id === "setting:wrap")?.checked).toBe(false);
+  });
+  it("lists the resolved comments switch after Wrap long lines and takes its row", () => {
+    const rows = rowsOf(changesMenuItems(on));
+    expect(rows.find((r) => r.id === "setting:resolved_comments")).toMatchObject({ label: "Show resolved and outdated comments", checked: false });
+    expect(changesChoice("setting:resolved_comments")).toEqual({ kind: "setting", key: "resolved_comments" });
+    expect(changesChoice("setting:nope")).toBeNull();
   });
   it("disables the switches while the settings are unread and reads defaults after a failed read", () => {
     const loading = rowsOf(changesMenuItems({ ...on, settings: null }));
