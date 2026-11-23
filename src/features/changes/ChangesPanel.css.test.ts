@@ -36,7 +36,7 @@ describe("ChangesPanel.css", () => {
   // A fill isn't drawn in forced colours: the Send bar's buttons and the comment box keep an edge, in a system colour.
   it("gives the Send bar's buttons and the comment box an edge in forced colours", () => {
     expect(forcedRule(".changes__send-button")).toContain("border: 1px solid ButtonText");
-    expect(forcedRule(".changes__send-button--primary")).toContain("border-color: Highlight");
+    expect(forcedRule(".changes__send-button--primary")).toContain("border: 1px solid Highlight");
     expect(forcedRule(".changes__box-text")).toContain("border: 1px solid CanvasText");
   });
 

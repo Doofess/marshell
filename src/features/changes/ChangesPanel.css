@@ -310,7 +310,7 @@
   .changes__send-button--primary {
     background: Highlight;
     color: HighlightText;
-    border-color: Highlight;
+    border: 1px solid Highlight;
   }
   /* The rows that keep their own colours keep the theme's ring, hover, press and selection fill too, unless they are set
      back here: the ring is CanvasText, and the selection is SelectedMark's Highlight outline alone. */
