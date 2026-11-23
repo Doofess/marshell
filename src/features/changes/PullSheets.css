@@ -1,0 +1,106 @@
+/*
+ * The Create pull request, Push and Merge sheets. They are the close dialog's sheet (CloseDialog.css) with a wider measure and
+ * one scrolling body between the title and the buttons: the commit list, the fields and git's output wrap and grow inside the body
+ * and never scroll on their own. Fields are fills, never boxes.
+ */
+.close-dialog__sheet.pull-sheet {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  inline-size: min(560px, 100%);
+  max-block-size: 100%;
+}
+.pull-sheet__foot {
+  min-inline-size: 0;
+}
+.pull-sheet__body {
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
+  min-block-size: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.pull-sheet__body:focus-visible,
+.pull-sheet__input:focus-visible,
+.pull-sheet__notice:focus-visible,
+.pull-sheet__check input:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+.pull-sheet__folder {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-12);
+  overflow-wrap: anywhere;
+}
+.pull-sheet__notice[data-problem] {
+  color: var(--caution);
+}
+.pull-sheet__commits {
+  display: grid;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pull-sheet__commit {
+  overflow-wrap: anywhere;
+}
+.pull-sheet__id {
+  font-family: var(--font-mono);
+  font-size: var(--text-12);
+  color: var(--text-2);
+}
+.pull-sheet__output {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-12);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.pull-sheet__field {
+  display: grid;
+  gap: var(--space-1);
+}
+.pull-sheet__input {
+  inline-size: 100%;
+  box-sizing: border-box;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-1);
+  font: inherit;
+}
+/* The description grows with its text: the sheet's body is the one scroller. */
+.pull-sheet__text {
+  field-sizing: content;
+  resize: none;
+  min-block-size: 6lh;
+}
+.pull-sheet__check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+/* An off button stays in the tab order (aria-disabled), so it is told apart by fill and ink, under the pointer too. */
+.pull-sheet .close-dialog__btn[aria-disabled="true"],
+.pull-sheet .close-dialog__btn[aria-disabled="true"]:hover,
+.pull-sheet .close-dialog__btn[aria-disabled="true"]:active {
+  background: var(--hover);
+  color: var(--text-3);
+  cursor: default;
+}
+@media (forced-colors: active) {
+  .pull-sheet__input {
+    outline: 1px solid CanvasText;
+  }
+  .pull-sheet__body:focus-visible,
+  .pull-sheet__input:focus-visible,
+  .pull-sheet__notice:focus-visible,
+  .pull-sheet__check input:focus-visible {
+    outline: 2px solid Highlight;
+  }
+  .pull-sheet .close-dialog__btn[aria-disabled="true"] {
+    color: GrayText;
+    outline-color: GrayText;
+  }
+}

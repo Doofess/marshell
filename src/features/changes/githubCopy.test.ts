@@ -27,4 +27,18 @@ describe("githubCopy", () => {
     expect(c.hidden).toBe("Pull requests are hidden. Settings → Changes shows them again.");
     expect(c.typedRequest("api")).toBe("Typed a request into api.");
   });
+  it("words the sheets", () => {
+    expect(c.willPush(1)).toBe("1 commit will be pushed to origin.");
+    expect(c.willPush(3)).toBe("3 commits will be pushed to origin.");
+    expect(c.uncommitted(1)).toBe("1 file isn't committed and stays out.");
+    expect(c.uncommitted(2)).toBe("2 files aren't committed and stay out.");
+    expect(c.pushed(2)).toBe("Pushed 2 commits to origin.");
+    expect(c.pushed(1)).toBe("Pushed 1 commit to origin.");
+    expect(c.pushed(null)).toBe("Pushed to origin.");
+    expect(c.headLine("feat", "main", "octo-org/widgets")).toBe("feat → main · octo-org/widgets");
+    expect(c.mergeLine("Squash and merge", "Fix", 182, "main")).toBe('Squash and merge "Fix" (#182) into main.');
+    expect(c.mergeTitle(182)).toBe("Merge #182?");
+    expect(c.mergesLater(182)).toBe("#182 merges when its checks pass.");
+    expect(c.pushingTo("feat")).toBe("Pushing feat to origin…");
+  });
 });

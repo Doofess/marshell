@@ -1,5 +1,6 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { type ReactNode, type Ref, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ContextMenu } from "../../components/ContextMenu/ContextMenu";
 import type { ChangesDrafts } from "../../generated/ChangesDrafts";
 import type { ChangesReply } from "../../generated/ChangesReply";
@@ -18,11 +19,15 @@ import type { AskRequest } from "../../generated/AskRequest";
 import type { CiCheck } from "../../generated/CiCheck";
 import type { MergeMethod } from "../../generated/MergeMethod";
 import type { PullActionKind } from "../../generated/PullActionKind";
+import type { PullStatus } from "../../generated/PullStatus";
 import { refusalOf } from "./changesApi";
 import type { CheckAction } from "./ChecksList";
 import { ask, failureOf, pullAction } from "./githubApi";
 import { githubCopy as gc } from "./githubCopy";
+import { CreatePullSheet } from "./CreatePullSheet";
+import { MergeDialog } from "./MergeDialog";
 import { PullBar } from "./PullBar";
+import { PushSheet } from "./PushSheet";
 import { type BarButton, type BarMenuItem, announcementsOf, barOf } from "./pullModel";
 import { useGithub } from "./useGithub";
 import { type Item, type Row, type Section, cutFiles, focusIndex, itemsOf, sectionsOf } from "./model";
@@ -310,17 +315,19 @@ export function ChangesPanel(p: ChangesPanelProps) {
   };
 
   // The pull request bar's actions. The ones that need a sheet are Task 14's: each is the one place it fills.
-  const createPull = () => {
-    // Task 14: opens the sheet
-  };
-  const push = () => {
-    // Task 14: opens the sheet
-  };
-  const merge = () => {
-    // Task 14: opens the sheet
+  // At most one sheet is open; the panel holds which.
+  // What a sheet needs from the reply is taken when it opens: a reply that changes under it never takes it down mid-push.
+  type Sheet = { kind: "create"; repo: string } | { kind: "push" } | { kind: "output"; id: string } | { kind: "merge"; checkout: string; pull: PullStatus; method: MergeMethod; auto: boolean };
+  const [sheet, setSheet] = useState<Sheet | null>(null);
+  useEffect(() => setSheet(null), [p.session]);
+  const createPull = () => gh && setSheet({ kind: "create", repo: gh.repo });
+  const push = () => setSheet({ kind: "push" });
+  const merge = (method?: MergeMethod, auto = false) => {
+    const m = method ?? gh?.merge_methods[0];
+    if (m !== undefined && gh?.pull) setSheet({ kind: "merge", checkout: gh.checkout, pull: gh.pull, method: m, auto });
   };
   const showOutput = () => {
-    // Task 14: opens the sheet
+    if (gh?.push) setSheet({ kind: "output", id: gh.push });
   };
   const fail = (text: string) => {
     setNote(text);
@@ -358,7 +365,6 @@ export function ChangesPanel(p: ChangesPanelProps) {
     }
   };
   const onBarMain = (button: BarButton, method?: MergeMethod) => {
-    void method; // Task 14: the sheet opens on this method
     switch (button.id) {
       case "push":
         return push();
@@ -366,7 +372,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
         return createPull();
       case "merge":
       case "auto_merge":
-        return merge();
+        return merge(method, button.id === "auto_merge");
       case "show_output":
         return showOutput();
       case "ready":
@@ -407,6 +413,24 @@ export function ChangesPanel(p: ChangesPanelProps) {
     if (action === "copy_link") return check.url === null ? p.announce(gc.noCheckAddress) : copyOut(check.url, gc.copiedLink);
     if (gh?.pull) void askAgent({ kind: "fix_check", copy: p.agent === null, number: gh.pull.number, name: check.name, workflow: check.workflow, url: check.url, run_id: check.run_id });
   };
+  const closeSheet = () => setSheet(null);
+  const sheetDone = () => {
+    setSheet(null);
+    github.refresh();
+  };
+  const sheetNode =
+    sheet === null ? null : sheet.kind === "create" ? (
+      <CreatePullSheet key="create" tab={p.session} repo={sheet.repo} announce={p.announce} onClose={closeSheet} onDone={sheetDone} />
+    ) : sheet.kind === "push" ? (
+      <PushSheet key="push" tab={p.session} announce={p.announce} onClose={closeSheet} onDone={sheetDone} />
+    ) : sheet.kind === "output" ? (
+      <PushSheet key="output" tab={p.session} resume={sheet.id} announce={p.announce} onClose={closeSheet} onDone={sheetDone} />
+    ) : (
+      <MergeDialog key="merge" tab={p.session} checkout={sheet.checkout} pull={sheet.pull} method={sheet.method} auto={sheet.auto} announce={p.announce} onClose={closeSheet} onDone={sheetDone} />
+    );
+  // Over the whole window, where every other dialog is drawn: the side pane is too narrow for a sheet, and a page beside it stays covered.
+  const sheetHost = sheetNode === null ? null : (box.current?.closest(".live-app") ?? null);
+  const sheetAt = sheetNode !== null && sheetHost !== null ? createPortal(sheetNode, sheetHost) : sheetNode;
   const bar = barView === null ? null : <PullBar view={barView} agent={ghAgent} now={now} onMain={onBarMain} onMenu={onBarMenu} onCheck={onBarCheck} onEscape={p.onEscape} />;
 
   useImperativeHandle(p.ref, () => ({
@@ -600,6 +624,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
         {empty}
         {sendBar}
         {menus}
+        {sheetAt}
       </div>
     );
   }
@@ -646,6 +671,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
       />
       {sendBar}
       {menus}
+      {sheetAt}
     </div>
   );
 }
