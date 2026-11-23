@@ -155,6 +155,14 @@ describe("side pane commands", () => {
   });
 });
 
+describe("the Changes panel's commands", () => {
+  it("each palette command maps to a shortcut kind", () => {
+    expect(commandShortcut("changes-refresh")).toEqual({ kind: "changes", what: "refresh" });
+    expect(commandShortcut("changes-review")).toEqual({ kind: "changes", what: "review" });
+    expect(commandShortcut("changes-send")).toEqual({ kind: "changes", what: "send" });
+  });
+});
+
 describe("the text tab's commands", () => {
   it("map_to_their_shortcut_kinds_and_have_no_key", () => {
     expect(commandShortcut("pane-save")).toEqual({ kind: "paneSave" });

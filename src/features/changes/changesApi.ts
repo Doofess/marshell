@@ -17,6 +17,20 @@ export async function readChanges(tab: string, req: ChangesRequest): Promise<Cha
   }
 }
 
+export type Refusal = "ended" | "elevated" | "paused" | "waiting" | "no_agent";
+const REFUSALS: readonly string[] = ["ended", "elevated", "paused", "waiting", "no_agent"];
+
+/** Why the core refused to type into the session (a 409 with `{ reason }`), or null for any other failure. */
+export function refusalOf(e: unknown): Refusal | null {
+  if (!(e instanceof ApiError) || e.status !== 409) return null;
+  try {
+    const reason = (JSON.parse(e.message) as { reason?: unknown } | null)?.reason;
+    return typeof reason === "string" && REFUSALS.includes(reason) ? (reason as Refusal) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The text that asks the session's agent to review the changes. A 404 or 409 throws an `ApiError` whose message is the core's sentence. */
 export async function askReview(tab: string, base: string | null): Promise<ReviewReply> {
   return api<ReviewReply>(await getEndpoint(), "POST", `${session(tab)}/review`, { base });

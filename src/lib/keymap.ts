@@ -103,6 +103,10 @@ export const COMMANDS: Command[] = [
   // The Files panel's tree: shown or hidden, and every folder folded. No default key.
   { id: "files-tree", label: "Show file tree", group: "Window" },
   { id: "files-collapse", label: "Collapse all folders", group: "Window" },
+  // The Changes panel: reread the diff, ask the agent to review it and send the line comments. None has a default key.
+  { id: "changes-refresh", label: "Refresh changes", group: "Window" },
+  { id: "changes-review", label: "Ask the agent to review", group: "Window" },
+  { id: "changes-send", label: "Send comments", group: "Window" },
   // The browser tab (Windows only for now: the window hides them elsewhere). None has a default key.
   { id: "new-browser-tab", label: "New browser tab", group: "Window" },
   { id: "open-url", label: "Open URL…", group: "Window" },

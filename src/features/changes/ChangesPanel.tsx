@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type Ref, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { ContextMenu } from "../../components/ContextMenu/ContextMenu";
 import type { ChangesDrafts } from "../../generated/ChangesDrafts";
 import type { ChangesReply } from "../../generated/ChangesReply";
@@ -7,10 +7,14 @@ import { absoluteOf } from "../files/treeModel";
 import { ChangesIcon, EmptyPanel } from "../pane/EmptyPanel";
 import { type ItemRange, DiffList, type ListResult, reach } from "./DiffList";
 import { type ChangesChoice, changesChoice, changesMenuItems, headerMenuItems, lineMenuItems, openLineOf, settingLabel } from "./changesMenu";
-import { type Placement, place } from "./comments";
+import { type BoxAction, CommentBox, boxLabel } from "./CommentBox";
+import { type BoxState, anchorKey, boxAfter } from "./boxModel";
+import { MAX_COMMENTS, type Placement, anchorOf, messageOf, place } from "./comments";
 import { copy } from "./copy";
 import { type Item, type Row, type Section, cutFiles, itemsOf, sectionsOf } from "./model";
 import { reviewLabel } from "./review";
+import { SendBar } from "./SendBar";
+import { type SendResult, afterSend } from "./send";
 import { useChanges } from "./useChanges";
 import { useDiffColours } from "./useDiffColours";
 import { useChangesSettings } from "./changesSettings";
@@ -25,8 +29,12 @@ export type ChangesPanelProps = {
   onDrafts(next: ChangesDrafts | null): void;
   onOpen(o: { path: string; line?: number; keep: boolean }): void;
   onEscape(): void;
-  onSend(text: string, count: number): void;
+  /** Hands the comments' message to the session; the panel clears the comments only when `sent` is true. */
+  onSend(text: string, count: number): Promise<SendResult>;
   onReview(base: string | null): void;
+  /** "clipboard" for a session with no prompt line: the Send button reads Copy. */
+  via: "paste" | "clipboard";
+  ref?: Ref<ChangesHandle>;
   announce(text: string): void;
   /** The strip's title: "4 files · +120 −18", or "Changes" while there is nothing to count. */
   onSummary(text: string): void;
@@ -36,6 +44,12 @@ export type ChangesPanelProps = {
 };
 
 export { listKey } from "./DiffList";
+
+/** What the palette's Changes commands call on the mounted panel. Each announces why when it can't act. */
+export type ChangesHandle = { refresh(): void; review(): void; send(): void };
+
+const commentsOf = (n: number) => `${n} ${n === 1 ? "comment" : "comments"}`;
+const folderName = (path: string) => path.split(/[\\/]/).filter((s) => s !== "").pop() ?? path;
 
 /** The panel's empty states, each with its mark; only a failed read has an action. */
 export function ChangesEmpty({ reply, noFolder, onRetry }: { reply: ChangesReply | null; noFolder: boolean; onRetry(): void }) {
@@ -84,11 +98,18 @@ export function ChangesPanel(p: ChangesPanelProps) {
   const { drafts } = p;
 
   const sections = useMemo(() => (listed ? sectionsOf(listed, drafts?.folds ?? {}, drafts?.comments ?? [], hide) : []), [listed, drafts, hide]);
-  const items = useMemo<Item[]>(() => {
-    const comments = drafts?.comments ?? [];
-    const placements = new Map<string, Placement>(comments.map((c) => [c.id, place(c, sections.find((s) => s.path === c.path))]));
-    return itemsOf(sections, comments, placements);
-  }, [sections, drafts]);
+  const placements = useMemo(() => new Map<string, Placement>((drafts?.comments ?? []).map((c) => [c.id, place(c, sections.find((s) => s.path === c.path))])), [sections, drafts]);
+  const items = useMemo<Item[]>(() => itemsOf(sections, drafts?.comments ?? [], placements), [sections, drafts, placements]);
+  const draftsRef = useRef(drafts);
+  draftsRef.current = drafts;
+  const count = drafts?.comments.length ?? 0;
+
+  // The comment box (its text lives here, so a poll never loses it), the Send bar's question and a send under way.
+  const [open, setOpen] = useState<{ state: BoxState; text: string } | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  // Counts the times the keyboard goes back to the item it was on once the box or the bar is gone.
+  const [back, setBack] = useState(0);
 
   const colours = useDiffColours(sections);
   const box = useRef<HTMLDivElement>(null);
@@ -123,6 +144,88 @@ export function ChangesPanel(p: ChangesPanelProps) {
   const setRange = (next: ItemRange | null) => setKeys((k) => ({ ...k, range: next === null ? null : { from: items[next.from]!.key, to: items[next.to]!.key } }));
   const rowsIn = (r: ItemRange) => items.slice(Math.min(r.from, r.to), Math.max(r.from, r.to) + 1).filter((i) => i.kind === "row").length;
 
+  useEffect(() => {
+    if (count === 0) setAsking(false);
+  }, [count]);
+
+  // The keyboard goes back to its item once the box or the bar is gone (never because a poll changed the list).
+  useEffect(() => {
+    if (back > 0) box.current?.querySelector<HTMLElement>(`[data-changes-index="${focus}"]`)?.focus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only a request to go back moves the focus
+  }, [back]);
+
+  /** The items a comment or a line menu acts on: the range when the item is in it, else the item. */
+  const heldItems = (item: Item): Item[] => {
+    const at = items.indexOf(item);
+    const lo = range === null ? -1 : Math.min(range.from, range.to);
+    const hi = range === null ? -1 : Math.max(range.from, range.to);
+    return at >= lo && at <= hi ? items.slice(lo, hi + 1) : [item];
+  };
+
+  const startBox = (item: Item | undefined) => {
+    if (!listed || item === undefined) return;
+    const folder = drafts?.checkout;
+    if (item.kind === "comment") {
+      const { id, text, ...anchor } = item.comment;
+      setOpen({ state: { anchor, id }, text });
+      return;
+    }
+    if (item.kind !== "row") return;
+    const held = heldItems(item).filter((i): i is Extract<Item, { kind: "row" }> => i.kind === "row");
+    const rows = held.map((i) => i.file.rows[i.at]!);
+    if (held.length === 0 || rows.some((r) => r.kind === "hunk")) return;
+    if (count > 0 && folder !== undefined && folder !== listed.folder) return p.announce(`Send or discard the ${commentsOf(count)} on ${folderName(folder)} first.`);
+    if (count >= MAX_COMMENTS) return p.announce(`A session holds at most ${MAX_COMMENTS} comments.`);
+    const ats = held.map((i) => i.at);
+    setOpen({ state: { anchor: anchorOf(item.file, Math.min(...ats), Math.max(...ats)), id: null }, text: "" });
+  };
+
+  const closeBox = (action: BoxAction) => {
+    const current = open;
+    setOpen(null);
+    setBack((n) => n + 1);
+    if (!current || !listed) return;
+    const text = current.text;
+    if (action === "close" || text.trim() === "") return;
+    const comments = drafts?.comments ?? [];
+    const { anchor, id } = current.state;
+    const next = id === null ? [...comments, { ...anchor, id: crypto.randomUUID(), text }] : comments.map((c) => (c.id === id ? { ...c, text } : c));
+    p.onDrafts({ checkout: id === null ? listed.folder : (drafts?.checkout ?? listed.folder), base: id === null ? listed.base : (drafts?.base ?? listed.base), comments: next, folds: drafts?.folds ?? {} });
+    p.announce(action === "add" ? `Comment added. ${next.length} to send.` : "Comment kept as a draft.");
+  };
+
+  const removeComment = (index: number) => {
+    const item = items[index];
+    if (!item || item.kind !== "comment" || !drafts) return;
+    const before = items[index - 1];
+    if (before) setKeys({ focus: before.key, range: null });
+    p.onDrafts({ ...drafts, comments: drafts.comments.filter((c) => c.id !== item.comment.id) });
+    p.announce("Comment deleted.");
+    setBack((n) => n + 1);
+  };
+
+  const send = async () => {
+    const d = draftsRef.current;
+    const comments = d?.comments ?? [];
+    if (!listed || comments.length === 0) return p.announce("There are no comments to send.");
+    if (busy) return;
+    setBusy(true);
+    let result: SendResult;
+    try {
+      result = await p.onSend(messageOf(comments, placements, sections, listed.base), comments.length);
+    } finally {
+      setBusy(false);
+    }
+    const latest = draftsRef.current;
+    if (result.sent && latest) p.onDrafts(afterSend(latest, result));
+  };
+
+  useImperativeHandle(p.ref, () => ({
+    refresh: refresh,
+    review: () => (listed ? p.onReview(listed.base) : p.announce("There are no changes to review.")),
+    send: () => void send(),
+  }));
+
   const onKey = (r: ListResult) => {
     const target = items[r.focus];
     if (target !== undefined) setKeys((k) => ({ focus: target.key, range: r.range === undefined ? k.range : null }));
@@ -132,7 +235,8 @@ export function ChangesPanel(p: ChangesPanelProps) {
     }
     if (r.fold !== undefined) fold(r.fold, true);
     if (r.unfold !== undefined) fold(r.unfold, false);
-    // r.open: "comment" is Task 12's box.
+    if (r.open === "comment") startBox(target);
+    if (r.remove) removeComment(r.focus);
     if (r.open === "menu") {
       const el = box.current?.querySelector<HTMLElement>(`[data-changes-index="${r.focus}"]`) ?? null;
       const at = el?.getBoundingClientRect();
@@ -178,10 +282,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
   const menuItem = itemMenu === null ? undefined : items.find((i) => i.key === itemMenu.key);
   /** The rows a line menu acts on: the range when the item is in it, else the item. A range leaves out hunk headers. */
   const menuRows = (item: Item): Row[] => {
-    const at = items.indexOf(item);
-    const lo = range === null ? -1 : Math.min(range.from, range.to);
-    const hi = range === null ? -1 : Math.max(range.from, range.to);
-    const held = at >= lo && at <= hi ? items.slice(lo, hi + 1) : [item];
+    const held = heldItems(item);
     return held.flatMap((i) => (i.kind === "row" && (held.length === 1 || i.file.rows[i.at]!.kind !== "hunk") ? [i.file.rows[i.at]!] : []));
   };
   const closeItemMenu = (refocus: boolean) => {
@@ -205,7 +306,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
         const rows = menuRows(item);
         copyText(rows.map((r) => r.text).join("\n"), rows.length === 1 ? "Copied the line." : `Copied ${rows.length} lines.`, "Couldn't copy the lines.");
       }
-      // "comment" is Task 12's box.
+      else if (id === "comment") startBox(item);
     }
   };
   const foldAll = (folded: boolean) => {
@@ -270,6 +371,14 @@ export function ChangesPanel(p: ChangesPanelProps) {
 
   const line = copy.line({ branch: listed.branch, detached: listed.detached, base: listed.base, ahead: listed.ahead, uncommitted: listed.uncommitted, moved: listed.moved, folder: listed.folder });
   const notices = noticesOf(listed);
+  const boxAt = open === null ? -1 : boxAfter(items, sections, open.state);
+  const boxNode =
+    open !== null && boxAt >= 0
+      ? {
+          after: boxAt,
+          node: <CommentBox key={anchorKey(open.state.anchor)} label={boxLabel(open.state.anchor.start, open.state.anchor.end)} value={open.text} onChange={(text) => setOpen((o) => (o === null ? o : { ...o, text }))} onAction={closeBox} />,
+        }
+      : undefined;
   return (
     <div className="changes" ref={box}>
       <div className="changes__strip">
@@ -280,7 +389,38 @@ export function ChangesPanel(p: ChangesPanelProps) {
           </p>
         ))}
       </div>
-      <DiffList items={items} focus={focus} range={range} wrap={wrap} onKey={onKey} onClickItem={onClickItem} onOpenItem={onOpenItem} onMenuItem={onMenuItem} colours={colours} />
+      <DiffList
+        items={items}
+        focus={focus}
+        range={range}
+        wrap={wrap}
+        onKey={onKey}
+        onClickItem={onClickItem}
+        onOpenItem={onOpenItem}
+        onMenuItem={onMenuItem}
+        colours={colours}
+        box={boxNode}
+      />
+      {count > 0 && (
+        <SendBar
+          count={count}
+          via={p.via}
+          asking={asking}
+          busy={busy}
+          onSend={() => void send()}
+          onAsk={() => setAsking(true)}
+          onDiscard={() => {
+            setAsking(false);
+            if (drafts) p.onDrafts({ ...drafts, comments: [] });
+            p.announce(`Discarded ${commentsOf(count)}.`);
+            setBack((n) => n + 1);
+          }}
+          onKeep={() => {
+            setAsking(false);
+            setBack((n) => n + 1);
+          }}
+        />
+      )}
       {menus}
     </div>
   );

@@ -5,7 +5,7 @@
  */
 .changes {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   block-size: 100%;
   min-inline-size: 0;
   min-block-size: 0;
@@ -177,6 +177,79 @@
   color: var(--text-2);
 }
 
+/* The comment box under a range's last row: a tinted text area and its hint, indented like a comment. */
+.changes__box {
+  display: grid;
+  gap: var(--space-1);
+  padding-block: var(--space-1);
+  padding-inline: var(--space-4);
+  background: var(--fill);
+}
+.changes__box-text {
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-block-size: 3lh;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius);
+  background: var(--hover);
+  color: var(--text-1);
+  font-size: var(--text-12);
+  line-height: var(--leading);
+  field-sizing: content;
+  resize: none;
+}
+.changes__box-text:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.changes__box-hint {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-12);
+}
+
+/* The Send bar: the primary button is filled with the accent and the others tinted, told apart by fill and never by a box. */
+.changes__send {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding-block: var(--space-2);
+  padding-inline: var(--space-3);
+  background: var(--fill);
+}
+.changes__send-ask {
+  color: var(--text-1);
+  font-size: var(--text-12);
+}
+.changes__send-button {
+  min-block-size: 28px;
+  padding: var(--space-1) var(--space-3);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--fill-strong);
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--text-12);
+  white-space: nowrap;
+}
+.changes__send-button--primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.changes__send-button[aria-disabled="true"] {
+  background: var(--hover);
+  color: var(--text-3);
+  cursor: default;
+}
+.changes__send-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.changes__send-button:not([aria-disabled="true"]):active {
+  scale: 0.97;
+}
+
 @media (hover: hover) and (pointer: fine) {
   .changes__item:hover {
     background-image: linear-gradient(var(--hover), var(--hover));
@@ -200,5 +273,30 @@
   .changes__sign,
   .changes__no {
     color: CanvasText;
+  }
+  .changes__box,
+  .changes__send {
+    forced-color-adjust: none;
+    color: CanvasText;
+    background: Canvas;
+  }
+  .changes__box-text {
+    background: Field;
+    color: FieldText;
+  }
+  .changes__send-button {
+    background: ButtonFace;
+    color: ButtonText;
+  }
+  .changes__send-button--primary {
+    background: Highlight;
+    color: HighlightText;
+  }
+  .changes__send-button[aria-disabled="true"] {
+    color: GrayText;
+  }
+  .changes__box-text:focus-visible,
+  .changes__send-button:focus-visible {
+    outline-color: Highlight;
   }
 }

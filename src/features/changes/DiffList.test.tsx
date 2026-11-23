@@ -76,6 +76,15 @@ describe("DiffList", () => {
     expect(listKey(items, 2, "F10", { shift: true, alt: false }, null).open).toBe("menu");
     expect(listKey(items, 2, "ContextMenu", none, null).open).toBe("menu");
   });
+  it("Delete removes a comment and does nothing on a row", () => {
+    const a = file("a.ts", ["hunk", "add"]);
+    const c = { id: "c", path: "a.ts", side: "new" as const, start: 43, end: 43, rows: 1, first: "f", hash: "h", quote: [], text: "t" };
+    const list = itemsOf([a], [c], new Map([["c", { at: 1, changed: false }]]));
+    expect(list[3]!.kind).toBe("comment");
+    expect(listKey(list, 3, "Delete", none, null).remove).toBe(true);
+    expect(listKey(list, 2, "Delete", none, null).remove).toBeUndefined();
+    expect(listKey(list, 3, "Enter", none, null).open).toBe("comment");
+  });
   it("Esc leaves the list", () => expect(listKey(items, 3, "Escape", none, null).escape).toBe(true));
   it("a folded file shows its Show row", () => {
     const html = draw(itemsOf([file("a.ts", ["hunk", "add", "add"], true)], [], new Map()));

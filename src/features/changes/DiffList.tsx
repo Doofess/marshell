@@ -12,6 +12,8 @@ export type ListResult = {
   unfold?: string;
   range?: ItemRange | null;
   open?: "comment" | "menu";
+  /** Delete on a comment item: the comment goes. */
+  remove?: true;
   escape?: true;
 };
 
@@ -58,7 +60,7 @@ export function reach(items: Item[], anchor: number, to: number): number {
   return at;
 }
 
-const LIST_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "Enter", "Escape", "ContextMenu"]);
+const LIST_KEYS = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "Enter", "Escape", "ContextMenu", "Delete"]);
 
 /** Whether the list takes this key (Alt works only with Up and Down; F10 only with Shift). */
 export function isListKey(key: string, mods: { shift: boolean; alt: boolean }): boolean {
@@ -117,6 +119,8 @@ export function listKey(items: Item[], focus: number, key: string, mods: { shift
     case "F10":
     case "ContextMenu":
       return { focus, open: "menu" };
+    case "Delete":
+      return item.kind === "comment" ? { focus, remove: true } : stay;
     case "Escape":
       return { focus, escape: true };
     default:
@@ -262,10 +266,12 @@ export type DiffListProps = {
   onMenuItem(index: number, at: { x: number; y: number }): void;
   /** The token classes of each section's rows, by path. */
   colours?: Map<string, LineTokens[]>;
+  /** The comment box, drawn right under the item at `after`. Its element carries its own React key. */
+  box?: { after: number; node: ReactNode };
 };
 
 /** The whole diff as one tree: a block per file, its rows in blocks of 200, every item a `treeitem`. */
-export function DiffList({ items, focus, range, wrap, onKey, onClickItem, onOpenItem, onMenuItem, colours }: DiffListProps) {
+export function DiffList({ items, focus, range, wrap, onKey, onClickItem, onOpenItem, onMenuItem, colours, box: openBox }: DiffListProps) {
   const box = useRef<HTMLDivElement>(null);
   const keyed = useRef(0);
 
@@ -333,7 +339,7 @@ export function DiffList({ items, focus, range, wrap, onKey, onClickItem, onOpen
           <div key={items[group[0]!]!.key} className="changes__section" role="none">
             {chunks.map((chunk) => (
               <div key={chunk[0]} className="changes__chunk" role="none">
-                {chunk.map(entry)}
+                {chunk.flatMap((i) => (openBox !== undefined && openBox.after === i ? [entry(i), openBox.node] : [entry(i)]))}
               </div>
             ))}
           </div>

@@ -72,7 +72,10 @@ import { EmptyBrowser, PAGES_UNAVAILABLE } from "../pane/EmptyBrowser";
 import { ChangesIcon, EmptyPanel } from "../pane/EmptyPanel";
 import { NO_FOLDER_LINE } from "../files/FileTree";
 import { copy as changesCopy } from "../changes/copy";
-import { ChangesPanel } from "../changes/ChangesPanel";
+import { ChangesPanel, type ChangesHandle } from "../changes/ChangesPanel";
+import { askReview, postComments } from "../changes/changesApi";
+import { reviewCommandOf } from "../changes/review";
+import { runReview, runSend, type SendResult } from "../changes/send";
 import { EmptyFiles } from "../pane/EmptyFiles";
 import { PanelStack } from "../pane/PanelStack";
 import { KeptTabs } from "../pane/KeptTabs";
@@ -1314,6 +1317,23 @@ export function LiveApp() {
     pick(tabId);
     setTimeout(() => actions.focusTerminal(), 0);
   };
+  // The Changes panel's Send and Review: the comments' text goes into the session's prompt (or onto the clipboard), never Enter.
+  const changesPanel = useRef<ChangesHandle | null>(null);
+  const sendComments = async (session: string, text: string, count: number): Promise<SendResult> => {
+    const delivery = deliveryFor(stateRef.current.rows.find((r) => r.id === session) ?? null);
+    const result = await runSend({ delivery, count, message: text, post: (t) => postComments(session, t), write: (t) => navigator.clipboard.writeText(t) });
+    announce(result.notice);
+    if (result.focus && delivery !== null) focusDelivered(session, { name: delivery.name });
+    return result;
+  };
+  const reviewChanges = async (session: string, agent: string | null, base: string | null): Promise<void> => {
+    const delivery = deliveryFor(stateRef.current.rows.find((r) => r.id === session) ?? null);
+    if (delivery === null) return announce("No session to ask.");
+    if ("refused" in delivery) return announce(`${delivery.refused.replace(/\.$/, "")}, so nothing was typed.`);
+    const result = await runReview({ name: delivery.name, base, command: reviewCommandOf(agent), ask: (b) => askReview(session, b) });
+    announce(result.notice);
+    if (result.done) focusDelivered(session, { name: delivery.name });
+  };
   // An image pasted into a terminal (Ctrl+Shift+V): saved, and its reference pasted into that session, agent or shell. Never Enter.
   const addImage = async (tabId: string, image: Blob): Promise<void> => {
     const ep = endpointRef.current;
@@ -1849,6 +1869,11 @@ export function LiveApp() {
         case "filesCollapse":
           filesCommandRef.current("collapse");
           return true;
+        // The Changes panel's commands act on the mounted panel of the focused session; when it isn't on screen they say so.
+        case "changes":
+          if (!onNow.current.panelsOn.includes("changes") || changesPanel.current === null) announce("The Changes panel isn't shown.");
+          else changesPanel.current[shortcut.what]();
+          return true;
         // The browser tab's commands: a blank tab with the keyboard in its address box, and the profile's data cleared after a question.
         case "newBrowserTab":
           openPageRef.current(BLANK, { focus: "address" });
@@ -2350,9 +2375,13 @@ export function LiveApp() {
               onDrafts={(drafts) => paneDispatch({ type: "drafts", session: paneSession, drafts })}
               onOpen={openFromTree}
               onEscape={() => void toTerminalFromPane()}
-              // Task 12: sending the comments and asking for a review.
-              onSend={() => {}}
-              onReview={() => {}}
+              ref={changesPanel}
+              via={(() => {
+                const d = deliveryFor(focusedRow ?? null);
+                return d !== null && "via" in d ? d.via : "paste";
+              })()}
+              onSend={(text, count) => sendComments(paneSession, text, count)}
+              onReview={(base) => void reviewChanges(paneSession, focusedInfo?.agent ?? null, base)}
               announce={announce}
               onSummary={setChangesSummary}
               menu={changesMenu}
