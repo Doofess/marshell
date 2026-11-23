@@ -9,9 +9,9 @@ import { type ItemRange, DiffList, type ListResult, reach } from "./DiffList";
 import { type ChangesChoice, changesChoice, changesMenuItems, headerMenuItems, lineMenuItems, openLineOf, settingLabel } from "./changesMenu";
 import { type BoxAction, CommentBox, boxLabel } from "./CommentBox";
 import { type BoxState, anchorKey, boxAfter } from "./boxModel";
-import { MAX_COMMENTS, type Placement, anchorOf, messageOf, place } from "./comments";
+import { MAX_COMMENTS, type Placement, anchorOf, messageOf, place, renumbered } from "./comments";
 import { copy } from "./copy";
-import { type Item, type Row, type Section, cutFiles, itemsOf, sectionsOf } from "./model";
+import { type Item, type Row, type Section, cutFiles, focusIndex, itemsOf, sectionsOf } from "./model";
 import { reviewLabel } from "./review";
 import { SendBar } from "./SendBar";
 import { type SendResult, afterSend } from "./send";
@@ -117,8 +117,10 @@ export function ChangesPanel(p: ChangesPanelProps) {
   const [itemMenu, setItemMenu] = useState<{ key: string; anchor: { x: number; y: number }; opener: HTMLElement | null } | null>(null);
 
   const [keys, setKeys] = useState<Keys>({ focus: null, range: null });
-  const found = keys.focus === null ? -1 : items.findIndex((i) => i.key === keys.focus);
-  const focus = found >= 0 ? found : 0;
+  // A reply that changes the focused line (its key is gone) leaves the keyboard at the index it was on, not at the top.
+  const lastFocus = useRef(0);
+  const focus = focusIndex(items, keys.focus, lastFocus.current);
+  lastFocus.current = focus;
   const range = useMemo<ItemRange | null>(() => {
     if (keys.range === null) return null;
     const from = items.findIndex((i) => i.key === keys.range!.from);
@@ -180,6 +182,10 @@ export function ChangesPanel(p: ChangesPanelProps) {
     setOpen({ state: { anchor: anchorOf(item.file, Math.min(...ats), Math.max(...ats)), id: null }, text: "" });
   };
 
+  /** Where the box's rows are now. */
+  const placeBox = (state: BoxState): Placement =>
+    place({ ...state.anchor, id: "", text: "" }, sections.find((s) => s.path === state.anchor.path));
+
   const closeBox = (action: BoxAction) => {
     const current = open;
     setOpen(null);
@@ -188,8 +194,10 @@ export function ChangesPanel(p: ChangesPanelProps) {
     const text = current.text;
     if (action === "close" || text.trim() === "") return;
     const comments = drafts?.comments ?? [];
-    const { anchor, id } = current.state;
-    const next = id === null ? [...comments, { ...anchor, id: crypto.randomUUID(), text }] : comments.map((c) => (c.id === id ? { ...c, text } : c));
+    const { id } = current.state;
+    // Saved at the lines its rows are on now, which a reply during the writing may have moved.
+    const anchor = renumbered(current.state.anchor, placeBox(current.state));
+    const next = id === null ? [...comments, { ...anchor, id: crypto.randomUUID(), text }] : comments.map((c) => (c.id === id ? { ...renumbered(c, placements.get(c.id)), text } : c));
     p.onDrafts({ checkout: id === null ? listed.folder : (drafts?.checkout ?? listed.folder), base: id === null ? listed.base : (drafts?.base ?? listed.base), comments: next, folds: drafts?.folds ?? {} });
     p.announce(action === "add" ? `Comment added. ${next.length} to send.` : "Comment kept as a draft.");
   };
@@ -372,11 +380,13 @@ export function ChangesPanel(p: ChangesPanelProps) {
   const line = copy.line({ branch: listed.branch, detached: listed.detached, base: listed.base, ahead: listed.ahead, uncommitted: listed.uncommitted, moved: listed.moved, folder: listed.folder });
   const notices = noticesOf(listed);
   const boxAt = open === null ? -1 : boxAfter(items, sections, open.state);
+  // The key stays the written anchor (the box keeps its text and caret); the label reads the lines it is on now.
+  const boxLines = open === null ? null : renumbered(open.state.anchor, placeBox(open.state));
   const boxNode =
-    open !== null && boxAt >= 0
+    open !== null && boxLines !== null && boxAt >= 0
       ? {
           after: boxAt,
-          node: <CommentBox key={anchorKey(open.state.anchor)} label={boxLabel(open.state.anchor.start, open.state.anchor.end)} value={open.text} onChange={(text) => setOpen((o) => (o === null ? o : { ...o, text }))} onAction={closeBox} />,
+          node: <CommentBox key={anchorKey(open.state.anchor)} label={boxLabel(boxLines.start, boxLines.end)} value={open.text} onChange={(text) => setOpen((o) => (o === null ? o : { ...o, text }))} onAction={closeBox} />,
         }
       : undefined;
   return (

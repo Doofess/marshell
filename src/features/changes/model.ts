@@ -4,7 +4,7 @@ import type { DiffNote } from "../../generated/DiffNote";
 import type { DiffStatus } from "../../generated/DiffStatus";
 import type { DraftComment } from "../../generated/DraftComment";
 import { splitDiff } from "../tasks/splitDiff";
-import type { Placement } from "./comments";
+import { hashesOf, renumbered, type Placement } from "./comments";
 import { copy } from "./copy";
 
 /** A file with more rows than this starts folded. */
@@ -179,12 +179,26 @@ export function itemsOf(sections: Section[], drafts: DraftComment[], placements:
       .sort((a, b) => a.comment.start - b.comment.start || a.order - b.order);
     const commentItem = (p: (typeof placed)[number]): Item => ({ kind: "comment", key: `comment:${p.comment.id}`, comment: p.comment, placed: p.placed });
     for (const p of placed) if (p.placed.at === null) items.push(commentItem(p));
+    // A row's key is its kind and text, and how many rows above it in the file have the same: rows that go in above it
+    // never change it, so the keyboard, a range and a menu stay on the line they were on.
+    const hashes = hashesOf(file.rows);
+    const seen = new Map<string, number>();
     file.rows.forEach((_, at) => {
-      items.push({ kind: "row", key: `row:${file.path}:${at}`, file, at });
+      const hash = hashes[at]!;
+      const n = seen.get(hash) ?? 0;
+      seen.set(hash, n + 1);
+      items.push({ kind: "row", key: `row:${file.path}:${hash}:${n}`, file, at });
       for (const p of placed) if (p.placed.at === at) items.push(commentItem(p));
     });
   }
   return items;
+}
+
+/** The index the keyboard is on: the item with its key, else the index it was on before (its line changed or went), kept in the list. */
+export function focusIndex(items: Item[], key: string | null, last: number): number {
+  const found = key === null ? -1 : items.findIndex((i) => i.key === key);
+  if (found >= 0) return found;
+  return items.length === 0 ? 0 : Math.max(0, Math.min(last, items.length - 1));
 }
 
 function statusText(file: Section): string {
@@ -238,7 +252,7 @@ export function itemLabel(item: Item): string {
       return `Show ${n.toLocaleString("en-US")} ${n === 1 ? "line" : "lines"}`;
     }
     case "comment": {
-      const c = item.comment;
+      const c = renumbered(item.comment, item.placed);
       const range = c.start !== c.end;
       const where = range ? `lines ${c.start} to ${c.end}` : `line ${c.start}`;
       return `Comment on ${where}: ${c.text}${item.placed.changed ? `. ${copy.changed(range)}` : ""}`;

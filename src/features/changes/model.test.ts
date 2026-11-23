@@ -3,7 +3,7 @@ import type { ChangesReply } from "../../generated/ChangesReply";
 import type { DiffFile } from "../../generated/DiffFile";
 import type { DraftComment } from "../../generated/DraftComment";
 import type { Placement } from "./comments";
-import { FOLD_LINES, OPEN_BUDGET, cutFiles, isLockfile, isMinified, itemLabel, itemsOf, sectionsOf, type Item, type Row, type Section } from "./model";
+import { FOLD_LINES, OPEN_BUDGET, cutFiles, focusIndex, isLockfile, isMinified, itemLabel, itemsOf, sectionsOf, type Item, type Row, type Section } from "./model";
 
 const file = (path: string, extra: Partial<DiffFile> = {}): DiffFile => ({ path, old_path: null, status: "modified", note: null, ...extra });
 const reply = (files: DiffFile[], diff: string, extra: Partial<ChangesReply> = {}): ChangesReply => ({
@@ -232,6 +232,31 @@ describe("itemsOf", () => {
     const items = itemsOf(s, [draft({ id: "c1" })], new Map([["c1", { at: 2, changed: false }]]));
     expect(new Set(items.map((i) => i.key)).size).toBe(items.length);
   });
+  it("keeps a row's key when rows go in above it, so the keyboard stays on the same line", () => {
+    const before = itemsOf(sectionsOf(reply([file("src/a.ts")], A), {}, [], false), [], new Map());
+    const moved = head("src/a.ts") + "@@ -1,3 +1,8 @@\n+p\n+p\n+p\n+p\n+p\n one\n-two\n+TWO\n three\n";
+    const after = itemsOf(sectionsOf(reply([file("src/a.ts")], moved), {}, [], false), [], new Map());
+    const keyOf = (items: Item[], text: string) => items.find((i) => i.kind === "row" && i.file.rows[i.at]!.text === text)?.key;
+    expect(keyOf(after, "TWO")).toBeDefined();
+    expect(keyOf(after, "TWO")).toBe(keyOf(before, "TWO"));
+    expect(keyOf(after, "three")).toBe(keyOf(before, "three"));
+    // Five rows with the same text still get five keys.
+    expect(new Set(after.map((i) => i.key)).size).toBe(after.length);
+  });
+});
+
+describe("focusIndex", () => {
+  const items = itemsOf(sectionsOf(reply([file("src/a.ts")], A), {}, [], false), [], new Map());
+
+  it("finds the focused item by its key", () => {
+    expect(focusIndex(items, items[3]!.key, 0)).toBe(3);
+  });
+  it("stays at the index it was on when its item is gone, within the list", () => {
+    expect(focusIndex(items, "row:gone", 2)).toBe(2);
+    expect(focusIndex(items, "row:gone", 99)).toBe(items.length - 1);
+    expect(focusIndex(items, null, 0)).toBe(0);
+    expect(focusIndex([], "row:gone", 2)).toBe(0);
+  });
 });
 
 describe("itemLabel", () => {
@@ -267,6 +292,10 @@ describe("itemLabel", () => {
     expect(itemLabel(c({ start: 10, end: 14, text: "Why?" }, false))).toBe("Comment on lines 10 to 14: Why?");
     expect(itemLabel(c({ start: 42, end: 42, text: "Use PORT." }, true))).toBe("Comment on line 42: Use PORT.. The line changed");
     expect(itemLabel(c({ start: 10, end: 14, text: "Why?" }, true))).toBe("Comment on lines 10 to 14: Why?. The lines changed");
+  });
+  it("labels a moved comment by the lines it is on now", () => {
+    const item: Item = { kind: "comment", key: "k", comment: draft({ start: 3, end: 4, text: "Why?" }), placed: { at: 10, changed: false, start: 8, end: 9 } };
+    expect(itemLabel(item)).toBe("Comment on lines 8 to 9: Why?");
   });
   it("labels a note by its text", () => {
     expect(itemLabel({ kind: "note", key: "k", file: s, text: "Only whitespace changed." })).toBe("Only whitespace changed.");

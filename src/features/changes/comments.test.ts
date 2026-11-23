@@ -105,13 +105,13 @@ describe("place", () => {
 
   it("keeps a comment on an unchanged file where it is", () => {
     const s = sec(A);
-    expect(place(mk(s, 3, 5), s)).toEqual({ at: 5, changed: false });
+    expect(place(mk(s, 3, 5), s)).toEqual({ at: 5, changed: false, start: 3, end: 4 });
   });
   it("re-anchors a comment when lines above it move", () => {
     const c = mk(sec(A), 3, 5);
     const moved = sec("@@ -1,10 +1,10 @@\n p1\n p2\n p3\n p4\n p5\n one\n two\n-old()\n+neu()\n keep()\n tail\n");
-    // Five rows went in above, so the old row 5 is now row 10.
-    expect(place(c, moved)).toEqual({ at: 10, changed: false });
+    // Five rows went in above, so the old row 5 is now row 10, and its lines 3-4 are now 8-9.
+    expect(place(c, moved)).toEqual({ at: 10, changed: false, start: 8, end: 9 });
   });
   it("marks a comment changed when its line's text changed", () => {
     const c = mk(sec(A), 3, 5);
@@ -128,7 +128,7 @@ describe("place", () => {
   it("places on the old side's numbers for a removed-only comment", () => {
     const s = sec("@@ -7,3 +7,0 @@\n-a\n-b\n-c\n");
     const c = mk(s, 1, 3);
-    expect(place(c, s)).toEqual({ at: 3, changed: false });
+    expect(place(c, s)).toEqual({ at: 3, changed: false, start: 7, end: 9 });
     const other = sec("@@ -7,3 +7,1 @@\n-a\n-b\n-X\n+Y\n");
     expect(place(c, other)).toEqual({ at: 3, changed: true });
   });
@@ -136,8 +136,8 @@ describe("place", () => {
     const s = sec("@@ -1,3 +1,3 @@\n a\n dup\n b\n@@ -19,3 +19,3 @@\n x\n dup\n y\n");
     // idx: 0 hunk, 1 a, 2 dup (2), 3 b, 4 hunk, 5 x, 6 dup (20), 7 y
     const c = mk(s, 6, 6);
-    expect(place({ ...c, start: 19, end: 19 }, s)).toEqual({ at: 6, changed: false });
-    expect(place({ ...c, start: 3, end: 3 }, s)).toEqual({ at: 2, changed: false });
+    expect(place({ ...c, start: 19, end: 19 }, s)).toEqual({ at: 6, changed: false, start: 20, end: 20 });
+    expect(place({ ...c, start: 3, end: 3 }, s)).toEqual({ at: 2, changed: false, start: 2, end: 2 });
   });
   it("never matches a window that holds a hunk row", () => {
     const s = sec("@@ -1,2 +1,2 @@\n a\n b\n@@ -19,2 +19,2 @@\n x\n y\n");
@@ -208,6 +208,10 @@ describe("messageOf", () => {
     const placements = new Map<string, Placement>([["1", { at: 3, changed: true }]]);
     const m = messageOf([c({ id: "1", text: "  two\n\tlines " })], placements, [stub("src/a.ts")], "main");
     expect(m).toBe("Comments on the changes (compared with main):\n\nsrc/a.ts:1 (changed since)\n> q\n  two\n\tlines ");
+  });
+  it("cites the lines a moved comment's rows are on now", () => {
+    const placements = new Map<string, Placement>([["1", { at: 10, changed: false, start: 8, end: 9 }]]);
+    expect(messageOf([c({ id: "1", start: 3, end: 4, text: "Why?" })], placements, [stub("src/a.ts")], "main")).toBe("Comments on the changes (compared with main):\n\nsrc/a.ts:8-9\n> q\nWhy?");
   });
   it("has no trailing newline", () => {
     expect(messageOf([c({ text: "end\n" })], none, [stub("src/a.ts")], "main").endsWith("\n")).toBe(false);

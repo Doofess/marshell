@@ -26,8 +26,16 @@ export function quoteLine(text: string): string {
   return cut(text.replace(CONTROL_NOT_TAB, "�"), QUOTE_CHARS);
 }
 
-/** Where a comment sits now: the index of the row it goes under (null: above the first row), and whether the lines under it changed. */
-export type Placement = { at: number | null; changed: boolean };
+/**
+ * Where a comment sits now: the index of the row it goes under (null: above the first row), and whether the lines under it changed.
+ * When its rows were found unchanged, `start` and `end` are their line numbers now (lines above may have moved them).
+ */
+export type Placement = { at: number | null; changed: boolean; start?: number; end?: number };
+
+/** The comment (or box) with the line numbers its rows have now, when `place` found them; else as it was written. */
+export function renumbered<T extends { start: number; end: number }>(c: T, placed: Placement | undefined): T {
+  return placed?.start === undefined || placed.end === undefined ? c : { ...c, start: placed.start, end: placed.end };
+}
 
 /** The 53-bit cyrb53 hash (seed 0) as 14 lowercase hex characters. Not a security hash: it only recognises a line again. */
 export function cyrb53(s: string): string {
@@ -73,7 +81,8 @@ export function anchorOf(file: Section, from: number, to: number): Omit<DraftCom
 }
 
 const keyHashes = new WeakMap<Row[], string[]>();
-const hashesOf = (rows: Row[]) => {
+/** Each row's cyrb53 of its kind and text, kept per rows array. */
+export const hashesOf = (rows: Row[]) => {
   let h = keyHashes.get(rows);
   if (!h) keyHashes.set(rows, (h = rows.map((r) => cyrb53(keyOf(r)))));
   return h;
@@ -87,21 +96,21 @@ export function place(c: DraftComment, file: Section | undefined): Placement {
 
   // 1. The same rows, wherever they moved to: the window of c.rows rows (no hunk row) that begins like the comment and hashes the same.
   const firsts = hashesOf(rows);
-  let best: number | null = null;
+  let best: Placement | null = null;
   let bestDistance = Infinity;
   for (let i = 0; i + c.rows <= rows.length; i++) {
     if (firsts[i] !== c.first) continue;
     const window = rows.slice(i, i + c.rows);
     if (window.some((r) => r.kind === "hunk")) continue;
     if (cyrb53(window.map(keyOf).join("\n")) !== c.hash) continue;
-    const first = window.map(no).find((v) => v !== undefined);
-    const distance = first === undefined ? Infinity : Math.abs(first - c.start);
+    const numbers = window.map(no).filter((v): v is number => v !== undefined);
+    const distance = numbers.length === 0 ? Infinity : Math.abs(numbers[0]! - c.start);
     if (best === null || distance < bestDistance) {
-      best = i + c.rows - 1;
+      best = { at: i + c.rows - 1, changed: false, ...(numbers.length > 0 ? { start: Math.min(...numbers), end: Math.max(...numbers) } : {}) };
       bestDistance = distance;
     }
   }
-  if (best !== null) return { at: best, changed: false };
+  if (best !== null) return best;
 
   // 2. The text changed: the row numbered c.end on its side, or the nearest smaller one.
   let at: number | null = null;
@@ -128,7 +137,9 @@ export function citation(c: DraftComment, changed: boolean): string {
 export function messageOf(drafts: DraftComment[], placements: Map<string, Placement>, sections: Section[], base: string | null): string {
   const order = new Map(sections.map((s, i) => [s.path, i]));
   const rank = (c: DraftComment) => order.get(c.path) ?? sections.length;
-  const sorted = [...drafts].sort((a, b) => rank(a) - rank(b) || a.start - b.start);
+  // Cited at the lines the rows are on now: the agent reads the file as it is.
+  const now = drafts.map((c) => renumbered(c, placements.get(c.id)));
+  const sorted = now.sort((a, b) => rank(a) - rank(b) || a.start - b.start);
   const header = base === null ? "Comments on the uncommitted changes:" : `Comments on the changes (compared with ${base}):`;
   const blocks = sorted.map((c) => {
     const lines = [citation(c, placements.get(c.id)?.changed ?? false), ...c.quote.map((q) => `> ${q}`)];
