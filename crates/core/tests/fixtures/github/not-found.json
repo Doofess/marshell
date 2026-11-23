@@ -1,0 +1,1 @@
+{"data":{"rateLimit":{"remaining":4973,"resetAt":"2026-11-23T16:06:01Z"},"repository":null},"errors":[{"type":"NOT_FOUND","path":["repository"],"locations":[{"line":1,"column":81}],"message":"Could not resolve to a Repository with the name 'octo-org/no-such-repo'."}]}

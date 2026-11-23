@@ -1,7 +1,9 @@
 //! GitHub, as the Changes panel's pull request bar knows it.
 
 pub mod gh;
+pub mod query;
 pub mod remote;
+pub mod status;
 
 use crate::gitbox::refs;
 
@@ -24,6 +26,32 @@ pub fn command_safe(name: &str) -> bool {
     let plain = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/');
     let mut chars = name.chars();
     chars.next().is_some_and(plain) && chars.all(|c| plain(c) || c == '-')
+}
+
+/// `text` as one line of plain characters, for anything from GitHub or from git that Marshell shows: every control
+/// character, and every character that hides or reorders text (soft hyphen, Arabic letter mark, zero-width and
+/// direction marks, line and paragraph separators and embeddings, word joiners and isolates, the byte order mark,
+/// interlinear annotation marks, and the tag characters), becomes one space, and the result is cut at `max`
+/// characters (not bytes).
+pub fn plain(text: &str, max: usize) -> String {
+    let hides = |c: char| {
+        matches!(
+            c,
+            '\u{ad}'
+                | '\u{61c}'
+                | '\u{200b}'..='\u{200f}'
+                | '\u{2028}'..='\u{202e}'
+                | '\u{2060}'..='\u{206f}'
+                | '\u{feff}'
+                | '\u{fff9}'..='\u{fffb}'
+                | '\u{e0001}'
+                | '\u{e0020}'..='\u{e007f}'
+        )
+    };
+    text.chars()
+        .take(max)
+        .map(|c| if c.is_control() || hides(c) { ' ' } else { c })
+        .collect()
 }
 
 #[cfg(test)]
