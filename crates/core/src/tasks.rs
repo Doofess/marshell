@@ -1028,6 +1028,8 @@ fn run_removal(
     teardown: Option<(&str, Duration)>,
     steps: &[GitStep],
 ) -> Result<Vec<String>, String> {
+    // Changes names its sandbox by the canonical path, which can't be worked out once the folder is gone.
+    let checkout = crate::projects::canonical(Path::new(&task.path));
     let notes: Vec<String> = teardown
         .and_then(|(script, timeout)| run_teardown(script, Path::new(&task.path), timeout))
         .into_iter()
@@ -1085,6 +1087,8 @@ fn run_removal(
             })?;
         }
     }
+    // The worktree is gone, so is the copy of its index that Changes kept. Nothing depends on the answer.
+    crate::gitbox::sweep::forget(st.home(), &checkout);
     let _guard = TASKS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut doc = store::read::<FileDoc>(&file(st.home()))
         .map_err(|e| format!("The task was removed, but the task list couldn't be read: {e:#}"))?
@@ -1308,6 +1312,19 @@ mod tests {
         assert!(notes.is_empty(), "{notes:?}");
         assert!(marker.exists());
         assert!(!Path::new(&task.path).exists());
+    }
+
+    #[test]
+    fn removing_a_task_removes_its_sandbox() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (home, task) = new_task(&tmp);
+        crate::gitbox::GitBox::open(&home, Path::new(&task.path)).unwrap();
+        let sandbox = crate::gitbox::sandbox_dir(&home, Path::new(&task.path));
+        assert!(sandbox.is_dir());
+        let req = request_for(&home, &task);
+        remove_with_timeout(&state_in(&home), &task, &req, ENOUGH).unwrap();
+        assert!(!Path::new(&task.path).exists());
+        assert!(!sandbox.exists());
     }
 
     /// Commits the worktree's files on the task branch, so the folder is clean.
