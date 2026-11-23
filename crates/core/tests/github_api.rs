@@ -2247,6 +2247,12 @@ const ASK_URL: &str = "https://github.com/octo-org/widgets/actions/runs/45193065
 const HEARD_NOTHING: &str = "Marshell hasn't heard from GitHub about this branch yet.";
 const NO_DEFAULT_COMMAND: &str = "The default branch's name can't be put in a command safely.";
 
+/// Where a Copilot CLI is "found": a name no real program has, so the test neither needs one installed nor looks one up
+/// on the machine's PATH. Nothing runs it: the session's program is the capturing one.
+fn copilot_stand_in(command: &str) -> Option<PathBuf> {
+    (command == "copilot").then(|| Path::new(env!("CARGO_TARGET_TMPDIR")).join("copilot-marshell-test.exe"))
+}
+
 /// A session of the capturing program in the rig's checkout, for `agent`. Claude's version and settings are pinned
 /// to scratch values, so no test runs a real `claude`. Waits until the program takes input. Returns the typed log.
 async fn ask_session(rig: &Rig, agent: Option<&str>) -> (AppState, axum::Router, String, PathBuf) {
@@ -2269,6 +2275,7 @@ async fn ask_session(rig: &Rig, agent: Option<&str>) -> (AppState, axum::Router,
     .with_claude_compact_paths(home.join("user"), Vec::new())
     .with_claude_settings(home.join("claude-settings.json"))
     .with_agent_check(|_| true)
+    .with_agent_path(copilot_stand_in)
     .with_tab_path(|| None);
     let app = router(state.clone());
     let body = json!({

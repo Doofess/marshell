@@ -1,6 +1,6 @@
 # GitHub in the Changes panel live check (slice 6r-4a)
 
-- Date: 2026-11-23, 19:57 to 20:54 local time, with one more start afterwards for row 14.
+- Date: 2026-11-23, 19:57 to 20:54 local time, and 21:04 to 21:22 for row 14.
 - Build: `phase-6r-4a` under `pnpm tauri dev` on Windows 11 Pro (26300).
 - Home: a scratch `MARSHELL_HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME`, `USERPROFILE` and `MARSHELL_CLAUDE_SETTINGS`, with CDP on port 9333. Onboarding was skipped, so agents ran with limited status. gh was the PC's own, signed in, except in row 10.
 - Data: a private scratch repository on GitHub with a failing workflow, a `develop` branch and eight pull requests made during the check; two clones of it in scratch folders, the first with a `pre-push` hook that prints one line a second for a number of seconds read from a file beside it. Qwen Code and Copilot CLI ran on the skill's fake models (`start -QwenFake -CopilotFake`). Commit statuses, the outside commit and three of the pull requests were made with gh from outside the app.
@@ -23,7 +23,7 @@
 | 11. The switch off: no gh process starts | Pass. With the switch on, `gh` ran every 30 s as a child of `marshell-app`. From the moment the setting was off, none started in the 99 s that were watched. |
 | 12. Keyboard alone; forced colours; the bar over an empty diff; a Browser page covered by each sheet | Pass, after fixes. Keyboard: the bar, its ⋯ menu, the checks list (one tab stop, arrows, Shift+F10 for a row's menu), the Push sheet, the Create sheet and the Merge dialog, each with Tab wrapping and Escape giving the keyboard back to the button it came from. Forced colours (emulated): the bar's note, reason and menu kept token colours (finding 4, fixed and seen). The bar stood over "No changes". A page in the Browser panel was reported covered while each sheet was open and uncovered after; the page itself can't be seen over CDP. |
 | 13. A session whose shell moved into the scratch clone | Pass. Both confirms carried "This isn't the folder the session started in. A push runs this repository's hooks and settings.", and the branch line ended "· in {folder}". |
-| 14. This slice's own pull request, read-only | Runs once this slice's pull request exists; the result is added under "Row 14" at the end. |
+| 14. This slice's own pull request, read-only | Pass for what it could show; see "Row 14" at the end. The run failed, so the bar followed a running check to a failed one, not to a passed one. |
 | 15. `origin` with a `pushurl`, then two `url` values | Pass. Create and Push were off with "origin pushes somewhere other than {repository}, so push from the terminal."; pressing the off button opened nothing; nothing was pushed. The sentence showed twice (finding 7, fixed and seen). |
 | 16. Branches named `+main` and `-x` | Pass. No bar at all, the core's plan refused with "That isn't a branch name Marshell can push.", and GitHub's `main` did not move. |
 | 17. Quit while the hook sleeps | Pass through the shell's `quit`, which the tray's Quit calls; the tray click itself was not sent. "Quit Marshell?" / "A push is still running. Quit and stop it?" with the keyboard on Cancel. Cancel closed the question and the push went on (step 11, then 14, of 30). A second quit and "Quit": seven seconds later there was no `marshell-app`, no process of the push, and GitHub had no such branch. |
@@ -49,3 +49,13 @@ After the check the real `~/.claude/settings.json` had the modified time it had 
 12. **A palette command run seconds after a branch switch or a push answered from the reply the panel still held**, once with the old branch's line and once with "1 commit isn't on GitHub yet. Push it first."; a second try worked, and the core refuses anything that no longer fits. Not fixed.
 13. **After "Hide" the keyboard is on nothing**: the button goes with the bar. Not fixed.
 14. **With onboarding skipped, an ask was typed while Copilot CLI still showed its folder-trust question.** The same path as Send and Review, which wait for a ready agent only with full status. Not fixed here.
+15. **A test of this branch needed Copilot CLI on the machine.** `ask_types_the_same_bytes_for_all_five_agents_with_no_enter` looked the agent up on the real PATH, so it passed on the dev PC and failed in CI with "Copilot CLI isn't installed, or isn't on PATH." The bar showed that failure for this pull request. Fixed with a stand-in path that no real program has; with no agent on the PATH the test failed the same way locally before the fix.
+
+## Row 14
+
+Run after the pull request was opened, in a third start of the app with the PC's own gh sign-in, from a plain PowerShell session in this slice's own checkout. Nothing was typed into it and no button of the bar was pressed but the checks disclosure.
+
+- Two minutes after the pull request was opened the bar read "#181 Open · Checks: 1 running", with Merge off: "GitHub won't merge #181 yet: a required check or review is missing." The list had one row, "Running: build-test (windows-latest), ci, 1 min 5 s".
+- Twelve and a half minutes later, within seconds of the run's end, it read "#181 Open · Checks: 1 failed", and "A check failed on #181: build-test (windows-latest)." was said once.
+- The run failed for a reason of this branch's own (finding 15), so passed checks folding into a count were not seen here. Row 4 saw a passed status counted ("1 passed, 3 failed") on the scratch repository, and what the bar showed for the next run is in the pull request's "Live check" section.
+- The same start pushed a branch of the scratch repository through the 3-second hook over https, after the push got `GIT_ALLOW_PROTOCOL=https:ssh` in the fix pass: "Pushed 2 commits to origin."
