@@ -56,6 +56,40 @@ fn child_outlives_a_normal_exit() {
     assert!(survived, "a child died although the app released it before exiting");
 }
 
+/// The probe in `tree` mode starts a `ping` and prints its PID. Started through `ProcessTree::spawn`, that `ping`
+/// is in the probe's job from the first instant, so `kill` ends it with the probe.
+#[test]
+fn a_tree_started_in_its_job_ends_whole() {
+    use marshell_core::job::ProcessTree;
+
+    /// Ends exactly the `ping` with this PID, if the test left it running.
+    struct EndPing(String);
+    impl Drop for EndPing {
+        fn drop(&mut self) {
+            if ping_is_running(&self.0) {
+                let _ = Command::new("taskkill").args(["/PID", &self.0, "/F"]).output();
+            }
+        }
+    }
+
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_job-probe"));
+    cmd.arg("tree").stdout(Stdio::piped());
+    let (mut probe, tree) = ProcessTree::spawn(&mut cmd).unwrap();
+    let mut lines = BufReader::new(probe.stdout.take().unwrap()).lines();
+    let pid = lines.next().unwrap().unwrap();
+    let _end = EndPing(pid.clone());
+    assert!(ping_is_running(&pid), "the probe's child did not start");
+
+    tree.kill(&mut probe);
+    let _ = probe.wait();
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while ping_is_running(&pid) {
+        assert!(Instant::now() < deadline, "the child outlived the kill of its tree");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 #[test]
 fn job_failure_is_not_fatal() {
     let _ = marshell_core::job::tie_children_to_app();
