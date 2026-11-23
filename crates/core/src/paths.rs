@@ -138,6 +138,12 @@ pub fn drafts_dir(home: &Path) -> PathBuf {
     home.join("drafts")
 }
 
+/// `<home>/git-sandbox`: one git folder of Marshell's own per checkout, which the Changes panel runs git
+/// against so that no config of the repository is read (spike S15).
+pub fn git_sandbox_dir(home: &Path) -> PathBuf {
+    home.join("git-sandbox")
+}
+
 /// `<home>/doctor/last-fix.json`: the last fix the Doctor applied, which "Undo last fix" puts back.
 pub fn doctor_last_fix(home: &Path) -> PathBuf {
     home.join("doctor").join("last-fix.json")
