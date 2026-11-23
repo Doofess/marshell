@@ -92,6 +92,24 @@
   color: var(--text-3);
 }
 
+/* Git's marks: a letter at the end of a changed file's row, a small dot on the folders that hold changes. Neither moves the row. */
+.file-tree__mark {
+  flex: none;
+  margin-inline-start: auto;
+  color: var(--text-1);
+  font-size: var(--text-11);
+  font-weight: 600;
+}
+.file-tree__row[data-changes]::after {
+  content: "";
+  flex: none;
+  margin-inline-start: auto;
+  inline-size: 6px;
+  block-size: 6px;
+  border-radius: 50%;
+  background: var(--text-2);
+}
+
 /* "And 1,234 more" and the empty folder's note: text, not rows to open. */
 .file-tree__row--note .file-tree__name {
   color: var(--text-3);
@@ -154,6 +172,19 @@
   }
   .file-tree__row--note .file-tree__name {
     color: GrayText;
+  }
+  .file-tree__mark {
+    color: CanvasText;
+  }
+  .file-tree__row[data-changes]::after {
+    background: CanvasText;
+    forced-color-adjust: none;
+  }
+  .file-tree__row[aria-selected="true"] .file-tree__mark {
+    color: HighlightText;
+  }
+  .file-tree__row[aria-selected="true"][data-changes]::after {
+    background: HighlightText;
   }
   .file-tree__row:focus-visible {
     outline-color: CanvasText;

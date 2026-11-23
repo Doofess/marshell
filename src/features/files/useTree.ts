@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ChangeMark } from "../../generated/ChangeMark";
 import type { TreeAsk } from "../../generated/TreeAsk";
 import type { TreeDir } from "../../generated/TreeDir";
 import type { TreeReply } from "../../generated/TreeReply";
 import type { TreeState } from "../../generated/TreeState";
+import { withMarks } from "./treeMarks";
 import { ancestors, type Listing, openFolders, type TreeRow, visibleRows } from "./treeModel";
 
 export const TREE_POLL_MS = 2000;
@@ -26,10 +28,16 @@ export type TreeData = {
   noFolder: boolean;
   listings: ReadonlyMap<string, Listing>;
   expanded: ReadonlySet<string>;
+  /** The changed files of the last reply, relative to the root. Every reply replaces them, a `same` one too. */
+  changes: readonly ChangeMark[];
 };
 
 export function initialData(session: string, saved: TreeState | undefined): TreeData {
-  return { session, root: saved?.root ?? null, noFolder: false, listings: new Map(), expanded: new Set((saved?.expanded ?? []).slice(0, MAX_SAVED)) };
+  return { session, root: saved?.root ?? null, noFolder: false, listings: new Map(), expanded: new Set((saved?.expanded ?? []).slice(0, MAX_SAVED)), changes: [] };
+}
+
+function sameChanges(a: readonly ChangeMark[], b: readonly ChangeMark[]): boolean {
+  return a.length === b.length && a.every((m, i) => m.path === b[i]?.path && m.status === b[i]?.status);
 }
 
 /**
@@ -156,8 +164,9 @@ export function applyReply(data: TreeData, tag: ReplyTag, reply: TreeReply | "no
     }
   }
 
-  if (!touched) return { data, save: null };
-  return { data: { session: data.session, root, noFolder, listings, expanded }, save: stateChanged ? saveOf(root, expanded) : null };
+  const changes = sameChanges(data.changes, reply.changes) ? data.changes : reply.changes;
+  if (!touched && changes === data.changes) return { data, save: null };
+  return { data: { session: data.session, root, noFolder, listings, expanded, changes }, save: stateChanged ? saveOf(root, expanded) : null };
 }
 
 export type TreeEnv = { now(): number; visible(): boolean; focused(): boolean };
@@ -389,7 +398,7 @@ export function useTree(o: { session: string; source: TreeSource | null; saved: 
 
   // Until the new session's engine has spoken, show that session's saved state, never the last one's rows.
   const data = useMemo(() => (snap.session === session ? snap : initialData(session, latest.current.saved)), [snap, session]);
-  const rows = useMemo(() => visibleRows(data.listings, data.expanded), [data]);
+  const rows = useMemo(() => withMarks(visibleRows(data.listings, data.expanded), data.changes), [data]);
   const expand = useCallback((p: string) => engineRef.current?.expand(p), []);
   const collapse = useCallback((p: string) => engineRef.current?.collapse(p), []);
   const collapseAll = useCallback(() => engineRef.current?.collapseAll(), []);
