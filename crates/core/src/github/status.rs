@@ -52,10 +52,12 @@ fn refused_branch() -> GhError {
     }
 }
 
-/// A branch name from GitHub: checked as it came, then made plain.
+/// A branch name from GitHub, as it came or not at all. Git and GitHub get this name back, so it is never
+/// rewritten: one that isn't a branch Marshell hands on, or that the display rules would change (too long, or
+/// holding a character that hides or reorders text), is refused whole.
 fn branch_of(raw: &str) -> Result<String, GhError> {
-    if valid_branch(raw) {
-        Ok(plain(raw, TEXT_MAX))
+    if valid_branch(raw) && plain(raw, TEXT_MAX) == raw {
+        Ok(raw.to_string())
     } else {
         Err(refused_branch())
     }
@@ -868,6 +870,29 @@ mod tests {
         assert_eq!(p.checks[0].name, "n ame");
         assert_eq!(p.checks[0].workflow.as_deref(), Some("w f"));
         assert_eq!(p.checks[0].run_id, Some(5));
+    }
+
+    /// A name git will use is never rewritten: one the display rules would change is refused whole.
+    #[test]
+    fn a_branch_name_that_plain_would_change_is_refused_not_rewritten() {
+        let refused = Err(GhError::Refused {
+            status: None,
+            message: "GitHub named a branch Marshell can't use.".into(),
+        });
+        // Over the display length: cutting it would name another branch.
+        let long = "a".repeat(201);
+        let mut v = load(OPEN_FAILING);
+        first_pull(&mut v)["baseRefName"] = json!(long);
+        assert_eq!(snapshot_of(&v).map(|_| ()), refused);
+        // A character that hides: replacing it would name another branch.
+        let mut v = load(OPEN_FAILING);
+        repo(&mut v)["defaultBranchRef"]["name"] = json!("ma\u{200b}in");
+        assert_eq!(snapshot_of(&v).map(|_| ()), refused);
+        // A name of exactly the display length comes through as it is.
+        let exact = "b".repeat(200);
+        let mut v = load(OPEN_FAILING);
+        first_pull(&mut v)["baseRefName"] = json!(exact);
+        assert_eq!(snapshot_of(&v).unwrap().pulls[0].status.base, exact);
     }
 
     #[test]
