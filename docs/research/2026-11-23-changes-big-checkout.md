@@ -95,6 +95,23 @@ With the listing answering those (slice 6u decision 4):
 
 At 20,000 files the look is now under 250 ms, so it runs on every check and not every 10 s: a check there takes about 0.46 s, where it took 0.26 s plus 0.86 s every 10 s.
 
+## After slice 6u
+
+The same test, release build, warm, with the listing answering the walk (decision 4) and a slow link check standing for 10 s (decision 1). Six checks in a row, nothing changed in the checkout:
+
+| | 20,000 files | 100,000 files |
+| --- | --- | --- |
+| Check 1 (everything runs) | 0.68 s | 2.67 s |
+| Checks 2 to 6 | 0.39 to 0.43 s | 0.26 to 0.28 s |
+| Checks 2 to 6 before | 0.26 s, plus 0.86 s every 10 s | 1.3 s |
+| Link safety check alone | 135 ms | 0.71 to 0.80 s |
+| `git diff --raw` | 74 ms | 301 ms |
+| Look for new files alone | 183 ms | 1.02 s |
+
+- At 100,000 files a check that has to do both the link check and the look for new files needs about 2.1 s (0.75 s, 0.3 s for `git diff`, 1.0 s) against a budget of 2 s, so the look for new files is cut in it and the answer comes with "Looking for new files took too long, so some may not be shown." That is the first check. After it each of the two runs again once in 10 s, on its own clock: worked out from the panel's 2 s poll, they fall into different checks from about 24 s on and into the same check about once a minute, where the notice shows again until the next full look. The live check looks at this in the running app.
+- At 20,000 files both parts are under 250 ms, so neither is reused and every check does all the work: slower between looks than the bigger checkout, with nothing shown late.
+- The tracked paths stayed one set across the six checks (the link check was reused each time), so git's own refresh of the sandbox's index copy doesn't end the reuse.
+
 ## `tasks::task_at`
 
 Issue #176's comment: it reads the tasks file on every tree and Changes poll. Measured: 0.07 ms with no tasks file and 3.2 ms with 50 tasks. Left as it is.
