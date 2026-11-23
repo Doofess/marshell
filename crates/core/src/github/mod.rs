@@ -1,6 +1,7 @@
 //! GitHub, as the Changes panel's pull request bar knows it.
 
 pub mod actions;
+pub mod ask;
 pub mod gh;
 pub mod plan;
 pub mod push;
@@ -243,6 +244,14 @@ pub struct GithubState {
     inner: Mutex<Inner>,
 }
 
+/// What GitHub last said that a request typed to the agent names. See `GithubState::stored_for_ask`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredAsk {
+    pub default_branch: String,
+    /// The base of the branch's open or draft pull request.
+    pub open_base: Option<String>,
+}
+
 /// How an ask for a status goes on.
 pub enum Take {
     /// The snapshot kept for the key answers.
@@ -288,6 +297,28 @@ impl GithubState {
         inner
             .position(checkout, branch)
             .and_then(|at| inner.keys[at].seen.clone())
+    }
+
+    /// What the text of a request typed to the agent needs of what GitHub last said for `branch` at `checkout`, read
+    /// from the snapshot kept and never asked of GitHub: the default branch, and the base of the open or draft pull
+    /// request when there is one. `None` when no snapshot is kept, or it names no default branch.
+    pub fn stored_for_ask(&self, checkout: &Path, branch: &str) -> Option<StoredAsk> {
+        let inner = self.lock();
+        let at = inner.position(checkout, branch)?;
+        let (_, snapshot) = inner.keys[at].snapshot.as_ref()?;
+        Some(StoredAsk {
+            default_branch: snapshot.default_branch.clone()?,
+            open_base: snapshot
+                .pulls
+                .iter()
+                .find(|c| {
+                    matches!(
+                        c.status.state,
+                        marshell_protocol::api::PullState::Open | marshell_protocol::api::PullState::Draft
+                    )
+                })
+                .map(|c| c.status.base.clone()),
+        })
     }
 
     /// Notes what the answer showed for `branch` at `checkout`: the pull request seen (node id, number) and the base of

@@ -1414,6 +1414,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{tab}/github/create", post(github::create))
         .route("/v1/sessions/{tab}/github/merge", post(github::merge))
         .route("/v1/sessions/{tab}/github/pull", post(github::pull_action))
+        .route("/v1/sessions/{tab}/github/ask", post(github::ask_agent))
         .route("/v1/sessions/{tab}/push", post(github::push))
         .route("/v1/pushes/stop", post(github::stop_pushes))
         .route("/v1/pushes/{id}", get(github::push_progress))

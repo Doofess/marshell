@@ -30,7 +30,8 @@ fn main() {
         .append(true)
         .open("calls.jsonl")
     {
-        let _ = writeln!(calls, "{call}");
+        // One write for the whole line: a test that polls the file must not read half of one.
+        let _ = calls.write_all(format!("{call}\n").as_bytes());
     }
     let script: Vec<Value> = std::fs::read_to_string("script.json")
         .ok()

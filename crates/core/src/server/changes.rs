@@ -232,7 +232,7 @@ fn busy_reason(busy: Busy) -> &'static str {
 
 /// The agent of a session that can take typed text now, or the 409 that says why not: "no_agent" for a plain shell,
 /// "not_ready" when Claude Code's settings can't be read in time, else the `busy` reason.
-async fn agent_ready(
+pub(super) async fn agent_ready(
     st: &AppState,
     tab: &str,
     row: &SessionInfo,
@@ -249,7 +249,7 @@ async fn agent_ready(
 }
 
 /// Types `bytes` into the session as `sessions::input` does: it answers in the terminal, and no Enter follows.
-fn type_in(st: &AppState, tab: &str, session: &crate::pty::Session, bytes: Vec<u8>) {
+pub(super) fn type_in(st: &AppState, tab: &str, session: &crate::pty::Session, bytes: Vec<u8>) {
     st.holds().release_tab(tab);
     st.registry().note_input(tab);
     session.write_input(bytes);

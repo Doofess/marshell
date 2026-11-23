@@ -7,11 +7,14 @@
 //! is held across a call to gh, a git command or an `.await`.
 
 use super::AppState;
-use super::changes::{CancelOnDrop, changes_target, with_bases};
+use super::attachments::effective_agent;
+use super::changes::{CancelOnDrop, agent_ready, changes_target, type_in, with_bases};
 use super::files::row_of;
+use super::sessions::cannot_resume;
 use crate::changes::{CHECK_BUDGET, ChangesError, Check, READ_BUDGET, Target, uncommitted_files};
 use crate::gitbox::refs;
 use crate::github::actions::{self, Rejection};
+use crate::github::ask::{AskContext, ask_text, typed_text};
 use crate::github::gh::{self, GhError};
 use crate::github::plan::{body_of, outgoing, refusal, refusal_for, title_of};
 use crate::github::push::{AlreadyRunning, PushLaunch};
@@ -27,8 +30,8 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use marshell_protocol::api::{
-    CreatePull, GithubKind, GithubReply, GithubRequest, OutgoingCommit, PullAction, PullMergeRequest, PullState,
-    PullStatus, PushPlan, PushPlanRequest, PushRequest, PushStarted,
+    AskForm, AskReply, AskRequest, CreatePull, GithubKind, GithubReply, GithubRequest, OutgoingCommit, PullAction,
+    PullMergeRequest, PullState, PullStatus, PushPlan, PushPlanRequest, PushRequest, PushStarted,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -882,4 +885,113 @@ pub async fn pull_action(State(st): State<AppState>, Path(tab): Path<String>, Js
         }
     })
     .await
+}
+
+const HEARD_NOTHING: &str = "Marshell hasn't heard from GitHub about this branch yet.";
+
+/// What the text of an ask is built from, or the answer to send. It is the core's own reading of the checkout's
+/// branch and repository and of what GitHub last said; the request names only a pull request number, which must be
+/// the one the core last saw for this branch. Nothing here asks GitHub. Blocking.
+fn ask_context(
+    st: &AppState,
+    row: &marshell_protocol::api::SessionInfo,
+    reported: Option<PathBuf>,
+    cancel: &AtomicBool,
+    req: &AskRequest,
+) -> Result<AskContext, Box<Response>> {
+    let ctx = match prepare(st, row, reported, cancel) {
+        Early::Go(ctx) => *ctx,
+        Early::Reply(reply) => {
+            return Err(Box::new(match reply.kind {
+                GithubKind::Off => refused(SWITCHED_OFF),
+                GithubKind::NoGh => unavailable(actions::NEED_GH),
+                _ => refused(reply.reason.as_deref().unwrap_or(NOT_GITHUB)),
+            }));
+        }
+        // On no branch Marshell can name, GitHub has said nothing about one.
+        Early::Headless(_) => return Err(Box::new(refused(HEARD_NOTHING))),
+    };
+    let checkout = &ctx.target.checkout;
+    let Some(stored) = st.github().stored_for_ask(checkout, &ctx.branch) else {
+        return Err(Box::new(refused(HEARD_NOTHING)));
+    };
+    let number = match req {
+        AskRequest::FixCheck { number, .. } | AskRequest::SwitchAndPull { number, .. } => Some(*number),
+        AskRequest::OpenPull { .. } => None,
+    };
+    if let Some(number) = number
+        && st.github().pull_seen(checkout, &ctx.branch).map(|(_, seen)| seen) != Some(number)
+    {
+        return Err(Box::new(refused(NOT_THIS_PULL)));
+    }
+    let repo = if ctx.host == "github.com" {
+        format!("{}/{}", ctx.repo.owner, ctx.repo.name)
+    } else {
+        format!("{}/{}/{}", ctx.host, ctx.repo.owner, ctx.repo.name)
+    };
+    Ok(AskContext {
+        repo,
+        base: stored.open_base.unwrap_or_else(|| stored.default_branch.clone()),
+        default_branch: stored.default_branch,
+        branch: ctx.branch,
+        plain_shell: effective_agent(row).is_none(),
+    })
+}
+
+/// POST /v1/sessions/{tab}/github/ask: types a request about the pull request into the session's agent, in words and
+/// with no Enter, or with `copy` answers with the text and types nothing. 404 for a tab that doesn't exist; 409 for a
+/// refusal (the session takes no text now, no answer from GitHub yet, another pull request than this branch's, a name
+/// that can't be typed). The text is built by `ask_text` from what the core read, never from a name in the request.
+pub async fn ask_agent(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<AskRequest>) -> Response {
+    let reported = st.session(&tab).and_then(|s| s.current_cwd());
+    let Some(row) = row_of(&st, &tab) else {
+        return (StatusCode::NOT_FOUND, "There is no such session.").into_response();
+    };
+    let copy = match &req {
+        AskRequest::FixCheck { copy, .. } | AskRequest::OpenPull { copy } | AskRequest::SwitchAndPull { copy, .. } => {
+            *copy
+        }
+    };
+    let session = st.session(&tab);
+    if !copy && session.is_none() {
+        return (StatusCode::NOT_FOUND, "There is no such session.").into_response();
+    }
+    let cancel = Arc::new(AtomicBool::new(false));
+    let _stop = CancelOnDrop(cancel.clone());
+    let context = {
+        let (state, row, req) = (st.clone(), row.clone(), req.clone());
+        match tokio::task::spawn_blocking(move || ask_context(&state, &row, reported, &cancel, &req)).await {
+            Ok(Ok(context)) => context,
+            Ok(Err(response)) => return *response,
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
+    };
+    if copy {
+        return match ask_text(&req, &context) {
+            Ok(text) => Json(AskReply {
+                form: AskForm::Copy,
+                text,
+            })
+            .into_response(),
+            Err(sentence) => refused(sentence),
+        };
+    }
+    let Some(session) = session else {
+        return (StatusCode::NOT_FOUND, "There is no such session.").into_response();
+    };
+    // The same 409 reasons as /review. The text is built at once after, so the session has no time to change.
+    if let Err(reason) = agent_ready(&st, &tab, &row, &session).await {
+        return cannot_resume(reason);
+    }
+    match typed_text(&req, &context) {
+        Ok(text) => {
+            type_in(&st, &tab, &session, text.clone().into_bytes());
+            Json(AskReply {
+                form: AskForm::Typed,
+                text,
+            })
+            .into_response()
+        }
+        Err(sentence) => refused(sentence),
+    }
 }

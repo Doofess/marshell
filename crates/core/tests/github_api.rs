@@ -214,10 +214,12 @@ impl Scratch {
         std::fs::write(dir.join("script.json"), entries.to_string()).unwrap();
     }
 
-    /// What the fake gh was called with, in order, each as its arguments joined by a space.
+    /// What the fake gh was called with, in order, each as its arguments joined by a space. A last line with no
+    /// line end yet is a call still being written, and is not counted.
     fn calls(&self) -> Vec<String> {
-        std::fs::read_to_string(self.home().join("gh").join("calls.jsonl"))
-            .unwrap_or_default()
+        let text = std::fs::read_to_string(self.home().join("gh").join("calls.jsonl")).unwrap_or_default();
+        let whole = text.rfind('\n').map_or("", |end| &text[..end]);
+        whole
             .lines()
             .map(|line| {
                 let call: Value = serde_json::from_str(line).unwrap();
@@ -2217,4 +2219,351 @@ async fn action_routes_need_the_token() {
         assert_eq!(res.status(), StatusCode::UNAUTHORIZED, "{path}");
     }
     assert!(rig.scratch.writes().is_empty());
+}
+// ---- The requests typed to the agent (Task 11) -------------------------------------------------------------------
+//
+// A session in the rig's checkout runs a program that logs every byte typed to it; the route types a request into
+// it, and the tests read what the program received.
+
+const ASK_URL: &str = "https://github.com/octo-org/widgets/actions/runs/4519306504/job/137756214968";
+const HEARD_NOTHING: &str = "Marshell hasn't heard from GitHub about this branch yet.";
+const NO_DEFAULT_COMMAND: &str = "The default branch's name can't be put in a command safely.";
+
+/// A session of the capturing program in the rig's checkout, for `agent`. Claude's version and settings are pinned
+/// to scratch values, so no test runs a real `claude`. Waits until the program takes input. Returns the typed log.
+async fn ask_session(rig: &Rig, agent: Option<&str>) -> (AppState, axum::Router, String, PathBuf) {
+    let log = rig.scratch.root.join("typed.log");
+    let home = rig.scratch.home();
+    let command = vec![
+        env!("CARGO_BIN_EXE_fake-agent").into(),
+        "capture-input".into(),
+        log.to_string_lossy().into_owned(),
+    ];
+    let state = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec![ORIGIN.into()],
+        home.clone(),
+        vec![common::family_profile("capture", command, ShellFamily::Posix)],
+    )
+    .with_gh(PathBuf::from(env!("CARGO_BIN_EXE_gh-marshell-test")))
+    .with_claude_version(Some("2.1.302".into()))
+    .with_claude_compact_paths(home.join("user"), Vec::new())
+    .with_claude_settings(home.join("claude-settings.json"))
+    .with_agent_check(|_| true)
+    .with_tab_path(|| None);
+    let app = router(state.clone());
+    let body = json!({
+        "cols": 80, "rows": 24, "profile_id": "capture", "cwd": rig.scratch.repo.to_string_lossy(), "agent": agent,
+    });
+    let (status, answer) = call(&app, "POST", "/v1/sessions", Some(body)).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let tab = answer["tab_id"].as_str().unwrap().to_string();
+    let session = state.session(&tab).unwrap();
+    let started = Instant::now();
+    while !session.bracketed_paste() {
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "the program never took input"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    (state, app, tab, log)
+}
+
+/// `ask_session`, after the bar has shown pull request #7 for `feat/login`, so the core has GitHub's answer.
+async fn ask_ready(rig: &Rig, agent: Option<&str>) -> (AppState, axum::Router, String, PathBuf) {
+    let (state, app, tab, log) = ask_session(rig, agent).await;
+    let reply = github(&app, &tab, true).await;
+    assert_eq!(reply["pull"]["number"], 7, "{reply}");
+    (state, app, tab, log)
+}
+
+async fn ask(app: &axum::Router, tab: &str, body: Value) -> (StatusCode, Value) {
+    call(app, "POST", &format!("/v1/sessions/{tab}/github/ask"), Some(body)).await
+}
+
+fn fix_check(copy: bool) -> Value {
+    json!({
+        "kind": "fix_check", "copy": copy, "number": 7, "name": "pass", "workflow": "ci", "url": ASK_URL,
+        "run_id": 4519306504u64,
+    })
+}
+
+fn fix_text() -> String {
+    format!(
+        "The check \"pass\" (ci) failed on pull request #7: {ASK_URL}. Read its log with `gh run view 4519306504 --repo octo-org/widgets --log-failed`, find the cause and fix it."
+    )
+}
+
+const OPEN_TEXT: &str = "Open a pull request on GitHub for the branch feat/login into main: push the branch if it isn't pushed yet, then create the pull request with a title and a description that sum up its commits.";
+const SWITCH_TEXT: &str = "Pull request #7 is merged. Switch this checkout to main and pull it: run `git switch main`, then `git pull`. If there are uncommitted changes, ask me first.";
+
+#[tokio::test]
+async fn ask_types_the_same_bytes_for_all_five_agents_with_no_enter() {
+    let mut seen = Vec::new();
+    for agent in ["claude", "codex", "copilot", "qwen", "antigravity"] {
+        let rig = Rig::new();
+        let (_state, app, tab, log) = ask_ready(&rig, Some(agent)).await;
+        let mut want = String::new();
+        for (body, text) in [
+            (fix_check(false), fix_text()),
+            (json!({"kind": "open_pull", "copy": false}), OPEN_TEXT.to_string()),
+            (
+                json!({"kind": "switch_and_pull", "copy": false, "number": 7}),
+                SWITCH_TEXT.to_string(),
+            ),
+        ] {
+            let (status, answer) = ask(&app, &tab, body).await;
+            assert_eq!(status, StatusCode::OK, "{agent}: {answer}");
+            assert_eq!(answer, json!({"form": "typed", "text": text}), "{agent}");
+            want.push_str(&text);
+        }
+        let bytes = common::typed(&log, want.len()).await;
+        assert_eq!(String::from_utf8_lossy(&bytes), want, "{agent}");
+        assert!(!bytes.contains(&b'\r') && !bytes.contains(&b'\n'), "{agent}: {bytes:?}");
+        seen.push(bytes);
+    }
+    assert!(
+        seen.windows(2).all(|pair| pair[0] == pair[1]),
+        "the CLIs got different bytes"
+    );
+}
+
+#[tokio::test]
+async fn ask_copy_types_nothing() {
+    let rig = Rig::new();
+    let (_state, app, tab, log) = ask_ready(&rig, Some("claude")).await;
+    let (status, answer) = ask(&app, &tab, fix_check(true)).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer, json!({"form": "copy", "text": fix_text()}));
+    let (status, answer) = ask(&app, &tab, json!({"kind": "open_pull", "copy": true})).await;
+    assert_eq!(
+        (status, &answer),
+        (StatusCode::OK, &json!({"form": "copy", "text": OPEN_TEXT}))
+    );
+    assert_eq!(common::typed(&log, 1).await, b"");
+}
+
+/// A Claude hook call carrying a recorded fixture.
+fn hook_request(role: &str, tab: &str, name: &str) -> Request<Body> {
+    let file = format!(
+        "{}/tests/fixtures/claude/2.1.302/{name}.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let mut req = request("POST", "/v1/hook", None, true);
+    *req.body_mut() = Body::from(std::fs::read(file).unwrap());
+    let h = req.headers_mut();
+    h.insert("x-marshell-role", role.parse().unwrap());
+    h.insert("x-marshell-agent", "claude".parse().unwrap());
+    h.insert("x-marshell-tab", tab.parse().unwrap());
+    h.insert("x-marshell-version", "0.0.0".parse().unwrap());
+    req
+}
+
+#[tokio::test]
+async fn ask_waits_while_the_agent_asks() {
+    let rig = Rig::new();
+    let (state, app, tab, log) = ask_ready(&rig, Some("claude")).await;
+    let res = app
+        .clone()
+        .oneshot(hook_request("event", &tab, "SessionStart"))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    // The permission request holds its call open until it is answered.
+    let held = tokio::spawn({
+        let app = app.clone();
+        let req = hook_request("permission", &tab, "PermissionRequest");
+        async move { app.oneshot(req).await.unwrap().status() }
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !state.holds().has_tab(&tab) {
+        assert!(Instant::now() < deadline, "the permission request was never held");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let (status, answer) = ask(&app, &tab, fix_check(false)).await;
+    assert_eq!(
+        (status, &answer["reason"]),
+        (StatusCode::CONFLICT, &json!("waiting")),
+        "{answer}"
+    );
+    // The card is still pending and nothing was typed.
+    assert!(state.holds().has_tab(&tab));
+    assert_eq!(common::typed(&log, 1).await, b"");
+    // Asking to copy is not typing: it still answers.
+    let (status, answer) = ask(&app, &tab, fix_check(true)).await;
+    assert_eq!((status, &answer["form"]), (StatusCode::OK, &json!("copy")), "{answer}");
+    let rid = state.holds().pending()[0].rid.clone();
+    assert!(state.holds().release(&rid));
+    assert_eq!(held.await.unwrap(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn ask_in_a_session_with_no_agent_is_refused_unless_copy() {
+    let rig = Rig::new();
+    let (_state, app, tab, log) = ask_ready(&rig, None).await;
+    let (status, answer) = ask(&app, &tab, fix_check(false)).await;
+    assert_eq!(
+        (status, &answer["reason"]),
+        (StatusCode::CONFLICT, &json!("no_agent")),
+        "{answer}"
+    );
+    // A copy still answers; for a plain shell the switch is the two commands on two lines.
+    let (status, answer) = ask(&app, &tab, fix_check(true)).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer, json!({"form": "copy", "text": fix_text()}));
+    let body = json!({"kind": "switch_and_pull", "copy": true, "number": 7});
+    let (status, answer) = ask(&app, &tab, body).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer, json!({"form": "copy", "text": "git switch main\ngit pull"}));
+    assert_eq!(common::typed(&log, 1).await, b"");
+}
+
+#[tokio::test]
+async fn ask_needs_the_token() {
+    let rig = Rig::new();
+    let (_state, app, tab, log) = ask_ready(&rig, Some("claude")).await;
+    let res = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            &format!("/v1/sessions/{tab}/github/ask"),
+            Some(fix_check(false)),
+            false,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(common::typed(&log, 1).await, b"");
+}
+
+#[tokio::test]
+async fn ask_for_an_unknown_tab_is_404() {
+    let rig = Rig::new();
+    let app = router(rig.state());
+    let (status, _) = ask(&app, "nope", fix_check(true)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn ask_before_github_has_answered_is_refused() {
+    let rig = Rig::new();
+    let (_state, app, tab, log) = ask_session(&rig, Some("claude")).await;
+    for copy in [false, true] {
+        let (status, answer) = ask(&app, &tab, fix_check(copy)).await;
+        assert_eq!(
+            (status, &answer["reason"]),
+            (StatusCode::CONFLICT, &json!(HEARD_NOTHING)),
+            "{answer}"
+        );
+    }
+    assert_eq!(common::typed(&log, 1).await, b"");
+    assert_eq!(rig.scratch.status_calls(), 0, "{:?}", rig.scratch.calls());
+}
+
+#[tokio::test]
+async fn ask_refuses_a_pull_request_that_is_not_this_branchs() {
+    let rig = Rig::new();
+    let (_state, app, tab, log) = ask_ready(&rig, Some("claude")).await;
+    let mut body = fix_check(false);
+    body["number"] = json!(8);
+    let (status, answer) = ask(&app, &tab, body).await;
+    assert_eq!(
+        (status, &answer["reason"]),
+        (StatusCode::CONFLICT, &json!(NOT_THIS_PULL)),
+        "{answer}"
+    );
+    let body = json!({"kind": "switch_and_pull", "copy": true, "number": 3});
+    let (status, answer) = ask(&app, &tab, body).await;
+    assert_eq!(
+        (status, &answer["reason"]),
+        (StatusCode::CONFLICT, &json!(NOT_THIS_PULL)),
+        "{answer}"
+    );
+    assert_eq!(common::typed(&log, 1).await, b"");
+}
+
+#[tokio::test]
+async fn ask_takes_the_branches_and_repository_from_the_core() {
+    let rig = Rig::new();
+    let (_state, app, tab, _log) = ask_ready(&rig, None).await;
+    let mut body = json!({"kind": "open_pull", "copy": true});
+    for (key, value) in [
+        ("branch", "evil"),
+        ("base", "evil"),
+        ("repo", "evil/evil"),
+        ("host", "evil"),
+    ] {
+        body[key] = json!(value);
+    }
+    let (status, answer) = ask(&app, &tab, body).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["text"], OPEN_TEXT);
+}
+
+/// The rig's status answer with the default branch's name set to `name`.
+fn default_named(rig: &Rig, name: &str) {
+    let reply = answer(&answer_at(OPEN_FAILING, &rig.base).to_string(), |repo| {
+        repo["defaultBranchRef"]["name"] = json!(name);
+    });
+    rig.scratch.script(json!([status(&reply)]));
+}
+
+#[tokio::test]
+async fn ask_never_puts_a_shell_character_of_the_default_branch_in_a_command() {
+    let rig = Rig::new();
+    default_named(&rig, "main;calc");
+    let (_state, app, tab, log) = ask_ready(&rig, Some("claude")).await;
+    let body = json!({"kind": "switch_and_pull", "copy": false, "number": 7});
+    let (status, answer) = ask(&app, &tab, body).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let text = answer["text"].as_str().unwrap();
+    assert!(!text.contains("git switch") && !text.contains("calc"), "{text}");
+    assert_eq!(common::typed(&log, text.len()).await, text.as_bytes());
+
+    // A copy for a plain shell is refused.
+    let rig = Rig::new();
+    default_named(&rig, "main;calc");
+    let (_state, app, tab, _log) = ask_ready(&rig, None).await;
+    let body = json!({"kind": "switch_and_pull", "copy": true, "number": 7});
+    let (status, answer) = ask(&app, &tab, body).await;
+    assert_eq!(
+        (status, &answer["reason"]),
+        (StatusCode::CONFLICT, &json!(NO_DEFAULT_COMMAND)),
+        "{answer}"
+    );
+}
+
+#[tokio::test]
+async fn ask_types_one_line_whatever_the_check_is_called() {
+    let rig = Rig::new();
+    let (_state, app, tab, log) = ask_ready(&rig, Some("codex")).await;
+    let mut body = fix_check(false);
+    body["name"] = json!("a\r\nb`c\u{202e}\"d");
+    body["workflow"] = json!("w\nf");
+    body["url"] = json!("https://github.com/x\ny");
+    let (status, answer) = ask(&app, &tab, body).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    let text = answer["text"].as_str().unwrap();
+    assert!(
+        text.contains("\"a  b c  d\" (w f)") && !text.contains("github.com/x"),
+        "{text}"
+    );
+    let bytes = common::typed(&log, text.len()).await;
+    assert_eq!(bytes, text.as_bytes());
+    assert!(!bytes.iter().any(|b| *b < 0x20 || *b == 0x7f), "{bytes:?}");
+    // A name with nothing left is refused, and nothing more is typed.
+    let mut body = fix_check(false);
+    body["name"] = json!("\n`");
+    let (status, answer) = ask(&app, &tab, body).await;
+    assert_eq!(
+        (status, &answer["reason"]),
+        (
+            StatusCode::CONFLICT,
+            &json!("That check has no name Marshell can type.")
+        ),
+        "{answer}"
+    );
+    assert_eq!(common::typed(&log, text.len() + 1).await, text.as_bytes());
 }
