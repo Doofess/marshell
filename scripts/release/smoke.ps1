@@ -515,6 +515,7 @@ function Invoke-CycleA {
         Check "A6 before the uninstall: Claude Code's and Codex's files still name marshell-hook" {
             (Test-Contains $ClaudeFile 'marshell-hook') -and (Test-Contains $CodexFile 'marshell-hook')
         }
+        Check 'A6 the fixture git sandbox is still there' { Test-Path -LiteralPath (Join-Path $MHome 'git-sandbox') }
     }
     $instDir = $script:Inst
     $appId = $app.Id
@@ -531,6 +532,7 @@ function Invoke-CycleA {
         }
         # The fixture's changes are what puts backups in the home's snapshots folder. Without it nothing made one.
         Check 'A8 after uninstall: the home snapshots folder is still there' { Test-Path -LiteralPath (Join-Path $MHome 'snapshots') -PathType Container }
+        Check 'A8 after uninstall: the home git-sandbox folder is gone' { -not (Test-Path -LiteralPath (Join-Path $MHome 'git-sandbox')) }
     } else {
         Report-Skip 'A8 after uninstall: the hook files and the home snapshots folder' 'no -Fixture given'
     }
