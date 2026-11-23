@@ -249,7 +249,7 @@ const MAX_FOLDS: usize = 1000;
 const TREE_WIDTH: std::ops::RangeInclusive<u32> = 160..=2048;
 const PANE_VIEWS: [&str; 2] = ["rendered", "source"];
 /// The side pane's panels, top to bottom.
-const PANEL_IDS: [&str; 2] = ["browser", "files"];
+const PANEL_IDS: [&str; 3] = ["browser", "files", "changes"];
 const PANEL_WEIGHT: std::ops::RangeInclusive<u32> = 1..=100_000;
 
 /// A missing, broken or newer-version file means the defaults. The file itself is not touched.
@@ -446,7 +446,7 @@ fn repair_panels(panels: &mut Option<Panels>) {
     }
     p.weights
         .retain(|k, v| PANEL_IDS.contains(&k.as_str()) && PANEL_WEIGHT.contains(v));
-    if !(shown.len() == 2 && p.filled.as_ref().is_some_and(|f| shown.contains(f))) {
+    if !(shown.len() >= 2 && p.filled.as_ref().is_some_and(|f| shown.contains(f))) {
         p.filled = None;
     }
     p.shown = shown;
@@ -633,7 +633,7 @@ fn validate_panels(p: &Panels) -> Result<(), String> {
         .collect();
     if p.shown.is_empty() || p.shown.iter().map(String::as_str).ne(ordered.iter().copied()) {
         return Err(format!(
-            "pane.panels.shown must hold \"browser\" and \"files\" once each, in that order, and at least one, not {:?}",
+            "pane.panels.shown must hold \"browser\", \"files\" and \"changes\" at most once each, in that order, and at least one, not {:?}",
             p.shown
         ));
     }
@@ -650,10 +650,10 @@ fn validate_panels(p: &Panels) -> Result<(), String> {
         }
     }
     if let Some(f) = &p.filled
-        && (p.shown.len() != 2 || !p.shown.contains(f))
+        && (p.shown.len() < 2 || !p.shown.contains(f))
     {
         return Err(format!(
-            "pane.panels.filled must name a shown panel, and only while two are shown, not {f:?}"
+            "pane.panels.filled must name a shown panel, and only while two or more are shown, not {f:?}"
         ));
     }
     Ok(())
@@ -1829,9 +1829,9 @@ mod tests {
 
     #[test]
     fn repair_drops_an_unknown_panel() {
-        let got = repaired_stack(stack(&["changes", "files"], &[], None)).unwrap();
+        let got = repaired_stack(stack(&["tree", "files"], &[], None)).unwrap();
         assert_eq!(got.shown, vec!["files"]);
-        assert_eq!(repaired_stack(stack(&["changes"], &[], None)), None);
+        assert_eq!(repaired_stack(stack(&["tree"], &[], None)), None);
     }
 
     #[test]
@@ -1866,6 +1866,31 @@ mod tests {
     }
 
     #[test]
+    fn changes_is_a_panel_and_fill_holds_with_three() {
+        let three = stack(&["browser", "files", "changes"], &[("changes", 9)], Some("changes"));
+        let got = repaired_stack(three.clone()).unwrap();
+        assert_eq!(got.shown, ["browser", "files", "changes"]);
+        assert_eq!(got.weights["changes"], 9);
+        assert_eq!(got.filled.as_deref(), Some("changes"));
+        let pane = PaneView {
+            panels: Some(three),
+            ..PaneView::default()
+        };
+        assert!(validate_pane(&pane).is_ok());
+        let out_of_order = stack(&["changes", "browser", "files"], &[], None);
+        assert_eq!(
+            repaired_stack(out_of_order).unwrap().shown,
+            ["browser", "files", "changes"]
+        );
+        assert_eq!(
+            repaired_stack(stack(&["changes"], &[], Some("changes")))
+                .unwrap()
+                .filled,
+            None
+        );
+    }
+
+    #[test]
     fn repair_clears_an_active_browser_that_names_no_tab() {
         let mut st = session(vec![browser_tab("t1", "https://example.com/")]);
         st.active_browser = Some("gone".into());
@@ -1888,7 +1913,7 @@ mod tests {
         check(stack(&["files", "browser"], &[], None), "pane.panels.shown");
         check(stack(&["files", "files"], &[], None), "pane.panels.shown");
         check(stack(&[], &[], None), "pane.panels.shown");
-        check(stack(&["changes"], &[], None), "pane.panels.shown");
+        check(stack(&["tree"], &[], None), "pane.panels.shown");
         check(stack(&["files"], &[("tree", 5)], None), "pane.panels.weights.tree");
         check(stack(&["files"], &[("files", 0)], None), "pane.panels.weights.files");
         check(

@@ -294,7 +294,7 @@ async fn put_view_keeps_the_stack() {
     saved_with_session_a(home.path());
     let app = app_in(home.path());
     let body = pane_body(serde_json::json!({
-        "shown": ["browser", "files"], "weights": { "browser": 6000, "files": 14000 }, "filled": "files"
+        "shown": ["browser", "files", "changes"], "weights": { "browser": 6000, "files": 14000, "changes": 8000 }, "filled": "changes"
     }));
     let res = app
         .clone()
