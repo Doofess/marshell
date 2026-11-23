@@ -1,18 +1,42 @@
 import { describe, expect, it } from "vitest";
 import { isAction, type MenuItem, type MenuRow } from "../../components/ContextMenu/menuKeys";
-import { changesMenuItems, headerMenuItems, lineMenuItems, openLineOf, openOf } from "./changesMenu";
+import type { GithubReply } from "../../generated/GithubReply";
+import { changesChoice, changesMenuItems, headerMenuItems, lineMenuItems, openLineOf, openOf } from "./changesMenu";
+import { type BarButton, type BarMenuItem, barOf } from "./pullModel";
 import type { Item, Row, Section } from "./model";
 
 const section = (rows: Row[], status: Section["status"] = "modified"): Section => ({ path: "a.ts", status, added: 1, removed: 1, rows, folded: false });
 const rowItem = (file: Section, at: number): Item => ({ kind: "row", key: `row:${file.path}:${at}`, file, at });
 const rowsOf = (items: MenuItem[]): MenuRow[] => items.filter(isAction);
 const labels = (items: MenuItem[]) => items.map((i) => (isAction(i) ? i.label : "-"));
-const on = { settings: { hide_whitespace: true, wrap: false, pull_requests: true }, failed: false, review: "Ask Claude Code to review (types /code-review)", hasFiles: true };
+const on = { settings: { hide_whitespace: true, wrap: false, pull_requests: true }, failed: false, review: "Ask Claude Code to review (types /code-review)", hasFiles: true, github: [] as BarMenuItem[], main: null as BarButton | null };
+const replyOf = (o: Partial<GithubReply> = {}): GithubReply => ({
+  kind: "ready", checkout: "C:/p", host: "github.com", repo: "octo-org/widgets", branch: "feat", default_branch: "main", fork_of: null, compare_url: null, pull: null, closed: null,
+  on_github: true, to_push: 2, github_ahead: false, can_write: true, merge_methods: ["merge"], auto_merge_allowed: true, push: null, push_blocked: null, reason: null, next_ms: 30_000, ...o,
+});
 
 describe("changesMenuItems", () => {
   it("leaves review out for a plain shell", () => {
     expect(labels(changesMenuItems({ ...on, review: null }))).toEqual(["Refresh", "-", "Fold all files", "Unfold all files", "-", "Hide whitespace changes", "Wrap long lines"]);
     expect(labels(changesMenuItems(on))[1]).toBe(on.review);
+  });
+  it("adds the bar's rows under the review row", () => {
+    const view = barOf(replyOf({ push_blocked: "x" }), "Claude Code")!;
+    const items = changesMenuItems({ ...on, github: view.menu, main: view.main });
+    expect(labels(items).slice(0, 6)).toEqual(["Refresh", on.review, "-", "Create pull request…", "Push 2 commits", "Ask Claude Code to open the pull request"]);
+    const rows = rowsOf(items);
+    expect(rows.find((r) => r.label === "Create pull request…")?.disabled).toContain("origin pushes somewhere other than");
+    expect(rows.find((r) => r.label === "Ask Claude Code to open the pull request")?.disabled).toBeUndefined();
+    expect(changesChoice(rows.find((r) => r.label === "Create pull request…")!.id)).toEqual({ kind: "github", from: "main", id: "create" });
+    expect(changesChoice(rows.find((r) => r.label === "Push 2 commits")!.id)).toEqual({ kind: "github", from: "menu", id: "push" });
+    expect(changesChoice("github:menu:nope")).toBeNull();
+    expect(changesChoice("github:main:retry")).toBeNull();
+  });
+  it("leaves out the open-pull-request row with no agent", () => {
+    const view = barOf(replyOf(), null)!;
+    const items = labels(changesMenuItems({ ...on, review: null, github: view.menu, main: view.main }));
+    expect(items.some((l) => l.includes("open the pull request"))).toBe(false);
+    expect(items).toContain("Push 2 commits");
   });
   it("makes the switches checked rows", () => {
     const rows = rowsOf(changesMenuItems(on));

@@ -17,7 +17,7 @@ const list = (checks: CiCheck[], agent: string | null = "Claude", more = 0) =>
   renderToStaticMarkup(<ChecksList view={checksOf(pull(checks, more))} agent={agent} now={1_000_000} id="c" onCheck={noop} onEscape={noop} />);
 const bar = (view: BarView) => renderToStaticMarkup(<PullBar view={view} agent="Claude" now={0} onMain={noop} onMenu={noop} onCheck={noop} onEscape={noop} />);
 
-const plain = (line: string, o: Partial<BarView> = {}): BarView => ({ line, second: null, notes: [], main: null, menu: [], checks: null, link: null, hide: false, ...o });
+const plain = (line: string, o: Partial<BarView> = {}): BarView => ({ line, second: null, notes: [], main: null, menu: [], checks: null, link: null, hide: false, scope: "other", ...o });
 
 describe("PullBar", () => {
   it("draws the bar between the branch line and the diff", () => {

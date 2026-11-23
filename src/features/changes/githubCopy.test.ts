@@ -26,6 +26,11 @@ describe("githubCopy", () => {
     expect(c.checkStates.failed).toBe("Failed");
     expect(c.hidden).toBe("Pull requests are hidden. Settings → Changes shows them again.");
     expect(c.typedRequest("api")).toBe("Typed a request into api.");
+    expect(c.copiedRequest("api")).toBe("Copied the request. api has no prompt line.");
+    expect(c.copiedCommands).toBe("Copied the two commands.");
+    expect(c.pullsOff).toBe("Pull requests from GitHub are off in Settings.");
+    expect(c.noPullHere).toBe("This branch has no pull request.");
+    expect(c.unavailable).toBe("Pull requests aren't available for this checkout.");
   });
   it("words the sheets", () => {
     expect(c.willPush(1)).toBe("1 commit will be pushed to origin.");

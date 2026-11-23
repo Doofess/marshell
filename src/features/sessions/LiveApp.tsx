@@ -2382,6 +2382,8 @@ export function LiveApp() {
               })()}
               onSend={(text, count) => sendComments(paneSession, text, count)}
               onReview={(base) => void reviewChanges(paneSession, focusedInfo?.agent ?? null, base)}
+              sessionName={focusedRow?.name}
+              onTyped={() => focusDelivered(paneSession, { name: focusedRow?.name ?? "" })}
               announce={announce}
               onSummary={setChangesSummary}
               menu={changesMenu}

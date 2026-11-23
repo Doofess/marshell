@@ -161,6 +161,12 @@ describe("the Changes panel's commands", () => {
     expect(commandShortcut("changes-review")).toEqual({ kind: "changes", what: "review" });
     expect(commandShortcut("changes-send")).toEqual({ kind: "changes", what: "send" });
   });
+  it("maps the four palette commands", () => {
+    expect(commandShortcut("changes-create-pull")).toEqual({ kind: "changes", what: "createPull" });
+    expect(commandShortcut("changes-push")).toEqual({ kind: "changes", what: "push" });
+    expect(commandShortcut("changes-merge")).toEqual({ kind: "changes", what: "merge" });
+    expect(commandShortcut("changes-open-pull")).toEqual({ kind: "changes", what: "openPull" });
+  });
 });
 
 describe("the text tab's commands", () => {

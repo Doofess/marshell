@@ -20,7 +20,6 @@ import type { CiCheck } from "../../generated/CiCheck";
 import type { MergeMethod } from "../../generated/MergeMethod";
 import type { PullActionKind } from "../../generated/PullActionKind";
 import type { PullStatus } from "../../generated/PullStatus";
-import { refusalOf } from "./changesApi";
 import type { CheckAction } from "./ChecksList";
 import { ask, failureOf, pullAction } from "./githubApi";
 import { githubCopy as gc } from "./githubCopy";
@@ -28,12 +27,12 @@ import { CreatePullSheet } from "./CreatePullSheet";
 import { MergeDialog } from "./MergeDialog";
 import { PullBar } from "./PullBar";
 import { PushSheet } from "./PushSheet";
-import { type BarButton, type BarMenuItem, announcementsOf, barOf } from "./pullModel";
+import { type BarButton, type BarCommand, type BarMenuItem, announcementsOf, barOf, commandOf } from "./pullModel";
 import { useGithub } from "./useGithub";
 import { type Item, type Row, type Section, cutFiles, focusIndex, itemsOf, sectionsOf } from "./model";
 import { reviewLabel } from "./review";
 import { SendBar } from "./SendBar";
-import { type SendResult, afterSend, refusalNotice } from "./send";
+import { type SendResult, afterSend, askNotice } from "./send";
 import { useChanges } from "./useChanges";
 import { useDiffColours } from "./useDiffColours";
 import { useChangesSettings } from "./changesSettings";
@@ -338,7 +337,6 @@ export function ChangesPanel(p: ChangesPanelProps) {
     void openUrl(url).catch(() => fail(gc.noAddress));
   };
   const copyOut = (text: string, said: string) => void navigator.clipboard.writeText(text).then(() => p.announce(said), () => p.announce(gc.couldntCopy));
-  const openPull = () => (gh?.pull ? openHttps(gh.pull.url) : p.announce(gc.noPullToOpen));
   const pullDo = async (action: PullActionKind) => {
     const pull = gh?.pull;
     if (!gh || !pull) return;
@@ -352,16 +350,16 @@ export function ChangesPanel(p: ChangesPanelProps) {
   };
   const askAgent = async (req: AskRequest) => {
     setNote(null);
+    const name = p.sessionName ?? p.agentName;
     try {
       const r = await ask(p.session, req);
-      if (r.form === "copy") copyOut(r.text, gc.copiedRequest);
+      if (r.form === "copy") copyOut(r.text, req.kind === "switch_and_pull" ? gc.copiedCommands : gc.copiedRequest(name));
       else {
-        p.announce(gc.typedRequest(p.sessionName ?? p.agentName));
+        p.announce(gc.typedRequest(name));
         p.onTyped?.();
       }
     } catch (e) {
-      const reason = refusalOf(e);
-      fail(reason === null ? failureOf(e).reason : refusalNotice(reason, p.sessionName ?? p.agentName, "review"));
+      fail(askNotice(e, name));
     }
   };
   const onBarMain = (button: BarButton, method?: MergeMethod) => {
@@ -413,6 +411,17 @@ export function ChangesPanel(p: ChangesPanelProps) {
     if (action === "copy_link") return check.url === null ? p.announce(gc.noCheckAddress) : copyOut(check.url, gc.copiedLink);
     if (gh?.pull) void askAgent({ kind: "fix_check", copy: p.agent === null, number: gh.pull.number, name: check.name, workflow: check.workflow, url: check.url, run_id: check.run_id });
   };
+  // The palette's commands: the bar's own action, or why it can't run now.
+  const barCommand = (command: BarCommand) => {
+    const what = commandOf(barView, command);
+    if ("main" in what) return onBarMain(what.main);
+    if ("menu" in what) return onBarMenu(what.menu);
+    p.announce(barView === null && settings?.pull_requests !== false ? gc.unavailable : what.say);
+  };
+  const refreshAll = () => {
+    refresh();
+    github.refresh();
+  };
   const closeSheet = () => setSheet(null);
   const sheetDone = () => {
     setSheet(null);
@@ -434,13 +443,13 @@ export function ChangesPanel(p: ChangesPanelProps) {
   const bar = barView === null ? null : <PullBar view={barView} agent={ghAgent} now={now} onMain={onBarMain} onMenu={onBarMenu} onCheck={onBarCheck} onEscape={p.onEscape} />;
 
   useImperativeHandle(p.ref, () => ({
-    refresh: refresh,
+    refresh: refreshAll,
     review: () => (listed ? p.onReview(listed.base) : p.announce("There are no changes to review.")),
     send: () => void send(),
-    createPull: () => createPull(),
-    push: () => push(),
-    merge: () => merge(),
-    openPull: () => openPull(),
+    createPull: () => barCommand("create"),
+    push: () => barCommand("push"),
+    merge: () => barCommand("merge"),
+    openPull: () => barCommand("open"),
   }));
 
   const onKey = (r: ListResult) => {
@@ -539,8 +548,15 @@ export function ChangesPanel(p: ChangesPanelProps) {
     p.onMenuClose();
     opener?.focus();
     if (choice === null) return;
-    if (choice.kind === "refresh") refresh();
-    else if (choice.kind === "review") p.onReview(listed?.base ?? null);
+    if (choice.kind === "refresh") refreshAll();
+    else if (choice.kind === "github") {
+      if (choice.from === "main") {
+        if (barView?.main?.id === choice.id) onBarMain(barView.main);
+      } else {
+        const item = barView?.menu.find((m) => m.id === choice.id);
+        if (item) onBarMenu(item);
+      }
+    } else if (choice.kind === "review") p.onReview(listed?.base ?? null);
     else if (choice.kind === "fold-all") foldAll(true);
     else if (choice.kind === "unfold-all") foldAll(false);
     else if (choice.kind === "setting") {
@@ -557,7 +573,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
       {p.menu && (
         <ContextMenu
           label="Changes menu"
-          items={changesMenuItems({ settings, failed, review: p.agent === null ? null : reviewLabel(p.agent, p.agentName), hasFiles: sections.some((s) => s.rows.length > 0) })}
+          items={changesMenuItems({ settings, failed, review: p.agent === null ? null : reviewLabel(p.agent, p.agentName), hasFiles: sections.some((s) => s.rows.length > 0), github: barView?.menu ?? [], main: barView?.main ?? null })}
           anchor={p.menu.anchor}
           onRun={runMenu}
           onClose={({ refocus }) => {

@@ -4,6 +4,7 @@ import type { DraftComment } from "../../generated/DraftComment";
 import type { ReviewReply } from "../../generated/ReviewReply";
 import { addFailure, type Delivery } from "../regions/deliver";
 import { type Refusal, refusalOf } from "./changesApi";
+import { failureOf } from "./githubApi";
 
 const comments = (n: number) => `${n} ${n === 1 ? "comment" : "comments"}`;
 
@@ -28,6 +29,12 @@ export function refusalNotice(reason: Refusal, name: string, what: "send" | "rev
       return unreachable;
     }
   }
+}
+
+/** The sentence for an ask of the agent that failed: a refusal in the review path's words, else the core's own sentence. */
+export function askNotice(e: unknown, name: string): string {
+  const reason = refusalOf(e);
+  return reason === null ? failureOf(e).reason : refusalNotice(reason, name, "review");
 }
 
 /** What a send did: whether the comments left (and are cleared), what to announce, and whether the keyboard goes to the terminal. */

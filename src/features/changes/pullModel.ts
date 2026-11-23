@@ -54,11 +54,13 @@ export type BarView = {
   checks: ChecksView | null;
   link: { label: string; url: string } | null;
   hide: boolean;
+  /** "branch": a branch with no pull request; "pull": a branch with one; "other": GitHub isn't available, or there is no branch to ask about. */
+  scope: "branch" | "pull" | "other";
 };
 
 const FOLDED = new Set<CiCheck["state"]>(["passed", "neutral", "skipped"]);
 const https = (u: string | null | undefined): u is string => typeof u === "string" && u.startsWith("https://");
-const bar = (line: string, o: Partial<BarView> = {}): BarView => ({ line, second: null, notes: [], main: null, menu: [], checks: null, link: null, hide: false, ...o });
+const bar = (line: string, o: Partial<BarView> = {}): BarView => ({ line, second: null, notes: [], main: null, menu: [], checks: null, link: null, hide: false, scope: "other", ...o });
 
 /** "Checks: 5 passed, 1 failed" and the checks split into the ones to list and the ones to fold. */
 export function checksOf(pull: PullStatus): ChecksView {
@@ -131,7 +133,7 @@ export function barOf(reply: GithubReply | null, agent: string | null, now?: num
     // A branch that isn't on GitHub counts its commits from the base: none means there is nothing to open one for.
     // For a pushed branch that isn't known here, and GitHub says so itself.
     const same = !r.on_github && r.to_push === 0 && r.default_branch !== null ? c.nothingDiffers(r.default_branch) : null;
-    return bar(pushing ?? parts.join(" · "), { notes, main: running ? show : { id: "create", label: c.create, disabled: pushOff ?? same }, menu, link });
+    return bar(pushing ?? parts.join(" · "), { notes, main: running ? show : { id: "create", label: c.create, disabled: pushOff ?? same }, menu, link, scope: "branch" });
   }
 
   const num = pull.number;
@@ -152,7 +154,7 @@ export function barOf(reply: GithubReply | null, agent: string | null, now?: num
     : [];
 
   if (pull.state === "merged") {
-    return bar(`#${num} ${c.pullState.merged}`, { notes, menu: [...menu, ...links], link: https(pull.url) ? { label: c.mergedLink(num), url: pull.url } : null });
+    return bar(`#${num} ${c.pullState.merged}`, { notes, menu: [...menu, ...links], link: https(pull.url) ? { label: c.mergedLink(num), url: pull.url } : null, scope: "pull" });
   }
 
   // Why Merge is off, first match: commits to push, no write access, Conflicts, Checking, Blocked (only when auto-merge
@@ -187,7 +189,7 @@ export function barOf(reply: GithubReply | null, agent: string | null, now?: num
   if (pull.auto_merge !== null) parts.push(c.mergesWhenChecksPass);
   else parts.push(checks.summary);
   const second = pull.state === "open" && pull.review !== "none" ? REVIEW_LABELS[pull.review] : null;
-  return bar(pushing ?? parts.join(" · "), { second: pushing ? null : second, notes, main, menu, checks: pull.checks.length > 0 || pull.more_checks > 0 ? checks : null });
+  return bar(pushing ?? parts.join(" · "), { second: pushing ? null : second, notes, main, menu, checks: pull.checks.length > 0 || pull.more_checks > 0 ? checks : null, scope: "pull" });
 }
 
 const allPassed = (p: PullStatus) => p.checks.length > 0 && p.checks.every((k) => FOLDED.has(k.state));
@@ -209,4 +211,22 @@ export function announcementsOf(before: GithubReply | null, after: GithubReply):
   if (fresh) out.push(c.checkFailed(now.number, fresh.name));
   if (was.state !== "merged" && now.state === "merged") out.push(c.merged(now.number));
   return out;
+}
+
+export type BarCommand = "create" | "push" | "merge" | "open";
+
+/**
+ * What a palette command does with the bar: run the button or menu row that is its action, or say why it can't. A null bar is the
+ * setting being off (the panel says something else when the setting is on but GitHub has nothing for the checkout).
+ */
+export function commandOf(view: BarView | null, command: BarCommand): { main: BarButton } | { menu: BarMenuItem } | { say: string } {
+  if (view === null) return { say: c.pullsOff };
+  const mains: Record<BarCommand, BarButtonId[]> = { create: ["create"], push: ["push"], merge: ["merge", "auto_merge"], open: [] };
+  const menus: Record<BarCommand, BarMenuId[]> = { create: [], push: ["push"], merge: ["merge"], open: ["open_on_github"] };
+  const main = view.main !== null && mains[command].includes(view.main.id) ? view.main : null;
+  const menu = view.menu.find((m) => menus[command].includes(m.id)) ?? null;
+  const found = main ?? menu;
+  if (found !== null) return found.disabled !== null ? { say: found.disabled } : main !== null ? { main } : { menu: menu! };
+  if (view.scope === "branch" && (command === "merge" || command === "open")) return { say: c.noPullHere };
+  return { say: view.line };
 }

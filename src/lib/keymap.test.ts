@@ -303,6 +303,15 @@ describe("the Changes panel's commands", () => {
     for (const id of ["changes-refresh", "changes-review", "changes-send"]) expect(commandById(id).binding).toBeUndefined();
   });
 });
+describe("the pull request commands", () => {
+  it("maps the four palette commands, in the Window group with no key", () => {
+    expect(commandById("changes-create-pull")).toMatchObject({ label: "Create pull request…", group: "Window" });
+    expect(commandById("changes-push")).toMatchObject({ label: "Push commits", group: "Window" });
+    expect(commandById("changes-merge")).toMatchObject({ label: "Merge pull request…", group: "Window" });
+    expect(commandById("changes-open-pull")).toMatchObject({ label: "Open the pull request on GitHub", group: "Window" });
+    for (const id of ["changes-create-pull", "changes-push", "changes-merge", "changes-open-pull"]) expect(commandById(id).binding).toBeUndefined();
+  });
+});
 describe("the text tab's commands", () => {
   it("are_in_the_window_group_with_the_plans_names_and_no_default_key", () => {
     expect(commandById("pane-save")).toMatchObject({ label: "Save file", group: "Window" });

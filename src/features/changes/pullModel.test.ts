@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { CiCheck } from "../../generated/CiCheck";
 import type { GithubReply } from "../../generated/GithubReply";
 import type { PullStatus } from "../../generated/PullStatus";
-import { announcementsOf, barOf, checksOf } from "./pullModel";
+import { announcementsOf, barOf, checksOf, commandOf } from "./pullModel";
 
 const check = (name: string, state: CiCheck["state"]): CiCheck => ({ kind: "run", state, name, workflow: null, url: `https://github.com/octo-org/widgets/runs/${name}`, run_id: 1, started_ms: null, completed_ms: null });
 const pullOf = (o: Partial<PullStatus> = {}): PullStatus => ({
@@ -151,5 +151,32 @@ describe("announcementsOf", () => {
     expect(announcementsOf(withPull({}), withPull({ state: "merged" }))).toEqual(["#182 was merged."]);
     expect(announcementsOf(replyOf(), withPull({}))).toEqual(["Pull request #182 was created."]);
     expect(announcementsOf(withPull({ number: 1 }), withPull({ number: 2, checks: [check("a", "passed")] }))).toEqual([]);
+  });
+});
+
+describe("commandOf", () => {
+  it("runs a command whose action is on", () => {
+    expect(commandOf(barOf(replyOf(), null), "create")).toMatchObject({ main: { id: "create" } });
+    expect(commandOf(barOf(replyOf({ to_push: 2 }), null), "push")).toMatchObject({ menu: { id: "push" } });
+    expect(commandOf(barOf(withPull({}, { to_push: 2 }), null), "push")).toMatchObject({ main: { id: "push" } });
+    expect(commandOf(barOf(withPull(), null), "merge")).toMatchObject({ main: { id: "merge" } });
+    expect(commandOf(barOf(withPull({ readiness: "blocked", can_auto_merge: true }), null), "merge")).toMatchObject({ main: { id: "auto_merge" } });
+    expect(commandOf(barOf(withPull(), null), "open")).toMatchObject({ menu: { id: "open_on_github" } });
+  });
+  it("says the reason of an action that is off", () => {
+    expect(commandOf(barOf(replyOf({ push_blocked: "x", to_push: 1 }), null), "create")).toEqual({ say: "origin pushes somewhere other than octo-org/widgets, so push from the terminal." });
+    expect(commandOf(barOf(withPull({}, { to_push: 2 }), null), "merge")).toEqual({ say: "2 commits aren't on GitHub yet. Push them first." });
+    expect(commandOf(barOf(withPull({ readiness: "conflicts" }), null), "merge")).toEqual({ say: "#182 has conflicts with main. Resolve them in the terminal." });
+  });
+  it("says the branch has no pull request for merge and open", () => {
+    expect(commandOf(barOf(replyOf(), null), "merge")).toEqual({ say: "This branch has no pull request." });
+    expect(commandOf(barOf(replyOf(), null), "open")).toEqual({ say: "This branch has no pull request." });
+  });
+  it("says the bar's own line when GitHub isn't available", () => {
+    expect(commandOf(barOf({ ...replyOf(), kind: "no_gh" }, null), "push")).toEqual({ say: "Pull requests need the GitHub CLI." });
+    expect(commandOf(barOf({ ...replyOf(), kind: "signed_out" }, null), "create")).toMatchObject({ say: expect.stringContaining("GitHub sign-in") });
+  });
+  it("says Settings has pull requests off when there is no bar", () => {
+    expect(commandOf(null, "push")).toEqual({ say: "Pull requests from GitHub are off in Settings." });
   });
 });
