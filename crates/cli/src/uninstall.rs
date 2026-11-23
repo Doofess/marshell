@@ -16,6 +16,7 @@ use marshell_core::config::guard::unverbatim;
 use marshell_core::config::managed;
 use marshell_core::config::preview::{MAX_CONFIG_BYTES, TOO_LARGE_DETAIL};
 use marshell_core::config::service::{ApplyError, ConfigService};
+use marshell_core::gitbox::sweep;
 use marshell_core::{paths, wsl};
 use marshell_protocol::agents::SkillInstall;
 use marshell_protocol::config::{ApplyRequest, ChangeSet, ConfigPreview, ExpectedHash, FileStatus};
@@ -142,6 +143,20 @@ fn remove_bin(home: &Path, out: &mut dyn Write) {
         }
     }
     let _ = std::fs::remove_dir(&bin);
+}
+
+/// Removes the Changes panel's sandboxes through `sweep::remove_all`, which deletes nothing else. Says so when
+/// `git-sandbox` is still there afterwards, because it holds files Marshell did not make.
+fn remove_sandboxes(home: &Path, out: &mut dyn Write) {
+    sweep::remove_all(home);
+    let root = paths::git_sandbox_dir(home);
+    if std::fs::symlink_metadata(&root).is_ok() {
+        let _ = writeln!(
+            out,
+            "The folder {} was left in place: it still holds files that were not removed.",
+            root.display()
+        );
+    }
 }
 
 /// Only literal paths: PowerShell single quotes are escaped by doubling them.
@@ -517,7 +532,14 @@ pub fn run(
     let bin = paths::bin_dir(home);
     let others_failed = claude_failed || hooks_failed || skill_unread || !distro_kept.is_empty();
     let has_bin = bin.exists() && !others_failed;
-    // Non-zero when something was left, so a script notices.
+    // No hook points into `git-sandbox`, so what the other files did doesn't matter to it.
+    let has_sandbox = sweep::any(home);
+    let sandbox_line = format!(
+        "The folder {} (the Changes panel's copies of git's index) will be removed.",
+        paths::git_sandbox_dir(home).display()
+    );
+    // Non-zero when another CLI's hooks were left, so a script notices. A `git-sandbox` kept for a file
+    // Marshell didn't make is not counted: nothing of Marshell's is left in it.
     let ok = i32::from(others_failed || distro_unanswered);
     let keep_note = |out: &mut dyn Write| {
         if claude_failed && bin.exists() {
@@ -552,20 +574,36 @@ pub fn run(
         if plan.statusline_left {
             let _ = writeln!(out, "{left_note}");
         }
-        if !has_bin {
+        if !has_bin && !has_sandbox {
             keep_note(out);
             return ok;
         }
-        let _ = writeln!(
-            out,
-            "The folder {} and the programs in it will be removed.",
-            bin.display()
-        );
+        if has_bin {
+            let _ = writeln!(
+                out,
+                "The folder {} and the programs in it will be removed.",
+                bin.display()
+            );
+        }
+        if has_sandbox {
+            let _ = writeln!(out, "{sandbox_line}");
+        }
         if !yes && !confirmed(input, out, "Apply these changes? [y/N] ") {
+            // Why bin stays is said either way: before the sandboxes, this run printed it and asked nothing.
+            if !has_bin {
+                keep_note(out);
+            }
             let _ = writeln!(out, "Nothing changed.");
             return 1;
         }
-        remove_bin(home, out);
+        if has_bin {
+            remove_bin(home, out);
+        } else {
+            keep_note(out);
+        }
+        if has_sandbox {
+            remove_sandboxes(home, out);
+        }
         return ok;
     }
 
@@ -597,6 +635,10 @@ pub fn run(
             "\nThe folder {} and the programs in it will be removed.",
             bin.display()
         );
+    }
+    if has_sandbox {
+        let lead = if has_bin { "" } else { "\n" };
+        let _ = writeln!(out, "{lead}{sandbox_line}");
     }
     let _ = writeln!(out);
 
@@ -649,6 +691,9 @@ pub fn run(
         remove_bin(home, out);
     } else {
         keep_note(out);
+    }
+    if has_sandbox {
+        remove_sandboxes(home, out);
     }
     ok
 }
@@ -1348,6 +1393,160 @@ mod tests {
         );
         assert_eq!(code, 0, "{}", String::from_utf8_lossy(&out));
         assert!(!bin.exists());
+    }
+
+    /// A sandbox in `<home>/git-sandbox`, made as the smoke fixture makes it: the folder of a checkout that
+    /// exists, a `HEAD`, and the file naming the checkout.
+    fn sandbox(home: &Path) -> PathBuf {
+        let checkout = home.join("smoke-checkout");
+        std::fs::create_dir_all(&checkout).unwrap();
+        let dir = marshell_core::gitbox::sandbox_dir(home, &checkout);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("HEAD"), "ref: refs/heads/none\n").unwrap();
+        let text = std::path::absolute(&checkout).unwrap();
+        std::fs::write(
+            dir.join(marshell_core::gitbox::sweep::OWNER_FILE),
+            text.to_str().unwrap(),
+        )
+        .unwrap();
+        dir
+    }
+
+    /// A Marshell home with nothing installed in it and a user home with no CLI files.
+    fn bare() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("marshell-home");
+        let user_home = dir.path().join("user");
+        std::fs::create_dir_all(&home).unwrap();
+        (dir, home, user_home)
+    }
+
+    fn run_bare(home: &Path, user_home: &Path, input: &str, yes: bool) -> (i32, String) {
+        let mut out = Vec::new();
+        let code = run(
+            home,
+            user_home,
+            &no_env,
+            &no_wsl(),
+            &mut input.as_bytes(),
+            &mut out,
+            yes,
+        );
+        (code, String::from_utf8(out).unwrap())
+    }
+
+    #[test]
+    fn uninstall_removes_the_git_sandboxes() {
+        let f = installed(ORIGINAL);
+        sandbox(&f.home);
+        let (code, out) = run_with(&f, "", true);
+        assert_eq!(code, 0, "{out}");
+        let root = paths::git_sandbox_dir(&f.home);
+        assert!(
+            out.contains(&format!(
+                "The folder {} (the Changes panel's copies of git's index) will be removed.",
+                root.display()
+            )),
+            "{out}"
+        );
+        assert!(!root.exists(), "{out}");
+        assert!(f.home.join("managed.json").exists(), "the rest of the home stays");
+        assert!(f.home.join("snapshots").exists(), "the rest of the home stays");
+    }
+
+    #[test]
+    fn only_the_sandboxes_left_still_asks() {
+        let (_dir, home, user_home) = bare();
+        sandbox(&home);
+        let (code, out) = run_bare(&home, &user_home, "y\n", false);
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(out.matches("Apply these changes?").count(), 1, "{out}");
+        assert!(!paths::git_sandbox_dir(&home).exists(), "{out}");
+    }
+
+    #[test]
+    fn declining_keeps_the_sandboxes() {
+        let (_dir, home, user_home) = bare();
+        let dir = sandbox(&home);
+        let (code, out) = run_bare(&home, &user_home, "n\n", false);
+        assert_eq!(code, 1, "{out}");
+        assert!(out.contains("Nothing changed."), "{out}");
+        assert!(dir.exists(), "{out}");
+    }
+
+    #[test]
+    fn the_sandboxes_go_even_when_bin_stays() {
+        let f = installed(ORIGINAL);
+        std::fs::write(&f.settings, ORIGINAL).unwrap();
+        broken_codex(&f);
+        sandbox(&f.home);
+        let (code, out) = run_with(&f, "", true);
+        assert_ne!(code, 0, "{out}");
+        assert!(marshell_core::paths::bridge_exe(&f.home).exists(), "{out}");
+        assert!(out.contains("left in place"), "{out}");
+        assert!(!paths::git_sandbox_dir(&f.home).exists(), "{out}");
+    }
+
+    #[test]
+    fn declining_still_says_why_bin_stays() {
+        // Nothing of Claude Code's to change, bin kept for Codex's file, and a sandbox: the one question is
+        // about the sandbox.
+        let (_dir, home, user_home) = bare();
+        let bridge = marshell_core::paths::bridge_exe(&home);
+        std::fs::create_dir_all(bridge.parent().unwrap()).unwrap();
+        std::fs::write(&bridge, "x").unwrap();
+        let codex = marshell_core::agents::codex::hooks::hooks_path(&no_env, &user_home);
+        std::fs::create_dir_all(codex.parent().unwrap()).unwrap();
+        std::fs::write(&codex, "{ \"hooks\": [oops\n").unwrap();
+        sandbox(&home);
+        let (_, out) = run_bare(&home, &user_home, "n\n", false);
+        assert_eq!(out.matches("Apply these changes?").count(), 1, "{out}");
+        assert!(!out.contains("and the programs in it will be removed"), "{out}");
+        assert!(out.contains("left in place, because"), "{out}");
+        assert!(out.contains("Nothing changed."), "{out}");
+        assert!(paths::git_sandbox_dir(&home).exists(), "{out}");
+    }
+
+    #[test]
+    fn the_sandbox_line_comes_before_the_question_when_bin_stays() {
+        let f = installed(ORIGINAL);
+        broken_codex(&f);
+        sandbox(&f.home);
+        let (_, out) = run_with(&f, "y\n", false);
+        let line = out.find("(the Changes panel's copies of git's index) will be removed.");
+        let question = out.find("Apply these changes?");
+        assert!(line.is_some() && question.is_some() && line < question, "{out}");
+        assert!(!out.contains("and the programs in it will be removed"), "{out}");
+        assert!(!paths::git_sandbox_dir(&f.home).exists(), "{out}");
+    }
+
+    #[test]
+    fn a_file_marshell_did_not_make_keeps_the_folder() {
+        let (_dir, home, user_home) = bare();
+        let dir = sandbox(&home);
+        let root = paths::git_sandbox_dir(&home);
+        std::fs::write(root.join("notes.txt"), "x").unwrap();
+        let (code, out) = run_bare(&home, &user_home, "", true);
+        assert_eq!(code, 0, "{out}");
+        assert!(!dir.exists(), "{out}");
+        assert!(root.join("notes.txt").exists(), "{out}");
+        assert!(
+            out.contains("was left in place: it still holds files that were not removed."),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn a_folder_with_only_other_files_is_not_asked_about() {
+        let (_dir, home, user_home) = bare();
+        let root = paths::git_sandbox_dir(&home);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("notes.txt"), "x").unwrap();
+        let (code, out) = run_bare(&home, &user_home, "", false);
+        assert_eq!(code, 0, "{out}");
+        assert!(!out.contains("Apply these changes?"), "{out}");
+        assert!(!out.contains("Changes panel"), "{out}");
+        assert!(root.join("notes.txt").exists(), "{out}");
     }
 
     #[test]

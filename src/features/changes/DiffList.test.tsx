@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { ChangesReply } from "../../generated/ChangesReply";
 import { ChangesEmpty, emptyNotices, noticesOf } from "./ChangesPanel";
-import { DiffList, chunksOf, listKey, refocusOf } from "./DiffList";
+import { DiffList, chunksOf, keyFocuses, listKey, refocusOf } from "./DiffList";
 import { copy } from "./copy";
 import { itemsOf, type Item, type Row, type Section } from "./model";
 
@@ -129,6 +129,22 @@ describe("DiffList blocks", () => {
     expect(after[1]!.chunks.map((c) => c.key)).toEqual(before[1]!.chunks.map((c) => c.key));
     expect(after[1]!.chunks.map((c) => c.indices.length)).toEqual([200, 200, 52]);
     expect(after[1]!.chunks[0]!.indices[0]).toBe(9);
+  });
+});
+
+describe("keyFocuses", () => {
+  it("puts the keyboard on the item a key moved to, soon after the key", () => {
+    expect(keyFocuses(50, "key", false)).toBe(true);
+    expect(keyFocuses(200, "key", false)).toBe(false);
+    expect(keyFocuses(200, "click", false)).toBe(false);
+  });
+  it("leaves the keyboard in the comment box the same key opened", () => {
+    // Enter on a row opens a box; a draft kept above that row moves the row's index in the same draw.
+    expect(keyFocuses(50, "key", true)).toBe(false);
+  });
+  it("takes the keyboard out of the comment box for a shift-click on a row", () => {
+    // The click itself moves no focus (its mousedown is cancelled), so the range it widened would be left without the keyboard.
+    expect(keyFocuses(50, "click", true)).toBe(true);
   });
 });
 

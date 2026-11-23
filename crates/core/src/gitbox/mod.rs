@@ -12,6 +12,7 @@
 
 pub mod config;
 pub mod refs;
+pub mod sweep;
 pub mod worktree;
 
 pub use crate::git::Stopped;
@@ -154,6 +155,15 @@ fn sandbox_name(checkout: &Path) -> String {
     let text = checkout.to_string_lossy().into_owned();
     let text = if cfg!(windows) { text.to_lowercase() } else { text };
     format!("{:016x}", fnv1a64(text.as_bytes()))
+}
+
+/// The folder of `checkout`'s sandbox: `git-sandbox` under `home`, made absolute, and the name of the
+/// checkout's absolute path in it.
+pub fn sandbox_dir(home: &Path, checkout: &Path) -> PathBuf {
+    let sandboxes = crate::paths::git_sandbox_dir(home);
+    let sandboxes = std::path::absolute(&sandboxes).unwrap_or(sandboxes);
+    let checkout = std::path::absolute(checkout).unwrap_or_else(|_| checkout.to_path_buf());
+    sandboxes.join(sandbox_name(&checkout))
 }
 
 fn stamp_of(meta: &std::fs::Metadata) -> FileStamp {
@@ -368,7 +378,7 @@ impl GitBox {
         let sandboxes = crate::paths::git_sandbox_dir(home);
         let sandboxes = std::path::absolute(&sandboxes).unwrap_or(sandboxes);
         let mut git_box = GitBox {
-            sandbox: sandboxes.join(sandbox_name(&checkout)),
+            sandbox: sandbox_dir(home, &checkout),
             empty: sandboxes.join("empty-config"),
             checkout,
             git_dir,
@@ -391,9 +401,14 @@ impl GitBox {
         self.reload()
     }
 
+    /// All of it runs under `sweep::GATE` shared, so a sweep never removes the sandbox while it is written. The
+    /// lock is held across file work and a `git config` run on purpose: it is a plain thread lock like
+    /// `Slot::work` (`cache.rs`), never held in async code.
     fn reload(&mut self) -> Result<(), BoxError> {
+        let _gate = sweep::GATE.read().unwrap_or_else(|e| e.into_inner());
         self.preflight()?;
         self.write_static()?;
+        self.write_owner();
         let seen = (
             stamp(&self.common.join("config")),
             stamp(&self.git_dir.join("config.worktree")),
@@ -419,6 +434,29 @@ impl GitBox {
             "attributes",
             &mut self.stamps.attributes,
         )
+    }
+
+    /// Writes `OWNER_FILE`, which names the checkout for the sweep and dates the sandbox's last use, when the
+    /// file isn't there, isn't a regular file, is older than `TOUCH_EVERY` or is dated in the future. A
+    /// checkout whose path isn't UTF-8 gets no file. A failed write is left for the next check: the file is
+    /// bookkeeping, and Changes works without it.
+    fn write_owner(&self) {
+        let Some(text) = self.checkout.to_str() else {
+            return;
+        };
+        let file = self.sandbox.join(sweep::OWNER_FILE);
+        let fresh = std::fs::symlink_metadata(&file)
+            .ok()
+            .filter(|meta| meta.file_type().is_file())
+            .and_then(|meta| meta.modified().ok())
+            .is_some_and(|modified| {
+                SystemTime::now()
+                    .duration_since(modified)
+                    .is_ok_and(|age| age <= sweep::TOUCH_EVERY)
+            });
+        if !fresh {
+            let _ = write_file(&self.sandbox, sweep::OWNER_FILE, text.as_bytes(), None);
+        }
     }
 
     /// What must hold before git is given any path of the repository: no link to a network folder on the way
@@ -1370,5 +1408,85 @@ mod tests {
     fn a_checkout_with_no_git_folder_is_no_repo() {
         let scratch = Scratch::new();
         assert_eq!(GitBox::open(&scratch.home, &scratch.repo).err(), Some(BoxError::NoRepo));
+    }
+
+    fn date(path: &Path, modified: SystemTime) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+    }
+
+    fn modified(path: &Path) -> SystemTime {
+        std::fs::metadata(path).unwrap().modified().unwrap()
+    }
+
+    /// Whether `time` is within a minute of now.
+    fn recent(time: SystemTime) -> bool {
+        let now = SystemTime::now();
+        let apart = now.duration_since(time).unwrap_or_else(|e| e.duration());
+        apart < Duration::from_secs(60)
+    }
+
+    #[test]
+    fn open_names_the_checkout_in_the_sandbox() {
+        let scratch = Scratch::new();
+        repo_with_commit(&scratch);
+        let b = GitBox::open(&scratch.home, &scratch.repo).unwrap();
+        let text = std::fs::read_to_string(sandbox_of(&b).join(sweep::OWNER_FILE)).unwrap();
+        assert_eq!(Path::new(&text), b.checkout());
+        assert_eq!(sandbox_of(&b), sandbox_dir(&scratch.home, &scratch.repo));
+        assert_eq!(
+            sweep::sweep(&scratch.home, SystemTime::now()),
+            sweep::Swept { removed: 0, kept: 1 }
+        );
+        assert!(sandbox_of(&b).is_dir());
+    }
+
+    #[test]
+    fn a_sandbox_without_the_file_gets_one_when_it_is_opened() {
+        let scratch = Scratch::new();
+        repo_with_commit(&scratch);
+        let b = GitBox::open(&scratch.home, &scratch.repo).unwrap();
+        let file = sandbox_of(&b).join(sweep::OWNER_FILE);
+        std::fs::remove_file(&file).unwrap();
+        GitBox::open(&scratch.home, &scratch.repo).unwrap();
+        assert!(file.is_file());
+    }
+
+    #[test]
+    fn the_file_is_written_again_after_an_hour() {
+        let scratch = Scratch::new();
+        repo_with_commit(&scratch);
+        let mut b = GitBox::open(&scratch.home, &scratch.repo).unwrap();
+        let file = sandbox_of(&b).join(sweep::OWNER_FILE);
+        let minutes = |m: u64| Duration::from_secs(m * 60);
+        date(&file, SystemTime::now() - minutes(59));
+        let before = modified(&file);
+        b.refresh().unwrap();
+        assert_eq!(modified(&file), before, "59 minutes is not old enough");
+        date(&file, SystemTime::now() - minutes(61));
+        b.refresh().unwrap();
+        assert!(recent(modified(&file)), "{:?}", modified(&file));
+        date(&file, SystemTime::now() + 24 * 60 * minutes(1));
+        b.refresh().unwrap();
+        assert!(recent(modified(&file)), "{:?}", modified(&file));
+    }
+
+    #[test]
+    fn a_sandbox_removed_under_a_live_box_is_rebuilt_by_refresh() {
+        let scratch = Scratch::new();
+        repo_with_commit(&scratch);
+        let mut b = GitBox::open(&scratch.home, &scratch.repo).unwrap();
+        assert_eq!(sweep::remove_all(&scratch.home), 1);
+        assert!(!sandbox_of(&b).exists());
+        b.refresh().unwrap();
+        let sandbox = sandbox_of(&b);
+        assert!(sandbox.join("index").is_file());
+        assert!(sandbox.join("HEAD").is_file());
+        assert!(sandbox.join(sweep::OWNER_FILE).is_file());
+        assert!(run(&b, &["ls-files"]).contains("a.txt"));
     }
 }

@@ -5,13 +5,16 @@
 //! The files are found as the CLI finds them: from the process environment (`MARSHELL_CLAUDE_SETTINGS`, `CODEX_HOME`)
 //! and the user's home folder. Both variables must be set, so a run can never reach the real `~/.claude` or
 //! `~/.codex`; without them it changes nothing and exits 1. Claude Code's `settings.json` must exist already. Codex's
-//! `hooks.json` may be missing, but its folder must exist. Nothing else is changed. Exit 0 when both were changed,
+//! `hooks.json` may be missing, but its folder must exist. It also makes one git sandbox of the Changes panel in
+//! the home (and the folder `smoke-checkout` it belongs to). Nothing else is changed. Exit 0 when both were changed,
 //! 1 with the reason on stderr.
 
 use marshell_core::agents::claude::hooks as claude;
 use marshell_core::agents::codex::hooks as codex;
 use marshell_core::agents::common::Bridge;
 use marshell_core::config::service::ConfigService;
+use marshell_core::gitbox::sandbox_dir;
+use marshell_core::gitbox::sweep::OWNER_FILE;
 use marshell_core::paths;
 use marshell_protocol::agents::HookPlanRequest;
 use marshell_protocol::config::{ApplyRequest, ChangeSet, ExpectedHash};
@@ -110,6 +113,22 @@ fn run(home: &Path) -> Result<(), String> {
         .map_err(|e| format!("Planning Codex's hooks failed: {e}"))?;
     apply(&service, changes, 2)?;
     println!("changed {}", hooks.display());
+
+    // One git sandbox of the Changes panel, for the uninstall to remove. Its checkout must exist: the app starts
+    // once more before the uninstall, and its sweep removes a sandbox whose checkout is gone.
+    let checkout = home.join("smoke-checkout");
+    std::fs::create_dir_all(&checkout).map_err(|e| format!("Couldn't make {}: {e}", checkout.display()))?;
+    let dir = sandbox_dir(home, &checkout);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Couldn't make {}: {e}", dir.display()))?;
+    let owner = std::path::absolute(&checkout).map_err(|e| format!("Couldn't resolve {}: {e}", checkout.display()))?;
+    let owner = owner
+        .to_str()
+        .ok_or_else(|| format!("{} is not UTF-8 text.", checkout.display()))?;
+    for (name, text) in [("HEAD", "ref: refs/heads/none\n"), (OWNER_FILE, owner)] {
+        std::fs::write(dir.join(name), text)
+            .map_err(|e| format!("Couldn't write {}: {e}", dir.join(name).display()))?;
+    }
+    println!("made {}", dir.display());
     Ok(())
 }
 

@@ -1692,6 +1692,7 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
         state.start_importer(roots);
     }
     state.start_storage();
+    crate::gitbox::sweep::spawn(state.home().to_path_buf());
     let notifier = cfg.notify.map(|sink| crate::notify::spawn(state.clone(), sink));
     let stuck_state = state.clone();
     let stuck_tick = tokio::spawn(async move {
