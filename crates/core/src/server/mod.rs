@@ -1376,6 +1376,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{tab}/files", get(files::list))
         .route("/v1/sessions/{tab}/tree", post(tree::tree))
         .route("/v1/sessions/{tab}/changes", post(changes::changes))
+        .route("/v1/sessions/{tab}/review", post(changes::review))
+        .route("/v1/sessions/{tab}/comments", post(changes::comments))
         .route("/v1/sessions/{tab}/search", post(search::search))
         .route(
             "/v1/sessions/{tab}/attachments",

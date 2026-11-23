@@ -1171,7 +1171,7 @@ pub struct ChangeMark {
     pub status: DiffStatus,
 }
 
-/// POST /v1/sessions/{tab}/changes/review body.
+/// POST /v1/sessions/{tab}/review body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ReviewRequest {
@@ -1185,7 +1185,7 @@ pub struct ReviewReply {
     pub typed: String,
 }
 
-/// POST /v1/sessions/{tab}/changes/comments body.
+/// POST /v1/sessions/{tab}/comments body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct CommentsRequest {

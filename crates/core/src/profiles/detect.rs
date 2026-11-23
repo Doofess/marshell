@@ -516,6 +516,50 @@ pub fn attachment_ref(agent: Option<&str>, path: &Path) -> String {
     }
 }
 
+/// The command that asks `agent` to review the changes: its own, where it has one. The table in
+/// `src/features/changes/review.ts` must hold the same pairs; a test pins the two.
+pub fn review_command(agent: Option<&str>) -> Option<&'static str> {
+    match agent {
+        Some("claude") => Some("/code-review"),
+        Some("codex" | "copilot" | "qwen") => Some("/review"),
+        _ => None,
+    }
+}
+
+/// The request typed for an agent with no review command: the changes against `base`, or the uncommitted ones.
+pub fn review_request(base: Option<&str>) -> String {
+    match base {
+        Some(base) => format!(
+            "Review the changes in this checkout against {base}, file by file, and list each problem with its file and line."
+        ),
+        None => "Review the uncommitted changes in this checkout, file by file, and list each problem with its file and line."
+            .to_string(),
+    }
+}
+
+/// How review comments reach an agent: pasted into its prompt, or written to a file it is told to read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommentsDelivery {
+    Paste,
+    File,
+}
+
+/// The most characters of comments that are pasted. S16 (`docs/spikes/S16-multiline-paste.md`) found no smaller limit.
+pub const PASTE_MAX: usize = 16_000;
+
+/// How `agent` takes multi-line comments, from S16: every CLI it tried takes a bracketed paste of several lines as one
+/// entry; any other program gets a file.
+pub fn comments_delivery(agent: Option<&str>) -> CommentsDelivery {
+    match agent {
+        Some("claude") => CommentsDelivery::Paste,
+        Some("codex") => CommentsDelivery::Paste,
+        Some("copilot") => CommentsDelivery::Paste,
+        Some("qwen") => CommentsDelivery::Paste,
+        Some("antigravity") => CommentsDelivery::Paste,
+        _ => CommentsDelivery::File,
+    }
+}
+
 /// What to type for a path dropped on a session whose shell is `family`: the agent's reference, unless
 /// the name holds a character the shell would act on inside double quotes. Then it is the shell's own
 /// single quoting, since the agent may have exited and left the shell's prompt behind.
@@ -2188,5 +2232,65 @@ mod tests {
             line(&wsl),
             ["wsl.exe", "--exec", "bash", "-lc", "tool go; exec bash -l"]
         );
+    }
+
+    #[test]
+    fn review_commands_per_cli() {
+        assert_eq!(review_command(Some("claude")), Some("/code-review"));
+        for agent in ["codex", "copilot", "qwen"] {
+            assert_eq!(review_command(Some(agent)), Some("/review"), "{agent}");
+        }
+        assert_eq!(review_command(Some("antigravity")), None);
+        assert_eq!(review_command(Some("crush")), None);
+        assert_eq!(review_command(None), None);
+    }
+
+    #[test]
+    fn review_request_names_the_base() {
+        assert_eq!(
+            review_request(Some("main")),
+            "Review the changes in this checkout against main, file by file, and list each problem with its file and line."
+        );
+        assert_eq!(
+            review_request(None),
+            "Review the uncommitted changes in this checkout, file by file, and list each problem with its file and line."
+        );
+    }
+
+    #[test]
+    fn comments_delivery_per_cli() {
+        for agent in ["claude", "codex", "copilot", "qwen", "antigravity"] {
+            assert_eq!(comments_delivery(Some(agent)), CommentsDelivery::Paste, "{agent}");
+        }
+        assert_eq!(comments_delivery(Some("crush")), CommentsDelivery::File);
+        assert_eq!(comments_delivery(None), CommentsDelivery::File);
+        assert_eq!(PASTE_MAX, 16_000);
+    }
+
+    /// `review_command` repeats the frontend's `REVIEW_COMMANDS` table, pair for pair.
+    #[test]
+    fn review_commands_match_the_frontend_table() {
+        let file = format!("{}/../../src/features/changes/review.ts", env!("CARGO_MANIFEST_DIR"));
+        let source = std::fs::read_to_string(file).unwrap().replace('\r', "");
+        let start = source.find("REVIEW_COMMANDS: Record<string, string> = {").unwrap();
+        let body = &source[start..];
+        let body = &body[body.find('{').unwrap() + 1..];
+        let body = &body[..body.find('}').unwrap()];
+        let pairs: Vec<(String, String)> = body
+            .lines()
+            .filter_map(|line| {
+                let (agent, command) = line.trim().trim_end_matches(',').split_once(':')?;
+                Some((agent.trim().to_string(), command.trim().trim_matches('"').to_string()))
+            })
+            .collect();
+        assert_eq!(pairs.len(), 4, "{pairs:?}");
+        for (agent, command) in &pairs {
+            assert_eq!(review_command(Some(agent)), Some(command.as_str()), "{agent}");
+        }
+        // And Rust has no row the table lacks.
+        for agent in ["claude", "codex", "copilot", "qwen", "antigravity", "crush"] {
+            let table = pairs.iter().find(|(a, _)| a == agent).map(|(_, c)| c.as_str());
+            assert_eq!(review_command(Some(agent)), table, "{agent}");
+        }
     }
 }

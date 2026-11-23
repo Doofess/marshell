@@ -361,3 +361,266 @@ async fn tree_marks_are_empty_outside_git() {
         tokio::time::sleep(Duration::from_millis(300)).await;
     }
 }
+
+// ---- The review command and the comments ----
+
+/// A session whose program (`mode`: `capture-input` or `capture-input-plain`) appends every byte typed to it to
+/// `typed.log` in `dir`. Claude's version and settings are pinned to scratch values, so no test runs a real `claude`.
+/// With `agent` set the row is that agent's. Waits until the program takes input.
+async fn agent_session(dir: &Path, agent: Option<&str>, mode: &str) -> (AppState, axum::Router, String, PathBuf) {
+    let log = dir.join("typed.log");
+    let home = dir.join("home");
+    let command = vec![
+        env!("CARGO_BIN_EXE_fake-agent").into(),
+        mode.into(),
+        log.to_string_lossy().into_owned(),
+    ];
+    let state = AppState::new(
+        TOKEN.into(),
+        PORT,
+        vec![ORIGIN.into()],
+        home.clone(),
+        vec![common::family_profile("capture", command, ShellFamily::Posix)],
+    )
+    .with_claude_version(Some("2.1.302".into()))
+    .with_claude_compact_paths(home.join("user"), Vec::new())
+    .with_claude_settings(home.join("claude-settings.json"))
+    .with_agent_check(|_| true)
+    .with_tab_path(|| None);
+    let app = router(state.clone());
+    let body = serde_json::json!({
+        "cols": 80, "rows": 24, "profile_id": "capture", "cwd": dir.to_string_lossy(), "agent": agent,
+    });
+    let res = call(&app, "POST", "/v1/sessions", Some(body)).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let tab = json_of(res).await["tab_id"].as_str().unwrap().to_string();
+    let session = state.session(&tab).unwrap();
+    let started = Instant::now();
+    loop {
+        // `capture-input` asks for bracketed paste once its input is raw; the plain mode says it is ready.
+        let ready = if mode == "capture-input" {
+            session.bracketed_paste()
+        } else {
+            matches!(
+                session.pull(0, 64 * 1024),
+                marshell_core::pty::Pull::Data { bytes, .. } if String::from_utf8_lossy(&bytes).contains("plain-ready")
+            )
+        };
+        if ready {
+            return (state, app, tab, log);
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "the program never took input"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+async fn review(app: &axum::Router, tab: &str, body: serde_json::Value) -> axum::response::Response {
+    call(app, "POST", &format!("/v1/sessions/{tab}/review"), Some(body)).await
+}
+
+async fn comments(app: &axum::Router, tab: &str, text: &str) -> axum::response::Response {
+    let body = serde_json::json!({ "text": text });
+    call(app, "POST", &format!("/v1/sessions/{tab}/comments"), Some(body)).await
+}
+
+async fn reason_of(res: axum::response::Response) -> String {
+    json_of(res).await["reason"].as_str().unwrap_or_default().to_string()
+}
+
+#[tokio::test]
+async fn review_types_the_command_with_no_enter() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_state, app, tab, log) = agent_session(tmp.path(), Some("claude"), "capture-input").await;
+    let res = review(&app, &tab, serde_json::json!({ "base": null })).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(json_of(res).await["typed"], "/code-review");
+    let bytes = common::typed(&log, 12).await;
+    assert_eq!(bytes, b"/code-review");
+    assert!(!bytes.contains(&b'\r') && !bytes.contains(&b'\n'));
+}
+
+#[tokio::test]
+async fn review_types_a_request_for_an_agent_with_no_command() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_state, app, tab, log) = agent_session(tmp.path(), Some("antigravity"), "capture-input").await;
+    let res = review(&app, &tab, serde_json::json!({ "base": "main" })).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let want =
+        "Review the changes in this checkout against main, file by file, and list each problem with its file and line.";
+    assert_eq!(json_of(res).await["typed"], want);
+    assert_eq!(common::typed(&log, want.len()).await, want.as_bytes());
+}
+
+#[tokio::test]
+async fn review_refuses_a_bad_base() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_state, app, tab, log) = agent_session(tmp.path(), Some("claude"), "capture-input").await;
+    for base in ["x".repeat(201), "ma\nin".to_string(), "ma\u{1b}in".to_string()] {
+        let res = review(&app, &tab, serde_json::json!({ "base": base })).await;
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST, "{base:?}");
+    }
+    assert_eq!(common::typed(&log, 1).await, b"");
+    let res = review(&app, "nope", serde_json::json!({ "base": null })).await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn review_for_a_shell_with_no_agent_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_state, app, tab, log) = agent_session(tmp.path(), None, "capture-input").await;
+    let res = review(&app, &tab, serde_json::json!({ "base": null })).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert_eq!(reason_of(res).await, "no_agent");
+    let res = comments(&app, &tab, "a").await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert_eq!(reason_of(res).await, "no_agent");
+    assert_eq!(common::typed(&log, 1).await, b"");
+}
+
+#[tokio::test]
+async fn comments_paste_bracketed_with_cr_line_breaks() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_state, app, tab, log) = agent_session(tmp.path(), Some("claude"), "capture-input").await;
+    let res = comments(&app, &tab, "a\nb").await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let reply = json_of(res).await;
+    assert_eq!(reply["form"], "paste");
+    assert!(reply["path"].is_null());
+    assert_eq!(common::typed(&log, 11).await, b"\x1b[200~a\rb\x1b[201~");
+    assert!(!tmp.path().join("home/attachments").exists());
+}
+
+#[tokio::test]
+async fn comments_go_by_file_when_bracketed_paste_is_off() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_state, app, tab, log) = agent_session(tmp.path(), Some("claude"), "capture-input-plain").await;
+    let res = comments(&app, &tab, "a\nb").await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let reply = json_of(res).await;
+    assert_eq!(reply["form"], "file");
+    let path = PathBuf::from(reply["path"].as_str().unwrap());
+    let folder = tmp.path().join("home/attachments").join(&tab);
+    assert_eq!(path.parent().unwrap(), folder);
+    let name = path.file_name().unwrap().to_string_lossy().into_owned();
+    assert!(name.starts_with("comments-") && name.ends_with(".md"), "{name}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "a\nb\n");
+    // No temp file is left behind.
+    assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 1);
+    let want = format!("Read my review comments in \"{}\"", path.display());
+    let bytes = common::typed(&log, want.len()).await;
+    assert_eq!(bytes, want.as_bytes());
+    assert!(!bytes.contains(&b'\r') && !bytes.contains(&b'\n') && !bytes.contains(&0x1b));
+}
+
+#[tokio::test]
+async fn comments_over_paste_max_go_by_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_state, app, tab, log) = agent_session(tmp.path(), Some("claude"), "capture-input").await;
+    let text = "x".repeat(16_001);
+    let res = comments(&app, &tab, &text).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let reply = json_of(res).await;
+    assert_eq!(reply["form"], "file");
+    let path = PathBuf::from(reply["path"].as_str().unwrap());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), format!("{text}\n"));
+    // One line, pasted as the program asked: the reference, not the comments.
+    let want = format!("\x1b[200~Read my review comments in \"{}\"\x1b[201~", path.display());
+    assert_eq!(common::typed(&log, want.len()).await, want.as_bytes());
+    // Exactly 16,000 characters still go by paste.
+    let res = comments(&app, &tab, &"y".repeat(16_000)).await;
+    assert_eq!(json_of(res).await["form"], "paste");
+}
+
+#[tokio::test]
+async fn comments_refuse_an_escape_or_a_cr() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_state, app, tab, log) = agent_session(tmp.path(), Some("claude"), "capture-input").await;
+    let too_long = "x".repeat(1024 * 1024 + 1);
+    for text in ["a\u{1b}[201~b", "a\rb", "a\u{7f}b", "", too_long.as_str()] {
+        let res = comments(&app, &tab, text).await;
+        assert_eq!(
+            res.status(),
+            StatusCode::BAD_REQUEST,
+            "{:?}",
+            text.chars().take(8).collect::<String>()
+        );
+    }
+    // A tab and a line break are text.
+    let res = comments(&app, &tab, "a\tb\nc").await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(common::typed(&log, 1).await, b"\x1b[200~a\tb\rc\x1b[201~");
+    let res = comments(&app, "nope", "a").await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+/// A Claude hook call carrying a recorded fixture.
+fn hook_request(role: &str, tab: &str, name: &str) -> Request<Body> {
+    let file = format!(
+        "{}/tests/fixtures/claude/2.1.302/{name}.json",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let mut req = request("POST", "/v1/hook", None, true);
+    *req.body_mut() = Body::from(std::fs::read(file).unwrap());
+    let h = req.headers_mut();
+    h.insert("x-marshell-role", role.parse().unwrap());
+    h.insert("x-marshell-agent", "claude".parse().unwrap());
+    h.insert("x-marshell-tab", tab.parse().unwrap());
+    h.insert("x-marshell-version", "0.0.0".parse().unwrap());
+    req
+}
+
+#[tokio::test]
+async fn comments_wait_while_the_agent_asks() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (state, app, tab, log) = agent_session(tmp.path(), Some("claude"), "capture-input").await;
+    let res = app
+        .clone()
+        .oneshot(hook_request("event", &tab, "SessionStart"))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    // The permission request holds its call open until it is answered.
+    let held = tokio::spawn({
+        let app = app.clone();
+        let req = hook_request("permission", &tab, "PermissionRequest");
+        async move { app.oneshot(req).await.unwrap().status() }
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !state.holds().has_tab(&tab) {
+        assert!(Instant::now() < deadline, "the permission request was never held");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let res = comments(&app, &tab, "a\nb").await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert_eq!(reason_of(res).await, "waiting");
+    let res = review(&app, &tab, serde_json::json!({ "base": null })).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert_eq!(reason_of(res).await, "waiting");
+    // The card is still pending and nothing was written, to the pty or to disk.
+    assert!(state.holds().has_tab(&tab));
+    assert_eq!(common::typed(&log, 1).await, b"");
+    assert!(!tmp.path().join("home/attachments").exists());
+    let rid = state.holds().pending()[0].rid.clone();
+    assert!(state.holds().release(&rid));
+    assert_eq!(held.await.unwrap(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn review_and_comments_need_the_token() {
+    let scratch = Scratch::new();
+    let app = router(state_in(&scratch.home(), &scratch.root));
+    for (path, body) in [
+        ("/v1/sessions/nope/review", serde_json::json!({ "base": null })),
+        ("/v1/sessions/nope/comments", serde_json::json!({ "text": "a" })),
+    ] {
+        let res = app
+            .clone()
+            .oneshot(request("POST", path, Some(body), false))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED, "{path}");
+    }
+}

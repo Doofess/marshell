@@ -9,7 +9,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use marshell_protocol::agents::HookInstall;
-use marshell_protocol::api::{FillRequest, LiveState};
+use marshell_protocol::api::{FillRequest, LiveState, SessionInfo};
 use std::time::{Duration, Instant};
 
 /// The refusal for text that holds a control character.
@@ -52,6 +52,89 @@ pub fn claude_hooked(agent: Option<&str>, status_note: Option<&str>, hooks: Opti
     agent == Some("claude") && status_note.is_none() && hooks == Some(HookInstall::Installed)
 }
 
+/// Why a session takes no text now. The order is the order of the checks: the first that holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Busy {
+    /// The program or its agent has ended.
+    Ended,
+    /// An administrator session takes input only from Marshell's own window.
+    Elevated,
+    Paused,
+    /// An answer is pending, and text would be taken as its keys.
+    Waiting,
+}
+
+/// What `assess` found out about a session.
+pub(super) struct Assessed {
+    pub busy: Option<Busy>,
+    /// The row waits for Claude Code's `SessionStart`.
+    pub hooked: bool,
+    /// Its `SessionStart` has come.
+    pub started: bool,
+}
+
+/// Reads Claude Code's hook state off the async workers.
+fn read_hooks(st: &AppState) -> tokio::task::JoinHandle<Option<HookInstall>> {
+    let asker = st.clone();
+    tokio::task::spawn_blocking(move || super::agents::setup_of(&asker).ok().map(|s| s.hooks))
+}
+
+/// The refusals of a write to a session, from the hooks already read. `hooks` is Claude Code's hook state, read once
+/// by the caller, and None for any other agent.
+pub(super) fn assess(
+    st: &AppState,
+    tab: &str,
+    row: &SessionInfo,
+    session: &crate::pty::Session,
+    hooks: Option<HookInstall>,
+) -> Assessed {
+    let hooked = claude_hooked(row.agent.as_deref(), row.status_note.as_deref(), hooks);
+    let started = st.registry().session_started(tab);
+    let found = |busy| Assessed {
+        busy: Some(busy),
+        hooked,
+        started,
+    };
+    if !row.running() || session.has_exited() {
+        return found(Busy::Ended);
+    }
+    // An administrator session takes input only from Marshell's own window.
+    if session.is_elevated() {
+        return found(Busy::Elevated);
+    }
+    if session.is_frozen() {
+        return found(Busy::Paused);
+    }
+    // A pending answer would take the text as its own keys (a digit, `y`), so nothing is typed until it is
+    // answered, and Marshell's held card is left alone. A Claude dialog dismissed with Escape sends no hook, so the
+    // row keeps saying it waits: a key typed in the terminal since it appeared counts as its answer. Two more
+    // answers can be pending with no dialog state. A hooked Claude row without its `SessionStart` may still show
+    // the folder-trust dialog. An Antigravity row stays Working under its own tool prompt, and only the status
+    // line says it shows; typing takes that flag, so a key typed since counts as its answer too.
+    let waiting = st.holds().has_tab(tab)
+        || row.live.as_ref().is_some_and(|l| {
+            matches!(l.state, LiveState::NeedsPermission | LiveState::NeedsQuestion)
+                && !st.registry().typed_since(tab, l.since_ms)
+        })
+        || (hooked && !started)
+        || st.registry().agent_prompt_showing(tab);
+    Assessed {
+        busy: waiting.then_some(Busy::Waiting),
+        hooked,
+        started,
+    }
+}
+
+/// Why `session` takes no text now, if it doesn't. Reads Claude Code's settings off the async workers.
+pub(super) async fn busy(st: &AppState, tab: &str, row: &SessionInfo, session: &crate::pty::Session) -> Option<Busy> {
+    let hooks = if row.agent.as_deref() == Some("claude") {
+        read_hooks(st).await.ok().flatten()
+    } else {
+        None
+    };
+    assess(st, tab, row, session, hooks).busy
+}
+
 pub async fn fill(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<FillRequest>) -> Response {
     if st.registry().row(&tab).is_none() {
         return (StatusCode::NOT_FOUND, "No such session.").into_response();
@@ -68,8 +151,7 @@ pub async fn fill(State(st): State<AppState>, Path(tab): Path<String>, Json(req)
         .row(&tab)
         .is_some_and(|r| r.agent.as_deref() == Some("claude"));
     let hooks = if claude {
-        let asker = st.clone();
-        let lookup = tokio::task::spawn_blocking(move || super::agents::setup_of(&asker).ok().map(|s| s.hooks));
+        let lookup = read_hooks(&st);
         match tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), lookup).await {
             Ok(done) => done.ok().flatten(),
             Err(_) => return cannot_resume("not_ready"),
@@ -83,37 +165,21 @@ pub async fn fill(State(st): State<AppState>, Path(tab): Path<String>, Json(req)
         let Some(row) = st.registry().row(&tab) else {
             return (StatusCode::NOT_FOUND, "No such session.").into_response();
         };
+        // An ended row may have no session left to look at, and still says it ended.
         if !row.running() {
             return cannot_resume("ended");
         }
         let Some(session) = st.session(&tab) else {
             return (StatusCode::NOT_FOUND, "No such session.").into_response();
         };
-        if session.has_exited() {
-            return cannot_resume("ended");
+        let Assessed { busy, hooked, started } = assess(&st, &tab, &row, &session, hooks);
+        match busy {
+            Some(Busy::Ended) => return cannot_resume("ended"),
+            Some(Busy::Elevated) => return cannot_resume(crate::pty::elevated::API_WRITE_COPY),
+            Some(Busy::Paused) => return cannot_resume("It is paused."),
+            _ => {}
         }
-        // An administrator session takes input only from Marshell's own window.
-        if session.is_elevated() {
-            return cannot_resume(crate::pty::elevated::API_WRITE_COPY);
-        }
-        if session.is_frozen() {
-            return cannot_resume("It is paused.");
-        }
-        // A pending answer would take the text as its own keys (a digit, `y`), so nothing is typed until it is
-        // answered, and Marshell's held card is left alone. A Claude dialog dismissed with Escape sends no hook, so the
-        // row keeps saying it waits: a key typed in the terminal since it appeared counts as its answer. Two more
-        // answers can be pending with no dialog state. A hooked Claude row without its `SessionStart` may still show
-        // the folder-trust dialog. An Antigravity row stays Working under its own tool prompt, and only the status
-        // line says it shows; typing takes that flag, so a key typed since counts as its answer too.
-        let hooked = claude_hooked(row.agent.as_deref(), row.status_note.as_deref(), hooks);
-        let started = st.registry().session_started(&tab);
-        let waiting = st.holds().has_tab(&tab)
-            || row.live.as_ref().is_some_and(|l| {
-                matches!(l.state, LiveState::NeedsPermission | LiveState::NeedsQuestion)
-                    && !st.registry().typed_since(&tab, l.since_ms)
-            })
-            || (hooked && !started)
-            || st.registry().agent_prompt_showing(&tab);
+        let waiting = busy == Some(Busy::Waiting);
         if waiting && !req.wait {
             return cannot_resume("waiting");
         }

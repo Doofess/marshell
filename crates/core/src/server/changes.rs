@@ -5,12 +5,22 @@
 //! `changes_target` picks it and refuses a network folder before any git runs.
 
 use super::AppState;
+use super::attachments::{effective_agent, paste_pieces};
 use super::files::{Root, checkout_above, checkout_of, links_refused, refused, row_of};
+use super::fill::{Busy, busy};
+use super::sessions::cannot_resume;
+use crate::paths;
+use crate::profiles::detect::{
+    CommentsDelivery, PASTE_MAX, attachment_ref, comments_delivery, review_command, review_request,
+};
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use marshell_protocol::api::{ChangeMark, ChangesKind, ChangesReply, ChangesRequest, DiffStatus, SessionInfo};
+use marshell_protocol::api::{
+    ChangeMark, ChangesKind, ChangesReply, ChangesRequest, CommentsForm, CommentsReply, CommentsRequest, DiffStatus,
+    ReviewReply, ReviewRequest, SessionInfo,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -198,6 +208,149 @@ pub async fn changes(State(st): State<AppState>, Path(tab): Path<String>, Json(r
         Ok(reply) => Json(reply).into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
+}
+
+/// The longest base a review request names.
+const MAX_BASE: usize = 200;
+/// The longest comments text the route takes.
+const MAX_COMMENTS: usize = 1024 * 1024;
+
+/// Why a session takes no review or comments now, as the `reason` of the 409.
+fn busy_reason(busy: Busy) -> &'static str {
+    match busy {
+        Busy::Ended => "ended",
+        Busy::Elevated => "elevated",
+        Busy::Paused => "paused",
+        Busy::Waiting => "waiting",
+    }
+}
+
+/// The agent of a session that can take typed text now, or the 409 that says why not: "no_agent" for a plain shell,
+/// else the `busy` reason.
+async fn agent_ready(
+    st: &AppState,
+    tab: &str,
+    row: &SessionInfo,
+    session: &crate::pty::Session,
+) -> Result<String, &'static str> {
+    let Some(agent) = effective_agent(row) else {
+        return Err("no_agent");
+    };
+    match busy(st, tab, row, session).await {
+        Some(why) => Err(busy_reason(why)),
+        None => Ok(agent),
+    }
+}
+
+/// Types `bytes` into the session as `sessions::input` does: it answers in the terminal, and no Enter follows.
+fn type_in(st: &AppState, tab: &str, session: &crate::pty::Session, bytes: Vec<u8>) {
+    st.holds().release_tab(tab);
+    st.registry().note_input(tab);
+    session.write_input(bytes);
+}
+
+/// POST /v1/sessions/{tab}/review: types the agent's review command, or a request in words, with no Enter.
+/// 404 unknown tab, 400 for a bad base, 409 for no agent or a session that takes no text now.
+pub async fn review(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<ReviewRequest>) -> Response {
+    let (Some(row), Some(session)) = (row_of(&st, &tab), st.session(&tab)) else {
+        return (StatusCode::NOT_FOUND, "There is no such session.").into_response();
+    };
+    // A base is typed into the prompt as it is, so it has no control character.
+    let base = req.base.as_deref().filter(|b| !b.is_empty());
+    if base.is_some_and(|b| b.chars().count() > MAX_BASE || b.chars().any(char::is_control)) {
+        return (StatusCode::BAD_REQUEST, "That base isn't a branch name.").into_response();
+    }
+    let agent = match agent_ready(&st, &tab, &row, &session).await {
+        Ok(agent) => agent,
+        Err(reason) => return cannot_resume(reason),
+    };
+    let typed = review_command(Some(&agent))
+        .map(String::from)
+        .unwrap_or_else(|| review_request(base));
+    type_in(&st, &tab, &session, typed.clone().into_bytes());
+    Json(ReviewReply { typed }).into_response()
+}
+
+/// Whether the text can be pasted or written: not empty, not over 1 MiB, and no control character but a line break
+/// and a tab. That refuses `\r` and Escape, so the text can never end a bracketed paste.
+fn comments_refused(text: &str) -> Option<&'static str> {
+    if text.is_empty() {
+        return Some("There are no comments to send.");
+    }
+    if text.len() > MAX_COMMENTS {
+        return Some("The comments are over 1 MiB.");
+    }
+    if text.chars().any(|c| c.is_control() && c != '\n' && c != '\t') {
+        return Some("The comments can't hold control characters.");
+    }
+    None
+}
+
+/// Writes the comments to `<folder>/comments-<unix ms>.md` through a temp file renamed into place, and returns the path.
+/// A name that is taken gets `-<n>` after the time. Blocking.
+fn write_comments(folder: &std::path::Path, text: &str) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(folder)?;
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or_default();
+    let mut path = folder.join(format!("comments-{ms}.md"));
+    let mut n = 1;
+    while path.exists() {
+        path = folder.join(format!("comments-{ms}-{n}.md"));
+        n += 1;
+    }
+    let temp = folder.join(format!(".comments-{ms}.tmp"));
+    std::fs::write(&temp, format!("{text}\n"))?;
+    std::fs::rename(&temp, &path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&temp);
+    })?;
+    Ok(path)
+}
+
+/// POST /v1/sessions/{tab}/comments: pastes the review comments into the agent's prompt, or, when they can't be
+/// pasted, writes them to a file and pastes the line that points at it. No Enter either way. 404 unknown tab, 400 for
+/// text that is refused, 409 for no agent or a session that takes no text now.
+pub async fn comments(
+    State(st): State<AppState>,
+    Path(tab): Path<String>,
+    Json(req): Json<CommentsRequest>,
+) -> Response {
+    let (Some(row), Some(session)) = (row_of(&st, &tab), st.session(&tab)) else {
+        return (StatusCode::NOT_FOUND, "There is no such session.").into_response();
+    };
+    if let Some(why) = comments_refused(&req.text) {
+        return (StatusCode::BAD_REQUEST, why).into_response();
+    }
+    let agent = match agent_ready(&st, &tab, &row, &session).await {
+        Ok(agent) => agent,
+        Err(reason) => return cannot_resume(reason),
+    };
+    let bracketed = session.bracketed_paste();
+    if comments_delivery(Some(&agent)) == CommentsDelivery::Paste && bracketed && req.text.chars().count() <= PASTE_MAX
+    {
+        // As xterm.js pastes: a line break is a CR.
+        let bytes = paste_pieces(&[&req.text.replace('\n', "\r")], true);
+        type_in(&st, &tab, &session, bytes);
+        return Json(CommentsReply {
+            form: CommentsForm::Paste,
+            path: None,
+        })
+        .into_response();
+    }
+    let folder = paths::attachments_dir(st.home()).join(&tab);
+    let text = req.text;
+    let written = tokio::task::spawn_blocking(move || write_comments(&folder, &text)).await;
+    let Ok(Ok(path)) = written else {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "Couldn't save the comments.").into_response();
+    };
+    let line = format!("Read my review comments in {}", attachment_ref(Some(&agent), &path));
+    type_in(&st, &tab, &session, paste_pieces(&[&line], bracketed));
+    Json(CommentsReply {
+        form: CommentsForm::File,
+        path: Some(path.to_string_lossy().into_owned()),
+    })
+    .into_response()
 }
 
 /// The root's path below the checkout, with a trailing `/` ("" at the checkout itself). None when the root
