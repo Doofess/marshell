@@ -648,6 +648,75 @@ mod tests {
         Instant::now() + Duration::from_secs(60)
     }
 
+    /// Not a test: prints what each part of a check costs on the checkout `MARSHELL_BENCH_CHECKOUT` names
+    /// (`docs/research/2026-11-23-changes-big-checkout.md` says how to make one). Run it with
+    /// `cargo test --release -p marshell-core -j 4 --lib timing_on_a_big_checkout -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn timing_on_a_big_checkout() {
+        let Some(checkout) = std::env::var_os("MARSHELL_BENCH_CHECKOUT") else {
+            return;
+        };
+        let checkout = crate::projects::canonical(Path::new(&checkout));
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let target = Target {
+            checkout: checkout.clone(),
+            moved: false,
+            task_base: None,
+        };
+        let never = AtomicBool::new(false);
+        let ms = |t: Instant| t.elapsed().as_secs_f64() * 1000.0;
+
+        let mut entry = Entry::default();
+        let mut from = String::new();
+        for n in 1..=6 {
+            let t = Instant::now();
+            let check = compute(&home, &target, &mut entry, far(), &never);
+            println!("check #{n}: {:.0} ms, ok={}", ms(t), check.is_ok());
+            if let Ok(check) = check {
+                from = check.from;
+            }
+        }
+        let git = entry.git.as_ref().unwrap();
+        let t = Instant::now();
+        let tracked = tracked_paths(git, &mut None, far(), &never).unwrap();
+        println!("ls-files and its parse: {:.0} ms, {} paths", ms(t), tracked.paths.len());
+        for n in 1..=3 {
+            let t = Instant::now();
+            let reach = worktree::reach(&checkout, &tracked, far(), &never);
+            println!("link safety check #{n}: {:.0} ms, {reach:?}", ms(t));
+        }
+        let t = Instant::now();
+        let args = [
+            "diff",
+            "--raw",
+            "-z",
+            "-M",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--ignore-submodules=all",
+            &from,
+            "--",
+        ];
+        let (raw, _) = collect(git, &args, far(), &never, MAX_RAW).unwrap();
+        println!("git diff --raw: {:.0} ms, {} bytes", ms(t), raw.len());
+        let t = Instant::now();
+        let mut new_files = 0usize;
+        let stopped = walk_unignored(
+            &mut Ignores::new(&checkout, &checkout),
+            &checkout,
+            far(),
+            &never,
+            &|rel| tracked.paths.contains(rel),
+            &mut |_, _| {
+                new_files += 1;
+                true
+            },
+        );
+        println!("look for new files: {:.0} ms, {new_files} new, {stopped:?}", ms(t));
+    }
+
     fn check_of(cache: &ChangesCache, target: &Target) -> Arc<Check> {
         // Zero age: every call is a new check, whatever the clock says.
         cache
