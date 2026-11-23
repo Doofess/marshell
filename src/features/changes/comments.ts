@@ -133,14 +133,15 @@ export function citation(c: DraftComment, changed: boolean): string {
   return `${c.path}:${lines}${removed}${changed ? " (changed since)" : ""}`;
 }
 
-/** The text handed to the agent. */
-export function messageOf(drafts: DraftComment[], placements: Map<string, Placement>, sections: Section[], base: string | null): string {
+/** The text handed to the agent. `folder` names the checkout when it isn't the one the session shows now. */
+export function messageOf(drafts: DraftComment[], placements: Map<string, Placement>, sections: Section[], base: string | null, folder?: string): string {
   const order = new Map(sections.map((s, i) => [s.path, i]));
   const rank = (c: DraftComment) => order.get(c.path) ?? sections.length;
   // Cited at the lines the rows are on now: the agent reads the file as it is.
   const now = drafts.map((c) => renumbered(c, placements.get(c.id)));
   const sorted = now.sort((a, b) => rank(a) - rank(b) || a.start - b.start);
-  const header = base === null ? "Comments on the uncommitted changes:" : `Comments on the changes (compared with ${base}):`;
+  const where = folder === undefined ? "" : ` in ${folder}`;
+  const header = base === null ? `Comments on the uncommitted changes${where}:` : `Comments on the changes${where} (compared with ${base}):`;
   const blocks = sorted.map((c) => {
     const lines = [citation(c, placements.get(c.id)?.changed ?? false), ...c.quote.map((q) => `> ${q}`)];
     if (c.rows > QUOTE_LINES) lines.push("> …");

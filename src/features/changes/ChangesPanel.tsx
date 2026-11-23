@@ -9,7 +9,8 @@ import { type ItemRange, DiffList, type ListResult, reach } from "./DiffList";
 import { type ChangesChoice, changesChoice, changesMenuItems, headerMenuItems, lineMenuItems, openLineOf, settingLabel } from "./changesMenu";
 import { type BoxAction, CommentBox, boxLabel } from "./CommentBox";
 import { type BoxState, anchorKey, boxAfter } from "./boxModel";
-import { MAX_COMMENTS, type Placement, anchorOf, messageOf, place, renumbered } from "./comments";
+import { MAX_COMMENTS, type Placement, anchorOf, place, renumbered } from "./comments";
+import { commentsOf, elsewhere, sendMessageOf, shownComments, withFolds } from "./drafts";
 import { copy } from "./copy";
 import { type Item, type Row, type Section, cutFiles, focusIndex, itemsOf, sectionsOf } from "./model";
 import { reviewLabel } from "./review";
@@ -48,8 +49,6 @@ export { listKey } from "./DiffList";
 /** What the palette's Changes commands call on the mounted panel. Each announces why when it can't act. */
 export type ChangesHandle = { refresh(): void; review(): void; send(): void };
 
-const commentsOf = (n: number) => `${n} ${n === 1 ? "comment" : "comments"}`;
-const folderName = (path: string) => path.split(/[\\/]/).filter((s) => s !== "").pop() ?? path;
 
 /** The panel's empty states, each with its mark; only a failed read has an action. */
 export function ChangesEmpty({ reply, noFolder, onRetry }: { reply: ChangesReply | null; noFolder: boolean; onRetry(): void }) {
@@ -97,9 +96,11 @@ export function ChangesPanel(p: ChangesPanelProps) {
   const listed = reply?.kind === "listed" ? reply : null;
   const { drafts } = p;
 
-  const sections = useMemo(() => (listed ? sectionsOf(listed, drafts?.folds ?? {}, drafts?.comments ?? [], hide) : []), [listed, drafts, hide]);
-  const placements = useMemo(() => new Map<string, Placement>((drafts?.comments ?? []).map((c) => [c.id, place(c, sections.find((s) => s.path === c.path))])), [sections, drafts]);
-  const items = useMemo<Item[]>(() => itemsOf(sections, drafts?.comments ?? [], placements), [sections, drafts, placements]);
+  // Another checkout's comments aren't listed against this one's files (the strip says where they are).
+  const comments = useMemo(() => (listed ? shownComments(drafts, listed.folder) : []), [listed, drafts]);
+  const sections = useMemo(() => (listed ? sectionsOf(listed, drafts?.folds ?? {}, comments, hide) : []), [listed, drafts, comments, hide]);
+  const placements = useMemo(() => new Map<string, Placement>(comments.map((c) => [c.id, place(c, sections.find((s) => s.path === c.path))])), [sections, comments]);
+  const items = useMemo<Item[]>(() => itemsOf(sections, comments, placements), [sections, comments, placements]);
   const draftsRef = useRef(drafts);
   draftsRef.current = drafts;
   const count = drafts?.comments.length ?? 0;
@@ -141,7 +142,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
 
   const fold = (path: string, folded: boolean) => {
     if (!listed) return;
-    p.onDrafts({ checkout: listed.folder, base: listed.base, comments: drafts?.comments ?? [], folds: { ...drafts?.folds, [path]: folded } });
+    p.onDrafts(withFolds(drafts, listed, { [path]: folded }));
   };
   const setRange = (next: ItemRange | null) => setKeys((k) => ({ ...k, range: next === null ? null : { from: items[next.from]!.key, to: items[next.to]!.key } }));
   const rowsIn = (r: ItemRange) => items.slice(Math.min(r.from, r.to), Math.max(r.from, r.to) + 1).filter((i) => i.kind === "row").length;
@@ -166,7 +167,6 @@ export function ChangesPanel(p: ChangesPanelProps) {
 
   const startBox = (item: Item | undefined) => {
     if (!listed || item === undefined) return;
-    const folder = drafts?.checkout;
     if (item.kind === "comment") {
       const { id, text, ...anchor } = item.comment;
       setOpen({ state: { anchor, id }, text });
@@ -176,7 +176,8 @@ export function ChangesPanel(p: ChangesPanelProps) {
     const held = heldItems(item).filter((i): i is Extract<Item, { kind: "row" }> => i.kind === "row");
     const rows = held.map((i) => i.file.rows[i.at]!);
     if (held.length === 0 || rows.some((r) => r.kind === "hunk")) return;
-    if (count > 0 && folder !== undefined && folder !== listed.folder) return p.announce(`Send or discard the ${commentsOf(count)} on ${folderName(folder)} first.`);
+    const away = elsewhere(drafts, listed.folder);
+    if (away !== null) return p.announce(away);
     if (count >= MAX_COMMENTS) return p.announce(`A session holds at most ${MAX_COMMENTS} comments.`);
     const ats = held.map((i) => i.at);
     setOpen({ state: { anchor: anchorOf(item.file, Math.min(...ats), Math.max(...ats)), id: null }, text: "" });
@@ -214,13 +215,12 @@ export function ChangesPanel(p: ChangesPanelProps) {
 
   const send = async () => {
     const d = draftsRef.current;
-    const comments = d?.comments ?? [];
-    if (!listed || comments.length === 0) return p.announce("There are no comments to send.");
+    if (!listed || !d || d.comments.length === 0) return p.announce("There are no comments to send.");
     if (busy) return;
     setBusy(true);
     let result: SendResult;
     try {
-      result = await p.onSend(messageOf(comments, placements, sections, listed.base), comments.length);
+      result = await p.onSend(sendMessageOf(d, listed, sections, placements), d.comments.length);
     } finally {
       setBusy(false);
     }
@@ -320,7 +320,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
   const foldAll = (folded: boolean) => {
     if (!listed) return;
     const all = Object.fromEntries(sections.filter((s) => s.rows.length > 0).map((s) => [s.path, folded]));
-    p.onDrafts({ checkout: listed.folder, base: listed.base, comments: drafts?.comments ?? [], folds: { ...drafts?.folds, ...all } });
+    p.onDrafts(withFolds(drafts, listed, all));
   };
   const runMenu = (id: string) => {
     const choice: ChangesChoice | null = changesChoice(id);
@@ -378,7 +378,8 @@ export function ChangesPanel(p: ChangesPanelProps) {
   }
 
   const line = copy.line({ branch: listed.branch, detached: listed.detached, base: listed.base, ahead: listed.ahead, uncommitted: listed.uncommitted, moved: listed.moved, folder: listed.folder });
-  const notices = noticesOf(listed);
+  const away = elsewhere(drafts, listed.folder);
+  const notices = away === null ? noticesOf(listed) : [...noticesOf(listed), away];
   const boxAt = open === null ? -1 : boxAfter(items, sections, open.state);
   // The key stays the written anchor (the box keeps its text and caret); the label reads the lines it is on now.
   const boxLines = open === null ? null : renumbered(open.state.anchor, placeBox(open.state));
