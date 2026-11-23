@@ -45,6 +45,7 @@ export const threadCopy = {
     open: "Open on GitHub",
     copyLink: "Copy link",
   },
+  resolvedNotSent: "A resolved thread isn't sent. Unresolve it first.",
   cantReply: "GitHub doesn't let this sign-in reply to this thread.",
   cantResolve: "GitHub doesn't let this sign-in resolve this thread.",
   cantUnresolve: "GitHub doesn't let this sign-in unresolve this thread.",

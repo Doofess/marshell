@@ -461,7 +461,8 @@
     color: FieldText;
     border: 1px solid CanvasText;
   }
-  .changes__box-error {
+  .changes__box-error,
+  .changes__box-hint {
     color: CanvasText;
   }
   .changes__send-button {

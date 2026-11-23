@@ -121,14 +121,16 @@ export function addressOf(item: CommentItem): string | null {
 /**
  * The menu of a thread or a note: add to or remove from the send; for a thread your note, a reply on GitHub (off with the reason when the
  * sign-in can't, or with "Replying…" while `replying`) and resolve or unresolve (off with the reason too); open and copy the address.
+ * A resolved thread leaves the send with GitHub's next answer (`pruned`), so adding it and its note row are off, with the reason.
  * A note's own text isn't part of what a send carries of a GitHub note, so it has no note row.
  */
 export function threadMenuItems(item: CommentItem, state: SendState, replying = false): MenuItem[] {
   const m = threadCopy.menu;
   const thread = item.kind === "thread" ? item.thread : null;
   const address = addressOf(item);
-  const rows: MenuItem[] = [state.picked ? { id: "unpick", label: m.unpick } : { id: "pick", label: m.pick }];
-  if (thread !== null) rows.push({ id: "note", label: state.note === "" ? m.note : m.editNote }, { id: "reply", label: m.reply, ...(!thread.can_reply ? { disabled: threadCopy.cantReply } : replying ? { disabled: threadCopy.replying } : {}) });
+  const gone = thread?.resolved === true && !state.picked ? { disabled: threadCopy.resolvedNotSent } : {};
+  const rows: MenuItem[] = [state.picked ? { id: "unpick", label: m.unpick } : { id: "pick", label: m.pick, ...gone }];
+  if (thread !== null) rows.push({ id: "note", label: state.note === "" ? m.note : m.editNote, ...gone }, { id: "reply", label: m.reply, ...(!thread.can_reply ? { disabled: threadCopy.cantReply } : replying ? { disabled: threadCopy.replying } : {}) });
   if (thread !== null) rows.push(thread.resolved ? { id: "unresolve", label: m.unresolve, ...(thread.can_unresolve ? {} : { disabled: threadCopy.cantUnresolve }) } : { id: "resolve", label: m.resolve, ...(thread.can_resolve ? {} : { disabled: threadCopy.cantResolve }) });
   if (address !== null) rows.push({ id: "open", label: m.open }, { id: "copy-link", label: m.copyLink });
   return rows;

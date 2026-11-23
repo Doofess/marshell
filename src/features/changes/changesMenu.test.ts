@@ -175,6 +175,15 @@ describe("the comment menu", () => {
     expect(rows.find((r) => r.id === "resolve")).toBeUndefined();
     expect(rowsOf(threadMenuItems(threadItem(thread({ resolved: true })), none)).find((r) => r.id === "unresolve")?.disabled).toBeUndefined();
   });
+  // A resolved thread leaves the send with GitHub's next answer, so adding one would be undone without a word.
+  it("turns Add to send and the note row off for a resolved thread, with the reason", () => {
+    const rows = rowsOf(threadMenuItems(threadItem(thread({ resolved: true })), none));
+    expect(rows.find((r) => r.id === "pick")).toMatchObject({ label: "Add to send", disabled: "A resolved thread isn't sent. Unresolve it first." });
+    expect(rows.find((r) => r.id === "note")).toMatchObject({ label: "Add your note…", disabled: "A resolved thread isn't sent. Unresolve it first." });
+    const picked: SendState = { picked: true, note: "", sent: false };
+    expect(rowsOf(threadMenuItems(threadItem(thread({ resolved: true }), picked), picked))[0]).toEqual(expect.objectContaining({ id: "unpick", label: "Remove from send" }));
+    expect(rowsOf(threadMenuItems(threadItem(thread({ resolved: true }), picked), picked))[0]?.disabled).toBeUndefined();
+  });
   it("gives the reason Resolve is off", () => {
     const rows = rowsOf(threadMenuItems(threadItem(thread({ can_resolve: false })), none));
     expect(rows.find((r) => r.id === "resolve")?.disabled).toBe("GitHub doesn't let this sign-in resolve this thread.");

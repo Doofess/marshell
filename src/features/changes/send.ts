@@ -40,6 +40,9 @@ export function askNotice(e: unknown, name: string): string {
 /** What a send did: whether the comments left (and are cleared), what to announce, and whether the keyboard goes to the terminal. */
 export type SendResult = { sent: boolean; notice: string; focus: boolean };
 
+/** Whether the keyboard goes back to the list after a send: the comments went, the terminal didn't take the keyboard (a copy), and none are `left`, so the Send bar and its button are gone. */
+export const backToList = (result: SendResult, left: number): boolean => result.sent && !result.focus && left === 0;
+
 export type SendInput = {
   /** `deliveryFor` of the session; null when there is none. */
   delivery: Delivery | null;

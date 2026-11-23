@@ -132,6 +132,13 @@ describe("labels", () => {
     const label = threadLabel(thread({ comments: [comment({ body: "x".repeat(300) })] }), null, plain, null);
     expect(label).toBe(`GitHub comment by alice on line 2: ${"x".repeat(200)}`);
   });
+  // The item's inside is hidden from a screen reader, so the label is where the user's own note is read.
+  it("reads the user's note after the marks, cut at 200 characters", () => {
+    const one = thread({ start: 12, end: 12 });
+    expect(threadLabel(one, { at: 3, changed: false, start: 12, end: 12 }, { picked: true, note: "Use four.", sent: false }, null)).toBe("GitHub comment by alice on line 12: Please fix.. In this send. Your note: Use four.");
+    expect(threadLabel(one, null, { picked: true, note: "n".repeat(300), sent: false }, null).endsWith(`. Your note: ${"n".repeat(200)}`)).toBe(true);
+    expect(threadLabel(one, null, plain, null)).not.toContain("Your note");
+  });
   it("a note's label", () => {
     const note: PullNote = { id: "n", kind: "review", verdict: "changes_requested", author: "alice", bot: false, body: "Rework it.", hidden_removed: true, cut: false, created_ms: null, url: null };
     expect(noteLabel(note, { picked: true, note: "", sent: true }, "Claude Code")).toBe("Review by alice · Changes requested: Rework it.. Hidden text removed. In this send. Sent to Claude Code");

@@ -43,7 +43,7 @@ import { threadsTarget, useThreads } from "./useThreads";
 import { type Item, type Row, type Section, cutFiles, focusIndex, itemsOf, sectionsOf } from "./model";
 import { reviewLabel } from "./review";
 import { SendBar } from "./SendBar";
-import { type SendResult, afterSend, askNotice } from "./send";
+import { type SendResult, afterSend, askNotice, backToList } from "./send";
 import { useChanges } from "./useChanges";
 import { useDiffColours } from "./useDiffColours";
 import { useChangesSettings } from "./changesSettings";
@@ -502,6 +502,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
     }
     const latest = draftsRef.current;
     if (result.sent && latest) p.onDrafts(afterSendPicked(afterSend(latest, result, own), number, onGithub.went));
+    if (backToList(result, onGithub.left)) setBack((n) => n + 1);
   };
 
   // The pull request bar's actions. The ones that need a sheet are Task 14's: each is the one place it fills.

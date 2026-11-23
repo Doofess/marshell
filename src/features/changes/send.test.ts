@@ -2,13 +2,25 @@ import { describe, expect, it, vi } from "vitest";
 import type { ChangesDrafts } from "../../generated/ChangesDrafts";
 import type { DraftComment } from "../../generated/DraftComment";
 import { ApiError } from "../../lib/api/client";
-import { afterSend, askNotice, refusalNotice, runReview, runSend } from "./send";
+import { afterSend, askNotice, backToList, refusalNotice, runReview, runSend } from "./send";
 
 const c = (id: string): DraftComment => ({ id, path: "a.ts", side: "new", start: 1, end: 1, rows: 1, first: "f", hash: "h", quote: ["x"], text: "t" });
 const drafts: ChangesDrafts = { checkout: "r", base: null, comments: [c("1"), c("2")], picked: [], sent: [], folds: { "a.ts": true } };
 const paste = { name: "Claude", via: "paste" as const };
 const reply = (form: "paste" | "file") => ({ form, path: null });
 const conflict = (reason: string) => new ApiError(409, JSON.stringify({ reason }));
+
+// A copy that empties the send takes the Send bar away with the button the keyboard was on.
+describe("backToList", () => {
+  it("sends the keyboard back to the list after a copy that leaves nothing to send", () => {
+    expect(backToList({ sent: true, notice: "n", focus: false }, 0)).toBe(true);
+  });
+  it("leaves the keyboard alone when the terminal takes it, when comments are left, and when nothing went", () => {
+    expect(backToList({ sent: true, notice: "n", focus: true }, 0)).toBe(false);
+    expect(backToList({ sent: true, notice: "n", focus: false }, 2)).toBe(false);
+    expect(backToList({ sent: false, notice: "n", focus: false }, 0)).toBe(false);
+  });
+});
 
 describe("runSend", () => {
   it("a refusal keeps the drafts", async () => {

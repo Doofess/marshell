@@ -62,7 +62,7 @@ export type GithubItems = {
 
 const marks = (hidden: boolean, state: SendState, agent: string | null): string[] => [...(hidden ? [threadCopy.hiddenRemoved] : []), ...(state.picked ? [threadCopy.inSend] : []), ...(state.sent ? [threadCopy.sentTo(agent)] : [])];
 
-/** The words read for a thread item: who, where, how many replies, the first comment's text (200 characters), then each mark that applies. */
+/** The words read for a thread item: who, where, how many replies, the first comment's text (200 characters), then each mark that applies, then the user's own note (200 characters). */
 export function threadLabel(t: ReviewThread, placed: Placement | null, state: SendState, agent: string | null): string {
   const anchor = threadAnchor(t);
   const start = placed?.start ?? anchor?.start;
@@ -76,7 +76,7 @@ export function threadLabel(t: ReviewThread, placed: Placement | null, state: Se
   for (const c of t.comments.slice(1, LABEL_COMMENTS)) label += `. ${threadCopy.replyBy(authorOf(c))}: ${cut(c.body, LABEL_CHARS)}`;
   const more = Math.max(0, t.comments.length - LABEL_COMMENTS) + t.more_comments;
   if (more > 0) label += `. ${threadCopy.moreComments(more).replace(/\.$/, "")}`;
-  const all = threadMarks(t, placed, state, agent);
+  const all = [...threadMarks(t, placed, state, agent), ...(state.note === "" ? [] : [threadCopy.yourNote(cut(state.note, LABEL_CHARS))])];
   return all.length === 0 ? label : `${label}. ${all.join(". ")}`;
 }
 

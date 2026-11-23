@@ -40,6 +40,10 @@ describe("ChangesPanel.css", () => {
     expect(forcedRule(".changes__box-error")).toContain("color: CanvasText");
     expect(forcedRule(".changes__box-text")).toContain("border: 1px solid CanvasText");
   });
+  // The box keeps its own colours (forced-color-adjust: none), so its hint line would keep the theme's grey.
+  it("gives the box's hint line the system's text colour in forced colours", () => {
+    expect(forcedRule(".changes__box-hint")).toContain("color: CanvasText");
+  });
 
   // A GitHub thread is a second tint of the draft's look: tokens only, and in forced colours the draft's system-colour edge.
   it("draws GitHub's threads with tokens, and gives them the draft's system colours in forced colours", () => {
