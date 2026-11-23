@@ -35,6 +35,7 @@ export const copy = {
   emptyFailed: (reason: string) => ({ title: "Can't read the changes", line: reason, action: "Try again" }),
   cut: (count: number) => `The diff is cut at 4 MiB. ${n(count)} more ${count === 1 ? "file isn't" : "files aren't"} shown.`,
   moreNew: (count: number) => `And ${n(count)} more new ${count === 1 ? "file isn't" : "files aren't"} shown.`,
+  newCut: "Looking for new files took too long, so some may not be shown.",
   notes: {
     binary: "Binary file, not shown.",
     large: "New file over 256 KiB, not shown.",

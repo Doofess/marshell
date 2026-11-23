@@ -63,6 +63,7 @@ fn empty_reply(kind: ChangesKind, folder: String, reason: Option<String>) -> Cha
         diff: String::new(),
         truncated: false,
         more_new: 0,
+        new_cut: false,
         reason,
     }
 }

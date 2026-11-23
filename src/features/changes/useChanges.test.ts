@@ -23,7 +23,7 @@ describe("changesSchedule", () => {
 });
 
 describe("keepReply", () => {
-  const reply = (stamp: string, kind: ChangesReply["kind"] = "listed"): ChangesReply => ({ kind, stamp, folder: "C:/p", moved: false, branch: "main", detached: null, base: null, unrelated: false, ahead: 0, uncommitted: false, files: [], diff: "", truncated: false, more_new: 0, reason: null });
+  const reply = (stamp: string, kind: ChangesReply["kind"] = "listed"): ChangesReply => ({ kind, stamp, folder: "C:/p", moved: false, branch: "main", detached: null, base: null, unrelated: false, ahead: 0, uncommitted: false, files: [], diff: "", truncated: false, more_new: 0, new_cut: false, reason: null });
   it("drops a reply for a session no longer shown", () => {
     const cur = reply("a");
     expect(keepReply({ asked: "s1", shown: "s2" }, cur, reply("b"))).toBe(cur);

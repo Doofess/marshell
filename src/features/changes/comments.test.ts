@@ -7,7 +7,7 @@ import { sectionsOf, type Section } from "./model";
 const head = (path: string) => `diff --git a/${path} b/${path}\nindex 1..2 100644\n--- a/${path}\n+++ b/${path}\n`;
 /** One file's section from a hunk body. Row 0 is the first hunk header. */
 const sec = (body: string, path = "src/a.ts"): Section => {
-  const reply = { kind: "listed", stamp: "s", folder: "r", moved: false, branch: "main", detached: null, base: "origin/main", unrelated: false, ahead: 0, uncommitted: true, files: [{ path, old_path: null, status: "modified", note: null }], diff: head(path) + body, truncated: false, more_new: 0, reason: null } as ChangesReply;
+  const reply = { kind: "listed", stamp: "s", folder: "r", moved: false, branch: "main", detached: null, base: "origin/main", unrelated: false, ahead: 0, uncommitted: true, files: [{ path, old_path: null, status: "modified", note: null }], diff: head(path) + body, truncated: false, more_new: 0, new_cut: false, reason: null } as ChangesReply;
   return sectionsOf(reply, {}, [], false)[0]!;
 };
 // idx: 0 hunk, 1 one(1/1), 2 two(2/2), 3 -old()(old 3), 4 +neu()(new 3), 5 keep()(4/4), 6 tail(5/5)
@@ -203,6 +203,12 @@ describe("messageOf", () => {
     const m = messageOf(drafts, none, [stub("a.ts"), stub("b.ts")], "main");
     expect(m.indexOf("A2")).toBeLessThan(m.indexOf("A9"));
     expect(m.indexOf("A9")).toBeLessThan(m.indexOf("B1"));
+  });
+  it("keeps each file's comments together when the files aren't in the diff (a send from another checkout)", () => {
+    const drafts = [c({ id: "1", path: "b.ts", start: 1, text: "B1" }), c({ id: "2", path: "a.ts", start: 9, end: 9, text: "A9" }), c({ id: "3", path: "b.ts", start: 20, end: 20, text: "B20" })];
+    const m = messageOf(drafts, none, [], "main", "r");
+    expect(m.indexOf("A9")).toBeLessThan(m.indexOf("B1"));
+    expect(m.indexOf("B1")).toBeLessThan(m.indexOf("B20"));
   });
   it("adds (changed since) from the placements, and keeps the text as typed", () => {
     const placements = new Map<string, Placement>([["1", { at: 3, changed: true }]]);

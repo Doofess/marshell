@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { isAction, type MenuItem, type MenuRow } from "../../components/ContextMenu/menuKeys";
-import { changesMenuItems, headerMenuItems, lineMenuItems, openLineOf } from "./changesMenu";
+import { changesMenuItems, headerMenuItems, lineMenuItems, openLineOf, openOf } from "./changesMenu";
 import type { Item, Row, Section } from "./model";
 
 const section = (rows: Row[], status: Section["status"] = "modified"): Section => ({ path: "a.ts", status, added: 1, removed: 1, rows, folded: false });
@@ -70,6 +70,25 @@ describe("openLineOf", () => {
   });
   it("gives a hunk the first new line after it", () => expect(openLineOf(rows, 0)).toBe(4));
   it("has no line when no row has one", () => expect(openLineOf([{ kind: "del", text: "x", oldNo: 1 }], 0)).toBeUndefined());
+});
+
+describe("openOf", () => {
+  const rows: Row[] = [
+    { kind: "hunk", text: "@@" },
+    { kind: "del", text: "gone", oldNo: 5 },
+    { kind: "add", text: "new", newNo: 5 },
+  ];
+  const file = section(rows);
+  it("opens what the menu's Open opens: a header at no line, a row at its line or a removed row's next one", () => {
+    expect(openOf({ kind: "file", key: "file:a.ts", file })).toEqual({ file, line: undefined });
+    expect(openOf(rowItem(file, 1))).toEqual({ file, line: 5 });
+  });
+  it("refuses a deleted file with the menu's reason, from its header or a row", () => {
+    const deleted = section(rows, "deleted");
+    expect(openOf({ kind: "file", key: "file:a.ts", file: deleted })).toEqual({ refused: "The file is deleted, so there is nothing to open." });
+    expect(openOf(rowItem(deleted, 1))).toEqual({ refused: "The file is deleted, so there is nothing to open." });
+  });
+  it("opens nothing for a missing item", () => expect(openOf(undefined)).toBeNull());
 });
 
 describe("headerMenuItems", () => {

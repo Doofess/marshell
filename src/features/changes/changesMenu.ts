@@ -57,6 +57,16 @@ export function openLineOf(rows: Row[], at: number): number | undefined {
 
 const DELETED = "The file is deleted, so there is nothing to open";
 
+/**
+ * What a double-click on an item opens: what the menu's Open opens (a header at no line, a row at `openLineOf`'s), or the menu's
+ * reason for a deleted file. Null for an item that opens nothing (a comment, a note, "Show"), or none.
+ */
+export function openOf(item: Item | undefined): { file: Section; line: number | undefined } | { refused: string } | null {
+  if (item === undefined || (item.kind !== "file" && item.kind !== "row")) return null;
+  if (item.file.status === "deleted") return { refused: `${DELETED}.` };
+  return { file: item.file, line: item.kind === "row" ? openLineOf(item.file.rows, item.at) : undefined };
+}
+
 /** The menu of a row: `count` is how many lines a range holds, so Copy reads "Copy lines". */
 export function lineMenuItems(item: Item, count = 1): MenuItem[] {
   const row = item.kind === "row" ? item.file.rows[item.at] : undefined;

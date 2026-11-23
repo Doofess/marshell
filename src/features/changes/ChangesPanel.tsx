@@ -5,12 +5,13 @@ import type { ChangesReply } from "../../generated/ChangesReply";
 import { NO_FOLDER_LINE } from "../files/FileTree";
 import { absoluteOf } from "../files/treeModel";
 import { ChangesIcon, EmptyPanel } from "../pane/EmptyPanel";
+import { paneFocusTarget } from "../pane/focusPane";
 import { type ItemRange, DiffList, type ListResult, reach } from "./DiffList";
-import { type ChangesChoice, changesChoice, changesMenuItems, headerMenuItems, lineMenuItems, openLineOf, settingLabel } from "./changesMenu";
+import { type ChangesChoice, changesChoice, changesMenuItems, headerMenuItems, lineMenuItems, openLineOf, openOf, settingLabel } from "./changesMenu";
 import { type BoxAction, CommentBox, boxLabel } from "./CommentBox";
 import { type BoxState, anchorKey, boxAfter } from "./boxModel";
 import { MAX_COMMENTS, type Placement, anchorOf, place, renumbered } from "./comments";
-import { commentsOf, elsewhere, sendMessageOf, shownComments, unkept, withFolds } from "./drafts";
+import { commentsOf, elsewhere, sendMessageOf, shownComments, unkept, withComments, withFolds } from "./drafts";
 import { copy } from "./copy";
 import { type Item, type Row, type Section, cutFiles, focusIndex, itemsOf, sectionsOf } from "./model";
 import { reviewLabel } from "./review";
@@ -52,8 +53,8 @@ export type ChangesHandle = { refresh(): void; review(): void; send(): void };
 
 /** The panel's empty states, each with its mark; only a failed read has an action. */
 export function ChangesEmpty({ reply, noFolder, onRetry }: { reply: ChangesReply | null; noFolder: boolean; onRetry(): void }) {
-  // Nothing read yet: the panel stays blank until the first reply.
-  if (reply === null && !noFolder) return null;
+  // Nothing read yet: the panel stays blank until the first reply, and `focusPane` waits on the mark.
+  if (reply === null && !noFolder) return <div data-changes-blank="" />;
   if (noFolder || reply === null) return <EmptyPanel icon={ChangesIcon} title={copy.emptyFailed("").title} line={NO_FOLDER_LINE} actions={[]} />;
   switch (reply.kind) {
     case "no_repo": {
@@ -75,14 +76,24 @@ export function ChangesEmpty({ reply, noFolder, onRetry }: { reply: ChangesReply
   }
 }
 
-/** The lines under the strip's line: no base or unrelated histories, the new files past 200, and the files a cut diff leaves out. */
+/** The lines under the strip's line: no base or unrelated histories, the new files past 200 or a look for them that was cut, and the files a cut diff leaves out. */
 export function noticesOf(reply: ChangesReply): string[] {
   const cut = cutFiles(reply);
   return [
     reply.base === null ? copy.noBase : reply.unrelated ? copy.unrelated(reply.base) : null,
     reply.more_new > 0 ? copy.moreNew(reply.more_new) : null,
+    reply.new_cut ? copy.newCut : null,
     cut > 0 ? copy.cut(cut) : null,
   ].filter((t): t is string => t !== null);
+}
+
+/**
+ * The strip's lines over an empty diff: only while comments on another checkout wait, so they can still be sent or discarded (the Send bar
+ * comes with them). Null for a bare empty state.
+ */
+export function emptyNotices(listed: ChangesReply | null, drafts: ChangesDrafts | undefined): string[] | null {
+  const away = listed === null ? null : elsewhere(drafts, listed.folder);
+  return listed === null || away === null ? null : [...noticesOf(listed), away];
 }
 
 /** Where the keyboard is, kept as keys so a poll that moves rows doesn't move it. */
@@ -155,9 +166,10 @@ export function ChangesPanel(p: ChangesPanelProps) {
     if (count === 0) setAsking(false);
   }, [count]);
 
-  // The keyboard goes back to its item once the box or the bar is gone (never because a poll changed the list).
+  // The keyboard goes back to its item once the box or the bar is gone (never because a poll changed the list), else to what the panel holds
+  // (an empty state's button or title once a discard leaves no diff and no comment).
   useEffect(() => {
-    if (back > 0) box.current?.querySelector<HTMLElement>(`[data-changes-index="${focus}"]`)?.focus();
+    if (back > 0) (box.current?.querySelector<HTMLElement>(`[data-changes-index="${focus}"]`) ?? paneFocusTarget(document, "changes"))?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only a request to go back moves the focus
   }, [back]);
 
@@ -207,7 +219,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
     // Saved at the lines its rows are on now, which a reply during the writing may have moved.
     const anchor = renumbered(current.state.anchor, placeBox(current.state));
     const next = id === null ? [...comments, { ...anchor, id: crypto.randomUUID(), text }] : comments.map((c) => (c.id === id ? { ...renumbered(c, placements.get(c.id)), text } : c));
-    p.onDrafts({ checkout: id === null ? listed.folder : (drafts?.checkout ?? listed.folder), base: id === null ? listed.base : (drafts?.base ?? listed.base), comments: next, folds: drafts?.folds ?? {} });
+    p.onDrafts(withComments(drafts, listed, next));
     p.announce(action === "add" ? `Comment added. ${next.length} to send.` : "Comment kept as a draft.");
   };
 
@@ -233,7 +245,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
       setBusy(false);
     }
     const latest = draftsRef.current;
-    if (result.sent && latest) p.onDrafts(afterSend(latest, result));
+    if (result.sent && latest) p.onDrafts(afterSend(latest, result, d.comments));
   };
 
   useImperativeHandle(p.ref, () => ({
@@ -279,10 +291,12 @@ export function ChangesPanel(p: ChangesPanelProps) {
 
   const absolute = (file: Section) => (listed ? absoluteOf(listed.folder, file.path, listed.folder.includes("\\")) : file.path);
   const openFile = (file: Section, line: number | undefined) => p.onOpen({ path: absolute(file), ...(line === undefined ? {} : { line }), keep: true });
+  // A double-click opens what the menu's Open opens, and says why for a deleted file.
   const onOpenItem = (index: number) => {
-    const item = items[index];
-    if (item === undefined || !listed || item.kind === "comment" || item.kind === "note" || item.kind === "show") return;
-    openFile(item.file, item.kind === "row" ? (item.file.rows[item.at]?.newNo ?? undefined) : undefined);
+    const to = listed ? openOf(items[index]) : null;
+    if (to === null) return;
+    if ("refused" in to) return p.announce(to.refused);
+    openFile(to.file, to.line);
   };
 
   // Menus: a header and a row have one each; the strip's ⋯ menu comes from the app as `p.menu`.
@@ -376,12 +390,51 @@ export function ChangesPanel(p: ChangesPanelProps) {
     </>
   );
 
+  const sendBar = count > 0 && (
+    <SendBar
+      count={count}
+      via={p.via}
+      asking={asking}
+      busy={busy}
+      onSend={() => void send()}
+      onAsk={() => setAsking(true)}
+      onDiscard={() => {
+        setAsking(false);
+        if (drafts) p.onDrafts({ ...drafts, comments: [] });
+        p.announce(`Discarded ${commentsOf(count)}.`);
+        setBack((n) => n + 1);
+      }}
+      onKeep={() => {
+        setAsking(false);
+        setBack((n) => n + 1);
+      }}
+    />
+  );
+
   if (!listed || sections.length === 0) {
+    const empty = <ChangesEmpty reply={reply} noFolder={noFolder} onRetry={refresh} />;
+    const around = emptyNotices(listed, drafts);
+    if (around === null) {
+      return (
+        <>
+          {empty}
+          {menus}
+        </>
+      );
+    }
     return (
-      <>
-        <ChangesEmpty reply={reply} noFolder={noFolder} onRetry={refresh} />
+      <div className="changes" ref={box}>
+        <div className="changes__strip">
+          {around.map((t) => (
+            <p key={t} className="changes__notice">
+              {t}
+            </p>
+          ))}
+        </div>
+        {empty}
+        {sendBar}
         {menus}
-      </>
+      </div>
     );
   }
 
@@ -420,26 +473,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
         colours={colours}
         box={boxNode}
       />
-      {count > 0 && (
-        <SendBar
-          count={count}
-          via={p.via}
-          asking={asking}
-          busy={busy}
-          onSend={() => void send()}
-          onAsk={() => setAsking(true)}
-          onDiscard={() => {
-            setAsking(false);
-            if (drafts) p.onDrafts({ ...drafts, comments: [] });
-            p.announce(`Discarded ${commentsOf(count)}.`);
-            setBack((n) => n + 1);
-          }}
-          onKeep={() => {
-            setAsking(false);
-            setBack((n) => n + 1);
-          }}
-        />
-      )}
+      {sendBar}
       {menus}
     </div>
   );

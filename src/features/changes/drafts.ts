@@ -13,6 +13,11 @@ export const folderName = (path: string) => path.split(/[\\/]/).filter((s) => s 
 /** Whether the drafts' comments were written on another checkout than the one shown. */
 const away = (drafts: ChangesDrafts | undefined, folder: string): boolean => drafts !== undefined && drafts.comments.length > 0 && drafts.checkout !== folder;
 
+/** The drafts with `comments` in place of their own. While earlier comments exist they keep the checkout and base those were written against. */
+export function withComments(drafts: ChangesDrafts | undefined, shown: Shown, comments: DraftComment[]): ChangesDrafts {
+  return { ...withFolds(drafts, shown, {}), comments };
+}
+
 /** The drafts with `folds` added. While comments exist they keep the checkout and base they were written against. */
 export function withFolds(drafts: ChangesDrafts | undefined, shown: Shown, folds: Record<string, boolean>): ChangesDrafts {
   const keep = drafts !== undefined && drafts.comments.length > 0;

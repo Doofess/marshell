@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { askedFrom, focusPane, paneFocusTarget, panelOfElement } from "./focusPane";
 
 // A stand-in for the document: it answers a selector by what it names.
-const root = (has: { tab?: string; selected?: boolean; editor?: boolean; body?: boolean; slot?: boolean; row?: boolean; tree?: boolean; empty?: boolean; plus?: boolean }) =>
+const root = (has: { tab?: string; selected?: boolean; editor?: boolean; body?: boolean; slot?: boolean; row?: boolean; tree?: boolean; empty?: boolean; plus?: boolean; item?: boolean; title?: boolean }) =>
   ({
     querySelector: (sel: string) => {
       if (sel.includes("aria-selected")) return has.selected ? "selected tab" : null;
@@ -14,6 +14,8 @@ const root = (has: { tab?: string; selected?: boolean; editor?: boolean; body?: 
       if (sel.includes('[role="tree"]')) return has.tree ? "tree" : null;
       if (sel.includes("empty-panel__button")) return has.empty ? "empty" : null;
       if (sel.includes("data-pane-plus")) return has.plus ? "plus" : null;
+      if (sel.includes("data-changes-item")) return has.item ? "item" : null;
+      if (sel.includes("empty-panel__title")) return has.title ? "title" : null;
       return null;
     },
   }) as unknown as ParentNode;
@@ -85,6 +87,14 @@ describe("paneFocusTarget", () => {
     expect(seen).toContain('[data-nav-side="browser"] .empty-panel__button:not([aria-disabled="true"])');
     expect(paneFocusTarget(root({ empty: true, plus: true }), "browser")).toBe("empty");
   });
+  it("is Changes' list, else its empty state's button, else the title of an empty state that has no button", () => {
+    expect(paneFocusTarget(root({ item: true, empty: true, title: true }), "changes")).toBe("item");
+    expect(paneFocusTarget(root({ empty: true, title: true }), "changes")).toBe("empty");
+    expect(paneFocusTarget(root({ title: true }), "changes")).toBe("title");
+    const seen: string[] = [];
+    paneFocusTarget({ querySelector: (s: string) => (seen.push(s), null) } as unknown as ParentNode, "changes");
+    expect(seen).toContain('[data-nav-side="changes"] .empty-panel__title[tabindex="-1"]');
+  });
   it("a closing tab is looked for in its own panel", () => {
     const seen: string[] = [];
     paneFocusTarget({ querySelector: (s: string) => (seen.push(s), null) } as unknown as ParentNode, "browser", "t9");
@@ -134,6 +144,57 @@ describe("focusPane", () => {
   });
   it("gives the empty state the keyboard at once with no tree", () => {
     expect(run([{ tree: false, row: false }])).toEqual({ focused: ["empty"], frames: 1 });
+  });
+});
+
+describe("focusPane in Changes", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  /** Runs focusPane("changes") over frames that each say whether the panel is blank (no reply yet), its list is drawn, and where the keyboard is. */
+  const run = (frames: { blank: boolean; item: boolean; active?: string }[]) => {
+    const queue: FrameRequestCallback[] = [];
+    const focused: string[] = [];
+    let frame = 0;
+    const at = () => frames[Math.min(frame, frames.length - 1)] ?? { blank: false, item: false };
+    const el = (name: string) => ({ dataset: {}, focus: () => void focused.push(name) });
+    const body = { name: "body" };
+    const others = new Map<string, object>();
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => (queue.push(cb), 0));
+    vi.stubGlobal("document", {
+      body,
+      get activeElement() {
+        const name = at().active;
+        if (name === undefined) return body;
+        if (!others.has(name)) others.set(name, { name });
+        return others.get(name);
+      },
+      querySelector: (sel: string) => {
+        const f = at();
+        if (sel.includes("data-changes-item")) return f.item ? el("item") : null;
+        if (sel.includes("data-changes-blank")) return f.blank ? el("blank") : null;
+        return null;
+      },
+    });
+    focusPane("changes");
+    while (queue.length > 0 && frame < 400) {
+      queue.shift()?.(0);
+      frame++;
+    }
+    return { focused, frames: frame };
+  };
+  it("waits for the first reply, which can take the check's 2 s, and gives the list the keyboard", () => {
+    const blank = Array<{ blank: boolean; item: boolean }>(100).fill({ blank: true, item: false });
+    expect(run([...blank, { blank: false, item: true }]).focused).toEqual(["item"]);
+  });
+  it("gives up after about 3 s of frames when no reply comes", () => {
+    const r = run([{ blank: true, item: false }]);
+    expect(r.focused).toEqual([]);
+    expect(r.frames).toBeGreaterThan(150);
+    expect(r.frames).toBeLessThanOrEqual(200);
+  });
+  it("leaves the keyboard alone when it went somewhere else while the panel waited", () => {
+    const blank = Array<{ blank: boolean; item: boolean; active?: string }>(10).fill({ blank: true, item: false });
+    const r = run([...blank, { blank: true, item: false, active: "terminal" }, ...blank.map((f) => ({ ...f, active: "terminal" })), { blank: false, item: true, active: "terminal" }]);
+    expect(r.focused).toEqual([]);
   });
 });
 

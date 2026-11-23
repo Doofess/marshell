@@ -35,6 +35,10 @@ unrelated: boolean, ahead: number, uncommitted: boolean, files: Array<DiffFile>,
  */
 more_new: number, 
 /**
+ * The look for untracked files took too long and was cut: some may be missing.
+ */
+new_cut: boolean, 
+/**
  * Refused and Failed: the sentence.
  */
 reason: string | null, };

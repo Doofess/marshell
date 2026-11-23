@@ -1158,6 +1158,8 @@ pub struct ChangesReply {
     pub truncated: bool,
     /// Untracked files past the cap.
     pub more_new: u32,
+    /// The look for untracked files took too long and was cut: some may be missing.
+    pub new_cut: bool,
     /// Refused and Failed: the sentence.
     pub reason: Option<String>,
 }

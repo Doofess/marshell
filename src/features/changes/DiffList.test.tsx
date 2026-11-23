@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { ChangesReply } from "../../generated/ChangesReply";
-import { ChangesEmpty, noticesOf } from "./ChangesPanel";
+import { ChangesEmpty, emptyNotices, noticesOf } from "./ChangesPanel";
 import { DiffList, chunksOf, listKey, refocusOf } from "./DiffList";
 import { copy } from "./copy";
 import { itemsOf, type Item, type Row, type Section } from "./model";
@@ -146,7 +146,7 @@ describe("refocusOf", () => {
   });
 });
 
-const reply = (o: Partial<ChangesReply>): ChangesReply => ({ kind: "listed", stamp: "s", folder: "C:\\repo", moved: false, branch: "main", detached: null, base: "origin/main", unrelated: false, ahead: 0, uncommitted: false, files: [], diff: "", truncated: false, more_new: 0, reason: null, ...o });
+const reply = (o: Partial<ChangesReply>): ChangesReply => ({ kind: "listed", stamp: "s", folder: "C:\\repo", moved: false, branch: "main", detached: null, base: "origin/main", unrelated: false, ahead: 0, uncommitted: false, files: [], diff: "", truncated: false, more_new: 0, new_cut: false, reason: null, ...o });
 const empty = (r: ChangesReply | null, noFolder = false) => renderToStaticMarkup(<ChangesEmpty reply={r} noFolder={noFolder} onRetry={() => {}} />);
 
 describe("ChangesEmpty", () => {
@@ -170,6 +170,22 @@ describe("ChangesEmpty", () => {
     expect(noFolder).not.toContain("<button");
     expect(noFolder).toContain('data-icon="panel-changes"');
   });
+  it("is blank before the first reply, with the mark focusPane waits on", () => {
+    expect(empty(null)).toBe('<div data-changes-blank=""></div>');
+  });
+});
+
+describe("emptyNotices", () => {
+  const c = { id: "1", path: "a.ts", side: "new" as const, start: 1, end: 1, rows: 1, first: "f", hash: "h", quote: ["x"], text: "t" };
+  it("keeps the comments on another checkout in sight beside an empty diff, so they can still be sent or discarded", () => {
+    const drafts = { checkout: "C:\\other", base: "main", comments: [c], folds: {} };
+    expect(emptyNotices(reply({ folder: "r", base: null }), drafts)).toEqual([copy.noBase, "Send or discard the 1 comment on other first."]);
+  });
+  it("is a bare empty state with no comments elsewhere, or no list", () => {
+    expect(emptyNotices(reply({ folder: "r" }), undefined)).toBeNull();
+    expect(emptyNotices(reply({ folder: "r" }), { checkout: "r", base: "main", comments: [c], folds: {} })).toBeNull();
+    expect(emptyNotices(null, { checkout: "C:\\other", base: "main", comments: [c], folds: {} })).toBeNull();
+  });
 });
 
 describe("noticesOf", () => {
@@ -181,4 +197,6 @@ describe("noticesOf", () => {
   });
   it("says nothing of a whole diff with a base", () => expect(noticesOf(reply({ files: [f("a.ts")], diff: part("a.ts") }))).toEqual([]));
   it("names a missing base and the new files past 200", () => expect(noticesOf(reply({ base: null, more_new: 3 }))).toEqual([copy.noBase, copy.moreNew(3)]));
+  it("says when the look for new files was cut", () =>
+    expect(noticesOf(reply({ new_cut: true }))).toEqual(["Looking for new files took too long, so some may not be shown."]));
 });

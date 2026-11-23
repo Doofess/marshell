@@ -20,7 +20,7 @@ const reply = (files: DiffFile[], diff: string, extra: Partial<ChangesReply> = {
   files,
   diff,
   truncated: false,
-  more_new: 0,
+  more_new: 0, new_cut: false,
   reason: null,
   ...extra,
 });

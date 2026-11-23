@@ -109,4 +109,8 @@ describe("EmptyPanel actions", () => {
     expect(buttons(renderToStaticMarkup(<EmptyPanel icon={null} title="T" line="L" actions={[act("One")]} />))).toHaveLength(1);
     expect(buttons(renderToStaticMarkup(<EmptyPanel icon={null} title="T" line="L" actions={[]} />))).toHaveLength(0);
   });
+  it("with no action its title can take the focus, so the panel's key still moves the keyboard into it; with one it can't", () => {
+    expect(renderToStaticMarkup(<EmptyPanel icon={null} title="T" line="L" actions={[]} />)).toContain('<h2 class="empty-panel__title" tabindex="-1">T</h2>');
+    expect(renderToStaticMarkup(<EmptyPanel icon={null} title="T" line="L" actions={[act("One")]} />)).not.toContain("tabindex");
+  });
 });

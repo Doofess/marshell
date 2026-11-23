@@ -71,6 +71,8 @@ pub struct Check {
     /// The first `MAX_NEW_FILES` untracked files, sorted.
     pub new_files: Vec<String>,
     pub more_new: u32,
+    /// The walk for new files was cut by the deadline: some may be missing.
+    pub new_cut: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,6 +85,7 @@ pub enum ChangesError {
 }
 
 /// Why a git step stopped.
+#[derive(Debug)]
 pub(crate) enum Halt {
     /// The deadline came, or the caller cancelled.
     Late,
@@ -144,14 +147,15 @@ fn stat(path: &Path) -> Option<FileStamp> {
         .map(|m| (m.len(), m.modified().ok()))
 }
 
-/// The checkout's tracked paths, from the index. Cached by the index file's stamp.
+/// The checkout's tracked paths, from the index. Cached by the stamp of the sandbox's copy, which is what
+/// `ls-files` reads: the checkout's own index may have changed since the last refresh copied it.
 fn tracked_paths(
     git: &GitBox,
     cache: &mut Option<(Option<FileStamp>, Arc<Tracked>)>,
     deadline: Instant,
     cancel: &AtomicBool,
 ) -> Result<Arc<Tracked>, Halt> {
-    let key = std::fs::metadata(git.git_dir().join("index"))
+    let key = std::fs::metadata(git.index())
         .ok()
         .filter(|m| m.is_file())
         .map(|m| (m.len(), m.modified().ok()));
@@ -276,7 +280,7 @@ fn compute(
         })
         .collect();
 
-    let (mut new_files, more_new) = walk.update(&tracked.paths, |each| {
+    let (mut new_files, more_new, new_cut) = walk.update(&tracked.paths, |each| {
         walk_unignored(
             &mut Ignores::new(&checkout, &checkout),
             &checkout,
@@ -314,6 +318,7 @@ fn compute(
     new_files.hash(&mut hasher);
     new_stats.hash(&mut hasher);
     more_new.hash(&mut hasher);
+    new_cut.hash(&mut hasher);
 
     Ok(Check {
         stamp: hasher.finish(),
@@ -324,6 +329,7 @@ fn compute(
         entries,
         new_files,
         more_new,
+        new_cut,
     })
 }
 
@@ -519,6 +525,7 @@ fn build_reply(
         diff: patch,
         truncated,
         more_new: check.more_new,
+        new_cut: check.new_cut,
         reason: None,
     })
 }
@@ -1219,7 +1226,7 @@ mod tests {
         );
     }
 
-    fn walked(walk: &mut cache::Walk, files: &[&str], stopped: crate::git::Stopped) -> (Vec<String>, u32) {
+    fn walked(walk: &mut cache::Walk, files: &[&str], stopped: crate::git::Stopped) -> (Vec<String>, u32, bool) {
         walk.update(&Default::default(), |each| {
             for file in files {
                 each(file, false);
@@ -1232,19 +1239,61 @@ mod tests {
     fn a_cut_walk_keeps_the_last_list_and_the_stamp() {
         use crate::git::Stopped;
         let mut walk = cache::Walk::default();
-        // The first walk was cut: nothing known yet.
-        assert_eq!(walked(&mut walk, &["z.txt"], Stopped::Deadline), (vec![], 0));
+        // The first walk was cut: nothing known yet, and the reply says so.
+        assert_eq!(walked(&mut walk, &["z.txt"], Stopped::Deadline), (vec![], 0, true));
         let full = walked(&mut walk, &["b.txt", "a.txt"], Stopped::Done);
-        assert_eq!(full, (vec!["a.txt".to_string(), "b.txt".to_string()], 0));
-        // A cut walk that saw other files, or fewer, leaves the list as it was.
-        assert_eq!(walked(&mut walk, &["c.txt"], Stopped::Deadline), full);
-        assert_eq!(walked(&mut walk, &[], Stopped::Cancelled), full);
+        assert_eq!(full, (vec!["a.txt".to_string(), "b.txt".to_string()], 0, false));
+        // A cut walk that saw other files, or fewer, leaves the list as it was, and says it was cut.
+        let (list, more, _) = full.clone();
+        assert_eq!(
+            walked(&mut walk, &["c.txt"], Stopped::Deadline),
+            (list.clone(), more, true)
+        );
+        assert_eq!(walked(&mut walk, &[], Stopped::Cancelled), (list, more, true));
         // The cap is on the list, and the rest is counted.
         let many: Vec<String> = (0..250).map(|n| format!("f{n:03}")).collect();
         let many: Vec<&str> = many.iter().map(String::as_str).collect();
         let mut walk = cache::Walk::default();
-        let (list, more) = walked(&mut walk, &many, Stopped::Done);
-        assert_eq!((list.len(), more), (200, 50));
+        let (list, more, cut) = walked(&mut walk, &many, Stopped::Done);
+        assert_eq!((list.len(), more, cut), (200, 50, false));
+    }
+
+    /// `ls-files` reads the sandbox's copy of the index, so the cached paths are keyed by that copy: an index
+    /// that changes after it was copied is read again once the next check copies it.
+    #[test]
+    fn the_tracked_paths_follow_the_index_git_read() {
+        let scratch = Scratch::new();
+        repo_with_commit(&scratch);
+        let mut git = GitBox::open(&scratch.home, &scratch.repo).unwrap();
+        git.refresh().unwrap();
+        // `git add` lands between the copy and the read.
+        write(&scratch.repo.join("d.txt"), "four\n");
+        plain(&scratch)(&scratch.repo, &["add", "d.txt"]);
+        let mut cache = None;
+        let first = tracked_paths(&git, &mut cache, far(), &AtomicBool::new(false)).unwrap();
+        assert!(!first.paths.contains("d.txt"));
+        git.refresh().unwrap();
+        let next = tracked_paths(&git, &mut cache, far(), &AtomicBool::new(false)).unwrap();
+        assert!(next.paths.contains("d.txt"));
+    }
+
+    /// A walk the deadline cuts is as slow as a finished one: it isn't run again on every check.
+    #[test]
+    fn a_slow_cut_walk_is_not_run_again_at_once() {
+        use crate::git::Stopped;
+        let mut walk = cache::Walk::default();
+        let (_, _, cut) = walk.update(&Default::default(), |_| {
+            std::thread::sleep(Duration::from_millis(300));
+            Stopped::Deadline
+        });
+        assert!(cut);
+        let mut ran = false;
+        let (list, _, cut) = walk.update(&Default::default(), |_| {
+            ran = true;
+            Stopped::Done
+        });
+        assert!(!ran, "a walk that ran 300 ms before it was cut waits 10 s");
+        assert_eq!((list, cut), (vec![], true));
     }
 
     #[test]
@@ -1260,7 +1309,7 @@ mod tests {
         tracked.insert("b.txt".to_string());
         walk.list = vec!["b.txt".to_string(), "c.txt".to_string()];
         walk.at = Some(Instant::now());
-        let (list, _) = walk.update(&tracked, |_| panic!("the walk is reused"));
+        let (list, _, _) = walk.update(&tracked, |_| panic!("the walk is reused"));
         assert_eq!(list, ["c.txt"]);
         // After ten seconds it runs again.
         walk.at = Some(Instant::now() - Duration::from_secs(11));

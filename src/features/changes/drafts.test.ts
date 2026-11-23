@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ChangesDrafts } from "../../generated/ChangesDrafts";
 import type { DraftComment } from "../../generated/DraftComment";
 import type { Placement } from "./comments";
-import { elsewhere, sendMessageOf, shownComments, unkept, withFolds } from "./drafts";
+import { elsewhere, sendMessageOf, shownComments, unkept, withComments, withFolds } from "./drafts";
 import type { Section } from "./model";
 
 const A = "C:\\work\\repoA";
@@ -20,6 +20,18 @@ describe("withFolds", () => {
   it("takes the shown checkout when there are no comments", () => {
     expect(withFolds({ ...onA, comments: [] }, showingB, { "lock.json": true })).toEqual({ checkout: B, base: "origin/main", comments: [], folds: { "src/a.ts": false, "lock.json": true } });
     expect(withFolds(undefined, showingB, { x: true })).toEqual({ checkout: B, base: "origin/main", comments: [], folds: { x: true } });
+  });
+});
+
+describe("withComments", () => {
+  const showingA = { folder: A, base: "origin/develop" };
+  it("keeps the base the earlier comments were written against when one more is added", () => {
+    const next = [...onA.comments, c("2", 20)];
+    expect(withComments(onA, showingA, next)).toEqual({ ...onA, comments: next });
+  });
+  it("takes the shown checkout and base for the first comment, and keeps the folds", () => {
+    expect(withComments({ ...onA, comments: [] }, showingA, [c("1", 1)])).toEqual({ checkout: A, base: "origin/develop", comments: [c("1", 1)], folds: { "src/a.ts": false } });
+    expect(withComments(undefined, showingA, [c("1", 1)])).toEqual({ checkout: A, base: "origin/develop", comments: [c("1", 1)], folds: {} });
   });
 });
 

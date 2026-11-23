@@ -710,6 +710,11 @@ impl GitBox {
         &self.common
     }
 
+    /// The sandbox's copy of the index: the one git reads, as it was at the last refresh.
+    pub fn index(&self) -> PathBuf {
+        self.sandbox.join("index")
+    }
+
     /// The id of the empty tree in this repository's hash.
     pub fn empty_tree(&self) -> &'static str {
         if self.sha256 {

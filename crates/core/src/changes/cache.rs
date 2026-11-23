@@ -37,18 +37,20 @@ pub(super) struct Walk {
     pub more: u32,
     pub at: Option<Instant>,
     pub took: Duration,
+    /// The last walk was cut, so `list` may be missing files.
+    pub cut: bool,
 }
 
 impl Walk {
-    /// The untracked files and how many more there are. `run` walks the checkout, handing each file and whether
-    /// it is a link to the closure it is given; it says how the walk ended. A walk that was cut (deadline or
-    /// cancel) keeps the last full list, so a cut never moves the stamp. When the last walk was slow, it
-    /// isn't repeated for 10 s.
+    /// The untracked files, how many more there are, and whether the last walk was cut. `run` walks the
+    /// checkout, handing each file and whether it is a link to the closure it is given; it says how the walk
+    /// ended. A walk that was cut (deadline or cancel) keeps the last full list, so a cut never moves the
+    /// list. When the last walk was slow, finished or cut, it isn't repeated for 10 s.
     pub(super) fn update(
         &mut self,
         tracked: &HashSet<String>,
         run: impl FnOnce(&mut dyn FnMut(&str, bool) -> bool) -> Stopped,
-    ) -> (Vec<String>, u32) {
+    ) -> (Vec<String>, u32, bool) {
         let reuse = self.took > SLOW_WALK && self.at.is_some_and(|at| at.elapsed() < SLOW_WALK_EVERY);
         if !reuse {
             let started = Instant::now();
@@ -64,9 +66,10 @@ impl Walk {
                 self.more = u32::try_from(found.len().saturating_sub(MAX_NEW_FILES)).unwrap_or(u32::MAX);
                 found.truncate(MAX_NEW_FILES);
                 self.list = found;
-                self.at = Some(started);
-                self.took = started.elapsed();
             }
+            self.cut = stopped != Stopped::Done;
+            self.at = Some(started);
+            self.took = started.elapsed();
         }
         // What was tracked since the list was made is not new any more.
         let list = self
@@ -75,7 +78,7 @@ impl Walk {
             .filter(|path| !tracked.contains(*path))
             .cloned()
             .collect();
-        (list, self.more)
+        (list, self.more, self.cut)
     }
 }
 

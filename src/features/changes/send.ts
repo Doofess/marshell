@@ -1,5 +1,6 @@
 import type { ChangesDrafts } from "../../generated/ChangesDrafts";
 import type { CommentsReply } from "../../generated/CommentsReply";
+import type { DraftComment } from "../../generated/DraftComment";
 import type { ReviewReply } from "../../generated/ReviewReply";
 import { addFailure, type Delivery } from "../regions/deliver";
 import { type Refusal, refusalOf } from "./changesApi";
@@ -64,9 +65,14 @@ export async function runSend(o: SendInput): Promise<SendResult> {
   }
 }
 
-/** The drafts once a send is over: the comments are cleared when they left, and the folds stay. A kept send leaves the same object. */
-export function afterSend(drafts: ChangesDrafts, result: SendResult): ChangesDrafts {
-  return result.sent ? { ...drafts, comments: [] } : drafts;
+/**
+ * The drafts once a send is over: the comments `sent` held are cleared when they left, and the folds stay. A comment added
+ * while the send went, or one whose text changed meanwhile, wasn't in the message and stays. A kept send leaves the same object.
+ */
+export function afterSend(drafts: ChangesDrafts, result: SendResult, sent: readonly DraftComment[]): ChangesDrafts {
+  if (!result.sent) return drafts;
+  const went = new Map(sent.map((c) => [c.id, c.text]));
+  return { ...drafts, comments: drafts.comments.filter((c) => went.get(c.id) !== c.text) };
 }
 
 export type ReviewResult = { done: boolean; notice: string };

@@ -8,7 +8,7 @@ import { itemsOf, sectionsOf } from "./model";
 
 const key = (k: string, shiftKey = false) => ({ key: k, shiftKey });
 const head = "diff --git a/a.ts b/a.ts\nindex 1..2 100644\n--- a/a.ts\n+++ b/a.ts\n";
-const replyFor = (body: string) => ({ kind: "listed", stamp: "s", folder: "r", moved: false, branch: "main", detached: null, base: null, unrelated: false, ahead: 0, uncommitted: true, files: [{ path: "a.ts", old_path: null, status: "modified", note: null }], diff: head + body, truncated: false, more_new: 0, reason: null }) as ChangesReply;
+const replyFor = (body: string) => ({ kind: "listed", stamp: "s", folder: "r", moved: false, branch: "main", detached: null, base: null, unrelated: false, ahead: 0, uncommitted: true, files: [{ path: "a.ts", old_path: null, status: "modified", note: null }], diff: head + body, truncated: false, more_new: 0, new_cut: false, reason: null }) as ChangesReply;
 const sectionFor = (body: string) => sectionsOf(replyFor(body), {}, [], false);
 // rows: 0 hunk, 1 one, 2 +two, 3 three
 const BODY = "@@ -1,3 +1,3 @@\n one\n+two\n three\n";

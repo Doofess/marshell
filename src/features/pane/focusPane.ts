@@ -20,6 +20,12 @@ const emptyFirst = (panel: PanelId) => `${nav(panel)} .empty-panel__button:not([
 const plusOf = (panel: PanelId) => `${nav(panel)} button[data-pane-plus]`;
 /** The Changes panel's list: the one item that is a tab stop. */
 const changesItem = (panel: PanelId) => `${nav(panel)} [data-changes-item][tabindex="0"]`;
+/** The title of an empty state that has no button (most of Changes'), which takes the focus in its place. */
+const emptyTitle = (panel: PanelId) => `${nav(panel)} .empty-panel__title[tabindex="-1"]`;
+/** Changes before its first reply, which can take the check's 2 s budget. */
+const changesBlank = (panel: PanelId) => `${nav(panel)} [data-changes-blank]`;
+/** About 3 s of frames: how long a blank Changes panel is waited for. */
+const CHANGES_FRAMES = 180;
 /** The selected tab in the strip. */
 const selectedTab = (panel: PanelId) => `${nav(panel)} .side-pane__strip [role="tab"][aria-selected="true"]`;
 
@@ -43,8 +49,8 @@ export function paneFocusTarget(root: ParentNode, panel: PanelId, closing?: stri
   // A close asked from the strip leaves the keyboard on the strip, as a close that asks nothing does: the next Delete closes the
   // next tab, and types nothing into its file.
   if (where === "strip") return root.querySelector<HTMLElement>(selectedTab(panel)) ?? root.querySelector<HTMLElement>(plusOf(panel));
-  // Changes holds no tabs: its list's tab stop, else its empty state's button. Its section takes no focus itself, so with neither there is no target.
-  if (panel === "changes") return root.querySelector<HTMLElement>(changesItem(panel)) ?? root.querySelector<HTMLElement>(emptyFirst(panel));
+  // Changes holds no tabs: its list's tab stop, else its empty state's button, else that state's title. Before its first reply there is none.
+  if (panel === "changes") return root.querySelector<HTMLElement>(changesItem(panel)) ?? root.querySelector<HTMLElement>(emptyFirst(panel)) ?? root.querySelector<HTMLElement>(emptyTitle(panel));
   const first = root.querySelector<HTMLElement>(editor(panel)) ?? root.querySelector<HTMLElement>(body(panel)) ?? root.querySelector<HTMLElement>(slot(panel)) ?? root.querySelector<HTMLElement>(treeRow(panel));
   if (first) return first;
   // The tree is drawn and its rows aren't yet: wait for them, rather than put the keyboard on the empty state's button beside it.
@@ -61,7 +67,14 @@ export function paneFocusTarget(root: ParentNode, panel: PanelId, closing?: stri
  */
 export function focusPane(panel: PanelId, closing?: string, where: "pane" | "strip" = "pane"): void {
   let frames = 0;
+  // A long wait gives the keyboard up once it went somewhere else meanwhile (a click, another key).
+  const from = document.activeElement;
+  const moved = () => {
+    const now = document.activeElement;
+    return now !== from && now !== null && now !== document.body;
+  };
   const attempt = () => {
+    if (frames >= 3 && moved()) return;
     const target = paneFocusTarget(document, panel, closing, where, frames < TREE_FRAMES - 1);
     if (target) {
       const page = target.dataset.pageKey;
@@ -70,9 +83,10 @@ export function focusPane(panel: PanelId, closing?: string, where: "pane" | "str
       quietly(() => target.focus({ preventScroll: true }));
       return void browser.focus(page, entryReason(page)).catch(() => {});
     }
-    // The pane may take a second frame to be laid out when the same click shows it, and the Files tree its rows a little longer.
-    const waiting = where === "pane" && document.querySelector(tree(panel)) !== null;
-    if (++frames < (waiting ? TREE_FRAMES : 3)) requestAnimationFrame(attempt);
+    // The pane may take a second frame to be laid out when the same click shows it, the Files tree its rows a little longer, and Changes its first reply longer still.
+    const rows = where === "pane" && document.querySelector(tree(panel)) !== null;
+    const blank = where === "pane" && panel === "changes" && document.querySelector(changesBlank(panel)) !== null;
+    if (++frames < (blank ? CHANGES_FRAMES : rows ? TREE_FRAMES : 3)) requestAnimationFrame(attempt);
   };
   requestAnimationFrame(attempt);
 }

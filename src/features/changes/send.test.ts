@@ -14,7 +14,11 @@ describe("runSend", () => {
   it("a refusal keeps the drafts", async () => {
     const r = await runSend({ delivery: paste, count: 2, message: "m", post: () => Promise.reject(conflict("waiting")), write: async () => {} });
     expect(r).toEqual({ sent: false, notice: "Claude is waiting for an answer, so the comments are kept.", focus: false });
-    expect(afterSend(drafts, r)).toBe(drafts);
+    expect(afterSend(drafts, r, drafts.comments)).toBe(drafts);
+  });
+  it("a sent paste clears only the comments it held: one added or edited while it went stays", () => {
+    const later = { ...drafts, comments: [c("1"), { ...c("2"), text: "edited" }, c("3")] };
+    expect(afterSend(later, { sent: true, notice: "n", focus: true }, drafts.comments).comments).toEqual([{ ...c("2"), text: "edited" }, c("3")]);
   });
   it("a refused delivery is announced and keeps the comments", async () => {
     const post = vi.fn();
@@ -25,7 +29,7 @@ describe("runSend", () => {
   it("a send keeps the folds", async () => {
     const r = await runSend({ delivery: paste, count: 2, message: "m", post: async () => reply("paste"), write: async () => {} });
     expect(r).toEqual({ sent: true, notice: "Pasted 2 comments into Claude.", focus: true });
-    expect(afterSend(drafts, r)).toEqual({ ...drafts, comments: [] });
+    expect(afterSend(drafts, r, drafts.comments)).toEqual({ ...drafts, comments: [] });
   });
   it("the message reaches postComments unchanged", async () => {
     const post = vi.fn(async (_text: string) => reply("file"));

@@ -44,14 +44,17 @@ export const ChangesIcon = large(<rect x="5" y="5" width="30" height="30" rx="5"
 
 /**
  * What a panel shows with no tabs: its mark, what is missing, what to do, and its ways in (none, one or two). The first button that can be used
- * takes focus when the panel does (`focusPane`). Whatever follows the buttons (a list of ports or recent files) is `children`.
+ * takes focus when the panel does (`focusPane`); with no button the title does, so the panel's key still moves the keyboard into it and a
+ * screen reader reads what is missing. Whatever follows the buttons (a list of ports or recent files) is `children`.
  */
 export function EmptyPanel({ icon, title, line, actions, children }: { icon: ReactNode; title: string; line: string; actions: readonly EmptyAction[]; children?: ReactNode }) {
   return (
     <div className="empty-panel">
       <div className="empty-panel__column">
         {icon}
-        <h2 className="empty-panel__title">{title}</h2>
+        <h2 className="empty-panel__title" tabIndex={actions.length === 0 ? -1 : undefined}>
+          {title}
+        </h2>
         <p className="empty-panel__line">{line}</p>
         {actions.length > 0 && (
         <div className="empty-panel__actions">

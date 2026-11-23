@@ -139,7 +139,8 @@ export function messageOf(drafts: DraftComment[], placements: Map<string, Placem
   const rank = (c: DraftComment) => order.get(c.path) ?? sections.length;
   // Cited at the lines the rows are on now: the agent reads the file as it is.
   const now = drafts.map((c) => renumbered(c, placements.get(c.id)));
-  const sorted = now.sort((a, b) => rank(a) - rank(b) || a.start - b.start);
+  // Files outside the sections (all of them in a send from another checkout) keep together, by path.
+  const sorted = now.sort((a, b) => rank(a) - rank(b) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0) || a.start - b.start);
   const where = folder === undefined ? "" : ` in ${folder}`;
   const header = base === null ? `Comments on the uncommitted changes${where}:` : `Comments on the changes${where} (compared with ${base}):`;
   const blocks = sorted.map((c) => {
