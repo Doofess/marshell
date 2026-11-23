@@ -15,11 +15,12 @@ export const GRID_LAYOUT: NavLayout = [
   { target: { kind: "pane", index: 3 }, rect: { x: 588, y: 340, w: 300, h: 300 } },
 ];
 
-/** The same window with the two panel buttons at the right of the top bar. Apart from GRID_LAYOUT: an extra target changes where arrows land at its edges. */
+/** The same window with the three panel buttons at the right of the top bar. Apart from GRID_LAYOUT: an extra target changes where arrows land at its edges. */
 export const GRID_WITH_PANEL_BUTTONS: NavLayout = [
   ...GRID_LAYOUT,
   { target: { kind: "top", id: "panel-browser" }, rect: { x: 880, y: 0, w: 60, h: 40 } },
   { target: { kind: "top", id: "panel-files" }, rect: { x: 950, y: 0, w: 60, h: 40 } },
+  { target: { kind: "top", id: "panel-changes" }, rect: { x: 1020, y: 0, w: 60, h: 40 } },
 ];
 
 export const NAMES: Record<number, string> = { 1: "billing", 2: "infra", 3: "api-server", 5: "docs-site", 6: "scratch", 7: "PowerShell" };

@@ -26,8 +26,8 @@ export type SessionShortcut =
   | { kind: "cheatsheet" }
   /** Show or hide the side pane (Ctrl+Shift+Q; Cmd+Alt+Q on macOS). With no tab open it shows the empty pane. */
   | { kind: "preview" }
-  /** Show or hide one panel of the side pane (Ctrl+Shift+A for Browser, Ctrl+Shift+D for Files; Cmd+Alt+A and Cmd+D on macOS). */
-  | { kind: "panel"; panel: "browser" | "files" }
+  /** Show or hide one panel of the side pane (Ctrl+Shift+A for Browser, Ctrl+Shift+D for Files, Ctrl+Shift+H for Changes; Cmd+Alt+A, Cmd+D and Cmd+Shift+H on macOS). */
+  | { kind: "panel"; panel: "browser" | "files" | "changes" }
   /** "Go to file…": the palette, to pick a file for the side pane (Ctrl+Shift+P; Cmd+P on macOS). */
   | { kind: "openFile" }
   /** "Show file tree" and "Collapse all folders": the Files panel's tree. Neither has a key of its own. */
@@ -149,6 +149,8 @@ export function commandShortcut(id: string): SessionShortcut | null {
       return { kind: "panel", panel: "browser" };
     case "files-panel":
       return { kind: "panel", panel: "files" };
+    case "changes-panel":
+      return { kind: "panel", panel: "changes" };
     case "open-file":
       return { kind: "openFile" };
     case "browse-file":

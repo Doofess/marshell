@@ -44,7 +44,7 @@ export function paneProblem(pane: PaneView): string | null {
     if (!Array.isArray(p.shown) || p.shown.length === 0) return "panels.shown";
     const order = PANELS.filter((id) => p.shown.includes(id));
     if (order.length !== p.shown.length || order.some((id, i) => p.shown[i] !== id)) return "panels.shown";
-    if (p.filled !== null && (typeof p.filled !== "string" || !p.shown.includes(p.filled) || p.shown.length !== 2)) return "panels.filled";
+    if (p.filled !== null && (typeof p.filled !== "string" || !p.shown.includes(p.filled) || p.shown.length < 2)) return "panels.filled";
     for (const [key, value] of Object.entries(p.weights)) {
       if (!isPanelId(key)) return "panels.weights";
       if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 100_000) return "panels.weights";

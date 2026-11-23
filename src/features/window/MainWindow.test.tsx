@@ -540,6 +540,16 @@ describe("MainWindow: the panel buttons", () => {
     expect(h.lastIndexOf("window__pane-toggle")).toBeLessThan(h.indexOf("window__controls"));
     expect(h.indexOf('data-icon="panel-browser"')).toBeLessThan(h.indexOf('data-icon="panel-files"'));
   });
+  it("shows a Changes button with its tooltip", () => {
+    const h = withProps({ panelButtons: [...BUTTONS, { id: "changes", label: "Changes", shown: false, news: false, keys: "Ctrl+Shift+H" }] });
+    const c = buttons(h)[2]!;
+    expect(c).toContain('data-nav-top="panel-changes"');
+    expect(c).toContain('aria-label="Changes"');
+    expect(c).toContain('aria-expanded="false"');
+    expect(c).toContain('title="Show Changes (Ctrl+Shift+H)"');
+    expect(h).toContain('data-icon="panel-changes"');
+    expect(h.indexOf('data-icon="panel-files"')).toBeLessThan(h.indexOf('data-icon="panel-changes"'));
+  });
   it("a panel's button shows its own news", () => {
     const h = withProps({ panelButtons: [BUTTONS[0]!, { ...BUTTONS[1]!, news: true }] });
     const [b, f] = buttons(h);

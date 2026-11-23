@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { PaneTab } from "../../generated/PaneTab";
 import type { PaneView } from "../../generated/PaneView";
 import type { SessionTabs } from "../../generated/SessionTabs";
-import { activeIn, onScreen, panelOf, panelOfPath, panelsWithTabs, stackOf, stackPanels } from "./panels";
+import { PANEL_COMMAND, PANEL_LABEL, activeIn, onScreen, panelOf, panelOfPath, panelTabs, panelsWithTabs, stackOf, stackPanels } from "./panels";
 
 const tab = (id: string, kind: "file" | "browser", path: string): PaneTab => ({
   id,
@@ -67,7 +67,7 @@ describe("panels", () => {
     expect(panelsWithTabs({ tabs: [page("a")], active: "a" })).toEqual(["browser"]);
     // A saved stack is returned cleaned, whatever the session holds.
     const saved = pane({ web: { tabs: [page("t1")], active: "t1" } }, { panels: { shown: ["files", "changes", "browser", "files"], weights: { files: 5, nope: 3 }, filled: "files" } });
-    expect(stackOf(saved, "web")).toEqual({ shown: ["browser", "files"], weights: { files: 5 }, filled: "files" });
+    expect(stackOf(saved, "web")).toEqual({ shown: ["browser", "files", "changes"], weights: { files: 5 }, filled: "files" });
     const lone = pane({}, { panels: { shown: ["files"], weights: {}, filled: "files" } });
     expect(stackOf(lone, "x").filled).toBeNull();
   });
@@ -84,5 +84,27 @@ describe("panels", () => {
     expect(stackPanels(stackOf(p, "s"))).toEqual(["browser"]);
     expect(onScreen({ ...p, open: false }, "s")).toEqual([]);
     expect(stackPanels(stackOf({ ...p, open: false }, "s"))).toEqual(["browser"]);
+  });
+
+  it("stacks Browser, Files, Changes in that order", () => {
+    const p = pane({}, { panels: { shown: ["changes", "browser", "files"], weights: {}, filled: null } });
+    expect(stackPanels(stackOf(p, "s"))).toEqual(["browser", "files", "changes"]);
+  });
+  it("keeps Fill with three panels shown", () => {
+    const p = pane({}, { panels: { shown: ["browser", "files", "changes"], weights: {}, filled: "changes" } });
+    expect(stackOf(p, "s").filled).toBe("changes");
+    expect(stackPanels(stackOf(p, "s"))).toEqual(["changes"]);
+  });
+  it("drops Fill under two shown panels", () => {
+    const p = pane({}, { panels: { shown: ["changes"], weights: {}, filled: "changes" } });
+    expect(stackOf(p, "s").filled).toBeNull();
+  });
+  it("Changes holds no tabs and has no selected tab", () => {
+    const st = { tabs: [file("f1"), page("b1")], active: "f1" };
+    expect(panelTabs(pane({ s: st }), "s", "changes")).toEqual([]);
+    expect(activeIn(st, "changes")).toBeNull();
+    expect(panelsWithTabs(st)).toEqual(["browser", "files"]);
+    expect(PANEL_COMMAND.changes).toBe("changes-panel");
+    expect(PANEL_LABEL.changes).toBe("Changes");
   });
 });

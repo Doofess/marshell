@@ -1,12 +1,37 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { Layout } from "../window/paneColumn";
-import { PanelStack, dividerKey, dividerProps, rowLayout } from "./PanelStack";
+import { PanelStack, dividerKey, dividerProps, liveDividers, rowLayout } from "./PanelStack";
 import type { PanelId } from "./panels";
 
 const noop = () => {};
 const render = (panel: PanelId) => <p data-frame={panel}>{panel} frame</p>;
 const html = (panels: PanelId[], weights = {}) => renderToStaticMarkup(<PanelStack panels={panels} weights={weights} render={render} onWeights={noop} />);
+
+describe("PanelStack: three panels", () => {
+  const three: PanelId[] = ["browser", "files", "changes"];
+  const heights = { browser: 200, files: 200, changes: 200 };
+  it("draws two dividers for three panels, each over its own pair", () => {
+    const out = html(three);
+    expect(out.match(/class="panel-stack__divider"/g)).toHaveLength(2);
+    expect(out).toContain("grid-template-rows:minmax(0, 10000fr) 1px minmax(0, 10000fr) 1px minmax(0, 10000fr)");
+    expect(dividerProps("browser", "files", 200, 200)["aria-label"]).toBe("Resize Browser and Files");
+    expect(dividerProps("files", "changes", 200, 200)["aria-label"]).toBe("Resize Files and Changes");
+  });
+  it("draws two live dividers for three panels", () => {
+    expect(liveDividers(three, three, heights, false)).toEqual([true, true]);
+  });
+  it("a divider is live on its own: one next to a leaving panel is not, the other is", () => {
+    // Changes is leaving: still drawn, no longer in the stack's panels.
+    expect(liveDividers(three, ["browser", "files"], heights, false)).toEqual([true, false]);
+    expect(liveDividers(three, ["files", "changes"], heights, false)).toEqual([false, true]);
+  });
+  it("no divider is live before the stack is measured or while anything moves", () => {
+    expect(liveDividers(three, three, null, false)).toEqual([false, false]);
+    expect(liveDividers(three, three, heights, true)).toEqual([false, false]);
+    expect(liveDividers(["files"], ["files"], heights, false)).toEqual([]);
+  });
+});
 
 describe("PanelStack", () => {
   it("draws a row per panel, in order, each holding its frame", () => {

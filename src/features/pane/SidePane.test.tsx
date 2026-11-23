@@ -30,6 +30,22 @@ const html = (more: Partial<SidePaneProps> = {}) =>
     </SidePane>,
   );
 
+describe("SidePane: a panel with no tabs", () => {
+  const out = () => html({ panel: "changes", tabs: [], activeId: null, plus: undefined, title: "4 files · +120 −18", hideKeys: "Ctrl+Shift+H" });
+  it("a tabless panel shows its title and no plus", () => {
+    const h = out();
+    expect(h).toContain('<span class="side-pane__title" role="heading" aria-level="2">4 files · +120 −18</span>');
+    expect(h).not.toContain('role="tablist"');
+    expect(h).not.toContain("data-pane-plus");
+    expect(h).toContain('aria-label="Changes"');
+    expect(h).toContain('aria-label="Hide Changes"');
+  });
+  it("a panel with no title keeps the tablist", () => {
+    expect(html()).toContain('role="tablist"');
+    expect(html()).toContain("data-pane-plus");
+  });
+});
+
 describe("SidePane", () => {
   it("is its panel's section and a navigation stop", () => {
     const out = html();

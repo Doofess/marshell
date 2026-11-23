@@ -105,6 +105,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A tabless panel's title (Changes' count), in the strip where the tabs would be. */
+.side-pane__strip > .side-pane__title {
+  align-self: center;
+  padding-inline: var(--space-3);
+  color: var(--text-2);
+}
 /* A file's name: the head shortens with an ellipsis and the tail (the extension) never shrinks. */
 .side-pane__title:has(> .side-pane__name-head) {
   display: flex;

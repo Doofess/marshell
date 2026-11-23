@@ -9,7 +9,7 @@ export type Target =
   | { kind: "row"; number: number }
   /** A control in the top bar, or the launcher and palette buttons: it is activated, not selected. */
   | { kind: "top"; id: string }
-  /** One panel of the side pane ("browser", "files"), which is selected like a terminal: focus goes into it. */
+  /** One panel of the side pane ("browser", "files", "changes"), which is selected like a terminal: focus goes into it. */
   | { kind: "side"; panel: string };
 
 /** A panel of the side pane that is on screen: its id (the value of its `data-nav-side`) and the name that is spoken ("Browser"). */

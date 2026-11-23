@@ -11,7 +11,10 @@ export const osOfPlatform = (platform: "windows" | "macos" | "linux"): Os => (pl
  * `ctrl` is Ctrl with the key and nothing else, on every system (the Control key on macOS, not Cmd): Ctrl+Tab shows the next tab.
  * `mac` replaces the whole binding on macOS, for a key the system already owns there: Cmd+Q is Quit, so the side pane is Cmd+Alt+Q.
  */
-export type Binding = { code: string; alt?: boolean; plain?: boolean; nav?: boolean; shift?: boolean; ctrl?: boolean; mac?: Binding };
+export type Binding = { code: string; alt?: boolean; plain?: boolean; nav?: boolean; shift?: boolean; ctrl?: boolean; mac?: Binding;
+  /** Cmd+Shift with the key, on macOS only (the Changes panel: Cmd+H is Hide and Cmd+Alt+H Hide Others). */
+  cmdShift?: true;
+};
 export type Command = { id: string; label: string; binding?: Binding; group: "Session" | "Terminal" | "Window" | "App" };
 
 const KEY_TEXT: Record<string, string> = { ArrowLeft: "←", ArrowRight: "→", ArrowUp: "↑", ArrowDown: "↓" };
@@ -25,6 +28,7 @@ export function keyText(code: string): string {
 export function shortcutLabel(b: Binding, os: Os, nav: NavModifier = DEFAULT_NAV_MODIFIER): string {
   if (os === "mac" && b.mac) return shortcutLabel(b.mac, os, nav);
   const key = keyText(b.code);
+  if (b.cmdShift) return `⌘⇧${key}`;
   if (b.plain) return key;
   if (b.ctrl) return os === "mac" ? `⌃${key}` : `Ctrl+${key}`;
   if (b.shift) return os === "mac" ? `${b.alt ? "⌥" : ""}⇧${key}` : `${b.alt ? "Alt+" : ""}Shift+${key}`;
@@ -92,6 +96,8 @@ export const COMMANDS: Command[] = [
   // The side pane's panels. Cmd+A is Select all on macOS, so the Browser panel takes Cmd+Alt+A there.
   { id: "browser-panel", label: "Browser panel", group: "Window", binding: { code: "KeyA", mac: { code: "KeyA", alt: true } } },
   { id: "files-panel", label: "Files panel", group: "Window", binding: { code: "KeyD" } },
+  // Cmd+H is Hide and Cmd+Alt+H Hide Others on macOS, so Changes takes Cmd+Shift+H there.
+  { id: "changes-panel", label: "Changes panel", group: "Window", binding: { code: "KeyH", mac: { code: "KeyH", cmdShift: true } } },
   { id: "open-file", label: "Go to file…", group: "Window", binding: { code: "KeyP" } },
   { id: "browse-file", label: "Browse…", group: "Window" },
   // The Files panel's tree: shown or hidden, and every folder folded. No default key.

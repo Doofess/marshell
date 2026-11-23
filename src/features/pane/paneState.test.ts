@@ -648,6 +648,22 @@ describe("the Browser and Files panels", () => {
     expect(stackOf(s, "s").shown).toEqual(["browser", "files"]);
   });
 
+  it("Changes is a third panel: it joins the stack in its place, and Fill holds with three shown", () => {
+    let s = run(EMPTY, pg("https://a.test/"), open("/a.md"), { type: "panel", panel: "changes", session: "s" });
+    expect(stackOf(s, "s").shown).toEqual(["browser", "files", "changes"]);
+    s = run(s, { type: "fill", panel: "changes", session: "s" });
+    expect(stackOf(s, "s").filled).toBe("changes");
+    expect(onScreen(s, "s")).toEqual(["changes"]);
+    s = run(s, { type: "fill", panel: "changes", session: "s" });
+    expect(stackOf(s, "s").filled).toBeNull();
+  });
+
+  it("Fill does nothing with only Changes shown", () => {
+    const s = run(EMPTY, { type: "show", session: "s" }, { type: "panel", panel: "changes", session: "s" }, { type: "panel", panel: "files", session: "s" });
+    expect(stackOf(s, "s").shown).toEqual(["changes"]);
+    expect(run(s, { type: "fill", panel: "changes", session: "s" })).toBe(s);
+  });
+
   it("an open selects the tab in its panel, shows the pane and adds the panel", () => {
     const s0 = run(EMPTY, pg("https://a.test/"));
     expect(shown(s0)).toEqual(["browser"]);
@@ -901,8 +917,8 @@ describe("the Browser and Files panels", () => {
     const w = (weights: Record<string, number>) => paneReducer(s, { type: "weights", weights } as PaneAction);
     expect(w({ browser: 5000.4, files: 123456 }).panels?.weights).toEqual({ browser: 5000, files: 100000 });
     expect(w({ browser: 0.2 }).panels?.weights).toEqual({ browser: 1 });
-    expect(w({ browser: Number.NaN, files: Number.POSITIVE_INFINITY, changes: 5 })).toBe(s);
-    expect(w({ browser: Number.NaN, files: 7000, changes: 5 }).panels?.weights).toEqual({ files: 7000 });
+    expect(w({ browser: Number.NaN, files: Number.POSITIVE_INFINITY, nope: 5 })).toBe(s);
+    expect(w({ browser: Number.NaN, files: 7000, nope: 5 }).panels?.weights).toEqual({ files: 7000 });
     const merged = paneReducer(w({ browser: 3000 }), { type: "weights", weights: { files: 9000 } });
     expect(merged.panels?.weights).toEqual({ browser: 3000, files: 9000 });
     expect(paneProblem(merged)).toBeNull();

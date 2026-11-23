@@ -1683,6 +1683,8 @@ export function LiveApp() {
             return void togglePanel("browser");
           case "panel-files":
             return void togglePanel("files");
+          case "panel-changes":
+            return void togglePanel("changes");
         }
         return;
       case "deselect":
@@ -2311,6 +2313,31 @@ export function LiveApp() {
   // One panel's frame: its own tabs, its own kept tabs, or its empty state. A panel that is leaving is still drawn until its motion ends.
   const renderPanel = (panel: PanelId) => {
     if (os === undefined) return null;
+    // Changes holds no tabs. Until the diff view lands (Task 11a) it shows an empty state.
+    if (panel === "changes") {
+      return (
+        <SidePane
+          panel={panel}
+          title="Changes"
+          tabs={[]}
+          activeId={null}
+          fill={{ on: stack.filled === panel, disabled: stack.shown.length < 2 ? "No other panel is shown" : undefined }}
+          hideKeys={keysOf(panel)}
+          onFill={() => paneDispatch({ type: "fill", panel, session: paneSession ?? null })}
+          onSelect={() => {}}
+          onClose={() => {}}
+          onMove={() => {}}
+          onHide={() => togglePanel(panel)}
+        >
+          <div className="empty-panel">
+            <div className="empty-panel__column">
+              <h2 className="empty-panel__title">Changes</h2>
+              <p className="empty-panel__line">The session&apos;s changes show here.</p>
+            </div>
+          </div>
+        </SidePane>
+      );
+    }
     const tabsHere = panelTabs(view.pane, paneSession, panel);
     const paneActive = activeIn(paneTabs, panel);
     const paneTitles = tabTitles(tabsHere);

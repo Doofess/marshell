@@ -23,13 +23,14 @@ afterEach(() => setNavState(INITIAL_NAV));
 
 describe("topAction", () => {
   it("knows the two panel buttons, as well as the palette, sidebar and launcher", () => {
-    for (const id of ["palette", "launcher", "sidebar", "panel-browser", "panel-files"]) expect(topAction(id), id).toBe(id);
+    for (const id of ["palette", "launcher", "sidebar", "panel-browser", "panel-files", "panel-changes"]) expect(topAction(id), id).toBe(id);
     expect(topAction("pane")).toBeNull();
     expect(topAction("nothing")).toBeNull();
   });
   it("names a panel's button for the cursor's hint", () => {
     expect(topName("panel-browser")).toBe("Browser");
     expect(topName("panel-files")).toBe("Files");
+    expect(topName("panel-changes")).toBe("Changes");
   });
 });
 

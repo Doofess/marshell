@@ -37,6 +37,14 @@ export function dividerKey(key: string, upperPx: number, lowerPx: number): { upp
 }
 
 /**
+ * Which of the dividers between `drawn` rows can be dragged now. Divider `i` sits between `drawn[i]` and `drawn[i + 1]` and is live
+ * on its own: the stack is measured, nothing moves, and both rows are panels of the stack (not one that is leaving).
+ */
+export function liveDividers(drawn: readonly PanelId[], panels: readonly PanelId[], heights: Weights | null, anyMoving: boolean): boolean[] {
+  return drawn.slice(1).map((lower, i) => heights !== null && !anyMoving && panels.includes(drawn[i]!) && panels.includes(lower));
+}
+
+/**
  * The layout a row's page slot sees: the window's own while nothing in the stack moves and nothing sits below, else with the
  * stack's motion and the share of the stack below the row. The same object when it would add nothing.
  */
@@ -78,56 +86,57 @@ export function PanelStack({ panels, weights, render, onWeights, onDividerGone }
   const motions: Record<PanelId, { value: number; moving: boolean }> = {
     browser: useLayoutMotion(key, heights?.browser ?? 0),
     files: useLayoutMotion(key, heights?.files ?? 0),
+    changes: useLayoutMotion(key, heights?.changes ?? 0),
   };
   const anyMoving = PANELS.some((p) => motions[p].moving);
   const drawn = PANELS.filter((p) => panels.includes(p) || motions[p].value > 0);
 
-  // The divider is live when it can be dragged: measured, both rows are panels of the stack, and nothing moves.
-  const [upper, lower] = drawn;
-  const live = heights !== null && !anyMoving && drawn.length === 2 && panels.includes(upper!) && panels.includes(lower!);
-  const upperPx = heights?.[upper!] ?? 0;
-  const lowerPx = heights?.[lower!] ?? 0;
+  // A divider is live when it can be dragged: measured, both rows are panels of the stack, and nothing moves. Each is live on its
+  // own and moves only its own pair's weights.
+  const live = liveDividers(drawn, panels, heights, anyMoving);
 
-  // The divider is one element through a motion, so focus on it stays. When it goes away for good (fewer than two panels) with
-  // the keyboard on it, the keyboard is handed on.
-  const dividerFocused = useRef(false);
-  const dividerWasLive = useRef(live);
+  // A divider is one element through a motion, so focus on it stays. When the pair it divides is no longer both in the stack, with
+  // the keyboard on it, the keyboard is handed on. `focusedPair` is the upper and lower panel of the focused divider.
+  const focusedPair = useRef<[PanelId, PanelId] | null>(null);
   const dividerGone = useRef(onDividerGone);
   dividerGone.current = onDividerGone;
   useLayoutEffect(() => {
-    if (dividerWasLive.current && !live && panels.length < 2 && dividerFocused.current) {
-      dividerFocused.current = false;
+    const f = focusedPair.current;
+    if (f && !(panels.includes(f[0]) && panels.includes(f[1]))) {
+      focusedPair.current = null;
       dividerGone.current?.();
     }
-    dividerWasLive.current = live;
   });
 
   const start = useRef<{ y: number; upper: number; lower: number } | null>(null);
-  const move = (pair: { upper: number; lower: number }) => {
-    if (!live) return;
+  const pxOf = (p: PanelId) => heights?.[p] ?? 0;
+  const move = (i: number, pair: { upper: number; lower: number }) => {
+    if (!live[i]) return;
+    const above = drawn[i]!;
+    const below = drawn[i + 1]!;
     // The same heights (at a limit, or in a pane too short) write nothing.
-    if (pair.upper === upperPx && pair.lower === lowerPx) return;
-    onWeights(pairWeights(weights, upper!, lower!, pair.upper, pair.lower));
+    if (pair.upper === pxOf(above) && pair.lower === pxOf(below)) return;
+    onWeights(pairWeights(weights, above, below, pair.upper, pair.lower));
   };
-  const onPointerDown = (e: ReactPointerEvent<HTMLElement>) => {
-    if (!live || e.button !== 0) return;
+  const onPointerDown = (e: ReactPointerEvent<HTMLElement>, i: number) => {
+    if (!live[i] || e.button !== 0) return;
     e.currentTarget.setPointerCapture(e.pointerId);
-    start.current = { y: e.clientY, upper: upperPx, lower: lowerPx };
+    start.current = { y: e.clientY, upper: pxOf(drawn[i]!), lower: pxOf(drawn[i + 1]!) };
   };
-  const onPointerMove = (e: ReactPointerEvent<HTMLElement>) => {
+  const onPointerMove = (e: ReactPointerEvent<HTMLElement>, i: number) => {
     const s = start.current;
     if (!s || !e.currentTarget.hasPointerCapture(e.pointerId)) return;
-    move(movedPair(s.upper, s.lower, e.clientY - s.y));
+    move(i, movedPair(s.upper, s.lower, e.clientY - s.y));
   };
   const endDrag = () => {
     start.current = null;
   };
-  const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+  const onKeyDown = (e: KeyboardEvent<HTMLElement>, i: number) => {
     if (e.ctrlKey || e.altKey || e.metaKey) return;
-    const pair = dividerKey(e.key, upperPx, lowerPx);
+    const pair = dividerKey(e.key, pxOf(drawn[i]!), pxOf(drawn[i + 1]!));
     if (!pair) return;
     e.preventDefault();
-    move(pair);
+    move(i, pair);
   };
 
   const tracks: string[] = [];
@@ -145,24 +154,24 @@ export function PanelStack({ panels, weights, render, onWeights, onDividerGone }
             // One element, whether live or not, so the keyboard focus on it survives a motion that ends with it live again.
             <div
               className="panel-stack__divider"
-              {...(live
+              {...(live[i - 1]
                 ? {
                     role: "separator",
                     "aria-orientation": "horizontal" as const,
                     tabIndex: 0,
-                    ...dividerProps(upper!, lower!, upperPx, lowerPx),
-                    onPointerDown,
-                    onPointerMove,
+                    ...dividerProps(drawn[i - 1]!, p, pxOf(drawn[i - 1]!), pxOf(p)),
+                    onPointerDown: (e: ReactPointerEvent<HTMLElement>) => onPointerDown(e, i - 1),
+                    onPointerMove: (e: ReactPointerEvent<HTMLElement>) => onPointerMove(e, i - 1),
                     onPointerUp: endDrag,
                     onPointerCancel: endDrag,
                     onLostPointerCapture: endDrag,
-                    onKeyDown,
-                    onDoubleClick: () => onWeights(pairWeights(weights, upper!, lower!, 1, 1)),
+                    onKeyDown: (e: KeyboardEvent<HTMLElement>) => onKeyDown(e, i - 1),
+                    onDoubleClick: () => onWeights(pairWeights(weights, drawn[i - 1]!, p, 1, 1)),
                     onFocus: () => {
-                      dividerFocused.current = true;
+                      focusedPair.current = [drawn[i - 1]!, p];
                     },
                     onBlur: () => {
-                      dividerFocused.current = false;
+                      focusedPair.current = null;
                     },
                   }
                 : { "aria-hidden": true })}
