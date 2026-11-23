@@ -287,6 +287,14 @@ export function chunksOf(items: Item[]): FileBlocks[] {
   });
 }
 
+/**
+ * Whether the item the keyboard is on takes the focus as the list draws: within `KEY_FOCUS_MS` of the key that moved it, and never
+ * from the comment box. Enter on a row opens a box, and a draft kept above that row moves the row's index in the same draw.
+ */
+export function keyFocuses(sinceKey: number, boxHasKeyboard: boolean): boolean {
+  return sinceKey < KEY_FOCUS_MS && !boxHasKeyboard;
+}
+
 /** What had the keyboard in the list as it drew: the comment box, an item, or neither. */
 export type Held = "box" | "item" | null;
 
@@ -336,8 +344,11 @@ export function DiffList({ items, focus, range, wrap, onKey, onClickItem, onOpen
 
   // The item with the keyboard takes the focus after a key or a shift-click moved it (never because a poll changed the list).
   useEffect(() => {
-    if (Date.now() - keyed.current >= KEY_FOCUS_MS) return;
+    const sinceKey = Date.now() - keyed.current;
     keyed.current = 0;
+    const active = document.activeElement;
+    const boxHasKeyboard = active instanceof HTMLTextAreaElement && box.current?.contains(active) === true;
+    if (!keyFocuses(sinceKey, boxHasKeyboard)) return;
     box.current?.querySelector<HTMLElement>(`[data-changes-index="${focus}"]`)?.focus();
   }, [focus]);
 
