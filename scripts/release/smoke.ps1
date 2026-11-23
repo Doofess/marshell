@@ -515,7 +515,10 @@ function Invoke-CycleA {
         Check "A6 before the uninstall: Claude Code's and Codex's files still name marshell-hook" {
             (Test-Contains $ClaudeFile 'marshell-hook') -and (Test-Contains $CodexFile 'marshell-hook')
         }
-        Check 'A6 the fixture git sandbox is still there' { Test-Path -LiteralPath (Join-Path $MHome 'git-sandbox') }
+        Check 'A6 the fixture git sandbox is still there' {
+            $boxes = Get-ChildItem -LiteralPath (Join-Path $MHome 'git-sandbox') -Directory -ErrorAction SilentlyContinue
+            @($boxes | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'marshell-checkout') -PathType Leaf }).Count -ge 1
+        }
     }
     $instDir = $script:Inst
     $appId = $app.Id

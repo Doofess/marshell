@@ -21,6 +21,8 @@ pub const OWNER_FILE: &str = "marshell-checkout";
 pub const UNUSED_AFTER: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const TEMP_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
 pub(super) const TOUCH_EVERY: Duration = Duration::from_secs(60 * 60);
+/// How long `remove_all` waits for the gate, per folder.
+const UNINSTALL_WAIT: Duration = Duration::from_secs(10);
 /// The most bytes `OWNER_FILE` may hold.
 const OWNER_CAP: u64 = 32 * 1024;
 /// Held shared while a sandbox is written (`GitBox::reload`), and alone for each folder a sweep removes.
@@ -120,16 +122,24 @@ fn old(modified: SystemTime, now: SystemTime) -> bool {
     now.duration_since(modified).is_ok_and(|age| age > UNUSED_AFTER)
 }
 
-/// The gate, alone, or None when a box is writing. A poisoned gate is used as it is.
-#[cfg(not(test))]
-fn exclusive() -> Option<RwLockWriteGuard<'static, ()>> {
-    try_gate()
+/// How long a removal waits for the gate.
+#[derive(Clone, Copy)]
+enum Wait {
+    /// One try: a sandbox that is being written stays. The sweep and `forget` run beside the Changes checks.
+    No,
+    /// Up to `UNINSTALL_WAIT`. Uninstall runs alone in its process, so nothing holds the gate there for long.
+    Uninstall,
 }
 
-/// In a test the gate is waited for: the tests run side by side and some hold it for a whole check.
-#[cfg(test)]
-fn exclusive() -> Option<RwLockWriteGuard<'static, ()>> {
-    let until = std::time::Instant::now() + Duration::from_secs(60);
+/// The gate, alone, or None when a box is still writing after `wait`. A poisoned gate is used as it is. In
+/// this crate's tests the gate is always waited for: they run side by side and some hold it for a whole check.
+fn exclusive(wait: Wait) -> Option<RwLockWriteGuard<'static, ()>> {
+    let wait = match wait {
+        _ if cfg!(test) => Duration::from_secs(60),
+        Wait::No => Duration::ZERO,
+        Wait::Uninstall => UNINSTALL_WAIT,
+    };
+    let until = std::time::Instant::now() + wait;
     loop {
         if let Some(guard) = try_gate() {
             return Some(guard);
@@ -154,8 +164,8 @@ fn try_gate() -> Option<RwLockWriteGuard<'static, ()>> {
 /// `ours` and the age are tested again under it, so a sandbox opened since the first look stays. A folder that
 /// can't be removed and is still there gets its file back and counts as kept. `first` is the checkout the
 /// first look read, which a `Why::Gone` removal must still find in the file.
-fn remove_one(dir: &Path, name: &str, why: Why, first: Option<&Path>) -> bool {
-    let Some(_gate) = exclusive() else {
+fn remove_one(dir: &Path, name: &str, why: Why, first: Option<&Path>, wait: Wait) -> bool {
+    let Some(_gate) = exclusive(wait) else {
         return false;
     };
     let Some((checkout, modified)) = ours(dir, name) else {
@@ -185,8 +195,8 @@ fn remove_one(dir: &Path, name: &str, why: Why, first: Option<&Path>) -> bool {
 /// Removes the temp files in `dir` that `write_file` leaves when it is interrupted: regular files named
 /// `.*.tmp`, older than `TEMP_AFTER` at `now`, or of any age when `now` is None. Nothing happens unless `dir`
 /// is a real folder. Under the gate, since a temp file is dated as its source while it is written.
-fn remove_temps(dir: &Path, now: Option<SystemTime>) {
-    let Some(_gate) = exclusive() else {
+fn remove_temps(dir: &Path, now: Option<SystemTime>, wait: Wait) {
+    let Some(_gate) = exclusive(wait) else {
         return;
     };
     if !is_real_dir(dir) {
@@ -254,26 +264,30 @@ pub fn sweep(home: &Path, now: SystemTime) -> Swept {
             None
         };
         if let Some(why) = why
-            && remove_one(&dir, &name, why, Some(&checkout))
+            && remove_one(&dir, &name, why, Some(&checkout), Wait::No)
         {
             swept.removed += 1;
             continue;
         }
         swept.kept += 1;
-        remove_temps(&dir, Some(now));
-        remove_temps(&dir.join("info"), Some(now));
+        remove_temps(&dir, Some(now), Wait::No);
+        remove_temps(&dir.join("info"), Some(now), Wait::No);
     }
-    remove_temps(&crate::paths::git_sandbox_dir(home), Some(now));
+    remove_temps(&crate::paths::git_sandbox_dir(home), Some(now), Wait::No);
     swept
 }
 
-/// Removes the sandbox of `checkout`, when there is one. True when one was removed.
+/// Removes the sandbox of `checkout`, when there is one and `git-sandbox` is a real folder. True when one was
+/// removed.
 pub fn forget(home: &Path, checkout: &Path) -> bool {
+    if !is_real_dir(&crate::paths::git_sandbox_dir(home)) {
+        return false;
+    }
     let dir = sandbox_dir(home, checkout);
     let Some(name) = dir.file_name().and_then(|n| n.to_str()).map(str::to_string) else {
         return false;
     };
-    remove_one(&dir, &name, Why::Asked, None)
+    remove_one(&dir, &name, Why::Asked, None, Wait::No)
 }
 
 /// Removes every sandbox, then `empty-config` and the temp files in `git-sandbox` itself whatever their age,
@@ -282,12 +296,12 @@ pub fn remove_all(home: &Path) -> usize {
     let root = crate::paths::git_sandbox_dir(home);
     let mut removed = 0;
     for (dir, name) in sandboxes(home) {
-        if remove_one(&dir, &name, Why::Asked, None) {
+        if remove_one(&dir, &name, Why::Asked, None, Wait::Uninstall) {
             removed += 1;
         }
     }
-    remove_temps(&root, None);
-    if let Some(_gate) = exclusive()
+    remove_temps(&root, None, Wait::Uninstall);
+    if let Some(_gate) = exclusive(Wait::Uninstall)
         && is_real_dir(&root)
     {
         let empty = root.join("empty-config");
@@ -571,15 +585,16 @@ mod tests {
         assert!(old(first, now), "the first look says unused");
         // It is opened after that look: its file is dated now again.
         date(&dir.join(OWNER_FILE), now);
-        assert!(!remove_one(&dir, &name, Why::Unused(now), None));
+        assert!(!remove_one(&dir, &name, Why::Unused(now), None, Wait::No));
         assert!(dir.exists());
         // The same call removes it when the file really is old.
         date(&dir.join(OWNER_FILE), now - 8 * DAY);
-        assert!(remove_one(&dir, &name, Why::Unused(now), None));
+        assert!(remove_one(&dir, &name, Why::Unused(now), None, Wait::No));
         assert!(!dir.exists());
     }
 
-    /// Outside the tests a removal makes one try at the gate, and a sandbox that is being written stays.
+    /// Outside the tests the sweep and `forget` make one try at the gate, and a sandbox that is being written
+    /// stays.
     #[test]
     fn a_busy_gate_is_not_waited_for() {
         let _writing = GATE.read().unwrap_or_else(|e| e.into_inner());
@@ -597,6 +612,23 @@ mod tests {
         assert!(!box_a.exists());
         assert!(box_b.exists());
         assert!(!forget(&s.home, &a));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn forget_leaves_a_sandbox_behind_a_linked_git_sandbox() {
+        let s = scratch();
+        let a = made(&s.root.join("a"));
+        let other = s.root.join("other-home");
+        let kept = sandbox(&other, &a, SystemTime::now());
+        made(&s.home);
+        let link = crate::paths::git_sandbox_dir(&s.home);
+        if !junction(&link, &crate::paths::git_sandbox_dir(&other)) {
+            return;
+        }
+        assert!(!forget(&s.home, &a));
+        assert!(kept.join(OWNER_FILE).is_file());
+        std::fs::remove_dir(&link).unwrap();
     }
 
     #[test]

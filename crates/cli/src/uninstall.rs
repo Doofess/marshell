@@ -538,7 +538,8 @@ pub fn run(
         "The folder {} (the Changes panel's copies of git's index) will be removed.",
         paths::git_sandbox_dir(home).display()
     );
-    // Non-zero when something was left, so a script notices.
+    // Non-zero when another CLI's hooks were left, so a script notices. A `git-sandbox` kept for a file
+    // Marshell didn't make is not counted: nothing of Marshell's is left in it.
     let ok = i32::from(others_failed || distro_unanswered);
     let keep_note = |out: &mut dyn Write| {
         if claude_failed && bin.exists() {
@@ -588,6 +589,10 @@ pub fn run(
             let _ = writeln!(out, "{sandbox_line}");
         }
         if !yes && !confirmed(input, out, "Apply these changes? [y/N] ") {
+            // Why bin stays is said either way: before the sandboxes, this run printed it and asked nothing.
+            if !has_bin {
+                keep_note(out);
+            }
             let _ = writeln!(out, "Nothing changed.");
             return 1;
         }
@@ -1480,6 +1485,26 @@ mod tests {
         assert!(marshell_core::paths::bridge_exe(&f.home).exists(), "{out}");
         assert!(out.contains("left in place"), "{out}");
         assert!(!paths::git_sandbox_dir(&f.home).exists(), "{out}");
+    }
+
+    #[test]
+    fn declining_still_says_why_bin_stays() {
+        // Nothing of Claude Code's to change, bin kept for Codex's file, and a sandbox: the one question is
+        // about the sandbox.
+        let (_dir, home, user_home) = bare();
+        let bridge = marshell_core::paths::bridge_exe(&home);
+        std::fs::create_dir_all(bridge.parent().unwrap()).unwrap();
+        std::fs::write(&bridge, "x").unwrap();
+        let codex = marshell_core::agents::codex::hooks::hooks_path(&no_env, &user_home);
+        std::fs::create_dir_all(codex.parent().unwrap()).unwrap();
+        std::fs::write(&codex, "{ \"hooks\": [oops\n").unwrap();
+        sandbox(&home);
+        let (_, out) = run_bare(&home, &user_home, "n\n", false);
+        assert_eq!(out.matches("Apply these changes?").count(), 1, "{out}");
+        assert!(!out.contains("and the programs in it will be removed"), "{out}");
+        assert!(out.contains("left in place, because"), "{out}");
+        assert!(out.contains("Nothing changed."), "{out}");
+        assert!(paths::git_sandbox_dir(&home).exists(), "{out}");
     }
 
     #[test]

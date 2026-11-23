@@ -134,12 +134,17 @@ describe("DiffList blocks", () => {
 
 describe("keyFocuses", () => {
   it("puts the keyboard on the item a key moved to, soon after the key", () => {
-    expect(keyFocuses(50, false)).toBe(true);
-    expect(keyFocuses(200, false)).toBe(false);
+    expect(keyFocuses(50, "key", false)).toBe(true);
+    expect(keyFocuses(200, "key", false)).toBe(false);
+    expect(keyFocuses(200, "click", false)).toBe(false);
   });
   it("leaves the keyboard in the comment box the same key opened", () => {
     // Enter on a row opens a box; a draft kept above that row moves the row's index in the same draw.
-    expect(keyFocuses(50, true)).toBe(false);
+    expect(keyFocuses(50, "key", true)).toBe(false);
+  });
+  it("takes the keyboard out of the comment box for a shift-click on a row", () => {
+    // The click itself moves no focus (its mousedown is cancelled), so the range it widened would be left without the keyboard.
+    expect(keyFocuses(50, "click", true)).toBe(true);
   });
 });
 

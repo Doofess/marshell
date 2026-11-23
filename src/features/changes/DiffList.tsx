@@ -288,11 +288,12 @@ export function chunksOf(items: Item[]): FileBlocks[] {
 }
 
 /**
- * Whether the item the keyboard is on takes the focus as the list draws: within `KEY_FOCUS_MS` of the key that moved it, and never
- * from the comment box. Enter on a row opens a box, and a draft kept above that row moves the row's index in the same draw.
+ * Whether the item the keyboard is on takes the focus as the list draws: within `KEY_FOCUS_MS` of the key or shift-click that moved
+ * it. A key never takes it from the comment box: the box stops its own keys, so the key was the Enter that opened it, and a draft
+ * kept above that row moves the row's index in the same draw. A shift-click does, since the click itself moves no focus.
  */
-export function keyFocuses(sinceKey: number, boxHasKeyboard: boolean): boolean {
-  return sinceKey < KEY_FOCUS_MS && !boxHasKeyboard;
+export function keyFocuses(since: number, by: "key" | "click", boxHasKeyboard: boolean): boolean {
+  return since < KEY_FOCUS_MS && (by === "click" || !boxHasKeyboard);
 }
 
 /** What had the keyboard in the list as it drew: the comment box, an item, or neither. */
@@ -309,14 +310,14 @@ const Entry = memo(EntryView);
 
 export function DiffList({ items, focus, range, wrap, onKey, onClickItem, onOpenItem, onMenuItem, colours, box: openBox }: DiffListProps) {
   const box = useRef<HTMLDivElement>(null);
-  const keyed = useRef(0);
+  const keyed = useRef<{ at: number; by: "key" | "click" }>({ at: 0, by: "key" });
   // The rows' handlers keep their identity across renders (so the memo holds) and call the latest props.
   const latest = useRef({ onClickItem, onOpenItem, onMenuItem });
   latest.current = { onClickItem, onOpenItem, onMenuItem };
   const handlers = useMemo(
     () => ({
       click: (index: number, e: ReactMouseEvent<HTMLElement>) => {
-        if (e.shiftKey) keyed.current = Date.now();
+        if (e.shiftKey) keyed.current = { at: Date.now(), by: "click" };
         latest.current.onClickItem(index, { shift: e.shiftKey });
       },
       open: (index: number) => latest.current.onOpenItem(index),
@@ -344,11 +345,11 @@ export function DiffList({ items, focus, range, wrap, onKey, onClickItem, onOpen
 
   // The item with the keyboard takes the focus after a key or a shift-click moved it (never because a poll changed the list).
   useEffect(() => {
-    const sinceKey = Date.now() - keyed.current;
-    keyed.current = 0;
+    const { at, by } = keyed.current;
+    keyed.current = { at: 0, by: "key" };
     const active = document.activeElement;
     const boxHasKeyboard = active instanceof HTMLTextAreaElement && box.current?.contains(active) === true;
-    if (!keyFocuses(sinceKey, boxHasKeyboard)) return;
+    if (!keyFocuses(Date.now() - at, by, boxHasKeyboard)) return;
     box.current?.querySelector<HTMLElement>(`[data-changes-index="${focus}"]`)?.focus();
   }, [focus]);
 
@@ -357,7 +358,7 @@ export function DiffList({ items, focus, range, wrap, onKey, onClickItem, onOpen
     const mods = { shift: e.shiftKey, alt: e.altKey };
     if (!isListKey(e.key, mods)) return;
     e.preventDefault();
-    keyed.current = Date.now();
+    keyed.current = { at: Date.now(), by: "key" };
     onKey(listKey(items, focus, e.key, mods, range));
   };
 
