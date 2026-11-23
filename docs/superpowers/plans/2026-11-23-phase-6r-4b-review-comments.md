@@ -772,6 +772,7 @@ Whatever fails is fixed, with a test, before Task 10.
 - Raw HTML in a comment (`<details>`, `<br>`) shows as text, and so do a table, a character entity (`&amp;`) and a link reference definition: the panel draws nothing the agent doesn't get, and the other way round. A link inside a comment is opened with the mouse; the keyboard opens the comment on GitHub.
 - A send holds about 1 MB. GitHub comments that don't fit stay picked for the next send, and the notice says how many.
 - A zero-width joiner between letters is removed and marked; inside an emoji it stays.
-- A link's address and title are part of the Markdown that is sent, and show in the panel only as the link.
+- The address of a link that has text is part of the Markdown that is sent, and shows in the panel only as the link. (A link's title is drawn as text after it, and a link that draws nothing shows its address: changed while building.)
+- Blank characters that draw as a space (a no-break space, a Braille blank, the wide spaces) are kept in a comment.
 - A thread is placed by the rows of the diff it was written on. With "Hide whitespace changes" on, or when the checkout differs from what was pushed on those rows, it reads "The line changed".
 - Not verified live (S18): a thread the sign-in may not resolve, a minimized comment, a bot's or a deleted user's comment, a GitHub Enterprise host. Each is covered by the fixture.
