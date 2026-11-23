@@ -209,6 +209,7 @@ async fn changes_lists_a_checkout_and_then_answers_same() {
     assert_eq!(first["kind"], "listed");
     assert_eq!(first["folder"], canon(&repo));
     assert_eq!(first["moved"], false);
+    assert_eq!(first["head"].as_str().map(str::len), Some(40), "HEAD's full commit id");
     assert_eq!(files(&first), ["a.txt:modified"]);
     assert!(first["diff"].as_str().unwrap().contains("+one!"));
 

@@ -17,6 +17,7 @@ mod fill;
 mod folders;
 mod foreground;
 pub mod frames;
+mod github;
 mod guard;
 mod history;
 mod hook;
@@ -239,6 +240,8 @@ struct Inner {
     agent_versions: Arc<crate::agents::identify::VersionCache>,
     /// The Changes panel's checks and reads, one slot per checkout.
     changes: Arc<crate::changes::ChangesCache>,
+    /// What GitHub said about each checkout's branch, and the state the pull request bar keeps.
+    github: Arc<crate::github::GithubState>,
     /// The last events the bridge sent, per live tab.
     hook_log: crate::hooks::log::HookLog,
     /// The permission requests being held for a decision.
@@ -419,6 +422,7 @@ impl AppState {
             own_agents_write: Mutex::new(()),
             agent_versions: Arc::new(crate::agents::identify::VersionCache::default()),
             changes: Arc::new(crate::changes::ChangesCache::new()),
+            github: Arc::new(crate::github::GithubState::default()),
             hook_log: crate::hooks::log::HookLog::default(),
             holds: crate::hooks::holds::Holds::default(),
             permission_hold: DEFAULT_PERMISSION_HOLD,
@@ -857,6 +861,14 @@ impl AppState {
             .status_runner = run;
         self
     }
+    /// Names the file gh runs from, so the PATH is not searched. Call it before the state is cloned. For tests, which
+    /// give it a fake: none runs the real `gh`.
+    pub fn with_gh(mut self, path: PathBuf) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_gh runs before the state is shared")
+            .github = Arc::new(crate::github::GithubState::default().with_gh(path));
+        self
+    }
     /// Replaces the run of a CLI doctor. Call it before the state is cloned. Unit tests only: `DoctorRunner` is not part
     /// of the crate's public API.
     #[cfg(test)]
@@ -972,6 +984,14 @@ impl AppState {
     /// The same cache, for work that outlives a request (the tree's background check).
     pub fn changes_arc(&self) -> Arc<crate::changes::ChangesCache> {
         self.0.changes.clone()
+    }
+    /// What GitHub said about each checkout's branch.
+    pub fn github(&self) -> &crate::github::GithubState {
+        &self.0.github
+    }
+    /// The same state, for work that outlives a request (an ask of GitHub that others wait for).
+    pub fn github_arc(&self) -> Arc<crate::github::GithubState> {
+        self.0.github.clone()
     }
     /// What the UI last reported it shows. Starts as an unfocused window with no visible tab.
     pub fn view(&self) -> tokio::sync::watch::Receiver<marshell_protocol::api::UiView> {
@@ -1373,6 +1393,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{tab}/files", get(files::list))
         .route("/v1/sessions/{tab}/tree", post(tree::tree))
         .route("/v1/sessions/{tab}/changes", post(changes::changes))
+        .route("/v1/sessions/{tab}/github", post(github::github))
         .route("/v1/sessions/{tab}/review", post(changes::review))
         .route("/v1/sessions/{tab}/comments", post(changes::comments))
         .route("/v1/sessions/{tab}/search", post(search::search))

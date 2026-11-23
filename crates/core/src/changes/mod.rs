@@ -139,7 +139,7 @@ fn raw_entries(raw: &[u8], capped: bool) -> Result<Vec<RawEntry>, Halt> {
 }
 
 /// Runs git and collects at most `max` bytes; true when there was more.
-fn collect(
+pub(crate) fn collect(
     git: &GitBox,
     args: &[&str],
     deadline: Instant,
@@ -566,7 +566,7 @@ fn build_reply(
         more_new: check.more_new,
         new_cut: check.new_cut,
         reason: None,
-        head: None,
+        head: check.head_oid.clone(),
         pr_base_unfetched: None,
     })
 }

@@ -45,6 +45,13 @@ fn parse_path(path: &str) -> Option<(String, String)> {
     (owner_ok && name_ok).then(|| (owner.to_string(), name.to_string()))
 }
 
+/// `owner/name` as GitHub's `nameWithOwner` writes it, and nothing else: no `.git`, no trailing `/`, no third part.
+/// The owner and the name follow the rules of an address's path. GitHub's text is only display text until it passes.
+pub(crate) fn slug(text: &str) -> Option<(String, String)> {
+    let (owner, name) = parse_path(text)?;
+    (format!("{owner}/{name}") == text).then_some((owner, name))
+}
+
 /// The host of `authority` (`[user[:password]@]host[:port]`), lowercased, with the user and port dropped.
 /// An authority with a backslash, `#`, `?`, a space or a control character is refused: tools disagree on
 /// where its host ends.
