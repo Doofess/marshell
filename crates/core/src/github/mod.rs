@@ -60,8 +60,9 @@ pub fn command_safe(name: &str) -> bool {
 /// Whether `c` hides or reorders text, or draws nothing and can carry bytes past a reader: the soft hyphen, the
 /// combining grapheme joiner, the Arabic letter mark, the Hangul and Khmer fillers, the Mongolian selectors,
 /// zero-width and direction marks, line and paragraph separators and embeddings, word joiners and isolates, the
-/// variation selectors (but `\u{fe0f}`, which emoji need), the byte order mark, interlinear annotation marks, and
-/// every tag character.
+/// variation selectors (but `\u{fe0f}`, which emoji need), the byte order mark, the specials before the replacement
+/// character (interlinear annotation marks among them), the shorthand and musical format controls, and every tag
+/// character. With `\u{fe0f}`, this is what Unicode calls default-ignorable, and the direction and separator marks.
 pub(crate) fn hides(c: char) -> bool {
     matches!(
         c,
@@ -80,7 +81,9 @@ pub(crate) fn hides(c: char) -> bool {
             | '\u{fe00}'..='\u{fe0e}'
             | '\u{feff}'
             | '\u{ffa0}'
-            | '\u{fff9}'..='\u{fffb}'
+            | '\u{fff0}'..='\u{fffb}'
+            | '\u{1bca0}'..='\u{1bca3}'
+            | '\u{1d173}'..='\u{1d17a}'
             | '\u{e0000}'..='\u{e0fff}'
     )
 }
@@ -764,6 +767,12 @@ mod tests {
             '\u{e0fff}',
             '\u{e0141}',
             '\u{200d}',
+            '\u{fff0}',
+            '\u{fff8}',
+            '\u{1bca0}',
+            '\u{1bca3}',
+            '\u{1d173}',
+            '\u{1d17a}',
         ] {
             assert!(hides(c), "{c:?}");
             assert_eq!(plain(&format!("a{c}b"), 10), "a b", "{c:?}");

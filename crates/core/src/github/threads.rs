@@ -9,6 +9,7 @@ use marshell_protocol::api::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use super::actions::valid_node_id;
 use super::gh::{self, GhError};
 use super::remote::RemoteRepo;
 use super::{hides, plain};
@@ -26,6 +27,8 @@ pub const THREADS_QUERY: &str = "query($o:String!,$n:String!,$num:Int!){viewer{l
 
 /// How many times the structure of a body is read again, at most, when reading it changed the text.
 const PASSES: usize = 8;
+/// The most bytes of an `<img` tag that are read; a longer one stays as written.
+const TAG_MAX: usize = 4096;
 
 /// The JSON body of the call: the query, and `owner`, `name` and the number as variables.
 pub fn threads_body(repo: &RemoteRepo, number: u32) -> Value {
@@ -197,10 +200,17 @@ fn pictures(line: &str, removed: &mut bool) -> String {
         let at = from + found;
         from = at + 1;
         let tail = &line[at..];
-        if tail.len() >= 4
-            && tail.as_bytes()[1..4].eq_ignore_ascii_case(b"img")
-            && tail[4..].chars().next().is_some_and(char::is_whitespace)
-            && let Some(end) = tail[4..].find('>')
+        if tail.len() < 4
+            || !tail.as_bytes()[1..4].eq_ignore_ascii_case(b"img")
+            || !tail[4..].chars().next().is_some_and(char::is_whitespace)
+        {
+            continue;
+        }
+        // With no `>` left on the line, no later tag ends either.
+        let Some(end) = tail[4..].find('>') else {
+            break;
+        };
+        if end <= TAG_MAX
             && let Some((pic, unseen)) = picture(&tail[4..4 + end])
         {
             out.push_str(&line[copied..at]);
@@ -509,10 +519,10 @@ struct IssueCommentNode {
     author: Option<Author>,
 }
 
-/// A node id GitHub sent, kept only when it is plain: it is shown, and sent back to GitHub as it came.
+/// A node id GitHub sent, kept only when it is one the saved picks and the action routes take: it is saved with a
+/// session, and sent back to GitHub as it came.
 fn safe_id(id: Option<&str>) -> Option<String> {
-    let id = id?;
-    (!id.is_empty() && !id.chars().any(char::is_whitespace) && plain(id, 200) == id).then(|| id.to_string())
+    id.filter(|id| valid_node_id(id)).map(str::to_string)
 }
 
 /// The author's name as shown (`ghost` when GitHub sent none), and whether it is a bot.
@@ -910,6 +920,18 @@ mod tests {
 
     // Input the brief doesn't name.
 
+    /// A tag past `TAG_MAX` bytes is never parsed, so a body of thousands of opened tags can't cost a parse each.
+    #[test]
+    fn clean_body_leaves_a_picture_tag_that_is_too_long() {
+        let long = format!(
+            "<img src=\"https://example.com/b.png\" alt=\"{}\">",
+            "a".repeat(TAG_MAX)
+        );
+        is(&long, &long, false, false);
+        let fits = format!("<img src=\"https://example.com/b.png\" title=\"{}\">", "a".repeat(1000));
+        is(&fits, "![](https://example.com/b.png)", true, false);
+    }
+
     #[test]
     fn clean_body_leaves_a_picture_tag_that_never_ends() {
         for t in [
@@ -1289,6 +1311,26 @@ mod tests {
         let read = read_of(&answer, 1).unwrap();
         assert_eq!(read.roots, [("T1".to_string(), 5)]);
         assert_eq!(read.threads.more_threads, 0);
+    }
+
+    /// An id is kept only when it is one the saved picks and the action routes take.
+    #[test]
+    fn an_id_that_isnt_a_node_id_is_dropped() {
+        let comment = json!({"databaseId": 5, "author": {"login": "a", "__typename": "User"}, "body": "b", "createdAt": "2026-11-23T20:25:06Z", "url": "https://github.com/x", "state": "SUBMITTED", "isMinimized": false, "diffHunk": ""});
+        let thread = |id: &str| json!({"id": id, "path": "a.txt", "line": 1, "comments": {"totalCount": 1, "nodes": [comment.clone()]}});
+        let note = |id: &str| json!({"id": id, "body": "b", "url": "https://github.com/x", "createdAt": "2026-11-23T20:25:06Z", "isMinimized": false, "author": {"login": "a", "__typename": "User"}});
+        let long = "a".repeat(101);
+        let answer = json!({"data": {"repository": {"pullRequest": {"id": "PR_x",
+            "reviewThreads": {"totalCount": 4, "nodes": [thread("PRRT_kw-DO=1"), thread("T/2"), thread("T.3"), thread(&long)]},
+            "comments": {"totalCount": 2, "nodes": [note("IC_1"), note("IC:2")]}}}}});
+        let read = read_of(&answer, 1).unwrap();
+        assert_eq!(read.roots, [("PRRT_kw-DO=1".to_string(), 5)]);
+        assert_eq!(
+            read.threads.notes.iter().map(|n| n.id.as_str()).collect::<Vec<_>>(),
+            ["IC_1"]
+        );
+        let odd = json!({"data": {"repository": {"pullRequest": {"id": "PR x"}}}});
+        assert_eq!(read_of(&odd, 1), Err(GhError::Unreadable));
     }
 
     #[test]
