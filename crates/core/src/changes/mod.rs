@@ -433,14 +433,16 @@ fn build_reply(
         })
         .collect();
     for path in &check.new_files {
-        let note = untracked_note(checkout, path);
-        // The sections go in the order of the list, and stop at the first that doesn't fit.
+        // The sections go in the order of the list, and stop at the first that doesn't fit. A file past the
+        // cut has no section and no note: that is how the panel tells it was left out.
+        let mut note = None;
         if !truncated {
             let section = untracked_diff(checkout, path);
             if patch.len() + section.len() > MAX_DIFF {
                 truncated = true;
             } else {
                 patch.push_str(&section);
+                note = untracked_note(checkout, path);
             }
         }
         files.push(DiffFile {
@@ -896,6 +898,31 @@ mod tests {
         );
         assert!(reply.diff.contains("+small\n"));
         assert!(!reply.diff.contains("+line\n"));
+    }
+
+    /// The panel tells the files a cut leaves out by their having no section and no note, so a new file past
+    /// the cut has no note either.
+    #[test]
+    fn a_new_file_past_the_cut_has_no_note() {
+        let scratch = Scratch::new();
+        repo_with_commit(&scratch);
+        // 18 new files of 250,000 bytes each pass 4 MiB; `zz.bin` comes last and is over the new-file cap.
+        let text = format!("{}\n", "x".repeat(99)).repeat(2_500);
+        for i in 0..18 {
+            write(&scratch.repo.join(format!("big{i:02}.txt")), &text);
+        }
+        write(&scratch.repo.join("zz.bin"), &"y".repeat(300_000));
+
+        let cache = ChangesCache::new();
+        let reply = read_of(&cache, &scratch, false);
+        assert!(reply.truncated);
+        let last = reply.files.last().unwrap();
+        assert_eq!(last.path, "zz.bin");
+        assert_eq!(last.note, None, "a file past the cut has a note");
+        for f in reply.files.iter().filter(|f| f.note.is_some()) {
+            let header = format!("diff --git a/{0} b/{0}\n", f.path);
+            assert!(reply.diff.contains(&header), "{} has a note and no section", f.path);
+        }
     }
 
     #[test]
