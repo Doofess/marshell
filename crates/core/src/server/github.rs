@@ -9,20 +9,24 @@
 use super::AppState;
 use super::changes::{CancelOnDrop, changes_target, with_bases};
 use super::files::row_of;
-use crate::changes::{CHECK_BUDGET, ChangesError, Check, READ_BUDGET, Target};
+use crate::changes::{CHECK_BUDGET, ChangesError, Check, READ_BUDGET, Target, uncommitted_files};
 use crate::gitbox::refs;
 use crate::github::gh::{self, GhError};
+use crate::github::plan::{body_of, outgoing, refusal, refusal_for, title_of};
 use crate::github::query::status_args;
 use crate::github::remote::{RemoteRepo, fetch_repo, push_repo};
 use crate::github::status::{Candidate, NEXT_IDLE_MS, Snapshot, snapshot_of};
+use crate::github::template::pull_template;
 use crate::github::{
-    Failure, Flight, Local, Outcome, Take, compare_url, failure_of, in_history, local_counts, valid_branch,
+    Failure, Flight, Local, Outcome, Take, compare_url, failure_of, has_commit, in_history, local_counts, valid_branch,
 };
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use marshell_protocol::api::{GithubKind, GithubReply, GithubRequest, PullState, PullStatus};
+use marshell_protocol::api::{
+    GithubKind, GithubReply, GithubRequest, OutgoingCommit, PullState, PullStatus, PushPlan, PushPlanRequest,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -37,9 +41,23 @@ struct Ctx {
     branch: String,
 }
 
+/// A checkout on a repository GitHub has, that is on no branch Marshell can name.
+struct Headless {
+    reply: GithubReply,
+    /// HEAD's commit id, when it has one.
+    head: String,
+    /// HEAD is on no branch (detached), as opposed to a branch whose name `valid_branch` refuses.
+    detached: bool,
+    /// The refused name, as git has it.
+    name: Option<String>,
+    moved: bool,
+}
+
 /// Either the answer already, or what is needed to ask for it.
 enum Early {
     Reply(Box<GithubReply>),
+    /// The answer, and what the push plan says about why there is no branch.
+    Headless(Box<Headless>),
     Go(Box<Ctx>),
 }
 
@@ -126,7 +144,8 @@ fn prepare(
         Some(host) => host,
         None => return reply(bare(GithubKind::None)),
     };
-    let branch = check.head.branch.clone().filter(|b| valid_branch(b));
+    let named = check.head.branch.clone();
+    let branch = named.clone().filter(|b| valid_branch(b));
     let ctx = |gh: PathBuf, branch: String| Ctx {
         target: target.clone(),
         repo: repo.clone(),
@@ -145,10 +164,16 @@ fn prepare(
         Some(branch) => Early::Go(Box::new(ctx(gh, branch))),
         None => {
             let ctx = ctx(gh, String::new());
-            reply(GithubReply {
-                branch: None,
-                ..about(GithubKind::None, &ctx)
-            })
+            Early::Headless(Box::new(Headless {
+                reply: GithubReply {
+                    branch: None,
+                    ..about(GithubKind::None, &ctx)
+                },
+                head: check.head_oid.clone().unwrap_or_default(),
+                detached: named.is_none(),
+                name: named,
+                moved: ctx.target.moved,
+            }))
         }
     }
 }
@@ -224,6 +249,18 @@ struct Counted {
     pull: Option<PullStatus>,
     closed: Option<u32>,
     local: Local,
+    plan: Gathered,
+}
+
+/// What a push plan needs of the checkout besides the reply, read in the same look at it. Empty when nothing is asked
+/// for, and where it can't be counted.
+#[derive(Default)]
+struct Gathered {
+    /// HEAD's commit id, when it has one.
+    head: String,
+    commits: Vec<OutgoingCommit>,
+    more: u32,
+    uncommitted: u32,
 }
 
 /// Step 7: the first open or draft pull request; else the newest merged or closed one whose head is in the branch's
@@ -252,26 +289,33 @@ fn choose(
 
 /// Steps 6 to 12: the reply for a snapshot. Blocking.
 fn finish(st: &AppState, ctx: &Ctx, outcome: Outcome, cancel: &AtomicBool) -> GithubReply {
+    finish_with(st, ctx, outcome, cancel, false).0
+}
+
+/// `finish`, and with `plan` what a push plan needs, read in the same look at the checkout as the reply's counts.
+fn finish_with(st: &AppState, ctx: &Ctx, outcome: Outcome, cancel: &AtomicBool, plan: bool) -> (GithubReply, Gathered) {
     let checkout = &ctx.target.checkout;
     let snapshot: Snapshot = match outcome {
         Ok(snapshot) => snapshot,
         Err(failure) => {
-            return GithubReply {
+            let reply = GithubReply {
                 reason: failure.reason,
                 next_ms: failure.next_ms,
                 ..about(failure.kind, ctx)
             };
+            return (reply, Gathered::default());
         }
     };
     if snapshot.default_branch.as_deref() == Some(ctx.branch.as_str()) {
         if st.github().note_pull(checkout, &ctx.branch, None, None) {
             st.changes().forget(checkout);
         }
-        return GithubReply {
+        let reply = GithubReply {
             default_branch: snapshot.default_branch.clone(),
             next_ms: snapshot.next_ms,
             ..about(GithubKind::DefaultBranch, ctx)
         };
+        return (reply, Gathered::default());
     }
 
     let counted = st.changes().with_box(
@@ -304,13 +348,35 @@ fn finish(st: &AppState, ctx: &Ctx, outcome: Outcome, cancel: &AtomicBool) -> Gi
                 snapshot.branch_oid.as_deref(),
                 base_oid.as_ref().map(refs::Oid::as_str),
             )?;
-            Ok(Some((Counted { pull, closed, local }, check.origin.clone())))
+            let mut gathered = Gathered::default();
+            if plan && let Some(head) = &check.head_oid {
+                gathered.head = head.clone();
+                // The commits `to_push` counted: from GitHub's commit for the branch when it is here, else from the
+                // base the branch was counted from. With neither, none are listed.
+                let from = match snapshot.branch_oid.as_deref().and_then(refs::Oid::parse) {
+                    Some(branch) => has_commit(git, &branch)?.then_some(branch),
+                    None => base_oid,
+                };
+                if let Some(from) = from {
+                    (gathered.commits, gathered.more) = outgoing(git, from.as_str(), head)?;
+                }
+                gathered.uncommitted = uncommitted_files(git, check, Instant::now() + READ_BUDGET, cancel)?;
+            }
+            Ok(Some((
+                Counted {
+                    pull,
+                    closed,
+                    local,
+                    plan: gathered,
+                },
+                check.origin.clone(),
+            )))
         },
     );
     let (counted, origin) = match counted {
         Ok(Some(found)) => found,
-        Ok(None) => return about(GithubKind::None, ctx),
-        Err(e) => return none_for(e),
+        Ok(None) => return (about(GithubKind::None, ctx), Gathered::default()),
+        Err(e) => return (none_for(e), Gathered::default()),
     };
 
     let open_base = counted
@@ -323,7 +389,7 @@ fn finish(st: &AppState, ctx: &Ctx, outcome: Outcome, cancel: &AtomicBool) -> Gi
         st.changes().forget(checkout);
     }
     let blocked = !matches!(push_repo(&origin), Ok(ref pushes) if *pushes == ctx.repo);
-    GithubReply {
+    let reply = GithubReply {
         default_branch: snapshot.default_branch.clone(),
         compare_url: compare_url(
             &ctx.host,
@@ -350,7 +416,8 @@ fn finish(st: &AppState, ctx: &Ctx, outcome: Outcome, cancel: &AtomicBool) -> Gi
         }),
         next_ms: snapshot.next_ms,
         ..about(GithubKind::Ready, ctx)
-    }
+    };
+    (reply, counted.plan)
 }
 
 /// POST /v1/sessions/{tab}/github. 404 for a tab that doesn't exist; every other case is an answer.
@@ -365,6 +432,7 @@ pub async fn github(State(st): State<AppState>, Path(tab): Path<String>, Json(re
         let (state, cancel) = (st.clone(), cancel.clone());
         match tokio::task::spawn_blocking(move || prepare(&state, &row, reported, &cancel)).await {
             Ok(Early::Reply(reply)) => return Json(*reply).into_response(),
+            Ok(Early::Headless(headless)) => return Json(headless.reply).into_response(),
             Ok(Early::Go(ctx)) => Arc::new(*ctx),
             Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
@@ -373,6 +441,97 @@ pub async fn github(State(st): State<AppState>, Path(tab): Path<String>, Json(re
     let state = st.clone();
     match tokio::task::spawn_blocking(move || finish(&state, &ctx, outcome, &cancel)).await {
         Ok(reply) => Json(reply).into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+/// The plan for a checkout that is on no branch Marshell can name.
+fn headless_plan(h: Headless) -> PushPlan {
+    let named = GithubReply {
+        branch: h.name,
+        ..h.reply.clone()
+    };
+    PushPlan {
+        checkout: h.reply.checkout,
+        branch: String::new(),
+        head: h.head,
+        moved: h.moved,
+        on_github: false,
+        to_push: 0,
+        commits: Vec::new(),
+        more: 0,
+        uncommitted: 0,
+        base: String::new(),
+        title: String::new(),
+        body: String::new(),
+        refusal: refusal(&named, h.detached),
+    }
+}
+
+/// The plan for a reply from a checkout on a branch. Blocking: it reads the pull request template.
+fn plan_of(reply: GithubReply, gathered: Gathered, moved: bool, create: bool) -> PushPlan {
+    let branch = reply.branch.clone().unwrap_or_default();
+    let open_base = reply
+        .pull
+        .as_ref()
+        .filter(|p| matches!(p.state, PullState::Open | PullState::Draft))
+        .map(|p| p.base.clone());
+    let template = (reply.kind == GithubKind::Ready)
+        .then(|| pull_template(std::path::Path::new(&reply.checkout)))
+        .flatten();
+    PushPlan {
+        refusal: refusal_for(&reply, false, create),
+        title: title_of(&gathered.commits, &branch),
+        body: body_of(template, &gathered.commits),
+        base: open_base.or(reply.default_branch.clone()).unwrap_or_default(),
+        checkout: reply.checkout,
+        branch,
+        head: gathered.head,
+        moved,
+        on_github: reply.on_github,
+        to_push: reply.to_push,
+        commits: gathered.commits,
+        more: gathered.more,
+        uncommitted: gathered.uncommitted,
+    }
+}
+
+/// POST /v1/sessions/{tab}/github/plan: what a push (or, with `create`, a push and a new pull request) would send
+/// and say, and why Marshell will not, from the reply the bar has and the checkout. It uses what GitHub last said and
+/// asks only when nothing is kept. 404 for a tab that does not exist; every other case is an answer.
+pub async fn plan(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<PushPlanRequest>) -> Response {
+    let reported = st.session(&tab).and_then(|s| s.current_cwd());
+    let Some(row) = row_of(&st, &tab) else {
+        return (StatusCode::NOT_FOUND, "There is no such session.").into_response();
+    };
+    let cancel = Arc::new(AtomicBool::new(false));
+    let _stop = CancelOnDrop(cancel.clone());
+    let ctx = {
+        let (state, cancel) = (st.clone(), cancel.clone());
+        match tokio::task::spawn_blocking(move || prepare(&state, &row, reported, &cancel)).await {
+            Ok(Early::Reply(reply)) => {
+                let (reply, create) = (*reply, req.create);
+                let done =
+                    tokio::task::spawn_blocking(move || plan_of(reply, Gathered::default(), false, create)).await;
+                return match done {
+                    Ok(plan) => Json(plan).into_response(),
+                    Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                };
+            }
+            Ok(Early::Headless(headless)) => return Json(headless_plan(*headless)).into_response(),
+            Ok(Early::Go(ctx)) => Arc::new(*ctx),
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
+    };
+    let outcome = snapshot(&st, &ctx, false).await;
+    let state = st.clone();
+    let created = tokio::task::spawn_blocking(move || {
+        let (reply, gathered) = finish_with(&state, &ctx, outcome, &cancel, true);
+        plan_of(reply, gathered, ctx.target.moved, req.create)
+    })
+    .await;
+    match created {
+        Ok(plan) => Json(plan).into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }

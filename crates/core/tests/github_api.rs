@@ -122,6 +122,12 @@ impl Scratch {
 
     /// Plain git in the repository that never reads the person's own config or inherited `GIT_*` variables.
     fn git(&self, args: &[&str]) -> String {
+        self.git_input(args, "")
+    }
+
+    /// `git` with `input` on its standard input.
+    fn git_input(&self, args: &[&str], input: &str) -> String {
+        use std::io::Write;
         let mut cmd = std::process::Command::new("git");
         cmd.current_dir(&self.repo)
             .args([
@@ -141,13 +147,43 @@ impl Scratch {
         cmd.env("GIT_CONFIG_GLOBAL", self.root.join("empty.gitconfig"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_TERMINAL_PROMPT", "0");
-        let out = cmd.output().expect("git runs");
+        cmd.stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child = cmd.spawn().expect("git runs");
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(input.as_bytes()).unwrap();
+        drop(stdin);
+        let out = child.wait_with_output().unwrap();
         assert!(
             out.status.success(),
             "git {args:?} failed: {}",
             String::from_utf8_lossy(&out.stderr)
         );
         String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    /// `count` empty commits `c001`, `c002`... on the branch `name`, which starts at `from` (one `git fast-import`).
+    fn many_commits(&self, name: &str, from: &str, count: usize) {
+        let mut script = String::new();
+        // After the commit they follow: git walks by date, and a child older than its parent confuses it.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        for n in 1..=count {
+            let subject = format!("c{n:03}");
+            script.push_str(&format!(
+                "commit refs/heads/{name}\ncommitter T <t@example.invalid> {} +0000\ndata {}\n{subject}\n",
+                now + n as u64,
+                subject.len()
+            ));
+            if n == 1 {
+                script.push_str(&format!("from {from}\n"));
+            }
+            script.push('\n');
+        }
+        self.git_input(&["fast-import", "--quiet"], &script);
     }
 
     /// A commit that adds a file named after `message`; returns its id.
@@ -730,6 +766,216 @@ async fn github_route_needs_the_token() {
             "POST",
             &format!("/v1/sessions/{tab}/github"),
             Some(json!({"fresh": true})),
+            false,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    assert!(!scratch.home().join("gh").join("calls.jsonl").exists());
+}
+
+async fn plan(app: &axum::Router, tab: &str, create: bool) -> Value {
+    let res = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            &format!("/v1/sessions/{tab}/github/plan"),
+            Some(json!({"create": create})),
+            true,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    json_of(res).await
+}
+
+fn subjects(plan: &Value) -> Vec<String> {
+    plan["commits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["subject"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[tokio::test]
+async fn plan_lists_commits_newest_first_and_counts_the_rest() {
+    let scratch = Scratch::new("https://github.com/octo-org/widgets.git");
+    scratch.git(&["switch", "-q", "-c", "feat/login"]);
+    let on_github = scratch.commit("second");
+    scratch.many_commits("feat/login", &on_github, 103);
+    let head = scratch.git(&["rev-parse", "HEAD"]);
+    scratch.script(json!([status(&answer_at(OPEN_FAILING, &on_github))]));
+    let (app, tab) = open(&state_with_gh(&scratch), &scratch).await;
+    let got = plan(&app, &tab, false).await;
+    assert_eq!(got["refusal"], Value::Null, "{got}");
+    assert_eq!(got["head"], head.as_str());
+    assert_eq!(got["to_push"], 103);
+    let listed = subjects(&got);
+    assert_eq!(listed.len(), 100, "{got}");
+    assert_eq!(listed[0], "c103");
+    assert_eq!(listed[99], "c004");
+    assert_eq!(got["more"], 3);
+    assert_eq!(got["commits"][0]["id"], head[..7]);
+    assert_eq!(got["checkout"], scratch.repo.to_string_lossy().as_ref());
+    assert_eq!(got["branch"], "feat/login");
+    assert_eq!(got["on_github"], true);
+    assert_eq!(got["moved"], false);
+    // A plan asks GitHub only when nothing is kept.
+    assert_eq!(scratch.status_calls(), 1);
+    plan(&app, &tab, false).await;
+    assert_eq!(scratch.status_calls(), 1);
+}
+
+#[tokio::test]
+async fn plan_title_is_the_only_subject_else_the_branch() {
+    let scratch = Scratch::new("https://github.com/octo-org/widgets.git");
+    let base = scratch.git(&["rev-parse", "HEAD"]);
+    scratch.git(&["update-ref", "refs/remotes/origin/main", &base]);
+    scratch.git(&["switch", "-q", "-c", "feat/login"]);
+    scratch.commit("Add the login form");
+    scratch.script(json!([status(&answer(NO_BRANCH, |_| {}))]));
+    let state = state_with_gh(&scratch);
+    let (app, tab) = open(&state, &scratch).await;
+    let got = plan(&app, &tab, true).await;
+    assert_eq!(got["on_github"], false);
+    assert_eq!(subjects(&got), ["Add the login form"]);
+    assert_eq!(got["title"], "Add the login form");
+    assert_eq!(got["base"], "main");
+
+    scratch.commit("Check the password");
+    tokio::time::sleep(Duration::from_millis(1_200)).await;
+    let got = plan(&app, &tab, true).await;
+    assert_eq!(got["to_push"], 2);
+    assert_eq!(got["title"], "feat/login");
+}
+
+#[tokio::test]
+async fn plan_body_is_the_template_else_the_subjects() {
+    let scratch = Scratch::new("https://github.com/octo-org/widgets.git");
+    let base = scratch.git(&["rev-parse", "HEAD"]);
+    scratch.git(&["update-ref", "refs/remotes/origin/main", &base]);
+    scratch.git(&["switch", "-q", "-c", "feat/login"]);
+    scratch.commit("Add the form");
+    scratch.commit("Check the password");
+    scratch.script(json!([status(&answer(NO_BRANCH, |_| {}))]));
+    let (app, tab) = open(&state_with_gh(&scratch), &scratch).await;
+    let got = plan(&app, &tab, true).await;
+    assert_eq!(got["body"], "- Add the form\n- Check the password");
+
+    let dir = scratch.repo.join(".github");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("PULL_REQUEST_TEMPLATE.md"), "## What\r\n\r\n## Why\n").unwrap();
+    let got = plan(&app, &tab, true).await;
+    assert_eq!(got["body"], "## What\r\n\r\n## Why\n");
+    assert_eq!(got["title"], "feat/login");
+}
+
+#[tokio::test]
+async fn plan_counts_uncommitted_and_new_files() {
+    let scratch = Scratch::new("https://github.com/octo-org/widgets.git");
+    scratch.git(&["switch", "-q", "-c", "feat/login"]);
+    let on_github = scratch.commit("second");
+    scratch.script(json!([status(&answer_at(OPEN_FAILING, &on_github))]));
+    let (app, tab) = open(&state_with_gh(&scratch), &scratch).await;
+    let got = plan(&app, &tab, false).await;
+    assert_eq!(got["uncommitted"], 0, "{got}");
+    assert_eq!(got["to_push"], 0);
+    assert_eq!(got["commits"], json!([]));
+
+    std::fs::write(scratch.repo.join("first.txt"), "changed").unwrap();
+    std::fs::write(scratch.repo.join("staged.txt"), "staged").unwrap();
+    scratch.git(&["add", "staged.txt"]);
+    std::fs::write(scratch.repo.join("new-one.txt"), "n1").unwrap();
+    std::fs::write(scratch.repo.join("new-two.txt"), "n2").unwrap();
+    // The look at the checkout is reused for a moment; wait it out.
+    tokio::time::sleep(Duration::from_millis(1_200)).await;
+    let got = plan(&app, &tab, false).await;
+    assert_eq!(got["uncommitted"], 4, "{got}");
+}
+
+#[tokio::test]
+async fn plan_refuses_a_detached_head_and_the_default_branch() {
+    let scratch = Scratch::new("https://github.com/octo-org/widgets.git");
+    scratch.script(json!([status(&answer(NO_PULL, |_| {}))]));
+    let (app, tab) = open(&state_with_gh(&scratch), &scratch).await;
+    let got = plan(&app, &tab, false).await;
+    assert_eq!(
+        got["refusal"], "main is the default branch on GitHub. Marshell doesn't push it.",
+        "{got}"
+    );
+    assert_eq!(got["commits"], json!([]));
+    assert_eq!(got["branch"], "main");
+
+    let head = scratch.git(&["rev-parse", "HEAD"]);
+    scratch.git(&["switch", "-q", "--detach", "HEAD"]);
+    tokio::time::sleep(Duration::from_millis(1_200)).await;
+    let got = plan(&app, &tab, false).await;
+    assert_eq!(
+        got["refusal"], "This checkout is on no branch, so there is nothing to push.",
+        "{got}"
+    );
+    assert_eq!(got["branch"], "");
+    assert_eq!(got["head"], head.as_str());
+    assert_eq!(got["checkout"], scratch.repo.to_string_lossy().as_ref());
+}
+
+#[tokio::test]
+async fn plan_says_when_github_is_ahead() {
+    let scratch = Scratch::new("https://github.com/octo-org/widgets.git");
+    scratch.git(&["switch", "-q", "-c", "feat/login"]);
+    scratch.commit("second");
+    scratch.script(json!([status(&answer_at(NO_PULL, &"2".repeat(40)))]));
+    let (app, tab) = open(&state_with_gh(&scratch), &scratch).await;
+    let got = plan(&app, &tab, false).await;
+    assert_eq!(
+        got["refusal"], "GitHub's feat/login has commits this checkout doesn't. Pull them in the terminal.",
+        "{got}"
+    );
+    assert_eq!(got["commits"], json!([]));
+}
+
+#[tokio::test]
+async fn plan_refuses_when_origin_pushes_elsewhere() {
+    let scratch = Scratch::new("https://github.com/octo-org/widgets.git");
+    scratch.git(&["switch", "-q", "-c", "feat/login"]);
+    let head = scratch.commit("second");
+    scratch.git(&[
+        "config",
+        "remote.origin.pushurl",
+        "https://github.com/someone-else/widgets.git",
+    ]);
+    scratch.script(json!([status(&answer_at(NO_PULL, &head))]));
+    let (app, tab) = open(&state_with_gh(&scratch), &scratch).await;
+    let got = plan(&app, &tab, false).await;
+    assert_eq!(
+        got["refusal"], "origin pushes somewhere other than octo-org/widgets, so push from the terminal.",
+        "{got}"
+    );
+}
+
+#[tokio::test]
+async fn plan_for_a_create_refuses_a_branch_with_an_open_pull_request_and_bases_on_it() {
+    let scratch = Scratch::new("https://github.com/octo-org/widgets.git");
+    on_a_pull_requests_branch(&scratch, true);
+    let (app, tab) = open(&state_with_gh(&scratch), &scratch).await;
+    let got = plan(&app, &tab, false).await;
+    assert_eq!(got["refusal"], Value::Null, "{got}");
+    assert_eq!(got["base"], "develop");
+    let got = plan(&app, &tab, true).await;
+    assert_eq!(got["refusal"], "This branch already has pull request #7.", "{got}");
+}
+
+#[tokio::test]
+async fn plan_route_needs_the_token() {
+    let scratch = Scratch::new("https://github.com/octo-org/widgets.git");
+    let (app, tab) = open(&state_with_gh(&scratch), &scratch).await;
+    let res = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            &format!("/v1/sessions/{tab}/github/plan"),
+            Some(json!({"create": false})),
             false,
         ))
         .await

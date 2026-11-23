@@ -158,6 +158,41 @@ pub(crate) fn collect(
     }
 }
 
+/// How many files the checkout holds that its head's commit doesn't: the tracked files that differ from it, the staged
+/// ones included (what `build_reply` asks git about for `ChangesReply.uncommitted`), and the new files the check found
+/// (including those past `MAX_NEW_FILES`). A list cut at `MAX_RAW` counts what was read.
+pub(crate) fn uncommitted_files(
+    git: &GitBox,
+    check: &Check,
+    deadline: Instant,
+    cancel: &AtomicBool,
+) -> Result<u32, Halt> {
+    let new = check.new_files.len() + check.more_new as usize;
+    let changed = match &check.head.oid {
+        Some(head) => {
+            let (bytes, _) = collect(
+                git,
+                &[
+                    "diff",
+                    "--raw",
+                    "-z",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--ignore-submodules=all",
+                    head.as_str(),
+                    "--",
+                ],
+                deadline,
+                cancel,
+                MAX_RAW,
+            )?;
+            parse_raw(&bytes).len()
+        }
+        None => check.entries.len(),
+    };
+    Ok(u32::try_from(new + changed).unwrap_or(u32::MAX))
+}
+
 /// A file's length and modified time as it is now, None when it can't be looked at.
 fn stat(path: &Path) -> Option<FileStamp> {
     std::fs::symlink_metadata(path)

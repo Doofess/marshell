@@ -12,7 +12,7 @@ mod doctor_measure;
 mod doctor_usage;
 mod drafts;
 mod events;
-mod files;
+pub(crate) mod files;
 mod fill;
 mod folders;
 mod foreground;
@@ -21,7 +21,7 @@ mod github;
 mod guard;
 mod history;
 mod hook;
-mod ignores;
+pub(crate) mod ignores;
 mod layout;
 mod merge;
 pub mod opens;
@@ -1394,6 +1394,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{tab}/tree", post(tree::tree))
         .route("/v1/sessions/{tab}/changes", post(changes::changes))
         .route("/v1/sessions/{tab}/github", post(github::github))
+        .route("/v1/sessions/{tab}/github/plan", post(github::plan))
         .route("/v1/sessions/{tab}/review", post(changes::review))
         .route("/v1/sessions/{tab}/comments", post(changes::comments))
         .route("/v1/sessions/{tab}/search", post(search::search))

@@ -1,9 +1,11 @@
 //! GitHub, as the Changes panel's pull request bar knows it.
 
 pub mod gh;
+pub mod plan;
 pub mod query;
 pub mod remote;
 pub mod status;
+pub mod template;
 
 use crate::changes::{Check, Halt, READ_BUDGET, collect};
 use crate::gitbox::GitBox;
@@ -25,6 +27,8 @@ pub const AUTH_AGE: Duration = Duration::from_secs(10 * 60);
 pub const FRESH_GAP: Duration = Duration::from_secs(3);
 /// The least time to wait before asking again after GitHub's rate limit.
 pub const RATE_MIN_MS: u64 = 60_000;
+/// The most outgoing commits a push plan lists.
+pub const COMMITS_MAX: usize = 100;
 /// The most (checkout, branch) keys kept; a key with an ask in flight is never dropped.
 const MAX_KEYS: usize = 64;
 
