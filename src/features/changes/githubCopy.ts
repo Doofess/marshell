@@ -1,0 +1,85 @@
+import type { CheckState } from "../../generated/CheckState";
+import type { MergeMethod } from "../../generated/MergeMethod";
+import type { Readiness } from "../../generated/Readiness";
+import type { ReviewNeed } from "../../generated/ReviewNeed";
+
+/** Every sentence and label of the pull request bar. Counts agree in number: "1 commit", "3 commits". */
+const n = (v: number) => v.toLocaleString("en-US");
+export const commitCount = (v: number) => `${n(v)} ${v === 1 ? "commit" : "commits"}`;
+
+export const METHOD_LABELS: Record<MergeMethod, string> = {
+  merge: "Create a merge commit",
+  squash: "Squash and merge",
+  rebase: "Rebase and merge",
+};
+/** The Merge button's own words for each method. */
+export const METHOD_BUTTONS: Record<MergeMethod, string> = { merge: "Merge", squash: "Squash and merge", rebase: "Rebase and merge" };
+
+export const REVIEW_LABELS: Record<Exclude<ReviewNeed, "none">, string> = { required: "Review required", changes_requested: "Changes requested", approved: "Approved" };
+
+/** The words of a check state in a summary, in the order the summary reads them. A neutral check counts as passed. */
+export const SUMMARY_ORDER: readonly { word: string; states: readonly CheckState[] }[] = [
+  { word: "passed", states: ["passed", "neutral"] },
+  { word: "failed", states: ["failed"] },
+  { word: "cancelled", states: ["cancelled"] },
+  { word: "running", states: ["running"] },
+  { word: "waiting", states: ["waiting"] },
+  { word: "skipped", states: ["skipped"] },
+];
+
+export const githubCopy = {
+  noGh: "Pull requests need the GitHub CLI.",
+  getGh: "Get it",
+  ghUrl: "https://cli.github.com",
+  signedOut: "Pull requests need a GitHub sign-in. Run `gh auth login` in a terminal.",
+  signInCommand: "gh auth login",
+  copy: "Copy",
+  copied: "Copied the command.",
+  hide: "Hide",
+  tryAgain: "Try again",
+  unreachable: (reason: string) => `Can't reach GitHub: ${reason}`,
+  unreachableFallback: "no answer.",
+  notFound: (repo: string) => `GitHub has no repository ${repo} that this sign-in can see.`,
+  rateLimited: (time: string) => `GitHub's limit for this sign-in is used up. Marshell asks again at ${time}.`,
+  rateLimitedSoon: "GitHub's limit for this sign-in is used up. Marshell asks again soon.",
+  defaultBranch: (branch: string) => `${branch} is the default branch on GitHub, so it has no pull request.`,
+  noPull: "No pull request",
+  closedPull: (number: number) => `#${number} was closed`,
+  nothingToPush: "Nothing to push",
+  toPush: (v: number) => `${commitCount(v)} to push`,
+  pushButton: (v: number) => `Push ${commitCount(v)}`,
+  notPushedYet: (v: number) => `${commitCount(v)} ${v === 1 ? "isn't" : "aren't"} on GitHub yet. Push ${v === 1 ? "it" : "them"} first.`,
+  create: "Create pull request…",
+  nothingDiffers: (base: string) => `Nothing differs from ${base}.`,
+  askOpen: (agent: string) => `Ask ${agent} to open the pull request`,
+  githubAhead: (branch: string) => `GitHub's ${branch} has commits this checkout doesn't. Pull them in the terminal.`,
+  pushBlocked: (repo: string) => `origin pushes somewhere other than ${repo}, so push from the terminal.`,
+  pushing: (branch: string) => `Pushing ${branch}…`,
+  showOutput: "Show output",
+  pullState: { open: "Open", draft: "Draft", merged: "Merged", closed: "Closed" } as const,
+  ready: "Mark as ready for review",
+  draft: "Convert to draft",
+  mergeWhenChecksPass: "Merge when checks pass",
+  mergesWhenChecksPass: "Merges when checks pass",
+  cancelAutoMerge: "Cancel auto-merge",
+  checking: (num: number) => `GitHub is still checking whether #${num} can merge.`,
+  conflicts: (num: number, base: string) => `#${num} has conflicts with ${base}. Resolve them in the terminal.`,
+  blocked: (num: number) => `GitHub won't merge #${num} yet: a required check or review is missing.`,
+  behind: (branch: string, base: string) => `${branch} must be brought up to date with ${base} first.`,
+  noWrite: (repo: string) => `Your GitHub account can't merge in ${repo}.`,
+  askSwitch: (agent: string, def: string) => `Ask ${agent} to switch to ${def} and pull`,
+  copySwitch: (def: string) => `Copy the commands to switch to ${def} and pull`,
+  fork: (parent: string) => `A fork of ${parent}`,
+  forkLink: (parent: string) => `Open a pull request to ${parent} on GitHub`,
+  mergedLink: (num: number) => `#${num} on GitHub`,
+  openOnGithub: "Open on GitHub",
+  copyLink: "Copy link",
+  noChecks: "No checks",
+  checksSummary: (parts: string) => `Checks: ${parts}`,
+  created: (num: number) => `Pull request #${num} was created.`,
+  checksPassed: (num: number) => `Checks passed on #${num}.`,
+  checkFailed: (num: number, name: string) => `A check failed on #${num}: ${name}.`,
+  merged: (num: number) => `#${num} was merged.`,
+};
+
+export type { Readiness };
