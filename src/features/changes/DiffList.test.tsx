@@ -15,7 +15,7 @@ const B = file("b.ts", ["hunk", "del", "add"]);
 const items: Item[] = itemsOf([A, B], [], new Map());
 
 const draw = (list: Item[], o: { focus?: number; range?: { from: number; to: number } | null; wrap?: boolean } = {}) =>
-  renderToStaticMarkup(<DiffList items={list} focus={o.focus ?? 0} range={o.range ?? null} wrap={o.wrap ?? false} onKey={() => {}} onClickItem={() => {}} onOpenItem={() => {}} />);
+  renderToStaticMarkup(<DiffList items={list} focus={o.focus ?? 0} range={o.range ?? null} wrap={o.wrap ?? false} onKey={() => {}} onClickItem={() => {}} onOpenItem={() => {}} onMenuItem={() => {}} />);
 
 describe("DiffList", () => {
   it("is one tree with one tab stop", () => {

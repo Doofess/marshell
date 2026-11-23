@@ -1250,8 +1250,8 @@ export function LiveApp() {
   // The Files menu (the strip's ⋯ button), the Files panel's handle and the Files settings (Settings → Files writes the same values).
   const [filesMenu, setFilesMenu] = useState<{ anchor: { x: number; y: number }; opener: HTMLElement } | null>(null);
   const filesPanel = useRef<FilesPanelHandle | null>(null);
-  // The Changes menu (its ⋯ button) has no items until Task 11b, so it opens nothing yet; the strip's title is the panel's summary.
-  const [, setChangesMenu] = useState<{ anchor: { x: number; y: number }; opener: HTMLElement } | null>(null);
+  // The Changes menu (its ⋯ button): the panel draws it, since it holds the settings, the files and the refresh. The strip's title is the panel's summary.
+  const [changesMenu, setChangesMenu] = useState<{ anchor: { x: number; y: number }; opener: HTMLElement } | null>(null);
   const [changesSummary, setChangesSummary] = useState("Changes");
   const { settings: filesSettings, failed: filesSettingsFailed, set: setFilesSetting } = useFilesSettings();
   const filesPrefs = useMemo(() => editorPrefsOf(filesSettings), [filesSettings]);
@@ -2355,6 +2355,8 @@ export function LiveApp() {
               onReview={() => {}}
               announce={announce}
               onSummary={setChangesSummary}
+              menu={changesMenu}
+              onMenuClose={() => setChangesMenu(null)}
             />
           ) : (
             <EmptyPanel icon={ChangesIcon} title={changesCopy.emptyFailed("").title} line={NO_FOLDER_LINE} actions={[]} />

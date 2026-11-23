@@ -1,14 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ContextMenu } from "../../components/ContextMenu/ContextMenu";
 import type { ChangesDrafts } from "../../generated/ChangesDrafts";
 import type { ChangesReply } from "../../generated/ChangesReply";
 import { NO_FOLDER_LINE } from "../files/FileTree";
 import { absoluteOf } from "../files/treeModel";
 import { ChangesIcon, EmptyPanel } from "../pane/EmptyPanel";
 import { type ItemRange, DiffList, type ListResult, reach } from "./DiffList";
+import { type ChangesChoice, changesChoice, changesMenuItems, headerMenuItems, lineMenuItems, openLineOf, settingLabel } from "./changesMenu";
 import { type Placement, place } from "./comments";
 import { copy } from "./copy";
-import { type Item, cutFiles, itemsOf, sectionsOf } from "./model";
+import { type Item, type Row, type Section, cutFiles, itemsOf, sectionsOf } from "./model";
+import { reviewLabel } from "./review";
 import { useChanges } from "./useChanges";
+import { useDiffColours } from "./useDiffColours";
 import { useChangesSettings } from "./changesSettings";
 import "./ChangesPanel.css";
 
@@ -26,6 +30,9 @@ export type ChangesPanelProps = {
   announce(text: string): void;
   /** The strip's title: "4 files · +120 −18", or "Changes" while there is nothing to count. */
   onSummary(text: string): void;
+  /** The strip's ⋯ menu while it is open: where it opened and the button to give the focus back to. */
+  menu: { anchor: { x: number; y: number }; opener: HTMLElement } | null;
+  onMenuClose(): void;
 };
 
 export { listKey } from "./DiffList";
@@ -69,7 +76,7 @@ export function noticesOf(reply: ChangesReply): string[] {
 type Keys = { focus: string | null; range: { from: string; to: string } | null };
 
 export function ChangesPanel(p: ChangesPanelProps) {
-  const { settings } = useChangesSettings();
+  const { settings, failed, set: setSetting } = useChangesSettings();
   const hide = settings?.hide_whitespace ?? false;
   const wrap = settings?.wrap ?? false;
   const { reply, noFolder, refresh } = useChanges({ session: p.session, shown: p.shown, hideWhitespace: hide });
@@ -82,6 +89,11 @@ export function ChangesPanel(p: ChangesPanelProps) {
     const placements = new Map<string, Placement>(comments.map((c) => [c.id, place(c, sections.find((s) => s.path === c.path))]));
     return itemsOf(sections, comments, placements);
   }, [sections, drafts]);
+
+  const colours = useDiffColours(sections);
+  const box = useRef<HTMLDivElement>(null);
+  // The menu of an item (by its key, so a poll that moves rows keeps it) and the element to give the focus back to.
+  const [itemMenu, setItemMenu] = useState<{ key: string; anchor: { x: number; y: number }; opener: HTMLElement | null } | null>(null);
 
   const [keys, setKeys] = useState<Keys>({ focus: null, range: null });
   const found = keys.focus === null ? -1 : items.findIndex((i) => i.key === keys.focus);
@@ -120,7 +132,12 @@ export function ChangesPanel(p: ChangesPanelProps) {
     }
     if (r.fold !== undefined) fold(r.fold, true);
     if (r.unfold !== undefined) fold(r.unfold, false);
-    // r.open: "comment" is Task 12's box and "menu" is Task 11b's menu.
+    // r.open: "comment" is Task 12's box.
+    if (r.open === "menu") {
+      const el = box.current?.querySelector<HTMLElement>(`[data-changes-index="${r.focus}"]`) ?? null;
+      const at = el?.getBoundingClientRect();
+      openItemMenu(target, at ? { x: at.left + 24, y: at.bottom } : { x: 0, y: 0 }, el);
+    }
     if (r.escape) p.onEscape();
   };
 
@@ -140,21 +157,121 @@ export function ChangesPanel(p: ChangesPanelProps) {
     else if (item.kind === "show") fold(item.file.path, false);
   };
 
+  const absolute = (file: Section) => (listed ? absoluteOf(listed.folder, file.path, listed.folder.includes("\\")) : file.path);
+  const openFile = (file: Section, line: number | undefined) => p.onOpen({ path: absolute(file), ...(line === undefined ? {} : { line }), keep: true });
   const onOpenItem = (index: number) => {
     const item = items[index];
     if (item === undefined || !listed || item.kind === "comment" || item.kind === "note" || item.kind === "show") return;
-    const windows = listed.folder.includes("\\");
-    const path = absoluteOf(listed.folder, item.file.path, windows);
-    const line = item.kind === "row" ? (item.file.rows[item.at]?.newNo ?? undefined) : undefined;
-    p.onOpen({ path, ...(line === undefined ? {} : { line }), keep: true });
+    openFile(item.file, item.kind === "row" ? (item.file.rows[item.at]?.newNo ?? undefined) : undefined);
   };
 
-  if (!listed || sections.length === 0) return <ChangesEmpty reply={reply} noFolder={noFolder} onRetry={refresh} />;
+  // Menus: a header and a row have one each; the strip's ⋯ menu comes from the app as `p.menu`.
+  const openItemMenu = (item: Item | undefined, anchor: { x: number; y: number }, opener: HTMLElement | null) => {
+    if (item?.kind === "file" || item?.kind === "row") setItemMenu({ key: item.key, anchor, opener });
+  };
+  const onMenuItem = (index: number, at: { x: number; y: number }) => {
+    const item = items[index];
+    if (item === undefined) return;
+    setKeys({ focus: item.key, range: null });
+    openItemMenu(item, at, box.current?.querySelector<HTMLElement>(`[data-changes-index="${index}"]`) ?? null);
+  };
+  const menuItem = itemMenu === null ? undefined : items.find((i) => i.key === itemMenu.key);
+  /** The rows a line menu acts on: the range when the item is in it, else the item. A range leaves out hunk headers. */
+  const menuRows = (item: Item): Row[] => {
+    const at = items.indexOf(item);
+    const lo = range === null ? -1 : Math.min(range.from, range.to);
+    const hi = range === null ? -1 : Math.max(range.from, range.to);
+    const held = at >= lo && at <= hi ? items.slice(lo, hi + 1) : [item];
+    return held.flatMap((i) => (i.kind === "row" && (held.length === 1 || i.file.rows[i.at]!.kind !== "hunk") ? [i.file.rows[i.at]!] : []));
+  };
+  const closeItemMenu = (refocus: boolean) => {
+    const m = itemMenu;
+    setItemMenu(null);
+    if (!m || !refocus) return;
+    const index = items.findIndex((i) => i.key === m.key);
+    (m.opener?.isConnected ? m.opener : box.current?.querySelector<HTMLElement>(`[data-changes-index="${index}"]`))?.focus();
+  };
+  const copyText = (text: string, said: string, failedText: string) => void navigator.clipboard.writeText(text).then(() => p.announce(said), () => p.announce(failedText));
+  const runItemMenu = (id: string) => {
+    const item = menuItem;
+    closeItemMenu(true);
+    if (item?.kind === "file") {
+      if (id === "open") openFile(item.file, undefined);
+      else if (id === "fold") fold(item.file.path, !item.file.folded);
+      else if (id === "copy-path") copyText(absolute(item.file), "Copied the path.", "Couldn't copy the path.");
+    } else if (item?.kind === "row") {
+      if (id === "open") openFile(item.file, openLineOf(item.file.rows, item.at));
+      else if (id === "copy") {
+        const rows = menuRows(item);
+        copyText(rows.map((r) => r.text).join("\n"), rows.length === 1 ? "Copied the line." : `Copied ${rows.length} lines.`, "Couldn't copy the lines.");
+      }
+      // "comment" is Task 12's box.
+    }
+  };
+  const foldAll = (folded: boolean) => {
+    if (!listed) return;
+    const all = Object.fromEntries(sections.filter((s) => s.rows.length > 0).map((s) => [s.path, folded]));
+    p.onDrafts({ checkout: listed.folder, base: listed.base, comments: drafts?.comments ?? [], folds: { ...drafts?.folds, ...all } });
+  };
+  const runMenu = (id: string) => {
+    const choice: ChangesChoice | null = changesChoice(id);
+    const opener = p.menu?.opener;
+    p.onMenuClose();
+    opener?.focus();
+    if (choice === null) return;
+    if (choice.kind === "refresh") refresh();
+    else if (choice.kind === "review") p.onReview(listed?.base ?? null);
+    else if (choice.kind === "fold-all") foldAll(true);
+    else if (choice.kind === "unfold-all") foldAll(false);
+    else if (choice.kind === "setting") {
+      const { key } = choice;
+      const on = !(settings?.[key] ?? false);
+      void setSetting({ [key]: on }).then(
+        () => p.announce(`${settingLabel(key)}: ${on ? "on" : "off"}`),
+        () => p.announce("The setting wasn't saved."),
+      );
+    }
+  };
+  const menus = (
+    <>
+      {p.menu && (
+        <ContextMenu
+          label="Changes menu"
+          items={changesMenuItems({ settings, failed, review: p.agent === null ? null : reviewLabel(p.agent, p.agentName), hasFiles: sections.some((s) => s.rows.length > 0) })}
+          anchor={p.menu.anchor}
+          onRun={runMenu}
+          onClose={({ refocus }) => {
+            const opener = p.menu?.opener;
+            p.onMenuClose();
+            if (refocus) opener?.focus();
+          }}
+        />
+      )}
+      {itemMenu && menuItem && (menuItem.kind === "file" || menuItem.kind === "row") && (
+        <ContextMenu
+          label={menuItem.kind === "file" ? "File menu" : "Line menu"}
+          items={menuItem.kind === "file" ? headerMenuItems(menuItem.file) : lineMenuItems(menuItem, menuRows(menuItem).length)}
+          anchor={itemMenu.anchor}
+          onRun={runItemMenu}
+          onClose={({ refocus }) => closeItemMenu(refocus)}
+        />
+      )}
+    </>
+  );
+
+  if (!listed || sections.length === 0) {
+    return (
+      <>
+        <ChangesEmpty reply={reply} noFolder={noFolder} onRetry={refresh} />
+        {menus}
+      </>
+    );
+  }
 
   const line = copy.line({ branch: listed.branch, detached: listed.detached, base: listed.base, ahead: listed.ahead, uncommitted: listed.uncommitted, moved: listed.moved, folder: listed.folder });
   const notices = noticesOf(listed);
   return (
-    <div className="changes">
+    <div className="changes" ref={box}>
       <div className="changes__strip">
         {line !== "" && <p className="changes__line">{line}</p>}
         {notices.map((t) => (
@@ -163,7 +280,8 @@ export function ChangesPanel(p: ChangesPanelProps) {
           </p>
         ))}
       </div>
-      <DiffList items={items} focus={focus} range={range} wrap={wrap} onKey={onKey} onClickItem={onClickItem} onOpenItem={onOpenItem} />
+      <DiffList items={items} focus={focus} range={range} wrap={wrap} onKey={onKey} onClickItem={onClickItem} onOpenItem={onOpenItem} onMenuItem={onMenuItem} colours={colours} />
+      {menus}
     </div>
   );
 }

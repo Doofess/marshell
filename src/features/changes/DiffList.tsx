@@ -1,5 +1,6 @@
-import { type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, useEffect, useRef } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, useEffect, useRef } from "react";
 import { selectedProps } from "../../components/a11y/SelectedMark";
+import type { LineTokens } from "../preview/highlight";
 import { copy } from "./copy";
 import { type Item, type Row, type Section, itemLabel } from "./model";
 import "./ChangesPanel.css";
@@ -141,9 +142,31 @@ type ItemProps = {
   selected: boolean;
   onClick(index: number, e: ReactMouseEvent<HTMLElement>): void;
   onOpen(index: number): void;
+  onMenu(index: number, at: { x: number; y: number }): void;
+  /** The token classes of a row's text, when its section is coloured. */
+  tokens: LineTokens | undefined;
 };
 
-function Entry({ item, index, tabStop, selected, onClick, onOpen }: ItemProps) {
+/** A row's text in spans of the token classes; the text itself when nothing in it is coloured. */
+function Coloured({ text, tokens }: { text: string; tokens: LineTokens | undefined }) {
+  if (!tokens || tokens.length === 0) return <>{text}</>;
+  const parts: ReactNode[] = [];
+  let at = 0;
+  for (const t of tokens) {
+    if (t.from < at || t.to > text.length) continue;
+    if (t.from > at) parts.push(text.slice(at, t.from));
+    parts.push(
+      <span key={t.from} className={t.cls}>
+        {text.slice(t.from, t.to)}
+      </span>,
+    );
+    at = t.to;
+  }
+  if (at < text.length) parts.push(text.slice(at));
+  return <>{parts}</>;
+}
+
+function Entry({ item, index, tabStop, selected, onClick, onOpen, onMenu, tokens }: ItemProps) {
   const common = {
     role: "treeitem",
     "data-changes-item": "",
@@ -153,6 +176,10 @@ function Entry({ item, index, tabStop, selected, onClick, onOpen }: ItemProps) {
     tabIndex: tabStop ? 0 : -1,
     onClick: (e: ReactMouseEvent<HTMLElement>) => onClick(index, e),
     onDoubleClick: () => onOpen(index),
+    onContextMenu: (e: ReactMouseEvent<HTMLElement>) => {
+      e.preventDefault();
+      onMenu(index, { x: e.clientX, y: e.clientY });
+    },
   };
   const mark = (name: string) => selectedProps(selected, "selected", `changes__item ${name}`);
   switch (item.kind) {
@@ -207,7 +234,7 @@ function Entry({ item, index, tabStop, selected, onClick, onOpen }: ItemProps) {
             {SIGN[row.kind]}
           </span>
           <span className="changes__code" aria-hidden="true">
-            {row.text}
+            <Coloured text={row.text} tokens={tokens} />
           </span>
         </div>
       );
@@ -231,10 +258,14 @@ export type DiffListProps = {
   onClickItem(index: number, mods: { shift: boolean }): void;
   /** A double-click: open the file (at the row's line). */
   onOpenItem(index: number): void;
+  /** A right-click on an item, at the pointer. */
+  onMenuItem(index: number, at: { x: number; y: number }): void;
+  /** The token classes of each section's rows, by path. */
+  colours?: Map<string, LineTokens[]>;
 };
 
 /** The whole diff as one tree: a block per file, its rows in blocks of 200, every item a `treeitem`. */
-export function DiffList({ items, focus, range, wrap, onKey, onClickItem, onOpenItem }: DiffListProps) {
+export function DiffList({ items, focus, range, wrap, onKey, onClickItem, onOpenItem, onMenuItem, colours }: DiffListProps) {
   const box = useRef<HTMLDivElement>(null);
   const keyed = useRef(0);
 
@@ -256,20 +287,25 @@ export function DiffList({ items, focus, range, wrap, onKey, onClickItem, onOpen
 
   const lo = range === null ? -1 : Math.min(range.from, range.to);
   const hi = range === null ? -1 : Math.max(range.from, range.to);
-  const entry = (i: number) => (
-    <Entry
-      key={items[i]!.key}
-      item={items[i]!}
-      index={i}
-      tabStop={i === focus}
-      selected={i >= lo && i <= hi && items[i]!.kind === "row"}
-      onClick={(index, e) => {
-        if (e.shiftKey) keyed.current = Date.now();
-        onClickItem(index, { shift: e.shiftKey });
-      }}
-      onOpen={onOpenItem}
-    />
-  );
+  const entry = (i: number) => {
+    const it = items[i]!;
+    return (
+      <Entry
+        key={it.key}
+        item={it}
+        tokens={it.kind === "row" ? colours?.get(it.file.path)?.[it.at] : undefined}
+        onMenu={onMenuItem}
+        index={i}
+        tabStop={i === focus}
+        selected={i >= lo && i <= hi && it.kind === "row"}
+        onClick={(index, e) => {
+          if (e.shiftKey) keyed.current = Date.now();
+          onClickItem(index, { shift: e.shiftKey });
+        }}
+        onOpen={onOpenItem}
+      />
+    );
+  };
 
   // One group per file: from its header to the item before the next header.
   const files: number[][] = [];
