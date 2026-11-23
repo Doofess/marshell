@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { ChangesReply } from "../../generated/ChangesReply";
-import { ChangesEmpty } from "./ChangesPanel";
+import { ChangesEmpty, noticesOf } from "./ChangesPanel";
 import { DiffList, listKey } from "./DiffList";
 import { copy } from "./copy";
 import { itemsOf, type Item, type Row, type Section } from "./model";
@@ -134,4 +134,15 @@ describe("ChangesEmpty", () => {
     expect(noFolder).not.toContain("<button");
     expect(noFolder).toContain('data-icon="panel-changes"');
   });
+});
+
+describe("noticesOf", () => {
+  const f = (path: string) => ({ path, old_path: null, status: "modified" as const, note: null });
+  const part = (path: string) => `diff --git a/${path} b/${path}\nindex 1..2 100644\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-a\n+b\n`;
+  it("says how many files a cut diff leaves out", () => {
+    const r = reply({ files: [f("a.ts"), f("b.ts"), f("c.ts")], diff: part("a.ts"), truncated: true });
+    expect(noticesOf(r)).toEqual(["The diff is cut at 4 MiB. 2 more files aren't shown."]);
+  });
+  it("says nothing of a whole diff with a base", () => expect(noticesOf(reply({ files: [f("a.ts")], diff: part("a.ts") }))).toEqual([]));
+  it("names a missing base and the new files past 200", () => expect(noticesOf(reply({ base: null, more_new: 3 }))).toEqual([copy.noBase, copy.moreNew(3)]));
 });

@@ -7,7 +7,7 @@ import { ChangesIcon, EmptyPanel } from "../pane/EmptyPanel";
 import { type ItemRange, DiffList, type ListResult, reach } from "./DiffList";
 import { type Placement, place } from "./comments";
 import { copy } from "./copy";
-import { type Item, itemsOf, sectionsOf } from "./model";
+import { type Item, cutFiles, itemsOf, sectionsOf } from "./model";
 import { useChanges } from "./useChanges";
 import { useChangesSettings } from "./changesSettings";
 import "./ChangesPanel.css";
@@ -53,6 +53,16 @@ export function ChangesEmpty({ reply, noFolder, onRetry }: { reply: ChangesReply
       return <EmptyPanel icon={ChangesIcon} title={c.title} line={c.line} actions={[]} />;
     }
   }
+}
+
+/** The lines under the strip's line: no base or unrelated histories, the new files past 200, and the files a cut diff leaves out. */
+export function noticesOf(reply: ChangesReply): string[] {
+  const cut = cutFiles(reply);
+  return [
+    reply.base === null ? copy.noBase : reply.unrelated ? copy.unrelated(reply.base) : null,
+    reply.more_new > 0 ? copy.moreNew(reply.more_new) : null,
+    cut > 0 ? copy.cut(cut) : null,
+  ].filter((t): t is string => t !== null);
 }
 
 /** Where the keyboard is, kept as keys so a poll that moves rows doesn't move it. */
@@ -142,7 +152,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
   if (!listed || sections.length === 0) return <ChangesEmpty reply={reply} noFolder={noFolder} onRetry={refresh} />;
 
   const line = copy.line({ branch: listed.branch, detached: listed.detached, base: listed.base, ahead: listed.ahead, uncommitted: listed.uncommitted, moved: listed.moved, folder: listed.folder });
-  const notices = [listed.base === null ? copy.noBase : listed.unrelated ? copy.unrelated(listed.base) : null, listed.more_new > 0 ? copy.moreNew(listed.more_new) : null].filter((t): t is string => t !== null);
+  const notices = noticesOf(listed);
   return (
     <div className="changes">
       <div className="changes__strip">

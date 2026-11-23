@@ -101,12 +101,37 @@ function foldReasonOf(path: string, rows: Row[], openRows: number): Section["fol
  * A file starts folded by the rules above (big, lockfile, minified, or too many open rows above it); `folds[path]` overrides.
  * A section with no rows is never folded: there is nothing to hide.
  */
-export function sectionsOf(reply: ChangesReply, folds: Record<string, boolean>, drafts: DraftComment[], hideWhitespace: boolean): Section[] {
+/** Each file's part of the reply's diff, by path; the first part wins. */
+function partsOf(reply: ChangesReply): Map<string, string> {
   const diffs = new Map<string, string>();
   for (const part of splitDiff(reply.diff)) if (!diffs.has(part.path)) diffs.set(part.path, part.diff);
+  return diffs;
+}
+
+/**
+ * The files of a cut diff that lie past the cut: the ones after the last file the diff holds or a note covers. The diff comes in the
+ * files' order, so a file before that one with no part is one whose changes are only whitespace.
+ */
+function pastCut(reply: ChangesReply, diffs: Map<string, string>): Set<string> {
+  if (!reply.truncated) return new Set();
+  let last = -1;
+  reply.files.forEach((f, i) => {
+    if (diffs.has(f.path) || f.note !== null) last = i;
+  });
+  return new Set(reply.files.slice(last + 1).map((f) => f.path));
+}
+
+/** How many files a cut diff leaves out, for "The diff is cut at 4 MiB. {n} more files aren't shown."; 0 when it isn't cut. */
+export function cutFiles(reply: ChangesReply): number {
+  return pastCut(reply, partsOf(reply)).size;
+}
+
+export function sectionsOf(reply: ChangesReply, folds: Record<string, boolean>, drafts: DraftComment[], hideWhitespace: boolean): Section[] {
+  const diffs = partsOf(reply);
+  const cut = pastCut(reply, diffs);
 
   let openRows = 0;
-  const sections: Section[] = reply.files.map((f) => {
+  const sections: Section[] = reply.files.filter((f) => !cut.has(f.path)).map((f) => {
     const rows = rowsOf(diffs.get(f.path) ?? "");
     const section: Section = { path: f.path, status: f.status, added: 0, removed: 0, rows, folded: false };
     if (f.old_path !== null) section.oldPath = f.old_path;

@@ -3,7 +3,7 @@ import type { ChangesReply } from "../../generated/ChangesReply";
 import type { DiffFile } from "../../generated/DiffFile";
 import type { DraftComment } from "../../generated/DraftComment";
 import type { Placement } from "./comments";
-import { FOLD_LINES, OPEN_BUDGET, isLockfile, isMinified, itemLabel, itemsOf, sectionsOf, type Item, type Row, type Section } from "./model";
+import { FOLD_LINES, OPEN_BUDGET, cutFiles, isLockfile, isMinified, itemLabel, itemsOf, sectionsOf, type Item, type Row, type Section } from "./model";
 
 const file = (path: string, extra: Partial<DiffFile> = {}): DiffFile => ({ path, old_path: null, status: "modified", note: null, ...extra });
 const reply = (files: DiffFile[], diff: string, extra: Partial<ChangesReply> = {}): ChangesReply => ({
@@ -43,6 +43,15 @@ const draft = (over: Partial<DraftComment> = {}): DraftComment => ({
 const A = head("src/a.ts") + "@@ -1,3 +1,3 @@\n one\n-two\n+TWO\n three\n";
 
 describe("sectionsOf", () => {
+  it("leaves out the files past a cut diff, and counts them", () => {
+    const cut = reply([file("a.ts"), file("b.ts"), file("c.ts")], adds("a.ts", 1), { truncated: true });
+    // With whitespace hidden too, a file past the cut must not read as "Only whitespace changed".
+    expect(sectionsOf(cut, {}, [], true).map((x) => x.path)).toEqual(["a.ts"]);
+    expect(cutFiles(cut)).toBe(2);
+    const whole = reply([file("a.ts"), file("b.ts")], adds("a.ts", 1) + head("b.ts"));
+    expect(cutFiles(whole)).toBe(0);
+    expect(sectionsOf(whole, {}, [], true).find((x) => x.path === "b.ts")?.note).toBe("whitespace");
+  });
   it("comes in the reply's file order, with counts", () => {
     const s = sectionsOf(reply([file("b.ts"), file("src/a.ts")], A + adds("b.ts", 2)), {}, [], false);
     expect(s.map((x) => x.path)).toEqual(["b.ts", "src/a.ts"]);
