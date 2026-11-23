@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ChangesReply } from "../../generated/ChangesReply";
-import { CHANGES_POLL_MS, changesSchedule, keepReply } from "./useChanges";
+import { CHANGES_POLL_MS, changesSchedule, changesState, keepReply } from "./useChanges";
 
 const base = { inFlight: false, shown: true, focused: true, urgent: false, lastAsk: 0 as number | null, now: 0 };
 
@@ -34,5 +34,20 @@ describe("keepReply", () => {
     expect(keepReply({ asked: "s1", shown: "s1" }, cur, next)).toBe(next);
     expect(keepReply({ asked: "s1", shown: "s1" }, cur, reply("a", "same"))).toBe(cur);
     expect(keepReply({ asked: "s1", shown: "s1" }, null, reply("a", "same"))).toBeNull();
+  });
+});
+
+describe("changesState", () => {
+  const reply = { kind: "listed", stamp: "a" } as ChangesReply;
+  it("keeps the state object when a reply changes nothing, so a poll doesn't draw the panel again", () => {
+    const prev = { session: "s1", reply, noFolder: false };
+    expect(changesState(prev, { session: "s1", reply, noFolder: false })).toBe(prev);
+  });
+  it("takes a new reply, another session or a change of folder", () => {
+    const prev = { session: "s1", reply, noFolder: false };
+    const other = { kind: "listed", stamp: "b" } as ChangesReply;
+    expect(changesState(prev, { session: "s1", reply: other, noFolder: false }).reply).toBe(other);
+    expect(changesState(prev, { session: "s2", reply, noFolder: false }).session).toBe("s2");
+    expect(changesState(prev, { session: "s1", reply: null, noFolder: true }).noFolder).toBe(true);
   });
 });

@@ -1,4 +1,4 @@
-import { type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, useEffect, useRef } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, memo, useEffect, useMemo, useRef } from "react";
 import { selectedProps } from "../../components/a11y/SelectedMark";
 import type { LineTokens } from "../preview/highlight";
 import { copy } from "./copy";
@@ -170,7 +170,7 @@ function Coloured({ text, tokens }: { text: string; tokens: LineTokens | undefin
   return <>{parts}</>;
 }
 
-function Entry({ item, index, tabStop, selected, onClick, onOpen, onMenu, tokens }: ItemProps) {
+function EntryView({ item, index, tabStop, selected, onClick, onOpen, onMenu, tokens }: ItemProps) {
   const common = {
     role: "treeitem",
     "data-changes-item": "",
@@ -271,9 +271,26 @@ export type DiffListProps = {
 };
 
 /** The whole diff as one tree: a block per file, its rows in blocks of 200, every item a `treeitem`. */
+// A file can hold thousands of rows: a render of the list (a poll, the window's state) redraws only the rows whose props changed.
+const Entry = memo(EntryView);
+
 export function DiffList({ items, focus, range, wrap, onKey, onClickItem, onOpenItem, onMenuItem, colours, box: openBox }: DiffListProps) {
   const box = useRef<HTMLDivElement>(null);
   const keyed = useRef(0);
+  // The rows' handlers keep their identity across renders (so the memo holds) and call the latest props.
+  const latest = useRef({ onClickItem, onOpenItem, onMenuItem });
+  latest.current = { onClickItem, onOpenItem, onMenuItem };
+  const handlers = useMemo(
+    () => ({
+      click: (index: number, e: ReactMouseEvent<HTMLElement>) => {
+        if (e.shiftKey) keyed.current = Date.now();
+        latest.current.onClickItem(index, { shift: e.shiftKey });
+      },
+      open: (index: number) => latest.current.onOpenItem(index),
+      menu: (index: number, at: { x: number; y: number }) => latest.current.onMenuItem(index, at),
+    }),
+    [],
+  );
 
   // The item with the keyboard takes the focus after a key or a shift-click moved it (never because a poll changed the list).
   useEffect(() => {
@@ -300,15 +317,12 @@ export function DiffList({ items, focus, range, wrap, onKey, onClickItem, onOpen
         key={it.key}
         item={it}
         tokens={it.kind === "row" ? colours?.get(it.file.path)?.[it.at] : undefined}
-        onMenu={onMenuItem}
+        onMenu={handlers.menu}
         index={i}
         tabStop={i === focus}
         selected={i >= lo && i <= hi && it.kind === "row"}
-        onClick={(index, e) => {
-          if (e.shiftKey) keyed.current = Date.now();
-          onClickItem(index, { shift: e.shiftKey });
-        }}
-        onOpen={onOpenItem}
+        onClick={handlers.click}
+        onOpen={handlers.open}
       />
     );
   };

@@ -22,15 +22,21 @@ export function keepReply(tag: { asked: string; shown: string }, current: Change
 
 const focused = () => typeof document === "undefined" || document.hasFocus();
 
+type ChangesState = { session: string; reply: ChangesReply | null; noFolder: boolean };
+
+/** The state after a reply: the same object when nothing in it changed, so a poll answered `same` draws nothing again. */
+export function changesState(prev: ChangesState, next: ChangesState): ChangesState {
+  return prev.session === next.session && prev.reply === next.reply && prev.noFolder === next.noFolder ? prev : next;
+}
+
 /**
  * The changes of one session, kept current with the disk: asked once when shown, then every 2,000 ms while the window is
  * focused. Each ask sends the last reply's stamp; `refresh()`, a change of `hideWhitespace` and a change of `session` ask
  * at once with no stamp.
  */
-export function useChanges(o: { session: string; shown: boolean; hideWhitespace: boolean }): { reply: ChangesReply | null; noFolder: boolean; busy: boolean; refresh(): void } {
+export function useChanges(o: { session: string; shown: boolean; hideWhitespace: boolean }): { reply: ChangesReply | null; noFolder: boolean; refresh(): void } {
   const { session, shown, hideWhitespace } = o;
-  const [state, setState] = useState<{ session: string; reply: ChangesReply | null; noFolder: boolean }>({ session, reply: null, noFolder: false });
-  const [busy, setBusy] = useState(false);
+  const [state, setState] = useState<ChangesState>({ session, reply: null, noFolder: false });
   const live = useRef({ session, shown, hideWhitespace });
   live.current = { session, shown, hideWhitespace };
   const run = useRef({ inFlight: false, lastAsk: null as number | null, urgent: true, stamp: null as string | null });
@@ -54,25 +60,23 @@ export function useChanges(o: { session: string; shown: boolean; hideWhitespace:
       const stamp = r.urgent ? null : r.stamp;
       r.inFlight = true;
       r.urgent = false;
-      setBusy(true);
       readChanges(asked, { stamp, hide_whitespace: hide })
         .then((reply) => {
           if (!alive || asked !== live.current.session || hide !== live.current.hideWhitespace) return;
           if (reply === "no-folder") {
             r.stamp = null;
-            setState({ session: asked, reply: null, noFolder: true });
+            setState((prev) => changesState(prev, { session: asked, reply: null, noFolder: true }));
             return;
           }
           const current = stateRef.current.session === asked ? stateRef.current.reply : null;
           const kept = keepReply({ asked, shown: live.current.session }, current, reply);
           r.stamp = kept?.stamp ?? null;
-          setState({ session: asked, reply: kept, noFolder: false });
+          setState((prev) => changesState(prev, { session: asked, reply: kept, noFolder: false }));
         })
         .catch(() => {})
         .finally(() => {
           r.inFlight = false;
           r.lastAsk = Date.now();
-          if (alive) setBusy(false);
           if (alive) tick();
         });
     };
@@ -97,5 +101,5 @@ export function useChanges(o: { session: string; shown: boolean; hideWhitespace:
 
   // Never show the last session's changes under the new one.
   const mine = state.session === session;
-  return { reply: mine ? state.reply : null, noFolder: mine ? state.noFolder : false, busy, refresh };
+  return { reply: mine ? state.reply : null, noFolder: mine ? state.noFolder : false, refresh };
 }
