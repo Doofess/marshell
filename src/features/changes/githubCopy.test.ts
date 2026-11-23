@@ -20,4 +20,11 @@ describe("githubCopy", () => {
     expect(c.conflicts(182, "main")).toBe("#182 has conflicts with main. Resolve them in the terminal.");
     expect(c.created(5)).toBe("Pull request #5 was created.");
   });
+  it("words the checks list and the bar's own actions", () => {
+    expect(c.andMore(3)).toBe("And 3 more on GitHub.");
+    expect(c.askFix("Claude")).toBe("Ask Claude to fix");
+    expect(c.checkStates.failed).toBe("Failed");
+    expect(c.hidden).toBe("Pull requests are hidden. Settings → Changes shows them again.");
+    expect(c.typedRequest("api")).toBe("Typed a request into api.");
+  });
 });

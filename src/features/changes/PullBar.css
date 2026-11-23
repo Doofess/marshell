@@ -1,0 +1,161 @@
+/*
+ * The pull request bar of the Changes panel: a filled block under the branch line, told apart from the panel by its fill and never by a box.
+ * Its buttons are the Send bar's buttons. A state is a glyph and a word; the glyph's colour only adds to it.
+ */
+.pull-bar {
+  display: grid;
+  gap: var(--space-1);
+  padding-block: var(--space-2);
+  padding-inline: var(--space-3);
+  background: var(--fill);
+  color: var(--text-1);
+  font-size: var(--text-12);
+  min-inline-size: 0;
+}
+.pull-bar__line,
+.pull-bar__second,
+.pull-bar__note,
+.pull-bar__reason,
+.pull-bar__more {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.pull-bar__second,
+.pull-bar__note,
+.pull-bar__more {
+  color: var(--text-2);
+}
+.pull-bar__reason {
+  color: var(--text-1);
+}
+
+.pull-bar__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.pull-bar__button {
+  min-block-size: 28px;
+  padding: var(--space-1) var(--space-3);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--fill-strong);
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--text-12);
+  text-align: start;
+}
+.pull-bar__button--primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.pull-bar__button--small {
+  min-block-size: 24px;
+  padding-block: 0;
+}
+.pull-bar__button[aria-disabled="true"] {
+  background: var(--hover);
+  color: var(--text-3);
+  cursor: default;
+}
+.pull-bar__button:focus-visible,
+.pull-bar__check:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.pull-bar__button:not([aria-disabled="true"]):active {
+  scale: 0.97;
+}
+
+.pull-bar__checks {
+  display: grid;
+  gap: var(--space-1);
+}
+.pull-bar__list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.pull-bar__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.pull-bar__check {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  padding-block: var(--space-1);
+  border-radius: var(--radius);
+  cursor: default;
+}
+.pull-bar__glyph {
+  inline-size: 1.25ch;
+  text-align: center;
+  flex: none;
+}
+.pull-bar__check[data-state="failed"] .pull-bar__glyph,
+.pull-bar__check[data-state="cancelled"] .pull-bar__glyph {
+  color: var(--error);
+}
+.pull-bar__check[data-state="passed"] .pull-bar__glyph {
+  color: var(--ok);
+}
+.pull-bar__check-state {
+  flex: none;
+}
+.pull-bar__check-name {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+.pull-bar__check-extra {
+  color: var(--text-2);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .pull-bar__check:hover {
+    background: var(--hover);
+  }
+}
+
+@media (forced-colors: active) {
+  /* A fill can match the canvas in forced colours: the bar and its buttons keep an edge in a system colour. */
+  .pull-bar {
+    forced-color-adjust: none;
+    color: CanvasText;
+    background: Canvas;
+    border: 1px solid CanvasText;
+  }
+  .pull-bar__button {
+    background: ButtonFace;
+    color: ButtonText;
+    border: 1px solid ButtonText;
+  }
+  .pull-bar__button--primary {
+    background: Highlight;
+    color: HighlightText;
+    border: 1px solid Highlight;
+  }
+  .pull-bar__button[aria-disabled="true"] {
+    color: GrayText;
+  }
+  .pull-bar__glyph,
+  .pull-bar__check[data-state] .pull-bar__glyph {
+    color: CanvasText;
+  }
+  .pull-bar__check-extra {
+    color: CanvasText;
+  }
+  .pull-bar__check:hover {
+    background: Canvas;
+  }
+  .pull-bar__button:focus-visible,
+  .pull-bar__check:focus-visible {
+    outline-color: Highlight;
+  }
+}

@@ -1,4 +1,5 @@
-import { type Ref, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { type ReactNode, type Ref, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { ContextMenu } from "../../components/ContextMenu/ContextMenu";
 import type { ChangesDrafts } from "../../generated/ChangesDrafts";
 import type { ChangesReply } from "../../generated/ChangesReply";
@@ -13,10 +14,21 @@ import { type BoxState, anchorKey, boxAfter } from "./boxModel";
 import { MAX_COMMENTS, type Placement, anchorOf, place, renumbered } from "./comments";
 import { type OpenBox, boxAnchor, commentsOf, elsewhere, givesWay, keptBox, sendMessageOf, shownComments, unkept, withFolds } from "./drafts";
 import { copy } from "./copy";
+import type { AskRequest } from "../../generated/AskRequest";
+import type { CiCheck } from "../../generated/CiCheck";
+import type { MergeMethod } from "../../generated/MergeMethod";
+import type { PullActionKind } from "../../generated/PullActionKind";
+import { refusalOf } from "./changesApi";
+import type { CheckAction } from "./ChecksList";
+import { ask, failureOf, pullAction } from "./githubApi";
+import { githubCopy as gc } from "./githubCopy";
+import { PullBar } from "./PullBar";
+import { type BarButton, type BarMenuItem, announcementsOf, barOf } from "./pullModel";
+import { useGithub } from "./useGithub";
 import { type Item, type Row, type Section, cutFiles, focusIndex, itemsOf, sectionsOf } from "./model";
 import { reviewLabel } from "./review";
 import { SendBar } from "./SendBar";
-import { type SendResult, afterSend } from "./send";
+import { type SendResult, afterSend, refusalNotice } from "./send";
 import { useChanges } from "./useChanges";
 import { useDiffColours } from "./useDiffColours";
 import { useChangesSettings } from "./changesSettings";
@@ -43,12 +55,26 @@ export type ChangesPanelProps = {
   /** The strip's ⋯ menu while it is open: where it opened and the button to give the focus back to. */
   menu: { anchor: { x: number; y: number }; opener: HTMLElement } | null;
   onMenuClose(): void;
+  /** The session's own name, for what a typed request says; the agent's name when absent. */
+  sessionName?: string;
+  /** A request was typed into the session's prompt: the keyboard goes there. */
+  onTyped?(): void;
 };
 
 export { listKey } from "./DiffList";
 
 /** What the palette's Changes commands call on the mounted panel. Each announces why when it can't act. */
-export type ChangesHandle = { refresh(): void; review(): void; send(): void };
+export type ChangesHandle = { refresh(): void; review(): void; send(): void; createPull(): void; push(): void; merge(): void; openPull(): void };
+
+/** The strip's lines and, under them, the pull request bar: drawn over a diff and over an empty one. */
+export function ChangesHead({ strip, bar }: { strip: ReactNode; bar: ReactNode }) {
+  return (
+    <div className="changes__top">
+      <div className="changes__strip">{strip}</div>
+      {bar}
+    </div>
+  );
+}
 
 
 /** The panel's empty states, each with its mark; only a failed read has an action. */
@@ -107,6 +133,21 @@ export function ChangesPanel(p: ChangesPanelProps) {
   const { reply, noFolder, refresh } = useChanges({ session: p.session, shown: p.shown, hideWhitespace: hide });
   const listed = reply?.kind === "listed" ? reply : null;
   const { drafts } = p;
+
+  // The pull request bar: what GitHub says about this checkout, and what the bar's buttons do.
+  const github = useGithub(p.session, p.shown, listed?.head ?? null, settings?.pull_requests ?? false);
+  const gh = github.reply;
+  const ghAgent = p.agent === null ? null : p.agentName;
+  const now = Date.now();
+  const barView = barOf(gh, ghAgent, now);
+  const [note, setNote] = useState<string | null>(null);
+  const before = useRef<typeof gh>(null);
+  useEffect(() => {
+    if (gh !== null) for (const t of announcementsOf(before.current, gh)) p.announce(t);
+    before.current = gh;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per new reply
+  }, [gh]);
+  useEffect(() => setNote(null), [p.session]);
 
   // The comment box (its text lives here, so a poll never loses it), the Send bar's question and a send under way.
   const [open, setOpen] = useState<OpenBox | null>(null);
@@ -268,10 +309,114 @@ export function ChangesPanel(p: ChangesPanelProps) {
     if (result.sent && latest) p.onDrafts(afterSend(latest, result, d.comments));
   };
 
+  // The pull request bar's actions. The ones that need a sheet are Task 14's: each is the one place it fills.
+  const createPull = () => {
+    // Task 14: opens the sheet
+  };
+  const push = () => {
+    // Task 14: opens the sheet
+  };
+  const merge = () => {
+    // Task 14: opens the sheet
+  };
+  const showOutput = () => {
+    // Task 14: opens the sheet
+  };
+  const fail = (text: string) => {
+    setNote(text);
+    p.announce(text);
+  };
+  const openHttps = (url: string | null | undefined) => {
+    if (typeof url !== "string" || !url.startsWith("https://")) return p.announce(gc.noAddress);
+    void openUrl(url).catch(() => fail(gc.noAddress));
+  };
+  const copyOut = (text: string, said: string) => void navigator.clipboard.writeText(text).then(() => p.announce(said), () => p.announce(gc.couldntCopy));
+  const openPull = () => (gh?.pull ? openHttps(gh.pull.url) : p.announce(gc.noPullToOpen));
+  const pullDo = async (action: PullActionKind) => {
+    const pull = gh?.pull;
+    if (!gh || !pull) return;
+    setNote(null);
+    try {
+      await pullAction(p.session, { checkout: gh.checkout, id: pull.id, number: pull.number, action });
+    } catch (e) {
+      fail(failureOf(e).reason);
+    }
+    github.refresh();
+  };
+  const askAgent = async (req: AskRequest) => {
+    setNote(null);
+    try {
+      const r = await ask(p.session, req);
+      if (r.form === "copy") copyOut(r.text, gc.copiedRequest);
+      else {
+        p.announce(gc.typedRequest(p.sessionName ?? p.agentName));
+        p.onTyped?.();
+      }
+    } catch (e) {
+      const reason = refusalOf(e);
+      fail(reason === null ? failureOf(e).reason : refusalNotice(reason, p.sessionName ?? p.agentName, "review"));
+    }
+  };
+  const onBarMain = (button: BarButton, method?: MergeMethod) => {
+    void method; // Task 14: the sheet opens on this method
+    switch (button.id) {
+      case "push":
+        return push();
+      case "create":
+        return createPull();
+      case "merge":
+      case "auto_merge":
+        return merge();
+      case "show_output":
+        return showOutput();
+      case "ready":
+        return void pullDo("ready");
+      case "get_gh":
+        return openHttps(button.url);
+      case "copy_sign_in":
+        return copyOut(button.text ?? "", button.done ?? gc.copied);
+      case "retry":
+        return github.refresh();
+    }
+  };
+  const onBarMenu = (item: BarMenuItem) => {
+    switch (item.id) {
+      case "push":
+        return push();
+      case "merge":
+        return merge();
+      case "draft":
+        return void pullDo("draft");
+      case "cancel_auto_merge":
+        return void pullDo("cancel_auto_merge");
+      case "hide":
+        return void setSetting({ pull_requests: false }).then(() => p.announce(gc.hidden), () => p.announce(gc.hideFailed));
+      case "ask_open":
+        return void askAgent({ kind: "open_pull", copy: false });
+      case "ask_switch":
+      case "copy_switch":
+        return void (gh?.pull && askAgent({ kind: "switch_and_pull", copy: item.id === "copy_switch", number: gh.pull.number }));
+      case "open_on_github":
+        return openHttps(item.url);
+      case "copy_link":
+        return copyOut(item.url ?? "", gc.copiedLink);
+    }
+  };
+  const onBarCheck = (action: CheckAction, check: CiCheck) => {
+    if (action === "open") return openHttps(check.url);
+    if (action === "copy_link") return check.url === null ? p.announce(gc.noCheckAddress) : copyOut(check.url, gc.copiedLink);
+    if (gh?.pull) void askAgent({ kind: "fix_check", copy: p.agent === null, number: gh.pull.number, name: check.name, workflow: check.workflow, url: check.url, run_id: check.run_id });
+  };
+  const bar = barView === null ? null : <PullBar view={barView} agent={ghAgent} now={now} onMain={onBarMain} onMenu={onBarMenu} onCheck={onBarCheck} onEscape={p.onEscape} />;
+
   useImperativeHandle(p.ref, () => ({
     refresh: refresh,
     review: () => (listed ? p.onReview(listed.base) : p.announce("There are no changes to review.")),
     send: () => void send(),
+    createPull: () => createPull(),
+    push: () => push(),
+    merge: () => merge(),
+    openPull: () => openPull(),
   }));
 
   const onKey = (r: ListResult) => {
@@ -434,7 +579,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
   if (!listed || sections.length === 0) {
     const empty = <ChangesEmpty reply={reply} noFolder={noFolder} onRetry={refresh} />;
     const around = emptyNotices(listed, drafts);
-    if (around === null) {
+    if (around === null && bar === null && note === null) {
       return (
         <>
           {empty}
@@ -444,13 +589,14 @@ export function ChangesPanel(p: ChangesPanelProps) {
     }
     return (
       <div className="changes" ref={box}>
-        <div className="changes__strip">
-          {around.map((t) => (
+        <ChangesHead
+          strip={[...(around ?? []), ...(note === null ? [] : [note])].map((t) => (
             <p key={t} className="changes__notice">
               {t}
             </p>
           ))}
-        </div>
+          bar={bar}
+        />
         {empty}
         {sendBar}
         {menus}
@@ -460,7 +606,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
 
   const line = copy.line({ branch: listed.branch, detached: listed.detached, base: listed.base, ahead: listed.ahead, uncommitted: listed.uncommitted, moved: listed.moved, folder: listed.folder });
   const away = elsewhere(drafts, listed.folder);
-  const notices = away === null ? noticesOf(listed) : [...noticesOf(listed), away];
+  const notices = [...noticesOf(listed), ...(away === null ? [] : [away]), ...(note === null ? [] : [note])];
   const boxAt = open === null ? -1 : boxAfter(items, sections, open.state);
   // The key stays the written anchor (the box keeps its text and caret); the label reads the lines it is on now.
   const boxLines = open === null ? null : boxAnchor(open, listed.folder, placeBox(open.state));
@@ -473,14 +619,19 @@ export function ChangesPanel(p: ChangesPanelProps) {
       : undefined;
   return (
     <div className="changes" ref={box}>
-      <div className="changes__strip">
-        {line !== "" && <p className="changes__line">{line}</p>}
-        {notices.map((t) => (
-          <p key={t} className="changes__notice">
-            {t}
-          </p>
-        ))}
-      </div>
+      <ChangesHead
+        strip={
+          <>
+            {line !== "" && <p className="changes__line">{line}</p>}
+            {notices.map((t) => (
+              <p key={t} className="changes__notice">
+                {t}
+              </p>
+            ))}
+          </>
+        }
+        bar={bar}
+      />
       <DiffList
         items={items}
         focus={focus}

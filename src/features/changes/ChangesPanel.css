@@ -12,6 +12,11 @@
   font-size: var(--text-13);
 }
 
+.changes__top {
+  display: grid;
+  min-inline-size: 0;
+}
+
 .changes__strip {
   display: grid;
   gap: var(--space-1);
