@@ -11,6 +11,7 @@ use super::changes::{CancelOnDrop, changes_target, with_bases};
 use super::files::row_of;
 use crate::changes::{CHECK_BUDGET, ChangesError, Check, READ_BUDGET, Target, uncommitted_files};
 use crate::gitbox::refs;
+use crate::github::actions::{self, Rejection};
 use crate::github::gh::{self, GhError};
 use crate::github::plan::{body_of, outgoing, refusal, refusal_for, title_of};
 use crate::github::push::{AlreadyRunning, PushLaunch};
@@ -26,8 +27,8 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use marshell_protocol::api::{
-    GithubKind, GithubReply, GithubRequest, OutgoingCommit, PullState, PullStatus, PushPlan, PushPlanRequest,
-    PushRequest, PushStarted,
+    CreatePull, GithubKind, GithubReply, GithubRequest, OutgoingCommit, PullAction, PullMergeRequest, PullState,
+    PullStatus, PushPlan, PushPlanRequest, PushRequest, PushStarted,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -41,6 +42,8 @@ struct Ctx {
     host: String,
     gh: PathBuf,
     branch: String,
+    /// HEAD's commit id, when it has one.
+    head: String,
 }
 
 /// A checkout on a repository GitHub has, that is on no branch Marshell can name.
@@ -154,6 +157,7 @@ fn prepare(
         host: host.clone(),
         gh,
         branch,
+        head: check.head_oid.clone().unwrap_or_default(),
     };
     let Some(gh) = find_gh(st) else {
         let ctx = ctx(PathBuf::new(), branch.unwrap_or_default());
@@ -699,4 +703,183 @@ pub async fn stop_pushes(State(st): State<AppState>) -> StatusCode {
     let github = st.github_arc();
     let _ = tokio::task::spawn_blocking(move || github.stop_pushes(std::time::Duration::from_secs(2))).await;
     StatusCode::NO_CONTENT
+}
+
+const NOT_THIS_PULL: &str = "That isn't this branch's pull request any more. Look again.";
+const NOT_GITHUB: &str = "This checkout's origin isn't a GitHub repository.";
+
+/// What an action route found on its fresh check of the checkout.
+enum Acting {
+    /// On a branch Marshell can name, in a GitHub repository, with gh found.
+    Go(Box<Ctx>),
+    /// The checkout is on no branch Marshell can name.
+    NoBranch,
+}
+
+/// A 400 whose body is the sentence.
+fn malformed(sentence: &str) -> Response {
+    (StatusCode::BAD_REQUEST, sentence.to_string()).into_response()
+}
+
+/// A 503 whose body is `{reason}`.
+fn unavailable(reason: &str) -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({ "reason": reason })),
+    )
+        .into_response()
+}
+
+/// The answer to a write GitHub did not do: 409 for its refusal, 503 for the rest.
+fn rejected(st: &AppState, rejection: Rejection) -> Response {
+    match rejection {
+        Rejection::Refused(reason) => refused(&reason),
+        Rejection::Unavailable(reason) => unavailable(&reason),
+        Rejection::NoGh => {
+            st.github().forget_gh_path();
+            unavailable(actions::NEED_GH)
+        }
+    }
+}
+
+/// The fresh check an action route makes before it acts, in order: the switch is on, `checkout` is the session's
+/// checkout now, the origin is a GitHub repository, gh is there. `Err` is the answer to send. Blocking.
+fn acting(
+    st: &AppState,
+    row: &marshell_protocol::api::SessionInfo,
+    reported: Option<PathBuf>,
+    cancel: &AtomicBool,
+    checkout: &str,
+) -> Result<Acting, Box<Response>> {
+    let moved = |now: &str| !now.is_empty() && !crate::projects::same_path(checkout, now);
+    match prepare(st, row, reported, cancel) {
+        Early::Reply(reply) => {
+            if reply.kind == GithubKind::Off {
+                return Err(Box::new(refused(SWITCHED_OFF)));
+            }
+            if moved(&reply.checkout) {
+                return Err(Box::new(refused(MOVED_FOLDER)));
+            }
+            match reply.kind {
+                GithubKind::NoGh => Err(Box::new(unavailable(actions::NEED_GH))),
+                _ => Err(Box::new(refused(reply.reason.as_deref().unwrap_or(NOT_GITHUB)))),
+            }
+        }
+        Early::Headless(headless) => {
+            if moved(&headless.reply.checkout) {
+                return Err(Box::new(refused(MOVED_FOLDER)));
+            }
+            Ok(Acting::NoBranch)
+        }
+        Early::Go(ctx) => {
+            if moved(&ctx.target.checkout.to_string_lossy()) || checkout.is_empty() {
+                return Err(Box::new(refused(MOVED_FOLDER)));
+            }
+            Ok(Acting::Go(ctx))
+        }
+    }
+}
+
+/// Runs `act` on the checkout's context after the fresh check, off the async workers, for a request that named
+/// `checkout`. `no_branch` is the refusal for a checkout on no branch.
+async fn act_on(
+    st: AppState,
+    tab: String,
+    checkout: String,
+    no_branch: &'static str,
+    act: impl FnOnce(&AppState, Ctx) -> Response + Send + 'static,
+) -> Response {
+    let reported = st.session(&tab).and_then(|s| s.current_cwd());
+    let Some(row) = row_of(&st, &tab) else {
+        return (StatusCode::NOT_FOUND, "There is no such session.").into_response();
+    };
+    let cancel = Arc::new(AtomicBool::new(false));
+    let _stop = CancelOnDrop(cancel.clone());
+    let state = st.clone();
+    let done = tokio::task::spawn_blocking(move || match acting(&state, &row, reported, &cancel, &checkout) {
+        Ok(Acting::Go(ctx)) => act(&state, *ctx),
+        Ok(Acting::NoBranch) => refused(no_branch),
+        Err(response) => *response,
+    })
+    .await;
+    done.unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+/// POST /v1/sessions/{tab}/github/create: opens a pull request for the session's checkout and its branch on GitHub.
+/// 404 for a tab that doesn't exist, 400 for a request that is malformed, 409 for a refusal, 503 when gh or GitHub
+/// can't be used. The repository is the checkout's own, never one the request names.
+pub async fn create(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<CreatePull>) -> Response {
+    // A tab that doesn't exist is a 404 before anything else (`act_on` answers it).
+    if row_of(&st, &tab).is_some()
+        && let Some(sentence) = actions::check_create(&req)
+    {
+        return malformed(sentence);
+    }
+    let checkout = req.checkout.clone();
+    act_on(st, tab, checkout, MOVED_BRANCH, move |state, ctx| {
+        if req.branch != ctx.branch || ctx.head.is_empty() || req.head != ctx.head {
+            return refused(MOVED_BRANCH);
+        }
+        match actions::create(&ctx.gh, state.home(), &ctx.host, &ctx.repo, &req) {
+            Ok(created) => {
+                state.github().mark_stale(&ctx.target.checkout);
+                Json(created).into_response()
+            }
+            Err(rejection) => rejected(state, rejection),
+        }
+    })
+    .await
+}
+
+/// The pull request `id` and `number` name, when it is the one the core last read for the checkout and its branch.
+fn is_seen(st: &AppState, ctx: &Ctx, id: &str, number: u32) -> bool {
+    st.github().pull_seen(&ctx.target.checkout, &ctx.branch) == Some((id.to_string(), number))
+}
+
+/// POST /v1/sessions/{tab}/github/merge: merges the branch's pull request now or turns on its auto-merge. 404, 400,
+/// 409 and 503 as for create; the pull request must be the one the core last read for this checkout and branch.
+pub async fn merge(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<PullMergeRequest>) -> Response {
+    if row_of(&st, &tab).is_some()
+        && let Some(sentence) = actions::check_merge(&req)
+    {
+        return malformed(sentence);
+    }
+    let checkout = req.checkout.clone();
+    act_on(st, tab, checkout, NOT_THIS_PULL, move |state, ctx| {
+        if !is_seen(state, &ctx, &req.id, req.number) {
+            return refused(NOT_THIS_PULL);
+        }
+        match actions::merge(&ctx.gh, state.home(), &ctx.host, &ctx.repo, &req) {
+            Ok(()) => {
+                state.github().mark_stale(&ctx.target.checkout);
+                StatusCode::NO_CONTENT.into_response()
+            }
+            Err(rejection) => rejected(state, rejection),
+        }
+    })
+    .await
+}
+
+/// POST /v1/sessions/{tab}/github/pull: marks the branch's pull request ready, makes it a draft, or cancels its
+/// auto-merge. Answers as merge does.
+pub async fn pull_action(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<PullAction>) -> Response {
+    if row_of(&st, &tab).is_some()
+        && let Some(sentence) = actions::check_pull(&req)
+    {
+        return malformed(sentence);
+    }
+    let checkout = req.checkout.clone();
+    act_on(st, tab, checkout, NOT_THIS_PULL, move |state, ctx| {
+        if !is_seen(state, &ctx, &req.id, req.number) {
+            return refused(NOT_THIS_PULL);
+        }
+        match actions::pull_action(&ctx.gh, state.home(), &ctx.host, &ctx.repo, &req) {
+            Ok(()) => {
+                state.github().mark_stale(&ctx.target.checkout);
+                StatusCode::NO_CONTENT.into_response()
+            }
+            Err(rejection) => rejected(state, rejection),
+        }
+    })
+    .await
 }

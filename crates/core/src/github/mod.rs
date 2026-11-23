@@ -1,5 +1,6 @@
 //! GitHub, as the Changes panel's pull request bar knows it.
 
+pub mod actions;
 pub mod gh;
 pub mod plan;
 pub mod push;

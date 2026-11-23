@@ -1559,3 +1559,662 @@ async fn push_routes_need_the_token() {
     }
     assert_eq!(rig.bare_ref("feat/login"), "");
 }
+// ---- Create, merge, auto-merge, ready and draft (Task 10) -------------------------------------------------------
+//
+// These act on a GitHub account, so each call is looked at as the fake gh recorded it: its exact arguments, and the
+// JSON that went in on standard input. The status calls (no `--input`) are not "writes".
+
+const PULL_ID: &str = "PR_kwDOAAAAAA";
+const NOT_THIS_PULL: &str = "That isn't this branch's pull request any more. Look again.";
+const MOVED_FOLDER: &str = "The session moved to another folder. Look again before you go on.";
+const NEED_CLI: &str = "Pull requests need the GitHub CLI.";
+const NEED_SIGN_IN: &str = "Pull requests need a GitHub sign-in. Run `gh auth login` in a terminal.";
+
+impl Scratch {
+    /// What the fake gh was called with that sent a body: `(arguments, the JSON on standard input)`.
+    fn writes(&self) -> Vec<(Vec<String>, Value)> {
+        std::fs::read_to_string(self.home().join("gh").join("calls.jsonl"))
+            .unwrap_or_default()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .filter(|call| {
+                call["args"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|a| a.as_str() == Some("--input"))
+            })
+            .map(|call| {
+                let args = call["args"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|a| a.as_str().unwrap().to_string())
+                    .collect();
+                let stdin = serde_json::from_str(call["stdin"].as_str().unwrap()).unwrap_or(Value::Null);
+                (args, stdin)
+            })
+            .collect()
+    }
+}
+
+/// The rig's script: `mine` first (they match `--input`, which a status call never has), then the status answer.
+fn script_with(rig: &Rig, mine: Value) {
+    let mut entries = mine.as_array().unwrap().clone();
+    entries.push(status(&answer_at(OPEN_FAILING, &rig.base)));
+    rig.scratch.script(Value::Array(entries));
+}
+
+/// A router on the rig whose bar has shown pull request #7 (`PULL_ID`) for `feat/login`: the head it showed is
+/// `rig.base`.
+async fn seen(rig: &Rig) -> (axum::Router, String) {
+    let (app, tab) = open(&rig.state(), &rig.scratch).await;
+    let reply = github(&app, &tab, true).await;
+    assert_eq!(reply["pull"]["number"], 7, "{reply}");
+    assert_eq!(reply["pull"]["id"], PULL_ID, "{reply}");
+    (app, tab)
+}
+
+fn create_body(rig: &Rig) -> Value {
+    json!({
+        "checkout": rig.checkout(), "title": "Add the login form", "body": "Adds the form.\r\n\r\n\tCloses #3\n",
+        "base": "main", "draft": true, "branch": "feat/login", "head": rig.head,
+    })
+}
+
+async fn create(app: &axum::Router, tab: &str, body: Value) -> (StatusCode, Value) {
+    call(app, "POST", &format!("/v1/sessions/{tab}/github/create"), Some(body)).await
+}
+
+fn merge_body(rig: &Rig, method: &str, auto: bool) -> Value {
+    json!({"checkout": rig.checkout(), "number": 7, "method": method, "head": rig.base, "id": PULL_ID, "auto": auto})
+}
+
+async fn merge(app: &axum::Router, tab: &str, body: Value) -> (StatusCode, Value) {
+    call(app, "POST", &format!("/v1/sessions/{tab}/github/merge"), Some(body)).await
+}
+
+fn pull_body(rig: &Rig, action: &str) -> Value {
+    json!({"checkout": rig.checkout(), "id": PULL_ID, "number": 7, "action": action})
+}
+
+async fn pull_action(app: &axum::Router, tab: &str, body: Value) -> (StatusCode, Value) {
+    call(app, "POST", &format!("/v1/sessions/{tab}/github/pull"), Some(body)).await
+}
+
+fn strs(args: &[&str]) -> Vec<String> {
+    args.iter().map(ToString::to_string).collect()
+}
+
+const CREATED: &str = r#"{"number":12,"html_url":"https://github.com/octo-org/widgets/pull/12","state":"open"}"#;
+
+#[tokio::test]
+async fn create_sends_title_head_base_body_draft_on_stdin() {
+    let rig = Rig::new();
+    script_with(
+        &rig,
+        json!([{"match": ["repos/octo-org/widgets/pulls", "--input"], "exit": 0, "stdout": CREATED}]),
+    );
+    let (app, tab) = seen(&rig).await;
+    let status_calls = rig.scratch.status_calls();
+    let (status, body) = create(&app, &tab, create_body(&rig)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body,
+        json!({"number": 12, "url": "https://github.com/octo-org/widgets/pull/12"})
+    );
+    let writes = rig.scratch.writes();
+    assert_eq!(writes.len(), 1, "{writes:?}");
+    assert_eq!(
+        writes[0].0,
+        strs(&[
+            "api",
+            "--hostname",
+            "github.com",
+            "repos/octo-org/widgets/pulls",
+            "--input",
+            "-"
+        ])
+    );
+    assert_eq!(
+        writes[0].1,
+        json!({
+            "title": "Add the login form", "head": "feat/login", "base": "main",
+            "body": "Adds the form.\r\n\r\n\tCloses #3\n", "draft": true,
+        })
+    );
+    // What the bar kept is no longer true: the next look asks again.
+    github(&app, &tab, false).await;
+    assert_eq!(rig.scratch.status_calls(), status_calls + 1);
+}
+
+#[tokio::test]
+async fn create_shows_githubs_422_message() {
+    let rig = Rig::new();
+    script_with(
+        &rig,
+        json!([{"match": ["repos/octo-org/widgets/pulls", "--input"], "exit": 1,
+            "stdout": r#"{"message":"Validation Failed","errors":[{"resource":"PullRequest","code":"custom","message":"A pull request already exists for octo-org:feat/login."}],"documentation_url":"https://docs.github.com/rest/pulls/pulls#create-a-pull-request","status":"422"}"#,
+            "stderr": "gh: Validation Failed (HTTP 422)\n"}]),
+    );
+    let (app, tab) = open(&rig.state(), &rig.scratch).await;
+    let (status, body) = create(&app, &tab, create_body(&rig)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["reason"], "A pull request already exists for octo-org:feat/login.");
+}
+
+#[tokio::test]
+async fn create_refuses_a_control_character_in_the_title() {
+    let rig = Rig::new();
+    script_with(
+        &rig,
+        json!([{"match": ["pulls", "--input"], "exit": 0, "stdout": CREATED}]),
+    );
+    let (app, tab) = open(&rig.state(), &rig.scratch).await;
+    let too_long = "x".repeat(257);
+    let titles = [
+        "Add\u{7} login",
+        "Add\nlogin",
+        "Add\u{202e}login",
+        "",
+        too_long.as_str(),
+    ];
+    for title in titles {
+        let mut body = create_body(&rig);
+        body["title"] = json!(title);
+        let (status, answer) = create(&app, &tab, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{title:?}: {answer}");
+    }
+    // The other inputs are looked at too.
+    for (field, value) in [
+        ("body", json!("a\u{1b}[31mred")),
+        ("body", json!("x".repeat(65_537))),
+        ("base", json!("-x")),
+        ("base", json!("a..b")),
+        ("branch", json!("+feat")),
+        ("head", json!("main")),
+        ("head", json!("0".repeat(39))),
+    ] {
+        let mut body = create_body(&rig);
+        body[field] = value.clone();
+        let (status, answer) = create(&app, &tab, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{field}={value}: {answer}");
+    }
+    assert!(rig.scratch.writes().is_empty());
+    // A title of exactly 256 characters passes.
+    let mut body = create_body(&rig);
+    body["title"] = json!("x".repeat(256));
+    let (status, answer) = create(&app, &tab, body).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(rig.scratch.writes().len(), 1);
+}
+
+#[tokio::test]
+async fn create_refuses_a_branch_or_head_that_is_not_the_checkouts() {
+    let rig = Rig::new();
+    script_with(
+        &rig,
+        json!([{"match": ["pulls", "--input"], "exit": 0, "stdout": CREATED}]),
+    );
+    let (app, tab) = open(&rig.state(), &rig.scratch).await;
+    for (field, value) in [("branch", json!("feat/other")), ("head", json!(rig.base))] {
+        let mut body = create_body(&rig);
+        body[field] = value;
+        let (status, answer) = create(&app, &tab, body).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{answer}");
+        assert_eq!(answer["reason"], MOVED);
+    }
+    assert!(rig.scratch.writes().is_empty());
+}
+
+#[tokio::test]
+async fn create_keeps_only_a_usable_https_url_and_needs_a_number() {
+    let rig = Rig::new();
+    let (app, tab) = open(&rig.state(), &rig.scratch).await;
+    for (answer, want) in [
+        (
+            r#"{"number":5,"html_url":"javascript:alert(1)"}"#,
+            json!({"number": 5, "url": ""}),
+        ),
+        (
+            r#"{"number":5,"html_url":"https://x.example/a b"}"#,
+            json!({"number": 5, "url": ""}),
+        ),
+        (r#"{"number":5}"#, json!({"number": 5, "url": ""})),
+    ] {
+        script_with(
+            &rig,
+            json!([{"match": ["pulls", "--input"], "exit": 0, "stdout": answer}]),
+        );
+        let (status, body) = create(&app, &tab, create_body(&rig)).await;
+        assert_eq!((status, body), (StatusCode::OK, want), "{answer}");
+    }
+    for answer in [
+        r#"{"html_url":"https://github.com/octo-org/widgets/pull/1"}"#,
+        r#"{"number":0}"#,
+        r#"{"number":"7"}"#,
+    ] {
+        script_with(
+            &rig,
+            json!([{"match": ["pulls", "--input"], "exit": 0, "stdout": answer}]),
+        );
+        let (status, body) = create(&app, &tab, create_body(&rig)).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{answer}: {body}");
+        assert_eq!(body["reason"], "GitHub's answer couldn't be read.");
+    }
+}
+
+#[tokio::test]
+async fn merge_sends_the_head_the_bar_showed() {
+    let rig = Rig::new();
+    script_with(
+        &rig,
+        json!([{"match": ["-X", "PUT", "pulls/7/merge", "--input"], "exit": 0,
+            "stdout": r#"{"sha":"abc","merged":true,"message":"Pull Request successfully merged"}"#}]),
+    );
+    let (app, tab) = seen(&rig).await;
+    let status_calls = rig.scratch.status_calls();
+    let (status, body) = merge(&app, &tab, merge_body(&rig, "squash", false)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let writes = rig.scratch.writes();
+    assert_eq!(writes.len(), 1, "{writes:?}");
+    assert_eq!(
+        writes[0].0,
+        strs(&[
+            "api",
+            "--hostname",
+            "github.com",
+            "-X",
+            "PUT",
+            "repos/octo-org/widgets/pulls/7/merge",
+            "--input",
+            "-"
+        ])
+    );
+    assert_eq!(writes[0].1, json!({"merge_method": "squash", "sha": rig.base}));
+    github(&app, &tab, false).await;
+    assert_eq!(rig.scratch.status_calls(), status_calls + 1);
+    for method in ["merge", "rebase"] {
+        let (status, _) = merge(&app, &tab, merge_body(&rig, method, false)).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(rig.scratch.writes().last().unwrap().1["merge_method"], method);
+    }
+}
+
+#[tokio::test]
+async fn merge_409_says_the_branch_moved() {
+    let rig = Rig::new();
+    script_with(
+        &rig,
+        json!([{"match": ["pulls/7/merge", "--input"], "exit": 1,
+            "stdout": r#"{"message":"Head branch was modified. Review and try the merge again.","documentation_url":"https://docs.github.com/rest/pulls/pulls#merge-a-pull-request","status":"409"}"#,
+            "stderr": "gh: Head branch was modified. Review and try the merge again. (HTTP 409)\n"}]),
+    );
+    let (app, tab) = seen(&rig).await;
+    let (status, body) = merge(&app, &tab, merge_body(&rig, "merge", false)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(
+        body["reason"],
+        "Head branch was modified. Review and try the merge again."
+    );
+}
+
+#[tokio::test]
+async fn merge_405_says_conflicts() {
+    let rig = Rig::new();
+    script_with(
+        &rig,
+        json!([{"match": ["pulls/7/merge", "--input"], "exit": 1,
+            "stdout": r#"{"message":"Pull Request has merge conflicts","documentation_url":"https://docs.github.com/rest/pulls/pulls#merge-a-pull-request","status":"405"}"#,
+            "stderr": "gh: Pull Request has merge conflicts (HTTP 405)\n"}]),
+    );
+    let (app, tab) = seen(&rig).await;
+    let (status, body) = merge(&app, &tab, merge_body(&rig, "merge", false)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["reason"], "Pull Request has merge conflicts");
+}
+
+const GRAPHQL_OK: &str = r#"{"data":{"x":{"clientMutationId":null}}}"#;
+
+#[tokio::test]
+async fn auto_merge_sends_the_expected_head() {
+    let rig = Rig::new();
+    script_with(
+        &rig,
+        json!([{"match": ["graphql", "--input"], "exit": 0, "stdout": GRAPHQL_OK}]),
+    );
+    let (app, tab) = seen(&rig).await;
+    let (status, body) = merge(&app, &tab, merge_body(&rig, "rebase", true)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let writes = rig.scratch.writes();
+    assert_eq!(writes.len(), 1, "{writes:?}");
+    assert_eq!(
+        writes[0].0,
+        strs(&["api", "--hostname", "github.com", "graphql", "--input", "-"])
+    );
+    let query = writes[0].1["query"].as_str().expect("a query");
+    assert!(query.starts_with("mutation("), "{query}");
+    assert!(query.contains("enablePullRequestAutoMerge"), "{query}");
+    // The values travel as variables, never in the text.
+    assert!(
+        !query.contains(PULL_ID) && !query.contains(&rig.base) && !query.contains("REBASE"),
+        "{query}"
+    );
+    assert_eq!(
+        writes[0].1["variables"],
+        json!({"id": PULL_ID, "method": "REBASE", "oid": rig.base})
+    );
+    assert_eq!(writes[0].1.as_object().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn a_graphql_answer_with_errors_is_a_refusal() {
+    let rig = Rig::new();
+    script_with(
+        &rig,
+        json!([{"match": ["graphql", "--input"], "exit": 0,
+            "stdout": r#"{"data":{"enablePullRequestAutoMerge":null},"errors":[{"type":"UNPROCESSABLE","path":["enablePullRequestAutoMerge"],"message":"Pull request Auto merge is not allowed for this repository"}]}"#}]),
+    );
+    let (app, tab) = seen(&rig).await;
+    let status_calls = rig.scratch.calls().iter().filter(|c| !c.contains("--input")).count();
+    let (status, body) = merge(&app, &tab, merge_body(&rig, "merge", true)).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(
+        body["reason"],
+        "Pull request Auto merge is not allowed for this repository"
+    );
+    // A refusal changed nothing: what the bar kept still stands.
+    github(&app, &tab, false).await;
+    assert_eq!(
+        rig.scratch.calls().iter().filter(|c| !c.contains("--input")).count(),
+        status_calls
+    );
+}
+
+#[tokio::test]
+async fn ready_and_draft_use_the_node_id() {
+    let rig = Rig::new();
+    script_with(
+        &rig,
+        json!([{"match": ["graphql", "--input"], "exit": 0, "stdout": GRAPHQL_OK}]),
+    );
+    let (app, tab) = seen(&rig).await;
+    for (action, mutation) in [
+        ("ready", "markPullRequestReadyForReview"),
+        ("draft", "convertPullRequestToDraft"),
+        ("cancel_auto_merge", "disablePullRequestAutoMerge"),
+    ] {
+        let (status, body) = pull_action(&app, &tab, pull_body(&rig, action)).await;
+        assert_eq!(status, StatusCode::NO_CONTENT, "{action}: {body}");
+        let writes = rig.scratch.writes();
+        let (args, sent) = writes.last().unwrap();
+        assert_eq!(
+            *args,
+            strs(&["api", "--hostname", "github.com", "graphql", "--input", "-"])
+        );
+        let query = sent["query"].as_str().unwrap();
+        assert!(
+            query.starts_with("mutation(") && query.contains(mutation),
+            "{action}: {query}"
+        );
+        assert!(!query.contains(PULL_ID), "{query}");
+        assert_eq!(sent["variables"], json!({"id": PULL_ID}), "{action}");
+    }
+    assert_eq!(rig.scratch.writes().len(), 3);
+}
+
+#[tokio::test]
+async fn a_node_id_with_a_quote_is_400() {
+    let rig = Rig::new();
+    script_with(
+        &rig,
+        json!([{"match": ["graphql", "--input"], "exit": 0, "stdout": GRAPHQL_OK}]),
+    );
+    let (app, tab) = seen(&rig).await;
+    let long = "A".repeat(101);
+    for id in [
+        "PR_x\"y",
+        "PR_x') { id }",
+        "PR x",
+        "",
+        "PR_\u{e9}",
+        "PR_x\n",
+        long.as_str(),
+    ] {
+        let mut body = merge_body(&rig, "merge", true);
+        body["id"] = json!(id);
+        let (status, answer) = merge(&app, &tab, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{id:?}: {answer}");
+        let mut body = pull_body(&rig, "ready");
+        body["id"] = json!(id);
+        let (status, answer) = pull_action(&app, &tab, body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{id:?}: {answer}");
+    }
+    // The other inputs: a head that isn't a commit id, a number below 1.
+    let mut body = merge_body(&rig, "merge", true);
+    body["head"] = json!("main");
+    assert_eq!(merge(&app, &tab, body).await.0, StatusCode::BAD_REQUEST);
+    let mut body = merge_body(&rig, "merge", false);
+    body["number"] = json!(0);
+    assert_eq!(merge(&app, &tab, body).await.0, StatusCode::BAD_REQUEST);
+    let mut body = pull_body(&rig, "ready");
+    body["number"] = json!(0);
+    assert_eq!(pull_action(&app, &tab, body).await.0, StatusCode::BAD_REQUEST);
+    assert!(rig.scratch.writes().is_empty());
+}
+
+#[tokio::test]
+async fn a_node_id_the_core_did_not_report_is_refused() {
+    let rig = Rig::new();
+    script_with(&rig, json!([{"match": ["--input"], "exit": 0, "stdout": GRAPHQL_OK}]));
+    let (app, tab) = open(&rig.state(), &rig.scratch).await;
+    // Nothing has been seen yet.
+    let (status, body) = pull_action(&app, &tab, pull_body(&rig, "ready")).await;
+    assert_eq!((status, &body["reason"]), (StatusCode::CONFLICT, &json!(NOT_THIS_PULL)));
+    github(&app, &tab, true).await;
+    // A well-formed id of another pull request; and the right id with another number.
+    let mut other = merge_body(&rig, "merge", true);
+    other["id"] = json!("PR_kwDOZZZZZZ");
+    let mut renumbered = merge_body(&rig, "merge", false);
+    renumbered["number"] = json!(8);
+    for body in [other, renumbered] {
+        let (status, answer) = merge(&app, &tab, body).await;
+        assert_eq!(
+            (status, &answer["reason"]),
+            (StatusCode::CONFLICT, &json!(NOT_THIS_PULL))
+        );
+    }
+    let mut other = pull_body(&rig, "draft");
+    other["id"] = json!("PR_kwDOZZZZZZ");
+    let (status, answer) = pull_action(&app, &tab, other).await;
+    assert_eq!(
+        (status, &answer["reason"]),
+        (StatusCode::CONFLICT, &json!(NOT_THIS_PULL))
+    );
+    assert!(rig.scratch.writes().is_empty(), "gh was run: {:?}", rig.scratch.calls());
+}
+
+#[tokio::test]
+async fn actions_refuse_another_checkout_than_the_confirmed_one() {
+    let rig = Rig::new();
+    script_with(&rig, json!([{"match": ["--input"], "exit": 0, "stdout": CREATED}]));
+    let (app, tab) = seen(&rig).await;
+    let other = rig.scratch.root.join("elsewhere").to_string_lossy().into_owned();
+    for checkout in [other.as_str(), ""] {
+        let mut body = create_body(&rig);
+        body["checkout"] = json!(checkout);
+        let (status, answer) = create(&app, &tab, body).await;
+        assert_eq!(
+            (status, &answer["reason"]),
+            (StatusCode::CONFLICT, &json!(MOVED_FOLDER)),
+            "{answer}"
+        );
+        let mut body = merge_body(&rig, "merge", false);
+        body["checkout"] = json!(checkout);
+        let (status, answer) = merge(&app, &tab, body).await;
+        assert_eq!(
+            (status, &answer["reason"]),
+            (StatusCode::CONFLICT, &json!(MOVED_FOLDER)),
+            "{answer}"
+        );
+        let mut body = pull_body(&rig, "ready");
+        body["checkout"] = json!(checkout);
+        let (status, answer) = pull_action(&app, &tab, body).await;
+        assert_eq!(
+            (status, &answer["reason"]),
+            (StatusCode::CONFLICT, &json!(MOVED_FOLDER)),
+            "{answer}"
+        );
+    }
+    assert!(rig.scratch.writes().is_empty(), "gh was run: {:?}", rig.scratch.calls());
+}
+
+#[tokio::test]
+async fn the_repository_comes_from_the_checkout() {
+    let rig = Rig::new();
+    script_with(&rig, json!([{"match": ["--input"], "exit": 0, "stdout": CREATED}]));
+    let (app, tab) = seen(&rig).await;
+    let naming = json!({
+        "repo": "evil/other", "repository": "evil/other", "owner": "evil", "name": "other",
+        "host": "evil.example", "hostname": "evil.example", "url": "https://evil.example/evil/other",
+        "path": "repos/evil/other/pulls",
+    });
+    let with = |mut body: Value| {
+        for (key, value) in naming.as_object().unwrap() {
+            body[key] = value.clone();
+        }
+        body
+    };
+    assert_eq!(create(&app, &tab, with(create_body(&rig))).await.0, StatusCode::OK);
+    assert_eq!(
+        merge(&app, &tab, with(merge_body(&rig, "merge", false))).await.0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        merge(&app, &tab, with(merge_body(&rig, "merge", true))).await.0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        pull_action(&app, &tab, with(pull_body(&rig, "ready"))).await.0,
+        StatusCode::NO_CONTENT
+    );
+    let writes = rig.scratch.writes();
+    assert_eq!(writes.len(), 4);
+    for (args, sent) in &writes {
+        assert!(!args.iter().any(|a| a.contains("evil")), "{args:?}");
+        assert!(!sent.to_string().contains("evil"), "{sent}");
+        assert_eq!(args[2], "github.com");
+    }
+    assert_eq!(writes[0].0[3], "repos/octo-org/widgets/pulls");
+    assert_eq!(writes[1].0[5], "repos/octo-org/widgets/pulls/7/merge");
+}
+
+#[tokio::test]
+async fn actions_say_why_github_could_not_be_reached_or_refused() {
+    let rig = Rig::new();
+    let (app, tab) = seen(&rig).await;
+    let cases = [
+        (
+            json!({"exit": 4, "stdout": "", "stderr": "To get started with GitHub CLI, please run:  gh auth login\n"}),
+            StatusCode::SERVICE_UNAVAILABLE,
+            NEED_SIGN_IN.to_string(),
+        ),
+        (
+            json!({"exit": 1, "stdout": "", "stderr": "error connecting to api.github.com\n"}),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Can't reach GitHub: error connecting to api.github.com".to_string(),
+        ),
+        (
+            json!({"exit": 1, "stdout": r#"{"message":"API rate limit exceeded for user ID 1."}"#,
+                "stderr": "gh: API rate limit exceeded for user ID 1. (HTTP 403)\n"}),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "GitHub's limit for this sign-in is used up.".to_string(),
+        ),
+        (
+            json!({"exit": 0, "stdout": "not json"}),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "GitHub's answer couldn't be read.".to_string(),
+        ),
+        (
+            json!({"exit": 1, "stdout": r#"{"message":"Not Found"}"#, "stderr": "gh: Not Found (HTTP 404)\n"}),
+            StatusCode::CONFLICT,
+            "GitHub has no repository octo-org/widgets that this sign-in can see.".to_string(),
+        ),
+    ];
+    for (mut entry, want_status, want) in cases {
+        entry["match"] = json!(["--input"]);
+        rig.scratch.script(json!([entry]));
+        let (status, body) = merge(&app, &tab, merge_body(&rig, "merge", false)).await;
+        assert_eq!((status, &body["reason"]), (want_status, &json!(want)), "{body}");
+    }
+}
+
+#[tokio::test]
+async fn actions_need_gh_and_the_switch() {
+    let rig = Rig::new();
+    let state = state_in(&rig.scratch).with_tab_path(|| Some(std::ffi::OsString::new()));
+    let (app, tab) = open(&state, &rig.scratch).await;
+    let (status, body) = create(&app, &tab, create_body(&rig)).await;
+    assert_eq!(
+        (status, &body["reason"]),
+        (StatusCode::SERVICE_UNAVAILABLE, &json!(NEED_CLI)),
+        "{body}"
+    );
+    let (status, body) = pull_action(&app, &tab, pull_body(&rig, "ready")).await;
+    assert_eq!(
+        (status, &body["reason"]),
+        (StatusCode::SERVICE_UNAVAILABLE, &json!(NEED_CLI)),
+        "{body}"
+    );
+
+    let (app, tab) = open(&rig.state(), &rig.scratch).await;
+    let (_, mut settings) = call(&app, "GET", "/v1/settings", None).await;
+    settings["changes"]["pull_requests"] = json!(false);
+    assert_eq!(
+        call(&app, "PUT", "/v1/settings", Some(settings)).await.0,
+        StatusCode::OK
+    );
+    let off = "Pull requests from GitHub are switched off in Settings.";
+    let (status, body) = create(&app, &tab, create_body(&rig)).await;
+    assert_eq!((status, &body["reason"]), (StatusCode::CONFLICT, &json!(off)), "{body}");
+    let (status, body) = merge(&app, &tab, merge_body(&rig, "merge", false)).await;
+    assert_eq!((status, &body["reason"]), (StatusCode::CONFLICT, &json!(off)), "{body}");
+    assert!(rig.scratch.writes().is_empty());
+}
+
+#[tokio::test]
+async fn actions_for_an_unknown_tab_are_404() {
+    let rig = Rig::new();
+    let (app, _) = open(&rig.state(), &rig.scratch).await;
+    let (status, _) = create(&app, "nope", create_body(&rig)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = merge(&app, "nope", merge_body(&rig, "merge", false)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = pull_action(&app, "nope", pull_body(&rig, "ready")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn action_routes_need_the_token() {
+    let rig = Rig::new();
+    script_with(&rig, json!([{"match": ["--input"], "exit": 0, "stdout": CREATED}]));
+    let (app, tab) = seen(&rig).await;
+    for (path, body) in [
+        ("github/create", create_body(&rig)),
+        ("github/merge", merge_body(&rig, "merge", false)),
+        ("github/pull", pull_body(&rig, "ready")),
+    ] {
+        let res = app
+            .clone()
+            .oneshot(request(
+                "POST",
+                &format!("/v1/sessions/{tab}/{path}"),
+                Some(body),
+                false,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED, "{path}");
+    }
+    assert!(rig.scratch.writes().is_empty());
+}
