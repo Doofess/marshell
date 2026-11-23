@@ -185,6 +185,9 @@ pub(crate) struct Ignores {
     /// One matcher per folder that holds a `.gitignore`, or None where it holds none.
     folders: HashMap<PathBuf, Option<Arc<Gitignore>>>,
     below_top: HashMap<PathBuf, Folder>,
+    /// How many times the disk was asked about a folder (its `.gitignore`, or its `.git`).
+    #[cfg(test)]
+    asks: usize,
 }
 
 impl Ignores {
@@ -208,6 +211,15 @@ impl Ignores {
             global,
             folders: HashMap::new(),
             below_top: HashMap::new(),
+            #[cfg(test)]
+            asks: 0,
+        }
+    }
+
+    fn count_ask(&mut self) {
+        #[cfg(test)]
+        {
+            self.asks += 1;
         }
     }
 
@@ -216,6 +228,7 @@ impl Ignores {
         if let Some(found) = self.folders.get(folder) {
             return found.clone();
         }
+        self.count_ask();
         let file = folder.join(".gitignore");
         // A `.gitignore` that is a link is skipped, as git 2.32 and later skip it.
         let is_link = std::fs::symlink_metadata(&file).is_ok_and(|m| m.file_type().is_symlink());
@@ -268,13 +281,28 @@ impl Ignores {
         }
         let state = if self.rules_ignore(folder, true) {
             Folder::Ignored
-        } else if std::fs::symlink_metadata(folder.join(".git")).is_ok() {
-            Folder::Nested
         } else {
-            Folder::Clear
+            self.count_ask();
+            if std::fs::symlink_metadata(folder.join(".git")).is_ok() {
+                Folder::Nested
+            } else {
+                Folder::Clear
+            }
         };
         self.below_top.insert(folder.to_path_buf(), state);
         state
+    }
+
+    /// What a listing of `folder` showed, so the disk isn't asked again for what the listing answered:
+    /// `has_rules` is whether it holds a `.gitignore`, and `clear` says the folder lies below `top`, isn't
+    /// ignored and holds no `.git`. Names are compared without case, so only a plain "no" is taken.
+    fn listed(&mut self, folder: &Path, has_rules: bool, clear: bool) {
+        if !has_rules {
+            self.folders.entry(folder.to_path_buf()).or_insert(None);
+        }
+        if clear {
+            self.below_top.entry(folder.to_path_buf()).or_insert(Folder::Clear);
+        }
     }
 
     /// Whether git ignores `abs`. A path that isn't below `top` (and the checkout) is never ignored.
@@ -332,13 +360,29 @@ impl Walk<'_> {
         let Ok(read) = std::fs::read_dir(folder) else {
             return Stopped::Done;
         };
+        // Whether the folder holds a `.gitignore` or a `.git`, in any case: Windows and macOS open either.
+        let (mut has_rules, mut has_git) = (false, false);
+        // An entry the listing couldn't give may be either of them: then the listing answers nothing.
+        let mut whole = true;
         let mut entries: Vec<(String, std::fs::FileType)> = read
-            .flatten()
-            .filter_map(|e| Some((e.file_name().into_string().ok()?, e.file_type().ok()?)))
+            .filter_map(|e| {
+                let Ok(e) = e else {
+                    whole = false;
+                    return None;
+                };
+                let name = e.file_name().into_string().ok()?;
+                has_rules |= name.eq_ignore_ascii_case(".gitignore");
+                has_git |= name.eq_ignore_ascii_case(".git");
+                Some((name, e.file_type().ok()?))
+            })
             .collect();
         // A folder that holds `.git` below the start is a nested checkout: git doesn't judge it.
         if !is_start && entries.iter().any(|(name, _)| name == ".git") {
             return Stopped::Done;
+        }
+        // The walk came in here, so the folder isn't ignored; its rules and its `.git` need no second look.
+        if whole {
+            self.ignores.listed(folder, has_rules, !is_start && !has_git);
         }
         entries.sort_by(|a, b| a.0.cmp(&b.0));
         for (name, kind) in entries {
@@ -817,5 +861,44 @@ mod tests {
         let pkg = root.join("node_modules/pkg");
         let mut ig = Ignores::with_global(&root, &pkg, None);
         assert_eq!(listed(&mut ig, &pkg), ["a.js"]);
+    }
+
+    /// The walk's listing answers what the rules would ask the disk: no `.gitignore` here, no `.git` here.
+    #[test]
+    fn the_walk_hands_its_listing_to_the_rules() {
+        let (_tmp, root) = repo();
+        write(&root.join("a").join("x.txt"), "x");
+        write(&root.join("b").join(".gitignore"), "*.log\n");
+        write(&root.join("b").join("y.log"), "y");
+        write(&root.join("b").join("z.txt"), "z");
+        let mut ig = rules(&root);
+        assert_eq!(listed(&mut ig, &root), ["a/x.txt", "b/.gitignore", "b/z.txt"]);
+        // Three folders listed, and the disk asked once more: for the one `.gitignore` there is.
+        assert_eq!(ig.asks, 1);
+        assert!(matches!(ig.folders.get(&root.join("b")), Some(Some(_))));
+    }
+
+    /// Windows opens `.GitIgnore` as `.gitignore`, so a listing that holds it is no "no".
+    #[cfg(windows)]
+    #[test]
+    fn a_gitignore_in_another_case_still_applies_in_the_walk() {
+        let (_tmp, root) = repo();
+        write(&root.join("sub").join(".GitIgnore"), "*.log\n");
+        write(&root.join("sub").join("a.log"), "a");
+        write(&root.join("sub").join("b.txt"), "b");
+        let mut ig = rules(&root);
+        assert_eq!(listed(&mut ig, &root), ["sub/.GitIgnore", "sub/b.txt"]);
+    }
+
+    /// A `.GIT` folder is a `.git` to Windows: the folder that holds it is not marked clear.
+    #[cfg(windows)]
+    #[test]
+    fn a_git_folder_in_another_case_is_not_taken_as_clear() {
+        let (_tmp, root) = repo();
+        std::fs::create_dir_all(root.join("sub").join(".GIT")).unwrap();
+        write(&root.join("sub").join("a.txt"), "a");
+        let mut ig = rules(&root);
+        let _ = listed(&mut ig, &root);
+        assert!(ig.below_top.get(&root.join("sub")) == Some(&Folder::Nested));
     }
 }
