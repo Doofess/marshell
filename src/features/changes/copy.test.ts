@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { copy } from "./copy";
+import { copy, stripTitle } from "./copy";
+
+describe("stripTitle", () => {
+  it("is the panel's summary while a session shows it, and the panel's name with no session, whose frame draws no panel to take the last summary back (pre-merge round 4)", () => {
+    expect(stripTitle("s1", "4 files · +120 −18")).toBe("4 files · +120 −18");
+    expect(stripTitle(undefined, "4 files · +120 −18")).toBe("Changes");
+  });
+});
 
 const line = (o: Partial<Parameters<typeof copy.line>[0]>) =>
   copy.line({ branch: "main", detached: null, base: "origin/main", ahead: 0, uncommitted: false, moved: false, folder: "C:\\r", ...o });

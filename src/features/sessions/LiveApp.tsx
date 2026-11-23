@@ -71,7 +71,7 @@ import { dropCover, modalOnScreen } from "../pane/dropCover";
 import { EmptyBrowser, PAGES_UNAVAILABLE } from "../pane/EmptyBrowser";
 import { ChangesIcon, EmptyPanel } from "../pane/EmptyPanel";
 import { NO_FOLDER_LINE } from "../files/FileTree";
-import { copy as changesCopy } from "../changes/copy";
+import { copy as changesCopy, stripTitle } from "../changes/copy";
 import { ChangesPanel, type ChangesHandle } from "../changes/ChangesPanel";
 import { askReview, postComments } from "../changes/changesApi";
 import { reviewCommandOf } from "../changes/review";
@@ -2351,7 +2351,7 @@ export function LiveApp() {
       return (
         <SidePane
           panel={panel}
-          title={changesSummary}
+          title={stripTitle(paneSession, changesSummary)}
           menu={{ label: "Changes menu" }}
           onMenu={(anchor, opener) => setChangesMenu({ anchor, opener })}
           tabs={[]}

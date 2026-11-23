@@ -13,6 +13,9 @@ export type LineInfo = {
   folder: string;
 };
 
+/** The strip's title: the panel's summary while a session shows it, else the panel's name. With no session the frame draws no panel, so nothing would take the last summary back. */
+export const stripTitle = (session: string | undefined, summary: string): string => (session === undefined ? "Changes" : summary);
+
 export const copy = {
   /** "4 files · +120 −18" (the minus sign is U+2212), or "No changes". */
   summary(fileCount: number, added: number, removed: number): string {

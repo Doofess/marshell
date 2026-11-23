@@ -1,6 +1,6 @@
 import type { ChangesDrafts } from "../../generated/ChangesDrafts";
 import type { DraftComment } from "../../generated/DraftComment";
-import type { BoxAnchor, BoxState } from "./boxModel";
+import { type BoxAnchor, type BoxState, anchorKey } from "./boxModel";
 import { type Placement, messageOf, renumbered } from "./comments";
 import type { Section } from "./model";
 import { treeFolderOk } from "../pane/paneRules";
@@ -25,12 +25,24 @@ export type OpenBox = { state: BoxState; text: string; on: Shown };
 /**
  * The drafts once a box's text is kept. A new comment goes in at `anchor` (where its rows are now) with `id`, on the checkout the box
  * was opened on, so a shell that moved to another repository meanwhile doesn't take it along; an edit takes the new text, its lines
- * renumbered by `now`.
+ * renumbered by `now`. An edit whose comment is gone meanwhile (deleted, or sent) goes in as a new one, so its text isn't lost.
  */
 export function keptBox(drafts: ChangesDrafts | undefined, box: OpenBox, anchor: BoxAnchor, id: string, now: (c: DraftComment) => DraftComment): ChangesDrafts {
   const comments = drafts?.comments ?? [];
-  const next = box.state.id === null ? [...comments, { ...anchor, id, text: box.text }] : comments.map((c) => (c.id === box.state.id ? { ...now(c), text: box.text } : c));
+  const edits = box.state.id !== null && comments.some((c) => c.id === box.state.id);
+  const next = edits ? comments.map((c) => (c.id === box.state.id ? { ...now(c), text: box.text } : c)) : [...comments, { ...anchor, id, text: box.text }];
   return withComments(drafts, box.on, next);
+}
+
+/**
+ * What asking for a box does to the one that is open. "same": it is that box, which stays as it is, text and all. "keep": the open one
+ * holds typed text, which is kept as a draft first, as Esc keeps it. "open": none is open, or it is empty.
+ */
+export function givesWay(open: OpenBox | null, next: BoxState): "open" | "same" | "keep" {
+  if (open === null) return "open";
+  const same = open.state.id !== null ? next.id === open.state.id : next.id === null && anchorKey(open.state.anchor) === anchorKey(next.anchor);
+  if (same) return "same";
+  return open.text.trim() === "" ? "open" : "keep";
 }
 
 /**

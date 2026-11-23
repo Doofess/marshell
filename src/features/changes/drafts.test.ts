@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ChangesDrafts } from "../../generated/ChangesDrafts";
 import type { DraftComment } from "../../generated/DraftComment";
 import type { Placement } from "./comments";
-import { boxAnchor, elsewhere, keptBox, sendMessageOf, shownComments, unkept, withComments, withFolds } from "./drafts";
+import { boxAnchor, elsewhere, givesWay, keptBox, sendMessageOf, shownComments, unkept, withComments, withFolds } from "./drafts";
 import type { Section } from "./model";
 
 const A = "C:\\work\\repoA";
@@ -54,6 +54,36 @@ describe("keptBox", () => {
     expect(added.comments.map((x) => x.id)).toEqual(["1", "n2"]);
     const edited = keptBox(onA, { state: { anchor: c("1", 12), id: "1" }, text: "new words", on: { folder: A, base: "main" } }, anchor, "unused", same);
     expect(edited.comments).toEqual([{ ...c("1", 12), text: "new words" }]);
+  });
+});
+
+describe("keptBox for a comment that is gone", () => {
+  const { id: _id, text: _text, ...anchor } = c("1", 12);
+  it("keeps an edit of a comment deleted or sent meanwhile as a new comment, so its text isn't lost (pre-merge round 4)", () => {
+    const sent: ChangesDrafts = { ...onA, comments: [c("2", 20)] };
+    const kept = keptBox(sent, { state: { anchor, id: "1" }, text: "edited words", on: { folder: A, base: "main" } }, anchor, "n3", (x) => x);
+    expect(kept.comments).toEqual([c("2", 20), { ...anchor, id: "n3", text: "edited words" }]);
+  });
+});
+
+describe("givesWay", () => {
+  const { id: _id, text: _text, ...anchor } = c("9", 30);
+  const { id: _i2, text: _t2, ...other } = c("9", 44);
+  const on = { folder: A, base: "main" };
+  it("opens the box when none is open, or the open one holds no text", () => {
+    expect(givesWay(null, { anchor, id: null })).toBe("open");
+    expect(givesWay({ state: { anchor: other, id: null }, text: "  ", on }, { anchor, id: null })).toBe("open");
+  });
+  it("keeps the open box's typed text before another box opens, as Esc keeps it (pre-merge round 4)", () => {
+    expect(givesWay({ state: { anchor: other, id: null }, text: "typed", on }, { anchor, id: null })).toBe("keep");
+    expect(givesWay({ state: { anchor: other, id: "7" }, text: "typed", on }, { anchor, id: "1" })).toBe("keep");
+    // A new comment on the lines of the comment being edited is another box.
+    expect(givesWay({ state: { anchor, id: "7" }, text: "typed", on }, { anchor, id: null })).toBe("keep");
+  });
+  it("leaves the open box as it is when the same one is asked for again, so its text isn't reset", () => {
+    expect(givesWay({ state: { anchor, id: null }, text: "typed", on }, { anchor, id: null })).toBe("same");
+    expect(givesWay({ state: { anchor, id: null }, text: "", on }, { anchor, id: null })).toBe("same");
+    expect(givesWay({ state: { anchor: other, id: "7" }, text: "typed", on }, { anchor, id: "7" })).toBe("same");
   });
 });
 

@@ -11,7 +11,7 @@ import { type ChangesChoice, changesChoice, changesMenuItems, headerMenuItems, l
 import { type BoxAction, CommentBox, boxLabel } from "./CommentBox";
 import { type BoxState, anchorKey, boxAfter } from "./boxModel";
 import { MAX_COMMENTS, type Placement, anchorOf, place, renumbered } from "./comments";
-import { type OpenBox, boxAnchor, commentsOf, elsewhere, keptBox, sendMessageOf, shownComments, unkept, withFolds } from "./drafts";
+import { type OpenBox, boxAnchor, commentsOf, elsewhere, givesWay, keptBox, sendMessageOf, shownComments, unkept, withFolds } from "./drafts";
 import { copy } from "./copy";
 import { type Item, type Row, type Section, cutFiles, focusIndex, itemsOf, sectionsOf } from "./model";
 import { reviewLabel } from "./review";
@@ -185,41 +185,59 @@ export function ChangesPanel(p: ChangesPanelProps) {
 
   // Set when the user opens the box, so it takes the focus once (a redraw that mounts it again doesn't).
   const focusBox = useRef(false);
-  const startBox = (item: Item | undefined) => {
-    if (!listed || item === undefined) return;
-    if (item.kind === "comment") {
-      const { id, text, ...anchor } = item.comment;
-      focusBox.current = true;
-      setOpen({ state: { anchor, id }, text, on: { folder: listed.folder, base: listed.base } });
-      return;
-    }
-    if (item.kind !== "row") return;
-    const held = heldItems(item).filter((i): i is Extract<Item, { kind: "row" }> => i.kind === "row");
-    const rows = held.map((i) => i.file.rows[i.at]!);
-    if (held.length === 0 || rows.some((r) => r.kind === "hunk")) return;
-    const away = elsewhere(drafts, listed.folder) ?? unkept(item.file.path);
-    if (away !== null) return p.announce(away);
-    if (count >= MAX_COMMENTS) return p.announce(`A session holds at most ${MAX_COMMENTS} comments.`);
-    const ats = held.map((i) => i.at);
-    focusBox.current = true;
-    setOpen({ state: { anchor: anchorOf(item.file, Math.min(...ats), Math.max(...ats)), id: null }, text: "", on: { folder: listed.folder, base: listed.base } });
-  };
-
   /** Where the box's rows are now. */
   const placeBox = (state: BoxState): Placement =>
     place({ ...state.anchor, id: "", text: "" }, sections.find((s) => s.path === state.anchor.path));
+
+  /** The drafts with a box's text kept: at the lines its rows are on now, unless the shell moved to another checkout while it was written. */
+  const keptNow = (current: OpenBox, folder: string): ChangesDrafts => {
+    const here = current.on.folder === folder;
+    const anchor = boxAnchor(current, folder, placeBox(current.state));
+    return keptBox(drafts, current, anchor, crypto.randomUUID(), (c) => (here ? renumbered(c, placements.get(c.id)) : c));
+  };
+
+  const startBox = (item: Item | undefined) => {
+    if (!listed || item === undefined) return;
+    let next: { state: BoxState; text: string };
+    if (item.kind === "comment") {
+      const { id, text, ...anchor } = item.comment;
+      next = { state: { anchor, id }, text };
+    } else if (item.kind === "row") {
+      const held = heldItems(item).filter((i): i is Extract<Item, { kind: "row" }> => i.kind === "row");
+      const rows = held.map((i) => i.file.rows[i.at]!);
+      if (held.length === 0 || rows.some((r) => r.kind === "hunk")) return;
+      const ats = held.map((i) => i.at);
+      next = { state: { anchor: anchorOf(item.file, Math.min(...ats), Math.max(...ats)), id: null }, text: "" };
+    } else return;
+    const way = givesWay(open, next.state);
+    // The box asked for is the open one: it keeps its text and takes the keyboard.
+    if (way === "same") return void box.current?.querySelector<HTMLTextAreaElement>(".changes__box-text")?.focus();
+    // An open box with typed text gives way as Esc would have it: the text is kept as a draft, and its box closes whatever comes next.
+    const kept = way === "keep" && open !== null ? keptNow(open, listed.folder) : null;
+    if (kept !== null) {
+      setOpen(null);
+      p.onDrafts(kept);
+      p.announce("Comment kept as a draft.");
+    }
+    const now = kept ?? drafts;
+    if (next.state.id === null) {
+      const away = elsewhere(now, listed.folder) ?? unkept(next.state.anchor.path);
+      if (away !== null) return p.announce(away);
+      if ((now?.comments.length ?? 0) >= MAX_COMMENTS) return p.announce(`A session holds at most ${MAX_COMMENTS} comments.`);
+    }
+    // A box on the same lines as the one that gave way is the same element, which mounts nothing: it is focused here instead.
+    if (open !== null && anchorKey(open.state.anchor) === anchorKey(next.state.anchor)) box.current?.querySelector<HTMLTextAreaElement>(".changes__box-text")?.focus();
+    else focusBox.current = true;
+    setOpen({ ...next, on: { folder: listed.folder, base: listed.base } });
+  };
 
   const closeBox = (action: BoxAction) => {
     const current = open;
     setOpen(null);
     setBack((n) => n + 1);
     if (!current || !listed) return;
-    const text = current.text;
-    if (action === "close" || text.trim() === "") return;
-    // Saved at the lines its rows are on now, unless the shell moved to another checkout while it was written.
-    const here = current.on.folder === listed.folder;
-    const anchor = boxAnchor(current, listed.folder, placeBox(current.state));
-    const next = keptBox(drafts, current, anchor, crypto.randomUUID(), (c) => (here ? renumbered(c, placements.get(c.id)) : c));
+    if (action === "close" || current.text.trim() === "") return;
+    const next = keptNow(current, listed.folder);
     p.onDrafts(next);
     p.announce(action === "add" ? `Comment added. ${next.comments.length} to send.` : "Comment kept as a draft.");
   };
