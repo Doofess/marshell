@@ -8,10 +8,8 @@ import { itemsOf, sectionsOf } from "./model";
 
 const key = (k: string, shiftKey = false) => ({ key: k, shiftKey });
 const head = "diff --git a/a.ts b/a.ts\nindex 1..2 100644\n--- a/a.ts\n+++ b/a.ts\n";
-const sectionFor = (body: string) => {
-  const reply = { kind: "listed", stamp: "s", folder: "r", moved: false, branch: "main", detached: null, base: null, unrelated: false, ahead: 0, uncommitted: true, files: [{ path: "a.ts", old_path: null, status: "modified", note: null }], diff: head + body, truncated: false, more_new: 0, reason: null } as ChangesReply;
-  return sectionsOf(reply, {}, [], false);
-};
+const replyFor = (body: string) => ({ kind: "listed", stamp: "s", folder: "r", moved: false, branch: "main", detached: null, base: null, unrelated: false, ahead: 0, uncommitted: true, files: [{ path: "a.ts", old_path: null, status: "modified", note: null }], diff: head + body, truncated: false, more_new: 0, reason: null }) as ChangesReply;
+const sectionFor = (body: string) => sectionsOf(replyFor(body), {}, [], false);
 // rows: 0 hunk, 1 one, 2 +two, 3 three
 const BODY = "@@ -1,3 +1,3 @@\n one\n+two\n three\n";
 // The same lines under five more rows in the same hunk.
@@ -75,5 +73,15 @@ describe("the box's place", () => {
     const c = { ...anchor, id: "c1", text: "t" };
     const items = itemsOf(s, [c], new Map([["c1", place(c, s[0])]]));
     expect(items[boxAfter(items, s, { anchor, id: "c1" })]!.key).toBe("comment:c1");
+  });
+  // A file reverted while its box is open keeps the box, and what is typed in it, under the file's "gone" note.
+  it("stays under its file's header when the file leaves the diff", () => {
+    const anchor = anchorOf(sectionFor(BODY)[0]!, 2, 2);
+    const after = sectionsOf({ ...replyFor(BODY), files: [], diff: "" }, {}, [], false, anchor.path);
+    const items = itemsOf(after, [], new Map());
+    const at = boxAfter(items, after, { anchor, id: null });
+    expect(after.map((s) => [s.path, s.note])).toEqual([["a.ts", "gone"]]);
+    expect(items[at]!.kind).toBe("note");
+    expect(sectionsOf({ ...replyFor(BODY), files: [], diff: "" }, {}, [], false)).toEqual([]);
   });
 });

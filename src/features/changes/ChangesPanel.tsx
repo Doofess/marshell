@@ -96,19 +96,21 @@ export function ChangesPanel(p: ChangesPanelProps) {
   const listed = reply?.kind === "listed" ? reply : null;
   const { drafts } = p;
 
+  // The comment box (its text lives here, so a poll never loses it), the Send bar's question and a send under way.
+  const [open, setOpen] = useState<{ state: BoxState; text: string } | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+
   // Another checkout's comments aren't listed against this one's files (the strip says where they are).
   const comments = useMemo(() => (listed ? shownComments(drafts, listed.folder) : []), [listed, drafts]);
-  const sections = useMemo(() => (listed ? sectionsOf(listed, drafts?.folds ?? {}, comments, hide) : []), [listed, drafts, comments, hide]);
+  // The open box's file stays, under "gone", when it leaves the diff, so the box and its text stay too.
+  const openPath = open?.state.anchor.path;
+  const sections = useMemo(() => (listed ? sectionsOf(listed, drafts?.folds ?? {}, comments, hide, openPath) : []), [listed, drafts, comments, hide, openPath]);
   const placements = useMemo(() => new Map<string, Placement>(comments.map((c) => [c.id, place(c, sections.find((s) => s.path === c.path))])), [sections, comments]);
   const items = useMemo<Item[]>(() => itemsOf(sections, comments, placements), [sections, comments, placements]);
   const draftsRef = useRef(drafts);
   draftsRef.current = drafts;
   const count = drafts?.comments.length ?? 0;
-
-  // The comment box (its text lives here, so a poll never loses it), the Send bar's question and a send under way.
-  const [open, setOpen] = useState<{ state: BoxState; text: string } | null>(null);
-  const [asking, setAsking] = useState(false);
-  const [busy, setBusy] = useState(false);
   // Counts the times the keyboard goes back to the item it was on once the box or the bar is gone.
   const [back, setBack] = useState(0);
 

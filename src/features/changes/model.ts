@@ -126,7 +126,8 @@ export function cutFiles(reply: ChangesReply): number {
   return pastCut(reply, partsOf(reply)).size;
 }
 
-export function sectionsOf(reply: ChangesReply, folds: Record<string, boolean>, drafts: DraftComment[], hideWhitespace: boolean): Section[] {
+/** `openPath` is the open comment box's file: like a comment's, it stays as a "gone" section when it leaves the diff. */
+export function sectionsOf(reply: ChangesReply, folds: Record<string, boolean>, drafts: DraftComment[], hideWhitespace: boolean, openPath?: string): Section[] {
   const diffs = partsOf(reply);
   const cut = pastCut(reply, diffs);
 
@@ -152,7 +153,8 @@ export function sectionsOf(reply: ChangesReply, folds: Record<string, boolean>, 
   });
 
   const known = new Set(reply.files.map((f) => f.path));
-  const gone = [...new Set(drafts.map((d) => d.path).filter((p) => !known.has(p)))].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const kept = openPath === undefined ? drafts.map((d) => d.path) : [...drafts.map((d) => d.path), openPath];
+  const gone = [...new Set(kept.filter((p) => !known.has(p)))].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   for (const path of gone) sections.push({ path, status: "modified", added: 0, removed: 0, note: "gone", rows: [], folded: false });
   return sections;
 }
