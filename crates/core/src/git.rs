@@ -133,7 +133,7 @@ pub fn stream(
     cancel: &std::sync::atomic::AtomicBool,
     each: impl FnMut(&[u8]) -> bool,
 ) -> anyhow::Result<Stopped> {
-    stream_cmd(command(dir, args), deadline, cancel, each)
+    stream_command(command(dir, args), deadline, cancel, each)
 }
 
 /// Reads `r` to its end and sends each chunk. A read error is sent too (an interrupted read is
@@ -157,8 +157,32 @@ fn pump(mut r: impl std::io::Read, tx: std::sync::mpsc::SyncSender<std::io::Resu
     }
 }
 
-/// `stream` for any command, so the tests can run one that prints nothing.
-fn stream_cmd(
+/// How much of git's stderr is kept for the sentence of a failed run.
+const STDERR_TAIL: usize = 4096;
+
+/// Reads `r` to its end and keeps the last `STDERR_TAIL` bytes in `tail`.
+fn keep_tail(mut r: impl std::io::Read, tail: &std::sync::Mutex<Vec<u8>>) {
+    let mut buf = [0u8; 4096];
+    loop {
+        match r.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                let Ok(mut kept) = tail.lock() else { break };
+                kept.extend_from_slice(&buf[..n]);
+                if kept.len() > STDERR_TAIL {
+                    let over = kept.len() - STDERR_TAIL;
+                    kept.drain(..over);
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => break,
+        }
+    }
+}
+
+/// `stream` for any command: the sandboxed git of Changes runs through it, and the tests run one that
+/// prints nothing. A failed run (an exit code other than 0 or 1) says why, in `said`'s words.
+pub(crate) fn stream_command(
     mut cmd: Command,
     deadline: std::time::Instant,
     cancel: &std::sync::atomic::AtomicBool,
@@ -174,11 +198,19 @@ fn stream_cmd(
     let mut child = Reaped::new(
         cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(start_error)?,
     );
     let out = child.0.stdout.take().expect("stdout is piped");
+    // Git's stderr is read on its own thread too, so a chatty git never blocks on a full pipe. Only the
+    // last part is kept: the sentence that explains a failure comes last.
+    let err = child.0.stderr.take().expect("stderr is piped");
+    let tail = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let reader = {
+        let tail = tail.clone();
+        std::thread::spawn(move || keep_tail(err, &tail))
+    };
     // The pipe is read on its own thread, so this one can watch the clock and the flag while git is
     // silent. The small queue holds the reader back when `each` is slow.
     let (tx, rx) = sync_channel::<std::io::Result<Vec<u8>>>(4);
@@ -209,7 +241,23 @@ fn stream_cmd(
             Some(status) => {
                 return match status.code() {
                     Some(0 | 1) => Ok(Stopped::Done),
-                    Some(code) => Err(anyhow::anyhow!("Git stopped with exit code {code}.")),
+                    Some(code) => {
+                        // The pipe closes with git; a grandchild that kept it open doesn't hold this up.
+                        let waited = Instant::now();
+                        while !reader.is_finished() && waited.elapsed() < std::time::Duration::from_millis(200) {
+                            std::thread::sleep(std::time::Duration::from_millis(2));
+                        }
+                        let stderr = tail
+                            .lock()
+                            .map(|t| String::from_utf8_lossy(&t).into_owned())
+                            .unwrap_or_default();
+                        let out = GitOutput {
+                            ok: false,
+                            stdout: String::new(),
+                            stderr,
+                        };
+                        Err(anyhow::anyhow!("Git stopped with exit code {code}: {}", said(&out)))
+                    }
                     None => Err(anyhow::anyhow!("Git was stopped.")),
                 };
             }
@@ -307,6 +355,23 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_run_says_what_git_said() {
+        let cancel = AtomicBool::new(false);
+        let err = stream(
+            Path::new("."),
+            &["rev-parse", "--verify", "no-such-revision-marshell"],
+            Instant::now() + Duration::from_secs(10),
+            &cancel,
+            |_| true,
+        )
+        .unwrap_err();
+        let text = err.to_string();
+        assert!(text.starts_with("Git stopped with exit code 128: "), "{text}");
+        assert!(!text.contains("fatal:"), "the prefix is dropped: {text}");
+        assert!(text.len() > "Git stopped with exit code 128: ".len(), "{text}");
+    }
+
+    #[test]
     fn stream_stops_when_each_says_so() {
         let cancel = AtomicBool::new(false);
         let mut chunks = 0;
@@ -350,7 +415,7 @@ mod tests {
         let cancel = AtomicBool::new(false);
         let started = Instant::now();
         let deadline = started + Duration::from_millis(300);
-        let stopped = stream_cmd(sleeper(), deadline, &cancel, |_| true).unwrap();
+        let stopped = stream_command(sleeper(), deadline, &cancel, |_| true).unwrap();
         assert_eq!(stopped, Stopped::Deadline);
         assert!(
             started.elapsed() < Duration::from_millis(300 + 500),
@@ -368,7 +433,7 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(200));
                 cancel.store(true, Ordering::Relaxed);
             });
-            stream_cmd(sleeper(), started + Duration::from_secs(10), &cancel, |_| true).unwrap()
+            stream_command(sleeper(), started + Duration::from_secs(10), &cancel, |_| true).unwrap()
         });
         assert_eq!(stopped, Stopped::Cancelled);
         assert!(
@@ -382,7 +447,7 @@ mod tests {
     fn stream_with_the_flag_already_set_runs_nothing_long() {
         let cancel = AtomicBool::new(true);
         let started = Instant::now();
-        let stopped = stream_cmd(sleeper(), started + Duration::from_secs(10), &cancel, |_| true).unwrap();
+        let stopped = stream_command(sleeper(), started + Duration::from_secs(10), &cancel, |_| true).unwrap();
         assert_eq!(stopped, Stopped::Cancelled);
         assert!(started.elapsed() < Duration::from_millis(500));
     }
@@ -391,7 +456,7 @@ mod tests {
     fn stream_says_when_the_program_cannot_start() {
         let cancel = AtomicBool::new(false);
         let cmd = Command::new("marshell-no-such-program");
-        let err = stream_cmd(cmd, Instant::now() + Duration::from_secs(1), &cancel, |_| true).unwrap_err();
+        let err = stream_command(cmd, Instant::now() + Duration::from_secs(1), &cancel, |_| true).unwrap_err();
         assert!(err.to_string().contains("isn't installed"), "{err}");
     }
 
@@ -427,7 +492,7 @@ mod tests {
                 }
                 cancel.store(true, Ordering::Relaxed);
             });
-            stream_cmd(cmd, Instant::now() + Duration::from_secs(30), &cancel, |_| true).unwrap()
+            stream_command(cmd, Instant::now() + Duration::from_secs(30), &cancel, |_| true).unwrap()
         });
         assert_eq!(stopped, Stopped::Cancelled);
         let grandchild: u32 = std::fs::read_to_string(&pid_file).unwrap().trim().parse().unwrap();

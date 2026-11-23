@@ -54,11 +54,11 @@ export function step(state: NavState, events: NavEvent[], ctx: NavContext): Resu
 
 export { topName };
 
-export type TopAction = "palette" | "launcher" | "sidebar" | "panel-browser" | "panel-files";
+export type TopAction = "palette" | "launcher" | "sidebar" | "panel-browser" | "panel-files" | "panel-changes";
 
 /** What releasing the cursor on a top-bar control does: the same as clicking it. Null for an id with no action. */
 export function topAction(id: string): TopAction | null {
-  return id === "palette" || id === "launcher" || id === "sidebar" || id === "panel-browser" || id === "panel-files" ? id : null;
+  return id === "palette" || id === "launcher" || id === "sidebar" || id === "panel-browser" || id === "panel-files" || id === "panel-changes" ? id : null;
 }
 
 /** What the hint under the cursor names: "Session 3, api-server", "Empty slot 2", "Command palette". */

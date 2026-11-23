@@ -69,6 +69,13 @@ import type { CookieRule } from "../../generated/CookieRule";
 import { PaneContext, PagePaneContext, type OpenPageInPane } from "../pane/PaneContext";
 import { dropCover, modalOnScreen } from "../pane/dropCover";
 import { EmptyBrowser, PAGES_UNAVAILABLE } from "../pane/EmptyBrowser";
+import { ChangesIcon, EmptyPanel } from "../pane/EmptyPanel";
+import { NO_FOLDER_LINE } from "../files/FileTree";
+import { copy as changesCopy, stripTitle } from "../changes/copy";
+import { ChangesPanel, type ChangesHandle } from "../changes/ChangesPanel";
+import { askReview, postComments } from "../changes/changesApi";
+import { reviewCommandOf } from "../changes/review";
+import { runReview, runSend, type SendResult } from "../changes/send";
 import { EmptyFiles } from "../pane/EmptyFiles";
 import { PanelStack } from "../pane/PanelStack";
 import { KeptTabs } from "../pane/KeptTabs";
@@ -157,7 +164,7 @@ import { ResumeBar } from "./ResumeBar";
 import { recordSetupDetection, type SetupDetections } from "./setupDetections";
 import { fetchSessionCommand, sessionResumeCommand } from "./resumeCommand";
 import { holdsResume, offersModeChange, offersResume, resumeBlockedReason, resumeStateOf, sessionRunning } from "./resumeState";
-import { PAUSED_TYPING_TEXT, SessionActions, closeBarText, needsCloseConfirm, pauseBarStale, pauseBarText, reopenBarText, restartBarStale, restartBarText, tabIdOfNumber } from "./sessionActions";
+import { PAUSED_TYPING_TEXT, agentLabel, SessionActions, closeBarText, needsCloseConfirm, pauseBarStale, pauseBarText, reopenBarText, restartBarStale, restartBarText, tabIdOfNumber } from "./sessionActions";
 import { topAction, useNavigation } from "./useNavigation";
 import type { NavEffect } from "../../lib/navigation/types";
 import { installTabHold, sendHeldTab } from "../../lib/navigation/tabHold";
@@ -744,9 +751,10 @@ export function LiveApp() {
   const panelFocus: PanelId | null = pageHasKeys ? "browser" : panelInDom;
   const panelFocusRef = useRef(panelFocus);
   panelFocusRef.current = panelFocus;
-  // The last panel that had the keyboard: the one a tab command acts on when none has it now.
-  const lastPanel = useRef<PanelId | null>(null);
-  if (panelFocus !== null) lastPanel.current = panelFocus;
+  // The last panel that holds tabs (Browser or Files) to have the keyboard: the one a tab command acts on when none has it now, and when
+  // the keyboard is in Changes, which holds none.
+  const lastTabPanel = useRef<PanelId | null>(null);
+  if (panelFocus !== null && panelFocus !== "changes") lastTabPanel.current = panelFocus;
   useEffect(() => {
     const inside = () => setPanelInDom(panelOfElement(document.activeElement));
     document.addEventListener("focusin", inside);
@@ -759,7 +767,7 @@ export function LiveApp() {
   // What a tab command acts on, read when it runs: the commands are called through refs, long after the render that made them.
   const onNow = useRef({ session: focusedId, panelsOn });
   onNow.current = { session: focusedId, panelsOn };
-  const currentPanel = (): PanelId | null => commandPanel(onNow.current.panelsOn, panelFocusRef.current, lastPanel.current, (p) => panelTabs(viewRef.current.pane, onNow.current.session, p).length > 0);
+  const currentPanel = (): PanelId | null => commandPanel(onNow.current.panelsOn, panelFocusRef.current, lastTabPanel.current, (p) => panelTabs(viewRef.current.pane, onNow.current.session, p).length > 0);
   // The side pane's preview tabs, by key: each hands over the commands the palette and the close question call on it, a text tab's
   // editor commands, and what saves the tab (a text tab's editor, or a PDF tab's notes).
   const textTabs = useRef(new Map<string, Pick<PreviewHandle, "text" | "saving" | "autoSave">>());
@@ -1179,7 +1187,7 @@ export function LiveApp() {
         const next = paneReducer(pane, action);
         paneDispatch(action);
         // Shown: the keyboard goes to the panel a tab command would act on among those now on screen. Hidden: to the terminal.
-        const into = next.open ? commandPanel(onScreen(next, session ?? null), panelFocusRef.current, lastPanel.current, (p) => panelTabs(next, session, p).length > 0) : null;
+        const into = next.open ? commandPanel(onScreen(next, session ?? null), panelFocusRef.current, lastTabPanel.current, (p) => panelTabs(next, session, p).length > 0) : null;
         if (into !== null) focusPane(into);
         else setTimeout(() => actions.focusTerminal(), 0);
         return;
@@ -1194,7 +1202,7 @@ export function LiveApp() {
         if (outcome === "show") {
           const action: PaneAction = { type: "show", session: session ?? null };
           const next = paneReducer(pane, action);
-          into = commandPanel(onScreen(next, session ?? null), panelFocusRef.current, lastPanel.current, (p) => panelTabs(next, session, p).length > 0);
+          into = commandPanel(onScreen(next, session ?? null), panelFocusRef.current, lastTabPanel.current, (p) => panelTabs(next, session, p).length > 0);
           paneDispatch(action);
         } else if (panel !== null) paneDispatch({ type: "step", session, panel, by: shortcut.by });
         // Asked once the change is drawn: whether the pane covers the terminal is the window's to say (`data-pane`).
@@ -1245,6 +1253,9 @@ export function LiveApp() {
   // The Files menu (the strip's ⋯ button), the Files panel's handle and the Files settings (Settings → Files writes the same values).
   const [filesMenu, setFilesMenu] = useState<{ anchor: { x: number; y: number }; opener: HTMLElement } | null>(null);
   const filesPanel = useRef<FilesPanelHandle | null>(null);
+  // The Changes menu (its ⋯ button): the panel draws it, since it holds the settings, the files and the refresh. The strip's title is the panel's summary.
+  const [changesMenu, setChangesMenu] = useState<{ anchor: { x: number; y: number }; opener: HTMLElement } | null>(null);
+  const [changesSummary, setChangesSummary] = useState("Changes");
   const { settings: filesSettings, failed: filesSettingsFailed, set: setFilesSetting } = useFilesSettings();
   const filesPrefs = useMemo(() => editorPrefsOf(filesSettings), [filesSettings]);
   // The home folder, so the Files panel's path bar starts a file under it and outside the project at `~`; null until the system answers.
@@ -1305,6 +1316,23 @@ export function LiveApp() {
     if (delivery.panel) return focusShellTerminal(document);
     pick(tabId);
     setTimeout(() => actions.focusTerminal(), 0);
+  };
+  // The Changes panel's Send and Review: the comments' text goes into the session's prompt (or onto the clipboard), never Enter.
+  const changesPanel = useRef<ChangesHandle | null>(null);
+  const sendComments = async (session: string, text: string, count: number): Promise<SendResult> => {
+    const delivery = deliveryFor(stateRef.current.rows.find((r) => r.id === session) ?? null);
+    const result = await runSend({ delivery, count, message: text, post: (t) => postComments(session, t), write: (t) => navigator.clipboard.writeText(t) });
+    announce(result.notice);
+    if (result.focus && delivery !== null) focusDelivered(session, { name: delivery.name });
+    return result;
+  };
+  const reviewChanges = async (session: string, agent: string | null, base: string | null): Promise<void> => {
+    const delivery = deliveryFor(stateRef.current.rows.find((r) => r.id === session) ?? null);
+    if (delivery === null) return announce("No session to ask.");
+    if ("refused" in delivery) return announce(`${delivery.refused.replace(/\.$/, "")}, so nothing was typed.`);
+    const result = await runReview({ name: delivery.name, base, command: reviewCommandOf(agent), ask: (b) => askReview(session, b) });
+    announce(result.notice);
+    if (result.done) focusDelivered(session, { name: delivery.name });
   };
   // An image pasted into a terminal (Ctrl+Shift+V): saved, and its reference pasted into that session, agent or shell. Never Enter.
   const addImage = async (tabId: string, image: Blob): Promise<void> => {
@@ -1683,6 +1711,8 @@ export function LiveApp() {
             return void togglePanel("browser");
           case "panel-files":
             return void togglePanel("files");
+          case "panel-changes":
+            return void togglePanel("changes");
         }
         return;
       case "deselect":
@@ -1838,6 +1868,11 @@ export function LiveApp() {
           return true;
         case "filesCollapse":
           filesCommandRef.current("collapse");
+          return true;
+        // The Changes panel's commands act on the mounted panel of the focused session; when it isn't on screen they say so.
+        case "changes":
+          if (!onNow.current.panelsOn.includes("changes") || changesPanel.current === null) announce("The Changes panel isn't shown.");
+          else changesPanel.current[shortcut.what]();
           return true;
         // The browser tab's commands: a blank tab with the keyboard in its address box, and the profile's data cleared after a question.
         case "newBrowserTab":
@@ -2311,6 +2346,53 @@ export function LiveApp() {
   // One panel's frame: its own tabs, its own kept tabs, or its empty state. A panel that is leaving is still drawn until its motion ends.
   const renderPanel = (panel: PanelId) => {
     if (os === undefined) return null;
+    // Changes holds no tabs: its strip shows the summary, and its body is the diff list.
+    if (panel === "changes") {
+      return (
+        <SidePane
+          panel={panel}
+          title={stripTitle(paneSession, changesSummary)}
+          menu={{ label: "Changes menu" }}
+          onMenu={(anchor, opener) => setChangesMenu({ anchor, opener })}
+          tabs={[]}
+          activeId={null}
+          fill={{ on: stack.filled === panel, disabled: stack.shown.length < 2 ? "No other panel is shown" : undefined }}
+          hideKeys={keysOf(panel)}
+          onFill={() => paneDispatch({ type: "fill", panel, session: paneSession ?? null })}
+          onSelect={() => {}}
+          onClose={() => {}}
+          onMove={() => {}}
+          onHide={() => togglePanel(panel)}
+        >
+          {paneSession !== undefined ? (
+            <ChangesPanel
+              key={paneSession}
+              session={paneSession}
+              agent={focusedInfo?.agent ?? null}
+              agentName={focusedInfo?.agent ? agentLabel(focusedInfo.agent) : "the shell"}
+              shown={panelsOn.includes("changes")}
+              drafts={paneTabs.changes}
+              onDrafts={(drafts) => paneDispatch({ type: "drafts", session: paneSession, drafts })}
+              onOpen={openFromTree}
+              onEscape={() => void toTerminalFromPane()}
+              ref={changesPanel}
+              via={(() => {
+                const d = deliveryFor(focusedRow ?? null);
+                return d !== null && "via" in d ? d.via : "paste";
+              })()}
+              onSend={(text, count) => sendComments(paneSession, text, count)}
+              onReview={(base) => void reviewChanges(paneSession, focusedInfo?.agent ?? null, base)}
+              announce={announce}
+              onSummary={setChangesSummary}
+              menu={changesMenu}
+              onMenuClose={() => setChangesMenu(null)}
+            />
+          ) : (
+            <EmptyPanel icon={ChangesIcon} title={changesCopy.emptyFailed("").title} line={NO_FOLDER_LINE} actions={[]} />
+          )}
+        </SidePane>
+      );
+    }
     const tabsHere = panelTabs(view.pane, paneSession, panel);
     const paneActive = activeIn(paneTabs, panel);
     const paneTitles = tabTitles(tabsHere);

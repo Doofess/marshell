@@ -78,3 +78,12 @@ export function nextAnnouncement(prev: Announced | null, row: RowModel | null, m
   if (!shouldAnnounce(kind, mode)) return { key, text: "" };
   return { key, text: switched ? switchAnnouncement(row) : state };
 }
+
+/**
+ * One render of the focused row: the new value to keep, and what to say now. An unchanged session says nothing: its
+ * previous text was said when it was new, and saying it again after another notice (a working/idle flip) repeats it.
+ */
+export function announcementStep(prev: Announced | null, row: RowModel | null, mode: AnnounceMode = "needs-you"): { said: Announced; text: string } {
+  const said = nextAnnouncement(prev, row, mode);
+  return { said, text: said === prev ? "" : said.text };
+}

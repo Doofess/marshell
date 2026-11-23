@@ -17,7 +17,8 @@
 //!   fake-agent env-present <names> print "NAME=present" or "NAME=absent" for each name (never a value), exit 0;
 //!                                  the names end at a "-c" word, where a launch line starts
 //!   fake-agent capture-input <f>   read stdin raw, turn bracketed paste on (2004h), append every byte read to <f>
-//!   fake-agent mcp <mode>          an MCP server over stdio, as the Doctor's probe meets it: ok (a banner line, a
+//!   fake-agent capture-input-plain <f>  like capture-input, but never turns bracketed paste on; prints "plain-ready"
+//!   fake-agent mcp <mode>         an MCP server over stdio, as the Doctor's probe meets it: ok (a banner line, a
 //!                                  request to the client, two pages of tools; with FAKE_MCP_ECHO set it reports its
 //!                                  environment's names as its instructions), notools, silent, exit3, garbage,
 //!                                  refuse, flood (20 MiB of non-JSON lines), grandchild (after `initialize`, starts
@@ -269,9 +270,14 @@ fn main() {
             out.flush().unwrap();
             pause(400);
         }
-        Some("capture-input") => {
+        Some(mode @ ("capture-input" | "capture-input-plain")) => {
             raw_stdin();
-            write!(out, "[?2004h").unwrap();
+            // The plain mode never asks for bracketed paste; it says "plain-ready" once its input is raw.
+            if mode == "capture-input-plain" {
+                write!(out, "plain-ready").unwrap();
+            } else {
+                write!(out, "[?2004h").unwrap();
+            }
             out.flush().unwrap();
             let mut file = std::fs::OpenOptions::new()
                 .create(true)

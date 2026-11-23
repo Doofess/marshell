@@ -26,13 +26,15 @@ export type SessionShortcut =
   | { kind: "cheatsheet" }
   /** Show or hide the side pane (Ctrl+Shift+Q; Cmd+Alt+Q on macOS). With no tab open it shows the empty pane. */
   | { kind: "preview" }
-  /** Show or hide one panel of the side pane (Ctrl+Shift+A for Browser, Ctrl+Shift+D for Files; Cmd+Alt+A and Cmd+D on macOS). */
-  | { kind: "panel"; panel: "browser" | "files" }
+  /** Show or hide one panel of the side pane (Ctrl+Shift+A for Browser, Ctrl+Shift+D for Files, Ctrl+Shift+H for Changes; Cmd+Alt+A, Cmd+D and Cmd+Shift+H on macOS). */
+  | { kind: "panel"; panel: "browser" | "files" | "changes" }
   /** "Go to file…": the palette, to pick a file for the side pane (Ctrl+Shift+P; Cmd+P on macOS). */
   | { kind: "openFile" }
   /** "Show file tree" and "Collapse all folders": the Files panel's tree. Neither has a key of its own. */
   | { kind: "filesTree" }
   | { kind: "filesCollapse" }
+  /** "Refresh changes", "Ask the agent to review" and "Send comments": the Changes panel of the focused session. None has a key of its own. */
+  | { kind: "changes"; what: "refresh" | "review" | "send" }
   /** The next or previous tab of the focused session's side pane, wrapping. */
   | { kind: "paneTab"; by: 1 | -1 }
   /** Close the side pane's selected tab. Has no key of its own. */
@@ -149,6 +151,8 @@ export function commandShortcut(id: string): SessionShortcut | null {
       return { kind: "panel", panel: "browser" };
     case "files-panel":
       return { kind: "panel", panel: "files" };
+    case "changes-panel":
+      return { kind: "panel", panel: "changes" };
     case "open-file":
       return { kind: "openFile" };
     case "browse-file":
@@ -157,6 +161,12 @@ export function commandShortcut(id: string): SessionShortcut | null {
       return { kind: "filesTree" };
     case "files-collapse":
       return { kind: "filesCollapse" };
+    case "changes-refresh":
+      return { kind: "changes", what: "refresh" };
+    case "changes-review":
+      return { kind: "changes", what: "review" };
+    case "changes-send":
+      return { kind: "changes", what: "send" };
     case "new-browser-tab":
     case "open-url":
       return { kind: "newBrowserTab" };

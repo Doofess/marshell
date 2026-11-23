@@ -109,6 +109,15 @@ describe("commandPanel", () => {
   it("skips a last panel that is not on screen", () => {
     expect(commandPanel(["files"], null, "browser", () => true)).toBe("files");
   });
+  it("tab commands from Changes act on the last tab panel", () => {
+    expect(commandPanel(["browser", "files", "changes"], "changes", "files", (p) => p !== "changes")).toBe("files");
+  });
+  it("tab commands from Changes fall back to the first panel with tabs", () => {
+    expect(commandPanel(["browser", "files", "changes"], "changes", null, (p) => p === "files")).toBe("files");
+  });
+  it("tab commands do nothing with only Changes shown", () => {
+    expect(commandPanel(["changes"], "changes", null, () => false)).toBeNull();
+  });
 });
 
 describe("panelToggleOutcome", () => {
@@ -160,16 +169,17 @@ describe("panelOrder and firstWith", () => {
 });
 
 describe("panelButtonsFor", () => {
-  const keys = (p: PanelId) => (p === "browser" ? "Ctrl+Shift+A" : "Ctrl+Shift+D");
+  const keys = (p: PanelId) => ({ browser: "Ctrl+Shift+A", files: "Ctrl+Shift+D", changes: "Ctrl+Shift+H" })[p];
   it("a button is shown for a panel on screen", () => {
     expect(panelButtonsFor(["files"], new Set(), keys)).toEqual([
       { id: "browser", label: "Browser", shown: false, news: false, keys: "Ctrl+Shift+A" },
       { id: "files", label: "Files", shown: true, news: false, keys: "Ctrl+Shift+D" },
+      { id: "changes", label: "Changes", shown: false, news: false, keys: "Ctrl+Shift+H" },
     ]);
   });
   it("news is per panel", () => {
     const b = panelButtonsFor(["files"], new Set(["browser:s1"]), keys);
-    expect(b.map((x) => x.news)).toEqual([true, false]);
+    expect(b.map((x) => x.news)).toEqual([true, false, false]);
   });
   it("with nothing on screen no button is shown", () => {
     expect(panelButtonsFor([], new Set(), keys).every((b) => !b.shown)).toBe(true);

@@ -5,10 +5,10 @@ import { isPageUrl } from "../browser/address";
 import { kindOf } from "../preview/kinds";
 
 /** The side pane's panels, top to bottom. This file imports nothing from `paneState.ts`: that file imports this one. */
-export const PANELS = ["browser", "files"] as const;
+export const PANELS = ["browser", "files", "changes"] as const;
 export type PanelId = (typeof PANELS)[number];
-export const PANEL_LABEL: Record<PanelId, string> = { browser: "Browser", files: "Files" };
-export const PANEL_COMMAND: Record<PanelId, string> = { browser: "browser-panel", files: "files-panel" };
+export const PANEL_LABEL: Record<PanelId, string> = { browser: "Browser", files: "Files", changes: "Changes" };
+export const PANEL_COMMAND: Record<PanelId, string> = { browser: "browser-panel", files: "files-panel", changes: "changes-panel" };
 /** A panel's weight in the stack's height when it has none saved. */
 export const DEFAULT_WEIGHT = 10_000;
 export type Weights = Partial<Record<PanelId, number>>;
@@ -31,7 +31,7 @@ export type Stack = { shown: PanelId[]; weights: Weights; filled: PanelId | null
 
 /** The panels that hold at least one tab of the session, in the stack's order. */
 export function panelsWithTabs(st: SessionTabs): PanelId[] {
-  return PANELS.filter((p) => st.tabs.some((t) => panelOf(t) === p));
+  return PANELS.filter((p) => p !== "changes" && st.tabs.some((t) => panelOf(t) === p));
 }
 
 /** The saved stack, cleaned; with none saved, the panels that hold tabs for the session, Files alone when it has none. */
@@ -45,7 +45,7 @@ export function stackOf(pane: PaneView, session: string | null | undefined): Sta
       const w = saved.weights?.[p];
       if (typeof w === "number") weights[p] = w;
     }
-    const filled = typeof saved.filled === "string" && isPanelId(saved.filled) && shown.length === 2 && shown.includes(saved.filled) ? saved.filled : null;
+    const filled = typeof saved.filled === "string" && isPanelId(saved.filled) && shown.length >= 2 && shown.includes(saved.filled) ? saved.filled : null;
     return { shown: shown.length > 0 ? [...shown] : ["files"], weights, filled };
   }
   const st = session != null ? pane.sessions[session] : undefined;
@@ -66,7 +66,8 @@ export function onScreen(pane: PaneView, session: string | null | undefined): Pa
 /** The session's tabs that are in the panel, in the session's order. */
 export function panelTabs(pane: PaneView, session: string | null | undefined, panel: PanelId): PaneTab[] {
   const st = session != null ? pane.sessions[session] : undefined;
-  return st ? st.tabs.filter((t) => panelOf(t) === panel) : [];
+  // Changes holds no tabs: it shows the session's diff.
+  return st && panel !== "changes" ? st.tabs.filter((t) => panelOf(t) === panel) : [];
 }
 
 /**
@@ -74,6 +75,7 @@ export function panelTabs(pane: PaneView, session: string | null | undefined, pa
  * first tab, else null. The own field is `active_browser` for Browser and `active` for Files.
  */
 export function activeIn(st: SessionTabs, panel: PanelId): string | null {
+  if (panel === "changes") return null;
   const own = panel === "browser" ? st.active_browser : st.active;
   const other = panel === "browser" ? st.active : st.active_browser;
   const mine = (id: string | null | undefined) => {

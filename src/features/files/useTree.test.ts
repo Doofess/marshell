@@ -9,11 +9,22 @@ import { applyReply, createTreeEngine, initialData, nextAsks, schedule, TREE_FUL
 const entry = (name: string, kind: TreeEntry["kind"] = "file"): TreeEntry => ({ name, kind, ignored: false });
 const listed = (entries: TreeEntry[], stamp = 1): Listing => ({ entries, more: 0, stamp, state: "listed" });
 const dirOf = (dir: string, entries: TreeEntry[], stamp = 1): TreeDir => ({ dir, state: "listed", stamp, entries, more: 0 });
-const replyOf = (root: string, dirs: TreeDir[]): TreeReply => ({ root, dirs });
+const replyOf = (root: string, dirs: TreeDir[]): TreeReply => ({ root, dirs, changes: [] });
 
 function rowsOf(listings: Map<string, Listing>, expanded: string[]) {
   return visibleRows(listings, new Set(expanded));
 }
+
+describe("applyReply's change marks", () => {
+  it("a Same reply's marks replace the last ones", () => {
+    const first = applyReply(initialData("s1", undefined), { session: "s1", root: null, expanded: new Set() }, { ...replyOf("C:\\p", [dirOf("", [entry("a")])]), changes: [{ path: "a", status: "modified" }] });
+    expect(first.data.changes).toEqual([{ path: "a", status: "modified" }]);
+    const same: TreeReply = { root: "C:\\p", dirs: [{ dir: "", state: "same", stamp: 1, entries: [], more: 0 }], changes: [{ path: "a", status: "modified" }, { path: "b", status: "added" }] };
+    const second = applyReply(first.data, { session: "s1", root: "C:\\p", expanded: new Set() }, same);
+    expect(second.data.changes).toEqual(same.changes);
+    expect(second.data.listings.get("")?.entries).toHaveLength(1);
+  });
+});
 
 describe("nextAsks", () => {
   it("nextAsks asks the root and every drawn open folder, with stamps unless full", () => {

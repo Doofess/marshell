@@ -3,6 +3,7 @@ pub(crate) mod agents;
 mod attachments;
 mod auto_open;
 mod catalog;
+mod changes;
 mod config;
 mod diagnostics;
 pub(crate) mod doctor;
@@ -43,8 +44,12 @@ mod tree;
 mod view;
 
 pub(crate) use files::existing_file as local_file;
+// The Changes panel's `gitbox` reads refs and runs git with these.
+pub(crate) use files::{links_refused, refused};
 /// The text check of `fill`, for the command line to run before it creates a session.
 pub use fill::check_text;
+pub(crate) use ignores::{Ignores, walk_unignored};
+pub(crate) use ignores::{MAX_POINTER_BYTES, common_dir, git_dir, read_capped};
 
 use crate::profiles::detect::{Probe, detect_profiles};
 use crate::registry::{Registry, Relaunch};
@@ -232,6 +237,8 @@ struct Inner {
     own_agents_write: Mutex<()>,
     /// `--version` of the manifest agents' programs, for telling a program from another with the same name.
     agent_versions: Arc<crate::agents::identify::VersionCache>,
+    /// The Changes panel's checks and reads, one slot per checkout.
+    changes: Arc<crate::changes::ChangesCache>,
     /// The last events the bridge sent, per live tab.
     hook_log: crate::hooks::log::HookLog,
     /// The permission requests being held for a decision.
@@ -411,6 +418,7 @@ impl AppState {
             own_agents: crate::agents::own::OwnCache::default(),
             own_agents_write: Mutex::new(()),
             agent_versions: Arc::new(crate::agents::identify::VersionCache::default()),
+            changes: Arc::new(crate::changes::ChangesCache::new()),
             hook_log: crate::hooks::log::HookLog::default(),
             holds: crate::hooks::holds::Holds::default(),
             permission_hold: DEFAULT_PERMISSION_HOLD,
@@ -957,6 +965,14 @@ impl AppState {
     pub fn home(&self) -> &std::path::Path {
         &self.0.home
     }
+    /// The Changes panel's cache of checks and reads.
+    pub fn changes(&self) -> &crate::changes::ChangesCache {
+        &self.0.changes
+    }
+    /// The same cache, for work that outlives a request (the tree's background check).
+    pub fn changes_arc(&self) -> Arc<crate::changes::ChangesCache> {
+        self.0.changes.clone()
+    }
     /// What the UI last reported it shows. Starts as an unfocused window with no visible tab.
     pub fn view(&self) -> tokio::sync::watch::Receiver<marshell_protocol::api::UiView> {
         self.0.view.subscribe()
@@ -1312,7 +1328,11 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/settings", get(settings::get).put(settings::put))
         .route("/v1/notify/paused", get(get_notify_paused).put(put_notify_paused))
         .route("/v1/layout", get(layout::get))
-        .route("/v1/layout/view", put(layout::put_view))
+        .route(
+            "/v1/layout/view",
+            // Saved review drafts can fill this well past axum's 2 MiB default.
+            put(layout::put_view).layer(DefaultBodyLimit::max(8 * 1024 * 1024)),
+        )
         .route("/v1/import/windows-terminal", get(settings::windows_terminal))
         .route("/v1/projects", get(projects::get))
         .route("/v1/folders/check", get(folders::check))
@@ -1352,6 +1372,9 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{tab}/resolve", post(files::resolve))
         .route("/v1/sessions/{tab}/files", get(files::list))
         .route("/v1/sessions/{tab}/tree", post(tree::tree))
+        .route("/v1/sessions/{tab}/changes", post(changes::changes))
+        .route("/v1/sessions/{tab}/review", post(changes::review))
+        .route("/v1/sessions/{tab}/comments", post(changes::comments))
         .route("/v1/sessions/{tab}/search", post(search::search))
         .route(
             "/v1/sessions/{tab}/attachments",

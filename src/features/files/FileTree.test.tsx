@@ -171,6 +171,19 @@ describe("scrollsToRow", () => {
   it("leaves the view where it is when the same row only moved", () => {
     expect(scrollsToRow("src/a.ts", "src/a.ts", false)).toBe(false);
   });
+  it("reads a modified file aloud", () => {
+    const out = render([row({ path: "a/c.ts", name: "c.ts", change: "modified" })]);
+    expect(out).toContain('aria-label="c.ts, modified"');
+    expect(out).toContain('<span class="file-tree__mark" aria-hidden="true">M</span>');
+  });
+  it("a folder holding changes says so", () => {
+    const out = render([row({ path: "a/b", name: "b", kind: "folder", holdsChanges: true })]);
+    expect(out).toContain('aria-label="b, has changes"');
+    expect(out).toContain('data-changes=""');
+  });
+  it("an unmarked row has no mark", () => {
+    expect(render([row({})])).not.toContain("file-tree__mark");
+  });
   it("is what the tree's scroll effect asks, and a row that leaves the tree is shown again when it comes back", () => {
     const tree = readFileSync(new URL("./FileTree.tsx", import.meta.url), "utf8");
     expect(tree).toContain("if (!scrollsToRow(p.focusedPath, shown.current, key)) return;");

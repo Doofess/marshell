@@ -174,6 +174,54 @@ describe("paneReducer", () => {
     expect(tabsOf(s, "s")).toEqual({ tabs: [], active: null });
   });
 
+  describe("drafts", () => {
+    const comment = (id: string) => ({ id, path: "a.ts", side: "new", start: 1, end: 1, rows: 1, first: "a1", hash: "b2", quote: ["+x"], text: "t" }) as unknown as NonNullable<SessionTabs["changes"]>["comments"][number];
+    const drafts = (comments: ReturnType<typeof comment>[], folds: Record<string, boolean> = {}) => ({ checkout: "c", base: null as string | null, comments, folds });
+    const put = (d: ReturnType<typeof drafts> | null): PaneAction => ({ type: "drafts", session: "s", drafts: d });
+    it("closing the last tab keeps the drafts", () => {
+      const d = drafts([comment("c1")]);
+      const s = run(EMPTY, open("/a"), put(d), close("t1"));
+      expect(s.sessions.s).toEqual({ tabs: [], active: null, changes: d });
+    });
+    it("drafts with nothing in them delete the session's changes, and an empty session goes", () => {
+      let s = run(EMPTY, open("/a"), put(drafts([comment("c1")])));
+      expect(s.sessions.s?.changes).toBeDefined();
+      s = run(s, put(drafts([])));
+      expect(s.sessions.s?.changes).toBeUndefined();
+      expect(s.sessions.s?.tabs).toHaveLength(1);
+      s = run(EMPTY, put(drafts([comment("c1")])));
+      expect(s.sessions.s?.changes).toBeDefined();
+      expect("s" in run(s, put(null)).sessions).toBe(false);
+      expect("s" in run(s, put(drafts([], {}))).sessions).toBe(false);
+    });
+    it("drafts with only folds are kept", () => {
+      expect(run(EMPTY, put(drafts([], { "a.ts": true }))).sessions.s?.changes?.folds).toEqual({ "a.ts": true });
+    });
+    it("drafts cap at 50 comments and 1,000 folds", () => {
+      const comments = Array.from({ length: 60 }, (_, i) => comment(`c${i}`));
+      const folds: Record<string, boolean> = {};
+      for (let i = 1999; i >= 0; i--) folds[`f${String(i).padStart(4, "0")}`] = true;
+      const got = run(EMPTY, put(drafts(comments, folds))).sessions.s!.changes!;
+      expect(got.comments.map((c) => c.id)).toEqual(comments.slice(0, 50).map((c) => c.id));
+      const keys = Object.keys(got.folds);
+      expect(keys).toHaveLength(1000);
+      expect(keys.sort()[0]).toBe("f0000");
+      expect(keys.sort()[999]).toBe("f0999");
+    });
+    // The core refuses the whole layout over one draft it can't keep, so the drafts are held to its rules before they are saved.
+    it("drafts keep only what the core accepts, so one odd file name never stops the layout saving", () => {
+      const odd = { ...comment("c2"), path: "dir\\b.ts" };
+      const badHash = { ...comment("c3"), hash: "XYZ" };
+      const got = run(EMPTY, put({ checkout: "c", base: `b\u0007${"b".repeat(250)}`, comments: [comment("c1"), odd, badHash], folds: { "a.ts": true, "x:y.ts": false, "../up": true } })).sessions.s!.changes!;
+      expect(got.comments.map((c) => c.id)).toEqual(["c1"]);
+      expect(got.folds).toEqual({ "a.ts": true });
+      expect([...got.base!]).toHaveLength(200);
+      expect(got.base!.startsWith("bbb")).toBe(true);
+      expect(got.base!.endsWith("…")).toBe(true);
+      expect(run(EMPTY, put({ checkout: "c", base: "origin/main", comments: [comment("c1")], folds: {} })).sessions.s!.changes!.base).toBe("origin/main");
+    });
+  });
+
   it("move puts the tab at the index and keeps the selection", () => {
     const mv = (paneTab: string, to: number): PaneAction => ({ type: "move", session: "s", paneTab, to });
     let s = run(EMPTY, open("/a"), open("/b"), open("/c"));
@@ -648,6 +696,22 @@ describe("the Browser and Files panels", () => {
     expect(stackOf(s, "s").shown).toEqual(["browser", "files"]);
   });
 
+  it("Changes is a third panel: it joins the stack in its place, and Fill holds with three shown", () => {
+    let s = run(EMPTY, pg("https://a.test/"), open("/a.md"), { type: "panel", panel: "changes", session: "s" });
+    expect(stackOf(s, "s").shown).toEqual(["browser", "files", "changes"]);
+    s = run(s, { type: "fill", panel: "changes", session: "s" });
+    expect(stackOf(s, "s").filled).toBe("changes");
+    expect(onScreen(s, "s")).toEqual(["changes"]);
+    s = run(s, { type: "fill", panel: "changes", session: "s" });
+    expect(stackOf(s, "s").filled).toBeNull();
+  });
+
+  it("Fill does nothing with only Changes shown", () => {
+    const s = run(EMPTY, { type: "show", session: "s" }, { type: "panel", panel: "changes", session: "s" }, { type: "panel", panel: "files", session: "s" });
+    expect(stackOf(s, "s").shown).toEqual(["changes"]);
+    expect(run(s, { type: "fill", panel: "changes", session: "s" })).toBe(s);
+  });
+
   it("an open selects the tab in its panel, shows the pane and adds the panel", () => {
     const s0 = run(EMPTY, pg("https://a.test/"));
     expect(shown(s0)).toEqual(["browser"]);
@@ -901,8 +965,8 @@ describe("the Browser and Files panels", () => {
     const w = (weights: Record<string, number>) => paneReducer(s, { type: "weights", weights } as PaneAction);
     expect(w({ browser: 5000.4, files: 123456 }).panels?.weights).toEqual({ browser: 5000, files: 100000 });
     expect(w({ browser: 0.2 }).panels?.weights).toEqual({ browser: 1 });
-    expect(w({ browser: Number.NaN, files: Number.POSITIVE_INFINITY, changes: 5 })).toBe(s);
-    expect(w({ browser: Number.NaN, files: 7000, changes: 5 }).panels?.weights).toEqual({ files: 7000 });
+    expect(w({ browser: Number.NaN, files: Number.POSITIVE_INFINITY, nope: 5 })).toBe(s);
+    expect(w({ browser: Number.NaN, files: 7000, nope: 5 }).panels?.weights).toEqual({ files: 7000 });
     const merged = paneReducer(w({ browser: 3000 }), { type: "weights", weights: { files: 9000 } });
     expect(merged.panels?.weights).toEqual({ browser: 3000, files: 9000 });
     expect(paneProblem(merged)).toBeNull();

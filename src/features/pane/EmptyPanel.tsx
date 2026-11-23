@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import "./EmptyPanel.css";
 
-/** One of an empty panel's two buttons. A button that can't be used stays reachable and says why. */
+/** One of an empty panel's buttons (0 to 2). A button that can't be used stays reachable and says why. */
 export type EmptyAction = { label: string; icon: ReactNode; disabled?: string; onClick(): void };
 
 /** A 14 px line icon beside a button's words, drawn in the button's own colour. */
@@ -24,9 +24,9 @@ export const SearchIcon = small(
 export const FolderOpenIcon = small(<path d="M1.5 11V2.5h3.75l1.5 1.75h4.75v2M1.5 11l1.75-4.75h9.25L10.75 11z" />);
 
 /** The panel's own mark, 40 px: the shape is tinted with the accent and drawn in the quietest text colour. */
-function large(shape: ReactNode, lines: ReactNode) {
+function large(shape: ReactNode, lines: ReactNode, name?: string) {
   return (
-    <svg className="empty-panel__icon" viewBox="0 0 40 40" width="40" height="40" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg className="empty-panel__icon" data-icon={name} viewBox="0 0 40 40" width="40" height="40" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <g className="empty-panel__icon-shape">{shape}</g>
       {lines}
     </svg>
@@ -39,17 +39,24 @@ export const FolderIcon = large(
   <path d="M5 18.5h30" />,
 );
 
+/** The Changes panel's glyph (`PanelIcon`'s 16 px frame with a plus and a minus), scaled to 40 px. */
+export const ChangesIcon = large(<rect x="5" y="5" width="30" height="30" rx="5" />, <path d="M20 11.25v10M15 16.25h10M15 27.5h10" />, "panel-changes");
+
 /**
- * What a panel shows with no tabs: its mark, what is missing, what to do, and the two ways in. The first button that can be used
- * takes focus when the panel does (`focusPane`). Whatever follows the buttons (a list of ports or recent files) is `children`.
+ * What a panel shows with no tabs: its mark, what is missing, what to do, and its ways in (none, one or two). The first button that can be used
+ * takes focus when the panel does (`focusPane`); with no button the title does, so the panel's key still moves the keyboard into it and a
+ * screen reader reads what is missing. Whatever follows the buttons (a list of ports or recent files) is `children`.
  */
-export function EmptyPanel({ icon, title, line, actions, children }: { icon: ReactNode; title: string; line: string; actions: readonly [EmptyAction, EmptyAction]; children?: ReactNode }) {
+export function EmptyPanel({ icon, title, line, actions, children }: { icon: ReactNode; title: string; line: string; actions: readonly EmptyAction[]; children?: ReactNode }) {
   return (
     <div className="empty-panel">
       <div className="empty-panel__column">
         {icon}
-        <h2 className="empty-panel__title">{title}</h2>
+        <h2 className="empty-panel__title" tabIndex={actions.length === 0 ? -1 : undefined}>
+          {title}
+        </h2>
         <p className="empty-panel__line">{line}</p>
+        {actions.length > 0 && (
         <div className="empty-panel__actions">
           {actions.map((a, i) => (
             <button
@@ -65,6 +72,7 @@ export function EmptyPanel({ icon, title, line, actions, children }: { icon: Rea
             </button>
           ))}
         </div>
+        )}
         {children}
       </div>
     </div>

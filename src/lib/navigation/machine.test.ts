@@ -262,7 +262,7 @@ describe("the cursor and a choice speak a title-bar target's name", () => {
   it("the cursor speaks a title-bar target's name, not its id", () => {
     const withButtons: NavContext = { ...GRID_CONTEXT, layout: GRID_WITH_PANEL_BUTTONS };
     let state = at(null, { cursor: { kind: "top", id: "brand" } });
-    for (const [id, name] of [["palette", "Command palette"], ["sidebar", "Sidebar"], ["panel-browser", "Browser"], ["panel-files", "Files"]] as const) {
+    for (const [id, name] of [["palette", "Command palette"], ["sidebar", "Sidebar"], ["panel-browser", "Browser"], ["panel-files", "Files"], ["panel-changes", "Changes"]] as const) {
       const r = run(state, [DOWN, arrow("right")], withButtons);
       expect(r.state.cursor).toEqual({ kind: "top", id });
       expect(announced(r.effects)).toEqual([`Cursor on ${name}`]);
@@ -270,7 +270,7 @@ describe("the cursor and a choice speak a title-bar target's name", () => {
     }
   });
   it("activating a title-bar target speaks its name", () => {
-    for (const [id, name] of [["palette", "Command palette"], ["sidebar", "Sidebar"], ["panel-browser", "Browser"], ["panel-files", "Files"]] as const)
+    for (const [id, name] of [["palette", "Command palette"], ["sidebar", "Sidebar"], ["panel-browser", "Browser"], ["panel-files", "Files"], ["panel-changes", "Changes"]] as const)
       expect(announced(run(at(0), [{ type: "choose", target: { kind: "top", id } }], GRID_CONTEXT).effects)).toEqual([`Activated ${name}`]);
   });
 });

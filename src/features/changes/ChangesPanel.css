@@ -1,0 +1,336 @@
+/*
+ * The Changes panel: a strip with the branch line, then one list that scrolls (the themed scrollbar stays, as in the preview body).
+ * Every file is a block the browser skips while it is off screen, and its rows are cut into blocks of 200 with an estimated height.
+ * No outlines or borders around rows: the added and removed fills, and in forced colors the signs, tell them apart.
+ */
+.changes {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  block-size: 100%;
+  min-inline-size: 0;
+  min-block-size: 0;
+  font-size: var(--text-13);
+}
+
+.changes__strip {
+  display: grid;
+  gap: var(--space-1);
+  padding-block: var(--space-1);
+  padding-inline: var(--space-3);
+  color: var(--text-2);
+  font-size: var(--text-12);
+}
+.changes__strip:empty {
+  display: none;
+}
+.changes__line,
+.changes__notice {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.changes__notice {
+  color: var(--text-1);
+}
+
+.changes__list {
+  --changes-row: 20px;
+  box-sizing: border-box;
+  min-inline-size: 0;
+  min-block-size: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  color: var(--text-1);
+}
+
+.changes__section {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto calc(10 * var(--changes-row));
+}
+.changes__chunk {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto calc(200 * var(--changes-row));
+}
+
+.changes__item {
+  box-sizing: border-box;
+  min-block-size: var(--changes-row);
+  line-height: var(--changes-row);
+  cursor: default;
+}
+.changes__item:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: -2px;
+}
+.changes__item:active {
+  background: var(--fill);
+}
+
+/* A file's header: twisty, path, status letter, counts. */
+.changes__file-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-inline: var(--space-2) var(--space-3);
+  background: var(--fill);
+  color: var(--text-1);
+  font-weight: 500;
+  user-select: none;
+}
+.changes__twisty {
+  display: grid;
+  flex: none;
+  place-items: center;
+  inline-size: 14px;
+  block-size: 14px;
+  color: var(--text-3);
+}
+.changes__chevron {
+  rotate: 0deg;
+}
+.changes__file-head[aria-expanded="true"] .changes__chevron {
+  rotate: 90deg;
+}
+.changes__path {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  overflow: clip;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: start;
+}
+.changes__status {
+  flex: none;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+}
+.changes__counts {
+  flex: none;
+  display: flex;
+  gap: var(--space-1);
+  color: var(--text-2);
+  font-size: var(--text-12);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A diff row: line number, sign, code. The sign column is always there. */
+.changes__row {
+  display: grid;
+  grid-template-columns: 5ch 1.5ch minmax(0, 1fr);
+  gap: var(--space-2);
+  padding-inline: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-12);
+  white-space: pre;
+  overflow-x: clip;
+}
+.changes__list[data-wrap="true"] .changes__row {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.changes__row[data-kind="add"] {
+  background: color-mix(in oklch, var(--ok) 12%, transparent);
+}
+.changes__row[data-kind="del"] {
+  background: color-mix(in oklch, var(--error) 12%, transparent);
+}
+.changes__row[data-kind="hunk"] {
+  background: var(--fill-strong);
+  color: var(--text-2);
+}
+.changes__no {
+  color: var(--text-3);
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.changes__sign {
+  user-select: none;
+}
+.changes__code {
+  min-inline-size: 0;
+}
+
+/* "Show 1,234 lines", a note and a draft comment: text lines indented under their file. */
+.changes__show,
+.changes__note,
+.changes__comment {
+  padding-inline: var(--space-4);
+  color: var(--text-2);
+  font-size: var(--text-12);
+}
+.changes__show {
+  color: var(--text-1);
+}
+.changes__comment {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  block-size: auto;
+  line-height: var(--leading);
+  padding-block: var(--space-1);
+  background: var(--fill);
+  color: var(--text-1);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.changes__comment-changed {
+  color: var(--text-2);
+}
+
+/* The comment box under a range's last row: a tinted text area and its hint, indented like a comment. */
+.changes__box {
+  display: grid;
+  gap: var(--space-1);
+  padding-block: var(--space-1);
+  padding-inline: var(--space-4);
+  background: var(--fill);
+}
+.changes__box-text {
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-block-size: 3lh;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius);
+  background: var(--hover);
+  color: var(--text-1);
+  font-size: var(--text-12);
+  line-height: var(--leading);
+  field-sizing: content;
+  resize: none;
+}
+.changes__box-text:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.changes__box-hint {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-12);
+}
+
+/* The Send bar: the primary button is filled with the accent and the others tinted, told apart by fill and never by a box. */
+.changes__send {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding-block: var(--space-2);
+  padding-inline: var(--space-3);
+  background: var(--fill);
+}
+.changes__send-ask {
+  color: var(--text-1);
+  font-size: var(--text-12);
+}
+.changes__send-button {
+  min-block-size: 28px;
+  padding: var(--space-1) var(--space-3);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--fill-strong);
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--text-12);
+  white-space: nowrap;
+}
+.changes__send-button--primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.changes__send-button[aria-disabled="true"] {
+  background: var(--hover);
+  color: var(--text-3);
+  cursor: default;
+}
+.changes__send-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.changes__send-button:not([aria-disabled="true"]):active {
+  scale: 0.97;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .changes__item:hover {
+    background-image: linear-gradient(var(--hover), var(--hover));
+  }
+}
+
+@media (forced-colors: active) {
+  /* The rows keep their own colours (forced-color-adjust: none), and their token spans with them: every token colour is
+     set back to its empty initial value, so a token takes the row's CanvasText, as in the preview. */
+  .changes {
+    --code-token-keyword: initial;
+    --code-token-string: initial;
+    --code-token-string-expression: initial;
+    --code-token-constant: initial;
+    --code-token-function: initial;
+    --code-token-parameter: initial;
+    --code-token-punctuation: initial;
+    --code-token-link: initial;
+    --code-token-comment: initial;
+    --code-token-inserted: initial;
+    --code-token-deleted: initial;
+    --code-token-changed: initial;
+  }
+  .changes__row[data-kind="add"],
+  .changes__row[data-kind="del"] {
+    forced-color-adjust: none;
+    color: CanvasText;
+    background: Canvas;
+  }
+  .changes__row[data-kind="hunk"],
+  .changes__file-head,
+  .changes__comment {
+    forced-color-adjust: none;
+    color: CanvasText;
+    background: Canvas;
+  }
+  .changes__sign,
+  .changes__no {
+    color: CanvasText;
+  }
+  .changes__box,
+  .changes__send {
+    forced-color-adjust: none;
+    color: CanvasText;
+    background: Canvas;
+  }
+  /* A fill can match the canvas in forced colours, so the box and the buttons keep their edge with a system-colour line. */
+  .changes__box-text {
+    background: Field;
+    color: FieldText;
+    border: 1px solid CanvasText;
+  }
+  .changes__send-button {
+    background: ButtonFace;
+    color: ButtonText;
+    border: 1px solid ButtonText;
+  }
+  .changes__send-button--primary {
+    background: Highlight;
+    color: HighlightText;
+    border: 1px solid Highlight;
+  }
+  /* The rows that keep their own colours keep the theme's ring, hover, press and selection fill too, unless they are set
+     back here: the ring is CanvasText, and the selection is SelectedMark's Highlight outline alone. */
+  .changes__item:focus-visible {
+    outline-color: CanvasText;
+  }
+  .changes__item:hover {
+    background-image: none;
+  }
+  .changes__item:active {
+    background: Canvas;
+  }
+  .changes__item[aria-selected="true"] {
+    box-shadow: none;
+  }
+  .changes__send-button[aria-disabled="true"] {
+    color: GrayText;
+  }
+  .changes__box-text:focus-visible,
+  .changes__send-button:focus-visible {
+    outline-color: Highlight;
+  }
+}

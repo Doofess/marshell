@@ -70,8 +70,12 @@ export function panelToggleOutcome(pane: PaneView, session: string | null | unde
   return { shows, paneHides: !shows && only.length === 1 && only[0] === panel };
 }
 
-/** The panel a tab command acts on: the one with the keyboard; else the last one that had it, when it is on screen and holds tabs; else the first on screen that holds tabs; else the first on screen; null with none on screen. */
-export function commandPanel(on: readonly PanelId[], focused: PanelId | null, last: PanelId | null, holdsTabs: (p: PanelId) => boolean): PanelId | null {
+/**
+ * The panel a tab command acts on: the one with the keyboard; else the last one that had it, when it is on screen and holds tabs; else the first on screen that holds tabs; else the first on screen; null with none on screen.
+ * Changes holds no tabs, so it is dropped first: with the keyboard in Changes the command acts on the tab panel that last had it.
+ */
+export function commandPanel(shown: readonly PanelId[], focused: PanelId | null, last: PanelId | null, holdsTabs: (p: PanelId) => boolean): PanelId | null {
+  const on: readonly PanelId[] = shown.filter((p) => p !== "changes");
   if (on.length === 0) return null;
   if (focused !== null && on.includes(focused)) return focused;
   if (last !== null && on.includes(last) && holdsTabs(last)) return last;

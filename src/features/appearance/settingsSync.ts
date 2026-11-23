@@ -1,6 +1,7 @@
 import type { Appearance } from "../../generated/Appearance";
 import type { BrowserSettings } from "../../generated/BrowserSettings";
 import type { Endpoint } from "../../generated/Endpoint";
+import type { ChangesSettings } from "../../generated/ChangesSettings";
 import type { FilesSettings } from "../../generated/FilesSettings";
 import type { NotifySettings } from "../../generated/NotifySettings";
 import type { RetentionLimits } from "../../generated/RetentionLimits";
@@ -17,6 +18,7 @@ export class SettingsReadError extends Error {
 
 const DEFAULT_BROWSER: BrowserSettings = { terminal_links: true, open_agent_html: true, cookies: "always" };
 
+const DEFAULT_CHANGES: ChangesSettings = { hide_whitespace: false, wrap: false };
 const DEFAULT_FILES: FilesSettings = { preview_tabs: true, auto_save: false, tab_indents: true, word_wrap: false, indent_guides: true, whitespace: false, scroll_past_end: false, tab_size: 4, tree_position: "automatic" };
 
 const DEFAULT_NOTIFY: NotifySettings = {
@@ -28,7 +30,7 @@ const DEFAULT_NOTIFY: NotifySettings = {
   terminal_alerts: true,
 };
 
-type FlagChange = Partial<Pick<Settings, "pause_warned" | "onboarded" | "close_to_tray" | "status_off" | "notifications" | "history_import" | "history_limit_gb" | "history_limit_days" | "history_backup_dir" | "browser" | "files">>;
+type FlagChange = Partial<Pick<Settings, "pause_warned" | "onboarded" | "close_to_tray" | "status_off" | "notifications" | "history_import" | "history_limit_gb" | "history_limit_days" | "history_backup_dir" | "browser" | "files" | "changes">>;
 
 type SettingsApi = {
   get(ep: Endpoint): Promise<Settings>;
@@ -51,6 +53,13 @@ export class SettingsSync {
   private off: string[] = [];
   /** Kept from the last read, so every save sends it back unchanged. */
   private notify: NotifySettings = DEFAULT_NOTIFY;
+  /** Keeps the current object when the fields are equal, so a store snapshot stays stable. */
+  private setChangesValue(next: ChangesSettings): void {
+    const cur = this.changesValue;
+    if (cur.hide_whitespace === next.hide_whitespace && cur.wrap === next.wrap) return;
+    this.changesValue = next;
+  }
+
   /** Whether conversations run outside Marshell are copied. Kept from the last read, so every save sends it back unchanged. */
   private importOn = true;
   /** The size limit on recordings and images, in GB. Kept from the last read, so every save sends it back unchanged. */
@@ -63,8 +72,23 @@ export class SettingsSync {
   private browserValue: BrowserSettings = DEFAULT_BROWSER;
   /** The Files settings. Kept from the last read, so every save sends them back unchanged. */
   private filesValue: FilesSettings = DEFAULT_FILES;
+  /** The Changes settings. Kept from the last read, so every save sends them back unchanged. */
+  private changesValue: ChangesSettings = DEFAULT_CHANGES;
   /** Every settings write in order: the last one's end. Never rejects. */
   private queue: Promise<void> = Promise.resolve();
+  /** The Changes settings, as of the last read or write: null until a read has worked. The same object until it changes. */
+  get changes(): ChangesSettings | null {
+    return this.hasRead ? this.changesValue : null;
+  }
+
+  /** Saves the changed Changes fields. Reads first, like `save`, and sends every other field back unchanged. Queued with every other write. */
+  setChanges(change: Partial<ChangesSettings>): Promise<void> {
+    return this.queued(async () => {
+      await this.readFirst();
+      await this.write({ changes: { ...this.changesValue, ...change } });
+    });
+  }
+
   /** True after a read that failed, until one works. */
   private failed = false;
   private listeners = new Set<() => void>();
@@ -100,6 +124,7 @@ export class SettingsSync {
     this.backupDir = s.history_backup_dir;
     this.setBrowserValue(s.browser);
     this.setFilesValue(s.files);
+    this.setChangesValue(s.changes);
     this.appearance = s.appearance;
     this.emit();
     return s.appearance;
@@ -233,7 +258,7 @@ export class SettingsSync {
         throw new SettingsReadError();
       }
     }
-    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, close_to_tray: this.tray, status_off: this.off, notifications: this.notify, history_import: this.importOn, history_limit_gb: this.limitGb, history_limit_days: this.limitDays, history_backup_dir: this.backupDir, browser: this.browserValue, files: this.filesValue });
+    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, close_to_tray: this.tray, status_off: this.off, notifications: this.notify, history_import: this.importOn, history_limit_gb: this.limitGb, history_limit_days: this.limitDays, history_backup_dir: this.backupDir, browser: this.browserValue, files: this.filesValue, changes: this.changesValue });
     this.warned = s.pause_warned;
     this.seen = s.onboarded;
     this.tray = s.close_to_tray;
@@ -245,6 +270,7 @@ export class SettingsSync {
     this.backupDir = s.history_backup_dir;
     this.setBrowserValue(s.browser);
     this.setFilesValue(s.files);
+    this.setChangesValue(s.changes);
     this.appearance = s.appearance;
     this.emit();
     return s.appearance;
@@ -330,7 +356,7 @@ export class SettingsSync {
       history_limit_gb: this.limitGb,
       history_limit_days: this.limitDays,
       history_backup_dir: this.backupDir,
-      browser: this.browserValue, files: this.filesValue,
+      browser: this.browserValue, files: this.filesValue, changes: this.changesValue,
       ...change,
     });
     this.warned = s.pause_warned;
@@ -344,6 +370,7 @@ export class SettingsSync {
     this.backupDir = s.history_backup_dir;
     this.setBrowserValue(s.browser);
     this.setFilesValue(s.files);
+    this.setChangesValue(s.changes);
     this.appearance = s.appearance;
     this.emit();
   }

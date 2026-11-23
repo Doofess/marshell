@@ -834,6 +834,13 @@ describe("LiveApp: the Files panel's wiring", () => {
     expect(source).toContain("preview: t.preview === true");
     expect(source).toMatch(/<ContextMenu\s+label="Files menu"/);
   });
+  it("fills the Changes panel's onSend and onReview and runs its palette commands", () => {
+    expect(source).not.toContain("onSend={() => {}}");
+    expect(source).not.toContain("onReview={() => {}}");
+    expect(source).toContain('case "changes":');
+    expect(source).toContain("runSend(");
+    expect(source).toContain("runReview(");
+  });
   it("runs Show file tree and Collapse all folders from the window's commands", () => {
     expect(source).toContain('case "filesTree":');
     expect(source).toContain('case "filesCollapse":');

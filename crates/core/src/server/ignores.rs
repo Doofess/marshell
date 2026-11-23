@@ -24,13 +24,13 @@ use crate::git::Stopped;
 /// The largest pattern file that is read.
 const MAX_PATTERN_BYTES: u64 = 1024 * 1024;
 /// The most of a `.git` file or a `commondir` file that is read.
-const MAX_POINTER_BYTES: u64 = 4096;
+pub(crate) const MAX_POINTER_BYTES: u64 = 4096;
 
 /// Git sets `core.ignorecase` when it makes a repo on these systems.
 pub(super) const IGNORE_CASE: bool = cfg!(any(windows, target_os = "macos"));
 
 /// The whole of a regular file, or None when it is missing, not a regular file or over `cap` bytes.
-fn read_capped(path: &Path, cap: u64) -> Option<Vec<u8>> {
+pub(crate) fn read_capped(path: &Path, cap: u64) -> Option<Vec<u8>> {
     // `metadata` follows links; a FIFO or device is never opened.
     let meta = std::fs::metadata(path).ok()?;
     if !meta.is_file() || meta.len() > cap {
@@ -85,7 +85,7 @@ fn followed_folder(base: &Path, named: &str) -> Option<PathBuf> {
 /// The git dir of `checkout`: `<checkout>/.git` when it is a real folder, else the `gitdir:` its `.git`
 /// file names (relative to the checkout when it is relative, as a submodule writes it). A `.git` that
 /// is a link is no checkout.
-pub(super) fn git_dir(checkout: &Path) -> Option<PathBuf> {
+pub(crate) fn git_dir(checkout: &Path) -> Option<PathBuf> {
     let dot_git = checkout.join(".git");
     let meta = std::fs::symlink_metadata(&dot_git).ok()?;
     let kind = meta.file_type();
@@ -101,7 +101,7 @@ pub(super) fn git_dir(checkout: &Path) -> Option<PathBuf> {
 }
 
 /// The common git dir of `git_dir`: what its `commondir` file names, else itself.
-fn common_dir(git_dir: &Path) -> PathBuf {
+pub(crate) fn common_dir(git_dir: &Path) -> PathBuf {
     let file = git_dir.join("commondir");
     let named = (!links_refused(&file))
         .then(|| read_capped(&file, MAX_POINTER_BYTES))
@@ -175,7 +175,7 @@ enum Folder {
 }
 
 /// Git's ignore rules for one checkout, below `top`.
-pub(super) struct Ignores {
+pub(crate) struct Ignores {
     checkout: PathBuf,
     top: PathBuf,
     /// `<common git dir>/info/exclude`, rooted at the checkout.
@@ -189,13 +189,13 @@ pub(super) struct Ignores {
 
 impl Ignores {
     /// The rules of `checkout`, for paths below `top`, with the user's global excludes file.
-    pub(super) fn new(checkout: &Path, top: &Path) -> Ignores {
+    pub(crate) fn new(checkout: &Path, top: &Path) -> Ignores {
         let global = ignore::gitignore::gitconfig_excludes_path();
         Ignores::with_global(checkout, top, global.as_deref())
     }
 
     /// As `new`, with `global` as the global excludes file (tests pass None or a temp file).
-    pub(super) fn with_global(checkout: &Path, top: &Path, global: Option<&Path>) -> Ignores {
+    pub(crate) fn with_global(checkout: &Path, top: &Path, global: Option<&Path>) -> Ignores {
         let exclude = git_dir(checkout).and_then(|dir| {
             let file = common_dir(&dir).join("info").join("exclude");
             read_in_git_dir(&file).map(|text| build(checkout, &file, &text))
@@ -280,7 +280,7 @@ impl Ignores {
     /// Whether git ignores `abs`. A path that isn't below `top` (and the checkout) is never ignored.
     /// `top` and the folders above it aren't ignored themselves, though their `.gitignore` lines still
     /// apply below them. A folder link counts as a folder for a `dir/` pattern: pass `is_dir` true.
-    pub(super) fn ignored(&mut self, abs: &Path, is_dir: bool) -> bool {
+    pub(crate) fn ignored(&mut self, abs: &Path, is_dir: bool) -> bool {
         if !abs.starts_with(&self.checkout) {
             return false;
         }
@@ -391,7 +391,7 @@ impl Walk<'_> {
 /// list: `rel` is relative to `start` and `/`-separated. A folder link, `.git`, a nested checkout,
 /// anything ignored and any file `skip` names is left out; hidden files are kept. A file link goes to
 /// `each` as a link. `each` returning false stops the walk with `Asked`.
-pub(super) fn walk_unignored(
+pub(crate) fn walk_unignored(
     ig: &mut Ignores,
     start: &Path,
     deadline: Instant,

@@ -47,6 +47,13 @@ describe("sessionShortcut", () => {
     expect(commandShortcut("browser-panel")).toEqual({ kind: "panel", panel: "browser" });
     expect(commandShortcut("files-panel")).toEqual({ kind: "panel", panel: "files" });
   });
+  it("Ctrl+Shift+H is the Changes panel, and ⌘⇧H on macOS", () => {
+    expect(sessionShortcut(ev("KeyH", cs), "windows")).toEqual({ kind: "panel", panel: "changes" });
+    expect(sessionShortcut(ev("KeyH", { metaKey: true, shiftKey: true }), "mac")).toEqual({ kind: "panel", panel: "changes" });
+    // ⌘H is Hide on macOS.
+    expect(sessionShortcut(ev("KeyH", { metaKey: true }), "mac")).toBeNull();
+    expect(commandShortcut("changes-panel")).toEqual({ kind: "panel", panel: "changes" });
+  });
   it("selects no terminal with the navigation modifier and Backspace; Tab is the navigation hook's own", () => {
     expect(DEFAULT_NAV_MODIFIER).toBe("ctrl+shift");
     expect(sessionShortcut(ev("Backspace", cs), "windows")).toEqual({ kind: "nonePane" });
@@ -148,6 +155,14 @@ describe("side pane commands", () => {
   });
 });
 
+describe("the Changes panel's commands", () => {
+  it("each palette command maps to a shortcut kind", () => {
+    expect(commandShortcut("changes-refresh")).toEqual({ kind: "changes", what: "refresh" });
+    expect(commandShortcut("changes-review")).toEqual({ kind: "changes", what: "review" });
+    expect(commandShortcut("changes-send")).toEqual({ kind: "changes", what: "send" });
+  });
+});
+
 describe("the text tab's commands", () => {
   it("map_to_their_shortcut_kinds_and_have_no_key", () => {
     expect(commandShortcut("pane-save")).toEqual({ kind: "paneSave" });
@@ -196,7 +211,7 @@ describe("the screenshot and viewport commands", () => {
 
 describe("waitsForPalette", () => {
   it("a palette command that moves the keyboard waits for the palette to hand it back", () => {
-    for (const id of ["browser-panel", "files-panel"]) expect(waitsForPalette(commandShortcut(id)), id).toBe(true);
+    for (const id of ["browser-panel", "files-panel", "changes-panel"]) expect(waitsForPalette(commandShortcut(id)), id).toBe(true);
     expect(waitsForPalette({ kind: "preview" })).toBe(true);
     expect(waitsForPalette({ kind: "paneTab", by: 1 })).toBe(true);
     expect(waitsForPalette({ kind: "closePaneTab" })).toBe(true);

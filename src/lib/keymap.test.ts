@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findCommand, problemsIn, type KeyEventLike } from "./bindings";
+import { bindingConflicts, findCommand, problemsIn, reservedReason, type KeyEventLike } from "./bindings";
 import { COMMANDS, MOVED_COMMANDS, NAV_COMMAND_IDS, commandById, keyText, osOfPlatform, shortcutLabel } from "./keymap";
 
 describe("osOfPlatform", () => {
@@ -295,6 +295,14 @@ describe("the select region command", () => {
     expect(commandById("select-region").binding).toBeUndefined();
   });
 });
+describe("the Changes panel's commands", () => {
+  it("the palette lists the three Changes commands with no binding", () => {
+    expect(commandById("changes-refresh")).toMatchObject({ label: "Refresh changes", group: "Window" });
+    expect(commandById("changes-review")).toMatchObject({ label: "Ask the agent to review", group: "Window" });
+    expect(commandById("changes-send")).toMatchObject({ label: "Send comments", group: "Window" });
+    for (const id of ["changes-refresh", "changes-review", "changes-send"]) expect(commandById(id).binding).toBeUndefined();
+  });
+});
 describe("the text tab's commands", () => {
   it("are_in_the_window_group_with_the_plans_names_and_no_default_key", () => {
     expect(commandById("pane-save")).toMatchObject({ label: "Save file", group: "Window" });
@@ -313,5 +321,27 @@ describe("the PDF tab's commands", () => {
     expect(commandById("pane-pdf-pages")).toMatchObject({ label: "Show PDF pages", group: "Window" });
     expect(commandById("pane-pdf-notes")).toMatchObject({ label: "Show PDF notes", group: "Window" });
     for (const id of ["pane-pdf-find", "pane-pdf-outline", "pane-pdf-pages", "pane-pdf-notes"]) expect(commandById(id).binding).toBeUndefined();
+  });
+});
+
+describe("the Changes panel's key", () => {
+  it("Changes is Ctrl+Shift+H and ⌘⇧H", () => {
+    const b = commandById("changes-panel").binding!;
+    expect(shortcutLabel(b, "windows")).toBe("Ctrl+Shift+H");
+    expect(shortcutLabel(b, "linux")).toBe("Ctrl+Shift+H");
+    expect(shortcutLabel(b, "mac")).toBe("⌘⇧H");
+  });
+  it("⌘⇧H conflicts with nothing and no reserved chord", () => {
+    const b = commandById("changes-panel").binding!;
+    for (const os of ["mac", "windows", "linux"] as const) {
+      expect(reservedReason(b, os)).toBeNull();
+      for (const c of COMMANDS) if (c.id !== "changes-panel" && c.binding) expect(bindingConflicts(b, c.binding, os), `${c.id} on ${os}`).toBe(false);
+    }
+  });
+  it("matches ⌘⇧H on a Mac and Ctrl+Shift+H elsewhere, and not ⌘H", () => {
+    const e = (o: Partial<KeyEventLike>): KeyEventLike => ({ code: "KeyH", ctrlKey: false, shiftKey: false, altKey: false, metaKey: false, ...o });
+    expect(findCommand(e({ metaKey: true, shiftKey: true }), "mac")?.id).toBe("changes-panel");
+    expect(findCommand(e({ metaKey: true }), "mac")).toBeUndefined();
+    expect(findCommand(e({ ctrlKey: true, shiftKey: true }), "windows")?.id).toBe("changes-panel");
   });
 });

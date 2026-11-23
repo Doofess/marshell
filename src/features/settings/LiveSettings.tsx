@@ -8,6 +8,7 @@ import type { SetupStart } from "../agents/agentsState";
 import { AccountsSection } from "../accounts/AccountsSection";
 import { BrowserSection } from "../browser/BrowserSection";
 import { browserTabs } from "../browser/available";
+import { ChangesSection } from "../changes/ChangesSection";
 import { FilesSection } from "../files/FilesSection";
 import type { HookInstall } from "../../generated/HookInstall";
 import type { HookAgent } from "../../lib/api/agents";
@@ -148,6 +149,8 @@ export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, 
       }
       case "files":
         return <FilesSection announce={announce} />;
+      case "changes":
+        return <ChangesSection announce={announce} />;
       case "notifications":
         return <NotificationsSection sync={sync} announce={announce} />;
       case "profiles":

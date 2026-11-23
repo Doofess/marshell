@@ -1,3 +1,4 @@
+import type { DiffStatus } from "../../generated/DiffStatus";
 import type { TreeEntry } from "../../generated/TreeEntry";
 
 export type Listing = {
@@ -19,6 +20,10 @@ export type TreeRow = {
   posInSet: number;
   more?: number;
   parts?: NamePart[];
+  /** How the file differs from the base, when it does. */
+  change?: DiffStatus;
+  /** A folder with a changed file somewhere under it. */
+  holdsChanges?: boolean;
 };
 
 /** Paths inside the tree are relative and use "/". */

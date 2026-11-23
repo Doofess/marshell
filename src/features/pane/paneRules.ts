@@ -1,3 +1,4 @@
+import type { DraftComment } from "../../generated/DraftComment";
 import type { PaneView } from "../../generated/PaneView";
 import { VIEWPORTS } from "../browser/viewport";
 import { PANELS, isPanelId, panelOf } from "./panels";
@@ -7,6 +8,38 @@ const VIEWPORT_IDS: readonly string[] = VIEWPORTS.map((v) => v.id);
 /** A folder of a saved tree, as `tree_folder_ok` in the core: relative to the root, "/" separated, no empty, "." or ".." part. */
 export function treeFolderOk(f: string): boolean {
   return f.length > 0 && f.length <= 4096 && !/[\\:]/.test(f) && !f.startsWith("/") && f.split("/").every((c) => c !== "" && c !== "." && c !== "..");
+}
+
+// Control characters as Rust's `char::is_control` has them (C0, DEL and C1).
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/g;
+const CONTROL_BUT_TAB = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f]/;
+const CONTROL_BUT_TAB_LF = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
+const points = (s: string) => [...s].length;
+const lowerHex = (s: string) => /^[0-9a-f]{1,16}$/.test(s);
+
+/** A saved Changes comment the core keeps, as `comment_problem` in the core finds nothing wrong with it (unique ids are the caller's). */
+export function draftCommentOk(c: DraftComment): boolean {
+  return (
+    /^[a-z0-9-]{1,64}$/.test(c.id) &&
+    treeFolderOk(c.path) &&
+    c.start >= 1 &&
+    c.end >= c.start &&
+    c.rows >= 1 &&
+    c.rows <= 100_000 &&
+    lowerHex(c.first) &&
+    lowerHex(c.hash) &&
+    c.quote.length <= 3 &&
+    c.quote.every((q) => points(q) <= 201 && !CONTROL_BUT_TAB.test(q)) &&
+    points(c.text) >= 1 &&
+    points(c.text) <= 2000 &&
+    !CONTROL_BUT_TAB_LF.test(c.text)
+  );
+}
+
+/** A compared base as the core keeps it: no control character, at most 200 characters (a longer one is cut, ending in "…"). */
+export function draftBase(base: string): string {
+  const chars = [...base.replace(CONTROL, "")];
+  return chars.length <= 200 ? chars.join("") : `${chars.slice(0, 199).join("")}…`;
 }
 
 /**
@@ -44,7 +77,7 @@ export function paneProblem(pane: PaneView): string | null {
     if (!Array.isArray(p.shown) || p.shown.length === 0) return "panels.shown";
     const order = PANELS.filter((id) => p.shown.includes(id));
     if (order.length !== p.shown.length || order.some((id, i) => p.shown[i] !== id)) return "panels.shown";
-    if (p.filled !== null && (typeof p.filled !== "string" || !p.shown.includes(p.filled) || p.shown.length !== 2)) return "panels.filled";
+    if (p.filled !== null && (typeof p.filled !== "string" || !p.shown.includes(p.filled) || p.shown.length < 2)) return "panels.filled";
     for (const [key, value] of Object.entries(p.weights)) {
       if (!isPanelId(key)) return "panels.weights";
       if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 100_000) return "panels.weights";

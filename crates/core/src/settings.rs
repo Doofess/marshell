@@ -3,7 +3,8 @@
 
 use crate::store::{self, Versioned};
 use marshell_protocol::api::{
-    Appearance, BrowserSettings, CookieRule, FilesSettings, NotifySettings, QuietHours, Settings, TreePosition,
+    Appearance, BrowserSettings, ChangesSettings, CookieRule, FilesSettings, NotifySettings, QuietHours, Settings,
+    TreePosition,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -43,6 +44,9 @@ struct FileDoc {
     /// Each value that does not read falls back on its own default.
     #[serde(default, deserialize_with = "lenient_files")]
     files: FilesSettings,
+    /// Each value that does not read falls back on its own default.
+    #[serde(default, deserialize_with = "lenient_changes")]
+    changes: ChangesSettings,
     /// Read only, to migrate an older file; never written.
     #[serde(default, skip_serializing)]
     sound_off: bool,
@@ -114,6 +118,27 @@ fn lenient_files<'de, D: serde::Deserializer<'de>>(d: D) -> Result<FilesSettings
         match serde_json::from_value::<TreePosition>(v.clone()) {
             Ok(p) => out.tree_position = p,
             Err(_) => tracing::warn!("settings file has an invalid files.tree_position, using the default"),
+        }
+    }
+    Ok(out)
+}
+
+/// The changes block, one field at a time like the browser block: a value of the wrong type reads as its default, and
+/// only the field's name is logged.
+fn lenient_changes<'de, D: serde::Deserializer<'de>>(d: D) -> Result<ChangesSettings, D::Error> {
+    let value = serde_json::Value::deserialize(d)?;
+    let mut out = ChangesSettings::default();
+    let Some(fields) = value.as_object() else {
+        if !value.is_null() {
+            tracing::warn!("settings file has an invalid changes block, using the defaults");
+        }
+        return Ok(out);
+    };
+    for (name, slot) in [("hide_whitespace", &mut out.hide_whitespace), ("wrap", &mut out.wrap)] {
+        match fields.get(name) {
+            None => {}
+            Some(serde_json::Value::Bool(b)) => *slot = *b,
+            Some(_) => tracing::warn!("settings file has an invalid changes.{name}, using the default"),
         }
     }
     Ok(out)
@@ -204,6 +229,7 @@ pub fn load(home: &Path) -> Settings {
         history_backup_dir: doc.history_backup_dir.filter(|dir| !dir.trim().is_empty()),
         browser: doc.browser,
         files: doc.files,
+        changes: doc.changes,
     }
 }
 
@@ -253,6 +279,7 @@ pub fn save(home: &Path, s: &Settings) -> anyhow::Result<()> {
             history_backup_dir: s.history_backup_dir.clone(),
             browser: s.browser.clone(),
             files: s.files.clone(),
+            changes: s.changes.clone(),
             sound_off: false,
         },
     )
@@ -370,7 +397,6 @@ fn repair(a: &mut Appearance) -> Vec<&'static str> {
 mod tests {
     use super::*;
     use marshell_protocol::api::{BrowserSettings, CookieRule, ImportedTheme, TerminalColors};
-
     #[test]
     fn files_settings_default_to_the_reference_choices() {
         let home = tempfile::tempdir().unwrap();
@@ -434,6 +460,33 @@ mod tests {
         assert_eq!(validate(&s), Err("files.tab_size must be 2, 4 or 8".to_string()));
         s.files.tab_size = 2;
         assert!(validate(&s).is_ok());
+    }
+
+    #[test]
+    fn changes_settings_default_off_and_lenient() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(load(home.path()).changes, ChangesSettings::default());
+        write_settings(home.path(), r#"{"changes": {"wrap": "yes"}}"#);
+        let changes = load(home.path()).changes;
+        assert!(!changes.wrap);
+        assert!(!changes.hide_whitespace);
+        write_settings(home.path(), r#"{"changes": {"wrap": true, "hide_whitespace": 3}}"#);
+        assert_eq!(
+            load(home.path()).changes,
+            ChangesSettings {
+                hide_whitespace: false,
+                wrap: true
+            }
+        );
+        let s = Settings {
+            changes: ChangesSettings {
+                hide_whitespace: true,
+                wrap: true,
+            },
+            ..Settings::default()
+        };
+        save(home.path(), &s).unwrap();
+        assert_eq!(load(home.path()).changes, s.changes);
     }
 
     fn write_settings(home: &Path, json: &str) {

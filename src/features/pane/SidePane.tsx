@@ -56,7 +56,9 @@ export type SidePaneProps = {
   /** What the panel holds: its tabs' bodies or its empty state. */
   children: ReactNode;
   /** + : its name ("New tab" for Browser, "Open a file" for Files), whether it opens a menu, and why it can't be used. */
-  plus: { label: string; menu: boolean; disabled?: string };
+  plus?: { label: string; menu: boolean; disabled?: string };
+  /** A panel with no tabs shows this in place of the tablist (and has no +): Changes' count of files and lines. */
+  title?: string;
   /** The ⋯ button, for a panel that has a menu: its name ("Browser menu"). */
   menu?: { label: string };
   /** ⤢ : whether this panel fills the pane, and why it can't. */
@@ -68,7 +70,7 @@ export type SidePaneProps = {
   /** A double-click on a tab keeps a preview tab. Optional until the Files panel passes it. */
   onKeep?(id: string): void;
   onMove(id: string, to: number): void;
-  onPlus(anchor: { x: number; y: number }, opener: HTMLElement): void;
+  onPlus?(anchor: { x: number; y: number }, opener: HTMLElement): void;
   onMenu?(anchor: { x: number; y: number }, opener: HTMLElement): void;
   onFill(): void;
   onHide(): void;
@@ -132,7 +134,7 @@ function TabTitle({ kind, title }: { kind: TabKind; title: string }) {
 type Drag = { id: string; pointerId: number; startX: number; started: boolean };
 
 /** One panel's frame: its tab strip, ending with +, the menu (if it has one), Fill and Hide, then whatever the panel holds. */
-export function SidePane({ panel, tabs, activeId, children, plus: plusSpec, menu, fill, hideKeys, onSelect, onClose, onKeep, onMove, onPlus, onMenu, onFill, onHide }: SidePaneProps) {
+export function SidePane({ panel, tabs, activeId, children, plus: plusSpec, title, menu, fill, hideKeys, onSelect, onClose, onKeep, onMove, onPlus, onMenu, onFill, onHide }: SidePaneProps) {
   const root = useRef<HTMLElement>(null);
   const plus = useRef<HTMLButtonElement>(null);
   // Where focus goes after the strip changes: a tab's id, or "active" for whichever tab became the selected one.
@@ -222,7 +224,12 @@ export function SidePane({ panel, tabs, activeId, children, plus: plusSpec, menu
   return (
     <section ref={root} className="side-pane" aria-label={PANEL_LABEL[panel]} data-nav-side={panel}>
       <div className="side-pane__strip">
-        {tabs.length > 0 && (
+        {title !== undefined ? (
+          <span className="side-pane__title" role="heading" aria-level={2}>
+            {title}
+          </span>
+        ) : (
+          tabs.length > 0 && (
           <div className="side-pane__tabs" role="tablist" aria-label={`${PANEL_LABEL[panel]} tabs`}>
             {tabs.map((t) => {
               const selected = t.id === activeId;
@@ -267,8 +274,10 @@ export function SidePane({ panel, tabs, activeId, children, plus: plusSpec, menu
               );
             })}
           </div>
+          )
         )}
         <span className="side-pane__spacer" />
+        {plusSpec && (
         <button
           ref={plus}
           type="button"
@@ -281,11 +290,12 @@ export function SidePane({ panel, tabs, activeId, children, plus: plusSpec, menu
           onClick={(e) => {
             if (plusSpec.disabled !== undefined) return;
             const r = e.currentTarget.getBoundingClientRect();
-            onPlus({ x: r.left, y: r.bottom }, e.currentTarget);
+            onPlus?.({ x: r.left, y: r.bottom }, e.currentTarget);
           }}
         >
           {icon("M6 2.5v7M2.5 6h7")}
         </button>
+        )}
         {menu && (
           <button
             type="button"
