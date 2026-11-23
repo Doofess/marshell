@@ -189,6 +189,26 @@ fn tracked_paths(
     Ok(set)
 }
 
+/// The link safety check (`worktree::reach`), or its last clear answer while `reached` says that one stands.
+fn looked(
+    checkout: &Path,
+    tracked: &Arc<Tracked>,
+    reached: &mut cache::Reached,
+    deadline: Instant,
+    cancel: &AtomicBool,
+) -> Reach {
+    if reached.stands(tracked) {
+        return Reach::Clear;
+    }
+    let started = Instant::now();
+    let reach = worktree::reach(checkout, tracked, deadline, cancel);
+    match reach {
+        Reach::Clear => reached.set(tracked, started),
+        _ => *reached = cache::Reached::default(),
+    }
+    reach
+}
+
 /// The check: heads, base, the changed files and the new ones, and a stamp of all of it. Runs under the
 /// checkout's `work` lock.
 fn compute(
@@ -209,6 +229,7 @@ fn compute(
         git,
         merge_base,
         tracked,
+        reached,
         walk,
     } = entry;
     let git = git.as_ref().expect("the box was just opened");
@@ -253,10 +274,12 @@ fn compute(
         }
     };
 
-    // Git is given the work tree only once nothing in it leads git to a network or device path.
+    // Git is given the work tree only once nothing in it leads git to a network or device path. On a big
+    // checkout that look is most of a check, so a slow one's clear answer stands for 10 s while the index is the
+    // same: a link made in that time is seen by the next look (PLAN §9, slice 6u decision 1).
     let tracked = tracked_paths(git, tracked, deadline, cancel)?;
     let checkout = git.checkout().to_path_buf();
-    match worktree::reach(&checkout, &tracked, deadline, cancel) {
+    match looked(&checkout, &tracked, reached, deadline, cancel) {
         Reach::Clear => {}
         Reach::Refused => return Err(Halt::Err(ChangesError::Refused(SUBMODULE_NETWORK.to_string()))),
         Reach::OddName => return Err(Halt::Err(ChangesError::Refused(ODD_NAME.to_string()))),
@@ -760,6 +783,75 @@ mod tests {
             .read(&scratch.home, &scratch.target(), false, far(), &AtomicBool::new(false))
             .unwrap_err();
         assert_eq!(err, ChangesError::Refused(SUBMODULE_NETWORK.to_string()));
+    }
+
+    /// A gitlink path with no folder is clear; a `.git` file there that names a device path is refused.
+    #[test]
+    fn a_slow_clear_look_stands_until_the_index_changes() {
+        let scratch = Scratch::new();
+        let never = AtomicBool::new(false);
+        let tracked = Arc::new(Tracked::parse(b"vendor/lib\0a.txt\0"));
+        let dot_git = scratch.repo.join("vendor").join("lib").join(".git");
+        let mut reached = cache::Reached::default();
+        let look = |tracked: &Arc<Tracked>, reached: &mut cache::Reached| {
+            looked(&scratch.repo, tracked, reached, far(), &never)
+        };
+
+        assert_eq!(look(&tracked, &mut reached), Reach::Clear);
+        // A fast look is not kept: the refused folder is seen on the next check.
+        write(&dot_git, "gitdir: //?/C:/marshell-no-such-folder\n");
+        assert_eq!(look(&tracked, &mut reached), Reach::Refused);
+        assert!(reached.of.is_none(), "a refusal is never kept");
+
+        std::fs::remove_file(&dot_git).unwrap();
+        assert_eq!(look(&tracked, &mut reached), Reach::Clear);
+        reached.took = Duration::from_millis(251);
+        write(&dot_git, "gitdir: //?/C:/marshell-no-such-folder\n");
+        assert_eq!(look(&tracked, &mut reached), Reach::Clear, "a slow clear look stands");
+
+        // A new index is a new set of paths: looked at again at once.
+        let again = Arc::new(Tracked::parse(b"vendor/lib\0a.txt\0"));
+        assert_eq!(look(&again, &mut reached), Reach::Refused);
+        assert!(reached.of.is_none());
+    }
+
+    /// The same through a whole check: the paths stay one set between checks, and a changed index ends the reuse.
+    #[test]
+    fn a_check_reuses_a_slow_clear_look_only_while_the_index_is_the_same() {
+        let scratch = Scratch::new();
+        let head = repo_with_commit(&scratch);
+        let git = plain(&scratch);
+        let entry_line = format!("160000,{head},vendor/lib");
+        git(&scratch.repo, &["update-index", "--add", "--cacheinfo", &entry_line]);
+        let never = AtomicBool::new(false);
+        let target = scratch.target();
+        let mut entry = Entry::default();
+        let refused = |entry: &mut Entry| {
+            matches!(
+                compute(&scratch.home, &target, entry, far(), &never),
+                Err(Halt::Err(ChangesError::Refused(_)))
+            )
+        };
+
+        assert!(!refused(&mut entry));
+        let first = entry.tracked.as_ref().unwrap().1.clone();
+        assert!(!refused(&mut entry));
+        assert!(
+            Arc::ptr_eq(&first, &entry.tracked.as_ref().unwrap().1),
+            "one set of paths between checks"
+        );
+
+        // As if that look had been slow: the folder that turned up since is not seen yet.
+        entry.reached.took = Duration::from_millis(251);
+        write(
+            &scratch.repo.join("vendor").join("lib").join(".git"),
+            "gitdir: //?/C:/marshell-no-such-folder\n",
+        );
+        assert!(!refused(&mut entry), "a slow clear look stands");
+
+        write(&scratch.repo.join("new.txt"), "new\n");
+        git(&scratch.repo, &["add", "new.txt"]);
+        assert!(refused(&mut entry), "a changed index is looked at again at once");
     }
 
     #[test]

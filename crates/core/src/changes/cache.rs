@@ -22,6 +22,9 @@ const MAX_SLOTS: usize = 8;
 /// A walk that took longer than this runs at most every `SLOW_WALK_EVERY`.
 const SLOW_WALK: Duration = Duration::from_millis(250);
 const SLOW_WALK_EVERY: Duration = Duration::from_secs(10);
+/// A link safety check that took longer than this stands for `SLOW_REACH_EVERY`, while the index is the same.
+const SLOW_REACH: Duration = Duration::from_millis(250);
+const SLOW_REACH_EVERY: Duration = Duration::from_secs(10);
 /// How long a caller waiting for `work` sleeps between tries.
 const LOCK_TICK: Duration = Duration::from_millis(10);
 
@@ -82,6 +85,41 @@ impl Walk {
     }
 }
 
+/// The link safety check's last clear answer: the tracked paths it looked at, when it started and how long
+/// it took. Only a clear answer is kept; a refusal is looked for again on every check.
+#[derive(Default)]
+pub(super) struct Reached {
+    pub of: Option<Arc<Tracked>>,
+    pub at: Option<Instant>,
+    pub took: Duration,
+}
+
+impl Reached {
+    /// Whether the last clear answer still stands for `tracked`: the look took over `SLOW_REACH`, started less
+    /// than `SLOW_REACH_EVERY` ago, and was at these very paths. A changed index gives a new `Arc`, and the one
+    /// kept here can't be freed and its address used again.
+    pub(super) fn stands(&self, tracked: &Arc<Tracked>) -> bool {
+        self.stands_at(tracked, Instant::now())
+    }
+
+    fn stands_at(&self, tracked: &Arc<Tracked>, now: Instant) -> bool {
+        self.took > SLOW_REACH
+            && self.of.as_ref().is_some_and(|of| Arc::ptr_eq(of, tracked))
+            && self
+                .at
+                .is_some_and(|at| now.saturating_duration_since(at) < SLOW_REACH_EVERY)
+    }
+
+    /// Keeps a clear answer for `tracked`, from a look that started at `started` and ends now.
+    pub(super) fn set(&mut self, tracked: &Arc<Tracked>, started: Instant) {
+        *self = Reached {
+            of: Some(tracked.clone()),
+            at: Some(started),
+            took: started.elapsed(),
+        };
+    }
+}
+
 /// Everything one checkout's git work keeps between checks; held through `Slot::work`.
 #[derive(Default)]
 pub(super) struct Entry {
@@ -90,6 +128,7 @@ pub(super) struct Entry {
     pub merge_base: Option<((String, String), Option<String>)>,
     /// The tracked paths, with the index file's stamp they were read at.
     pub tracked: Option<(Option<FileStamp>, Arc<Tracked>)>,
+    pub reached: Reached,
     pub walk: Walk,
 }
 
@@ -313,5 +352,39 @@ impl ChangesCache {
             }
         }
         last.map(|(_, check)| check)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_clear_look_stands_only_when_it_was_slow_young_and_of_these_paths() {
+        let tracked = Arc::new(Tracked::default());
+        // Built from a time in the future, so the test asks nothing of how long the PC has been up.
+        let look = |took_ms: u64, age: Duration| {
+            Reached {
+                of: Some(tracked.clone()),
+                at: Some(Instant::now()),
+                took: Duration::from_millis(took_ms),
+            }
+            .stands_at(&tracked, Instant::now() + age)
+        };
+        assert!(look(251, Duration::from_secs(9)));
+        assert!(!look(250, Duration::from_secs(1)), "a fast look runs on every check");
+        assert!(!look(251, Duration::from_secs(11)));
+
+        let slow = Reached {
+            of: Some(tracked.clone()),
+            at: Some(Instant::now()),
+            took: Duration::from_millis(251),
+        };
+        assert!(slow.stands(&tracked));
+        assert!(
+            !slow.stands(&Arc::new(Tracked::default())),
+            "other paths, even equal ones"
+        );
+        assert!(!Reached::default().stands(&tracked));
     }
 }

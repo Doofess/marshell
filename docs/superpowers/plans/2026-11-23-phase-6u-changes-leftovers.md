@@ -126,6 +126,8 @@ impl Reached {
     /// Whether the last clear answer still stands for `tracked`: it took over `SLOW_REACH`, started less than
     /// `SLOW_REACH_EVERY` ago, and looked at these very paths (`Arc::ptr_eq`: a new index is a new `Arc`).
     pub(super) fn stands(&self, tracked: &Arc<Tracked>) -> bool;
+    /// `stands` with the time given, so a test moves the clock forward and never subtracts from an `Instant`.
+    fn stands_at(&self, tracked: &Arc<Tracked>, now: Instant) -> bool;
     /// Keeps a clear answer for `tracked` from a look that started at `started` and ends now.
     pub(super) fn set(&mut self, tracked: &Arc<Tracked>, started: Instant);
 }
@@ -142,16 +144,19 @@ In `cache.rs`, in a new `#[cfg(test)] mod tests` (the file has none):
 #[test]
 fn a_clear_look_stands_only_when_it_was_slow_young_and_of_these_paths() {
     let tracked = Arc::new(Tracked::default());
-    let ago = |d: Duration| Instant::now().checked_sub(d).unwrap();
-    let of = |took_ms: u64, age: Duration| Reached {
+    // Asked about a time in the future, so the test needs nothing of how long the PC has been up.
+    let look = |took_ms: u64, age: Duration| Reached {
         of: Some(tracked.clone()),
-        at: Some(ago(age)),
+        at: Some(Instant::now()),
         took: Duration::from_millis(took_ms),
-    };
-    assert!(of(251, Duration::from_secs(9)).stands(&tracked));
-    assert!(!of(250, Duration::from_secs(1)).stands(&tracked), "a fast look runs on every check");
-    assert!(!of(251, Duration::from_secs(10)).stands(&tracked));
-    assert!(!of(251, Duration::from_secs(1)).stands(&Arc::new(Tracked::default())));
+    }
+    .stands_at(&tracked, Instant::now() + age);
+    assert!(look(251, Duration::from_secs(9)));
+    assert!(!look(250, Duration::from_secs(1)), "a fast look runs on every check");
+    assert!(!look(251, Duration::from_secs(11)));
+    let slow = Reached { of: Some(tracked.clone()), at: Some(Instant::now()), took: Duration::from_millis(251) };
+    assert!(slow.stands(&tracked));
+    assert!(!slow.stands(&Arc::new(Tracked::default())), "other paths, even equal ones");
     assert!(!Reached::default().stands(&tracked));
 }
 ```
