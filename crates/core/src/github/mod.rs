@@ -2,6 +2,7 @@
 
 pub mod gh;
 pub mod plan;
+pub mod push;
 pub mod query;
 pub mod remote;
 pub mod status;
@@ -179,8 +180,8 @@ struct Inner {
     gh: Option<(Instant, Option<PathBuf>)>,
     /// The hosts gh is signed in to and when it was asked.
     auth: Option<(Instant, Vec<String>)>,
-    /// (checkout, push id) of the pushes that run. Nothing fills it yet.
-    pushes: Vec<(PathBuf, String)>,
+    /// The pushes that run, and the ones that ended less than `push::PUSH_KEPT` ago.
+    pushes: Vec<push::PushSlot>,
 }
 
 fn same(a: &Path, b: &Path) -> bool {
@@ -286,15 +287,6 @@ impl GithubState {
         inner
             .position(checkout, branch)
             .and_then(|at| inner.keys[at].seen.clone())
-    }
-
-    /// The id of the push that runs at `checkout`.
-    pub(crate) fn running_push(&self, checkout: &Path) -> Option<String> {
-        self.lock()
-            .pushes
-            .iter()
-            .find(|(c, _)| same(c, checkout))
-            .map(|(_, id)| id.clone())
     }
 
     /// Notes what the answer showed for `branch` at `checkout`: the pull request seen (node id, number) and the base of

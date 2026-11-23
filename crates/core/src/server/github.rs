@@ -13,6 +13,7 @@ use crate::changes::{CHECK_BUDGET, ChangesError, Check, READ_BUDGET, Target, unc
 use crate::gitbox::refs;
 use crate::github::gh::{self, GhError};
 use crate::github::plan::{body_of, outgoing, refusal, refusal_for, title_of};
+use crate::github::push::{AlreadyRunning, PushLaunch};
 use crate::github::query::status_args;
 use crate::github::remote::{RemoteRepo, fetch_repo, push_repo};
 use crate::github::status::{Candidate, NEXT_IDLE_MS, Snapshot, snapshot_of};
@@ -21,11 +22,12 @@ use crate::github::{
     Failure, Flight, Local, Outcome, Take, compare_url, failure_of, has_commit, in_history, local_counts, valid_branch,
 };
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use marshell_protocol::api::{
     GithubKind, GithubReply, GithubRequest, OutgoingCommit, PullState, PullStatus, PushPlan, PushPlanRequest,
+    PushRequest, PushStarted,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -534,4 +536,167 @@ pub async fn plan(State(st): State<AppState>, Path(tab): Path<String>, Json(req)
         Ok(plan) => Json(plan).into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
+}
+
+const SWITCHED_OFF: &str = "Pull requests from GitHub are switched off in Settings.";
+const MOVED_FOLDER: &str = "The session moved to another folder. Look again before you go on.";
+const MOVED_BRANCH: &str = "The branch moved since you looked. Check the commits again.";
+const PUSH_RUNNING: &str = "A push of this checkout is already running.";
+const NO_GIT: &str = "Git isn't installed, or isn't on the PATH a session gets.";
+const NO_NAME: &str = "That isn't a branch name Marshell can push.";
+
+/// A 409 whose body is `{reason}`.
+fn refused(reason: &str) -> Response {
+    (StatusCode::CONFLICT, Json(serde_json::json!({ "reason": reason }))).into_response()
+}
+
+/// What a click on Push is checked against: the reply a fresh check of the checkout gives, whether that checkout is on
+/// no branch, its `HEAD`'s commit id, and the repository the bar shows (when there is one).
+struct Fresh {
+    reply: GithubReply,
+    detached: bool,
+    head: String,
+    repo: Option<RemoteRepo>,
+}
+
+/// The refusals of a push, in order, then the push. Blocking: it reads the PATH and the disk.
+fn start_push(st: &AppState, req: &PushRequest, fresh: Fresh) -> Result<PushStarted, String> {
+    let Fresh {
+        reply,
+        detached,
+        head,
+        repo,
+    } = fresh;
+    if reply.kind == GithubKind::Off {
+        return Err(SWITCHED_OFF.to_string());
+    }
+    // A reply that names no checkout (the origin isn't GitHub's, or the folder is no checkout now) has nothing to
+    // compare: `refusal` says why there is no push.
+    if !reply.checkout.is_empty() && !crate::projects::same_path(&req.checkout, &reply.checkout) {
+        return Err(MOVED_FOLDER.to_string());
+    }
+    if let Some(sentence) = refusal(&reply, detached) {
+        return Err(sentence);
+    }
+    if reply.checkout.is_empty() {
+        return Err(MOVED_FOLDER.to_string());
+    }
+    // Nothing refused the branch, so the reply is a Ready one about a branch Marshell can name.
+    let branch = reply.branch.clone().unwrap_or_default();
+    let Some(repo) = repo.filter(|_| valid_branch(&branch)) else {
+        return Err(NO_NAME.to_string());
+    };
+    if req.branch != branch || head.is_empty() || req.head != head {
+        return Err(MOVED_BRANCH.to_string());
+    }
+    let git = (st.0.tab_path)()
+        .and_then(|path| gh::find_exe(&path, "git"))
+        .ok_or_else(|| NO_GIT.to_string())?;
+    let launch = PushLaunch {
+        checkout: PathBuf::from(&reply.checkout),
+        branch,
+        repo,
+        git,
+        extra: st.push_config().to_vec(),
+    };
+    match st.github_arc().start_push(launch) {
+        Ok(id) => Ok(PushStarted { id }),
+        Err(AlreadyRunning) => Err(PUSH_RUNNING.to_string()),
+    }
+}
+
+/// POST /v1/sessions/{tab}/push: starts the confirmed push of the session's checkout, after a fresh check of it
+/// (GitHub is asked as the plan route asks: from what is kept, else once). It types nothing into the session. 404
+/// for a tab that doesn't exist; a refusal is a 409 with `{reason}`.
+pub async fn push(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<PushRequest>) -> Response {
+    let reported = st.session(&tab).and_then(|s| s.current_cwd());
+    let Some(row) = row_of(&st, &tab) else {
+        return (StatusCode::NOT_FOUND, "There is no such session.").into_response();
+    };
+    let cancel = Arc::new(AtomicBool::new(false));
+    let _stop = CancelOnDrop(cancel.clone());
+    let early = {
+        let (state, cancel) = (st.clone(), cancel.clone());
+        tokio::task::spawn_blocking(move || prepare(&state, &row, reported, &cancel)).await
+    };
+    let fresh = match early {
+        Ok(Early::Reply(reply)) => Fresh {
+            reply: *reply,
+            detached: false,
+            head: String::new(),
+            repo: None,
+        },
+        Ok(Early::Headless(headless)) => {
+            let h = *headless;
+            Fresh {
+                reply: GithubReply {
+                    branch: h.name,
+                    ..h.reply
+                },
+                detached: h.detached,
+                head: h.head,
+                repo: None,
+            }
+        }
+        Ok(Early::Go(ctx)) => {
+            let ctx = Arc::new(*ctx);
+            let outcome = snapshot(&st, &ctx, false).await;
+            let state = st.clone();
+            let done = tokio::task::spawn_blocking(move || {
+                let (reply, gathered) = finish_with(&state, &ctx, outcome, &cancel, true);
+                Fresh {
+                    reply,
+                    detached: false,
+                    head: gathered.head,
+                    repo: Some(ctx.repo.clone()),
+                }
+            })
+            .await;
+            match done {
+                Ok(fresh) => fresh,
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            }
+        }
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+    let state = st.clone();
+    match tokio::task::spawn_blocking(move || start_push(&state, &req, fresh)).await {
+        Ok(Ok(started)) => Json(started).into_response(),
+        Ok(Err(reason)) => refused(&reason),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct ProgressQuery {
+    from: Option<u64>,
+}
+
+/// GET /v1/pushes/{id}?from=<n>: the push's state and its lines from `n - 1` on (`from` is how many lines the caller
+/// has seen; the last of them may have been redrawn). 404 for an id that isn't a push's.
+pub async fn push_progress(
+    State(st): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<ProgressQuery>,
+) -> Response {
+    match st.github().push_progress(&id, q.from.unwrap_or(0)) {
+        Some(progress) => Json(progress).into_response(),
+        None => (StatusCode::NOT_FOUND, "There is no such push.").into_response(),
+    }
+}
+
+/// POST /v1/pushes/{id}/cancel: ends the push whole. 204 also for one that has ended; 404 for an unknown id.
+pub async fn cancel_push(State(st): State<AppState>, Path(id): Path<String>) -> StatusCode {
+    if st.github().cancel_push(&id) {
+        StatusCode::NO_CONTENT
+    } else {
+        StatusCode::NOT_FOUND
+    }
+}
+
+/// POST /v1/pushes/stop: ends every push, and answers once they have (2 s at most). The quit question's "Quit".
+pub async fn stop_pushes(State(st): State<AppState>) -> StatusCode {
+    let github = st.github_arc();
+    let _ = tokio::task::spawn_blocking(move || github.stop_pushes(std::time::Duration::from_secs(2))).await;
+    StatusCode::NO_CONTENT
 }

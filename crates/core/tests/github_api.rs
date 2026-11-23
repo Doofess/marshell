@@ -112,6 +112,11 @@ impl Scratch {
         let scratch = Scratch { _tmp: tmp, root, repo };
         scratch.git(&["init", "-q", "-b", "main"]);
         scratch.git(&["remote", "add", "origin", origin]);
+        // Every address here is a GitHub one, so a mistake must not reach it: nothing connects (the proxy is the
+        // discard port), nothing asks for credentials, and no ssh program runs.
+        scratch.git(&["config", "http.proxy", "http://127.0.0.1:9"]);
+        scratch.git(&["config", "credential.helper", ""]);
+        scratch.git(&["config", "core.sshCommand", "false"]);
         scratch.commit("first");
         scratch
     }
@@ -127,9 +132,18 @@ impl Scratch {
 
     /// `git` with `input` on its standard input.
     fn git_input(&self, args: &[&str], input: &str) -> String {
+        self.git_input_at(&self.repo, args, input)
+    }
+
+    /// `git` in `dir`, as `git` is.
+    fn git_at(&self, dir: &Path, args: &[&str]) -> String {
+        self.git_input_at(dir, args, "")
+    }
+
+    fn git_input_at(&self, dir: &Path, args: &[&str], input: &str) -> String {
         use std::io::Write;
         let mut cmd = std::process::Command::new("git");
-        cmd.current_dir(&self.repo)
+        cmd.current_dir(dir)
             .args([
                 "-c",
                 "user.name=T",
@@ -264,7 +278,13 @@ async fn json_of(res: axum::response::Response) -> Value {
 /// A session started in the scratch repository; returns the router and the tab.
 async fn open(state: &AppState, scratch: &Scratch) -> (axum::Router, String) {
     let app = router(state.clone());
-    let cwd = scratch.repo.to_string_lossy();
+    let tab = open_in(&app, &scratch.repo).await;
+    (app, tab)
+}
+
+/// A session started in `cwd` on a router; returns the tab.
+async fn open_in(app: &axum::Router, cwd: &Path) -> String {
+    let cwd = cwd.to_string_lossy();
     let body = json!({"cols": 80, "rows": 24, "profile_id": "sleeper", "cwd": cwd, "agent": null});
     let res = app
         .clone()
@@ -272,8 +292,7 @@ async fn open(state: &AppState, scratch: &Scratch) -> (axum::Router, String) {
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    let tab = json_of(res).await["tab_id"].as_str().unwrap().to_string();
-    (app, tab)
+    json_of(res).await["tab_id"].as_str().unwrap().to_string()
 }
 
 async fn github(app: &axum::Router, tab: &str, fresh: bool) -> Value {
@@ -982,4 +1001,561 @@ async fn plan_route_needs_the_token() {
         .unwrap();
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
     assert!(!scratch.home().join("gh").join("calls.jsonl").exists());
+}
+// ---- The push (Task 9) -----------------------------------------------------------------------------------------
+//
+// Every repository here has `https://github.com/octo-org/widgets.git` as its origin. The push reaches a bare
+// repository in the temp folder instead, through settings the test hands the route (`with_push_config`): an
+// `insteadOf` for that address and `protocol.file.allow`, followed by `protocol.https.allow=never` and
+// `protocol.ssh.allow=never`, which come last on git's command line and so win. The repositories' own config
+// points `http.proxy` at the discard port and has no credential helper or ssh program (see `Scratch::new`). No
+// test reaches a network, and none touches the real `gh`, `~/.gitconfig` or any real repository.
+
+const WIDGETS: &str = "https://github.com/octo-org/widgets.git";
+const MOVED: &str = "The branch moved since you looked. Check the commits again.";
+const RUNNING: &str = "A push of this checkout is already running.";
+const ELSEWHERE: &str = "origin pushes somewhere other than octo-org/widgets, so push from the terminal.";
+
+fn slash(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+/// A repository on `feat/login` (`main`'s commit, then `base`, then `head`), a bare repository that has `main`, and
+/// GitHub's answer (by the fake gh) that its `feat/login` is at `base`.
+struct Rig {
+    scratch: Scratch,
+    bare: PathBuf,
+    first: String,
+    base: String,
+    head: String,
+}
+
+impl Rig {
+    fn new() -> Rig {
+        let scratch = Scratch::new(WIDGETS);
+        let bare = scratch.root.join("bare.git");
+        scratch.git_at(&scratch.root, &["init", "--bare", "-q", "-b", "main", &slash(&bare)]);
+        let first = scratch.git(&["rev-parse", "HEAD"]);
+        // A push to a path, not to `origin`.
+        scratch.git(&["push", "-q", &slash(&bare), "main"]);
+        scratch.git(&["switch", "-q", "-c", "feat/login"]);
+        let base = scratch.commit("second");
+        let head = scratch.commit("third");
+        scratch.script(json!([status(&answer_at(OPEN_FAILING, &base))]));
+        Rig {
+            scratch,
+            bare,
+            first,
+            base,
+            head,
+        }
+    }
+
+    /// What `with_push_config` gets: the push lands in the bare repository, and nothing else can be reached.
+    fn config(&self) -> Vec<String> {
+        vec![
+            "protocol.file.allow=always".to_string(),
+            format!("url.{}.insteadOf={WIDGETS}", slash(&self.bare)),
+            "protocol.https.allow=never".to_string(),
+            "protocol.ssh.allow=never".to_string(),
+        ]
+    }
+
+    fn state(&self) -> AppState {
+        state_with_gh(&self.scratch).with_push_config(self.config())
+    }
+
+    fn checkout(&self) -> String {
+        self.scratch.repo.to_string_lossy().into_owned()
+    }
+
+    /// The commit the bare repository has at `branch`, or an empty text.
+    fn bare_ref(&self, branch: &str) -> String {
+        self.scratch.git_at(
+            &self.bare,
+            &[
+                "for-each-ref",
+                "--format=%(objectname)",
+                &format!("refs/heads/{branch}"),
+            ],
+        )
+    }
+
+    /// A `pre-push` hook running `body` as a shell script.
+    fn hook(&self, body: &str) {
+        let path = self.scratch.repo.join(".git").join("hooks").join("pre-push");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    }
+
+    /// A hook that prints a line, waits until the returned file exists, and prints another.
+    fn waiting_hook(&self) -> PathBuf {
+        let go = self.scratch.root.join("go");
+        self.hook(&format!(
+            "echo \"hook started\"\nwhile [ ! -f \"{}\" ]; do sleep 0.2; done\necho \"hook done\"",
+            slash(&go)
+        ));
+        go
+    }
+}
+
+/// A call with the token: its status and its body (JSON when it is, else the text).
+async fn call(app: &axum::Router, method: &str, path: &str, body: Option<Value>) -> (StatusCode, Value) {
+    let res = app.clone().oneshot(request(method, path, body, true)).await.unwrap();
+    let status = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), 4 * 1024 * 1024).await.unwrap();
+    let body =
+        serde_json::from_slice(&bytes).unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()));
+    (status, body)
+}
+
+async fn push_at(app: &axum::Router, tab: &str, checkout: &str, branch: &str, head: &str) -> (StatusCode, Value) {
+    let body = json!({"checkout": checkout, "branch": branch, "head": head});
+    call(app, "POST", &format!("/v1/sessions/{tab}/push"), Some(body)).await
+}
+
+/// The confirmed push of the rig's branch; its id.
+async fn start_push(rig: &Rig, app: &axum::Router, tab: &str) -> String {
+    let (status, body) = push_at(app, tab, &rig.checkout(), "feat/login", &rig.head).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body["id"].as_str().expect("an id").to_string()
+}
+
+/// Polls the push until `done` says so (a minute at most); its last answer.
+async fn poll_push(app: &axum::Router, id: &str, mut done: impl FnMut(&Value) -> bool) -> Value {
+    let started = Instant::now();
+    loop {
+        let (status, progress) = call(app, "GET", &format!("/v1/pushes/{id}?from=0"), None).await;
+        assert_eq!(status, StatusCode::OK, "{progress}");
+        if done(&progress) || started.elapsed() > Duration::from_secs(60) {
+            return progress;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+async fn finished(app: &axum::Router, id: &str) -> Value {
+    poll_push(app, id, |p| p["state"] != "running").await
+}
+
+fn printed(progress: &Value) -> String {
+    progress["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l.as_str().unwrap())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[tokio::test]
+async fn push_runs_the_hook_and_streams_its_output() {
+    let rig = Rig::new();
+    let go = rig.waiting_hook();
+    let (app, tab) = open(&rig.state(), &rig.scratch).await;
+    assert_eq!(github(&app, &tab, true).await["to_push"], 1);
+    assert_eq!(rig.scratch.status_calls(), 1);
+    let id = start_push(&rig, &app, &tab).await;
+    assert_eq!(id.len(), 32);
+
+    // While the hook waits, its first line is there already and the push runs.
+    let running = poll_push(&app, &id, |p| printed(p).contains("hook started")).await;
+    assert_eq!(running["state"], "running", "{running}");
+    assert_eq!(rig.bare_ref("feat/login"), "", "nothing has moved yet");
+
+    std::fs::write(&go, "").unwrap();
+    let done = finished(&app, &id).await;
+    assert_eq!(done["state"], "pushed", "{done}");
+    let text = printed(&done);
+    assert!(text.contains("hook done"), "{text}");
+    assert!(text.contains("refs/heads/feat/login:refs/heads/feat/login"), "{text}");
+    assert_eq!(rig.bare_ref("feat/login"), rig.head);
+    // The pushed branch is tracked, which `-u` asks for.
+    assert_eq!(rig.scratch.git(&["config", "branch.feat/login.remote"]), "origin");
+
+    // The address git printed is the test's bare repository, not the bar's: that is told, and carried as the reason.
+    let reason = done["reason"].as_str().expect("a reason");
+    assert!(
+        reason.starts_with("git pushed to ") && reason.ends_with(", which isn't octo-org/widgets."),
+        "{reason}"
+    );
+    assert!(text.contains(reason), "the transcript says it too: {text}");
+
+    // A reader that has seen `total` lines gets the last of them again.
+    let total = done["total"].as_u64().unwrap();
+    let (status, tail) = call(&app, "GET", &format!("/v1/pushes/{id}?from={total}"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(tail["start"], total - 1);
+    assert_eq!(tail["lines"].as_array().unwrap().len(), 1);
+    assert_eq!(tail["total"], total);
+    // Beyond the end, and with no `from`: nothing breaks.
+    let (status, beyond) = call(&app, "GET", &format!("/v1/pushes/{id}?from=999999"), None).await;
+    assert_eq!((status, beyond["lines"].as_array().unwrap().len()), (StatusCode::OK, 0));
+    let (status, all) = call(&app, "GET", &format!("/v1/pushes/{id}"), None).await;
+    assert_eq!((status, all["start"].as_u64()), (StatusCode::OK, Some(0)));
+
+    // A push that landed makes what GitHub said stale: the next look asks again, with no `fresh`.
+    assert_eq!(github(&app, &tab, false).await["push"], Value::Null);
+    assert_eq!(rig.scratch.status_calls(), 2);
+}
+
+/// Whether Windows lists a process with this id.
+#[cfg(windows)]
+fn process_is_running(pid: u32) -> bool {
+    let out = std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .any(|word| word == pid.to_string())
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn push_cancel_ends_the_hook_and_moves_nothing() {
+    /// Ends exactly the process with this id, if the test left it running.
+    struct EndProcess(u32);
+    impl Drop for EndProcess {
+        fn drop(&mut self) {
+            if process_is_running(self.0) {
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/PID", &self.0.to_string(), "/F", "/T"])
+                    .output();
+            }
+        }
+    }
+
+    let rig = Rig::new();
+    // GitHub's branch (the bare repository's) is at `base`; the push would move it to `head`.
+    rig.scratch.git(&[
+        "push",
+        "-q",
+        &slash(&rig.bare),
+        &format!("{}:refs/heads/feat/login", rig.base),
+    ]);
+    let pid_file = rig.scratch.root.join("hook.pid");
+    // Git for Windows' shell: `$$` is its own number, and `winpid` is the one Windows has for it.
+    rig.hook(&format!("cat /proc/$$/winpid > \"{}\"\nsleep 60", slash(&pid_file)));
+    let (app, tab) = open(&rig.state(), &rig.scratch).await;
+    let id = start_push(&rig, &app, &tab).await;
+
+    let started = Instant::now();
+    let pid = loop {
+        if let Ok(text) = std::fs::read_to_string(&pid_file)
+            && let Ok(pid) = text.trim().parse::<u32>()
+        {
+            break pid;
+        }
+        assert!(started.elapsed() < Duration::from_secs(30), "the hook never started");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    let _end = EndProcess(pid);
+    assert!(process_is_running(pid), "the hook's shell is not running");
+
+    let (status, _) = call(&app, "POST", &format!("/v1/pushes/{id}/cancel"), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let done = finished(&app, &id).await;
+    assert_eq!(done["state"], "cancelled", "{done}");
+    assert_eq!(done["reason"], Value::Null);
+
+    let waited = Instant::now();
+    while process_is_running(pid) {
+        assert!(
+            waited.elapsed() < Duration::from_secs(5),
+            "the hook outlived the cancelled push"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(rig.bare_ref("feat/login"), rig.base, "the branch did not move");
+    // Cancelling an ended push changes nothing.
+    let (status, _) = call(&app, "POST", &format!("/v1/pushes/{id}/cancel"), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(github(&app, &tab, false).await["push"], Value::Null);
+}
+
+#[tokio::test]
+async fn a_rejected_push_ends_failed_with_gits_output() {
+    let rig = Rig::new();
+    // GitHub's branch holds a commit this one lacks.
+    rig.scratch.git(&["switch", "-q", "-c", "side", "main"]);
+    let side = rig.scratch.commit("side");
+    rig.scratch.git(&[
+        "push",
+        "-q",
+        &slash(&rig.bare),
+        &format!("{side}:refs/heads/feat/login"),
+    ]);
+    rig.scratch.git(&["switch", "-q", "feat/login"]);
+    let (app, tab) = open(&rig.state(), &rig.scratch).await;
+    let id = start_push(&rig, &app, &tab).await;
+    let done = finished(&app, &id).await;
+    assert_eq!(done["state"], "failed", "{done}");
+    assert_eq!(done["reason"], "git ended with code 1.");
+    let text = printed(&done);
+    assert!(text.contains("rejected"), "{text}");
+    assert_eq!(rig.bare_ref("feat/login"), side, "nothing was forced");
+}
+
+#[tokio::test]
+async fn push_refuses_a_moved_head() {
+    let rig = Rig::new();
+    let (app, tab) = open(&rig.state(), &rig.scratch).await;
+    // A head, and a branch, that aren't the checkout's.
+    let (status, body) = push_at(&app, &tab, &rig.checkout(), "feat/login", &rig.base).await;
+    assert_eq!((status, &body["reason"]), (StatusCode::CONFLICT, &json!(MOVED)));
+    let (status, body) = push_at(&app, &tab, &rig.checkout(), "feat/login", &"0".repeat(40)).await;
+    assert_eq!((status, &body["reason"]), (StatusCode::CONFLICT, &json!(MOVED)));
+    let (status, body) = push_at(&app, &tab, &rig.checkout(), "feat/other", &rig.head).await;
+    assert_eq!((status, &body["reason"]), (StatusCode::CONFLICT, &json!(MOVED)));
+    // A commit made after the user looked.
+    rig.scratch.commit("fourth");
+    tokio::time::sleep(Duration::from_millis(1_200)).await;
+    let (status, body) = push_at(&app, &tab, &rig.checkout(), "feat/login", &rig.head).await;
+    assert_eq!((status, &body["reason"]), (StatusCode::CONFLICT, &json!(MOVED)));
+    assert_eq!(rig.bare_ref("feat/login"), "");
+}
+
+#[tokio::test]
+async fn push_refuses_a_second_push() {
+    let rig = Rig::new();
+    let go = rig.waiting_hook();
+    let (app, tab) = open(&rig.state(), &rig.scratch).await;
+    // Two clicks at once: one starts, the other is refused.
+    let (checkout, head) = (rig.checkout(), rig.head.clone());
+    let (a, b) = tokio::join!(
+        push_at(&app, &tab, &checkout, "feat/login", &head),
+        push_at(&app, &tab, &checkout, "feat/login", &head),
+    );
+    let mut got = [a, b];
+    got.sort_by_key(|(status, _)| status.as_u16());
+    assert_eq!(got[0].0, StatusCode::OK, "{got:?}");
+    assert_eq!((got[1].0, &got[1].1["reason"]), (StatusCode::CONFLICT, &json!(RUNNING)));
+    let id = got[0].1["id"].as_str().unwrap().to_string();
+    // And a third, later.
+    let (status, body) = push_at(&app, &tab, &checkout, "feat/login", &head).await;
+    assert_eq!((status, &body["reason"]), (StatusCode::CONFLICT, &json!(RUNNING)));
+
+    std::fs::write(&go, "").unwrap();
+    assert_eq!(finished(&app, &id).await["state"], "pushed");
+    // Once it ended, the checkout may push again.
+    let (status, again) = push_at(&app, &tab, &checkout, "feat/login", &head).await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_ne!(again["id"], json!(id));
+    assert_eq!(finished(&app, again["id"].as_str().unwrap()).await["state"], "pushed");
+}
+
+#[tokio::test]
+async fn push_refuses_a_branch_that_starts_with_a_dash_or_a_plus() {
+    for name in ["+main", "-x"] {
+        let rig = Rig::new();
+        let main_before = rig.bare_ref("main");
+        rig.scratch.git(&["update-ref", &format!("refs/heads/{name}"), "HEAD"]);
+        rig.scratch
+            .git(&["symbolic-ref", "HEAD", &format!("refs/heads/{name}")]);
+        let (app, tab) = open(&rig.state(), &rig.scratch).await;
+        let (status, body) = push_at(&app, &tab, &rig.checkout(), name, &rig.head).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{name}: {body}");
+        assert_eq!(body["reason"], "That isn't a branch name Marshell can push.");
+        assert_eq!(rig.bare_ref("main"), main_before, "{name}");
+        assert_eq!(rig.bare_ref(name), "", "{name}");
+        assert_eq!(rig.bare_ref("feat/login"), "", "{name}");
+    }
+}
+
+#[tokio::test]
+async fn push_refuses_the_default_branch() {
+    let rig = Rig::new();
+    rig.scratch.git(&["switch", "-q", "main"]);
+    rig.scratch.script(json!([status(&answer_at(NO_PULL, &rig.first))]));
+    let (app, tab) = open(&rig.state(), &rig.scratch).await;
+    let (status, body) = push_at(&app, &tab, &rig.checkout(), "main", &rig.first).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(
+        body["reason"],
+        "main is the default branch on GitHub. Marshell doesn't push it."
+    );
+    assert_eq!(rig.bare_ref("main"), rig.first);
+}
+
+#[tokio::test]
+async fn push_refuses_an_origin_that_pushes_elsewhere() {
+    // A push address of another repository, and a local path.
+    for local in [false, true] {
+        let rig = Rig::new();
+        let pushurl = if local {
+            slash(&rig.bare)
+        } else {
+            "https://github.com/someone-else/widgets.git".to_string()
+        };
+        rig.scratch.git(&["config", "remote.origin.pushurl", &pushurl]);
+        let (app, tab) = open(&rig.state(), &rig.scratch).await;
+        let (status, body) = push_at(&app, &tab, &rig.checkout(), "feat/login", &rig.head).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{pushurl}: {body}");
+        assert_eq!(body["reason"], ELSEWHERE, "{pushurl}");
+        assert_eq!(rig.bare_ref("feat/login"), "", "{pushurl}");
+    }
+}
+
+#[tokio::test]
+async fn push_refuses_another_checkout_than_the_confirmed_one() {
+    let rig = Rig::new();
+    let (app, tab) = open(&rig.state(), &rig.scratch).await;
+    let other = rig.scratch.root.join("elsewhere");
+    let (status, body) = push_at(&app, &tab, &other.to_string_lossy(), "feat/login", &rig.head).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(
+        body["reason"],
+        "The session moved to another folder. Look again before you go on."
+    );
+    let (status, body) = push_at(&app, &tab, "", "feat/login", &rig.head).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(rig.bare_ref("feat/login"), "");
+}
+
+/// The origin changed under an open sheet: the sentence is about GitHub, not about a session that moved.
+#[tokio::test]
+async fn push_for_an_origin_that_is_no_longer_github_says_it_could_not_check() {
+    let rig = Rig::new();
+    rig.scratch
+        .git(&["config", "remote.origin.url", "https://gitlab.com/octo-org/widgets.git"]);
+    let (app, tab) = open(&rig.state(), &rig.scratch).await;
+    let (status, body) = push_at(&app, &tab, &rig.checkout(), "feat/login", &rig.head).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(
+        body["reason"],
+        "Marshell couldn't check this branch with GitHub, so push from the terminal."
+    );
+    assert_eq!(rig.bare_ref("feat/login"), "");
+}
+
+#[tokio::test]
+async fn push_refuses_when_pull_requests_are_switched_off() {
+    let rig = Rig::new();
+    let (app, tab) = open(&rig.state(), &rig.scratch).await;
+    let (_, mut settings) = call(&app, "GET", "/v1/settings", None).await;
+    settings["changes"]["pull_requests"] = json!(false);
+    let (status, _) = call(&app, "PUT", "/v1/settings", Some(settings)).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, body) = push_at(&app, &tab, &rig.checkout(), "feat/login", &rig.head).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(
+        body["reason"],
+        "Pull requests from GitHub are switched off in Settings."
+    );
+    assert_eq!(rig.bare_ref("feat/login"), "");
+}
+
+/// Without the test's settings the route sends git its own: a repository's included file that turns the address into
+/// a local path can't make git use the `file` transport.
+#[tokio::test]
+async fn a_file_address_is_refused_by_git_without_the_test_setting() {
+    let rig = Rig::new();
+    let include = rig.scratch.root.join("included.gitconfig");
+    std::fs::write(
+        &include,
+        format!("[url \"{}\"]\n\tinsteadOf = {WIDGETS}\n", slash(&rig.bare)),
+    )
+    .unwrap();
+    rig.scratch.git(&["config", "include.path", &slash(&include)]);
+    // The state has no `with_push_config`.
+    let (app, tab) = open(&state_with_gh(&rig.scratch), &rig.scratch).await;
+    let id = start_push(&rig, &app, &tab).await;
+    let done = finished(&app, &id).await;
+    assert_eq!(done["state"], "failed", "{done}");
+    assert!(
+        done["reason"].as_str().unwrap().starts_with("git ended with code "),
+        "{done}"
+    );
+    assert_eq!(rig.bare_ref("feat/login"), "");
+}
+
+#[tokio::test]
+async fn a_running_push_is_named_in_the_status() {
+    let rig = Rig::new();
+    let go = rig.waiting_hook();
+    let (app, tab) = open(&rig.state(), &rig.scratch).await;
+    assert_eq!(github(&app, &tab, true).await["push"], Value::Null);
+    let id = start_push(&rig, &app, &tab).await;
+    assert_eq!(github(&app, &tab, false).await["push"], json!(id));
+    assert_eq!(github(&app, &tab, true).await["push"], json!(id));
+    std::fs::write(&go, "").unwrap();
+    assert_eq!(finished(&app, &id).await["state"], "pushed");
+    assert_eq!(github(&app, &tab, false).await["push"], Value::Null);
+    // An ended push stays readable.
+    let (status, again) = call(&app, "GET", &format!("/v1/pushes/{id}?from=0"), None).await;
+    assert_eq!((status, &again["state"]), (StatusCode::OK, &json!("pushed")));
+}
+
+#[tokio::test]
+async fn stop_ends_every_running_push() {
+    let rig = Rig::new();
+    let _go = rig.waiting_hook();
+    // A second checkout of the same repository, on a branch of its own.
+    let second = rig.scratch.root.join("second-checkout");
+    rig.scratch
+        .git(&["worktree", "add", "-q", "-b", "feat/two", &slash(&second), "feat/login"]);
+    let app = router(rig.state());
+    let (one, two) = (open_in(&app, &rig.scratch.repo).await, open_in(&app, &second).await);
+    let first_id = start_push(&rig, &app, &one).await;
+    let (status, body) = push_at(&app, &two, &second.to_string_lossy(), "feat/two", &rig.head).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let second_id = body["id"].as_str().unwrap().to_string();
+    for id in [&first_id, &second_id] {
+        let running = poll_push(&app, id, |p| printed(p).contains("hook started")).await;
+        assert_eq!(running["state"], "running", "{running}");
+    }
+
+    let started = Instant::now();
+    let (status, _) = call(&app, "POST", "/v1/pushes/stop", None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(started.elapsed() < Duration::from_secs(4), "{:?}", started.elapsed());
+    for id in [&first_id, &second_id] {
+        let (_, progress) = call(&app, "GET", &format!("/v1/pushes/{id}?from=0"), None).await;
+        assert_eq!(progress["state"], "cancelled", "stop waits for the end: {progress}");
+    }
+    assert_eq!(rig.bare_ref("feat/login"), "");
+    assert_eq!(rig.bare_ref("feat/two"), "");
+    // With nothing running, stop answers at once.
+    let (status, _) = call(&app, "POST", "/v1/pushes/stop", None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn push_of_an_unknown_id_is_404() {
+    let rig = Rig::new();
+    let (app, _tab) = open(&rig.state(), &rig.scratch).await;
+    let unknown = "0123456789abcdef0123456789abcdef";
+    for id in [unknown, "not-an-id", "..%2F..%2Fx", &unknown.to_uppercase()] {
+        let (status, _) = call(&app, "GET", &format!("/v1/pushes/{id}?from=0"), None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{id}");
+        let (status, _) = call(&app, "POST", &format!("/v1/pushes/{id}/cancel"), None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{id}");
+    }
+    let body = json!({"checkout": rig.checkout(), "branch": "feat/login", "head": rig.head});
+    let (status, _) = call(&app, "POST", "/v1/sessions/no-such-tab/push", Some(body)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn push_routes_need_the_token() {
+    let rig = Rig::new();
+    let (app, tab) = open(&rig.state(), &rig.scratch).await;
+    let id = "0123456789abcdef0123456789abcdef";
+    let body = json!({"checkout": rig.checkout(), "branch": "feat/login", "head": rig.head});
+    for (method, path, body) in [
+        ("POST", format!("/v1/sessions/{tab}/push"), Some(body)),
+        ("GET", format!("/v1/pushes/{id}?from=0"), None),
+        ("POST", format!("/v1/pushes/{id}/cancel"), None),
+        ("POST", "/v1/pushes/stop".to_string(), None),
+    ] {
+        let res = app.clone().oneshot(request(method, &path, body, false)).await.unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED, "{method} {path}");
+    }
+    assert_eq!(rig.bare_ref("feat/login"), "");
 }

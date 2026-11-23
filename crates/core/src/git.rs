@@ -309,8 +309,6 @@ fn pump_pipe(mut r: impl std::io::Read, pipe: Pipe, tx: std::sync::mpsc::Sender<
 /// an error here. The cancel flag is looked at every 50 ms; when set while the program runs, it and everything it started are
 /// killed and the result is `Cancelled`. Once the program has ended, the pipes get `PIPE_GRACE` more, then the run
 /// returns even if something it started still holds a pipe: that is left running, and its reader ends on its own.
-// Used by github::push (slice 6r-4a, Task 9).
-#[allow(dead_code)]
 pub(crate) fn run_watched(
     mut cmd: Command,
     cancel: &std::sync::atomic::AtomicBool,
