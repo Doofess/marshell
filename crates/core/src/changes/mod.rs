@@ -292,6 +292,8 @@ fn compute(
     };
 
     let mut hasher = DefaultHasher::new();
+    // Two checkouts in the same state are still two answers: the reply names its folder.
+    target.checkout.hash(&mut hasher);
     head.branch.hash(&mut hasher);
     head.oid.as_ref().map(refs::Oid::as_str).hash(&mut hasher);
     base.as_ref()
@@ -819,6 +821,27 @@ mod tests {
         let reply = reply_stamp(&first, true);
         assert_eq!(reply, format!("{:016x}w", first.stamp));
         assert_eq!(reply_stamp(&first, false).len(), 16);
+    }
+
+    #[test]
+    fn two_checkouts_in_the_same_state_have_different_stamps() {
+        // A shell that moves between two clean clones must get the new folder, not a Same reply for the old one.
+        let scratch = Scratch::new();
+        let git = plain(&scratch);
+        let twin = scratch.root.join("twin");
+        std::fs::create_dir(&twin).unwrap();
+        git(&scratch.repo, &["init", "-q", "-b", "main"]);
+        git(&twin, &["init", "-q", "-b", "main"]);
+        let cache = ChangesCache::new();
+        let here = check_of(&cache, &scratch.target());
+        let there = check_of(
+            &cache,
+            &Target {
+                checkout: twin,
+                ..scratch.target()
+            },
+        );
+        assert_ne!(here.stamp, there.stamp);
     }
 
     #[test]
