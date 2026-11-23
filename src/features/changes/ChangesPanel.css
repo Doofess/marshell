@@ -339,6 +339,19 @@
   color: var(--text-2);
   font-size: var(--text-12);
 }
+/* The reply box's button beside its hint, and the sentence of a reply GitHub refused or didn't answer, under the text area. */
+.changes__box-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+}
+.changes__box-error {
+  margin: 0;
+  color: var(--error);
+  font-size: var(--text-12);
+  overflow-wrap: anywhere;
+}
 
 /* The Send bar: the primary button is filled with the accent and the others tinted, told apart by fill and never by a box. */
 .changes__send {
@@ -435,6 +448,9 @@
     background: Field;
     color: FieldText;
     border: 1px solid CanvasText;
+  }
+  .changes__box-error {
+    color: CanvasText;
   }
   .changes__send-button {
     background: ButtonFace;

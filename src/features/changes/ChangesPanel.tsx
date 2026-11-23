@@ -12,7 +12,8 @@ import { type ItemRange, DiffList, type ListResult, reach } from "./DiffList";
 import { remembered, safeCommentHtml } from "../preview/markdown";
 import { type ChangesChoice, type CommentItem, addressOf, changesChoice, changesMenuItems, headerMenuItems, lineMenuItems, openLineOf, openOf, settingLabel, threadMenuItems } from "./changesMenu";
 import { type BoxAction, CommentBox, boxLabel } from "./CommentBox";
-import { type BoxState, anchorKey, boxAfter } from "./boxModel";
+import { type BoxState, type ReplyState, type ThreadBox, afterReply, anchorKey, boxAfter, canPost, closedThreadBox, openThreadBox, startPost, threadBoxAfter } from "./boxModel";
+import { type ReplyAction, ReplyBox, cleanReply } from "./ReplyBox";
 import { MAX_COMMENTS, type Placement, anchorOf, place, renumbered } from "./comments";
 import { type OpenBox, boxAnchor, commentsOf, elsewhere, givesWay, keptBox, sendMessageOf, shownComments, unkept, withFolds } from "./drafts";
 import { copy } from "./copy";
@@ -35,7 +36,7 @@ import { threadCopy } from "./threadCopy";
 import { threadsBarOf, newCommentsOf, withThreads } from "./threadsBar";
 import { addAllOf, commentSay, discarded, githubItemsOf, hasList, inDiffOrder, nextToResolve, placementsOf, readNotice, sendCount, sendNotice } from "./threadsPanel";
 import { afterSendPicked, batchMessageOf, githubMessageOf, pickedItems, pruned, sendBudget, withPicked, withoutPicked } from "./threadsSend";
-import { toResolve } from "./threads";
+import { authorOf, toResolve } from "./threads";
 import { recountKey, useGithub } from "./useGithub";
 import { threadsTarget, useThreads } from "./useThreads";
 import { type Item, type Row, type Section, cutFiles, focusIndex, itemsOf, sectionsOf } from "./model";
@@ -177,6 +178,15 @@ export function ChangesPanel(p: ChangesPanelProps) {
   const [open, setOpen] = useState<OpenBox | null>(null);
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
+  // The box on a GitHub thread (a reply or the user's note), the reply text kept per thread and the threads with a reply out. A ref, so
+  // the check that stops a second post and the mark that a reply is out happen in one tick and outlive the box and a redraw; `setReply` draws.
+  const replyRef = useRef<ReplyState>({ box: null, texts: new Map(), out: new Set() });
+  const [, drawReply] = useState(0);
+  const setReply = (next: ReplyState) => {
+    replyRef.current = next;
+    drawReply((n) => n + 1);
+  };
+  const threadBox = replyRef.current.box;
 
   // Another checkout's comments aren't listed against this one's files (the strip says where they are).
   const comments = useMemo(() => (listed ? shownComments(drafts, listed.folder) : []), [listed, drafts]);
@@ -193,6 +203,17 @@ export function ChangesPanel(p: ChangesPanelProps) {
   const count = sendCount(drafts, threads);
   // What the checkout and base are for a drafts' save with no comment yet (the diff's, else the bar's checkout).
   const shownNow = { folder: listed?.folder ?? gh?.checkout ?? "", base: listed?.base ?? null };
+  // A thread's box closes with its thread (resolved elsewhere, another branch, a folded file); a reply's text stays kept for the thread.
+  useEffect(() => {
+    const cur = replyRef.current;
+    if (cur.box !== null && threadBoxAfter(items, cur.box) < 0) setReply(closedThreadBox(cur));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only a new list can take the thread away
+  }, [items]);
+  useEffect(() => {
+    const cur = replyRef.current;
+    if (cur.box !== null) setReply(closedThreadBox(cur));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per session
+  }, [p.session]);
 
   // A new answer: the picks and sent marks GitHub no longer holds go, and the comments the user hasn't seen are announced.
   const seenThreads = useRef<PullThreads | null>(null);
@@ -343,7 +364,96 @@ export function ChangesPanel(p: ChangesPanelProps) {
     // A box on the same lines as the one that gave way is the same element, which mounts nothing: it is focused here instead.
     if (open !== null && anchorKey(open.state.anchor) === anchorKey(next.state.anchor)) box.current?.querySelector<HTMLTextAreaElement>(".changes__box-text")?.focus();
     else focusBox.current = true;
+    // One box at a time: a thread's box gives way as its Esc would (a note is saved, a reply's text is kept).
+    const mine = replyRef.current;
+    if (mine.box !== null) {
+      if (mine.box.kind === "note" && !saveNote(mine.box)) return;
+      setReply(closedThreadBox(mine));
+    }
     setOpen({ ...next, on: { folder: listed.folder, base: listed.base } });
+  };
+
+  /** The thread's or the note's item the box is under, by the thread's id. */
+  const itemKeyOf = (thread: string) => `thread:${thread}`;
+  /**
+   * The note box's text as the thread's note: a note adds the thread to the send (as a pick) and says so; an empty one on a picked thread
+   * clears the note and leaves it picked; an empty one on any other does nothing. False when the send is full, so the box stays.
+   */
+  const saveNote = (b: ThreadBox): boolean => {
+    const target = threadsTarget(gh);
+    if (target === null) return true;
+    const d = draftsRef.current;
+    const text = b.text.trim();
+    if (text === "" && (d?.picked.find((x) => x.id === b.thread)?.note ?? "") === "") return true;
+    const next = withPicked(d, shownNow, target.number, b.thread, text);
+    if (next === null) {
+      p.announce(threadCopy.tooMany);
+      return false;
+    }
+    p.onDrafts(next);
+    if (text !== "") p.announce(threadCopy.noteAdded(sendCount(next, threads)));
+    return true;
+  };
+  /** Opens the reply box or the note box under a thread (the keyboard goes to it); the box that is open gives way as its Esc would. */
+  const startThreadBox = (kind: ThreadBox["kind"], item: CommentItem) => {
+    if (item.kind !== "thread") return;
+    const thread = item.thread.id;
+    const cur = replyRef.current;
+    if (cur.box?.kind === kind && cur.box.thread === thread) return void box.current?.querySelector<HTMLTextAreaElement>(".changes__box-text")?.focus();
+    if (kind === "reply" && !item.thread.can_reply) return p.announce(threadCopy.cantReply);
+    if (cur.box?.kind === "note" && !saveNote(cur.box)) return;
+    // A draft comment box with typed text is kept as a draft first, as `startBox` keeps it.
+    if (open !== null) {
+      if (listed && open.text.trim() !== "") {
+        p.onDrafts(keptNow(open, listed.folder));
+        p.announce("Comment kept as a draft.");
+      }
+      setOpen(null);
+    }
+    focusBox.current = true;
+    setReply(openThreadBox(cur, kind, thread, item.state.note));
+  };
+  /** The thread box's Esc, Enter or close: a reply closes (never while it is out) and keeps its text; a note is saved. The keyboard goes back to the thread's item. */
+  const closeThreadBox = () => {
+    const cur = replyRef.current;
+    const b = cur.box;
+    if (b === null) return;
+    if (b.kind === "reply" && !canPost(cur, b.thread)) return;
+    if (b.kind === "note" && !saveNote(b)) return;
+    setReply(closedThreadBox(cur));
+    focusKey(itemKeyOf(b.thread));
+  };
+  /** Posts the open reply. The check that no reply to the thread is out and the mark that one is happen in the same tick, before the request starts. */
+  const postReply = async () => {
+    const target = threadsTarget(gh);
+    const first = replyRef.current;
+    const b = first.box;
+    if (target === null || b === null || b.kind !== "reply") return;
+    const body = cleanReply(b.text);
+    if (body.trim() === "") return;
+    if (!canPost(first, b.thread)) return;
+    setReply(startPost({ ...first, box: { ...b, error: null } }, b.thread));
+    const thread = b.thread;
+    let result: Parameters<typeof afterReply>[2];
+    try {
+      await threadAction(p.session, { ...target, thread, action: "reply", body });
+      result = { ok: true };
+    } catch (e) {
+      result = { ok: false, reason: failureOf(e).reason };
+    }
+    const now = replyRef.current;
+    const there = now.box?.kind === "reply" && now.box.thread === thread;
+    setReply(afterReply(now, thread, result));
+    if (result.ok) {
+      p.announce(threadCopy.replied(target.number));
+      if (there) focusKey(itemKeyOf(thread));
+    } else p.announce(result.reason);
+    github.refresh();
+    refreshThreads();
+  };
+  const onReplyAction = (a: ReplyAction) => {
+    if (a === "post") void postReply();
+    else closeThreadBox();
   };
 
   const closeBox = (action: BoxAction) => {
@@ -681,6 +791,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
   const runCommentMenu = (item: CommentItem, id: string) => {
     const at = item.kind === "thread" ? item.thread.id : item.note.id;
     if (id === "pick" || id === "unpick") pick(at, id === "pick");
+    else if (id === "note" || id === "reply") startThreadBox(id, item);
     else if (id === "resolve" || id === "unresolve") {
       if (item.kind === "thread" && (id === "resolve" ? item.thread.can_resolve : item.thread.can_unresolve)) void threadDo(at, id);
     } else if (id === "open") openHttps(addressOf(item));
@@ -739,7 +850,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
       {itemMenu && menuItem && (menuItem.kind === "file" || menuItem.kind === "row" || menuItem.kind === "thread" || menuItem.kind === "talk") && (
         <ContextMenu
           label={menuItem.kind === "file" ? "File menu" : menuItem.kind === "row" ? "Line menu" : threadCopy.threadMenu}
-          items={menuItem.kind === "file" ? headerMenuItems(menuItem.file) : menuItem.kind === "row" ? lineMenuItems(menuItem, menuRows(menuItem).length) : threadMenuItems(menuItem, menuItem.state)}
+          items={menuItem.kind === "file" ? headerMenuItems(menuItem.file) : menuItem.kind === "row" ? lineMenuItems(menuItem, menuRows(menuItem).length) : threadMenuItems(menuItem, menuItem.state, menuItem.kind === "thread" && replyRef.current.out.has(menuItem.thread.id))}
           anchor={itemMenu.anchor}
           onRun={runItemMenu}
           onClose={({ refocus }) => closeItemMenu(refocus)}
@@ -806,13 +917,33 @@ export function ChangesPanel(p: ChangesPanelProps) {
   const boxAt = open === null ? -1 : boxAfter(items, sections, open.state);
   // The key stays the written anchor (the box keeps its text and caret); the label reads the lines it is on now.
   const boxLines = open === null ? null : boxAnchor(open, listed.folder, placeBox(open.state));
-  const boxNode =
+  const threadBoxAt = threadBox === null ? -1 : threadBoxAfter(items, threadBox);
+  const threadItem = threadBox === null || threadBoxAt < 0 ? undefined : items[threadBoxAt];
+  const threadAuthor = threadItem?.kind === "thread" ? (threadItem.thread.comments[0] === undefined ? threadCopy.from : authorOf(threadItem.thread.comments[0])) : threadCopy.from;
+  const setThreadText = (text: string) => {
+    const cur = replyRef.current;
+    if (cur.box !== null) setReply({ ...cur, box: { ...cur.box, text } });
+  };
+  const draftNode =
     open !== null && boxLines !== null && boxAt >= 0
       ? {
           after: boxAt,
           node: <CommentBox key={anchorKey(open.state.anchor)} label={boxLabel(boxLines.start, boxLines.end)} value={open.text} onChange={(text) => setOpen((o) => (o === null ? o : { ...o, text }))} onAction={closeBox} focus={focusBox} />,
         }
       : undefined;
+  // One box at a time: a thread's box and the draft comment box are never open together.
+  const boxNode =
+    threadBox === null || threadBoxAt < 0
+      ? draftNode
+      : {
+          after: threadBoxAt,
+          node:
+            threadBox.kind === "reply" ? (
+              <ReplyBox key={`reply:${threadBox.thread}`} label={threadCopy.replyLabel(threadAuthor)} value={threadBox.text} posting={replyRef.current.out.has(threadBox.thread)} error={threadBox.error} onChange={setThreadText} onAction={onReplyAction} focus={focusBox} />
+            ) : (
+              <CommentBox key={`note:${threadBox.thread}`} label={threadCopy.noteLabel(threadAuthor)} value={threadBox.text} onChange={setThreadText} onAction={closeThreadBox} focus={focusBox} />
+            ),
+        };
   return (
     <div className="changes" ref={box}>
       <ChangesHead

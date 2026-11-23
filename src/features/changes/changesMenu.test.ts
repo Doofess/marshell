@@ -146,10 +146,28 @@ describe("the comment menu", () => {
     const rows = rowsOf(threadMenuItems(threadItem(thread()), none));
     expect(rows.map((r) => [r.id, r.label, r.disabled])).toEqual([
       ["pick", "Add to send", undefined],
+      ["note", "Add your note…", undefined],
+      ["reply", "Reply on GitHub…", undefined],
       ["resolve", "Resolve", undefined],
       ["open", "Open on GitHub", undefined],
       ["copy-link", "Copy link", undefined],
     ]);
+  });
+  it("offers Edit your note once the thread has one", () => {
+    const state = { picked: true, note: "mine", sent: false };
+    const rows = rowsOf(threadMenuItems(threadItem(thread(), state), state));
+    expect(rows.map((r) => r.label).slice(0, 3)).toEqual(["Remove from send", "Edit your note…", "Reply on GitHub…"]);
+    expect(rows[1]!.id).toBe("note");
+  });
+  it("gives the reason Reply is off when the thread can't be replied to", () => {
+    const rows = rowsOf(threadMenuItems(threadItem(thread({ can_reply: false })), none));
+    expect(rows.find((r) => r.id === "reply")).toMatchObject({ label: "Reply on GitHub…", disabled: "GitHub doesn't let this sign-in reply to this thread." });
+  });
+  it("shows Reply off with Replying… while a reply is out", () => {
+    const rows = rowsOf(threadMenuItems(threadItem(thread()), none, true));
+    expect(rows.find((r) => r.id === "reply")).toMatchObject({ label: "Reply on GitHub…", disabled: "Replying…" });
+    expect(rowsOf(threadMenuItems(threadItem(thread()), none, false)).find((r) => r.id === "reply")?.disabled).toBeUndefined();
+    expect(rowsOf(threadMenuItems(threadItem(thread({ can_reply: false })), none, true)).find((r) => r.id === "reply")?.disabled).toBe("GitHub doesn't let this sign-in reply to this thread.");
   });
   it("offers Unresolve for a resolved thread, with the reason when the sign-in can't", () => {
     const rows = rowsOf(threadMenuItems(threadItem(thread({ resolved: true, can_unresolve: false })), none));
@@ -169,7 +187,12 @@ describe("the comment menu", () => {
   it("gives a note no resolve row, and no Open or Copy link without an address", () => {
     expect(labels(threadMenuItems(noteItem(), none))).toEqual(["Add to send", "Open on GitHub", "Copy link"]);
     expect(labels(threadMenuItems(noteItem({ url: null }), none))).toEqual(["Add to send"]);
-    expect(labels(threadMenuItems(threadItem(thread({ comments: [] })), none))).toEqual(["Add to send", "Resolve"]);
+    expect(labels(threadMenuItems(threadItem(thread({ comments: [] })), none))).toEqual(["Add to send", "Add your note…", "Reply on GitHub…", "Resolve"]);
+  });
+  it("gives a note neither a note row nor a reply row: its text is not what a send carries of it", () => {
+    const ids = rowsOf(threadMenuItems(noteItem(), none, false)).map((r) => r.id);
+    expect(ids).not.toContain("reply");
+    expect(ids).not.toContain("note");
   });
   it("takes only an https address", () => {
     expect(addressOf(noteItem({ url: "http://x.test/" }))).toBeNull();
