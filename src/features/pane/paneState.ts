@@ -9,7 +9,7 @@ import type { TreeState } from "../../generated/TreeState";
 import type { TreeView } from "../../generated/TreeView";
 import { BLANK, isPageUrl, pageTitle, sameUrl } from "../browser/address";
 import type { ViewportId } from "../browser/viewport";
-import { treeFolderOk } from "./paneRules";
+import { draftBase, draftCommentOk, treeFolderOk } from "./paneRules";
 import { type PanelId, PANELS, type Stack, type Weights, activeIn, isPanelId, onScreen, panelOf, panelOfPath, panelTabs, stackOf, stackPanels } from "./panels";
 
 export type { PaneEntry };
@@ -450,11 +450,16 @@ const TREE_WIDTH_MAX = 2048;
 const DRAFT_COMMENTS_MAX = 50;
 const DRAFT_FOLDS_MAX = 1000;
 
-/** Sets the session's Changes drafts, capped as the core's repair caps them. Nothing in them removes them, and a session left with no tabs, tree or drafts goes. */
+/**
+ * Sets the session's Changes drafts, held to the core's rules: the core refuses the whole layout over one draft it can't keep, so a comment
+ * or fold it would refuse is left out and the base is cut. Nothing in them removes them, and a session left with no tabs, tree or drafts goes.
+ */
 function setDrafts(s: PaneView, session: string, drafts: ChangesDrafts | null): PaneView {
   const cur = s.sessions[session];
-  const comments = drafts ? drafts.comments.slice(0, DRAFT_COMMENTS_MAX) : [];
-  const keys = drafts ? Object.keys(drafts.folds).sort() : [];
+  const ids = new Set<string>();
+  const kept = (c: ChangesDrafts["comments"][number]) => draftCommentOk(c) && !ids.has(c.id) && ids.add(c.id) !== undefined;
+  const comments = drafts ? drafts.comments.filter(kept).slice(0, DRAFT_COMMENTS_MAX) : [];
+  const keys = drafts ? Object.keys(drafts.folds).filter(treeFolderOk).sort() : [];
   if (!drafts || (comments.length === 0 && keys.length === 0)) {
     if (!cur || !cur.changes) return s;
     const { changes: _gone, ...rest } = cur;
@@ -466,7 +471,7 @@ function setDrafts(s: PaneView, session: string, drafts: ChangesDrafts | null): 
   }
   const folds: { [key in string]: boolean } = {};
   for (const k of keys.slice(0, DRAFT_FOLDS_MAX)) folds[k] = drafts.folds[k]!;
-  return setTabs(s, session, { ...(cur ?? { tabs: [], active: null }), changes: { ...drafts, comments, folds } });
+  return setTabs(s, session, { ...(cur ?? { tabs: [], active: null }), changes: { ...drafts, base: drafts.base === null ? null : draftBase(drafts.base), comments, folds } });
 }
 
 /** Sets the session's tree, keeping only the folders the core accepts and the first 500; the session's tabs are untouched. */

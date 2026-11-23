@@ -2,6 +2,7 @@ import type { ChangesDrafts } from "../../generated/ChangesDrafts";
 import type { DraftComment } from "../../generated/DraftComment";
 import { type Placement, messageOf } from "./comments";
 import type { Section } from "./model";
+import { treeFolderOk } from "../pane/paneRules";
 
 /** The checkout shown and the base it is compared with. */
 export type Shown = { folder: string; base: string | null };
@@ -32,6 +33,11 @@ export function elsewhere(drafts: ChangesDrafts | undefined, folder: string): st
 /** The comments the shown diff lists: none while they belong to another checkout, whose files the diff doesn't show. */
 export function shownComments(drafts: ChangesDrafts | undefined, folder: string): DraftComment[] {
   return drafts === undefined || away(drafts, folder) ? [] : drafts.comments;
+}
+
+/** Why a comment or a fold on `path` can't be kept, else null: the layout keeps a path only as the core's rule for saved paths allows. */
+export function unkept(path: string): string | null {
+  return treeFolderOk(path) ? null : "This file's name holds a colon or a backslash, so a comment or a fold on it can't be kept.";
 }
 
 /** The message Send hands over. Another checkout's comments are cited at the lines they were written at, against its base, with the checkout named. */

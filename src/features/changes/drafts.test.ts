@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ChangesDrafts } from "../../generated/ChangesDrafts";
 import type { DraftComment } from "../../generated/DraftComment";
 import type { Placement } from "./comments";
-import { elsewhere, sendMessageOf, shownComments, withFolds } from "./drafts";
+import { elsewhere, sendMessageOf, shownComments, unkept, withFolds } from "./drafts";
 import type { Section } from "./model";
 
 const A = "C:\\work\\repoA";
@@ -56,5 +56,15 @@ describe("sendMessageOf", () => {
     const onB: ChangesDrafts = { ...onA, checkout: B };
     const placements = new Map<string, Placement>([["1", { at: 0, changed: false, start: 40, end: 40 }]]);
     expect(sendMessageOf(onB, showingB, [sectionB], placements)).toBe(["Comments on the changes (compared with origin/main):", "src/a.ts:40\n> x\nnote 1"].join("\n\n"));
+  });
+});
+
+describe("unkept", () => {
+  // The layout keeps a draft's path only relative with / separators and no colon, as the core's rule for saved paths.
+  it("says why a file whose name holds a colon or a backslash can't hold a comment or a fold", () => {
+    const why = "This file's name holds a colon or a backslash, so a comment or a fold on it can't be kept.";
+    expect(unkept("x:y.ts")).toBe(why);
+    expect(unkept("dir\\b.ts")).toBe(why);
+    expect(unkept("src/a.ts")).toBeNull();
   });
 });

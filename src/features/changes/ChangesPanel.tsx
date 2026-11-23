@@ -10,7 +10,7 @@ import { type ChangesChoice, changesChoice, changesMenuItems, headerMenuItems, l
 import { type BoxAction, CommentBox, boxLabel } from "./CommentBox";
 import { type BoxState, anchorKey, boxAfter } from "./boxModel";
 import { MAX_COMMENTS, type Placement, anchorOf, place, renumbered } from "./comments";
-import { commentsOf, elsewhere, sendMessageOf, shownComments, withFolds } from "./drafts";
+import { commentsOf, elsewhere, sendMessageOf, shownComments, unkept, withFolds } from "./drafts";
 import { copy } from "./copy";
 import { type Item, type Row, type Section, cutFiles, focusIndex, itemsOf, sectionsOf } from "./model";
 import { reviewLabel } from "./review";
@@ -144,6 +144,8 @@ export function ChangesPanel(p: ChangesPanelProps) {
 
   const fold = (path: string, folded: boolean) => {
     if (!listed) return;
+    const no = unkept(path);
+    if (no !== null) return p.announce(no);
     p.onDrafts(withFolds(drafts, listed, { [path]: folded }));
   };
   const setRange = (next: ItemRange | null) => setKeys((k) => ({ ...k, range: next === null ? null : { from: items[next.from]!.key, to: items[next.to]!.key } }));
@@ -181,7 +183,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
     const held = heldItems(item).filter((i): i is Extract<Item, { kind: "row" }> => i.kind === "row");
     const rows = held.map((i) => i.file.rows[i.at]!);
     if (held.length === 0 || rows.some((r) => r.kind === "hunk")) return;
-    const away = elsewhere(drafts, listed.folder);
+    const away = elsewhere(drafts, listed.folder) ?? unkept(item.file.path);
     if (away !== null) return p.announce(away);
     if (count >= MAX_COMMENTS) return p.announce(`A session holds at most ${MAX_COMMENTS} comments.`);
     const ats = held.map((i) => i.at);
