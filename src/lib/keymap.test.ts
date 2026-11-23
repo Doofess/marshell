@@ -311,6 +311,11 @@ describe("the pull request commands", () => {
     expect(commandById("changes-open-pull")).toMatchObject({ label: "Open the pull request on GitHub", group: "Window" });
     for (const id of ["changes-create-pull", "changes-push", "changes-merge", "changes-open-pull"]) expect(commandById(id).binding).toBeUndefined();
   });
+  it("lists the two commands for GitHub's review comments, in the Window group with no key", () => {
+    expect(commandById("changes-next-comment")).toMatchObject({ label: "Go to the next GitHub comment", group: "Window" });
+    expect(commandById("changes-add-comments")).toMatchObject({ label: "Add unresolved GitHub comments to send", group: "Window" });
+    for (const id of ["changes-next-comment", "changes-add-comments"]) expect(commandById(id).binding).toBeUndefined();
+  });
 });
 describe("the text tab's commands", () => {
   it("are_in_the_window_group_with_the_plans_names_and_no_default_key", () => {

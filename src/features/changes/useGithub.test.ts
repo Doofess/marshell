@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { askedAt, githubSchedule, recountKey } from "./useGithub";
+import { askedAt, countsAsAsk, githubSchedule, recountKey } from "./useGithub";
 
 const base = { inFlight: false, shown: true, focused: true, on: true, lastAsk: 0, nextMs: 30_000, now: 0, headMoved: false, asked: true };
 
@@ -41,5 +41,12 @@ describe("askedAt", () => {
   it("moves the time GitHub was last asked only for an ask, not for a local recount", () => {
     expect(askedAt("ask", 1_000, 9_000)).toBe(9_000);
     expect(askedAt("local", 1_000, 9_000)).toBe(1_000);
+  });
+});
+
+describe("countsAsAsk", () => {
+  it("counts an answer to an ask, not a local recount", () => {
+    expect(countsAsAsk("ask")).toBe(true);
+    expect(countsAsAsk("local")).toBe(false);
   });
 });

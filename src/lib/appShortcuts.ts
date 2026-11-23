@@ -33,8 +33,8 @@ export type SessionShortcut =
   /** "Show file tree" and "Collapse all folders": the Files panel's tree. Neither has a key of its own. */
   | { kind: "filesTree" }
   | { kind: "filesCollapse" }
-  /** "Refresh changes", "Ask the agent to review", "Send comments" and the four pull request commands: the Changes panel of the focused session. None has a key of its own. */
-  | { kind: "changes"; what: "refresh" | "review" | "send" | "createPull" | "push" | "merge" | "openPull" }
+  /** "Refresh changes", "Ask the agent to review", "Send comments", the four pull request commands and the two for GitHub's review comments: the Changes panel of the focused session. None has a key of its own. */
+  | { kind: "changes"; what: "refresh" | "review" | "send" | "createPull" | "push" | "merge" | "openPull" | "nextComment" | "addComments" }
   /** The next or previous tab of the focused session's side pane, wrapping. */
   | { kind: "paneTab"; by: 1 | -1 }
   /** Close the side pane's selected tab. Has no key of its own. */
@@ -175,6 +175,10 @@ export function commandShortcut(id: string): SessionShortcut | null {
       return { kind: "changes", what: "merge" };
     case "changes-open-pull":
       return { kind: "changes", what: "openPull" };
+    case "changes-next-comment":
+      return { kind: "changes", what: "nextComment" };
+    case "changes-add-comments":
+      return { kind: "changes", what: "addComments" };
     case "new-browser-tab":
     case "open-url":
       return { kind: "newBrowserTab" };

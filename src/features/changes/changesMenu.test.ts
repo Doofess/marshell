@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { isAction, type MenuItem, type MenuRow } from "../../components/ContextMenu/menuKeys";
 import type { GithubReply } from "../../generated/GithubReply";
-import { changesChoice, changesMenuItems, headerMenuItems, lineMenuItems, openLineOf, openOf } from "./changesMenu";
+import type { PullNote } from "../../generated/PullNote";
+import type { ReviewThread } from "../../generated/ReviewThread";
+import { addressOf, changesChoice, changesMenuItems, headerMenuItems, lineMenuItems, openLineOf, openOf, threadMenuItems } from "./changesMenu";
 import { type BarButton, type BarMenuItem, barOf } from "./pullModel";
 import type { Item, Row, Section } from "./model";
+import type { SendState } from "./threads";
 
 const section = (rows: Row[], status: Section["status"] = "modified"): Section => ({ path: "a.ts", status, added: 1, removed: 1, rows, folded: false });
 const rowItem = (file: Section, at: number): Item => ({ kind: "row", key: `row:${file.path}:${at}`, file, at });
@@ -129,5 +132,51 @@ describe("headerMenuItems", () => {
   });
   it("cannot open a deleted file", () => {
     expect(rowsOf(headerMenuItems(section([], "deleted"))).find((i) => i.id === "open")?.disabled).toBeTruthy();
+  });
+});
+
+describe("the comment menu", () => {
+  const thread = (over: Partial<ReviewThread> = {}): ReviewThread =>
+    ({ id: "PRRT_1", path: "a.ts", side: "new", file: false, start: 2, end: 2, original_start: 2, original_end: 2, resolved: false, outdated: false, can_resolve: true, can_unresolve: true, can_reply: true, rows: [], comments: [{ id: 1, author: "alice", bot: false, body: "x", hidden_removed: false, cut: false, created_ms: null, url: "https://github.com/o/r/pull/7#discussion_r1" }], more_comments: 0, minimized: 0, ...over }) as ReviewThread;
+  const none: SendState = { picked: false, note: "", sent: false };
+  const threadItem = (t: ReviewThread, state = none): Extract<Item, { kind: "thread" }> => ({ kind: "thread", key: `thread:${t.id}`, thread: t, placed: null, state, agent: null });
+  const noteItem = (over: Partial<PullNote> = {}): Extract<Item, { kind: "talk" }> => ({ kind: "talk", key: "talk:N1", note: { id: "N1", kind: "comment", verdict: null, author: "bob", bot: false, body: "hi", hidden_removed: false, cut: false, created_ms: null, url: "https://github.com/o/r/pull/7#issuecomment-1", ...over }, state: none, agent: null });
+
+  it("offers add, resolve, open and copy for an unresolved thread", () => {
+    const rows = rowsOf(threadMenuItems(threadItem(thread()), none));
+    expect(rows.map((r) => [r.id, r.label, r.disabled])).toEqual([
+      ["pick", "Add to send", undefined],
+      ["resolve", "Resolve", undefined],
+      ["open", "Open on GitHub", undefined],
+      ["copy-link", "Copy link", undefined],
+    ]);
+  });
+  it("offers Unresolve for a resolved thread, with the reason when the sign-in can't", () => {
+    const rows = rowsOf(threadMenuItems(threadItem(thread({ resolved: true, can_unresolve: false })), none));
+    expect(rows.find((r) => r.id === "unresolve")).toMatchObject({ label: "Unresolve", disabled: "GitHub doesn't let this sign-in unresolve this thread." });
+    expect(rows.find((r) => r.id === "resolve")).toBeUndefined();
+    expect(rowsOf(threadMenuItems(threadItem(thread({ resolved: true })), none)).find((r) => r.id === "unresolve")?.disabled).toBeUndefined();
+  });
+  it("gives the reason Resolve is off", () => {
+    const rows = rowsOf(threadMenuItems(threadItem(thread({ can_resolve: false })), none));
+    expect(rows.find((r) => r.id === "resolve")?.disabled).toBe("GitHub doesn't let this sign-in resolve this thread.");
+  });
+  it("offers Remove from send for a picked thread", () => {
+    const state = { picked: true, note: "", sent: false };
+    const rows = rowsOf(threadMenuItems(threadItem(thread(), state), state));
+    expect(rows[0]).toMatchObject({ id: "unpick", label: "Remove from send" });
+  });
+  it("gives a note no resolve row, and no Open or Copy link without an address", () => {
+    expect(labels(threadMenuItems(noteItem(), none))).toEqual(["Add to send", "Open on GitHub", "Copy link"]);
+    expect(labels(threadMenuItems(noteItem({ url: null }), none))).toEqual(["Add to send"]);
+    expect(labels(threadMenuItems(threadItem(thread({ comments: [] })), none))).toEqual(["Add to send", "Resolve"]);
+  });
+  it("takes only an https address", () => {
+    expect(addressOf(noteItem({ url: "http://x.test/" }))).toBeNull();
+    expect(addressOf(noteItem())).toBe("https://github.com/o/r/pull/7#issuecomment-1");
+    expect(addressOf(threadItem(thread()))).toBe("https://github.com/o/r/pull/7#discussion_r1");
+  });
+  it("knows the bar's row that adds the unresolved comments", () => {
+    expect(changesChoice("github:menu:add_unresolved")).toEqual({ kind: "github", from: "menu", id: "add_unresolved" });
   });
 });

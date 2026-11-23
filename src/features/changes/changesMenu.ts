@@ -3,6 +3,8 @@ import type { ChangesSettings } from "../../generated/ChangesSettings";
 import type { BarButton, BarMenuItem } from "./pullModel";
 import { CHANGES_DEFAULTS } from "./changesSettings";
 import type { Item, Row, Section } from "./model";
+import { threadCopy } from "./threadCopy";
+import type { SendState } from "./threads";
 
 export type SettingKey = keyof ChangesSettings;
 const SETTING_LABELS: Record<SettingKey, string> = { hide_whitespace: "Hide whitespace changes", wrap: "Wrap long lines", pull_requests: "Show pull requests from GitHub", resolved_comments: "Show resolved and outdated comments" };
@@ -36,7 +38,7 @@ export function changesMenuItems(o: { settings: ChangesSettings | null; failed: 
 }
 
 const MAIN_ACTIONS: readonly string[] = ["push", "create", "merge", "auto_merge", "ready"];
-const MENU_IDS: readonly string[] = ["push", "merge", "draft", "cancel_auto_merge", "hide", "ask_open", "ask_switch", "copy_switch", "open_on_github", "copy_link"];
+const MENU_IDS: readonly string[] = ["push", "merge", "draft", "cancel_auto_merge", "hide", "ask_open", "ask_switch", "copy_switch", "add_unresolved", "open_on_github", "copy_link"];
 
 /** The pull request bar's rows, under a separator: its main button when that is a pull request action, then its ⋯ rows. None gives nothing. */
 function githubRows(menu: BarMenuItem[], main: BarButton | null): MenuItem[] {
@@ -105,4 +107,24 @@ export function headerMenuItems(file: Section): MenuItem[] {
     { id: "fold", label: file.folded ? "Unfold" : "Fold", ...(file.rows.length === 0 ? { disabled: "The file has no lines to fold" } : {}) },
     { id: "copy-path", label: "Copy path" },
   ];
+}
+
+/** An item of GitHub's comments: a thread or a note. */
+export type CommentItem = Extract<Item, { kind: "thread" | "talk" }>;
+
+/** The address of a thread's first comment or of a note, when it is an https one. */
+export function addressOf(item: CommentItem): string | null {
+  const url = item.kind === "thread" ? item.thread.comments[0]?.url : item.note.url;
+  return typeof url === "string" && url.startsWith("https://") ? url : null;
+}
+
+/** The menu of a thread or a note: add to or remove from the send, resolve or unresolve a thread (the row carries why it is off), open and copy the address. */
+export function threadMenuItems(item: CommentItem, state: SendState): MenuItem[] {
+  const m = threadCopy.menu;
+  const thread = item.kind === "thread" ? item.thread : null;
+  const address = addressOf(item);
+  const rows: MenuItem[] = [state.picked ? { id: "unpick", label: m.unpick } : { id: "pick", label: m.pick }];
+  if (thread !== null) rows.push(thread.resolved ? { id: "unresolve", label: m.unresolve, ...(thread.can_unresolve ? {} : { disabled: threadCopy.cantUnresolve }) } : { id: "resolve", label: m.resolve, ...(thread.can_resolve ? {} : { disabled: threadCopy.cantResolve }) });
+  if (address !== null) rows.push({ id: "open", label: m.open }, { id: "copy-link", label: m.copyLink });
+  return rows;
 }

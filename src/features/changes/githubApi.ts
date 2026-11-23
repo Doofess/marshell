@@ -7,8 +7,11 @@ import type { PullAction } from "../../generated/PullAction";
 import type { PullMergeRequest } from "../../generated/PullMergeRequest";
 import type { PushPlan } from "../../generated/PushPlan";
 import type { PushProgress } from "../../generated/PushProgress";
+import type { PullThreads } from "../../generated/PullThreads";
 import type { PushRequest } from "../../generated/PushRequest";
 import type { PushStarted } from "../../generated/PushStarted";
+import type { ThreadAction } from "../../generated/ThreadAction";
+import type { ThreadsRequest } from "../../generated/ThreadsRequest";
 import { ApiError, api, coreFetch, getEndpoint } from "../../lib/api/client";
 
 const session = (tab: string) => `/v1/sessions/${encodeURIComponent(tab)}`;
@@ -76,6 +79,16 @@ export async function mergePull(tab: string, req: PullMergeRequest): Promise<voi
 
 export async function pullAction(tab: string, req: PullAction): Promise<void> {
   await send("POST", `${session(tab)}/github/pull`, req);
+}
+
+/** The review threads, reviews and comments of the pull request the bar names. */
+export async function readThreads(tab: string, req: ThreadsRequest): Promise<PullThreads> {
+  return api<PullThreads>(await getEndpoint(), "POST", `${session(tab)}/github/threads`, req);
+}
+
+/** Resolves, unresolves or replies to a thread of the bar's pull request. */
+export async function threadAction(tab: string, req: ThreadAction): Promise<void> {
+  await send("POST", `${session(tab)}/github/thread`, req);
 }
 
 /** The text that asks the session's agent about the pull request. A 409 for a session that takes no text reads as `/review`'s does (`refusalOf`). */
