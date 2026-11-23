@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ChangesDrafts } from "../../generated/ChangesDrafts";
 import type { DraftComment } from "../../generated/DraftComment";
 import type { Placement } from "./comments";
-import { elsewhere, keptBox, sendMessageOf, shownComments, unkept, withComments, withFolds } from "./drafts";
+import { boxAnchor, elsewhere, keptBox, sendMessageOf, shownComments, unkept, withComments, withFolds } from "./drafts";
 import type { Section } from "./model";
 
 const A = "C:\\work\\repoA";
@@ -20,6 +20,13 @@ describe("withFolds", () => {
   it("takes the shown checkout when there are no comments", () => {
     expect(withFolds({ ...onA, comments: [] }, showingB, { "lock.json": true })).toEqual({ checkout: B, base: "origin/main", comments: [], folds: { "src/a.ts": false, "lock.json": true } });
     expect(withFolds(undefined, showingB, { x: true })).toEqual({ checkout: B, base: "origin/main", comments: [], folds: { x: true } });
+  });
+  it("keeps only the folds of files in the diff shown now, so they never pile up to the layout's limit (pre-merge round 3)", () => {
+    const inDiff = new Set(["lock.json", "src/b.ts"]);
+    const had = { ...onA, comments: [], folds: { "src/a.ts": false, "src/b.ts": true } };
+    expect(withFolds(had, showingB, { "lock.json": true }, inDiff).folds).toEqual({ "src/b.ts": true, "lock.json": true });
+    // A fold asked for a file that isn't in the diff is not kept either.
+    expect(withFolds(undefined, showingB, { "gone.ts": true, "lock.json": false }, inDiff).folds).toEqual({ "lock.json": false });
   });
 });
 
@@ -47,6 +54,19 @@ describe("keptBox", () => {
     expect(added.comments.map((x) => x.id)).toEqual(["1", "n2"]);
     const edited = keptBox(onA, { state: { anchor: c("1", 12), id: "1" }, text: "new words", on: { folder: A, base: "main" } }, anchor, "unused", same);
     expect(edited.comments).toEqual([{ ...c("1", 12), text: "new words" }]);
+  });
+});
+
+describe("boxAnchor", () => {
+  const { id: _id, text: _text, ...anchor } = c("9", 30);
+  const box = { state: { anchor, id: null }, text: "typed", on: { folder: A, base: "main" } };
+  const placed: Placement = { at: 3, changed: false, start: 40, end: 41 };
+  it("takes the lines its rows are on now, on the checkout the box was opened on", () => {
+    expect(boxAnchor(box, A, placed)).toEqual({ ...anchor, start: 40, end: 41 });
+    expect(boxAnchor(box, A, undefined)).toEqual(anchor);
+  });
+  it("keeps the lines it was opened at when another checkout is shown by now, whose file of the same name isn't its own (pre-merge round 3)", () => {
+    expect(boxAnchor(box, B, placed)).toEqual(anchor);
   });
 });
 

@@ -67,13 +67,17 @@ export function paneFocusTarget(root: ParentNode, panel: PanelId, closing?: stri
  */
 export function focusPane(panel: PanelId, closing?: string, where: "pane" | "strip" = "pane"): void {
   let frames = 0;
-  // A long wait gives the keyboard up once it went somewhere else meanwhile (a click, another key).
-  const from = document.activeElement;
+  // A long wait gives the keyboard up once it went somewhere else meanwhile (a click, another key). Where it was is read at the
+  // first frame, not at the call: a palette or menu that asked gives the keyboard back to its opener as it closes, after the call.
+  let from: Element | null = null;
   const moved = () => {
     const now = document.activeElement;
+    // What asked has left the document (it closed some frames in): where it put the keyboard is where the keyboard was.
+    if (from !== null && from.isConnected === false) from = now;
     return now !== from && now !== null && now !== document.body;
   };
   const attempt = () => {
+    if (frames === 0) from = document.activeElement;
     if (frames >= 3 && moved()) return;
     const target = paneFocusTarget(document, panel, closing, where, frames < TREE_FRAMES - 1);
     if (target) {

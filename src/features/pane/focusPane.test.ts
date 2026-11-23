@@ -110,13 +110,28 @@ describe("paneFocusTarget", () => {
 describe("focusPane", () => {
   afterEach(() => vi.unstubAllGlobals());
   /** Runs focusPane("files") over frames that each say whether the tree and its tabbable row are drawn; the last one repeats. */
-  const run = (frames: { tree: boolean; row: boolean }[]) => {
+  const run = (frames: { tree: boolean; row: boolean }[], keyboard?: { asker: string; after: string; closesAt?: number }) => {
     const queue: FrameRequestCallback[] = [];
     const focused: string[] = [];
     let frame = 0;
+    let asked = false;
     const el = (name: string) => ({ dataset: {}, focus: () => void focused.push(name) });
+    const body = { name: "body" };
+    // What asked (a palette) closes at a frame, or before the first one: it leaves the document and gives the keyboard back.
+    const open = () => !asked || frame < (keyboard?.closesAt ?? 0);
+    const asker = {
+      name: keyboard?.asker,
+      get isConnected() {
+        return open();
+      },
+    };
+    const after = { name: keyboard?.after };
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => (queue.push(cb), 0));
     vi.stubGlobal("document", {
+      body,
+      get activeElement() {
+        return keyboard === undefined ? body : open() ? asker : after;
+      },
       querySelector: (sel: string) => {
         const f = frames[Math.min(frame, frames.length - 1)] ?? { tree: false, row: false };
         if (sel.includes("treeitem")) return f.row ? el("row") : null;
@@ -126,6 +141,7 @@ describe("focusPane", () => {
       },
     });
     focusPane("files");
+    asked = true;
     while (queue.length > 0 && frame < 200) {
       queue.shift()?.(0);
       frame++;
@@ -145,12 +161,20 @@ describe("focusPane", () => {
   it("gives the empty state the keyboard at once with no tree", () => {
     expect(run([{ tree: false, row: false }])).toEqual({ focused: ["empty"], frames: 1 });
   });
+  it("still takes the keyboard when the palette that asked gave it back to the terminal as it closed (pre-merge round 3)", () => {
+    const waiting = Array<{ tree: boolean; row: boolean }>(12).fill({ tree: true, row: false });
+    expect(run([...waiting, { tree: true, row: true }], { asker: "palette", after: "terminal" }).focused).toEqual(["row"]);
+  });
+  it("still takes the keyboard when that palette closes some frames into the wait", () => {
+    const waiting = Array<{ tree: boolean; row: boolean }>(12).fill({ tree: true, row: false });
+    expect(run([...waiting, { tree: true, row: true }], { asker: "palette", after: "terminal", closesAt: 5 }).focused).toEqual(["row"]);
+  });
 });
 
 describe("focusPane in Changes", () => {
   afterEach(() => vi.unstubAllGlobals());
   /** Runs focusPane("changes") over frames that each say whether the panel is blank (no reply yet), its list is drawn, and where the keyboard is. */
-  const run = (frames: { blank: boolean; item: boolean; active?: string }[]) => {
+  const run = (frames: { blank: boolean; item: boolean; active?: string }[], asker?: string) => {
     const queue: FrameRequestCallback[] = [];
     const focused: string[] = [];
     let frame = 0;
@@ -158,11 +182,12 @@ describe("focusPane in Changes", () => {
     const el = (name: string) => ({ dataset: {}, focus: () => void focused.push(name) });
     const body = { name: "body" };
     const others = new Map<string, object>();
+    let asked = false;
     vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => (queue.push(cb), 0));
     vi.stubGlobal("document", {
       body,
       get activeElement() {
-        const name = at().active;
+        const name = asked ? at().active : asker;
         if (name === undefined) return body;
         if (!others.has(name)) others.set(name, { name });
         return others.get(name);
@@ -175,6 +200,7 @@ describe("focusPane in Changes", () => {
       },
     });
     focusPane("changes");
+    asked = true;
     while (queue.length > 0 && frame < 400) {
       queue.shift()?.(0);
       frame++;
@@ -195,6 +221,10 @@ describe("focusPane in Changes", () => {
     const blank = Array<{ blank: boolean; item: boolean; active?: string }>(10).fill({ blank: true, item: false });
     const r = run([...blank, { blank: true, item: false, active: "terminal" }, ...blank.map((f) => ({ ...f, active: "terminal" })), { blank: false, item: true, active: "terminal" }]);
     expect(r.focused).toEqual([]);
+  });
+  it("still takes the keyboard when the palette that asked gave it back to the terminal as it closed", () => {
+    const blank = Array<{ blank: boolean; item: boolean; active?: string }>(40).fill({ blank: true, item: false, active: "terminal" });
+    expect(run([...blank, { blank: false, item: true, active: "terminal" }], "palette").focused).toEqual(["item"]);
   });
 });
 

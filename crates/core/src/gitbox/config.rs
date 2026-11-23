@@ -40,7 +40,7 @@ impl Allowed {
 
 /// Key (lowercase, as git prints it) and the values it accepts.
 pub const ALLOWED: &[(&str, Allowed)] = &[
-    ("core.autocrlf", Allowed::Words(&["true", "false", "input"])),
+    ("core.autocrlf", Allowed::BoolOr(&["input"])),
     ("core.eol", Allowed::Words(&["lf", "crlf", "native"])),
     ("core.ignorecase", Allowed::Bool),
     ("core.symlinks", Allowed::Bool),
@@ -119,6 +119,10 @@ mod tests {
     fn words_match_in_any_case_and_only_those() {
         assert!(ok("core.autocrlf", "input"));
         assert!(ok("core.autocrlf", "TRUE"));
+        // Git reads every boolean spelling here, not only true and false.
+        for word in ["yes", "no", "on", "off", "1", "0"] {
+            assert!(ok("core.autocrlf", word), "{word}");
+        }
         assert!(!ok("core.autocrlf", "evil"));
         assert!(!ok("core.autocrlf", ""));
         assert!(ok("core.eol", "CRLF"));

@@ -1,7 +1,7 @@
 import type { ChangesDrafts } from "../../generated/ChangesDrafts";
 import type { DraftComment } from "../../generated/DraftComment";
 import type { BoxAnchor, BoxState } from "./boxModel";
-import { type Placement, messageOf } from "./comments";
+import { type Placement, messageOf, renumbered } from "./comments";
 import type { Section } from "./model";
 import { treeFolderOk } from "../pane/paneRules";
 
@@ -33,14 +33,26 @@ export function keptBox(drafts: ChangesDrafts | undefined, box: OpenBox, anchor:
   return withComments(drafts, box.on, next);
 }
 
-/** The drafts with `folds` added. While comments exist they keep the checkout and base they were written against. */
-export function withFolds(drafts: ChangesDrafts | undefined, shown: Shown, folds: Record<string, boolean>): ChangesDrafts {
+/**
+ * Where a box's comment is anchored: at the lines its rows are on now (`placed`), which a reply during the writing may have moved. A box
+ * opened on another checkout than the one shown keeps the lines it was opened at: a file of the same name there isn't its own.
+ */
+export function boxAnchor(box: OpenBox, folder: string, placed: Placement | undefined): BoxAnchor {
+  return box.on.folder === folder ? renumbered(box.state.anchor, placed) : box.state.anchor;
+}
+
+/**
+ * The drafts with `folds` added. While comments exist they keep the checkout and base they were written against. With `inDiff` (the
+ * files of the diff shown now) only those files' folds are kept, so the folds of files long gone never fill the layout's limit.
+ */
+export function withFolds(drafts: ChangesDrafts | undefined, shown: Shown, folds: Record<string, boolean>, inDiff?: ReadonlySet<string>): ChangesDrafts {
   const keep = drafts !== undefined && drafts.comments.length > 0;
+  const all = { ...drafts?.folds, ...folds };
   return {
     checkout: keep ? drafts.checkout : shown.folder,
     base: keep ? drafts.base : shown.base,
     comments: drafts?.comments ?? [],
-    folds: { ...drafts?.folds, ...folds },
+    folds: inDiff === undefined ? all : Object.fromEntries(Object.entries(all).filter(([path]) => inDiff.has(path))),
   };
 }
 

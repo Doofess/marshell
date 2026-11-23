@@ -11,7 +11,7 @@ import { type ChangesChoice, changesChoice, changesMenuItems, headerMenuItems, l
 import { type BoxAction, CommentBox, boxLabel } from "./CommentBox";
 import { type BoxState, anchorKey, boxAfter } from "./boxModel";
 import { MAX_COMMENTS, type Placement, anchorOf, place, renumbered } from "./comments";
-import { type OpenBox, commentsOf, elsewhere, keptBox, sendMessageOf, shownComments, unkept, withFolds } from "./drafts";
+import { type OpenBox, boxAnchor, commentsOf, elsewhere, keptBox, sendMessageOf, shownComments, unkept, withFolds } from "./drafts";
 import { copy } from "./copy";
 import { type Item, type Row, type Section, cutFiles, focusIndex, itemsOf, sectionsOf } from "./model";
 import { reviewLabel } from "./review";
@@ -117,6 +117,8 @@ export function ChangesPanel(p: ChangesPanelProps) {
   // The open box's file stays, under "gone", when it leaves the diff, so the box and its text stay too.
   const openPath = open?.state.anchor.path;
   const sections = useMemo(() => (listed ? sectionsOf(listed, drafts?.folds ?? {}, comments, hide, openPath) : []), [listed, drafts, comments, hide, openPath]);
+  /** The files of the diff shown now: a fold is kept for these alone. */
+  const inDiff = useMemo(() => new Set(listed?.files.map((f) => f.path)), [listed]);
   const placements = useMemo(() => new Map<string, Placement>(comments.map((c) => [c.id, place(c, sections.find((s) => s.path === c.path))])), [sections, comments]);
   const items = useMemo<Item[]>(() => itemsOf(sections, comments, placements), [sections, comments, placements]);
   const draftsRef = useRef(drafts);
@@ -157,7 +159,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
     if (!listed) return;
     const no = unkept(path);
     if (no !== null) return p.announce(no);
-    p.onDrafts(withFolds(drafts, listed, { [path]: folded }));
+    p.onDrafts(withFolds(drafts, listed, { [path]: folded }, inDiff));
   };
   const setRange = (next: ItemRange | null) => setKeys((k) => ({ ...k, range: next === null ? null : { from: items[next.from]!.key, to: items[next.to]!.key } }));
   const rowsIn = (r: ItemRange) => items.slice(Math.min(r.from, r.to), Math.max(r.from, r.to) + 1).filter((i) => i.kind === "row").length;
@@ -214,9 +216,10 @@ export function ChangesPanel(p: ChangesPanelProps) {
     if (!current || !listed) return;
     const text = current.text;
     if (action === "close" || text.trim() === "") return;
-    // Saved at the lines its rows are on now, which a reply during the writing may have moved.
-    const anchor = renumbered(current.state.anchor, placeBox(current.state));
-    const next = keptBox(drafts, current, anchor, crypto.randomUUID(), (c) => renumbered(c, placements.get(c.id)));
+    // Saved at the lines its rows are on now, unless the shell moved to another checkout while it was written.
+    const here = current.on.folder === listed.folder;
+    const anchor = boxAnchor(current, listed.folder, placeBox(current.state));
+    const next = keptBox(drafts, current, anchor, crypto.randomUUID(), (c) => (here ? renumbered(c, placements.get(c.id)) : c));
     p.onDrafts(next);
     p.announce(action === "add" ? `Comment added. ${next.comments.length} to send.` : "Comment kept as a draft.");
   };
@@ -340,7 +343,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
   const foldAll = (folded: boolean) => {
     if (!listed) return;
     const all = Object.fromEntries(sections.filter((s) => s.rows.length > 0).map((s) => [s.path, folded]));
-    p.onDrafts(withFolds(drafts, listed, all));
+    p.onDrafts(withFolds(drafts, listed, all, inDiff));
   };
   const runMenu = (id: string) => {
     const choice: ChangesChoice | null = changesChoice(id);
@@ -441,7 +444,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
   const notices = away === null ? noticesOf(listed) : [...noticesOf(listed), away];
   const boxAt = open === null ? -1 : boxAfter(items, sections, open.state);
   // The key stays the written anchor (the box keeps its text and caret); the label reads the lines it is on now.
-  const boxLines = open === null ? null : renumbered(open.state.anchor, placeBox(open.state));
+  const boxLines = open === null ? null : boxAnchor(open, listed.folder, placeBox(open.state));
   const boxNode =
     open !== null && boxLines !== null && boxAt >= 0
       ? {
