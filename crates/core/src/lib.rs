@@ -7,6 +7,7 @@ pub mod diagnostics;
 pub mod doctor;
 pub mod folders;
 pub mod git;
+pub mod gitbox;
 pub mod history;
 pub mod hooks;
 pub mod job;

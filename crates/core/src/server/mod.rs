@@ -43,8 +43,14 @@ mod tree;
 mod view;
 
 pub(crate) use files::existing_file as local_file;
+// The Changes panel's `gitbox` reads refs and walks checkouts with these. Tasks 4 and 5 are the first
+// to use them, so they are unused until then.
+#[allow(unused_imports)]
+pub(crate) use files::{links_refused, refused};
 /// The text check of `fill`, for the command line to run before it creates a session.
 pub use fill::check_text;
+#[allow(unused_imports)]
+pub(crate) use ignores::{Ignores, MAX_POINTER_BYTES, common_dir, git_dir, read_capped, walk_unignored};
 
 use crate::profiles::detect::{Probe, detect_profiles};
 use crate::registry::{Registry, Relaunch};
