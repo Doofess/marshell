@@ -3,8 +3,8 @@
 
 use crate::store::{self, Versioned};
 use marshell_protocol::api::{
-    LauncherChoice, LayoutDoc, PaneTab, PaneView, Panels, RecentFile, SavedTab, SessionMode, TreeState, TreeView,
-    ViewLayout,
+    ChangesDrafts, DraftComment, LauncherChoice, LayoutDoc, PaneTab, PaneView, Panels, RecentFile, SavedTab,
+    SessionMode, TreeState, TreeView, ViewLayout,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -169,6 +169,40 @@ fn lenient_session(session: &mut serde_json::Value) -> bool {
     {
         fields.remove("tree");
     }
+    if let Some(changes) = fields.get_mut("changes")
+        && !lenient_changes(changes)
+    {
+        fields.remove("changes");
+    }
+    true
+}
+
+/// Keeps the comments of a session's saved Changes drafts that parse, and the folds whose value is a boolean, so that
+/// one wrongly typed draft never reaches the strict parse. False when the drafts can't be read: no `checkout` string.
+fn lenient_changes(changes: &mut serde_json::Value) -> bool {
+    use serde_json::{Map, Value};
+
+    let Some(fields) = changes.as_object_mut() else {
+        return false;
+    };
+    if !fields.get("checkout").is_some_and(Value::is_string) {
+        return false;
+    }
+    if fields.get("base").is_some_and(|b| !b.is_string()) {
+        fields.insert("base".into(), Value::Null);
+    }
+    if !fields.get("comments").is_some_and(Value::is_array) {
+        fields.insert("comments".into(), Value::Array(Vec::new()));
+    }
+    if let Some(comments) = fields.get_mut("comments").and_then(Value::as_array_mut) {
+        comments.retain(|c| serde_json::from_value::<DraftComment>(c.clone()).is_ok());
+    }
+    if !fields.get("folds").is_some_and(Value::is_object) {
+        fields.insert("folds".into(), Value::Object(Map::new()));
+    }
+    if let Some(folds) = fields.get_mut("folds").and_then(Value::as_object_mut) {
+        folds.retain(|_, v| v.is_boolean());
+    }
     true
 }
 
@@ -203,6 +237,15 @@ const MAX_PANE_HISTORY: usize = 50;
 const MAX_RECENT_FILES: usize = 200;
 const MAX_PATH_CHARS: usize = 4096;
 const MAX_TREE_FOLDERS: usize = 500;
+const MAX_BASE_CHARS: usize = 200;
+const MAX_COMMENTS: usize = 50;
+const MAX_COMMENT_ROWS: u32 = 100_000;
+const MAX_COMMENT_HASH: usize = 16;
+const MAX_COMMENT_QUOTE_LINES: usize = 3;
+/// A quote line is a diff sign and up to 200 characters.
+const MAX_COMMENT_QUOTE_CHARS: usize = 201;
+const MAX_COMMENT_TEXT: usize = 2000;
+const MAX_FOLDS: usize = 1000;
 const TREE_WIDTH: std::ops::RangeInclusive<u32> = 160..=2048;
 const PANE_VIEWS: [&str; 2] = ["rendered", "source"];
 /// The side pane's panels, top to bottom.
@@ -292,6 +335,86 @@ pub fn repair(mut doc: LayoutDoc) -> LayoutDoc {
 
 fn is_pane_id(id: &str) -> bool {
     is_command_id(id)
+}
+
+fn base_ok(base: &str) -> bool {
+    base.chars().count() <= MAX_BASE_CHARS && !base.chars().any(char::is_control)
+}
+
+/// The field of a saved comment that breaks a bound, if one does. The caller checks that ids are unique.
+fn comment_problem(c: &DraftComment) -> Option<&'static str> {
+    let lower_hex = |s: &str| {
+        (1..=MAX_COMMENT_HASH).contains(&s.len()) && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    };
+    if !is_pane_id(&c.id) {
+        Some("id")
+    } else if !tree_folder_ok(&c.path) {
+        Some("path")
+    } else if c.start < 1 || c.end < c.start {
+        Some("start")
+    } else if !(1..=MAX_COMMENT_ROWS).contains(&c.rows) {
+        Some("rows")
+    } else if !lower_hex(&c.first) {
+        Some("first")
+    } else if !lower_hex(&c.hash) {
+        Some("hash")
+    } else if c.quote.len() > MAX_COMMENT_QUOTE_LINES
+        || c.quote
+            .iter()
+            .any(|q| q.chars().count() > MAX_COMMENT_QUOTE_CHARS || q.chars().any(|ch| ch.is_control() && ch != '\t'))
+    {
+        Some("quote")
+    } else if !(1..=MAX_COMMENT_TEXT).contains(&c.text.chars().count())
+        || c.text.chars().any(|ch| ch.is_control() && !matches!(ch, '\n' | '\t'))
+    {
+        Some("text")
+    } else {
+        None
+    }
+}
+
+/// The saved Changes drafts of one session, with the same rules as `repair_pane`, and errors naming the field.
+fn validate_changes(session: &str, d: &ChangesDrafts) -> Result<(), String> {
+    let at = format!("pane.sessions.{session}.changes");
+    if !(1..=MAX_PATH_CHARS).contains(&d.checkout.chars().count()) {
+        return Err(format!("{at}.checkout must be 1 to {MAX_PATH_CHARS} characters"));
+    }
+    if d.base.as_deref().is_some_and(|b| !base_ok(b)) {
+        return Err(format!(
+            "{at}.base must be at most {MAX_BASE_CHARS} characters, with no control character"
+        ));
+    }
+    if d.comments.len() > MAX_COMMENTS {
+        return Err(format!(
+            "{at}.comments holds at most {MAX_COMMENTS}, not {}",
+            d.comments.len()
+        ));
+    }
+    let mut seen = BTreeSet::new();
+    for c in &d.comments {
+        if !seen.insert(&c.id) {
+            return Err(format!("{at}.comments.{}.id is used twice", c.id));
+        }
+        if let Some(field) = comment_problem(c) {
+            let rule = match field {
+                "id" => "must be 1 to 64 of a-z, 0-9 and -",
+                "path" => "isn't relative with / separators",
+                "start" => "must be 1 or more, and the end not before it",
+                "rows" => "must be 1 to 100000",
+                "first" | "hash" => "must be 1 to 16 of 0-9 and a-f",
+                "quote" => "holds at most 3 lines of 201 characters, with no control character but a tab",
+                _ => "must be 1 to 2000 characters, with no control character but a newline and a tab",
+            };
+            return Err(format!("{at}.comments.{}.{field} {rule}", c.id));
+        }
+    }
+    if d.folds.len() > MAX_FOLDS {
+        return Err(format!("{at}.folds holds at most {MAX_FOLDS} files"));
+    }
+    if d.folds.keys().any(|f| !tree_folder_ok(f)) {
+        return Err(format!("{at}.folds holds a path that isn't relative"));
+    }
+    Ok(())
 }
 
 fn path_ok(path: &str) -> bool {
@@ -414,7 +537,30 @@ fn repair_pane(pane: &mut PaneView, tabs: &[SavedTab]) {
             tree.expanded.truncate(MAX_TREE_FOLDERS);
         }
     }
-    pane.sessions.retain(|_, st| !st.tabs.is_empty() || st.tree.is_some());
+    for st in pane.sessions.values_mut() {
+        if let Some(drafts) = &mut st.changes {
+            if !(1..=MAX_PATH_CHARS).contains(&drafts.checkout.chars().count()) {
+                // The comments were made in that checkout.
+                st.changes = None;
+                continue;
+            }
+            if drafts.base.as_deref().is_some_and(|b| !base_ok(b)) {
+                drafts.base = None;
+            }
+            let mut seen = BTreeSet::new();
+            drafts
+                .comments
+                .retain(|c| comment_problem(c).is_none() && seen.insert(c.id.clone()));
+            drafts.comments.truncate(MAX_COMMENTS);
+            drafts.folds.retain(|f, _| tree_folder_ok(f));
+            if drafts.folds.len() > MAX_FOLDS {
+                let keep: BTreeSet<String> = drafts.folds.keys().take(MAX_FOLDS).cloned().collect();
+                drafts.folds.retain(|f, _| keep.contains(f));
+            }
+        }
+    }
+    pane.sessions
+        .retain(|_, st| !st.tabs.is_empty() || st.tree.is_some() || st.changes.is_some());
     if let Some(tree) = &mut pane.tree
         && tree.width.is_some_and(|w| !TREE_WIDTH.contains(&w))
     {
@@ -555,6 +701,9 @@ pub fn validate_pane(p: &PaneView) -> Result<(), String> {
                 ));
             }
         }
+        if let Some(drafts) = &st.changes {
+            validate_changes(session, drafts)?;
+        }
         if st.tabs.len() > MAX_PANE_TABS {
             return Err(format!(
                 "pane.sessions.{session}.tabs holds at most {MAX_PANE_TABS}, not {}",
@@ -678,7 +827,8 @@ pub fn validate_pane(p: &PaneView) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use marshell_protocol::api::{PaneEntry, PaneTab, PaneView, RecentFile, SavedTab, SessionTabs};
+    use marshell_protocol::api::{CommentSide, PaneEntry, PaneTab, PaneView, RecentFile, SavedTab, SessionTabs};
+    use std::collections::BTreeMap;
 
     fn tab(id: &str) -> SavedTab {
         SavedTab {
@@ -1028,6 +1178,7 @@ mod tests {
             active,
             active_browser: None,
             tree: None,
+            changes: None,
         }
     }
 
@@ -1910,5 +2061,173 @@ mod tests {
         let tree = pane.sessions["s"].tree.as_ref().unwrap();
         assert_eq!(tree.root, "");
         assert!(tree.expanded.is_empty());
+    }
+
+    fn comment(id: &str) -> DraftComment {
+        DraftComment {
+            id: id.into(),
+            path: "src/a.ts".into(),
+            side: CommentSide::New,
+            start: 3,
+            end: 4,
+            rows: 20,
+            first: "1a2b".into(),
+            hash: "00ff".into(),
+            quote: vec!["+let a = 1;".into(), "\tlet b = 2;".into()],
+            text: "Why not a const?\nIt never changes.".into(),
+        }
+    }
+
+    fn drafts(comments: Vec<DraftComment>) -> ChangesDrafts {
+        ChangesDrafts {
+            checkout: "C:/work".into(),
+            base: Some("origin/main".into()),
+            comments,
+            folds: BTreeMap::from([("src/a.ts".to_string(), true)]),
+        }
+    }
+
+    fn session_with_drafts(d: ChangesDrafts) -> SessionTabs {
+        SessionTabs {
+            changes: Some(d),
+            ..session(vec![])
+        }
+    }
+
+    #[test]
+    fn drafts_round_trip_through_layout_json() {
+        let home = tempfile::tempdir().unwrap();
+        let mut doc = doc_with("a");
+        doc.view.pane = pane_with("a", session_with_drafts(drafts(vec![comment("c1"), comment("c2")])));
+        save(home.path(), &doc).unwrap();
+        let loaded = load(home.path());
+        assert_eq!(loaded.view.pane, doc.view.pane);
+        let changes = loaded.view.pane.sessions["a"].changes.as_ref().unwrap();
+        assert_eq!(changes.comments.len(), 2);
+        assert_eq!(changes.folds.len(), 1);
+    }
+
+    #[test]
+    fn drafts_keep_a_session_with_no_tabs() {
+        let pane = repaired("s", session_with_drafts(drafts(vec![comment("c1")])));
+        assert_eq!(pane.sessions["s"].tabs.len(), 0);
+        assert!(pane.sessions["s"].tree.is_none());
+        assert!(pane.sessions["s"].changes.is_some());
+    }
+
+    #[test]
+    fn validate_refuses_a_51st_comment() {
+        let many: Vec<DraftComment> = (0..51).map(|i| comment(&format!("c{i}"))).collect();
+        let err = validate_pane(&pane_with("s1", session_with_drafts(drafts(many)))).unwrap_err();
+        assert!(
+            err.contains("pane.sessions.s1.changes.comments holds at most 50"),
+            "{err}"
+        );
+        let fifty: Vec<DraftComment> = (0..50).map(|i| comment(&format!("c{i}"))).collect();
+        assert!(validate_pane(&pane_with("s1", session_with_drafts(drafts(fifty)))).is_ok());
+    }
+
+    #[test]
+    fn validate_refuses_a_comment_path_with_dotdot() {
+        let mut c = comment("c1");
+        c.path = "../x.ts".into();
+        let err = validate_pane(&pane_with("s1", session_with_drafts(drafts(vec![c])))).unwrap_err();
+        assert!(err.contains("isn't relative"), "{err}");
+    }
+
+    #[test]
+    fn validate_refuses_text_with_an_escape() {
+        let mut c = comment("c1");
+        c.text = "a\u{1b}[201~b".into();
+        let err = validate_pane(&pane_with("s1", session_with_drafts(drafts(vec![c])))).unwrap_err();
+        assert!(err.contains("pane.sessions.s1.changes.comments.c1.text"), "{err}");
+        let mut c = comment("c1");
+        c.quote = vec!["+a\u{1b}b".into()];
+        assert!(validate_pane(&pane_with("s1", session_with_drafts(drafts(vec![c])))).is_err());
+    }
+
+    #[test]
+    fn validate_checks_the_other_draft_bounds() {
+        let bad = |f: &dyn Fn(&mut DraftComment)| {
+            let mut c = comment("c1");
+            f(&mut c);
+            validate_pane(&pane_with("s1", session_with_drafts(drafts(vec![c])))).is_err()
+        };
+        assert!(bad(&|c| c.start = 0));
+        assert!(bad(&|c| c.end = 2));
+        assert!(bad(&|c| c.rows = 0));
+        assert!(bad(&|c| c.rows = 100_001));
+        assert!(bad(&|c| c.first = String::new()));
+        assert!(bad(&|c| c.hash = "XYZ".into()));
+        assert!(bad(&|c| c.hash = "0".repeat(17)));
+        assert!(bad(&|c| c.quote = vec!["+a".into(); 4]));
+        assert!(bad(&|c| c.quote = vec!["a".repeat(202)]));
+        assert!(bad(&|c| c.text = String::new()));
+        assert!(bad(&|c| c.text = "a".repeat(2001)));
+        assert!(bad(&|c| c.id = "Bad Id".into()));
+        assert!(!bad(&|c| c.text = "a".repeat(2000)));
+        assert!(!bad(&|c| c.quote = vec!["a".repeat(201); 3]));
+        let mut d = drafts(vec![comment("c1"), comment("c1")]);
+        assert!(validate_pane(&pane_with("s1", session_with_drafts(d.clone()))).is_err());
+        d.comments.pop();
+        d.checkout = String::new();
+        assert!(validate_pane(&pane_with("s1", session_with_drafts(d.clone()))).is_err());
+        d.checkout = "C:/w".into();
+        d.base = Some("a".repeat(201));
+        assert!(validate_pane(&pane_with("s1", session_with_drafts(d.clone()))).is_err());
+        d.base = Some("ba\nd".into());
+        assert!(validate_pane(&pane_with("s1", session_with_drafts(d.clone()))).is_err());
+        d.base = None;
+        d.folds.insert("../x".into(), true);
+        assert!(validate_pane(&pane_with("s1", session_with_drafts(d))).is_err());
+    }
+
+    #[test]
+    fn repair_drops_only_the_bad_comment() {
+        let mut bad = comment("c2");
+        bad.start = 0;
+        let mut d = drafts(vec![comment("c1"), bad, comment("c3")]);
+        d.folds.insert("../x".into(), false);
+        let pane = repaired("s", session_with_drafts(d));
+        let changes = pane.sessions["s"].changes.as_ref().unwrap();
+        let ids: Vec<&str> = changes.comments.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids, ["c1", "c3"]);
+        assert_eq!(changes.folds.keys().collect::<Vec<_>>(), ["src/a.ts"]);
+    }
+
+    #[test]
+    fn a_wrongly_typed_draft_costs_only_that_draft() {
+        let good = |id: &str| serde_json::to_value(comment(id)).unwrap();
+        let mut bad = good("c2");
+        bad["start"] = serde_json::json!("x");
+        let doc = load_with_pane(
+            serde_json::json!({
+                "open": true, "width": 480, "recent": [],
+                "sessions": {
+                    "ta": {
+                        "tabs": [good_file_tab("t1")], "active": "t1",
+                        "changes": {
+                            "checkout": "C:/work", "base": null,
+                            "comments": [good("c1"), bad, 5],
+                            "folds": {"a": true, "b": 1}
+                        }
+                    },
+                    "tb": {
+                        "tabs": [], "active": null,
+                        "changes": {"checkout": 7, "base": null, "comments": [], "folds": {}}
+                    }
+                }
+            }),
+            serde_json::json!(304),
+        );
+        let sessions = &doc.view.pane.sessions;
+        assert_eq!(sessions["ta"].tabs.len(), 1);
+        let changes = sessions["ta"].changes.as_ref().unwrap();
+        assert_eq!(changes.comments.len(), 1);
+        assert_eq!(changes.comments[0].id, "c1");
+        assert_eq!(changes.folds, BTreeMap::from([("a".to_string(), true)]));
+        // A drafts block with no readable checkout goes whole.
+        assert_eq!(doc.tabs.len(), 1);
+        assert!(sessions.get("tb").is_none_or(|s| s.changes.is_none()));
     }
 }

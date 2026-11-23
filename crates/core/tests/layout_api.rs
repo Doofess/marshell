@@ -307,6 +307,47 @@ async fn put_view_keeps_the_stack() {
     assert_eq!(doc["view"]["pane"], body["pane"]);
 }
 
+/// A session's drafts at their bounds: 50 comments of 2,000 characters and a full quote each.
+fn full_drafts() -> serde_json::Value {
+    let comment = |i: usize| {
+        serde_json::json!({
+            "id": format!("c{i}"), "path": "src/a.ts", "side": "new", "start": 1, "end": 2, "rows": 100000,
+            "first": "0123456789abcdef", "hash": "0123456789abcdef",
+            "quote": vec![format!("+{}", "x".repeat(200)); 3],
+            "text": "y".repeat(2000)
+        })
+    };
+    serde_json::json!({
+        "checkout": "C:/work", "base": "origin/main",
+        "comments": (0..50).map(comment).collect::<Vec<_>>(),
+        "folds": { "src/a.ts": true }
+    })
+}
+
+#[tokio::test]
+async fn a_view_of_three_megabytes_is_saved() {
+    let home = tempfile::tempdir().unwrap();
+    saved_with_session_a(home.path());
+    let app = app_in(home.path());
+    let sessions: serde_json::Map<String, serde_json::Value> = (0..30)
+        .map(|i| {
+            (
+                format!("s{i}"),
+                serde_json::json!({ "tabs": [], "active": null, "changes": full_drafts() }),
+            )
+        })
+        .collect();
+    let mut body = view(serde_json::json!(["a"]));
+    body["pane"]["sessions"] = serde_json::Value::Object(sessions);
+    let size = body.to_string().len();
+    assert!(size > 3 * 1024 * 1024, "the body is only {size} bytes");
+    let res = app
+        .oneshot(request("PUT", "/v1/layout/view", Some(body)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+}
+
 #[tokio::test]
 async fn put_view_refuses_a_bad_stack() {
     let home = tempfile::tempdir().unwrap();

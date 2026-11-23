@@ -528,6 +528,10 @@ pub struct SessionTabs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub tree: Option<TreeState>,
+    /// The Changes panel's comments and folds for this session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub changes: Option<ChangesDrafts>,
 }
 
 /// A session's file tree: its root and the open folders.
@@ -1072,6 +1076,171 @@ pub struct TreeReply {
     pub root: String,
     /// One per ask, in order.
     pub dirs: Vec<TreeDir>,
+    /// The files the checkout has changed, for the tree's marks.
+    #[serde(default)]
+    pub changes: Vec<ChangeMark>,
+}
+
+/// How a file differs from the base.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum DiffStatus {
+    Modified,
+    Added,
+    Deleted,
+    Renamed,
+    Untracked,
+}
+
+/// Why a file's diff isn't shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum DiffNote {
+    Binary,
+    Large,
+}
+
+/// One changed file in the Changes panel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DiffFile {
+    pub path: String,
+    pub old_path: Option<String>,
+    pub status: DiffStatus,
+    pub note: Option<DiffNote>,
+}
+
+/// What a Changes reply holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ChangesKind {
+    Same,
+    Listed,
+    NoRepo,
+    Refused,
+    Failed,
+}
+
+/// POST /v1/sessions/{tab}/changes body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ChangesRequest {
+    /// The stamp of the last reply. An equal stamp answers `same`.
+    pub stamp: Option<String>,
+    pub hide_whitespace: bool,
+}
+
+/// POST /v1/sessions/{tab}/changes reply.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ChangesReply {
+    pub kind: ChangesKind,
+    pub stamp: String,
+    /// The checkout (Listed, Same, Failed) or the plain folder (NoRepo, Refused), as the core spells it.
+    pub folder: String,
+    /// The checkout is not the launch folder's: the shell moved.
+    pub moved: bool,
+    /// None when detached or unborn.
+    pub branch: Option<String>,
+    /// The 7-character id when detached.
+    pub detached: Option<String>,
+    /// "origin/main", "main" or a task's base. None: no base found.
+    pub base: Option<String>,
+    /// The base shares no history with HEAD.
+    pub unrelated: bool,
+    pub ahead: u32,
+    pub uncommitted: bool,
+    pub files: Vec<DiffFile>,
+    pub diff: String,
+    pub truncated: bool,
+    /// Untracked files past the cap.
+    pub more_new: u32,
+    /// Refused and Failed: the sentence.
+    pub reason: Option<String>,
+}
+
+/// A changed file, marked in the file tree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ChangeMark {
+    /// Relative to `TreeReply.root`, with `/` separators.
+    pub path: String,
+    pub status: DiffStatus,
+}
+
+/// POST /v1/sessions/{tab}/changes/review body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ReviewRequest {
+    pub base: Option<String>,
+}
+
+/// The text that asks an agent to review the changes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ReviewReply {
+    pub typed: String,
+}
+
+/// POST /v1/sessions/{tab}/changes/comments body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CommentsRequest {
+    pub text: String,
+}
+
+/// How the comments reach the agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum CommentsForm {
+    Paste,
+    File,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CommentsReply {
+    pub form: CommentsForm,
+    pub path: Option<String>,
+}
+
+/// Which side of the diff a comment sits on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum CommentSide {
+    New,
+    Old,
+}
+
+/// A review comment saved with the session's Changes drafts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DraftComment {
+    pub id: String,
+    pub path: String,
+    pub side: CommentSide,
+    pub start: u32,
+    pub end: u32,
+    pub rows: u32,
+    pub first: String,
+    pub hash: String,
+    pub quote: Vec<String>,
+    pub text: String,
+}
+
+/// A session's Changes panel state kept between runs: the comments, the base they were made against and the folded files.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ChangesDrafts {
+    pub checkout: String,
+    pub base: Option<String>,
+    pub comments: Vec<DraftComment>,
+    pub folds: BTreeMap<String, bool>,
 }
 
 /// The answer for one asked folder.
@@ -1432,6 +1601,17 @@ pub struct Settings {
     pub browser: BrowserSettings,
     /// The Files panel's settings.
     pub files: FilesSettings,
+    /// The Changes panel's settings.
+    pub changes: ChangesSettings,
+}
+
+/// The Changes panel's settings, in `settings.json` under `changes`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(default)]
+#[ts(export)]
+pub struct ChangesSettings {
+    pub hide_whitespace: bool,
+    pub wrap: bool,
 }
 
 /// How long a page keeps its cookies.
@@ -1485,6 +1665,7 @@ impl Default for Settings {
             history_backup_dir: None,
             browser: BrowserSettings::default(),
             files: FilesSettings::default(),
+            changes: ChangesSettings::default(),
         }
     }
 }

@@ -9,7 +9,7 @@ import { applyReply, createTreeEngine, initialData, nextAsks, schedule, TREE_FUL
 const entry = (name: string, kind: TreeEntry["kind"] = "file"): TreeEntry => ({ name, kind, ignored: false });
 const listed = (entries: TreeEntry[], stamp = 1): Listing => ({ entries, more: 0, stamp, state: "listed" });
 const dirOf = (dir: string, entries: TreeEntry[], stamp = 1): TreeDir => ({ dir, state: "listed", stamp, entries, more: 0 });
-const replyOf = (root: string, dirs: TreeDir[]): TreeReply => ({ root, dirs });
+const replyOf = (root: string, dirs: TreeDir[]): TreeReply => ({ root, dirs, changes: [] });
 
 function rowsOf(listings: Map<string, Listing>, expanded: string[]) {
   return visibleRows(listings, new Set(expanded));

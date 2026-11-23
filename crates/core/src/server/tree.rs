@@ -291,6 +291,7 @@ pub async fn tree(State(st): State<AppState>, Path(tab): Path<String>, Json(req)
         Some(TreeReply {
             root: strip_verbatim(found.path()).unwrap_or_default(),
             dirs,
+            changes: Vec::new(),
         })
     })
     .await;

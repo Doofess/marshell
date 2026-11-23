@@ -1312,7 +1312,11 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/settings", get(settings::get).put(settings::put))
         .route("/v1/notify/paused", get(get_notify_paused).put(put_notify_paused))
         .route("/v1/layout", get(layout::get))
-        .route("/v1/layout/view", put(layout::put_view))
+        .route(
+            "/v1/layout/view",
+            // Saved review drafts can fill this well past axum's 2 MiB default.
+            put(layout::put_view).layer(DefaultBodyLimit::max(8 * 1024 * 1024)),
+        )
         .route("/v1/import/windows-terminal", get(settings::windows_terminal))
         .route("/v1/projects", get(projects::get))
         .route("/v1/folders/check", get(folders::check))
