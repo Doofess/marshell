@@ -24,9 +24,9 @@ export const SearchIcon = small(
 export const FolderOpenIcon = small(<path d="M1.5 11V2.5h3.75l1.5 1.75h4.75v2M1.5 11l1.75-4.75h9.25L10.75 11z" />);
 
 /** The panel's own mark, 40 px: the shape is tinted with the accent and drawn in the quietest text colour. */
-function large(shape: ReactNode, lines: ReactNode) {
+function large(shape: ReactNode, lines: ReactNode, name?: string) {
   return (
-    <svg className="empty-panel__icon" viewBox="0 0 40 40" width="40" height="40" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg className="empty-panel__icon" data-icon={name} viewBox="0 0 40 40" width="40" height="40" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <g className="empty-panel__icon-shape">{shape}</g>
       {lines}
     </svg>
@@ -38,6 +38,9 @@ export const FolderIcon = large(
   <path d="M5 12a2.5 2.5 0 0 1 2.5-2.5h8.25l3.5 4H32.5A2.5 2.5 0 0 1 35 16v13a2.5 2.5 0 0 1-2.5 2.5h-25A2.5 2.5 0 0 1 5 29z" />,
   <path d="M5 18.5h30" />,
 );
+
+/** The Changes panel's glyph (`PanelIcon`'s 16 px frame with a plus and a minus), scaled to 40 px. */
+export const ChangesIcon = large(<rect x="5" y="5" width="30" height="30" rx="5" />, <path d="M20 11.25v10M15 16.25h10M15 27.5h10" />, "panel-changes");
 
 /**
  * What a panel shows with no tabs: its mark, what is missing, what to do, and its ways in (none, one or two). The first button that can be used

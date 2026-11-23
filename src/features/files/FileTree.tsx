@@ -5,6 +5,9 @@ import { FileIcon, iconKind } from "./fileIcons";
 import { type TreeMove, type TreeRow, typeAhead, treeKey } from "./treeModel";
 import "./FileTree.css";
 
+/** What the tree and the Changes panel say for a session with no folder. */
+export const NO_FOLDER_LINE = "This session has no folder the tree can show.";
+
 /** A row is 24 px tall; FileTree.css says the same. */
 const ROW = 24;
 /** Rows drawn beyond the ones in view, above and below. */
@@ -147,7 +150,7 @@ export function FileTree(p: {
   if (p.noFolder) {
     return (
       <div className="file-tree file-tree--none">
-        <p className="file-tree__none">This session has no folder the tree can show.</p>
+        <p className="file-tree__none">{NO_FOLDER_LINE}</p>
       </div>
     );
   }

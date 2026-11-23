@@ -69,7 +69,10 @@ import type { CookieRule } from "../../generated/CookieRule";
 import { PaneContext, PagePaneContext, type OpenPageInPane } from "../pane/PaneContext";
 import { dropCover, modalOnScreen } from "../pane/dropCover";
 import { EmptyBrowser, PAGES_UNAVAILABLE } from "../pane/EmptyBrowser";
-import { EmptyPanel } from "../pane/EmptyPanel";
+import { ChangesIcon, EmptyPanel } from "../pane/EmptyPanel";
+import { NO_FOLDER_LINE } from "../files/FileTree";
+import { copy as changesCopy } from "../changes/copy";
+import { ChangesPanel } from "../changes/ChangesPanel";
 import { EmptyFiles } from "../pane/EmptyFiles";
 import { PanelStack } from "../pane/PanelStack";
 import { KeptTabs } from "../pane/KeptTabs";
@@ -158,7 +161,7 @@ import { ResumeBar } from "./ResumeBar";
 import { recordSetupDetection, type SetupDetections } from "./setupDetections";
 import { fetchSessionCommand, sessionResumeCommand } from "./resumeCommand";
 import { holdsResume, offersModeChange, offersResume, resumeBlockedReason, resumeStateOf, sessionRunning } from "./resumeState";
-import { PAUSED_TYPING_TEXT, SessionActions, closeBarText, needsCloseConfirm, pauseBarStale, pauseBarText, reopenBarText, restartBarStale, restartBarText, tabIdOfNumber } from "./sessionActions";
+import { PAUSED_TYPING_TEXT, agentLabel, SessionActions, closeBarText, needsCloseConfirm, pauseBarStale, pauseBarText, reopenBarText, restartBarStale, restartBarText, tabIdOfNumber } from "./sessionActions";
 import { topAction, useNavigation } from "./useNavigation";
 import type { NavEffect } from "../../lib/navigation/types";
 import { installTabHold, sendHeldTab } from "../../lib/navigation/tabHold";
@@ -1247,6 +1250,9 @@ export function LiveApp() {
   // The Files menu (the strip's ⋯ button), the Files panel's handle and the Files settings (Settings → Files writes the same values).
   const [filesMenu, setFilesMenu] = useState<{ anchor: { x: number; y: number }; opener: HTMLElement } | null>(null);
   const filesPanel = useRef<FilesPanelHandle | null>(null);
+  // The Changes menu (its ⋯ button) has no items until Task 11b, so it opens nothing yet; the strip's title is the panel's summary.
+  const [, setChangesMenu] = useState<{ anchor: { x: number; y: number }; opener: HTMLElement } | null>(null);
+  const [changesSummary, setChangesSummary] = useState("Changes");
   const { settings: filesSettings, failed: filesSettingsFailed, set: setFilesSetting } = useFilesSettings();
   const filesPrefs = useMemo(() => editorPrefsOf(filesSettings), [filesSettings]);
   // The home folder, so the Files panel's path bar starts a file under it and outside the project at `~`; null until the system answers.
@@ -2315,12 +2321,14 @@ export function LiveApp() {
   // One panel's frame: its own tabs, its own kept tabs, or its empty state. A panel that is leaving is still drawn until its motion ends.
   const renderPanel = (panel: PanelId) => {
     if (os === undefined) return null;
-    // Changes holds no tabs. Until the diff view lands (Task 11a) it shows an empty state.
+    // Changes holds no tabs: its strip shows the summary, and its body is the diff list.
     if (panel === "changes") {
       return (
         <SidePane
           panel={panel}
-          title="Changes"
+          title={changesSummary}
+          menu={{ label: "Changes menu" }}
+          onMenu={(anchor, opener) => setChangesMenu({ anchor, opener })}
           tabs={[]}
           activeId={null}
           fill={{ on: stack.filled === panel, disabled: stack.shown.length < 2 ? "No other panel is shown" : undefined }}
@@ -2331,7 +2339,26 @@ export function LiveApp() {
           onMove={() => {}}
           onHide={() => togglePanel(panel)}
         >
-          <EmptyPanel icon={null} title="Changes" line="The session's changes show here." actions={[]} />
+          {paneSession !== undefined ? (
+            <ChangesPanel
+              key={paneSession}
+              session={paneSession}
+              agent={focusedInfo?.agent ?? null}
+              agentName={focusedInfo?.agent ? agentLabel(focusedInfo.agent) : "the shell"}
+              shown={panelsOn.includes("changes")}
+              drafts={paneTabs.changes}
+              onDrafts={(drafts) => paneDispatch({ type: "drafts", session: paneSession, drafts })}
+              onOpen={openFromTree}
+              onEscape={() => void toTerminalFromPane()}
+              // Task 12: sending the comments and asking for a review.
+              onSend={() => {}}
+              onReview={() => {}}
+              announce={announce}
+              onSummary={setChangesSummary}
+            />
+          ) : (
+            <EmptyPanel icon={ChangesIcon} title={changesCopy.emptyFailed("").title} line={NO_FOLDER_LINE} actions={[]} />
+          )}
         </SidePane>
       );
     }

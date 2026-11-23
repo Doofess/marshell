@@ -41,6 +41,8 @@ export const copy = {
     whitespace: "Only whitespace changed.",
     gone: "No changes in this file now.",
   },
+  /** What a screen reader hears when Shift+Up or Down widens the rows. */
+  selected: (count: number) => `${n(count)} ${count === 1 ? "line" : "lines"} selected`,
   /** What a comment says once the lines it sits on changed. */
   changed: (range: boolean) => (range ? "The lines changed" : "The line changed"),
 } as const;
