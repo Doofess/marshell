@@ -63,7 +63,7 @@ pub enum RefError {
 
 /// Whether `name` is a ref name Marshell reads: `HEAD` or one under `refs/`, with no component that
 /// is empty, starts with `.` or ends with `.lock`, and none of the characters git forbids.
-fn valid_name(name: &str) -> bool {
+pub(crate) fn valid_name(name: &str) -> bool {
     if name.len() > MAX_NAME_BYTES || !(name == "HEAD" || name.starts_with("refs/")) {
         return false;
     }

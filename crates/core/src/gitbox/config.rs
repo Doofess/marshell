@@ -68,15 +68,54 @@ pub const FORMAT_KEYS: &[&str] = &[
     "extensions.worktreeconfig",
 ];
 
-/// The extended regular expression for `git config --get-regexp`: every allowed key and every format key.
+/// Keys read to learn where `origin` points. They are read, never passed on: `allowed_pair` refuses them.
+/// Every `url.<base>.insteadof` and `url.<base>.pushinsteadof` is read with them (`REWRITE_KEYS`).
+pub const REMOTE_KEYS: &[&str] = &["remote.origin.url", "remote.origin.pushurl"];
+
+/// The pattern for the keys that rewrite an address. `<base>` may hold dots and slashes.
+const REWRITE_KEYS: &str = "url\\..*\\.(push)?insteadof";
+
+/// The extended regular expression for `git config --get-regexp`: every allowed key, every format key,
+/// the remote's keys and the address rewrites.
 pub fn key_regex() -> String {
-    let keys: Vec<String> = ALLOWED
+    let mut keys: Vec<String> = ALLOWED
         .iter()
         .map(|(key, _)| *key)
         .chain(FORMAT_KEYS.iter().copied())
+        .chain(REMOTE_KEYS.iter().copied())
         .map(|key| key.replace('.', "\\."))
         .collect();
+    keys.push(REWRITE_KEYS.to_string());
     format!("^({})$", keys.join("|"))
+}
+
+/// Which rewrite a `url.<base>` key sets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rewrite {
+    /// `insteadOf`: the address is replaced for every use.
+    Instead,
+    /// `pushInsteadOf`: the address is replaced for a push only.
+    Push,
+}
+
+/// A `url.<base>.insteadof` or `.pushinsteadof` entry as its kind, base and value. Git prints the section and
+/// variable in lowercase and the subsection (the base) as written, and the base may hold dots, so the key is
+/// told by its two ends and never split on dots. None for any other key.
+pub fn rewrite_entry(key: &str, value: &str) -> Option<(Rewrite, String, String)> {
+    let rest = key.strip_prefix("url.")?;
+    let ends_with = |suffix: &str| {
+        rest.len() >= suffix.len()
+            && rest.is_char_boundary(rest.len() - suffix.len())
+            && rest[rest.len() - suffix.len()..].eq_ignore_ascii_case(suffix)
+    };
+    let (kind, suffix) = if ends_with(".pushinsteadof") {
+        (Rewrite::Push, ".pushinsteadof")
+    } else if ends_with(".insteadof") {
+        (Rewrite::Instead, ".insteadof")
+    } else {
+        return None;
+    };
+    Some((kind, rest[..rest.len() - suffix.len()].to_string(), value.to_string()))
 }
 
 /// The entries of `git config -z --get-regexp` output: `key`, a newline, `value`, a NUL. A key with no
@@ -201,5 +240,57 @@ mod tests {
         for key in FORMAT_KEYS {
             assert!(re.contains(&key.replace('.', "\\.")), "{key}");
         }
+    }
+
+    #[test]
+    fn key_regex_names_the_remote_keys() {
+        let re = key_regex();
+        for key in REMOTE_KEYS {
+            assert!(re.contains(&key.replace('.', "\\.")), "{key}");
+        }
+        assert!(re.contains("url\\..*\\.(push)?insteadof"), "{re}");
+    }
+
+    #[test]
+    fn remote_keys_are_never_passed_on() {
+        for key in REMOTE_KEYS {
+            assert!(!ok(key, "https://github.com/octo-org/widgets.git"), "{key}");
+        }
+        assert!(!ok("url.https://github.com/.insteadof", "gh:"));
+        assert!(!ok("url.https://github.com/.pushinsteadof", "gh:"));
+    }
+
+    #[test]
+    fn url_rewrite_keys_are_told_by_their_ends_not_by_dots() {
+        let split = |key: &str, value: &str| rewrite_entry(key, value);
+        assert_eq!(
+            split("url.https://github.com/.insteadof", "gh:"),
+            Some((Rewrite::Instead, "https://github.com/".to_string(), "gh:".to_string()))
+        );
+        assert_eq!(
+            split("url.git@github.com:.pushinsteadof", "https://github.com/"),
+            Some((
+                Rewrite::Push,
+                "git@github.com:".to_string(),
+                "https://github.com/".to_string()
+            ))
+        );
+        assert_eq!(
+            split("url.https://ghe.example.com/a.b/.insteadof", "x"),
+            Some((
+                Rewrite::Instead,
+                "https://ghe.example.com/a.b/".to_string(),
+                "x".to_string()
+            ))
+        );
+        assert_eq!(split("url.x.insteadofx", "y"), None);
+        // An empty base is a rule git applies, so it is read.
+        assert_eq!(
+            split("url..insteadof", "y"),
+            Some((Rewrite::Instead, String::new(), "y".to_string()))
+        );
+        assert_eq!(split("url.insteadof", "y"), None);
+        assert_eq!(split("remote.origin.url", "y"), None);
+        assert_eq!(split("core.autocrlf", "y"), None);
     }
 }

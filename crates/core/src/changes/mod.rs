@@ -13,7 +13,7 @@ pub use raw::{RawEntry, parse_raw};
 use crate::git::Stopped;
 use crate::gitbox::refs::{self, Base, Head, RefError};
 use crate::gitbox::worktree::{self, Reach, Tracked};
-use crate::gitbox::{BoxError, GitBox};
+use crate::gitbox::{BoxError, GitBox, Origin};
 use crate::server::{Ignores, walk_unignored};
 use crate::tasks::{BINARY_SNIFF, MAX_DIFF, MAX_UNTRACKED, cut_diff, untracked_diff};
 use cache::{Entry, FileStamp};
@@ -64,6 +64,10 @@ pub struct Check {
     /// A hash of everything below, and of the files' lengths and modified times.
     pub stamp: u64,
     pub head: Head,
+    /// HEAD's full commit id; None on an unborn branch.
+    pub head_oid: Option<String>,
+    /// Where `origin` points, as the sandbox read it. Not part of the stamp.
+    pub origin: Origin,
     pub base: Option<Base>,
     /// What the files are compared with: the merge base, else HEAD, else the empty tree.
     pub from: String,
@@ -355,6 +359,8 @@ fn compute(
 
     Ok(Check {
         stamp: hasher.finish(),
+        head_oid: head.oid.as_ref().map(|oid| oid.as_str().to_string()),
+        origin: git.origin().clone(),
         head,
         base,
         from,
@@ -945,6 +951,32 @@ mod tests {
         assert_eq!(reply.ahead, 0);
         assert!(reply.uncommitted);
         assert_eq!(paths(&reply), [("a.txt", DiffStatus::Modified)]);
+    }
+
+    #[test]
+    fn a_check_carries_the_head_id_and_origin_and_the_stamp_ignores_origin() {
+        let scratch = Scratch::new();
+        let head = repo_with_commit(&scratch);
+        let cache = ChangesCache::new();
+        let before = check_of(&cache, &scratch.target());
+        assert_eq!(before.head_oid.as_deref(), Some(head.as_str()));
+        assert!(before.origin.urls.is_empty());
+
+        let git = plain(&scratch);
+        git(
+            &scratch.repo,
+            &["remote", "add", "origin", "https://github.com/octo-org/widgets.git"],
+        );
+        let after = check_of(&cache, &scratch.target());
+        assert_eq!(
+            after.origin.urls,
+            vec!["https://github.com/octo-org/widgets.git".to_string()]
+        );
+        assert_eq!(before.stamp, after.stamp);
+
+        let unborn = Scratch::new();
+        plain(&unborn)(&unborn.repo, &["init", "-q", "-b", "main"]);
+        assert_eq!(check_of(&ChangesCache::new(), &unborn.target()).head_oid, None);
     }
 
     #[test]
