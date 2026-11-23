@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import type { ChangesReply } from "../../generated/ChangesReply";
 import type { DiffFile } from "../../generated/DiffFile";
 import type { DraftComment } from "../../generated/DraftComment";
+import type { PullNote } from "../../generated/PullNote";
+import type { ReviewThread } from "../../generated/ReviewThread";
 import type { Placement } from "./comments";
 import { FOLD_LINES, OPEN_BUDGET, cutFiles, focusIndex, isLockfile, isMinified, itemLabel, itemsOf, sectionsOf, type Item, type Row, type Section } from "./model";
+import type { GithubItems } from "./threads";
 
 const file = (path: string, extra: Partial<DiffFile> = {}): DiffFile => ({ path, old_path: null, status: "modified", note: null, ...extra });
 const reply = (files: DiffFile[], diff: string, extra: Partial<ChangesReply> = {}): ChangesReply => ({
@@ -316,5 +319,56 @@ describe("itemLabel", () => {
   });
   it("labels a note by its text", () => {
     expect(itemLabel({ kind: "note", key: "k", file: s, text: "Only whitespace changed." })).toBe("Only whitespace changed.");
+  });
+});
+
+describe("itemsOf with GitHub's items", () => {
+  const thr = (id: string, path = "a.txt"): ReviewThread => ({
+    id, path, side: "new", file: false, start: 1, end: 1, original_start: 1, original_end: 1, resolved: false, outdated: false,
+    can_resolve: true, can_unresolve: true, can_reply: true, rows: [{ kind: "add", text: "two" }],
+    comments: [{ id: 1, author: "alice", bot: false, body: "Fix.", hidden_removed: false, cut: false, created_ms: null, url: null }], more_comments: 0, minimized: 0,
+  });
+  const note = (id: string): PullNote => ({ id, kind: "comment", verdict: null, author: "bob", bot: false, body: "Hi", hidden_removed: false, cut: false, created_ms: null, url: null });
+  const state = { picked: false, note: "", sent: false };
+  const files = (folded = false): Section[] => [{ path: "a.txt", status: "modified", added: 1, removed: 0, rows: [{ kind: "hunk", text: "@@ -0,0 +1 @@" }, { kind: "add", text: "two", newNo: 1 }], folded }];
+  const github = (over: Partial<GithubItems> = {}): GithubItems => ({
+    threads: [thr("orphan", "gone.txt"), thr("PRRT_one")],
+    placements: new Map<string, Placement | null>([["orphan", null], ["PRRT_one", { at: 1, changed: false, start: 1, end: 1 }]]),
+    notes: [note("n1"), note("n2")],
+    lines: ["And 2 more comment threads on GitHub."],
+    state: () => state,
+    agent: null,
+    ...over,
+  });
+  const keys = (items: Item[]) => items.map((i) => (i.key.startsWith("row:") ? "row" : i.key));
+
+  it("GitHub's items come before the files, and a thread under its row", () => {
+    const d = draft({ id: "d1", path: "a.txt", start: 1, end: 1 });
+    const items = itemsOf(files(), [d], new Map([["d1", { at: 1, changed: false }]]), github());
+    expect(keys(items)).toEqual(["talk:n1", "talk:n2", "line:0", "thread:orphan", "file:a.txt", "row", "row", "comment:d1", "thread:PRRT_one"]);
+  });
+  it("puts a thread with no row above the first row, after the drafts there", () => {
+    const d = draft({ id: "d1", path: "a.txt", start: 1, end: 1 });
+    const g = github({ threads: [thr("PRRT_one")], placements: new Map([["PRRT_one", { at: null, changed: false }]]), notes: [], lines: [] });
+    expect(keys(itemsOf(files(), [d], new Map([["d1", { at: null, changed: true }]]), g))).toEqual(["file:a.txt", "comment:d1", "thread:PRRT_one", "row", "row"]);
+  });
+  it("a folded file hides its threads", () => {
+    expect(keys(itemsOf(files(true), [], new Map(), github({ notes: [], lines: [] })))).toEqual(["thread:orphan", "file:a.txt", "show:a.txt"]);
+  });
+  it("a thread whose file is not in the diff is listed above it", () => {
+    const items = itemsOf(files(), [], new Map(), github({ notes: [], lines: [] }));
+    expect(items[0]).toMatchObject({ kind: "thread", key: "thread:orphan", placed: null });
+  });
+  it("without GitHub's items is unchanged", () => {
+    const d = draft({ id: "d1", path: "a.txt", start: 1, end: 1 });
+    const p = new Map([["d1", { at: 1, changed: false }]]);
+    expect(itemsOf(files(), [d], p, undefined)).toEqual(itemsOf(files(), [d], p));
+    expect(keys(itemsOf(files(), [d], p))).toEqual(["file:a.txt", "row", "row", "comment:d1"]);
+  });
+  it("itemLabel reads a thread, a note and a line", () => {
+    const items = itemsOf(files(), [], new Map(), github());
+    expect(itemLabel(items[0]!)).toBe("Comment by bob: Hi");
+    expect(itemLabel(items[2]!)).toBe("And 2 more comment threads on GitHub.");
+    expect(itemLabel(items[3]!)).toBe("GitHub comment by alice on line 1: Fix.");
   });
 });

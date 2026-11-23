@@ -22,10 +22,25 @@ const CHUNK = 200;
 /** A key move focuses the new item only if the item appears within this long of the key. */
 const KEY_FOCUS_MS = 200;
 
-const pathOf = (item: Item): string => (item.kind === "comment" ? item.comment.path : item.file.path);
+/** The file an item belongs to; null for GitHub's reviews, comments and lines. */
+const pathOf = (item: Item): string | null => {
+  switch (item.kind) {
+    case "comment":
+      return item.comment.path;
+    case "thread":
+      return item.thread.path;
+    case "talk":
+    case "line":
+      return null;
+    default:
+      return item.file.path;
+  }
+};
+/** The index of the header of the file the item at `i` belongs to; `i` itself when the item has no file in the list. */
 const fileIndexOf = (items: Item[], i: number): number => {
   const path = pathOf(items[i]!);
-  return items.findIndex((x) => x.kind === "file" && x.file.path === path);
+  const at = path === null ? -1 : items.findIndex((x) => x.kind === "file" && x.file.path === path);
+  return at < 0 ? i : at;
 };
 const rowOf = (item: Item | undefined): Row | undefined => (item?.kind === "row" ? item.file.rows[item.at] : undefined);
 /** A row a comment can start on or a range can hold: any row but a hunk's header. */
@@ -227,6 +242,11 @@ function EntryView({ item, index, tabStop, selected, onClick, onOpen, onMenu, to
         </div>
       );
     }
+    case "thread":
+    case "talk":
+    case "line":
+      // Drawn properly by a later task.
+      return <div {...common}>{itemLabel(item)}</div>;
     case "row": {
       const row = item.file.rows[item.at]!;
       return (

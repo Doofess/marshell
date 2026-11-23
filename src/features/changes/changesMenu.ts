@@ -90,7 +90,7 @@ export function openOf(item: Item | undefined): { file: Section; line: number | 
 /** The menu of a row: `count` is how many lines a range holds, so Copy reads "Copy lines". */
 export function lineMenuItems(item: Item, count = 1): MenuItem[] {
   const row = item.kind === "row" ? item.file.rows[item.at] : undefined;
-  const deleted = item.kind !== "comment" && item.file.status === "deleted";
+  const deleted = "file" in item && item.file.status === "deleted";
   return [
     { id: "comment", label: "Comment", ...(row?.kind === "hunk" ? { disabled: "A changed block can't take a comment" } : {}) },
     { id: "open", label: "Open in Files at this line", ...(deleted ? { disabled: DELETED } : {}) },

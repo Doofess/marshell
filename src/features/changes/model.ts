@@ -4,8 +4,11 @@ import type { DiffNote } from "../../generated/DiffNote";
 import type { DiffStatus } from "../../generated/DiffStatus";
 import type { DraftComment } from "../../generated/DraftComment";
 import { splitDiff } from "../tasks/splitDiff";
+import type { PullNote } from "../../generated/PullNote";
+import type { ReviewThread } from "../../generated/ReviewThread";
 import { hashesOf, renumbered, type Placement } from "./comments";
 import { copy } from "./copy";
+import { noteLabel, threadLabel, type GithubItems, type SendState } from "./threads";
 
 /** A file with more rows than this starts folded. */
 export const FOLD_LINES = 400;
@@ -29,7 +32,10 @@ export type Item =
   | { kind: "show"; key: string; file: Section }
   | { kind: "row"; key: string; file: Section; at: number }
   | { kind: "comment"; key: string; comment: DraftComment; placed: Placement }
-  | { kind: "note"; key: string; file: Section; text: string };
+  | { kind: "note"; key: string; file: Section; text: string }
+  | { kind: "thread"; key: string; thread: ReviewThread; placed: Placement | null; state: SendState; agent: string | null }
+  | { kind: "talk"; key: string; note: PullNote; state: SendState; agent: string | null }
+  | { kind: "line"; key: string; text: string };
 
 const LOCKFILES = new Set([
   "pnpm-lock.yaml",
@@ -176,8 +182,18 @@ const noteText = (note: NonNullable<Section["note"]>) => copy.notes[note];
  * its comments that have no row (above the first) and its rows with each comment right under the row it is placed at.
  * A draft with no placement is shown above the first row, as changed.
  */
-export function itemsOf(sections: Section[], drafts: DraftComment[], placements: Map<string, Placement>): Item[] {
+export function itemsOf(sections: Section[], drafts: DraftComment[], placements: Map<string, Placement>, github?: GithubItems): Item[] {
   const items: Item[] = [];
+  const threadItem = (thread: ReviewThread): Item => ({ kind: "thread", key: `thread:${thread.id}`, thread, placed: github!.placements.get(thread.id) ?? null, state: github!.state(thread.id), agent: github!.agent });
+  const threadsOf = new Map<string, ReviewThread[]>();
+  if (github !== undefined) {
+    for (const note of github.notes) items.push({ kind: "talk", key: `talk:${note.id}`, note, state: github.state(note.id), agent: github.agent });
+    github.lines.forEach((text, i) => items.push({ kind: "line", key: `line:${i}`, text }));
+    for (const t of github.threads) {
+      if ((github.placements.get(t.id) ?? null) === null) items.push(threadItem(t));
+      else threadsOf.set(t.path, [...(threadsOf.get(t.path) ?? []), t]);
+    }
+  }
   for (const file of sections) {
     items.push({ kind: "file", key: `file:${file.path}`, file });
     if (file.folded) {
@@ -190,7 +206,10 @@ export function itemsOf(sections: Section[], drafts: DraftComment[], placements:
       .map((comment, order) => ({ comment, order, placed: placements.get(comment.id) ?? { at: null, changed: true } }))
       .sort((a, b) => a.comment.start - b.comment.start || a.order - b.order);
     const commentItem = (p: (typeof placed)[number]): Item => ({ kind: "comment", key: `comment:${p.comment.id}`, comment: p.comment, placed: p.placed });
+    const threads = threadsOf.get(file.path) ?? [];
+    const threadsAt = (at: number | null) => threads.filter((t) => github!.placements.get(t.id)!.at === at).map(threadItem);
     for (const p of placed) if (p.placed.at === null) items.push(commentItem(p));
+    items.push(...threadsAt(null));
     // A row's key is its kind and text, and how many rows above it in the file have the same: rows that go in above it
     // never change it, so the keyboard, a range and a menu stay on the line they were on.
     const hashes = hashesOf(file.rows);
@@ -201,6 +220,7 @@ export function itemsOf(sections: Section[], drafts: DraftComment[], placements:
       seen.set(hash, n + 1);
       items.push({ kind: "row", key: `row:${file.path}:${hash}:${n}`, file, at });
       for (const p of placed) if (p.placed.at === at) items.push(commentItem(p));
+      if (threads.length > 0) items.push(...threadsAt(at));
     });
   }
   return items;
@@ -270,7 +290,12 @@ export function itemLabel(item: Item): string {
       return `Comment on ${where}: ${c.text}${item.placed.changed ? `. ${copy.changed(range)}` : ""}`;
     }
     case "note":
+    case "line":
       return item.text;
+    case "thread":
+      return threadLabel(item.thread, item.placed, item.state, item.agent);
+    case "talk":
+      return noteLabel(item.note, item.state, item.agent);
     default: {
       const unreachable: never = item;
       return unreachable;
