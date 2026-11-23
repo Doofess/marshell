@@ -26,6 +26,9 @@ pub struct Tracked {
     /// Each folder on the way to a tracked path (`""` for the checkout), parents before children, with the
     /// names in it the index holds.
     folders: Vec<(String, Vec<Name>)>,
+    /// A path wasn't UTF-8. Git for Windows makes such bytes into a file name its own way, so where git
+    /// would look can't be known.
+    odd: bool,
 }
 
 /// A name in a folder of the index: a tracked path, a folder on the way to one, or (in an odd index) both.
@@ -41,19 +44,25 @@ struct Name {
 pub enum Reach {
     Clear,
     Refused,
+    /// The index holds a path that isn't UTF-8, whose file name only git knows.
+    OddName,
     /// The deadline came, or the caller cancelled.
     Late,
 }
 
 impl Tracked {
-    /// The tracked paths from `git ls-files --cached -z`. A path that isn't UTF-8 is read byte for byte as
-    /// Latin-1, as Git for Windows turns it into a file name.
+    /// The tracked paths from `git ls-files --cached -z`. A path that isn't UTF-8 is left out and marks the
+    /// index odd.
     pub fn parse(bytes: &[u8]) -> Tracked {
         let mut paths = HashSet::new();
+        let mut odd = false;
         // folder → name → (tracked, a folder on the way)
         let mut folders: BTreeMap<String, BTreeMap<String, (bool, bool)>> = BTreeMap::new();
         for raw in bytes.split(|b| *b == 0).filter(|p| !p.is_empty()) {
-            let path = as_file_name(raw);
+            let Ok(path) = String::from_utf8(raw.to_vec()) else {
+                odd = true;
+                continue;
+            };
             let mut folder = String::new();
             let mut parts = path.split('/').peekable();
             while let Some(part) = parts.next() {
@@ -84,23 +93,16 @@ impl Tracked {
                 (folder, names)
             })
             .collect();
-        Tracked { paths, folders }
+        Tracked { paths, folders, odd }
     }
-}
-
-/// `bytes` as text: UTF-8 where it is, each other byte as the Latin-1 character it is.
-fn as_file_name(bytes: &[u8]) -> String {
-    let mut text = String::with_capacity(bytes.len());
-    for chunk in bytes.utf8_chunks() {
-        text.push_str(chunk.valid());
-        text.extend(chunk.invalid().iter().map(|b| char::from(*b)));
-    }
-    text
 }
 
 /// Whether git, comparing the work tree at `checkout` with `tracked`, would reach a refused path. The
 /// folders are looked at parents first, so no folder is read through a link before the link is checked.
 pub fn reach(checkout: &Path, tracked: &Tracked, deadline: Instant, cancel: &AtomicBool) -> Reach {
+    if tracked.odd {
+        return Reach::OddName;
+    }
     for (folder, names) in &tracked.folders {
         if Instant::now() >= deadline || cancel.load(Ordering::Relaxed) {
             return Reach::Late;
@@ -138,10 +140,18 @@ pub fn reach(checkout: &Path, tracked: &Tracked, deadline: Instant, cancel: &Ato
     Reach::Clear
 }
 
-/// A small file git reads whole (a `.git` file, `commondir`, a ref), or None when it is over the cap or
-/// can't be read.
+/// A small file git reads whole (a `.git` file, `commondir`, a ref), or None when it is over the cap,
+/// can't be read, or isn't UTF-8: git reads its bytes as they are, so no other reading of them may stand
+/// in for git's.
 fn pointer(file: &Path) -> Option<String> {
-    read_capped(file, MAX_POINTER_BYTES).map(|b| String::from_utf8_lossy(&b).into_owned())
+    read_capped(file, MAX_POINTER_BYTES).and_then(|b| String::from_utf8(b).ok())
+}
+
+/// A path as a git file holds it, less the line breaks at its end, or None when it starts with white
+/// space, which git would keep and no one writes.
+fn path_in(text: &str) -> Option<&str> {
+    let path = text.trim_end_matches(['\r', '\n']);
+    (!path.starts_with(char::is_whitespace)).then_some(path)
 }
 
 /// `named`, as a git file writes it (relative to `base` when relative), or None when `refused` or
@@ -173,11 +183,11 @@ fn repository_refused(folder: &Path) -> bool {
     let Some(text) = pointer(&dot) else {
         return true;
     };
-    // Git takes what follows `gitdir: ` to the end of the file, less the line breaks at its end.
+    // Git takes what follows `gitdir: ` to the end of the file; a file that starts otherwise is no pointer.
     let Some(rest) = text.strip_prefix("gitdir:") else {
         return false;
     };
-    match followed(folder, rest.trim_start_matches(' ').trim_end_matches(['\r', '\n'])) {
+    match path_in(rest.strip_prefix(' ').unwrap_or(rest)).and_then(|named| followed(folder, named)) {
         Some(git) => git_folder_refused(&git),
         None => true,
     }
@@ -195,7 +205,7 @@ fn git_folder_refused(git: &Path) -> bool {
         let Some(text) = pointer(&commondir) else {
             return true;
         };
-        match followed(git, text.trim_end_matches(['\r', '\n'])) {
+        match path_in(&text).and_then(|named| followed(git, named)) {
             Some(common) => common,
             None => return true,
         }
@@ -244,7 +254,7 @@ fn head_refused(git: &Path, common: &Path) -> bool {
         let Some(next) = text.strip_prefix("ref:") else {
             return false;
         };
-        let next = next.trim();
+        let next = next.trim_matches(|c: char| c.is_ascii_whitespace());
         if refused(next) {
             return true;
         }
@@ -381,6 +391,51 @@ mod tests {
         let padding = "\n".repeat(8 * 1024);
         write(&root.join("sub").join(".git"), &format!("gitdir: {NETWORK}{padding}"));
         assert_eq!(look(&root, &["sub"]), Reach::Refused);
+    }
+
+    /// Git reads a `.git` file's path byte for byte, and Git for Windows turns bytes that aren't UTF-8 into a
+    /// file name its own way, so a path that isn't UTF-8 can't be followed as git would: it is refused.
+    #[test]
+    fn a_git_file_whose_path_is_not_utf8_is_refused() {
+        let (_tmp, root) = temp();
+        // `../mod\xe9`: git would open a folder of its own spelling, which may lead anywhere.
+        let dot = root.join("sub").join(".git");
+        std::fs::create_dir_all(dot.parent().unwrap()).unwrap();
+        std::fs::write(&dot, b"gitdir: ../mod\xe9\n").unwrap();
+        assert_eq!(look(&root, &["sub"]), Reach::Refused);
+    }
+
+    #[test]
+    fn a_git_file_whose_path_starts_with_a_space_is_refused() {
+        let (_tmp, root) = temp();
+        write(&root.join("sub").join(".git"), &format!("gitdir:  {NETWORK}\n"));
+        assert_eq!(look(&root, &["sub"]), Reach::Refused);
+        write(&root.join("sub").join(".git"), "gitdir: \t../x\n");
+        assert_eq!(look(&root, &["sub"]), Reach::Refused);
+    }
+
+    #[test]
+    fn a_commondir_that_is_not_utf8_is_refused() {
+        let (_tmp, root) = temp();
+        let dot = root.join("sub").join(".git");
+        git_folder(&dot);
+        std::fs::write(dot.join("commondir"), b"../c\xe9\n").unwrap();
+        assert_eq!(look(&root, &["sub"]), Reach::Refused);
+    }
+
+    #[test]
+    fn an_index_path_that_is_not_utf8_is_odd() {
+        let (_tmp, root) = temp();
+        write(&root.join("a.txt"), "a\n");
+        let t = Tracked::parse(b"a.txt\0d\xe9j\xe0\0");
+        let r = reach(
+            &root,
+            &t,
+            Instant::now() + Duration::from_secs(30),
+            &AtomicBool::new(false),
+        );
+        assert_eq!(r, Reach::OddName);
+        assert!(t.paths.contains("a.txt"));
     }
 
     #[test]

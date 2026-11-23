@@ -39,6 +39,8 @@ const REFTABLE: &str = "This repository stores its branches in a format Changes 
 /// The sentence for a work tree git would follow to a network or device path (`gitbox::worktree`).
 const SUBMODULE_NETWORK: &str =
     "A submodule of this repository points to a network folder, so Changes doesn't read it.";
+/// The sentence for an index holding a path that isn't UTF-8 (`gitbox::worktree`).
+const ODD_NAME: &str = "A file name in this repository isn't UTF-8, so Changes doesn't read it.";
 /// The most `diff --raw` output that is read.
 const MAX_RAW: usize = 8 * 1024 * 1024;
 /// The most `ls-files` output that is read.
@@ -243,6 +245,7 @@ fn compute(
     match worktree::reach(&checkout, &tracked, deadline, cancel) {
         Reach::Clear => {}
         Reach::Refused => return Err(Halt::Err(ChangesError::Refused(SUBMODULE_NETWORK.to_string()))),
+        Reach::OddName => return Err(Halt::Err(ChangesError::Refused(ODD_NAME.to_string()))),
         Reach::Late => return Err(Halt::Late),
     }
 
