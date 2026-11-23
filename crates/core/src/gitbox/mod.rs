@@ -43,6 +43,9 @@ const CONFIG_DEADLINE: Duration = Duration::from_secs(10);
 /// The most output of one `git config` read that is kept.
 const CONFIG_MAX_BYTES: usize = 4 * 1024 * 1024;
 
+/// The commands that look into a submodule's work tree unless told not to; the box always tells them.
+const SUBMODULE_BLIND: &[&str] = &["diff", "diff-files", "diff-index", "status"];
+
 const EMPTY_TREE_SHA1: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const EMPTY_TREE_SHA256: &str = "6ef19b41225c5369f1c104d45d8d85efa9b057b53b14b4b9b939dd74decc5321";
 
@@ -619,11 +622,27 @@ impl GitBox {
             "protocol.allow=never",
             "-c",
             "core.quotepath=off",
+            // A dirty submodule is checked by a git of its own, which reads the submodule's config, filters
+            // and all. Submodules are never looked into.
+            "-c",
+            "diff.ignoreSubmodules=all",
+            "-c",
+            "status.submoduleSummary=false",
+            "-c",
+            "submodule.recurse=false",
         ]);
         for (key, value) in &self.pairs {
             cmd.arg("-c").arg(format!("{key}={value}"));
         }
-        cmd.args(args);
+        match args.split_first() {
+            // The config covers only porcelain `git diff`; the flag covers the plumbing too.
+            Some((first, rest)) if SUBMODULE_BLIND.contains(first) => {
+                cmd.arg(first).arg("--ignore-submodules=all").args(rest);
+            }
+            _ => {
+                cmd.args(args);
+            }
+        }
         scrub(&mut cmd);
         cmd.env("GIT_DIR", &self.sandbox)
             .env("GIT_WORK_TREE", &self.checkout)
@@ -889,6 +908,73 @@ mod tests {
         assert!(files.contains("a.txt") && files.contains("c.md"), "{files}");
         assert_eq!(run(&b, &["rev-list", "--count", &head]).trim(), "1");
         assert_eq!(marker_text(&scratch), "", "a program of the repository ran");
+    }
+
+    /// A diff of a checkout with a dirty submodule would have git check the submodule with a git of its own,
+    /// which reads the submodule's config: a filter there must not run either.
+    #[test]
+    fn a_submodule_config_runs_nothing() {
+        let scratch = Scratch::new();
+        let git = plain(&scratch);
+        let source = scratch.root.join("subsource");
+        std::fs::create_dir(&source).unwrap();
+        git(&source, &["init", "-q", "-b", "main"]);
+        write(&source.join(".gitattributes"), "*.txt filter=evil\n");
+        write(&source.join("s.txt"), "inside\n");
+        git(&source, &["add", "-A"]);
+        git(&source, &["commit", "-q", "-m", "sub"]);
+        repo_with_commit(&scratch);
+        let source_arg = source.to_string_lossy().replace('\\', "/");
+        git(
+            &scratch.repo,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                "-q",
+                &source_arg,
+                "sub",
+            ],
+        );
+        git(&scratch.repo, &["commit", "-q", "-m", "submodule"]);
+        let marker = scratch.marker().to_string_lossy().replace('\\', "/");
+        append(
+            &scratch.repo.join(".git").join("modules").join("sub").join("config"),
+            &format!("[filter \"evil\"]\n\tclean = cat >> '{marker}'\n"),
+        );
+        // Same bytes, a new modified time: git has to hash the file again, through its filter.
+        let file = scratch.repo.join("sub").join("s.txt");
+        let later = SystemTime::now() + Duration::from_secs(120);
+        std::fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        write(&scratch.repo.join("a.txt"), "changed one\n");
+        std::fs::write(scratch.marker(), "").unwrap();
+
+        // The trap works: plain git runs the submodule's filter.
+        git(&scratch.repo, &["diff"]);
+        assert!(
+            marker_text(&scratch).contains("inside"),
+            "plain git ran no filter in the submodule, so this test proves nothing: {:?}",
+            marker_text(&scratch)
+        );
+        std::fs::write(scratch.marker(), "").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(later + Duration::from_secs(60))
+            .unwrap();
+
+        let b = GitBox::open(&scratch.home, &scratch.repo).unwrap();
+        assert!(run(&b, &["diff", "--raw"]).contains("a.txt"));
+        assert!(run(&b, &["diff"]).contains("+changed one"));
+        run(&b, &["status", "--porcelain"]);
+        assert_eq!(marker_text(&scratch), "", "a filter of the submodule ran");
     }
 
     #[test]
