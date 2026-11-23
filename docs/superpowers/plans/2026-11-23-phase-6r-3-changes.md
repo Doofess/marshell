@@ -19,13 +19,15 @@
 ## Global Constraints
 
 - **Git runs for Changes, and for the tree's marks, only through `gitbox::GitBox`.** That means:
-  - `GIT_DIR` is the sandbox;
+  - `GIT_DIR` is the sandbox, and `GIT_INDEX_FILE` the sandbox's own copy of the repository's index;
   - `GIT_CONFIG_NOSYSTEM=1`, and `GIT_CONFIG_GLOBAL` names an empty file;
-  - every inherited `GIT_*` variable is removed first;
+  - `GIT_NO_LAZY_FETCH=1`;
+  - every inherited `GIT_*` variable is removed first, for the config reads too;
   - `-c core.fsmonitor=false -c protocol.allow=never -c core.quotepath=off`, plus the allowlisted values as `-c` pairs;
-  - `--no-ext-diff --no-textconv --ignore-submodules=all` on every diff.
+  - `--no-ext-diff --no-textconv --ignore-submodules=all` on every diff, `uncommitted`'s included.
 
   No other git call is added. The task Review sheet (`tasks.rs`) is unchanged.
+- **No file in a repository is ever written.** `git diff` refreshes and rewrites the index it is given whenever a file's stat moved and its content didn't (`refresh_index_quietly`), and `GIT_OPTIONAL_LOCKS=0` doesn't stop that. So git only ever gets the sandbox's copy of the index.
 - **Every git run has a deadline:** the check `CHECK_BUDGET` = 2 s, the full read `READ_BUDGET` = 5 s, and the marks the rest of the tree's 2 s budget, at most 1 s.
 - **Marshell never fetches, never writes to a repository, and never sends Enter.** Comments and review commands are typed or pasted and wait for the person.
 - **Limits:**
@@ -33,8 +35,9 @@
   - An untracked file over 256 KiB, or one with a NUL in its first 8 KiB, gets a note and no diff.
   - At most 200 untracked files get a section (`MAX_NEW_FILES`).
   - The tree gets at most 2,000 marks.
-  - 100 comments per session, 4,000 characters each.
-  - A pasted message holds 16,000 characters at most, and a comments file 1 MiB.
+  - 50 comments per session, 2,000 characters each, with no control character but `\n` and `\t`; a quote holds 3 lines of 200 characters (code points). Control characters in quoted code become U+FFFD.
+  - A pasted message holds 16,000 characters at most (lower if S16 says so), and a comments file 1 MiB.
+  - `PUT /v1/layout/view` takes bodies up to 8 MiB, since drafts travel in it.
 - **Exact copy:**
   - `…` is U+2026 and `−` is U+2212.
   - Thousands take a comma (`toLocaleString("en-US")`).
@@ -42,16 +45,19 @@
 - **Every UI change works with the keyboard alone and in forced colours.** Overlays call `useCoverPage` (the line menu uses `ContextMenu`, which already does). Colours come from `src/styles/` tokens only, following the good-css rules (logical properties, `oklch`/`color-mix`, motion only inside `prefers-reduced-motion: no-preference`).
 - **Multi-CLI.** Review commands and the paste-or-file choice live in vendor code (`profiles/detect.rs`), one arm per CLI. Antigravity and manifest agents get the written request. A session with no agent gets no review action.
 - **Checks and commits:**
-  - Rust tests run `cargo test -p marshell-core -j 4` (never more jobs). Run `cargo fmt --all` before every Rust commit.
+  - Rust tests run `cargo test -p marshell-core -j 4` (never more jobs). More than one name filter goes after `--` (`cargo test -p marshell-core -j 4 -- gitbox:: git::`). Run `cargo fmt --all` before every Rust commit.
   - `pnpm check:generated` passes after every protocol change; the regenerated `src/generated/` goes in the same commit.
   - Commit messages read `type(scope): sentence.` and end with the two attribution lines the session gives.
   - `git add` and `git commit -F <file>` run as separate commands.
 
 ## Review Focus
 
-1. **A hostile checkout the shell moved into.** Its `.git/config` sets `core.fsmonitor`, a clean filter on a changed file, `diff.external`, and an `[include]` of a missing network path. With Changes and the tree polling it for a minute, none of those programs starts and the include is never opened. Pinned in Task 4 (a marker file stays empty; `git config --list --show-origin` under the sandbox lists only the sandbox and the command line) and in the live check, row 2.
+1. **A hostile checkout the shell moved into, and a busy one.**
+   - Its `.git/config` sets `core.fsmonitor`, a clean filter on a changed file, `diff.external`, and an `[include]` of a missing network path. With Changes and the tree polling it for a minute, none of those programs starts and the include is never opened.
+   - An agent rewrites files with the same bytes while Changes polls: the repository's index keeps its bytes and its modified time, so the agent's own `git commit` never meets Marshell's `index.lock`.
+   - Pinned in Task 4: a marker file stays empty; `git config --list --show-origin` under the sandbox lists only the sandbox and the command line; and `index_is_never_written`. Also in the live check, row 2.
 2. **A refresh while a comment is being written.** The agent rewrites the file, so lines above move. The open box keeps its text and focus, and its draft re-anchors to the moved lines. Pinned in Task 9 (`place` tests) and Task 12 (the box's key stays stable across a new reply).
-3. **A CLI that has bracketed paste off when Send runs** (it sits in a picker or a sub-screen). The comments go by file, as one line, and no newline is ever typed. Pinned in Task 7 (the `bracketed == false` test).
+3. **A CLI that has bracketed paste off when Send runs** (it sits in a picker or a sub-screen). The comments go by file, as one line, and no newline is ever typed. Pinned in Task 7 (`comments_go_by_file_when_bracketed_paste_is_off`, through the fake agent's `capture-input-plain`).
 4. **A huge change:**
    - a lockfile with 50,000 changed lines;
    - 300 new files;
@@ -73,20 +79,22 @@
 | File | Responsibility |
 | --- | --- |
 | `crates/protocol/src/api.rs` | New wire types: `DiffStatus`, `DiffNote`, `DiffFile`, `ChangesKind`, `ChangesRequest`, `ChangesReply`, `ChangeMark`, `ReviewRequest`, `ReviewReply`, `CommentsRequest`, `CommentsForm`, `CommentsReply`, `CommentSide`, `DraftComment`, `ChangesDrafts`, `ChangesSettings`; `TreeReply.changes`, `SessionTabs.changes`, `Settings.changes`. |
-| `crates/core/src/gitbox/mod.rs` (new) | `GitBox`: the sandbox folder per checkout, its env and flags, `run`/`stream`, preflight refusals. |
+| `crates/core/src/gitbox/mod.rs` (new) | `GitBox`: the sandbox folder per checkout with its own copy of the index, its env and flags, `run`/`stream`, preflight refusals. |
 | `crates/core/src/gitbox/config.rs` (new) | The allowlist read from the system, global, repository and worktree config files with `--no-includes`, and the `-c` pairs. |
 | `crates/core/src/gitbox/refs.rs` (new) | `Oid`, `Head`, `Base`; HEAD, loose refs, `packed-refs`, and the base order, read from files. |
 | `crates/core/src/changes/mod.rs` (new) | `Target`, `Check`, `check`, `read`: the cheap check, the full read, notes and caps. |
 | `crates/core/src/changes/raw.rs` (new) | The parser for `diff --raw -z` output. |
-| `crates/core/src/changes/cache.rs` (new) | `ChangesCache`: ≤ 8 checkouts, one lock per checkout, fresh-check reuse, merge-base, tracked-list and walk throttle. |
+| `crates/core/src/changes/cache.rs` (new) | `ChangesCache`: ≤ 8 checkouts, one work lock per checkout that no caller waits on past its deadline, fresh-check reuse, the tree's `marks` that never wait, merge-base, tracked-list and walk throttle. |
 | `crates/core/src/server/changes.rs` (new) | `POST /v1/sessions/{tab}/changes`, `/review`, `/comments`. |
-| `crates/core/src/server/fill.rs` | `busy(st, tab, row, session) -> Option<Busy>` extracted; `fill` keeps its own replies. |
+| `crates/core/src/server/fill.rs` | `async busy(st, tab, row, session) -> Option<Busy>` extracted, hooks read included; `fill` keeps its own replies. |
 | `crates/core/src/server/tree.rs` | Marks in `TreeReply.changes`. |
 | `crates/core/src/profiles/detect.rs` | `review_command`, `review_request`, `comments_delivery`. |
-| `crates/core/src/layout.rs`, `settings.rs`, `paths.rs`, `tasks.rs`, `git.rs` | Drafts bounds, `changes` settings, `git_sandbox_dir`, `task_at`, `stream_env` with captured stderr. |
+| `crates/core/src/layout.rs`, `settings.rs`, `paths.rs`, `tasks.rs`, `git.rs` | Drafts bounds and their lenient load, `changes` settings, `git_sandbox_dir`, `task_at`, `stream_command` with captured stderr. |
+| `crates/core/src/server/mod.rs`, `server/ignores.rs`, `server/files.rs` | The `pub(crate)` re-exports the engine uses; the routes; an 8 MiB body limit on `/v1/layout/view`. |
+| `crates/core/tests/changes_api.rs` (new), `tests/common/`, `src/bin/fake-agent.rs` | The routes' integration tests; `capture-input-plain`, a fake agent with bracketed paste off. |
 | `src/features/pane/*`, `src/lib/keymap.ts`, `bindings.ts`, `appShortcuts.ts`, `navigation/*`, `window/MainWindow.tsx`, `window/PanelIcon.tsx` | A third panel, tabless, with Ctrl+Shift+H / ⌘⇧H. |
 | `src/features/changes/model.ts` (new) | Reply → `Section[]` → `Item[]`; folding; labels. |
-| `src/features/changes/comments.ts` (new) | `anchorOf`, `place`, `citation`, `messageOf`, `cyrb53`. |
+| `src/features/changes/comments.ts` (new) | `cleanComment`, `quoteLine`, `anchorOf`, `place`, `citation`, `messageOf`, `cyrb53`. |
 | `src/features/changes/copy.ts` (new) | Every sentence the panel says. |
 | `src/features/changes/changesApi.ts`, `useChanges.ts`, `changesSettings.tsx`, `ChangesSection.tsx` (new) | Requests, the poll engine, the settings hook and its Settings section. |
 | `src/features/changes/ChangesPanel.tsx`, `DiffList.tsx`, `CommentBox.tsx`, `SendBar.tsx`, `changesMenu.ts`, `useDiffColours.ts`, `review.ts`, `ChangesPanel.css` (new) | The panel. |
@@ -114,7 +122,7 @@ Run `start` with `-CopilotFake -QwenFake -AgyAuth -CodexAuth`. Claude Code stops
 3. **Pass:** the CLI's input holds the text, or its collapsed placeholder, and nothing is submitted:
    - Copilot and Qwen: their fake model's `*-fake.jsonl` gains no request.
    - Codex and agy: a webview screenshot shows no turn.
-4. Repeat with 20 lines of 150 characters (3,000 characters), over each CLI's collapse threshold.
+4. Repeat with 20 lines of 150 characters (3,000 characters), over each CLI's collapse threshold, then with 100 lines of 160 characters (16,000 characters), the paste form's cap. A CLI that keeps the first and not the second sets the cap: record the largest size it kept (try 8,000), and Task 7 uses the smallest such size across the CLIs as `PASTE_MAX`.
 5. Clear the input with Esc, then Ctrl+U, never Enter, or end the session by its PID.
 
 - [ ] **Step 3: Write `docs/spikes/S16-multiline-paste.md` in S15's format**
@@ -134,8 +142,12 @@ git commit -F .superpowers/msg.txt   # "docs(changes): spike S16, a multi-line p
 
 **Files:**
 - Modify: `crates/protocol/src/api.rs` (types below, beside `TreeReply` ~1070 and `SessionTabs` ~520, `Settings` ~1411)
-- Modify: `crates/core/src/layout.rs` (repair ~395-416, validate ~530-575, the `retain` at ~416)
+- Modify: `crates/core/src/layout.rs`:
+  - a `lenient_changes` called from `lenient_session` (~150-171), beside `lenient_tree_state`;
+  - repair ~395-416, validate ~530-575, and the `retain` at ~416.
+- Modify: `crates/core/src/server/mod.rs:1315`: `/v1/layout/view` gets `.layer(DefaultBodyLimit::max(8 * 1024 * 1024))`.
 - Modify: `crates/core/src/settings.rs` (a `lenient_changes` beside `lenient_files` ~83-119)
+- Modify: the TS test fixtures that build a `Settings`, `TreeReply` or `SessionTabs` literal (`pnpm build` lists them)
 - Regenerate: `src/generated/*` via `cargo test -p marshell-protocol`
 
 **Interfaces:**
@@ -185,39 +197,45 @@ pub struct ChangesDrafts { pub checkout: String, pub base: Option<String>, pub c
 Bounds for `validate_layout`. Each error names the field the way the tree's errors do (`pane.sessions.{session}.changes…`).
 - `checkout`: 1 to `MAX_PATH_CHARS` characters.
 - `base`: ≤ 200 characters, no control character.
-- `comments`: ≤ 100 of them.
+- `comments`: ≤ 50 of them.
   - `id`: `is_pane_id`, unique.
   - `path`: `tree_folder_ok`, i.e. relative and `/`-separated.
   - `1 ≤ start ≤ end`, and `1 ≤ rows ≤ 100_000`.
   - `first` and `hash`: 1 to 16 characters of `0-9a-f`.
-  - `quote`: ≤ 3 entries of ≤ 501 characters each, no control character but `\t`.
-  - `text`: 1 to 4,000 characters, no control character but `\n` and `\t`.
+  - `quote`: ≤ 3 entries of ≤ 201 characters each (a sign and 200 characters), no control character but `\t`.
+  - `text`: 1 to 2,000 characters, no control character but `\n` and `\t`.
 - `folds`: ≤ 1,000 keys, each `tree_folder_ok`.
 
-The repair at load drops a bad comment or fold, never the whole session. It drops `changes` when `checkout` is bad. The session `retain` keeps a session whose `changes` is `Some`.
+**Loading.** `FileDoc::deserialize` runs `lenient_pane`, then a strict parse, and `load` falls back to the defaults on any error (`layout.rs:33-42`, `214-222`), so one bad draft must never reach the strict parse.
+- `lenient_changes(value) -> bool` keeps only the comments that parse as `DraftComment` and the folds whose value is a boolean, and returns false when `checkout` isn't a string. `lenient_session` then removes `changes`.
+- After the parse, the repair drops a comment or fold that breaks a bound, never the whole session.
+- The session `retain` keeps a session whose `changes` is `Some`.
 
 - [ ] **Step 1: Write the failing tests** in `layout.rs`'s `mod tests` and `settings.rs`'s tests:
 
 ```rust
 #[test] fn drafts_round_trip_through_layout_json() // a ChangesDrafts with 2 comments and 1 fold saves and loads equal
 #[test] fn drafts_keep_a_session_with_no_tabs()     // tabs empty, tree None, changes Some → the session survives repair
-#[test] fn validate_refuses_a_101st_comment()        // Err contains "pane.sessions.s1.changes.comments holds at most 100"
+#[test] fn validate_refuses_a_51st_comment()         // Err contains "pane.sessions.s1.changes.comments holds at most 50"
 #[test] fn validate_refuses_a_comment_path_with_dotdot() // "../x.ts" → Err mentions "isn't relative"
 #[test] fn validate_refuses_text_with_an_escape()    // "a\u{1b}[201~b" → Err
 #[test] fn repair_drops_only_the_bad_comment()       // 3 comments, one with start 0 → 2 remain
+#[test] fn a_wrongly_typed_draft_costs_only_that_draft() // a file whose comment has "start":"x" and a fold "a":1 loads: the other sessions' tabs and the other comment survive
 #[test] fn changes_settings_default_off_and_lenient() // {"changes":{"wrap":"yes"}} → wrap false, hide_whitespace false
 ```
 
+In `crates/core/tests/layout_api.rs`: `a_view_of_three_megabytes_is_saved` (a PUT of 3 MiB of drafts answers 204, not 413).
+
 - [ ] **Step 2: Run them to see them fail**
 
-Run: `cargo test -p marshell-core -j 4 layout:: settings::`
+Run: `cargo test -p marshell-core -j 4 -- layout:: settings::`
 Expected: FAIL (the types don't exist yet).
 
 - [ ] **Step 3: Add the types, bounds, repair and lenient parse**
 
 - [ ] **Step 4: Regenerate and run**
 
-Run: `cargo test -p marshell-protocol -j 4`, then `cargo test -p marshell-core -j 4 layout:: settings::`, then `pnpm check:generated`.
+Run: `cargo test -p marshell-protocol -j 4`, then `cargo test -p marshell-core -j 4 -- layout:: settings::`, then `pnpm check:generated`.
 Expected: PASS. `pnpm build` may now fail where TS builds a `TreeReply` or `SessionTabs` literal; add `changes: []` to those test fixtures only.
 
 - [ ] **Step 5: Commit** `feat(changes): the wire types, saved drafts and the Changes settings.`
@@ -228,9 +246,14 @@ Expected: PASS. `pnpm build` may now fail where TS builds a `TreeReply` or `Sess
 
 **Files:**
 - Create: `crates/core/src/gitbox/refs.rs`, `crates/core/src/gitbox/mod.rs` (only `pub mod refs;` for now); `crates/core/src/lib.rs` gains `pub mod gitbox;`
+- Modify: `crates/core/src/server/mod.rs` and `server/ignores.rs`. `mod ignores;` and `mod files;` are private, so make the items below `pub(crate)` in their files and re-export them from `server/mod.rs`:
+  - `pub(crate) use ignores::{common_dir, git_dir, read_capped, walk_unignored, Ignores, MAX_POINTER_BYTES};`
+  - `pub(crate) use files::{links_refused, refused};`
+
+  Tasks 4 and 5 import them as `crate::server::…`.
 
 **Interfaces:**
-- Consumes: `server::ignores::git_dir` and `common_dir` for the tests' fixtures (make `common_dir` `pub(crate)`). Use `read_capped` with the 4 KiB `MAX_POINTER_BYTES` for single-ref files.
+- Consumes: `crate::server::{git_dir, common_dir}` for the tests' fixtures. Use `crate::server::read_capped` with the 4 KiB `MAX_POINTER_BYTES` for single-ref files.
 - Produces:
 
 ```rust
@@ -300,7 +323,7 @@ Expected: PASS.
 - Create: `crates/core/src/gitbox/config.rs`; extend `gitbox/mod.rs`.
 
 **Interfaces:**
-- Consumes: Task 3's `refs`; `ignores::git_dir`, `common_dir`; `files::links_refused`, `files::refused`.
+- Consumes: Task 3's `refs`; `crate::server::{git_dir, common_dir, links_refused, refused, read_capped}` (Task 3's re-exports).
 - Produces:
 
 ```rust
@@ -320,23 +343,25 @@ impl GitBox {
 pub const ALLOWED: &[(&str, Allowed)]; // config.rs
 ```
 
-**The sandbox.** It lives at `<git_sandbox_dir>/<16 hex of a hash of the checkout path>`, lowercased on Windows. It holds:
+**The sandbox.** It lives at `<git_sandbox_dir>/<16 hex of FNV-1a 64 of the checkout path>`, the path lowercased on Windows. The hash is written by hand, since `DefaultHasher` isn't stable across Rust releases and the folder must keep its name. It holds:
 - `HEAD` = `ref: refs/heads/none\n`, and an empty `refs/`;
 - `config`: `[core] repositoryformatversion = 0, bare = false`, or `1` with `[extensions] objectformat = sha256`;
-- a copy of `<common>/shallow` and of `<common>/info/attributes`, each when it exists, capped at 1 MiB (over the cap, Unsupported "This repository's history file is too large for Changes.");
+- `index`: a copy of `<git_dir>/index`, with every `sharedindex.<id>` it names (split index) copied beside it. The copy is made again whenever the source's length or modified time changes, and it gets the source's modified time (`File::set_modified`), so git's racy-clean check judges it as it would the source. Git may refresh and rewrite this copy; that is the point of the copy.
+- a copy of `<common>/shallow` and of `<common>/info/attributes`, each when it exists, capped at 1 MiB (over the cap, Unsupported "This repository's history file is too large for Changes."). A copy is deleted when its source is gone.
 - next to the sandboxes, one empty file `empty-config`.
 
-Each file is rewritten when its source changes.
+Every file is written through a temp file in the same folder and renamed into place.
 
 **The run.** `git -C <checkout> -c core.fsmonitor=false -c protocol.allow=never -c core.quotepath=off [-c k=v for each pair] <args>` runs with:
-- every inherited `GIT_*` variable removed;
+- every inherited `GIT_*` variable removed, picked by a pure `git_vars(vars: impl Iterator<Item = (OsString, OsString)>) -> Vec<OsString>`;
 - `GIT_DIR`, `GIT_WORK_TREE=<checkout>`;
-- `GIT_INDEX_FILE=<git_dir>/index`, `GIT_OBJECT_DIRECTORY=<common>/objects`;
+- `GIT_INDEX_FILE=<sandbox>/index`, `GIT_OBJECT_DIRECTORY=<common>/objects`;
 - `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=<empty-config>`, `GIT_ATTR_NOSYSTEM=1`;
-- `GIT_NO_REPLACE_OBJECTS=1`, `GIT_OPTIONAL_LOCKS=0`, `GIT_TERMINAL_PROMPT=0`;
+- `GIT_NO_REPLACE_OBJECTS=1`, `GIT_NO_LAZY_FETCH=1`, `GIT_OPTIONAL_LOCKS=0`, `GIT_TERMINAL_PROMPT=0`;
+- in debug builds only, `GIT_TRACE2_EVENT` set from `MARSHELL_GIT_TRACE` when that is set, for the live check;
 - `CREATE_NO_WINDOW` on Windows, as `git::command` sets it.
 
-**The config read.** It runs with the cwd at the sandbox, `GIT_DIR` = the sandbox, and no `NOSYSTEM`:
+**The config read.** It runs with the cwd at the sandbox, `GIT_DIR` = the sandbox, the same `GIT_*` scrub, and no `NOSYSTEM`:
 ```
 git config --system --no-includes -z --get-regexp <re>
 git config --global --no-includes -z --get-regexp <re>
@@ -354,13 +379,16 @@ The last runs only when the repository's `extensions.worktreeconfig` is true. La
 | `core.ignorecase`, `core.symlinks`, `core.filemode`, `core.precomposeunicode`, `core.trustctime`, `core.longpaths`, `core.fscache`, `diff.indentheuristic` | true, false, yes, no, on, off, 1, 0 |
 | `core.checkstat` | default, minimal |
 | `diff.renames` | the booleans, copies, copy |
-| `diff.renamelimit` | an integer 0 to 100000 |
+| `diff.renamelimit` | an integer 0 to 1000 (git's default; a higher limit can keep `-M` past the 2 s deadline on every poll) |
 | `diff.algorithm` | myers, minimal, patience, histogram |
 
-**Preflight in `open`:**
+**Preflight in `open`** (and again in `refresh` when a source file changed):
 - `NoRepo`: no git dir.
-- `Refused("This repository reads its objects from a network folder, so Changes doesn't read it.")`: `<common>/objects/info/alternates` names a path that `files::refused` refuses (network or device), or a link that `links_refused` refuses.
-- `Unsupported("This repository stores its branches in a format Changes can't read yet.")`: reftable.
+- `Unsupported("Changes needs git 2.32 or later.")`: `git --version` (read once per process) is older. `GIT_CONFIG_GLOBAL` arrived in 2.32.
+- `Refused("This repository reads its objects from a network folder, so Changes doesn't read it.")`:
+  - `<common>/objects/info/alternates`, read as git reads it: each line taken relative to its own objects folder, and every listed folder's own `info/alternates` followed, 5 levels deep. A line that names a path `files::refused` refuses (network or device), a quoted line, or a line that names a link `links_refused` refuses is refused.
+  - `links_refused` also refuses `objects`, `objects/info`, `objects/pack`, the index, each `sharedindex.*`, `shallow`, `packed-refs` and `info/attributes`, since a link to a UNC path there reaches SMB.
+- `Unsupported("This repository stores its branches in a format Changes can't read yet.")`: reftable, from the `reftable` folder or from `extensions.refstorage = reftable`.
 - `Unsupported("This repository uses a git format Changes can't read yet.")`: `repositoryformatversion` > 1, or an `objectformat` other than sha1/sha256.
 
 - [ ] **Step 1: Write the failing tests** (`gitbox/mod.rs` `mod tests`, using real git like `tasks.rs`'s tests; a helper builds the S15 trap):
@@ -372,8 +400,14 @@ The last runs only when the repository's `extensions.worktreeconfig` is true. La
 #[test] fn crlf_file_is_unchanged_under_autocrlf_true()  // repo config core.autocrlf=true, a CRLF file committed → diff --raw empty
 #[test] fn a_linked_worktree_uses_its_own_index()
 #[test] fn sha256_repo_gets_objectformat_in_the_sandbox()
+#[test] fn index_is_never_written()                     // touch two tracked files without changing their bytes; check and read three times → <git_dir>/index has the same bytes and modified time, and no index.lock ever appears
+#[test] fn a_split_index_is_copied_with_its_shared_file()
 #[test] fn alternates_on_a_network_path_are_refused()   // objects/info/alternates = \\\\server\\share\\objects → Refused
+#[test] fn nested_alternates_are_followed_and_refused()  // a local alternate whose own alternates names \\\\server\\share → Refused
+#[test] fn reftable_in_the_config_is_unsupported()       // extensions.refstorage = reftable, no reftable folder
 #[test] fn shallow_is_copied_and_rev_list_stops_there()
+#[test] fn a_stale_shallow_copy_is_removed()             // delete <common>/shallow, refresh → the sandbox has none
+#[test] fn renamelimit_over_1000_is_dropped()
 #[test] fn inherited_git_env_is_removed()               // the pure `git_vars(vars: impl Iterator<Item = (OsString, OsString)>) -> Vec<OsString>` picks GIT_EXTERNAL_DIFF and GIT_DIR, not PATH (no process env is set in tests)
 #[test] fn exit_128_reports_gits_sentence()             // diff a missing object → BoxError::Git containing "bad object" or "unknown revision"
 ```
@@ -387,7 +421,7 @@ Expected: FAIL.
 
 - [ ] **Step 4: Run them again with the `git::` tests too**
 
-Run: `cargo test -p marshell-core -j 4 gitbox:: git::`
+Run: `cargo test -p marshell-core -j 4 -- gitbox:: git::`
 Expected: PASS.
 
 - [ ] **Step 5: Commit** `feat(changes): a git sandbox that reads no repository config and runs no config program.`
@@ -401,7 +435,7 @@ Expected: PASS.
 - Modify: `crates/core/src/tasks.rs`:
   - make `untracked_diff`, `new_file_header`, `cut_diff`, `MAX_DIFF`, `MAX_UNTRACKED` and `BINARY_SNIFF` `pub(crate)`;
   - add `pub fn task_at(home: &Path, checkout: &Path) -> Option<Task>`, the task whose `path` is the checkout (`projects::is_inside` both ways, case-insensitive on Windows).
-- Modify: `crates/core/src/server/ignores.rs`: make `Ignores`, `Ignores::new` and `walk_unignored` `pub(crate)`.
+- Uses Task 3's re-exports `crate::server::{Ignores, walk_unignored}`.
 
 **Interfaces:**
 - Consumes: Tasks 2-4.
@@ -420,14 +454,25 @@ pub struct Check { pub stamp: u64, pub head: Head, pub base: Option<Base>, pub f
 pub enum ChangesError { NoRepo, Refused(String), Failed(String) }
 pub fn reply_stamp(check: &Check, hide_whitespace: bool) -> String; // format!("{:016x}{}", check.stamp, if hide_whitespace { "w" } else { "" })
 // cache.rs
-pub struct ChangesCache { /* Mutex<Vec<(PathBuf, Arc<Mutex<Entry>>)>>, ≤ 8, least recently used dropped */ }
+pub const CHECK_FRESH: Duration = Duration::from_secs(1);
+pub struct ChangesCache { /* Mutex<Vec<(PathBuf, Arc<Slot>)>>, ≤ 8, least recently used dropped */ }
+// struct Slot { work: Mutex<Entry>, last: Mutex<Option<(Instant, Arc<Check>)>>, running: AtomicBool }
 impl ChangesCache {
     pub fn new() -> Self;
-    /// A check younger than 1 s for this checkout is reused.
+    /// A check younger than CHECK_FRESH for this checkout is reused.
     pub fn check(&self, home: &Path, target: &Target, deadline: Instant, cancel: &AtomicBool) -> Result<Arc<Check>, ChangesError>;
     pub fn read(&self, home: &Path, target: &Target, hide_whitespace: bool, deadline: Instant, cancel: &AtomicBool) -> Result<ChangesReply, ChangesError>;
+    /// For the tree: the last finished check of any age, at once. When it is older than CHECK_FRESH, or there is none, and no check runs, it starts one in `spawn_blocking` with CHECK_BUDGET, whose result the next poll gets.
+    pub fn marks(self: &Arc<Self>, home: PathBuf, target: Target) -> Option<Arc<Check>>;
 }
 ```
+
+**Locks.** The outer `Mutex<Vec<…>>` is held only to find or insert a slot, and `last` only to read or swap it. No lock is held across a git run except `work`, which serializes the git runs for one checkout.
+- `check` and `read` take `work` with `try_lock` in a loop (10 ms sleeps) until their deadline.
+- Once they hold it, they look at `last` again, since another caller may just have finished.
+- When the deadline passes while they wait, they return `last` if there is one, else `Failed("Git took too long to read the changes.")`.
+
+The tree never waits: it uses `marks`.
 
 **`parse_raw`** reads records of the form `:<mode> <mode> <oid> <oid> <letter>[score]\0<path>\0`, plus a second `<path>\0` for `R` and `C`.
 - Letters map: `A`→Added, `D`→Deleted, `M`, `T` and `U`→Modified, `R`→Renamed (old_path = first path), `C`→Added (old_path set).
@@ -440,16 +485,18 @@ impl ChangesCache {
 4. `diff --raw -z -M --no-ext-diff --no-textconv --ignore-submodules=all <from>`, capped at 8 MiB.
 5. `symlink_metadata` (length, modified time) for each entry that isn't Deleted.
 6. The tracked set from `ls-files --cached -z`, cached by the index file's (length, modified time).
-7. The untracked files: `walk_unignored(Ignores::new(checkout, checkout), checkout, …)` minus the tracked set, minus links, sorted, with the first `MAX_NEW_FILES` kept and the rest counted in `more_new`. When the previous walk took over 250 ms, the walk runs at most every 10 s and the last list is reused in between.
+7. The untracked files: `walk_unignored(&mut Ignores::new(checkout, checkout), checkout, deadline, cancel, &|rel| tracked.contains(rel), each)`, minus links, sorted, with the first `MAX_NEW_FILES` kept and the rest counted in `more_new`.
+   - When the previous walk took over 250 ms, the walk runs at most every 10 s and the last list is reused in between.
+   - A walk stopped by `Stopped::Deadline` or `Cancelled` keeps the last full list (none: an empty one). So a cut walk never moves the stamp, which would make every poll a full read.
 
 `stamp` hashes the head, the base, `from`, the raw bytes, the stats, and the new files with their stats (`DefaultHasher`).
 
 **`read`** builds the reply from a fresh `check`:
-- **The patch:** `diff --no-color --no-ext-diff --no-textconv --ignore-submodules=all -M --src-prefix=a/ --dst-prefix=b/ [-w] <from>`, cut by `cut_diff(MAX_DIFF)`.
+- **The patch:** `diff --no-color --no-ext-diff --no-textconv --ignore-submodules=all -M --src-prefix=a/ --dst-prefix=b/ [-w] <from>`, collected up to `MAX_DIFF + 1` bytes. `cut_diff(MAX_DIFF)` runs only when the text is longer than `MAX_DIFF`: it panics on a shorter one (`tasks.rs:277-278`).
 - **New files:** each gets `untracked_diff(checkout, path)` appended while the total stays under `MAX_DIFF`, and `truncated` is set past it.
 - **Notes:** a patch section with `Binary files … differ` gets `DiffNote::Binary`, and an untracked file over the cap or with a NUL gets `Large` or `Binary`, as `untracked_diff` decides today.
 - **`ahead`:** `rev-list --count <from>..<head>` when `from` is the merge base; 0 otherwise.
-- **`uncommitted`:** `diff --raw -z --ignore-submodules=all <head>` gives any byte (stop at the first), or there are new files. An unborn repository is uncommitted when there is any entry.
+- **`uncommitted`:** `diff --raw -z --no-ext-diff --no-textconv --ignore-submodules=all <head>` gives any byte (stop at the first), or there are new files. An unborn repository is uncommitted when there is any entry.
 - **The stamp:** `reply_stamp(&check, hide_whitespace)`.
 - **Errors:** a `BoxError::Git` becomes `Failed(sentence)`, and a deadline becomes `Failed("Git took too long to read the changes.")`.
 
@@ -469,7 +516,12 @@ impl ChangesCache {
 #[test] fn read_notes_binary_and_large_new_files()
 #[test] fn hide_whitespace_drops_whitespace_only_hunks()            // reply.diff has the header and no @@ for that file
 #[test] fn a_task_checkout_compares_with_its_base_branch()
-#[test] fn cache_reuses_a_check_younger_than_a_second()             // two calls inside 1 s run git once (count via a GitBox test hook or the marker of a wrapper)
+#[test] fn cache_reuses_a_check_younger_than_a_second()             // two calls inside 1 s: GitBox::runs() unchanged by the second
+#[test] fn a_detached_head_compares_with_the_base()                 // head.branch None, from = merge base, ahead counted
+#[test] fn a_late_check_says_git_took_too_long()                    // a deadline already past, no last check → Failed("Git took too long to read the changes.")
+#[test] fn a_caller_waiting_on_the_lock_gets_the_last_check()       // hold `work` from a thread; check with a 50 ms deadline → Ok(last)
+#[test] fn marks_answer_at_once_and_refresh_in_the_background()     // first marks() None, then Some after the background run
+#[test] fn a_cut_walk_keeps_the_last_list_and_the_stamp()
 ```
 
 - [ ] **Step 2: Run**
@@ -493,48 +545,57 @@ Expected: PASS.
 - Create: `crates/core/src/server/changes.rs` (the `changes` handler; Task 7 adds two more)
 - Modify: `crates/core/src/server/mod.rs`:
   - `.route("/v1/sessions/{tab}/changes", post(changes::changes))` beside the tree's route (~1354);
-  - `AppState` gains `changes: Arc<ChangesCache>` and `pub fn changes(&self) -> &ChangesCache`.
+  - `AppState` gains `changes: Arc<ChangesCache>`, `pub fn changes(&self) -> &ChangesCache` and `pub fn changes_arc(&self) -> Arc<ChangesCache>`.
 - Modify: `crates/core/src/server/tree.rs`: `TreeReply.changes`.
 
+- Create: `crates/core/tests/changes_api.rs`. The router tests live here, because `CARGO_BIN_EXE_fake-agent` exists only for integration tests. Reuse `capturing_in` and `typed` from `tests/attachments.rs` by moving them into `tests/common/`.
+
 **Interfaces:**
-- Consumes: `files::{row_of, project_root, checkout_of, refused, links_refused, Root}`, `session.current_cwd()`, `tasks::task_at`, Task 5.
+- Consumes: `files::{row_of, checkout_of, checkout_above, refused, links_refused}` (make `checkout_of` and `checkout_above` `pub(super)`), `session.current_cwd()`, `tasks::task_at`, Task 5.
 - Produces:
   - `POST /v1/sessions/{tab}/changes` (`ChangesRequest` → `ChangesReply`);
   - `TreeReply.changes`.
 
-**`changes`:**
-- No session or no folder: 404, as the tree answers.
-- `Root::Plain(f)`: `NoRepo`, folder `f`.
-- A folder `files::refused` refuses: `Refused` with "{folder} is on a network share, so Changes doesn't read it.".
-- `Root::Checkout(c)`: `moved = false`. `Root::InCheckout { checkout, .. }`: `moved = checkout_of(row) != Some(checkout)`.
+**Which checkout (decision 4).** `pub(super) fn changes_target(row: &SessionInfo, reported: Option<PathBuf>) -> Result<Target, ChangesKind>` doesn't use `project_root`: that function keeps a launch checkout ahead of the shell's folder (`files.rs:919-922`), and its `first_folder` drops a refused folder and falls back to the launch one (`files.rs:906-909`). The candidate folder is the reported folder when there is one, else the launch folder (`row.cwd`).
+- **Refused:** a candidate that `refused` or `links_refused` refuses gives `Refused` with "{folder} is on a network share, so Changes doesn't read it.".
+- **Otherwise:**
+  - `checkout_above(candidate)` gives the checkout (6t decision 11's home rule included);
+  - none gives `NoRepo` for that folder;
+  - `moved` is the checkout differing from `checkout_of(row)`.
+- No session, or no folder at all, gives 404, as the tree answers.
 - In `spawn_blocking`, with a cancel flag the handler's drop sets (as the search does), it first runs `cache.check`.
 - When `req.stamp` equals `reply_stamp(&check, req.hide_whitespace)`, it answers `kind: Same` with only `stamp` and `folder` filled. Otherwise it runs `cache.read`, which reuses that check.
 
-**The tree:** after listing, when the root is `Checkout` or `InCheckout`, the handler runs `cache.check` with `min(1 s, what is left of the tree's budget)`.
-- The marks are the entries that aren't Deleted, plus the new files, whose path is under the tree's root. The root's prefix is stripped, and at most 2,000 are kept.
-- A failed or late check gives `changes: []`.
+**The tree.** Every tree reply carries marks, whether its folders came back `Listed` or `Same`: an edit doesn't change its folder's modified time, so a `Same` reply must still carry new marks.
+- When the tree's root is `Checkout` or `InCheckout`, the handler calls `st.changes_arc().marks(home, target)` for that checkout, which never waits (Task 5).
+- The marks are the check's entries that aren't Deleted, plus its new files, whose path is under the tree's root. The root's prefix is stripped, and at most 2,000 are kept.
+- No check yet gives `changes: []`, and the next poll has them.
 
-- [ ] **Step 1: Write the failing tests** (router tests in `server/changes.rs`, in the style of `tree.rs`'s, using a temp home and a launched shell session over a temp repo):
+- [ ] **Step 1: Write the failing tests.** `changes_target` gets unit tests in `server/changes.rs`; the router tests go in `tests/changes_api.rs`, using a temp home and a fake shell that reports folders with OSC 9;9, as the tree's tests do:
 
 ```rust
+#[test] fn target_prefers_the_reported_folder_over_a_launch_checkout() // launch in A, reported B → B, moved true
+#[test] fn target_refuses_a_reported_network_folder()                   // reported \\wsl.localhost\Ubuntu\home → Refused, the exact sentence, never A
 #[tokio::test] async fn changes_lists_a_checkout_and_then_answers_same()
 #[tokio::test] async fn changes_in_a_plain_folder_is_no_repo()
-#[tokio::test] async fn changes_follows_the_shell_into_another_checkout_and_says_moved()
+#[tokio::test] async fn changes_follows_the_shell_from_one_checkout_into_another() // launch in repo A, the shell reports repo B → folder B, moved true
 #[tokio::test] async fn changes_for_an_unknown_tab_is_404()
+#[tokio::test] async fn changes_needs_the_token()                       // no bearer → 401, as local-api.md requires
 #[tokio::test] async fn tree_marks_are_relative_to_the_root_and_skip_deleted()
+#[tokio::test] async fn tree_marks_reach_a_same_reply_after_an_edit()  // poll, edit a file, poll until the marks change while the folder is Same
 #[tokio::test] async fn tree_marks_are_empty_outside_git()
 ```
 
 - [ ] **Step 2: Run**
 
-`cargo test -p marshell-core -j 4 server::changes server::tree`
+Run: `cargo test -p marshell-core -j 4 -- server::changes server::tree`, then `cargo test -p marshell-core -j 4 --test changes_api`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement**
 
 - [ ] **Step 4: Run them again with the existing `layout_api` suite**
 
-Run: `cargo test -p marshell-core -j 4 server::changes server::tree` and `cargo test -p marshell-core -j 4 --test layout_api`
+Run: the two commands of Step 2, and `cargo test -p marshell-core -j 4 --test layout_api`
 Expected: PASS.
 
 - [ ] **Step 5: Commit** `feat(changes): the Changes route and the tree's change marks.`
@@ -545,8 +606,11 @@ Expected: PASS.
 
 **Files:**
 - Modify: `crates/core/src/profiles/detect.rs` (beside `attachment_ref` ~509)
-- Modify: `crates/core/src/server/fill.rs`: extract the refusals (~86-119) into `pub(super) enum Busy { Ended, Elevated, Paused, Waiting }` and `pub(super) fn busy(st: &AppState, tab: &str, row: &SessionInfo, session: &Session) -> Option<Busy>`. `fill` maps them back to its own replies: `"ended"`, `API_WRITE_COPY`, `"It is paused."` and `"waiting"`, unchanged.
-- Modify: `crates/core/src/server/changes.rs`, `server/mod.rs` (two routes)
+- Modify: `crates/core/src/server/fill.rs`: extract the refusals (~66-119) into `pub(super) enum Busy { Ended, Elevated, Paused, Waiting }` and `pub(super) async fn busy(st: &AppState, tab: &str, row: &SessionInfo, session: &Session) -> Option<Busy>`.
+  - It includes the `spawn_blocking` read of the session's `hooks` (`fill.rs:66-79`), which `hooked && !started` needs (`fill.rs:108-115`).
+  - `fill` maps the values back to its own replies, unchanged: `"ended"`, `API_WRITE_COPY`, `"It is paused."` and `"waiting"`.
+- Modify: `crates/core/src/bin/fake-agent.rs`: a mode `capture-input-plain <f>`, like `capture-input` but never writing `ESC[?2004h`, for the bracketed-paste-off test.
+- Modify: `crates/core/src/server/changes.rs`, `server/mod.rs` (two routes), `crates/core/tests/changes_api.rs`
 
 **Interfaces:**
 - Produces:
@@ -573,7 +637,7 @@ pub fn comments_delivery(agent: Option<&str>) -> CommentsDelivery; // one arm pe
 - **Paste form** when all hold:
   - `comments_delivery(agent) == Paste`;
   - `session.bracketed_paste()` is true;
-  - the text is ≤ 16,000 characters.
+  - the text is ≤ `PASTE_MAX` characters: 16,000, or the smaller size S16 recorded.
 
   The bytes are `paste_pieces(&[&text.replace('\n', "\r")], true)`, as xterm.js pastes.
 - **Otherwise, the file form:**
@@ -588,50 +652,48 @@ pub fn comments_delivery(agent: Option<&str>) -> CommentsDelivery; // one arm pe
 #[test] fn review_commands_per_cli()          // claude "/code-review", codex/copilot/qwen "/review", antigravity None, Some("crush") None, None None
 #[test] fn review_request_names_the_base()
 #[test] fn comments_delivery_per_cli()        // the S16 table; unknown → File
-// server/changes.rs (router tests with a fake session whose written bytes are captured, as attachments' tests do)
+// tests/changes_api.rs (fake-agent `capture-input`, whose written bytes are captured, as tests/attachments.rs does)
 #[tokio::test] async fn review_types_the_command_with_no_enter()      // bytes == b"/code-review", no \r or \n
 #[tokio::test] async fn review_for_a_shell_with_no_agent_is_refused() // 409 "no_agent"
 #[tokio::test] async fn comments_paste_bracketed_with_cr_line_breaks() // bracketed on, Paste agent → ESC[200~a\rb ESC[201~
-#[tokio::test] async fn comments_go_by_file_when_bracketed_paste_is_off() // bracketed off → a file exists, bytes are one line, no \r or \n
-#[tokio::test] async fn comments_over_16000_characters_go_by_file()
+#[tokio::test] async fn comments_go_by_file_when_bracketed_paste_is_off() // `capture-input-plain` → a file exists, bytes are one line, no \r or \n
+#[tokio::test] async fn comments_over_paste_max_go_by_file()
 #[tokio::test] async fn comments_refuse_an_escape_or_a_cr()            // "a\u{1b}[201~b", "a\rb" → 400
-#[tokio::test] async fn comments_wait_while_the_agent_asks()           // live NeedsPermission → 409 "waiting", nothing written
-#[test] fn fill_still_replies_as_before()                               // the extracted busy() keeps fill's four replies (existing fill tests pass unchanged)
+#[tokio::test] async fn comments_wait_while_the_agent_asks()           // a permission hook posted through the hook route → 409 "waiting", nothing written
+#[tokio::test] async fn review_and_comments_need_the_token()           // no bearer → 401 for both
 ```
+
+The existing `--test fill` suite must pass unchanged, since the extracted `busy()` keeps fill's four replies.
 
 - [ ] **Step 2: Run**
 
-`cargo test -p marshell-core -j 4 detect:: server::changes server::fill`
-Expected: FAIL.
+Run: `cargo test -p marshell-core -j 4 -- detect::`, then `cargo test -p marshell-core -j 4 --test changes_api` and `cargo test -p marshell-core -j 4 --test fill`
+Expected: the new tests FAIL; `fill` passes.
 
 - [ ] **Step 3: Implement**
 
 - [ ] **Step 4: Run them again, then the whole crate**
 
-Run: the same filter, then `cargo test -p marshell-core -j 4` and `cargo clippy --workspace --all-targets -- -D warnings`.
+Run: the commands of Step 2, then `cargo test -p marshell-core -j 4` and `cargo clippy --workspace --all-targets -- -D warnings`.
 Expected: PASS.
 
 - [ ] **Step 5: Commit** `feat(changes): the review command and the comments, pasted without Enter or written to a file.`
 
 ---
 
-### Task 8: A third panel, tabless, with its key
+### Task 8a: A third panel and its key
 
 **Files (the inventory from planning):**
 - Modify:
   - `src/features/pane/panels.ts`: `PANELS`, `PANEL_LABEL`, `PANEL_COMMAND`, `stackOf` (filled valid for `shown.length >= 2`), `activeIn` and `panelTabs` (Changes: none).
-  - `paneState.ts`: limits; `fill` stays a no-op under 2 shown; add the `drafts` action below.
-  - `paneRules.ts`, `focusPane.ts` (Changes' target: `[data-changes-item][tabindex="0"]`, else its empty-state button).
+  - `paneState.ts`: limits; `fill` stays a no-op under 2 shown.
   - `PanelStack.tsx`: a `useLayoutMotion` per panel. Each divider `i` (between `drawn[i-1]` and `drawn[i]`) is live on its own and moves only its pair's weights. `onDividerGone` fires when a focused divider stops being live.
   - `SidePane.tsx`: `plus` becomes optional, and a new optional `title?: string` renders `<span className="side-pane__title" role="heading" aria-level={2}>` in place of the tablist when given.
-  - `paneCommands.ts`.
   - `src/features/window/MainWindow.tsx`, `PanelIcon.tsx` (the glyph below).
   - `src/lib/keymap.ts`, `bindings.ts`, `appShortcuts.ts`.
   - `src/lib/navigation/names.ts`, `machine.ts`, `useNavigation.ts`.
   - `src/features/appearance/settingsSync.ts`.
-  - `src/features/sessions/LiveApp.tsx` (togglePanel, nav ids ~1682, `renderPanel` renders a placeholder `EmptyPanel` for Changes until Task 11).
-  - `src/features/pane/EmptyPanel.tsx`: `actions: readonly EmptyAction[]` (0 to 2).
-  - `src/styles/noScrollInMainWindow.test.ts`: `.changes__list` allowed. Its comment says "the Changes panel's diff list (`.changes__list`): a diff is read by scrolling it, both ways, with the themed scrollbar visible, like the preview body".
+  - `src/features/sessions/LiveApp.tsx` (togglePanel, nav ids ~1682, `renderPanel` renders a placeholder `EmptyPanel` for Changes until Task 11a).
 - Modify (Rust): `crates/core/src/layout.rs`:
   - `PANEL_IDS: [&str; 3] = ["browser", "files", "changes"]`;
   - `repair_panels` and `validate_panels` accept `filled` when ≥ 2 panels are shown;
@@ -646,16 +708,13 @@ Expected: PASS.
   - `PanelId` includes `"changes"`;
   - `PANEL_COMMAND.changes = "changes-panel"`;
   - `Binding.cmdShift?: true`;
-  - nav top id `"panel-changes"` named "Changes";
-  - `PaneAction` gains `{ type: "drafts"; session: string; drafts: ChangesDrafts | null }`, which sets `sessions[session].changes` (null deletes it) and caps at 100 comments and 1,000 folds.
+  - nav top id `"panel-changes"` named "Changes".
 
 **Keys:**
 - keymap: `{ id: "changes-panel", label: "Changes panel", group: "Window", binding: { code: "KeyH", mac: { code: "KeyH", cmdShift: true } } }`.
 - `chordOf`: on mac, `cmdShift` gives `{ meta: true, shift: true, ctrl: false, alt: false }`.
 - `shortcutLabel`: `⌘⇧H`.
 - Windows and Linux: Ctrl+Shift+H.
-
-**Tab commands.** `commandPanel` (used by `paneRun` in LiveApp ~1173) never answers `changes`, since Changes holds no tabs. With the keyboard in Changes, Ctrl+Tab, Ctrl+Shift+Tab and the palette's tab commands act on the tab panel that last had the keyboard (a new `lastTabPanel` ref beside `lastPanel`), else on the first shown panel with tabs. Focus stays in Changes, as it stays in the terminal (decision 22).
 
 **Glyph** (16×16, stroke as the others):
 ```html
@@ -679,8 +738,8 @@ it("draws two live dividers for three panels", () => { /* html has 2 role="separ
 it("shows a Changes button with its tooltip", () => { /* title "Show Changes (Ctrl+Shift+H)", aria-expanded false, data-nav-top="panel-changes" */ });
 // SidePane.test.tsx
 it("a tabless panel shows its title and no plus", () => { /* panel "changes", tabs [], title "4 files · +120 −18" → no role="tablist", no data-pane-plus */ });
-// paneCommands.test.ts (or wherever commandPanel's tests live)
-it("tab commands from Changes act on the last tab panel", () => { /* commandPanel(["browser","files","changes"], "changes", "files", hasTabs) === "files" */ });
+// names.test.ts / machine.test.ts
+it("the nav ring names the Changes button", () => { /* "panel-changes" → "Changes" */ });
 ```
 
 ```rust
@@ -696,10 +755,64 @@ Expected: FAIL.
 
 - [ ] **Step 4: Run the whole frontend suite, the build and the layout tests**
 
-Run: `pnpm test`, `pnpm build` and `cargo test -p marshell-core -j 4 layout:: --test layout_api`
+Run: `pnpm test`, `pnpm build` and `cargo test -p marshell-core -j 4 --lib -- layout::` and `cargo test -p marshell-core -j 4 --test layout_api`
 Expected: PASS.
 
 - [ ] **Step 5: Commit** `feat(pane): a third panel, Changes, with Ctrl+Shift+H and ⌘⇧H.`
+
+---
+
+### Task 8b: The tabless panel's commands, focus and drafts
+
+**Files:**
+- Modify:
+  - `src/features/pane/paneCommands.ts`: `commandPanel` (rule below).
+  - `src/features/sessions/LiveApp.tsx`: a `lastTabPanel` ref beside `lastPanel` (~1173), set only when the keyboard enters Browser or Files, passed to `commandPanel` as `last`.
+  - `paneState.ts`: the `drafts` action, and `close` keeping drafts (below).
+  - `paneRules.ts`, `focusPane.ts` (Changes' target: `[data-changes-item][tabindex="0"]`, else its empty-state button).
+  - `src/features/pane/EmptyPanel.tsx`: `actions: readonly EmptyAction[]` (0 to 2), with the existing callers moved to a one-item list.
+  - `src/styles/noScrollInMainWindow.test.ts`: `.changes__list` allowed. Its comment says "the Changes panel's diff list (`.changes__list`): a diff is read by scrolling it, both ways, with the themed scrollbar visible, like the preview body".
+
+**Interfaces:**
+- Produces: `PaneAction` gains `{ type: "drafts"; session: string; drafts: ChangesDrafts | null }`.
+  - It sets `sessions[session].changes`, capped at 50 comments and 1,000 folds.
+  - `null`, or drafts with no comments and no folds, deletes `changes`. A session left with no tabs, no tree and no `changes` is deleted.
+
+**`close`.** A session whose last tab closes keeps its tree and its `changes`, with no tabs (today it keeps only the tree, `paneState.ts:428-431`). Without this, closing the last browser tab would throw away the comments.
+
+**Tab commands (decision 22).** Changes holds no tabs, so `commandPanel(on, focused, last, holdsTabs)` first drops `"changes"` from `on`, and then runs its three steps on what is left: the focused panel, the last panel when it holds tabs, then the first panel that holds tabs, else the first.
+- It answers null when nothing is left.
+- So with the keyboard in Changes, Ctrl+Tab, Ctrl+Shift+Tab and the palette's tab commands act on the tab panel that last had the keyboard, else on the first shown one.
+- Focus stays in Changes, as it stays in the terminal.
+
+- [ ] **Step 1: Write the failing tests** (add to the existing files):
+
+```ts
+// paneCommands.test.ts
+it("tab commands from Changes act on the last tab panel", () => expect(commandPanel(["browser", "files", "changes"], "changes", "files", hasTabs)).toBe("files"));
+it("tab commands from Changes fall back to the first panel with tabs", () => expect(commandPanel(["browser", "files", "changes"], "changes", null, (p) => p === "files")).toBe("files"));
+it("tab commands do nothing with only Changes shown", () => expect(commandPanel(["changes"], "changes", null, () => false)).toBeNull());
+// paneState.test.ts
+it("closing the last tab keeps the drafts", () => { /* a session with one browser tab and changes.comments [c] → close → tabs [], changes kept */ });
+it("drafts with nothing in them delete the session's changes, and an empty session goes", ...);
+it("drafts cap at 50 comments and 1,000 folds", ...);
+// EmptyPanel.test.tsx
+it("shows two actions in order", ...);
+```
+
+- [ ] **Step 2: Run**
+
+Run: `pnpm test src/features/pane`
+Expected: FAIL.
+
+- [ ] **Step 3: Implement**
+
+- [ ] **Step 4: Run the whole frontend suite and the build**
+
+Run: `pnpm test` and `pnpm build`
+Expected: PASS.
+
+- [ ] **Step 5: Commit** `feat(pane): the Changes panel holds no tabs, so tab commands reach the others and closing a tab keeps its comments.`
 
 ---
 
@@ -730,7 +843,11 @@ export function itemLabel(item: Item): string;
 export function isLockfile(path: string): boolean;
 export function isMinified(path: string, rows: Row[]): boolean;
 // comments.ts
-export const MAX_COMMENTS = 100, MAX_COMMENT_CHARS = 4000, QUOTE_LINES = 3, QUOTE_CHARS = 500;
+export const MAX_COMMENTS = 50, MAX_COMMENT_CHARS = 2000, QUOTE_LINES = 3, QUOTE_CHARS = 200;
+/** What a comment may hold: control characters other than \n and \t removed, \r\n and \r turned into \n, cut at MAX_COMMENT_CHARS code points. CommentBox runs it on every change. */
+export function cleanComment(text: string): string;
+/** A quoted line: control characters other than \t (C0, DEL and C1) become U+FFFD, cut at QUOTE_CHARS code points, never inside a surrogate pair. */
+export function quoteLine(text: string): string;
 export type Placement = { at: number | null; changed: boolean };
 export function cyrb53(s: string): string; // 14 lowercase hex characters
 export function anchorOf(file: Section, from: number, to: number): Omit<DraftComment, "id" | "text">;
@@ -745,7 +862,8 @@ export function reviewLabel(agent: string, agentName: string): string;
 **Rules:**
 - **Sections.**
   - **Order:** sections come in `reply.files` order. A draft's path missing from the files adds a `note: "gone"` section with no rows, at the end in path order.
-  - **Rows:** `meta` lines are dropped; hunk headers stay as `hunk` rows.
+  - **Rows:** a section's rows start at its first `@@` line. Everything before it is dropped whatever it holds: `new file mode`, `deleted file mode`, `similarity index`, `rename from`/`rename to`, `old mode`/`new mode` and `Binary files … differ`, which `parseUnifiedDiff` would show as context, since it treats only `diff`, `---`, `+++` and `index` lines as meta. Hunk headers stay as `hunk` rows.
+  - **`\ No newline at end of file`:** these lines are dropped and count for neither side's numbers, so a comment below one cites the right line.
   - **Whitespace:** a section with no rows and `hideWhitespace` gets `note: "whitespace"`.
 - **Folding.**
   - A file starts folded when it has more than `FOLD_LINES` rows, or `isLockfile`, or `isMinified`. It also starts folded when the open rows above it already reach `OPEN_BUDGET`.
@@ -761,7 +879,7 @@ export function reviewLabel(agent: string, agentName: string): string;
   - `start`/`end`: the min/max of that side's numbers, and `rows` the row count;
   - `first`: `cyrb53` of the first row's `` `${kind}\u0000${text}` ``;
   - `hash`: `cyrb53` of the rows' keys joined with `\n`;
-  - `quote`: the first `QUOTE_LINES` rows, each cut to `QUOTE_CHARS`. When the range holds more than one kind, each line is prefixed with its sign (`+`, `-` or a space); otherwise it is plain.
+  - `quote`: the first `QUOTE_LINES` rows through `quoteLine`. When the range holds more than one kind, each line is prefixed with its sign (`+`, `-` or a space); otherwise it is plain. A quote line therefore never holds `\r`, `\n` or ESC, which the core refuses.
 - **`place` (re-anchoring).**
   1. Candidates are the windows of `c.rows` rows with no `hunk` row whose first row's key-hash equals `c.first`. The one whose window hash equals `c.hash` and whose first number on `c.side` is nearest `c.start` wins: `{ at: last row index, changed: false }`.
   2. Failing that, the row on `c.side` numbered `c.end`, or the nearest smaller one, gives `{ changed: true }`.
@@ -787,7 +905,7 @@ export function reviewLabel(agent: string, agentName: string): string;
   - Qwen Code: `Ask Qwen Code to review (types /review, uncommitted work only)`.
   - Others: `Ask {name} to review (no review command, so it types a request)`.
 
-`copy.ts` holds every string below as functions or constants. Tasks 11-13 use only these.
+`copy.ts` holds every string below as functions or constants. Tasks 11a-13 use only these.
 
 | Id | Text |
 | --- | --- |
@@ -817,6 +935,11 @@ it("marks a comment changed when its line's text changed", ...)
 it("keeps a comment on a reverted file under a gone section", ...)
 it("writes the message in the exact format", () => expect(messageOf(...)).toBe("Comments on the changes (compared with origin/main):\n\nsrc/a.ts:42\n> const port = 3000;\nUse PORT.\n\nsrc/old.ts:7 (removed line)\n> legacyInit();\nStill needed?"));
 it("labels rows for a screen reader", () => expect(itemLabel(addRow)).toBe("Added, line 42: const x = 1;"));
+it("starts a new file's rows at its first hunk", () => { /* "new file mode 100644" and "similarity index 90%" give no row */ });
+it("skips a no-newline marker in the numbering", () => { /* "-a", "\\ No newline at end of file", "+a", " b" → b is new line 2 */ });
+it("turns control characters in quoted code into U+FFFD", () => expect(quoteLine("a\fb\u001b[0mc\rd")).toBe("a�b�[0mc�d"));
+it("cuts a quote line by code points, never inside an emoji", () => expect([...quoteLine("x".repeat(199) + "😀😀")].length).toBe(200));
+it("cleans a comment of control characters but keeps tabs and line breaks", () => expect(cleanComment("a\tb\r\nc\u001b[201~d")).toBe("a\tb\nc[201~d"));
 it("review commands match detect.rs", () => { /* read crates/core/src/profiles/detect.rs, find review_command's arms, compare with reviewCommandOf */ });
 ```
 
@@ -892,16 +1015,16 @@ Expected: PASS.
 
 ---
 
-### Task 11: The diff list
+### Task 11a: The diff list and its keys
 
 **Files:**
-- Create: `src/features/changes/ChangesPanel.tsx`, `DiffList.tsx`, `changesMenu.ts` (+ test), `useDiffColours.ts`, `ChangesPanel.css`, `DiffList.test.tsx`
+- Create: `src/features/changes/ChangesPanel.tsx`, `DiffList.tsx`, `ChangesPanel.css`, `DiffList.test.tsx`
 - Modify:
   - `src/features/sessions/LiveApp.tsx`: render `ChangesPanel` for `panel === "changes"`; `SidePane` gets `title={summary}`, no `plus`, `menu={{ label: "Changes menu" }}`; the ⋯ menu state beside Files'; `shown` = Changes on screen and the pane open beside sessions.
   - `src/features/pane/EmptyPanel.tsx`: a large `ChangesIcon`.
 
 **Interfaces:**
-- Consumes: Tasks 8-10, `tokenizer` and `languageOf` (`src/features/preview/highlight.ts`, `kinds.ts`), `COLOUR_CAP` (`src/features/editor/tokens.ts`), `ContextMenu`.
+- Consumes: Tasks 8a-10.
 - Produces:
 
 ```ts
@@ -912,12 +1035,12 @@ export type ChangesPanelProps = {
   onSend(text: string, count: number): void; onReview(base: string | null): void;
   announce(text: string): void;
 };
-export function changesMenuItems(o: { settings: ChangesSettings | null; failed: boolean; review: string | null; hasFiles: boolean }): MenuItem[];
-export function lineMenuItems(item: Item): MenuItem[];
+export function listKey(items: Item[], focus: number, key: string, mods: { shift: boolean; alt: boolean }, range: { from: number; to: number } | null): { focus: number; fold?: string; unfold?: string; range?: { from: number; to: number } | null; open?: "comment" | "menu"; escape?: true };
 ```
 
 **The list:**
-- **Structure.** `DiffList` is `role="tree"`, `aria-label="Changes"`, `aria-multiselectable="true"`. Every item is a `role="treeitem"` with `data-changes-item` and a roving `tabIndex`, `aria-level` 1 for files and 2 for the rest, `aria-expanded` on files, and `aria-label={itemLabel(item)}`. Rows in the selected range get `aria-selected="true"`.
+- **Structure.** `DiffList` is `role="tree"`, `aria-label="Changes"`, `aria-multiselectable="true"`. Every item is a `role="treeitem"` with `data-changes-item` and a roving `tabIndex`, `aria-level` 1 for files and 2 for the rest, `aria-expanded` on files, and `aria-label={itemLabel(item)}`.
+- **The range.** Rows in the selected range get `aria-selected="true"` and are drawn with `SelectedMark` (`src/components/a11y/`), the only selected-state marker (ui.md), plus a tint from the tokens.
 - **Keys** (decision 17):
   - Up and Down move through items.
   - Alt+Up and Alt+Down go to the previous and next file header.
@@ -925,18 +1048,9 @@ export function lineMenuItems(item: Item): MenuItem[];
   - Home and End go to the first and last item.
   - Enter on a row opens the comment box (Task 12); on a file it toggles the fold; on `show` it unfolds.
   - Shift+Up and Shift+Down extend the range inside its hunk, and Shift+click does the same.
-  - Shift+F10 and the Menu key open `lineMenuItems` at the item.
+  - Shift+F10 and the Menu key open the item's menu (Task 11b; until then they do nothing).
   - Esc calls `onEscape`.
-- **Header.** A file header shows the path, the status letter (M, A, D, R), and `+a −r`. Its own menu holds "Open in Files", "Fold" or "Unfold", and "Copy path".
-- **The line menu:**
-  - "Comment" (disabled on a hunk);
-  - "Open in Files at this line" (removed rows open at the nearest new line);
-  - "Copy line" or "Copy lines".
-- **The ⋯ menu:**
-  - Refresh;
-  - the review label (left out when `review` is null);
-  - a separator, then "Fold all files" and "Unfold all files";
-  - a separator, then "Hide whitespace changes" and "Wrap long lines" as checked rows.
+- **Header.** A file header shows the path, the status letter (M, A, D, R), and `+a −r`.
 - **Strip and states.**
   - The strip line under the title is `copy.line(reply)`.
   - The empty states use `EmptyPanel` with Task 9's copy; only "Can't read the changes" has an action.
@@ -946,18 +1060,21 @@ export function lineMenuItems(item: Item): MenuItem[];
   - Every file section is a block with `content-visibility: auto`, and its rows are split into blocks of 200 rows with `contain-intrinsic-block-size: auto calc(200 * var(--changes-row))`.
   - With wrap off, rows use `white-space: pre`; with wrap on, `pre-wrap` and `overflow-wrap: anywhere`.
   - The added and removed fills use DiffView's `color-mix` tokens. In forced colours the signs carry the meaning: `CanvasText` and `Canvas`, with the sign column always drawn.
-- **Colours.** `useDiffColours` tokenizes each open section's new side (context and add rows, in order) and old side (context and del rows) with its own state. It skips a section whose rows' text is over `COLOUR_CAP` or that has no language, and caches by path and hash.
 
-- [ ] **Step 1: Write the failing tests** (`DiffList.test.tsx` via `renderToStaticMarkup`, and the key handler as a pure `listKey(items, focus, key, mods) -> { focus; fold?; range? }` exported from `DiffList.tsx`):
+- [ ] **Step 1: Write the failing tests** (`DiffList.test.tsx` via `renderToStaticMarkup`, and `listKey`, pure):
 
 ```ts
 it("is one tree with one tab stop", () => { /* exactly one tabindex="0" */ });
 it("labels an added row", () => { /* aria-label "Added, line 42: …" */ });
 it("Alt+Down jumps to the next file", ...)
 it("Shift+Down stops at the hunk's end", ...)
-it("Left on a row goes to its file", ...)
-it("the ⋯ menu leaves review out for a plain shell", ...)
+it("Shift+Down never takes in a hunk row", ...)
+it("Left on a row goes to its file, Right on a folded file unfolds it", ...)
+it("Home and End reach the first and last item", ...)
+it("Esc leaves the list", () => expect(listKey(items, 3, "Escape", none, null).escape).toBe(true));
 it("a folded file shows its Show row", ...)
+it("draws the range with SelectedMark", () => { /* the selected rows' markup holds SelectedMark's element and aria-selected="true" */ });
+it("each empty state shows its copy", () => { /* NoRepo, Listed with no files, Failed with Try again, Refused with no action, noFolder */ });
 ```
 
 - [ ] **Step 2: Run**
@@ -972,7 +1089,69 @@ Expected: FAIL.
 Run: `pnpm test` and `pnpm build`.
 Expected: PASS.
 
-- [ ] **Step 5: Commit** `feat(changes): the diff list, one tree for the keyboard, with folding, colours and menus.`
+- [ ] **Step 5: Commit** `feat(changes): the diff list, one tree for the keyboard, with folding.`
+
+---
+
+### Task 11b: The diff list's colours and menus
+
+**Files:**
+- Create: `src/features/changes/changesMenu.ts` (+ test), `useDiffColours.ts` (+ test)
+- Modify: `DiffList.tsx`, `ChangesPanel.tsx`, `src/features/sessions/LiveApp.tsx` (the ⋯ menu state beside Files')
+
+**Interfaces:**
+- Consumes: Task 11a; `tokenizer` and `languageOf` (`src/features/preview/highlight.ts`, `kinds.ts`); `COLOUR_CAP` (`src/features/editor/tokens.ts`); `ContextMenu`.
+- Produces:
+
+```ts
+export function changesMenuItems(o: { settings: ChangesSettings | null; failed: boolean; review: string | null; hasFiles: boolean }): MenuItem[];
+export function lineMenuItems(item: Item): MenuItem[];
+export function headerMenuItems(file: Section): MenuItem[];
+/** The token classes for each open section's rows, keyed by row index; a section it skips has none. */
+export function colourSections(sections: Section[], cache: Map<string, (string | null)[][]>): Map<string, (string | null)[][]>;
+```
+
+**Menus:**
+- **Header menu:** "Open in Files", "Fold" or "Unfold", and "Copy path".
+- **Line menu:**
+  - "Comment" (disabled on a hunk);
+  - "Open in Files at this line" (removed rows open at the nearest new line);
+  - "Copy line" or "Copy lines".
+- **The ⋯ menu:**
+  - Refresh;
+  - the review label (left out when `review` is null);
+  - a separator, then "Fold all files" and "Unfold all files" (disabled when `hasFiles` is false);
+  - a separator, then "Hide whitespace changes" and "Wrap long lines" as checked rows, disabled while `settings` is null; when `failed`, they read as the defaults.
+- Shift+F10 and the Menu key open the line or header menu at the item.
+
+**Colours.** `useDiffColours` runs `colourSections`, which tokenizes each open section's new side (context and add rows, in order) and old side (context and del rows) with its own tokenizer state.
+- It skips a section whose rows' text is over `COLOUR_CAP` or that has no language.
+- It caches by path and the section's hash.
+
+- [ ] **Step 1: Write the failing tests**
+
+```ts
+it("the ⋯ menu leaves review out for a plain shell", ...)
+it("the ⋯ menu's switches are checked rows", ...)
+it("Comment is disabled on a hunk", () => expect(lineMenuItems(hunkItem).find((i) => i.label === "Comment")?.disabled).toBe(true));
+it("colours the new and old sides apart", () => { /* a .ts section with a del row "const a" and an add row "let a": each row gets its own side's keyword class */ });
+it("skips colours past COLOUR_CAP and for a file with no language", ...)
+it("reuses a cached section", ...)
+```
+
+- [ ] **Step 2: Run**
+
+`pnpm test src/features/changes`
+Expected: FAIL.
+
+- [ ] **Step 3: Implement**
+
+- [ ] **Step 4: Run the tests and the build**
+
+Run: `pnpm test` and `pnpm build`.
+Expected: PASS.
+
+- [ ] **Step 5: Commit** `feat(changes): the diff list's colours and its menus.`
 
 ---
 
@@ -987,12 +1166,12 @@ Expected: PASS.
 - Consumes: Task 9's `anchorOf`, `place` and `messageOf`; Task 10's `postComments` and `askReview`; `deliveryFor`, `addFailure`, `focusDelivered` and `announce` in LiveApp.
 
 **The box:**
-- It opens under the range's last row, with a textarea labelled `Comment on line 42` or `Comment on lines 10 to 14` and the hint `Enter adds · Shift+Enter starts a new line · Esc closes`, and `maxLength` 4000.
+- It opens under the range's last row, with a textarea labelled `Comment on line 42` or `Comment on lines 10 to 14` and the hint `Enter adds · Shift+Enter starts a new line · Esc closes`. Every change of its text runs `cleanComment` (Task 9), which also caps it at 2,000 characters, so a pasted escape or form feed never reaches a draft.
 - **Enter** adds the comment, announces `Comment added. {n} to send.`, and focus returns to the row. **Shift+Enter** starts a new line.
 - **Esc** closes. An empty new box adds nothing. A box with text keeps it as the comment, announcing `Comment kept as a draft.`.
 - Its React key is the draft's anchor key (path, side, start, end), so a new reply never remounts it. It is placed by `place()` on each reply.
 - When the drafts' `checkout` isn't the one shown and comments exist, the box doesn't open. It announces `Send or discard the {n} comments on {folder name} first.`
-- The 101st comment announces `A session holds at most 100 comments.`
+- The 51st comment announces `A session holds at most 50 comments.`
 
 **A comment item:** Enter edits it in the box. Delete removes it and announces `Comment deleted.`. A changed comment shows "The line changed".
 
@@ -1002,12 +1181,14 @@ Expected: PASS.
 
 **Send** in LiveApp:
 1. A `refused` from `deliveryFor` is announced and keeps the comments.
-2. The clipboard form calls `navigator.clipboard.writeText(message)`, clears the drafts, and announces `Copied {n} comment(s). {name} has no prompt line.`.
+2. The clipboard form calls `navigator.clipboard.writeText(message)`, clears the comments, and announces `Copied {n} comment(s). {name} has no prompt line.`.
 3. The paste form calls `postComments`:
    - `form: "paste"` announces `Pasted {n} comment(s) into {name}.`;
    - `form: "file"` announces `Pasted a link to {n} comment(s) into {name}.`.
 
-   Both clear the drafts and run `focusDelivered`.
+   Both clear the comments and run `focusDelivered`.
+
+   "Clear" means `onDrafts({ ...drafts, comments: [] })`: the folds stay, and Task 8b's `drafts` action deletes `changes` only once nothing is left.
 4. A 409 is announced, with the comments kept:
    - `waiting`: `{name} is waiting for an answer, so the comments are kept.`;
    - `ended`: `{name} has ended, so the comments are kept.`;
@@ -1029,7 +1210,10 @@ it("the box keeps its key across a reply that moves lines", ...)          // Dif
 it("Send reads Copy for a session with no prompt line", ...)              // SendBar markup
 it("Discard all asks first", ...)
 it("a refusal keeps the drafts", ...)                                       // the send reducer: 409 waiting → drafts unchanged, notice text
+it("a send keeps the folds", ...)                                           // the send reducer: paste → comments [], folds unchanged
 it("the message reaches postComments unchanged", ...)
+it("the box drops a pasted escape and form feed", ...)                      // CommentBox's change handler runs cleanComment
+it("the palette lists the three Changes commands with no binding", ...)    // keymap.test.ts: changes-refresh, changes-review, changes-send; appShortcuts runs each
 ```
 
 - [ ] **Step 2: Run**
@@ -1075,6 +1259,7 @@ export const MARK_WORD: Record<DiffStatus, string>;   // ", modified", ", new", 
 it("marks every ancestor folder of a change", () => expect([...marksOf([{ path: "a/b/c.ts", status: "modified" }]).folders]).toEqual(["a", "a/b"]));
 it("reads a modified file aloud", () => { /* aria-label "c.ts, modified" */ });
 it("a folder holding changes says so", () => { /* aria-label "b, has changes" */ });
+it("a Same reply's marks replace the last ones", () => { /* useTree's reply reducer: Listed with marks [a], then Same with marks [a, b] → marks [a, b] */ });
 ```
 
 - [ ] **Step 2: Run**
@@ -1103,7 +1288,7 @@ Expected: PASS.
 | # | Check | Pass when |
 | --- | --- | --- |
 | 1 | A branch of a scratch repo: 2 commits ahead of `origin/main`, an edit, a new file, a rename, a CRLF file | Changes shows 4 files, `2 commits ahead of origin/main · uncommitted work`, R for the rename, nothing for the CRLF file; the tree shows M, A, R and folder dots |
-| 2 | A shell that `cd`s into the S15 trap repo (fsmonitor, clean filter, `diff.external`, an include of a missing `\\server\share` path), with Changes and the tree open for 60 s and `GIT_TRACE2_EVENT` set to a scratch file | The marker file is empty; the trace shows every git run with `GIT_DIR` at the sandbox and no `config.include` read; Changes says `in {folder}` |
+| 2 | A shell that `cd`s into the S15 trap repo (fsmonitor, clean filter, `diff.external`, an include of a missing `\\server\share` path), with Changes and the tree open for 60 s, `MARSHELL_GIT_TRACE` set to a scratch file (a dev build passes it on as `GIT_TRACE2_EVENT`), and a script rewriting a tracked file with the same bytes every second | The marker file is empty; the trace shows every git run with `GIT_DIR` at the sandbox and no `config.include` read; the repo's `.git/index` keeps its modified time; Changes says `in {folder}` |
 | 3 | Keyboard alone | Ctrl+Shift+H shows Changes; Up/Down, Alt+Down, Left/Right, Shift+Down, Enter, Shift+F10 and Esc do what decision 17 says; Modifier+Tab visits terminal, Browser, Files, Changes |
 | 4 | Comments to each measured CLI | 3 comments: Send pastes them, or the file line per S16, into the prompt; no Enter; the announcer says "Pasted 3 comments into …"; a plain shell gets "Copy 3 comments" |
 | 5 | A refresh during a comment | The agent (or a script) inserts 5 lines above an open box: the box keeps text and focus, and the draft moves 5 lines down |
