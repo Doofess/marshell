@@ -30,7 +30,7 @@ const DEFAULT_NOTIFY: NotifySettings = {
   terminal_alerts: true,
 };
 
-type FlagChange = Partial<Pick<Settings, "pause_warned" | "onboarded" | "close_to_tray" | "status_off" | "notifications" | "history_import" | "history_limit_gb" | "history_limit_days" | "history_backup_dir" | "browser" | "files">>;
+type FlagChange = Partial<Pick<Settings, "pause_warned" | "onboarded" | "close_to_tray" | "status_off" | "notifications" | "history_import" | "history_limit_gb" | "history_limit_days" | "history_backup_dir" | "browser" | "files" | "changes">>;
 
 type SettingsApi = {
   get(ep: Endpoint): Promise<Settings>;
@@ -53,6 +53,13 @@ export class SettingsSync {
   private off: string[] = [];
   /** Kept from the last read, so every save sends it back unchanged. */
   private notify: NotifySettings = DEFAULT_NOTIFY;
+  /** Keeps the current object when the fields are equal, so a store snapshot stays stable. */
+  private setChangesValue(next: ChangesSettings): void {
+    const cur = this.changesValue;
+    if (cur.hide_whitespace === next.hide_whitespace && cur.wrap === next.wrap) return;
+    this.changesValue = next;
+  }
+
   /** Whether conversations run outside Marshell are copied. Kept from the last read, so every save sends it back unchanged. */
   private importOn = true;
   /** The size limit on recordings and images, in GB. Kept from the last read, so every save sends it back unchanged. */
@@ -65,10 +72,23 @@ export class SettingsSync {
   private browserValue: BrowserSettings = DEFAULT_BROWSER;
   /** The Files settings. Kept from the last read, so every save sends them back unchanged. */
   private filesValue: FilesSettings = DEFAULT_FILES;
-  /** Kept only so a write sends back what the last read held; nothing here changes it yet. */
+  /** The Changes settings. Kept from the last read, so every save sends them back unchanged. */
   private changesValue: ChangesSettings = DEFAULT_CHANGES;
   /** Every settings write in order: the last one's end. Never rejects. */
   private queue: Promise<void> = Promise.resolve();
+  /** The Changes settings, as of the last read or write: null until a read has worked. The same object until it changes. */
+  get changes(): ChangesSettings | null {
+    return this.hasRead ? this.changesValue : null;
+  }
+
+  /** Saves the changed Changes fields. Reads first, like `save`, and sends every other field back unchanged. Queued with every other write. */
+  setChanges(change: Partial<ChangesSettings>): Promise<void> {
+    return this.queued(async () => {
+      await this.readFirst();
+      await this.write({ changes: { ...this.changesValue, ...change } });
+    });
+  }
+
   /** True after a read that failed, until one works. */
   private failed = false;
   private listeners = new Set<() => void>();
@@ -104,7 +124,7 @@ export class SettingsSync {
     this.backupDir = s.history_backup_dir;
     this.setBrowserValue(s.browser);
     this.setFilesValue(s.files);
-    this.changesValue = s.changes;
+    this.setChangesValue(s.changes);
     this.appearance = s.appearance;
     this.emit();
     return s.appearance;
@@ -250,7 +270,7 @@ export class SettingsSync {
     this.backupDir = s.history_backup_dir;
     this.setBrowserValue(s.browser);
     this.setFilesValue(s.files);
-    this.changesValue = s.changes;
+    this.setChangesValue(s.changes);
     this.appearance = s.appearance;
     this.emit();
     return s.appearance;
@@ -350,7 +370,7 @@ export class SettingsSync {
     this.backupDir = s.history_backup_dir;
     this.setBrowserValue(s.browser);
     this.setFilesValue(s.files);
-    this.changesValue = s.changes;
+    this.setChangesValue(s.changes);
     this.appearance = s.appearance;
     this.emit();
   }
