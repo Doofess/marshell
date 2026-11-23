@@ -12,6 +12,7 @@ pub use raw::{RawEntry, parse_raw};
 
 use crate::git::Stopped;
 use crate::gitbox::refs::{self, Base, Head, RefError};
+use crate::gitbox::worktree::{self, Reach, Tracked};
 use crate::gitbox::{BoxError, GitBox};
 use crate::server::{Ignores, walk_unignored};
 use crate::tasks::{BINARY_SNIFF, MAX_DIFF, MAX_UNTRACKED, cut_diff, untracked_diff};
@@ -35,6 +36,9 @@ pub const MAX_NEW_FILES: usize = 200;
 pub(crate) const TOO_LONG: &str = "Git took too long to read the changes.";
 /// The sentence for a repository that keeps its branches as reftable (the box says the same).
 const REFTABLE: &str = "This repository stores its branches in a format Changes can't read yet.";
+/// The sentence for a work tree git would follow to a network or device path (`gitbox::worktree`).
+const SUBMODULE_NETWORK: &str =
+    "A submodule of this repository points to a network folder, so Changes doesn't read it.";
 /// The most `diff --raw` output that is read.
 const MAX_RAW: usize = 8 * 1024 * 1024;
 /// The most `ls-files` output that is read.
@@ -138,13 +142,13 @@ fn stat(path: &Path) -> Option<FileStamp> {
         .map(|m| (m.len(), m.modified().ok()))
 }
 
-/// The first of the checkout's tracked paths, from the index. Cached by the index file's stamp.
+/// The checkout's tracked paths, from the index. Cached by the index file's stamp.
 fn tracked_paths(
     git: &GitBox,
-    cache: &mut Option<(Option<FileStamp>, Arc<HashSet<String>>)>,
+    cache: &mut Option<(Option<FileStamp>, Arc<Tracked>)>,
     deadline: Instant,
     cancel: &AtomicBool,
-) -> Result<Arc<HashSet<String>>, Halt> {
+) -> Result<Arc<Tracked>, Halt> {
     let key = std::fs::metadata(git.git_dir().join("index"))
         .ok()
         .filter(|m| m.is_file())
@@ -164,13 +168,7 @@ fn tracked_paths(
     if capped {
         return Err(failed("This repository has too many files for Changes."));
     }
-    let set: HashSet<String> = bytes
-        .split(|b| *b == 0)
-        .filter_map(|p| std::str::from_utf8(p).ok())
-        .filter(|p| !p.is_empty())
-        .map(str::to_string)
-        .collect();
-    let set = Arc::new(set);
+    let set = Arc::new(Tracked::parse(&bytes));
     *cache = Some((key, set.clone()));
     Ok(set)
 }
@@ -239,6 +237,15 @@ fn compute(
         }
     };
 
+    // Git is given the work tree only once nothing in it leads git to a network or device path.
+    let tracked = tracked_paths(git, tracked, deadline, cancel)?;
+    let checkout = git.checkout().to_path_buf();
+    match worktree::reach(&checkout, &tracked, deadline, cancel) {
+        Reach::Clear => {}
+        Reach::Refused => return Err(Halt::Err(ChangesError::Refused(SUBMODULE_NETWORK.to_string()))),
+        Reach::Late => return Err(Halt::Late),
+    }
+
     let (raw, _) = collect(
         git,
         &[
@@ -257,7 +264,6 @@ fn compute(
         MAX_RAW,
     )?;
     let entries = parse_raw(&raw);
-    let checkout = git.checkout().to_path_buf();
     let stats: Vec<Option<FileStamp>> = entries
         .iter()
         .map(|e| {
@@ -267,14 +273,13 @@ fn compute(
         })
         .collect();
 
-    let tracked = tracked_paths(git, tracked, deadline, cancel)?;
-    let (mut new_files, more_new) = walk.update(&tracked, |each| {
+    let (mut new_files, more_new) = walk.update(&tracked.paths, |each| {
         walk_unignored(
             &mut Ignores::new(&checkout, &checkout),
             &checkout,
             deadline,
             cancel,
-            &|rel| tracked.contains(rel),
+            &|rel| tracked.paths.contains(rel),
             each,
         )
     });
@@ -644,6 +649,28 @@ mod tests {
 
     fn paths(reply: &ChangesReply) -> Vec<(&str, DiffStatus)> {
         reply.files.iter().map(|f| (f.path.as_str(), f.status)).collect()
+    }
+
+    /// Git opens a submodule's `.git` on every work-tree diff, `--ignore-submodules=all` or not, so one that
+    /// names a network or device path refuses the check before git is given the work tree.
+    #[test]
+    fn a_submodule_whose_git_file_names_a_network_path_is_refused() {
+        let scratch = Scratch::new();
+        let head = repo_with_commit(&scratch);
+        let git = plain(&scratch);
+        let entry = format!("160000,{head},vendor/lib");
+        git(&scratch.repo, &["update-index", "--add", "--cacheinfo", &entry]);
+        // A device path: harmless if git does follow it, and `refused` reads only its text.
+        write(
+            &scratch.repo.join("vendor").join("lib").join(".git"),
+            "gitdir: //?/C:/marshell-no-such-folder\n",
+        );
+        write(&scratch.repo.join("a.txt"), "changed\n");
+        let cache = ChangesCache::new();
+        let err = cache
+            .read(&scratch.home, &scratch.target(), false, far(), &AtomicBool::new(false))
+            .unwrap_err();
+        assert_eq!(err, ChangesError::Refused(SUBMODULE_NETWORK.to_string()));
     }
 
     #[test]

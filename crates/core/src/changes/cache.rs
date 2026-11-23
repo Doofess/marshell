@@ -7,6 +7,7 @@
 use super::{CHECK_BUDGET, ChangesError, Check, Halt, MAX_NEW_FILES, TOO_LONG, Target};
 use crate::git::Stopped;
 use crate::gitbox::GitBox;
+use crate::gitbox::worktree::Tracked;
 use marshell_protocol::api::ChangesReply;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -85,7 +86,7 @@ pub(super) struct Entry {
     /// `(head, base)` → their merge base, None when the histories share none.
     pub merge_base: Option<((String, String), Option<String>)>,
     /// The tracked paths, with the index file's stamp they were read at.
-    pub tracked: Option<(Option<FileStamp>, Arc<HashSet<String>>)>,
+    pub tracked: Option<(Option<FileStamp>, Arc<Tracked>)>,
     pub walk: Walk,
 }
 

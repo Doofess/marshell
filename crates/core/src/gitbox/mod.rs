@@ -12,6 +12,7 @@
 
 pub mod config;
 pub mod refs;
+pub mod worktree;
 
 pub use crate::git::Stopped;
 use crate::git::stream_command;
