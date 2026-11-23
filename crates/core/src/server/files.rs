@@ -281,7 +281,7 @@ fn resolve_one(candidate: &str, bases: &[PathBuf]) -> Option<String> {
 /// The checkout the session was launched in: the nearest folder above the launch folder (or it
 /// itself) with a `.git` folder or file. A linked worktree has a `.git` file, so this is the
 /// worktree, where `projects::repo_root` gives the main checkout. None outside git.
-fn checkout_of(row: &SessionInfo) -> Option<PathBuf> {
+pub(super) fn checkout_of(row: &SessionInfo) -> Option<PathBuf> {
     if row.cwd.is_empty() || refused(&row.cwd) || links_refused(std::path::Path::new(&row.cwd)) {
         return None;
     }
@@ -289,7 +289,7 @@ fn checkout_of(row: &SessionInfo) -> Option<PathBuf> {
 }
 
 /// The checkout `folder` is in, with the user's home folder as `dirs` names it.
-fn checkout_above(folder: &std::path::Path) -> Option<PathBuf> {
+pub(super) fn checkout_above(folder: &std::path::Path) -> Option<PathBuf> {
     checkout_above_with(folder, dirs::home_dir().as_deref())
 }
 

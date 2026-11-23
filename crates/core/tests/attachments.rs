@@ -15,22 +15,7 @@ const ORIGIN: &str = "http://tauri.localhost";
 const SIGNATURE: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
 
 fn profile(id: &str, command: Vec<String>) -> Profile {
-    family_profile(id, command, ShellFamily::Posix)
-}
-
-fn family_profile(id: &str, command: Vec<String>, family: ShellFamily) -> Profile {
-    common::tie_children_to_test();
-    Profile {
-        id: id.into(),
-        name: id.into(),
-        command,
-        family,
-        cwd: None,
-        env: Vec::new(),
-        shell_integration: false,
-        terminal_theme: None,
-        detected: true,
-    }
+    common::family_profile(id, command, ShellFamily::Posix)
 }
 
 fn state_in(home: &Path) -> AppState {
@@ -237,52 +222,7 @@ fn file_in(dir: &Path, name: &str) -> String {
 /// A session whose program turns bracketed paste on and appends every byte typed to it to a file.
 /// Returns the router, the tab and that file.
 async fn capturing(s: &Setup) -> (axum::Router, String, std::path::PathBuf) {
-    capturing_in(s, ShellFamily::Posix).await
-}
-
-/// `capturing`, in a profile of the shell `family`.
-async fn capturing_in(s: &Setup, family: ShellFamily) -> (axum::Router, String, std::path::PathBuf) {
-    let log = s.dir.path().join("typed.log");
-    let fake = env!("CARGO_BIN_EXE_fake-agent");
-    let command = vec![fake.into(), "capture-input".into(), log.to_string_lossy().into_owned()];
-    let state = AppState::new(
-        TOKEN.into(),
-        PORT,
-        vec![ORIGIN.into()],
-        s._home.path().to_path_buf(),
-        vec![family_profile("capture", command, family)],
-    );
-    let app = router(state.clone());
-    let body = serde_json::json!({
-        "cols": 80, "rows": 24, "profile_id": "capture", "cwd": s.dir.path().to_string_lossy(), "agent": null,
-    });
-    let res = call(&app, "POST", "/v1/sessions", Some(body)).await;
-    assert_eq!(res.status(), StatusCode::OK);
-    let bytes = axum::body::to_bytes(res.into_body(), 1024 * 1024).await.unwrap();
-    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    let tab = json["tab_id"].as_str().unwrap().to_string();
-    let session = state.session(&tab).unwrap();
-    // The program sets raw input before it asks for bracketed paste, so this also means it is ready.
-    for _ in 0..200 {
-        if session.bracketed_paste() {
-            return (app, tab, log);
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-    panic!("the program never turned bracketed paste on");
-}
-
-async fn typed(log: &Path, at_least: usize) -> Vec<u8> {
-    for _ in 0..200 {
-        let bytes = std::fs::read(log).unwrap_or_default();
-        if bytes.len() >= at_least {
-            // Give a stray extra write the chance to show up.
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            return std::fs::read(log).unwrap_or_default();
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-    std::fs::read(log).unwrap_or_default()
+    common::capturing_in(s.dir.path(), s._home.path(), ShellFamily::Posix).await
 }
 
 #[tokio::test]
@@ -296,7 +236,7 @@ async fn pastes_each_path_as_its_own_bracketed_paste() {
     // The last space keeps the next drop apart from this one.
     let expected = format!("\x1b[200~\"{a}\"\x1b[201~\x1b[200~ \x1b[201~\x1b[200~\"{b}\"\x1b[201~\x1b[200~ \x1b[201~")
         .into_bytes();
-    let got = typed(&log, expected.len()).await;
+    let got = common::typed(&log, expected.len()).await;
     assert_eq!(String::from_utf8_lossy(&got), String::from_utf8_lossy(&expected));
     assert!(!got.contains(&b'\r') && !got.contains(&b'\n'));
 }
@@ -304,13 +244,13 @@ async fn pastes_each_path_as_its_own_bracketed_paste() {
 #[tokio::test]
 async fn pastes_a_name_powershell_would_expand_in_single_quotes() {
     let s = setup();
-    let (app, tab, log) = capturing_in(&s, ShellFamily::PowerShell).await;
+    let (app, tab, log) = common::capturing_in(s.dir.path(), s._home.path(), ShellFamily::PowerShell).await;
     let a = file_in(s.dir.path(), "a$(calc)'b.txt");
     let res = paste_paths(&app, &tab, std::slice::from_ref(&a)).await;
     assert_eq!(res.status(), StatusCode::NO_CONTENT);
     let quoted = format!("'{}'", a.replace('\'', "''"));
     let expected = format!("\x1b[200~{quoted}\x1b[201~\x1b[200~ \x1b[201~").into_bytes();
-    let got = typed(&log, expected.len()).await;
+    let got = common::typed(&log, expected.len()).await;
     assert_eq!(String::from_utf8_lossy(&got), String::from_utf8_lossy(&expected));
 }
 

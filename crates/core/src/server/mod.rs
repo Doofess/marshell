@@ -3,6 +3,7 @@ pub(crate) mod agents;
 mod attachments;
 mod auto_open;
 mod catalog;
+mod changes;
 mod config;
 mod diagnostics;
 pub(crate) mod doctor;
@@ -239,6 +240,8 @@ struct Inner {
     own_agents_write: Mutex<()>,
     /// `--version` of the manifest agents' programs, for telling a program from another with the same name.
     agent_versions: Arc<crate::agents::identify::VersionCache>,
+    /// The Changes panel's checks and reads, one slot per checkout.
+    changes: Arc<crate::changes::ChangesCache>,
     /// The last events the bridge sent, per live tab.
     hook_log: crate::hooks::log::HookLog,
     /// The permission requests being held for a decision.
@@ -418,6 +421,7 @@ impl AppState {
             own_agents: crate::agents::own::OwnCache::default(),
             own_agents_write: Mutex::new(()),
             agent_versions: Arc::new(crate::agents::identify::VersionCache::default()),
+            changes: Arc::new(crate::changes::ChangesCache::new()),
             hook_log: crate::hooks::log::HookLog::default(),
             holds: crate::hooks::holds::Holds::default(),
             permission_hold: DEFAULT_PERMISSION_HOLD,
@@ -964,6 +968,14 @@ impl AppState {
     pub fn home(&self) -> &std::path::Path {
         &self.0.home
     }
+    /// The Changes panel's cache of checks and reads.
+    pub fn changes(&self) -> &crate::changes::ChangesCache {
+        &self.0.changes
+    }
+    /// The same cache, for work that outlives a request (the tree's background check).
+    pub fn changes_arc(&self) -> Arc<crate::changes::ChangesCache> {
+        self.0.changes.clone()
+    }
     /// What the UI last reported it shows. Starts as an unfocused window with no visible tab.
     pub fn view(&self) -> tokio::sync::watch::Receiver<marshell_protocol::api::UiView> {
         self.0.view.subscribe()
@@ -1363,6 +1375,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{tab}/resolve", post(files::resolve))
         .route("/v1/sessions/{tab}/files", get(files::list))
         .route("/v1/sessions/{tab}/tree", post(tree::tree))
+        .route("/v1/sessions/{tab}/changes", post(changes::changes))
         .route("/v1/sessions/{tab}/search", post(search::search))
         .route(
             "/v1/sessions/{tab}/attachments",

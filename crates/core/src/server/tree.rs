@@ -6,6 +6,7 @@
 //! symlink or a junction), inside the root or out. `.git` is never listed or entered.
 
 use super::AppState;
+use super::changes::tree_marks;
 use super::files::{
     Root, Tracked, git_tracked, links_refused, modified_ms, project_root, refused, row_of, strip_verbatim,
 };
@@ -285,13 +286,16 @@ pub async fn tree(State(st): State<AppState>, Path(tab): Path<String>, Json(req)
     let row = row_of(&st, &tab);
     let session = st.session(&tab);
     let reported = session.and_then(|s| s.current_cwd());
+    let marks_state = st.clone();
     let done = tokio::task::spawn_blocking(move || {
         let found = project_root(row.as_ref(), reported)?;
         let dirs = tree_with(&found, &req.dirs, &git_tracked);
+        // Every reply carries the marks, `same` folders too: an edit leaves its folder's modified time alone.
+        let changes = tree_marks(&marks_state, row.as_ref(), &found);
         Some(TreeReply {
             root: strip_verbatim(found.path()).unwrap_or_default(),
             dirs,
-            changes: Vec::new(),
+            changes,
         })
     })
     .await;
