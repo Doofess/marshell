@@ -2153,7 +2153,8 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
           - Fixed: a comment box asked for while another held text opened without the keyboard when the kept draft sat above its row.
           - Known limit: at 100,000 files the link check and the look for new files come due in the same check every 10 s, and together they pass the 2 s budget, so "Looking for new files took too long, so some may not be shown." is up for much of the time. Tracked files always show. Letting the two come due at different times is its own change (a GitHub issue).
         - Settled in the final review (2026-11-23):
-          - `marshell uninstall` waits up to 10 s per folder for a sandbox that is being written; the sweep and a task's removal still make one try. Uninstall runs alone in its process, so the wait only shows in tests.
+          - `marshell uninstall` waits up to 10 s per folder for a sandbox that is being written; a task's removal waits up to 2 s (the pre-merge review: one try lost to a check of any other checkout), and the sweep still makes one try. Uninstall runs alone in its process, so its wait only shows in tests.
+          - Only files named as Marshell names its own temp files (`.<name>.<pid>-<n>.tmp`) are removed as temp files (the pre-merge review); any other `.tmp` file under `git-sandbox` stays.
           - A task's removal leaves the sandbox when `git-sandbox` itself is a link, as the sweep and uninstall do.
           - Declining uninstall's question still prints why `bin` stays, as it did before the sandbox made it a question.
           - Uninstall's exit code is 0 when `git-sandbox` is kept for a file Marshell didn't make: nothing of Marshell's is left in it.

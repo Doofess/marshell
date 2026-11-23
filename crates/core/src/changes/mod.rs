@@ -785,7 +785,8 @@ mod tests {
         assert_eq!(err, ChangesError::Refused(SUBMODULE_NETWORK.to_string()));
     }
 
-    /// A gitlink path with no folder is clear; a `.git` file there that names a device path is refused.
+    /// A fast clear look is not kept and a refusal never is; a slow clear look stands, so a refused folder made
+    /// after it is not seen, until the index gives a new set of paths.
     #[test]
     fn a_slow_clear_look_stands_until_the_index_changes() {
         let scratch = Scratch::new();

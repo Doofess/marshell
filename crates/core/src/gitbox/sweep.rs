@@ -21,6 +21,8 @@ pub const OWNER_FILE: &str = "marshell-checkout";
 pub const UNUSED_AFTER: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const TEMP_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
 pub(super) const TOUCH_EVERY: Duration = Duration::from_secs(60 * 60);
+/// How long `forget` waits for the gate.
+const TASK_WAIT: Duration = Duration::from_secs(2);
 /// How long `remove_all` waits for the gate, per folder.
 const UNINSTALL_WAIT: Duration = Duration::from_secs(10);
 /// The most bytes `OWNER_FILE` may hold.
@@ -125,8 +127,11 @@ fn old(modified: SystemTime, now: SystemTime) -> bool {
 /// How long a removal waits for the gate.
 #[derive(Clone, Copy)]
 enum Wait {
-    /// One try: a sandbox that is being written stays. The sweep and `forget` run beside the Changes checks.
+    /// One try: a sandbox that is being written stays. The sweep runs beside the Changes checks.
     No,
+    /// Up to `TASK_WAIT`. A task's removal runs git and a teardown script already, and a check of any
+    /// checkout holds the gate while it writes its sandbox.
+    Task,
     /// Up to `UNINSTALL_WAIT`. Uninstall runs alone in its process, so nothing holds the gate there for long.
     Uninstall,
 }
@@ -137,6 +142,7 @@ fn exclusive(wait: Wait) -> Option<RwLockWriteGuard<'static, ()>> {
     let wait = match wait {
         _ if cfg!(test) => Duration::from_secs(60),
         Wait::No => Duration::ZERO,
+        Wait::Task => TASK_WAIT,
         Wait::Uninstall => UNINSTALL_WAIT,
     };
     let until = std::time::Instant::now() + wait;
@@ -192,8 +198,19 @@ fn remove_one(dir: &Path, name: &str, why: Why, first: Option<&Path>, wait: Wait
     false
 }
 
-/// Removes the temp files in `dir` that `write_file` leaves when it is interrupted: regular files named
-/// `.*.tmp`, older than `TEMP_AFTER` at `now`, or of any age when `now` is None. Nothing happens unless `dir`
+/// Whether `name` is one `write_file` gives its temp file: `.<name>.<pid>-<n>.tmp`.
+fn temp_name(name: &str) -> bool {
+    let digits = |text: &str| !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit());
+    name.strip_prefix('.')
+        .and_then(|rest| rest.strip_suffix(".tmp"))
+        .and_then(|rest| rest.rsplit_once('.'))
+        .is_some_and(|(of, tail)| {
+            !of.is_empty() && tail.split_once('-').is_some_and(|(pid, n)| digits(pid) && digits(n))
+        })
+}
+
+/// Removes the temp files in `dir` that `write_file` leaves when it is interrupted: regular files that
+/// `temp_name` accepts, older than `TEMP_AFTER` at `now`, or of any age when `now` is None. Nothing happens unless `dir`
 /// is a real folder. Under the gate, since a temp file is dated as its source while it is written.
 fn remove_temps(dir: &Path, now: Option<SystemTime>, wait: Wait) {
     let Some(_gate) = exclusive(wait) else {
@@ -207,7 +224,7 @@ fn remove_temps(dir: &Path, now: Option<SystemTime>, wait: Wait) {
         let Some(name) = name.to_str() else {
             continue;
         };
-        if !(name.starts_with('.') && name.ends_with(".tmp")) {
+        if !temp_name(name) {
             continue;
         }
         let path = entry.path();
@@ -287,7 +304,7 @@ pub fn forget(home: &Path, checkout: &Path) -> bool {
     let Some(name) = dir.file_name().and_then(|n| n.to_str()).map(str::to_string) else {
         return false;
     };
-    remove_one(&dir, &name, Why::Asked, None, Wait::No)
+    remove_one(&dir, &name, Why::Asked, None, Wait::Task)
 }
 
 /// Removes every sandbox, then `empty-config` and the temp files in `git-sandbox` itself whatever their age,
@@ -562,7 +579,7 @@ mod tests {
         let here = made(&s.root.join("here"));
         let dir = sandbox(&s.home, &here, now);
         let elsewhere = made(&s.root.join("elsewhere"));
-        let temp = elsewhere.join(".x.tmp");
+        let temp = elsewhere.join(".index.1-2.tmp");
         std::fs::write(&temp, "x").unwrap();
         date(&temp, now - 2 * DAY);
         let info = dir.join("info");
@@ -593,8 +610,7 @@ mod tests {
         assert!(!dir.exists());
     }
 
-    /// Outside the tests the sweep and `forget` make one try at the gate, and a sandbox that is being written
-    /// stays.
+    /// Outside the tests the sweep makes one try at the gate, and a sandbox that is being written stays.
     #[test]
     fn a_busy_gate_is_not_waited_for() {
         let _writing = GATE.read().unwrap_or_else(|e| e.into_inner());
@@ -640,7 +656,7 @@ mod tests {
             sandbox(&s.home, &made(&s.root.join(name)), now);
         }
         std::fs::write(root.join("empty-config"), "").unwrap();
-        std::fs::write(root.join(".x.tmp"), "x").unwrap();
+        std::fs::write(root.join(".empty-config.7-8.tmp"), "x").unwrap();
         assert!(any(&s.home));
         assert_eq!(remove_all(&s.home), 2);
         assert!(!exists(&root));
@@ -658,5 +674,35 @@ mod tests {
         assert!(!dir.exists());
         assert!(root.join("notes.txt").exists());
         assert!(!any(&s.home));
+    }
+
+    /// Only the names `write_file` makes (`.<name>.<pid>-<n>.tmp`) are temp files of ours.
+    #[test]
+    fn a_file_only_named_like_a_temp_file_is_left() {
+        let s = scratch();
+        let now = SystemTime::now();
+        let root = made(&crate::paths::git_sandbox_dir(&s.home));
+        let dir = sandbox(&s.home, &made(&s.root.join("a")), now);
+        let theirs = [
+            root.join(".notes.tmp"),
+            dir.join(".x.tmp"),
+            root.join(".a.1-.tmp"),
+            root.join(".1-2.tmp"),
+        ];
+        for path in &theirs {
+            std::fs::write(path, "x").unwrap();
+            date(path, now - 2 * DAY);
+        }
+        let ours = root.join(".empty-config.12-0.tmp");
+        std::fs::write(&ours, "x").unwrap();
+        date(&ours, now - 2 * DAY);
+        sweep(&s.home, now);
+        assert!(!exists(&ours));
+        assert!(theirs.iter().all(|path| exists(path)));
+        assert!(temp_name(".index.4242-17.tmp") && temp_name(".marshell-checkout.1-2.tmp"));
+        assert!(!temp_name(".index.4242-17.tmp.bak") && !temp_name("index.1-2.tmp"));
+        // Uninstall takes its own temp files whatever their age, and leaves the others with the folder.
+        assert_eq!(remove_all(&s.home), 1);
+        assert!(exists(&theirs[0]) && exists(&root));
     }
 }
