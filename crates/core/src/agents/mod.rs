@@ -77,8 +77,42 @@ pub fn run_capture(exe: &Path, args: &[&str], timeout: Duration) -> Option<(i32,
 /// whole call: the wait for the child, and then the wait for its pipes, which a grandchild that outlives the child may
 /// keep open. When it passes, the child and the processes it started are ended and the result is `None`, not the
 /// bytes read so far: a half-read answer is not one the callers can use. `None` too when the program can't start.
-pub(crate) fn run_bounded(mut cmd: Command, timeout: Duration) -> Option<(i32, Vec<u8>, Vec<u8>)> {
-    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+pub(crate) fn run_bounded(cmd: Command, timeout: Duration) -> Option<(i32, Vec<u8>, Vec<u8>)> {
+    match run_bounded_with(cmd, timeout, None, usize::MAX) {
+        Bounded::Done(code, stdout, stderr) => Some((code, stdout, stderr)),
+        Bounded::NotStarted | Bounded::Deadline | Bounded::TooMuch => None,
+    }
+}
+
+/// How `run_bounded_with` ended.
+#[derive(Debug)]
+pub(crate) enum Bounded {
+    /// The program couldn't start.
+    NotStarted,
+    /// The deadline passed. The child and what it started are ended.
+    Deadline,
+    /// Standard output and standard error together went over `max_bytes`. The child and what it started are ended.
+    TooMuch,
+    /// The exit code, standard output and standard error.
+    Done(i32, Vec<u8>, Vec<u8>),
+}
+
+/// `run_bounded`, with `input` for standard input and a cap on the output. `input` is written on its own thread and
+/// standard input is then closed; with `None` it is the null device. Past `max_bytes` of standard output and standard
+/// error together, nothing more is read and the child and what it started are ended, as at the deadline.
+pub(crate) fn run_bounded_with(
+    mut cmd: Command,
+    timeout: Duration,
+    input: Option<Vec<u8>>,
+    max_bytes: usize,
+) -> Bounded {
+    use std::io::{Read, Write};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    cmd.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -86,28 +120,67 @@ pub(crate) fn run_bounded(mut cmd: Command, timeout: Duration) -> Option<(i32, V
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    let mut child = cmd.spawn().ok()?;
+    let Ok(mut child) = cmd.spawn() else {
+        return Bounded::NotStarted;
+    };
     let tree = crate::job::ProcessTree::adopt(&child);
     let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
         tree.kill(&mut child);
         let _ = child.wait();
-        return None;
+        return Bounded::NotStarted;
     };
+    if let Some(input) = input {
+        let Some(mut stdin) = child.stdin.take() else {
+            tree.kill(&mut child);
+            let _ = child.wait();
+            return Bounded::NotStarted;
+        };
+        // On its own thread, so a child that doesn't read can't hold the caller past the deadline. The pipe is
+        // closed when the thread ends, which tells the child its input is complete. A child that stops reading (or
+        // is killed) ends the write with an error, which is not the caller's concern.
+        std::thread::spawn(move || {
+            let _ = stdin.write_all(&input);
+            let _ = stdin.flush();
+        });
+    }
     // Each pipe is read on its own thread, so a full pipe cannot hold the child past the deadline. The thread sends
-    // its bytes when the pipe closes, which lets the caller wait for them with a deadline.
-    fn read(mut pipe: impl std::io::Read + Send + 'static) -> std::sync::mpsc::Receiver<Vec<u8>> {
+    // its bytes when the pipe closes, which lets the caller wait for them with a deadline. The two threads share one
+    // count of the bytes read: past `max_bytes` both stop and `over` is set, which the caller sees within a poll.
+    let total = Arc::new(AtomicUsize::new(0));
+    let over = Arc::new(AtomicBool::new(false));
+    let read = |mut pipe: Box<dyn Read + Send>| {
         let (tx, rx) = std::sync::mpsc::channel();
+        let (total, over) = (Arc::clone(&total), Arc::clone(&over));
         std::thread::spawn(move || {
             let mut out = Vec::new();
-            let _ = pipe.read_to_end(&mut out);
+            let mut buf = [0u8; 8192];
+            loop {
+                match pipe.read(&mut buf) {
+                    Ok(0) => break,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(_) => break,
+                    Ok(n) => {
+                        if total.fetch_add(n, Ordering::SeqCst).saturating_add(n) > max_bytes {
+                            over.store(true, Ordering::SeqCst);
+                            break;
+                        }
+                        out.extend_from_slice(&buf[..n]);
+                    }
+                }
+            }
             let _ = tx.send(out);
         });
         rx
-    }
-    let out_rx = read(stdout);
-    let err_rx = read(stderr);
+    };
+    let out_rx = read(Box::new(stdout));
+    let err_rx = read(Box::new(stderr));
     let deadline = Instant::now() + timeout;
     let status = loop {
+        if over.load(Ordering::SeqCst) {
+            tree.kill(&mut child);
+            let _ = child.wait();
+            return Bounded::TooMuch;
+        }
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
@@ -115,7 +188,7 @@ pub(crate) fn run_bounded(mut cmd: Command, timeout: Duration) -> Option<(i32, V
                 tree.kill(&mut child);
                 let _ = child.wait();
                 // The readers are left alone: they end once the killed processes have closed the pipes.
-                return None;
+                return Bounded::Deadline;
             }
         }
     };
@@ -125,11 +198,15 @@ pub(crate) fn run_bounded(mut cmd: Command, timeout: Duration) -> Option<(i32, V
     };
     let stdout = take(&out_rx);
     let stderr = take(&err_rx);
+    if over.load(Ordering::SeqCst) {
+        tree.kill(&mut child);
+        return Bounded::TooMuch;
+    }
     let (Some(stdout), Some(stderr)) = (stdout, stderr) else {
         tree.kill(&mut child);
-        return None;
+        return Bounded::Deadline;
     };
-    Some((status.code().unwrap_or(-1), stdout, stderr))
+    Bounded::Done(status.code().unwrap_or(-1), stdout, stderr)
 }
 
 /// The first version-shaped token, with an optional leading `v` removed and a suffix kept.

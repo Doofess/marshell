@@ -1,0 +1,21 @@
+/* The quit question: the close dialog's sheet. An off button stays in the tab order (aria-disabled), so it is told apart by fill and ink. */
+.quit-dialog .close-dialog__btn[aria-disabled="true"],
+.quit-dialog .close-dialog__btn[aria-disabled="true"]:hover,
+.quit-dialog .close-dialog__btn[aria-disabled="true"]:active {
+  background: var(--hover);
+  color: var(--text-3);
+  cursor: default;
+}
+.quit-dialog__error:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+@media (forced-colors: active) {
+  .quit-dialog .close-dialog__btn[aria-disabled="true"] {
+    color: GrayText;
+    outline-color: GrayText;
+  }
+  .quit-dialog__error:focus-visible {
+    outline: 2px solid Highlight;
+  }
+}

@@ -107,6 +107,11 @@ export const COMMANDS: Command[] = [
   { id: "changes-refresh", label: "Refresh changes", group: "Window" },
   { id: "changes-review", label: "Ask the agent to review", group: "Window" },
   { id: "changes-send", label: "Send comments", group: "Window" },
+  // The pull request bar's commands. None has a default key.
+  { id: "changes-create-pull", label: "Create pull request\u2026", group: "Window" },
+  { id: "changes-push", label: "Push commits", group: "Window" },
+  { id: "changes-merge", label: "Merge pull request\u2026", group: "Window" },
+  { id: "changes-open-pull", label: "Open the pull request on GitHub", group: "Window" },
   // The browser tab (Windows only for now: the window hides them elsewhere). None has a default key.
   { id: "new-browser-tab", label: "New browser tab", group: "Window" },
   { id: "open-url", label: "Open URL…", group: "Window" },

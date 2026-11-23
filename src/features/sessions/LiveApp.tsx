@@ -74,6 +74,7 @@ import { NO_FOLDER_LINE } from "../files/FileTree";
 import { copy as changesCopy, stripTitle } from "../changes/copy";
 import { ChangesPanel, type ChangesHandle } from "../changes/ChangesPanel";
 import { askReview, postComments } from "../changes/changesApi";
+import { stopPushes } from "../changes/githubApi";
 import { reviewCommandOf } from "../changes/review";
 import { runReview, runSend, type SendResult } from "../changes/send";
 import { EmptyFiles } from "../pane/EmptyFiles";
@@ -127,6 +128,7 @@ import { useRowFlash } from "../attention/rowFlash";
 import { notify } from "../../lib/api/notify";
 import { jumpCloses, trayClosesOverlay, traySessions, useTray, useTrayActions, type TrayAction } from "../tray/useTray";
 import { CloseDialog } from "../window/CloseDialog";
+import { QuitDialog, quitStopFailed } from "../window/QuitDialog";
 import { chooseClose as applyCloseChoice } from "../window/closeChoice";
 import { useViewReport } from "../notifications/useViewReport";
 import { focusTarget, linkFocusSelector } from "../notifications/notificationLink";
@@ -422,6 +424,8 @@ export function LiveApp() {
   const announce = useCallback((text: string, navigation?: boolean) => setNotice({ id: -++noticeCount.current, text, navigation }), []);
   // The one-time close dialog, opened by the shell's close-choice (see below).
   const [closeAsk, setCloseAsk] = useState<{ busy: boolean; error: string | null } | null>(null);
+  // The quit question while pushes run, opened by the shell's quit-ask (see below).
+  const [quitAsk, setQuitAsk] = useState<{ count: number; busy: boolean; error: string | null } | null>(null);
   // A prompt jump asked of one session's terminal; each token is one jump.
   const [promptJump, setPromptJump] = useState<{ token: number; by: -1 | 1; tabId: string } | null>(null);
   const jumpCount = useRef(0);
@@ -2014,7 +2018,7 @@ export function LiveApp() {
 
   useEffect(() => {
     // While the sheet is up it has the keys: Esc, Tab and the lists are its own.
-    if (!os || overlay !== null || review !== null || closeAsk !== null) return;
+    if (!os || overlay !== null || review !== null || closeAsk !== null || quitAsk !== null) return;
     if (launcherOpen) {
       // The launcher keeps its keys, except Reopen closed session: on an empty window the launcher is up by itself. The key types
       // no text, so it passes even from the launcher's search box.
@@ -2048,7 +2052,7 @@ export function LiveApp() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [os, launcherOpen, overlay, review, closeAsk, actions, jumpPrompt, windowCommand]);
+  }, [os, launcherOpen, overlay, review, closeAsk, quitAsk, actions, jumpPrompt, windowCommand]);
 
   // The other shortcuts are off under the Settings page, but a jump to a session still works: it closes the page and goes there.
   // A field that takes text keeps its own keys; a radio or a switch does not.
@@ -2155,10 +2159,15 @@ export function LiveApp() {
   });
   // The close button with no choice saved: the shell keeps the window open and asks for the one-time dialog.
   const closeAskOpen = useRef(false);
+  const quitAskOpen = useRef(false);
+  // True only while the pushes are being stopped; a quit-ask that comes after that is a new question.
+  const quitStopping = useRef(false);
   useEffect(() => {
     let gone = false;
     let stop: (() => void) | undefined;
     listen("close-choice", () => {
+      // The quit question is the bigger one: while it is up, the close question stays closed.
+      if (quitAskOpen.current) return;
       closeAskOpen.current = true;
       setCloseAsk({ busy: false, error: null });
     })
@@ -2169,6 +2178,53 @@ export function LiveApp() {
       stop?.();
     };
   }, []);
+  // A quit while a push runs: the shell keeps the window open and sends the number of pushes. Another one only updates the number.
+  useEffect(() => {
+    let gone = false;
+    let stop: (() => void) | undefined;
+    listen<number>("quit-ask", (event) => {
+      const count = typeof event.payload === "number" && event.payload > 0 ? event.payload : 1;
+      quitAskOpen.current = true;
+      // The close question gives way, and a close choice still being saved finds it closed.
+      closeAskOpen.current = false;
+      setCloseAsk(null);
+      setQuitAsk((q) => ({ count, busy: quitStopping.current, error: q?.error ?? null }));
+    })
+      .then((s) => (gone ? s() : (stop = s)))
+      .catch(() => {}); // Outside Tauri (tests, a plain browser) there are no events.
+    return () => {
+      gone = true;
+      stop?.();
+    };
+  }, []);
+  const cancelQuitAsk = () => {
+    quitAskOpen.current = false;
+    setQuitAsk(null);
+  };
+  // Stop the pushes first, then quit as the close dialog does: with none running the shell goes through without asking again.
+  const confirmQuit = async () => {
+    if (quitAsk === null || quitAsk.busy) return;
+    const count = quitAsk.count;
+    quitStopping.current = true;
+    setQuitAsk({ count, busy: true, error: null });
+    try {
+      await stopPushes();
+    } catch {
+      quitStopping.current = false;
+      const text = quitStopFailed(count);
+      setQuitAsk((q) => q && { ...q, busy: false, error: text });
+      announce(text);
+      return;
+    }
+    quitStopping.current = false;
+    try {
+      await invoke<void>("close_once", { keepInTray: false });
+    } catch {
+      const text = "Couldn't quit. Try again.";
+      setQuitAsk((q) => q && { ...q, busy: false, error: text });
+      announce(text);
+    }
+  };
   const cancelCloseAsk = () => {
     closeAskOpen.current = false;
     setCloseAsk(null);
@@ -2382,6 +2438,8 @@ export function LiveApp() {
               })()}
               onSend={(text, count) => sendComments(paneSession, text, count)}
               onReview={(base) => void reviewChanges(paneSession, focusedInfo?.agent ?? null, base)}
+              sessionName={focusedRow?.name}
+              onTyped={() => focusDelivered(paneSession, { name: focusedRow?.name ?? "" })}
               announce={announce}
               onSummary={setChangesSummary}
               menu={changesMenu}
@@ -2938,6 +2996,7 @@ export function LiveApp() {
       )}
       {overlay === "shortcuts" && os && <LiveShortcuts os={os} onClose={() => setOverlay(null)} />}
       {runAsk && <ScriptsTrustDialog scripts={runAsk.scripts} busy={runAsk.busy} error={runAsk.error} allowLabel="Allow and run" cancelLabel="Cancel" onAllow={() => void allowRun()} onCancel={() => setRunAsk(null)} />}
+      {quitAsk && <QuitDialog count={quitAsk.count} busy={quitAsk.busy} error={quitAsk.error} onQuit={() => void confirmQuit()} onCancel={cancelQuitAsk} />}
       {closeAsk && <CloseDialog busy={closeAsk.busy} error={closeAsk.error} onChoose={(keep) => void chooseClose(keep)} onCancel={cancelCloseAsk} />}
       {saveAsk && <SaveDialog name={lastSegment(saveAsk.path)} onChoose={answerSaveAsk} />}
       {clearData !== null && <ClearDataDialog busy={clearData === "busy"} onClear={() => void clearBrowserData()} onCancel={() => setClearData(null)} />}

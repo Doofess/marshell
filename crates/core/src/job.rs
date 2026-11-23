@@ -38,6 +38,35 @@ impl ProcessTree {
         }
     }
 
+    /// Starts `cmd` suspended, puts it in a job of its own, then lets it run, so nothing it starts is missed.
+    /// The job has no limits, as `adopt`'s: a child that ends on its own leaves what it started running, and only
+    /// `kill` ends the tree. On other OSes it only spawns. If the job can't be made or joined, the child is killed
+    /// and the error returned. On Windows it sets the creation flags itself, to `CREATE_SUSPENDED` and
+    /// `CREATE_NO_WINDOW` (no console window flashes); any flags the caller set are replaced.
+    pub fn spawn(cmd: &mut std::process::Command) -> std::io::Result<(std::process::Child, ProcessTree)> {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_SUSPENDED: u32 = 0x0000_0004;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            cmd.creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW);
+            let mut child = cmd.spawn()?;
+            let started = windows::Job::new()
+                .and_then(|job| job.assign(&child).map(|()| job))
+                .and_then(|job| windows::resume(&child).map(|()| job));
+            match started {
+                Ok(job) => Ok((child, ProcessTree { job: Some(job) })),
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    Err(e)
+                }
+            }
+        }
+        #[cfg(not(windows))]
+        Ok((cmd.spawn()?, ProcessTree {}))
+    }
+
     /// Ends the child and, where it is in a job, every process in the job.
     pub fn kill(&self, child: &mut std::process::Child) {
         #[cfg(windows)]
@@ -50,21 +79,44 @@ impl ProcessTree {
 
 #[cfg(windows)]
 mod windows {
+    use std::io;
     use std::os::windows::io::AsRawHandle;
     use std::sync::OnceLock;
-    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
+    };
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation, SetInformationJobObject,
         TerminateJobObject,
     };
-    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenThread, ResumeThread, THREAD_SUSPEND_RESUME};
 
     /// A job with no limits that holds one child. Closing the handle ends nothing: the job only goes away
     /// once its last process has.
     pub struct Job(HANDLE);
 
     impl Job {
+        /// An empty job with no limits. `assign` puts the child in it.
+        pub fn new() -> io::Result<Job> {
+            // SAFETY: both arguments may be null (default security, no name); the result is checked.
+            let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+            if handle.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(Job(handle))
+        }
+
+        /// Puts `child` in the job. Its own children join the job when they start.
+        pub fn assign(&self, child: &std::process::Child) -> io::Result<()> {
+            // SAFETY: both handles are valid: `self.0`, and the child's while `child` is borrowed.
+            if unsafe { AssignProcessToJobObject(self.0, child.as_raw_handle()) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        }
+
         /// None when the job can't be made or the child can't join it (it may already be in a job that forbids that).
         pub fn with(child: &std::process::Child) -> Option<Job> {
             // SAFETY: both arguments may be null (default security, no name); the result is checked.
@@ -89,6 +141,47 @@ mod windows {
             // SAFETY: `self.0` is a valid handle that nothing else closes.
             unsafe { CloseHandle(self.0) };
         }
+    }
+
+    /// Resumes a child that was started with `CREATE_SUSPENDED`. `std` keeps the main thread's handle
+    /// to itself, so the thread is found by its owner: a suspended process has only the one.
+    pub fn resume(child: &std::process::Child) -> io::Result<()> {
+        let pid = child.id();
+        // SAFETY: plain call; the result is checked.
+        let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
+        if snapshot == INVALID_HANDLE_VALUE {
+            return Err(io::Error::last_os_error());
+        }
+        let result = resume_thread_of(snapshot, pid);
+        // SAFETY: `snapshot` is a valid handle that nothing else uses.
+        unsafe { CloseHandle(snapshot) };
+        result
+    }
+
+    fn resume_thread_of(snapshot: HANDLE, pid: u32) -> io::Result<()> {
+        // SAFETY: an all-zero THREADENTRY32 is valid (plain integers); dwSize is set before use.
+        let mut entry: THREADENTRY32 = unsafe { std::mem::zeroed() };
+        entry.dwSize = size_of::<THREADENTRY32>() as u32;
+        // SAFETY: `snapshot` is valid and `entry` is sized as dwSize says.
+        let mut more = unsafe { Thread32First(snapshot, &mut entry) } != 0;
+        while more {
+            if entry.th32OwnerProcessID == pid {
+                // SAFETY: plain call; the result is checked.
+                let thread = unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID) };
+                if thread.is_null() {
+                    return Err(io::Error::last_os_error());
+                }
+                // SAFETY: `thread` is a valid handle with the right to resume.
+                let resumed = unsafe { ResumeThread(thread) };
+                let err = io::Error::last_os_error();
+                // SAFETY: `thread` is a valid handle that nothing else uses.
+                unsafe { CloseHandle(thread) };
+                return if resumed == u32::MAX { Err(err) } else { Ok(()) };
+            }
+            // SAFETY: as for Thread32First.
+            more = unsafe { Thread32Next(snapshot, &mut entry) } != 0;
+        }
+        Err(io::Error::other("the suspended process has no thread to resume"))
     }
 
     /// The job's handle, kept as a number because a raw handle cannot be stored in a static.

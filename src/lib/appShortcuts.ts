@@ -33,8 +33,8 @@ export type SessionShortcut =
   /** "Show file tree" and "Collapse all folders": the Files panel's tree. Neither has a key of its own. */
   | { kind: "filesTree" }
   | { kind: "filesCollapse" }
-  /** "Refresh changes", "Ask the agent to review" and "Send comments": the Changes panel of the focused session. None has a key of its own. */
-  | { kind: "changes"; what: "refresh" | "review" | "send" }
+  /** "Refresh changes", "Ask the agent to review", "Send comments" and the four pull request commands: the Changes panel of the focused session. None has a key of its own. */
+  | { kind: "changes"; what: "refresh" | "review" | "send" | "createPull" | "push" | "merge" | "openPull" }
   /** The next or previous tab of the focused session's side pane, wrapping. */
   | { kind: "paneTab"; by: 1 | -1 }
   /** Close the side pane's selected tab. Has no key of its own. */
@@ -167,6 +167,14 @@ export function commandShortcut(id: string): SessionShortcut | null {
       return { kind: "changes", what: "review" };
     case "changes-send":
       return { kind: "changes", what: "send" };
+    case "changes-create-pull":
+      return { kind: "changes", what: "createPull" };
+    case "changes-push":
+      return { kind: "changes", what: "push" };
+    case "changes-merge":
+      return { kind: "changes", what: "merge" };
+    case "changes-open-pull":
+      return { kind: "changes", what: "openPull" };
     case "new-browser-tab":
     case "open-url":
       return { kind: "newBrowserTab" };

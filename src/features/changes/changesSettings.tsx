@@ -2,7 +2,7 @@ import { useCallback, useSyncExternalStore } from "react";
 import type { ChangesSettings } from "../../generated/ChangesSettings";
 import { useAppearance } from "../appearance/AppearanceProvider";
 
-export const CHANGES_DEFAULTS: ChangesSettings = { hide_whitespace: false, wrap: false };
+export const CHANGES_DEFAULTS: ChangesSettings = { hide_whitespace: false, wrap: false, pull_requests: true };
 
 const never = () => () => {};
 

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ChangesDrafts } from "../../generated/ChangesDrafts";
 import type { DraftComment } from "../../generated/DraftComment";
 import { ApiError } from "../../lib/api/client";
-import { afterSend, refusalNotice, runReview, runSend } from "./send";
+import { afterSend, askNotice, refusalNotice, runReview, runSend } from "./send";
 
 const c = (id: string): DraftComment => ({ id, path: "a.ts", side: "new", start: 1, end: 1, rows: 1, first: "f", hash: "h", quote: ["x"], text: "t" });
 const drafts: ChangesDrafts = { checkout: "r", base: null, comments: [c("1"), c("2")], folds: { "a.ts": true } };
@@ -73,5 +73,16 @@ describe("runReview", () => {
   });
   it("a refusal types nothing", async () => {
     expect(await runReview({ name: "Claude", base: null, command: null, ask: () => Promise.reject(conflict("ended")) })).toEqual({ done: false, notice: "Claude has ended, so nothing was typed." });
+  });
+});
+
+describe("askNotice", () => {
+  it("words a refusal as the review path does", () => {
+    expect(askNotice(new ApiError(409, JSON.stringify({ reason: "elevated" })), "api")).toBe("api runs elevated, so nothing was typed.");
+    expect(askNotice(new ApiError(409, JSON.stringify({ reason: "waiting" })), "api")).toBe("api is waiting for an answer, so nothing was typed.");
+  });
+  it("shows a 409's own sentence and any other failure's reason", () => {
+    expect(askNotice(new ApiError(409, JSON.stringify({ reason: "The session moved to another folder. Look again before you go on." })), "api")).toBe("The session moved to another folder. Look again before you go on.");
+    expect(askNotice(new Error("boom"), "api")).toBe("boom");
   });
 });

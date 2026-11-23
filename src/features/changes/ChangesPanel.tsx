@@ -1,4 +1,6 @@
-import { type Ref, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { type ReactNode, type Ref, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ContextMenu } from "../../components/ContextMenu/ContextMenu";
 import type { ChangesDrafts } from "../../generated/ChangesDrafts";
 import type { ChangesReply } from "../../generated/ChangesReply";
@@ -13,10 +15,24 @@ import { type BoxState, anchorKey, boxAfter } from "./boxModel";
 import { MAX_COMMENTS, type Placement, anchorOf, place, renumbered } from "./comments";
 import { type OpenBox, boxAnchor, commentsOf, elsewhere, givesWay, keptBox, sendMessageOf, shownComments, unkept, withFolds } from "./drafts";
 import { copy } from "./copy";
+import type { AskRequest } from "../../generated/AskRequest";
+import type { CiCheck } from "../../generated/CiCheck";
+import type { MergeMethod } from "../../generated/MergeMethod";
+import type { PullActionKind } from "../../generated/PullActionKind";
+import type { PullStatus } from "../../generated/PullStatus";
+import type { CheckAction } from "./ChecksList";
+import { ask, failureOf, pullAction } from "./githubApi";
+import { githubCopy as gc } from "./githubCopy";
+import { CreatePullSheet } from "./CreatePullSheet";
+import { MergeDialog } from "./MergeDialog";
+import { PullBar } from "./PullBar";
+import { PushSheet } from "./PushSheet";
+import { type BarButton, type BarCommand, type BarMenuItem, announcementsOf, barOf, commandOf } from "./pullModel";
+import { recountKey, useGithub } from "./useGithub";
 import { type Item, type Row, type Section, cutFiles, focusIndex, itemsOf, sectionsOf } from "./model";
 import { reviewLabel } from "./review";
 import { SendBar } from "./SendBar";
-import { type SendResult, afterSend } from "./send";
+import { type SendResult, afterSend, askNotice } from "./send";
 import { useChanges } from "./useChanges";
 import { useDiffColours } from "./useDiffColours";
 import { useChangesSettings } from "./changesSettings";
@@ -43,12 +59,26 @@ export type ChangesPanelProps = {
   /** The strip's ⋯ menu while it is open: where it opened and the button to give the focus back to. */
   menu: { anchor: { x: number; y: number }; opener: HTMLElement } | null;
   onMenuClose(): void;
+  /** The session's own name, for what a typed request says; the agent's name when absent. */
+  sessionName?: string;
+  /** A request was typed into the session's prompt: the keyboard goes there. */
+  onTyped?(): void;
 };
 
 export { listKey } from "./DiffList";
 
 /** What the palette's Changes commands call on the mounted panel. Each announces why when it can't act. */
-export type ChangesHandle = { refresh(): void; review(): void; send(): void };
+export type ChangesHandle = { refresh(): void; review(): void; send(): void; createPull(): void; push(): void; merge(): void; openPull(): void };
+
+/** The strip's lines and, under them, the pull request bar: drawn over a diff and over an empty one. */
+export function ChangesHead({ strip, bar }: { strip: ReactNode; bar: ReactNode }) {
+  return (
+    <div className="changes__top">
+      <div className="changes__strip">{strip}</div>
+      {bar}
+    </div>
+  );
+}
 
 
 /** The panel's empty states, each with its mark; only a failed read has an action. */
@@ -83,6 +113,7 @@ export function noticesOf(reply: ChangesReply): string[] {
     reply.base === null ? copy.noBase : reply.unrelated ? copy.unrelated(reply.base) : null,
     reply.more_new > 0 ? copy.moreNew(reply.more_new) : null,
     reply.new_cut ? copy.newCut : null,
+    reply.pr_base_unfetched !== null ? copy.prBaseUnfetched(reply.pr_base_unfetched) : null,
     cut > 0 ? copy.cut(cut) : null,
   ].filter((t): t is string => t !== null);
 }
@@ -106,6 +137,21 @@ export function ChangesPanel(p: ChangesPanelProps) {
   const { reply, noFolder, refresh } = useChanges({ session: p.session, shown: p.shown, hideWhitespace: hide });
   const listed = reply?.kind === "listed" ? reply : null;
   const { drafts } = p;
+
+  // The pull request bar: what GitHub says about this checkout, and what the bar's buttons do.
+  const github = useGithub(p.session, p.shown, recountKey(listed), settings?.pull_requests ?? false);
+  const gh = github.reply;
+  const ghAgent = p.agent === null ? null : p.agentName;
+  const now = Date.now();
+  const barView = barOf(gh, ghAgent, now);
+  const [note, setNote] = useState<string | null>(null);
+  const before = useRef<typeof gh>(null);
+  useEffect(() => {
+    if (gh !== null) for (const t of announcementsOf(before.current, gh)) p.announce(t);
+    before.current = gh;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per new reply
+  }, [gh]);
+  useEffect(() => setNote(null), [p.session]);
 
   // The comment box (its text lives here, so a poll never loses it), the Send bar's question and a send under way.
   const [open, setOpen] = useState<OpenBox | null>(null);
@@ -267,10 +313,154 @@ export function ChangesPanel(p: ChangesPanelProps) {
     if (result.sent && latest) p.onDrafts(afterSend(latest, result, d.comments));
   };
 
+  // The pull request bar's actions. The ones that need a sheet are Task 14's: each is the one place it fills.
+  // At most one sheet is open; the panel holds which.
+  // What a sheet needs from the reply is taken when it opens: a reply that changes under it never takes it down mid-push.
+  type Sheet = { kind: "create"; repo: string } | { kind: "push" } | { kind: "output"; id: string } | { kind: "merge"; checkout: string; pull: PullStatus; method: MergeMethod; auto: boolean };
+  const [sheet, setSheet] = useState<Sheet | null>(null);
+  useEffect(() => setSheet(null), [p.session]);
+  // A merge takes away the button the keyboard came from, at once or with the next reply. Until that reply is drawn, a
+  // keyboard left on nothing goes to the bar.
+  const focusBarAfterMerge = useRef<{ from: typeof gh } | null>(null);
+  useEffect(() => {
+    const f = focusBarAfterMerge.current;
+    if (f === null || sheet !== null) return;
+    const active = document.activeElement;
+    if (active === null || active === document.body) box.current?.querySelector<HTMLElement>(".pull-bar button")?.focus();
+    if (gh !== f.from) focusBarAfterMerge.current = null;
+  }, [sheet, gh]);
+  const createPull = () => gh && setSheet({ kind: "create", repo: gh.repo });
+  const push = () => setSheet({ kind: "push" });
+  const merge = (method?: MergeMethod, auto = false) => {
+    const m = method ?? gh?.merge_methods[0];
+    if (m !== undefined && gh?.pull) setSheet({ kind: "merge", checkout: gh.checkout, pull: gh.pull, method: m, auto });
+  };
+  const showOutput = () => {
+    if (gh?.push) setSheet({ kind: "output", id: gh.push });
+  };
+  const fail = (text: string) => {
+    setNote(text);
+    p.announce(text);
+  };
+  const openHttps = (url: string | null | undefined) => {
+    if (typeof url !== "string" || !url.startsWith("https://")) return p.announce(gc.noAddress);
+    void openUrl(url).catch(() => fail(gc.noAddress));
+  };
+  const copyOut = (text: string, said: string) => void navigator.clipboard.writeText(text).then(() => p.announce(said), () => p.announce(gc.couldntCopy));
+  const pullDo = async (action: PullActionKind) => {
+    const pull = gh?.pull;
+    if (!gh || !pull) return;
+    setNote(null);
+    try {
+      await pullAction(p.session, { checkout: gh.checkout, id: pull.id, number: pull.number, action });
+    } catch (e) {
+      fail(failureOf(e).reason);
+    }
+    github.refresh();
+  };
+  const askAgent = async (req: AskRequest) => {
+    setNote(null);
+    const name = p.sessionName ?? p.agentName;
+    try {
+      const r = await ask(p.session, req);
+      if (r.form === "copy") copyOut(r.text, req.kind === "switch_and_pull" ? gc.copiedCommands : gc.copiedRequest(name));
+      else {
+        p.announce(gc.typedRequest(name));
+        p.onTyped?.();
+      }
+    } catch (e) {
+      fail(askNotice(e, name));
+    }
+  };
+  const onBarMain = (button: BarButton, method?: MergeMethod) => {
+    switch (button.id) {
+      case "push":
+        return push();
+      case "create":
+        return createPull();
+      case "merge":
+      case "auto_merge":
+        return merge(method, button.id === "auto_merge");
+      case "show_output":
+        return showOutput();
+      case "ready":
+        return void pullDo("ready");
+      case "get_gh":
+        return openHttps(button.url);
+      case "copy_sign_in":
+        return copyOut(button.text ?? "", button.done ?? gc.copied);
+      case "retry":
+        return github.refresh();
+    }
+  };
+  const onBarMenu = (item: BarMenuItem) => {
+    switch (item.id) {
+      case "push":
+        return push();
+      case "merge":
+        return merge();
+      case "draft":
+        return void pullDo("draft");
+      case "cancel_auto_merge":
+        return void pullDo("cancel_auto_merge");
+      case "hide":
+        return void setSetting({ pull_requests: false }).then(() => p.announce(gc.hidden), () => p.announce(gc.hideFailed));
+      case "ask_open":
+        return void askAgent({ kind: "open_pull", copy: false });
+      case "ask_switch":
+      case "copy_switch":
+        return void (gh?.pull && askAgent({ kind: "switch_and_pull", copy: item.id === "copy_switch", number: gh.pull.number }));
+      case "open_on_github":
+        return openHttps(item.url);
+      case "copy_link":
+        return copyOut(item.url ?? "", gc.copiedLink);
+    }
+  };
+  const onBarCheck = (action: CheckAction, check: CiCheck) => {
+    if (action === "open") return openHttps(check.url);
+    if (action === "copy_link") return check.url === null ? p.announce(gc.noCheckAddress) : copyOut(check.url, gc.copiedLink);
+    if (gh?.pull) void askAgent({ kind: "fix_check", copy: p.agent === null, number: gh.pull.number, name: check.name, workflow: check.workflow, url: check.url, run_id: check.run_id });
+  };
+  // The palette's commands: the bar's own action, or why it can't run now.
+  const barCommand = (command: BarCommand) => {
+    const what = commandOf(barView, command);
+    if ("main" in what) return onBarMain(what.main);
+    if ("menu" in what) return onBarMenu(what.menu);
+    p.announce(barView === null && settings?.pull_requests !== false ? gc.unavailable : what.say);
+  };
+  const refreshAll = () => {
+    refresh();
+    github.refresh();
+  };
+  const closeSheet = () => setSheet(null);
+  const sheetDone = () => {
+    if (sheet?.kind === "merge") focusBarAfterMerge.current = { from: gh };
+    setSheet(null);
+    github.refresh();
+  };
+  const sheetNode =
+    sheet === null ? null : sheet.kind === "create" ? (
+      <CreatePullSheet key="create" tab={p.session} repo={sheet.repo} announce={p.announce} onClose={closeSheet} onDone={sheetDone} />
+    ) : sheet.kind === "push" ? (
+      <PushSheet key="push" tab={p.session} announce={p.announce} onClose={closeSheet} onDone={sheetDone} />
+    ) : sheet.kind === "output" ? (
+      <PushSheet key="output" tab={p.session} resume={sheet.id} announce={p.announce} onClose={closeSheet} onDone={sheetDone} />
+    ) : (
+      <MergeDialog key="merge" tab={p.session} checkout={sheet.checkout} pull={sheet.pull} method={sheet.method} auto={sheet.auto} announce={p.announce} onClose={closeSheet} onDone={sheetDone} />
+    );
+  // Over the whole window, where every other dialog is drawn: the side pane is too narrow for a sheet, and a page beside it stays covered.
+  const sheetHost = sheetNode === null ? null : (box.current?.closest(".live-app") ?? null);
+  const sheetAt = sheetNode !== null && sheetHost !== null ? createPortal(sheetNode, sheetHost) : sheetNode;
+  const bar = barView === null ? null : <PullBar view={barView} agent={ghAgent} now={now} onMain={onBarMain} onMenu={onBarMenu} onCheck={onBarCheck} onEscape={p.onEscape} />;
+
   useImperativeHandle(p.ref, () => ({
-    refresh: refresh,
+    refresh: refreshAll,
     review: () => (listed ? p.onReview(listed.base) : p.announce("There are no changes to review.")),
     send: () => void send(),
+    createPull: () => barCommand("create"),
+    push: () => barCommand("push"),
+    merge: () => barCommand("merge"),
+    openPull: () => barCommand("open"),
   }));
 
   const onKey = (r: ListResult) => {
@@ -369,8 +559,15 @@ export function ChangesPanel(p: ChangesPanelProps) {
     p.onMenuClose();
     opener?.focus();
     if (choice === null) return;
-    if (choice.kind === "refresh") refresh();
-    else if (choice.kind === "review") p.onReview(listed?.base ?? null);
+    if (choice.kind === "refresh") refreshAll();
+    else if (choice.kind === "github") {
+      if (choice.from === "main") {
+        if (barView?.main?.id === choice.id) onBarMain(barView.main);
+      } else {
+        const item = barView?.menu.find((m) => m.id === choice.id);
+        if (item) onBarMenu(item);
+      }
+    } else if (choice.kind === "review") p.onReview(listed?.base ?? null);
     else if (choice.kind === "fold-all") foldAll(true);
     else if (choice.kind === "unfold-all") foldAll(false);
     else if (choice.kind === "setting") {
@@ -387,7 +584,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
       {p.menu && (
         <ContextMenu
           label="Changes menu"
-          items={changesMenuItems({ settings, failed, review: p.agent === null ? null : reviewLabel(p.agent, p.agentName), hasFiles: sections.some((s) => s.rows.length > 0) })}
+          items={changesMenuItems({ settings, failed, review: p.agent === null ? null : reviewLabel(p.agent, p.agentName), hasFiles: sections.some((s) => s.rows.length > 0), github: barView?.menu ?? [], main: barView?.main ?? null })}
           anchor={p.menu.anchor}
           onRun={runMenu}
           onClose={({ refocus }) => {
@@ -433,7 +630,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
   if (!listed || sections.length === 0) {
     const empty = <ChangesEmpty reply={reply} noFolder={noFolder} onRetry={refresh} />;
     const around = emptyNotices(listed, drafts);
-    if (around === null) {
+    if (around === null && bar === null && note === null) {
       return (
         <>
           {empty}
@@ -443,23 +640,25 @@ export function ChangesPanel(p: ChangesPanelProps) {
     }
     return (
       <div className="changes" ref={box}>
-        <div className="changes__strip">
-          {around.map((t) => (
+        <ChangesHead
+          strip={[...(around ?? []), ...(note === null ? [] : [note])].map((t) => (
             <p key={t} className="changes__notice">
               {t}
             </p>
           ))}
-        </div>
+          bar={bar}
+        />
         {empty}
         {sendBar}
         {menus}
+        {sheetAt}
       </div>
     );
   }
 
   const line = copy.line({ branch: listed.branch, detached: listed.detached, base: listed.base, ahead: listed.ahead, uncommitted: listed.uncommitted, moved: listed.moved, folder: listed.folder });
   const away = elsewhere(drafts, listed.folder);
-  const notices = away === null ? noticesOf(listed) : [...noticesOf(listed), away];
+  const notices = [...noticesOf(listed), ...(away === null ? [] : [away]), ...(note === null ? [] : [note])];
   const boxAt = open === null ? -1 : boxAfter(items, sections, open.state);
   // The key stays the written anchor (the box keeps its text and caret); the label reads the lines it is on now.
   const boxLines = open === null ? null : boxAnchor(open, listed.folder, placeBox(open.state));
@@ -472,14 +671,19 @@ export function ChangesPanel(p: ChangesPanelProps) {
       : undefined;
   return (
     <div className="changes" ref={box}>
-      <div className="changes__strip">
-        {line !== "" && <p className="changes__line">{line}</p>}
-        {notices.map((t) => (
-          <p key={t} className="changes__notice">
-            {t}
-          </p>
-        ))}
-      </div>
+      <ChangesHead
+        strip={
+          <>
+            {line !== "" && <p className="changes__line">{line}</p>}
+            {notices.map((t) => (
+              <p key={t} className="changes__notice">
+                {t}
+              </p>
+            ))}
+          </>
+        }
+        bar={bar}
+      />
       <DiffList
         items={items}
         focus={focus}
@@ -494,6 +698,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
       />
       {sendBar}
       {menus}
+      {sheetAt}
     </div>
   );
 }

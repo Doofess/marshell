@@ -84,8 +84,8 @@ export function unkept(path: string): string | null {
   return treeFolderOk(path) ? null : "This file's name holds a colon or a backslash, so a comment or a fold on it can't be kept.";
 }
 
-/** The message Send hands over. Another checkout's comments are cited at the lines they were written at, against its base, with the checkout named. */
+/** The message Send hands over. Comments keep the base they were written against, even when the diff now compares with another (a pull request's). Another checkout's are cited at the lines they were written at, with the checkout named. */
 export function sendMessageOf(drafts: ChangesDrafts, shown: Shown, sections: Section[], placements: Map<string, Placement>): string {
   if (away(drafts, shown.folder)) return messageOf(drafts.comments, new Map(), [], drafts.base, drafts.checkout);
-  return messageOf(drafts.comments, placements, sections, shown.base);
+  return messageOf(drafts.comments, placements, sections, drafts.comments.length > 0 ? drafts.base : shown.base);
 }

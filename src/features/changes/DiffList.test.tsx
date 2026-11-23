@@ -162,7 +162,7 @@ describe("refocusOf", () => {
   });
 });
 
-const reply = (o: Partial<ChangesReply>): ChangesReply => ({ kind: "listed", stamp: "s", folder: "C:\\repo", moved: false, branch: "main", detached: null, base: "origin/main", unrelated: false, ahead: 0, uncommitted: false, files: [], diff: "", truncated: false, more_new: 0, new_cut: false, reason: null, ...o });
+const reply = (o: Partial<ChangesReply>): ChangesReply => ({ kind: "listed", stamp: "s", folder: "C:\\repo", moved: false, branch: "main", detached: null, base: "origin/main", unrelated: false, ahead: 0, uncommitted: false, files: [], diff: "", truncated: false, more_new: 0, new_cut: false, reason: null, head: null, pr_base_unfetched: null, ...o });
 const empty = (r: ChangesReply | null, noFolder = false) => renderToStaticMarkup(<ChangesEmpty reply={r} noFolder={noFolder} onRetry={() => {}} />);
 
 describe("ChangesEmpty", () => {
@@ -213,6 +213,8 @@ describe("noticesOf", () => {
   });
   it("says nothing of a whole diff with a base", () => expect(noticesOf(reply({ files: [f("a.ts")], diff: part("a.ts") }))).toEqual([]));
   it("names a missing base and the new files past 200", () => expect(noticesOf(reply({ base: null, more_new: 3 }))).toEqual([copy.noBase, copy.moreNew(3)]));
+  it("says when a pull request's base isn't fetched", () =>
+    expect(noticesOf(reply({ pr_base_unfetched: "develop" }))).toEqual(["This pull request targets develop, which isn't fetched here."]));
   it("says when the look for new files was cut", () =>
     expect(noticesOf(reply({ new_cut: true }))).toEqual(["Looking for new files took too long, so some may not be shown."]));
 });

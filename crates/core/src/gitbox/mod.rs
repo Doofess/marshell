@@ -89,6 +89,39 @@ struct Stamps {
     attributes: Option<Option<FileStamp>>,
 }
 
+/// What the config says about where `origin` points, as written and in the order it was read (the system
+/// file, the user's, the repository's, then the worktree's). Only read: `GitBox` never passes any of it on.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Origin {
+    /// `remote.origin.url`, every value.
+    pub urls: Vec<String>,
+    /// `remote.origin.pushurl`, every value.
+    pub push_urls: Vec<String>,
+    /// `url.<base>.insteadOf` as `(base, value)`.
+    pub instead_of: Vec<(String, String)>,
+    /// `url.<base>.pushInsteadOf` as `(base, value)`.
+    pub push_instead_of: Vec<(String, String)>,
+}
+
+impl Origin {
+    /// Takes in the entries of one file's read that name origin or rewrite an address.
+    fn take(&mut self, entries: &[(String, String)]) {
+        for (key, value) in entries {
+            // Git prints the section and variable in lowercase and the remote's name as written, so only
+            // `origin` itself matches.
+            match key.as_str() {
+                "remote.origin.url" => self.urls.push(value.clone()),
+                "remote.origin.pushurl" => self.push_urls.push(value.clone()),
+                _ => match config::rewrite_entry(key, value) {
+                    Some((config::Rewrite::Instead, base, value)) => self.instead_of.push((base, value)),
+                    Some((config::Rewrite::Push, base, value)) => self.push_instead_of.push((base, value)),
+                    None => {}
+                },
+            }
+        }
+    }
+}
+
 /// One checkout's git, in a sandbox.
 pub struct GitBox {
     checkout: PathBuf,
@@ -99,6 +132,8 @@ pub struct GitBox {
     empty: PathBuf,
     /// The allowed settings read from the system, user and repository files, later files last.
     pairs: Vec<(String, String)>,
+    /// Where `origin` points, from the same files. Read only: none of it is ever passed on to git.
+    origin: Origin,
     sha256: bool,
     stamps: Stamps,
     #[cfg(test)]
@@ -384,6 +419,7 @@ impl GitBox {
             git_dir,
             common,
             pairs: Vec::new(),
+            origin: Origin::default(),
             sha256: false,
             stamps: Stamps::default(),
             #[cfg(test)]
@@ -546,8 +582,10 @@ impl GitBox {
     fn read_config(&mut self) -> Result<(), BoxError> {
         let re = config::key_regex();
         let mut pairs = Vec::new();
+        let mut origin = Origin::default();
         let mut keep = |entries: Vec<(String, String)>| {
             pairs.extend(entries.iter().filter_map(|(k, v)| config::allowed_pair(k, v)));
+            origin.take(&entries);
         };
         for scope in ["--system", "--global"] {
             if let Ok(entries) = self.config_entries(&[OsStr::new(scope)], &re) {
@@ -594,6 +632,7 @@ impl GitBox {
             Some(_) => return Err(BoxError::Unsupported(NEWER_FORMAT)),
         };
         self.pairs = pairs;
+        self.origin = origin;
         self.sha256 = sha256;
         Ok(())
     }
@@ -746,6 +785,11 @@ impl GitBox {
 
     pub fn common(&self) -> &Path {
         &self.common
+    }
+
+    /// Where `origin` points, as of the last config read. Values only: nothing in it reaches a command line.
+    pub fn origin(&self) -> &Origin {
+        &self.origin
     }
 
     /// The sandbox's copy of the index: the one git reads, as it was at the last refresh.
@@ -1293,6 +1337,117 @@ mod tests {
             "{:?}",
             b.pairs
         );
+    }
+
+    #[test]
+    fn the_origin_url_is_read_without_includes() {
+        let scratch = Scratch::new();
+        repo_with_commit(&scratch);
+        let included = scratch.root.join("included.cfg");
+        write(
+            &included,
+            "[remote \"origin\"]\n\turl = https://github.com/evil/included.git\n\tpushurl = https://github.com/evil/pushed.git\n",
+        );
+        let path = included.to_string_lossy().replace('\\', "/");
+        append(
+            &scratch.repo.join(".git").join("config"),
+            &format!(
+                "[remote \"origin\"]\n\turl = https://github.com/octo-org/widgets.git\n[include]\n\tpath = {path}\n"
+            ),
+        );
+        let b = GitBox::open(&scratch.home, &scratch.repo).unwrap();
+        assert_eq!(
+            b.origin().urls,
+            vec!["https://github.com/octo-org/widgets.git".to_string()]
+        );
+        assert!(b.origin().push_urls.is_empty(), "{:?}", b.origin());
+        // The included file is real: plain git, which follows includes, sees its values.
+        let seen = plain(&scratch)(&scratch.repo, &["config", "--get-all", "remote.origin.url"]);
+        assert!(seen.contains("evil/included"), "{seen}");
+    }
+
+    #[test]
+    fn a_linked_worktree_reads_origin_from_the_common_config() {
+        let scratch = Scratch::new();
+        repo_with_commit(&scratch);
+        let git = plain(&scratch);
+        git(
+            &scratch.repo,
+            &["remote", "add", "origin", "https://github.com/octo-org/widgets.git"],
+        );
+        let wt = scratch.root.join("wt");
+        git(
+            &scratch.repo,
+            &["worktree", "add", "-q", wt.to_str().unwrap(), "-b", "feat"],
+        );
+        let b = GitBox::open(&scratch.home, &wt).unwrap();
+        assert_eq!(
+            b.origin().urls,
+            vec!["https://github.com/octo-org/widgets.git".to_string()]
+        );
+    }
+
+    #[test]
+    fn the_url_never_becomes_a_dash_c_pair() {
+        let scratch = Scratch::new();
+        repo_with_commit(&scratch);
+        append(
+            &scratch.repo.join(".git").join("config"),
+            "[remote \"origin\"]\n\turl = https://github.com/octo-org/widgets.git\n\tpushurl = git@github.com:octo-org/widgets.git\n\
+             [url \"https://github.com/\"]\n\tinsteadOf = gh:\n\tpushInsteadOf = git@github.com:\n",
+        );
+        let b = GitBox::open(&scratch.home, &scratch.repo).unwrap();
+        assert!(!b.origin().urls.is_empty());
+        let cmd = b.command(&["status"]);
+        let args: Vec<String> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        for arg in &args {
+            let lower = arg.to_ascii_lowercase();
+            assert!(
+                !lower.contains("remote.origin") && !lower.starts_with("url.") && !lower.contains("insteadof"),
+                "{arg}"
+            );
+        }
+        assert!(
+            b.pairs
+                .iter()
+                .all(|(k, _)| !k.starts_with("remote.") && !k.starts_with("url."))
+        );
+    }
+
+    #[test]
+    fn pushurl_and_push_instead_of_are_read() {
+        let scratch = Scratch::new();
+        repo_with_commit(&scratch);
+        append(
+            &scratch.repo.join(".git").join("config"),
+            "[remote \"origin\"]\n\turl = https://github.com/octo-org/widgets.git\n\
+             \tpushurl = git@github.com:octo-org/widgets.git\n\tpushurl = git@github.com:octo-org/second.git\n\
+             [url \"https://github.com/\"]\n\tinsteadOf = gh:\n\tinsteadOf = github:\n\tpushInsteadOf = ssh:\n\
+             [url \"git@github.com:\"]\n\tpushInsteadOf = https://github.com/\n\
+             [remote \"Origin\"]\n\turl = https://github.com/octo-org/not-origin.git\n",
+        );
+        let b = GitBox::open(&scratch.home, &scratch.repo).unwrap();
+        let origin = b.origin();
+        assert_eq!(origin.urls, vec!["https://github.com/octo-org/widgets.git".to_string()]);
+        assert_eq!(
+            origin.push_urls,
+            vec![
+                "git@github.com:octo-org/widgets.git".to_string(),
+                "git@github.com:octo-org/second.git".to_string()
+            ]
+        );
+        let at = |list: &[(String, String)], base: &str, value: &str| {
+            list.iter()
+                .position(|(b, v)| b == base && v == value)
+                .unwrap_or_else(|| panic!("{base} {value} in {list:?}"))
+        };
+        let first = at(&origin.instead_of, "https://github.com/", "gh:");
+        let second = at(&origin.instead_of, "https://github.com/", "github:");
+        assert!(first < second, "{:?}", origin.instead_of);
+        let ssh = at(&origin.push_instead_of, "https://github.com/", "ssh:");
+        let back = at(&origin.push_instead_of, "git@github.com:", "https://github.com/");
+        assert!(ssh < back, "{:?}", origin.push_instead_of);
+        assert!(!origin.instead_of.iter().any(|(_, v)| v == "ssh:"));
     }
 
     #[test]

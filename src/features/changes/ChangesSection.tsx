@@ -8,11 +8,12 @@ import "../appearance/AppearanceSections.css";
 
 const NOT_SAVED = "The setting wasn't saved.";
 
-type Flag = "hide_whitespace" | "wrap";
+type Flag = keyof ChangesSettings;
 
 const FLAGS: ReadonlyArray<{ key: Flag; label: string; line: string }> = [
   { key: "hide_whitespace", label: "Hide whitespace changes", line: "Leaves out lines that differ only in spaces and tabs." },
   { key: "wrap", label: "Wrap long lines", line: "Wraps a long line in the diff instead of scrolling it sideways." },
+  { key: "pull_requests", label: "Show pull requests from GitHub", line: "Asks GitHub through the GitHub CLI while Changes shows a checkout whose origin is on GitHub. Off, Marshell never runs gh." },
 ];
 
 /** Saves one change and says so when it fails. */

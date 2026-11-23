@@ -268,6 +268,121 @@ pub(crate) fn stream_command(
     }
 }
 
+/// Which of a watched run's pipes a chunk came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pipe {
+    Out,
+    Err,
+}
+
+/// How a watched run ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ended {
+    /// The program exited. Any exit code is an answer, not an error; `None` is an end with no code.
+    Exited(Option<i32>),
+    /// The cancel flag was set, and the program and everything it started were killed.
+    Cancelled,
+}
+
+/// How long a watched run waits for the pipes after the program has ended.
+const PIPE_GRACE: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// Reads `r` to its end and sends each chunk with its pipe. A read error ends the reading.
+fn pump_pipe(mut r: impl std::io::Read, pipe: Pipe, tx: std::sync::mpsc::Sender<(Pipe, Vec<u8>)>) {
+    let mut buf = [0u8; 8192];
+    loop {
+        match r.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                if tx.send((pipe, buf[..n].to_vec())).is_err() {
+                    break;
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => break,
+        }
+    }
+}
+
+/// Runs `cmd` with no deadline, no window and no standard input, and hands `each` every chunk of its output as it
+/// arrives (two reader threads, one channel, `each` called on this thread). Any exit code is `Exited`: 1 is not
+/// an error here. The cancel flag is looked at every 50 ms; when set while the program runs, it and everything it started are
+/// killed and the result is `Cancelled`. Once the program has ended, the pipes get `PIPE_GRACE` more, then the run
+/// returns even if something it started still holds a pipe: that is left running, and its reader ends on its own.
+pub(crate) fn run_watched(
+    mut cmd: Command,
+    cancel: &std::sync::atomic::AtomicBool,
+    mut each: impl FnMut(Pipe, &[u8]),
+) -> anyhow::Result<Ended> {
+    use std::sync::atomic::Ordering;
+    use std::sync::mpsc::{RecvTimeoutError, channel};
+    use std::time::{Duration, Instant};
+
+    if cancel.load(Ordering::Relaxed) {
+        return Ok(Ended::Cancelled);
+    }
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let (mut child, tree) = crate::job::ProcessTree::spawn(&mut cmd).map_err(start_error)?;
+    let (tx, rx) = channel::<(Pipe, Vec<u8>)>();
+    let out = child.stdout.take().expect("stdout is piped");
+    let err = child.stderr.take().expect("stderr is piped");
+    let out_tx = tx.clone();
+    std::thread::spawn(move || pump_pipe(out, Pipe::Out, out_tx));
+    std::thread::spawn(move || pump_pipe(err, Pipe::Err, tx));
+    let mut exit = None;
+    let mut ended_at = None;
+    let mut pipes_open = true;
+    loop {
+        if exit.is_none() && cancel.load(Ordering::Relaxed) {
+            // A program that has already ended is past stopping, and its exit is the answer: a push may
+            // have moved the branch.
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    exit = Some(status);
+                    ended_at = Some(Instant::now());
+                }
+                _ => {
+                    tree.kill(&mut child);
+                    let _ = child.wait();
+                    return Ok(Ended::Cancelled);
+                }
+            }
+        }
+        if pipes_open {
+            match rx.recv_timeout(Duration::from_millis(50)) {
+                Ok((pipe, chunk)) => each(pipe, &chunk),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => pipes_open = false,
+            }
+        } else {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        if exit.is_none() {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    exit = Some(status);
+                    ended_at = Some(Instant::now());
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tree.kill(&mut child);
+                    let _ = child.wait();
+                    return Err(anyhow::Error::new(e).context("Couldn't wait for the program."));
+                }
+            }
+        }
+        if let Some(status) = exit
+            && (!pipes_open || ended_at.is_some_and(|at| at.elapsed() >= PIPE_GRACE))
+        {
+            // What the readers already sent is handed over before returning.
+            while let Ok((pipe, chunk)) = rx.try_recv() {
+                each(pipe, &chunk);
+            }
+            return Ok(Ended::Exited(status.code()));
+        }
+    }
+}
+
 /// Runs the steps in order and stops at the first one that fails. A step whose
 /// git can't be started fails with the reason in `stderr`.
 pub fn run_steps(steps: &[GitStep]) -> Result<(), StepFailure> {
@@ -501,6 +616,191 @@ mod tests {
             assert!(
                 started.elapsed() < Duration::from_secs(5),
                 "the grandchild {grandchild} outlived the cancel"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    /// `script` run by the system shell: `cmd /c` on Windows (its text goes in as written), `sh -c` elsewhere.
+    fn shell(script: &str) -> Command {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            let mut cmd = Command::new("cmd");
+            cmd.raw_arg(format!("/c {script}"));
+            cmd
+        }
+        #[cfg(not(windows))]
+        {
+            let mut cmd = Command::new("sh");
+            cmd.args(["-c", script]);
+            cmd
+        }
+    }
+
+    #[test]
+    fn watched_reads_both_pipes() {
+        let cancel = AtomicBool::new(false);
+        let (mut out, mut err) = (String::new(), String::new());
+        let script = if cfg!(windows) {
+            "echo to-out&echo to-err 1>&2"
+        } else {
+            "echo to-out; echo to-err >&2"
+        };
+        let ended = run_watched(shell(script), &cancel, |pipe, chunk| match pipe {
+            Pipe::Out => out.push_str(&String::from_utf8_lossy(chunk)),
+            Pipe::Err => err.push_str(&String::from_utf8_lossy(chunk)),
+        })
+        .unwrap();
+        assert_eq!(ended, Ended::Exited(Some(0)));
+        assert!(out.contains("to-out") && !out.contains("to-err"), "{out:?}");
+        assert!(err.contains("to-err") && !err.contains("to-out"), "{err:?}");
+    }
+
+    #[test]
+    fn watched_reports_exit_code_one() {
+        let cancel = AtomicBool::new(false);
+        let ended = run_watched(shell("exit 1"), &cancel, |_, _| {}).unwrap();
+        assert_eq!(ended, Ended::Exited(Some(1)));
+    }
+
+    /// A push that has already ended can't be called cancelled: it may have moved the branch.
+    #[test]
+    fn watched_cancel_after_the_program_ended_reports_its_exit() {
+        let cancel = AtomicBool::new(false);
+        let ended = run_watched(shell("echo x& exit 3"), &cancel, |_, _| {
+            // By the time this returns the program is long gone, and the flag is seen on the next turn.
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        })
+        .unwrap();
+        assert_eq!(ended, Ended::Exited(Some(3)));
+    }
+
+    #[test]
+    fn watched_says_when_the_program_cannot_start() {
+        let cancel = AtomicBool::new(false);
+        let cmd = Command::new("marshell-no-such-program");
+        assert!(run_watched(cmd, &cancel, |_, _| {}).is_err());
+    }
+
+    /// This test binary, run as a program that starts a long-lived grandchild (`ping`, which shares this
+    /// program's pipes) and prints `PID <n>` for it. `mode` `hold` then exits and `wait` waits for the grandchild.
+    #[cfg(windows)]
+    fn grandchild_maker(mode: &str) -> Command {
+        let mut cmd = Command::new(std::env::current_exe().unwrap());
+        cmd.args(["--ignored", "--exact", "git::tests::grandchild_helper", "--nocapture"])
+            .env("MARSHELL_TEST_GRANDCHILD", mode);
+        cmd
+    }
+
+    /// Not a test: the program `grandchild_maker` starts. It does nothing in an ordinary run.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "run only as a child process of the tests that start it"]
+    fn grandchild_helper() {
+        use std::io::Write;
+        let Ok(mode) = std::env::var("MARSHELL_TEST_GRANDCHILD") else {
+            return;
+        };
+        // In `hold` mode the grandchild is left running on purpose; the test that started this program ends it.
+        #[allow(clippy::zombie_processes)]
+        let mut ping = Command::new("ping")
+            .args(["-n", "30", "127.0.0.1"])
+            .stdin(Stdio::null())
+            .spawn()
+            .expect("could not start ping");
+        println!("PID {}", ping.id());
+        std::io::stdout().flush().unwrap();
+        if mode == "wait" {
+            let _ = ping.wait();
+        }
+    }
+
+    /// The `PID <n>` line `grandchild_helper` printed, once all of the line has arrived.
+    #[cfg(windows)]
+    fn pid_in(text: &str) -> Option<u32> {
+        text.split_inclusive('\n')
+            .filter(|l| l.ends_with('\n'))
+            .find_map(|l| l.strip_prefix("PID ")?.trim().parse().ok())
+    }
+
+    #[cfg(windows)]
+    fn ping_alive(pid: u32) -> bool {
+        let out = Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+            .output()
+            .expect("tasklist runs");
+        String::from_utf8_lossy(&out.stdout)
+            .to_ascii_uppercase()
+            .contains("PING.EXE")
+    }
+
+    /// Ends exactly the `ping` it was told about, by its PID, when the test is over, a failed test included.
+    #[cfg(windows)]
+    #[derive(Default)]
+    struct EndPing(std::cell::Cell<Option<u32>>);
+
+    #[cfg(windows)]
+    impl Drop for EndPing {
+        fn drop(&mut self) {
+            if let Some(pid) = self.0.get()
+                && ping_alive(pid)
+            {
+                let _ = Command::new("taskkill").args(["/PID", &pid.to_string(), "/F"]).output();
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn watched_returns_when_a_grandchild_keeps_a_pipe_open() {
+        let cancel = AtomicBool::new(false);
+        let ping = EndPing::default();
+        let mut text = String::new();
+        let started = Instant::now();
+        let ended = run_watched(grandchild_maker("hold"), &cancel, |pipe, chunk| {
+            if pipe == Pipe::Out {
+                text.push_str(&String::from_utf8_lossy(chunk));
+                if let Some(pid) = pid_in(&text) {
+                    ping.0.set(Some(pid));
+                }
+            }
+        })
+        .unwrap();
+        let took = started.elapsed();
+        assert_eq!(ended, Ended::Exited(Some(0)));
+        assert!(took < Duration::from_secs(2), "took {took:?}");
+        let pid = ping.0.get().expect("the helper never printed the grandchild's PID");
+        assert!(
+            ping_alive(pid),
+            "the grandchild was ended, and the run must leave it alone"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn watched_cancel_ends_a_grandchild_started_at_once() {
+        let cancel = AtomicBool::new(false);
+        let ping = EndPing::default();
+        let mut text = String::new();
+        let ended = run_watched(grandchild_maker("wait"), &cancel, |pipe, chunk| {
+            if pipe == Pipe::Out {
+                text.push_str(&String::from_utf8_lossy(chunk));
+                if let Some(pid) = pid_in(&text) {
+                    ping.0.set(Some(pid));
+                    cancel.store(true, Ordering::Relaxed);
+                }
+            }
+        })
+        .unwrap();
+        assert_eq!(ended, Ended::Cancelled);
+        let pid = ping.0.get().expect("the helper never printed the grandchild's PID");
+        let started = Instant::now();
+        while ping_alive(pid) {
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "the grandchild {pid} outlived the cancel"
             );
             std::thread::sleep(Duration::from_millis(50));
         }

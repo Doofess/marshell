@@ -1162,6 +1162,10 @@ pub struct ChangesReply {
     pub new_cut: bool,
     /// Refused and Failed: the sentence.
     pub reason: Option<String>,
+    /// The full commit id of `HEAD`.
+    pub head: Option<String>,
+    /// The pull request's base branch, when GitHub has it and this checkout does not.
+    pub pr_base_unfetched: Option<String>,
 }
 
 /// A changed file, marked in the file tree.
@@ -1208,6 +1212,311 @@ pub enum CommentsForm {
 pub struct CommentsReply {
     pub form: CommentsForm,
     pub path: Option<String>,
+}
+
+/// POST /v1/sessions/{tab}/github body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct GithubRequest {
+    pub fresh: bool,
+}
+
+/// What the pull request bar shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum GithubKind {
+    Off,
+    None,
+    NoGh,
+    SignedOut,
+    Unreachable,
+    NotFound,
+    RateLimited,
+    DefaultBranch,
+    Ready,
+}
+
+/// How a pull request can be merged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum MergeMethod {
+    Merge,
+    Squash,
+    Rebase,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum PullState {
+    Open,
+    Draft,
+    Merged,
+    Closed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum Readiness {
+    Ready,
+    Checking,
+    Conflicts,
+    Blocked,
+    Behind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ReviewNeed {
+    None,
+    Required,
+    ChangesRequested,
+    Approved,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum CheckKind {
+    Run,
+    Status,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum CheckState {
+    Failed,
+    Cancelled,
+    Running,
+    Waiting,
+    Passed,
+    Neutral,
+    Skipped,
+}
+
+/// One CI check of a pull request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CiCheck {
+    pub kind: CheckKind,
+    pub state: CheckState,
+    pub name: String,
+    pub workflow: Option<String>,
+    pub url: Option<String>,
+    #[ts(type = "number | null")]
+    pub run_id: Option<u64>,
+    #[ts(type = "number | null")]
+    pub started_ms: Option<u64>,
+    #[ts(type = "number | null")]
+    pub completed_ms: Option<u64>,
+}
+
+/// A pull request as the bar shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PullStatus {
+    pub id: String,
+    pub number: u32,
+    pub title: String,
+    pub url: String,
+    pub state: PullState,
+    pub base: String,
+    pub head: String,
+    pub readiness: Readiness,
+    pub review: ReviewNeed,
+    pub checks: Vec<CiCheck>,
+    pub more_checks: u32,
+    pub auto_merge: Option<MergeMethod>,
+    pub can_auto_merge: bool,
+}
+
+/// POST /v1/sessions/{tab}/github reply.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct GithubReply {
+    pub kind: GithubKind,
+    pub checkout: String,
+    pub host: String,
+    /// "owner/name".
+    pub repo: String,
+    pub branch: Option<String>,
+    pub default_branch: Option<String>,
+    pub fork_of: Option<String>,
+    pub compare_url: Option<String>,
+    pub pull: Option<PullStatus>,
+    /// The newest pull request, when it was closed unmerged.
+    pub closed: Option<u32>,
+    pub on_github: bool,
+    pub to_push: u32,
+    pub github_ahead: bool,
+    pub can_write: bool,
+    pub merge_methods: Vec<MergeMethod>,
+    pub auto_merge_allowed: bool,
+    /// The id of a push of this checkout that is running.
+    pub push: Option<String>,
+    /// Why Marshell won't push here (origin pushes elsewhere).
+    pub push_blocked: Option<String>,
+    pub reason: Option<String>,
+    #[ts(type = "number")]
+    pub next_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PushPlanRequest {
+    pub create: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct OutgoingCommit {
+    pub id: String,
+    pub subject: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PushPlan {
+    pub checkout: String,
+    pub branch: String,
+    pub head: String,
+    pub moved: bool,
+    pub on_github: bool,
+    pub to_push: u32,
+    pub commits: Vec<OutgoingCommit>,
+    pub more: u32,
+    pub uncommitted: u32,
+    pub base: String,
+    pub title: String,
+    pub body: String,
+    pub refusal: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PushRequest {
+    pub checkout: String,
+    pub branch: String,
+    pub head: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PushStarted {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum PushState {
+    Running,
+    Pushed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PushProgress {
+    pub state: PushState,
+    #[ts(type = "number")]
+    pub start: u64,
+    pub lines: Vec<String>,
+    #[ts(type = "number")]
+    pub total: u64,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CreatePull {
+    pub checkout: String,
+    pub title: String,
+    pub body: String,
+    pub base: String,
+    pub draft: bool,
+    pub branch: String,
+    pub head: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CreatedPull {
+    pub number: u32,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PullMergeRequest {
+    pub checkout: String,
+    pub number: u32,
+    pub method: MergeMethod,
+    pub head: String,
+    pub id: String,
+    pub auto: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum PullActionKind {
+    Ready,
+    Draft,
+    CancelAutoMerge,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PullAction {
+    pub checkout: String,
+    pub id: String,
+    pub number: u32,
+    pub action: PullActionKind,
+}
+
+/// A typed request to an agent about the pull request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum AskRequest {
+    FixCheck {
+        copy: bool,
+        number: u32,
+        name: String,
+        workflow: Option<String>,
+        url: Option<String>,
+        #[ts(type = "number | null")]
+        run_id: Option<u64>,
+    },
+    OpenPull {
+        copy: bool,
+    },
+    SwitchAndPull {
+        copy: bool,
+        number: u32,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum AskForm {
+    Typed,
+    Copy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AskReply {
+    pub form: AskForm,
+    pub text: String,
 }
 
 /// Which side of the diff a comment sits on.
@@ -1608,12 +1917,24 @@ pub struct Settings {
 }
 
 /// The Changes panel's settings, in `settings.json` under `changes`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(default)]
 #[ts(export)]
 pub struct ChangesSettings {
     pub hide_whitespace: bool,
     pub wrap: bool,
+    /// Show the pull request bar, which asks GitHub. On unless turned off.
+    pub pull_requests: bool,
+}
+
+impl Default for ChangesSettings {
+    fn default() -> Self {
+        Self {
+            hide_whitespace: false,
+            wrap: false,
+            pull_requests: true,
+        }
+    }
 }
 
 /// How long a page keeps its cookies.
@@ -1960,6 +2281,33 @@ pub struct ReferenceNote {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ask_request_reads_its_kind_tag() {
+        let json =
+            r#"{"kind":"fix_check","copy":false,"number":182,"name":"build","workflow":null,"url":null,"run_id":null}"#;
+        let ask: AskRequest = serde_json::from_str(json).unwrap();
+        assert!(matches!(
+            ask,
+            AskRequest::FixCheck {
+                number: 182,
+                copy: false,
+                run_id: None,
+                ..
+            }
+        ));
+        let open: AskRequest = serde_json::from_str(r#"{"kind":"open_pull","copy":true}"#).unwrap();
+        assert_eq!(open, AskRequest::OpenPull { copy: true });
+    }
+
+    #[test]
+    fn github_kind_is_snake_case() {
+        assert_eq!(serde_json::to_string(&GithubKind::NoGh).unwrap(), "\"no_gh\"");
+        assert_eq!(
+            serde_json::to_string(&GithubKind::DefaultBranch).unwrap(),
+            "\"default_branch\""
+        );
+    }
 
     #[test]
     fn endpoint_debug_redacts_the_token() {

@@ -63,7 +63,7 @@ pub enum RefError {
 
 /// Whether `name` is a ref name Marshell reads: `HEAD` or one under `refs/`, with no component that
 /// is empty, starts with `.` or ends with `.lock`, and none of the characters git forbids.
-fn valid_name(name: &str) -> bool {
+pub(crate) fn valid_name(name: &str) -> bool {
     if name.len() > MAX_NAME_BYTES || !(name == "HEAD" || name.starts_with("refs/")) {
         return false;
     }
@@ -219,10 +219,32 @@ pub fn resolve(git_dir: &Path, common: &Path, name: &str) -> Result<Option<Oid>,
     resolve_in(git_dir, common, name)
 }
 
-/// The branch a task's changes are measured against: its own base branch, else the remote's default,
-/// else `main` or `master`.
-pub fn base(git_dir: &Path, common: &Path, task_base: Option<&str>) -> Result<Option<Base>, RefError> {
+/// The branch a task's changes are measured against: the base of the open pull request, if its remote branch
+/// is fetched; else the task's own base branch, else the remote's default, else `main` or `master`. The second
+/// value is the pull request's base when it was given but isn't fetched here.
+pub fn base(
+    git_dir: &Path,
+    common: &Path,
+    task_base: Option<&str>,
+    pr_base: Option<&str>,
+) -> Result<(Option<Base>, Option<String>), RefError> {
     check_reftable(common)?;
+    let found = |name: &str, label: String| -> Result<Option<Base>, RefError> {
+        Ok(resolve_in(git_dir, common, name)?.map(|oid| Base { label, oid }))
+    };
+    let mut unfetched = None;
+    if let Some(b) = pr_base.filter(|b| crate::github::valid_branch(b)) {
+        // Only the remote branch: a local one of that name isn't what the pull request targets.
+        if let Some(base) = found(&format!("refs/remotes/origin/{b}"), format!("origin/{b}"))? {
+            return Ok((Some(base), None));
+        }
+        unfetched = Some(b.to_string());
+    }
+    let chosen = base_by_default(git_dir, common, task_base)?;
+    Ok((chosen, unfetched))
+}
+
+fn base_by_default(git_dir: &Path, common: &Path, task_base: Option<&str>) -> Result<Option<Base>, RefError> {
     let found = |name: &str, label: String| -> Result<Option<Base>, RefError> {
         Ok(resolve_in(git_dir, common, name)?.map(|oid| Base { label, oid }))
     };
@@ -374,39 +396,39 @@ mod tests {
         write(&dir.join("refs/remotes/origin/trunk"), &format!("{A}\n"));
         write(&dir.join("refs/remotes/origin/main"), &format!("{B}\n"));
         write(&dir.join("refs/heads/main"), &format!("{C}\n"));
-        let found = base(&dir, &dir, None).unwrap().unwrap();
+        let found = base(&dir, &dir, None, None).unwrap().0.unwrap();
         assert_eq!((found.label.as_str(), found.oid), ("origin/trunk", oid(A)));
 
         // No origin/HEAD: origin/main, then origin/master.
         let (_tmp2, dir) = temp();
         write(&dir.join("refs/remotes/origin/main"), &format!("{B}\n"));
         write(&dir.join("refs/heads/main"), &format!("{C}\n"));
-        let found = base(&dir, &dir, None).unwrap().unwrap();
+        let found = base(&dir, &dir, None, None).unwrap().0.unwrap();
         assert_eq!((found.label.as_str(), found.oid), ("origin/main", oid(B)));
         let (_tmp3, dir) = temp();
         write(&dir.join("refs/remotes/origin/master"), &format!("{B}\n"));
-        let found = base(&dir, &dir, None).unwrap().unwrap();
+        let found = base(&dir, &dir, None, None).unwrap().0.unwrap();
         assert_eq!(found.label, "origin/master");
 
         // Only local branches: main, then master.
         let (_tmp4, dir) = temp();
         write(&dir.join("refs/heads/main"), &format!("{C}\n"));
         write(&dir.join("refs/heads/master"), &format!("{A}\n"));
-        let found = base(&dir, &dir, None).unwrap().unwrap();
+        let found = base(&dir, &dir, None, None).unwrap().0.unwrap();
         assert_eq!((found.label.as_str(), found.oid), ("main", oid(C)));
         let (_tmp5, dir) = temp();
         write(&dir.join("refs/heads/master"), &format!("{A}\n"));
-        assert_eq!(base(&dir, &dir, None).unwrap().unwrap().label, "master");
+        assert_eq!(base(&dir, &dir, None, None).unwrap().0.unwrap().label, "master");
 
         // An origin/HEAD that doesn't resolve is passed over.
         let (_tmp6, dir) = temp();
         write(&dir.join("refs/remotes/origin/HEAD"), "ref: refs/remotes/origin/gone\n");
         write(&dir.join("refs/remotes/origin/main"), &format!("{B}\n"));
-        assert_eq!(base(&dir, &dir, None).unwrap().unwrap().label, "origin/main");
+        assert_eq!(base(&dir, &dir, None, None).unwrap().0.unwrap().label, "origin/main");
 
         // Nothing at all.
         let (_tmp7, dir) = temp();
-        assert_eq!(base(&dir, &dir, None).unwrap(), None);
+        assert_eq!(base(&dir, &dir, None, None).unwrap().0, None);
     }
 
     #[test]
@@ -414,16 +436,102 @@ mod tests {
         let (_tmp, dir) = temp();
         write(&dir.join("refs/heads/develop"), &format!("{A}\n"));
         write(&dir.join("refs/heads/main"), &format!("{C}\n"));
-        let found = base(&dir, &dir, Some("develop")).unwrap().unwrap();
+        let found = base(&dir, &dir, Some("develop"), None).unwrap().0.unwrap();
         assert_eq!((found.label.as_str(), found.oid), ("develop", oid(A)));
 
         // Without a local branch, the remote one; with neither, the usual order.
         let (_tmp2, dir) = temp();
         write(&dir.join("refs/remotes/origin/develop"), &format!("{B}\n"));
         write(&dir.join("refs/heads/main"), &format!("{C}\n"));
-        let found = base(&dir, &dir, Some("develop")).unwrap().unwrap();
+        let found = base(&dir, &dir, Some("develop"), None).unwrap().0.unwrap();
         assert_eq!((found.label.as_str(), found.oid), ("origin/develop", oid(B)));
-        assert_eq!(base(&dir, &dir, Some("nope")).unwrap().unwrap().label, "main");
+        assert_eq!(base(&dir, &dir, Some("nope"), None).unwrap().0.unwrap().label, "main");
+    }
+
+    #[test]
+    fn base_follows_an_open_pull_requests_fetched_base() {
+        // The pull request's base is the remote branch, though a local one of that name and a task base exist.
+        let (_tmp, dir) = temp();
+        write(
+            &dir.join("refs/remotes/origin/develop"),
+            &format!(
+                "{B}
+"
+            ),
+        );
+        write(
+            &dir.join("refs/heads/develop"),
+            &format!(
+                "{A}
+"
+            ),
+        );
+        write(
+            &dir.join("refs/heads/main"),
+            &format!(
+                "{C}
+"
+            ),
+        );
+        let (found, unfetched) = base(&dir, &dir, None, Some("develop")).unwrap();
+        let found = found.unwrap();
+        assert_eq!((found.label.as_str(), found.oid), ("origin/develop", oid(B)));
+        assert_eq!(unfetched, None);
+    }
+
+    #[test]
+    fn an_unfetched_pull_request_base_keeps_the_default_and_says_so() {
+        // Only a local branch of that name: not the pull request's base.
+        let (_tmp, dir) = temp();
+        write(
+            &dir.join("refs/heads/develop"),
+            &format!(
+                "{A}
+"
+            ),
+        );
+        write(
+            &dir.join("refs/heads/main"),
+            &format!(
+                "{C}
+"
+            ),
+        );
+        let (found, unfetched) = base(&dir, &dir, None, Some("develop")).unwrap();
+        assert_eq!(found.unwrap().label, "main");
+        assert_eq!(unfetched.as_deref(), Some("develop"));
+
+        // The task's base still comes next.
+        let (found, unfetched) = base(&dir, &dir, Some("develop"), Some("gone")).unwrap();
+        assert_eq!(found.unwrap().label, "develop");
+        assert_eq!(unfetched.as_deref(), Some("gone"));
+
+        // A name that is no branch is ignored.
+        let (found, unfetched) = base(&dir, &dir, None, Some("-x")).unwrap();
+        assert_eq!(found.unwrap().label, "main");
+        assert_eq!(unfetched, None);
+    }
+
+    #[test]
+    fn a_pull_request_base_comes_before_a_tasks_base() {
+        let (_tmp, dir) = temp();
+        write(
+            &dir.join("refs/heads/task-base"),
+            &format!(
+                "{A}
+"
+            ),
+        );
+        write(
+            &dir.join("refs/remotes/origin/develop"),
+            &format!(
+                "{B}
+"
+            ),
+        );
+        let (found, unfetched) = base(&dir, &dir, Some("task-base"), Some("develop")).unwrap();
+        assert_eq!(found.unwrap().label, "origin/develop");
+        assert_eq!(unfetched, None);
     }
 
     #[test]
@@ -480,7 +588,7 @@ mod tests {
         write(&dir.join("HEAD"), "ref: refs/heads/.invalid\n");
         std::fs::create_dir(dir.join("reftable")).unwrap();
         assert_eq!(head(&dir, &dir), Err(RefError::Reftable));
-        assert_eq!(base(&dir, &dir, None), Err(RefError::Reftable));
+        assert_eq!(base(&dir, &dir, None, None), Err(RefError::Reftable));
         assert_eq!(resolve(&dir, &dir, "refs/heads/main"), Err(RefError::Reftable));
     }
 

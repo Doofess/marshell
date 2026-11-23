@@ -327,6 +327,33 @@ impl ChangesCache {
             .read(home, target, hide_whitespace, deadline, cancel)
     }
 
+    /// Runs `f` with the checkout's sandboxed git and a check no older than `CHECK_FRESH`, under the checkout's
+    /// `work` lock (the one that serializes its git runs). The slot is the one `check` and `read` use for this
+    /// checkout, so a caller that built `target` as they do shares its check.
+    pub(crate) fn with_box<T>(
+        &self,
+        home: &Path,
+        target: &Target,
+        deadline: Instant,
+        cancel: &AtomicBool,
+        f: impl FnOnce(&GitBox, &Check) -> Result<T, Halt>,
+    ) -> Result<T, ChangesError> {
+        let slot = self.slot(&target.checkout);
+        let (entry, check) = slot
+            .lock_check(home, target, CHECK_FRESH, deadline, cancel)
+            .map_err(Halt::into_error)?;
+        let git = entry
+            .git
+            .as_ref()
+            .ok_or_else(|| ChangesError::Failed("Changes lost track of this repository.".to_string()))?;
+        f(git, &check).map_err(Halt::into_error)
+    }
+
+    /// Forgets the last check of `checkout`, so the next one is made anew (it may compare with another base).
+    pub fn forget(&self, checkout: &Path) {
+        self.slot(checkout).set_last(None);
+    }
+
     /// For the tree: the last finished check of any age, at once. When it is older than `CHECK_FRESH`, or there
     /// is none, and no check runs, one starts in the background with `CHECK_BUDGET`, and the next poll gets its
     /// result.

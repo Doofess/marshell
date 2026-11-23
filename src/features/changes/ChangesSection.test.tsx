@@ -16,7 +16,7 @@ const switchOf = (html: string, label: string): string => {
 };
 
 beforeEach(() => {
-  state.settings = { hide_whitespace: false, wrap: true };
+  state.settings = { hide_whitespace: false, wrap: true, pull_requests: true };
   state.failed = false;
   state.set = () => Promise.resolve();
 });
@@ -28,6 +28,14 @@ describe("ChangesSection", () => {
     expect(html).toContain("Wrap long lines");
     expect(switchOf(html, "Hide whitespace changes")).not.toContain("checked");
     expect(switchOf(html, "Wrap long lines")).toMatch(/checked=""/);
+  });
+  it("shows the GitHub switch with its help line", () => {
+    const html = render();
+    expect(html).toContain("Show pull requests from GitHub");
+    expect(switchOf(html, "Show pull requests from GitHub")).toMatch(/checked=""/);
+    expect(html).toContain("Asks GitHub through the GitHub CLI while Changes shows a checkout whose origin is on GitHub. Off, Marshell never runs gh.");
+    state.settings = { hide_whitespace: false, wrap: true, pull_requests: false };
+    expect(switchOf(render(), "Show pull requests from GitHub")).not.toContain("checked");
   });
   it("shows nothing on until the settings are read", () => {
     state.settings = null;

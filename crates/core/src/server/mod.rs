@@ -12,15 +12,16 @@ mod doctor_measure;
 mod doctor_usage;
 mod drafts;
 mod events;
-mod files;
+pub(crate) mod files;
 mod fill;
 mod folders;
 mod foreground;
 pub mod frames;
+mod github;
 mod guard;
 mod history;
 mod hook;
-mod ignores;
+pub(crate) mod ignores;
 mod layout;
 mod merge;
 pub mod opens;
@@ -239,6 +240,10 @@ struct Inner {
     agent_versions: Arc<crate::agents::identify::VersionCache>,
     /// The Changes panel's checks and reads, one slot per checkout.
     changes: Arc<crate::changes::ChangesCache>,
+    /// What GitHub said about each checkout's branch, and the state the pull request bar keeps.
+    github: Arc<crate::github::GithubState>,
+    /// Extra `-c` settings for a push's git: empty outside tests (`with_push_config`).
+    push_config: Vec<String>,
     /// The last events the bridge sent, per live tab.
     hook_log: crate::hooks::log::HookLog,
     /// The permission requests being held for a decision.
@@ -419,6 +424,8 @@ impl AppState {
             own_agents_write: Mutex::new(()),
             agent_versions: Arc::new(crate::agents::identify::VersionCache::default()),
             changes: Arc::new(crate::changes::ChangesCache::new()),
+            github: Arc::new(crate::github::GithubState::default()),
+            push_config: Vec::new(),
             hook_log: crate::hooks::log::HookLog::default(),
             holds: crate::hooks::holds::Holds::default(),
             permission_hold: DEFAULT_PERMISSION_HOLD,
@@ -857,6 +864,23 @@ impl AppState {
             .status_runner = run;
         self
     }
+    /// Names the file gh runs from, so the PATH is not searched. Call it before the state is cloned. For tests, which
+    /// give it a fake: none runs the real `gh`.
+    pub fn with_gh(mut self, path: PathBuf) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_gh runs before the state is shared")
+            .github = Arc::new(crate::github::GithubState::default().with_gh(path));
+        self
+    }
+    /// Gives a push's git these `-c` settings, after Marshell's own, so a test's push lands in a local repository while
+    /// the checkout still reads a GitHub address. Call it before the state is cloned. For tests: outside them there are
+    /// none.
+    pub fn with_push_config(mut self, settings: Vec<String>) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_push_config runs before the state is shared")
+            .push_config = settings;
+        self
+    }
     /// Replaces the run of a CLI doctor. Call it before the state is cloned. Unit tests only: `DoctorRunner` is not part
     /// of the crate's public API.
     #[cfg(test)]
@@ -972,6 +996,18 @@ impl AppState {
     /// The same cache, for work that outlives a request (the tree's background check).
     pub fn changes_arc(&self) -> Arc<crate::changes::ChangesCache> {
         self.0.changes.clone()
+    }
+    /// The extra `-c` settings a push's git gets (`with_push_config`).
+    pub fn push_config(&self) -> &[String] {
+        &self.0.push_config
+    }
+    /// What GitHub said about each checkout's branch.
+    pub fn github(&self) -> &crate::github::GithubState {
+        &self.0.github
+    }
+    /// The same state, for work that outlives a request (an ask of GitHub that others wait for).
+    pub fn github_arc(&self) -> Arc<crate::github::GithubState> {
+        self.0.github.clone()
     }
     /// What the UI last reported it shows. Starts as an unfocused window with no visible tab.
     pub fn view(&self) -> tokio::sync::watch::Receiver<marshell_protocol::api::UiView> {
@@ -1373,6 +1409,16 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/sessions/{tab}/files", get(files::list))
         .route("/v1/sessions/{tab}/tree", post(tree::tree))
         .route("/v1/sessions/{tab}/changes", post(changes::changes))
+        .route("/v1/sessions/{tab}/github", post(github::github))
+        .route("/v1/sessions/{tab}/github/plan", post(github::plan))
+        .route("/v1/sessions/{tab}/github/create", post(github::create))
+        .route("/v1/sessions/{tab}/github/merge", post(github::merge))
+        .route("/v1/sessions/{tab}/github/pull", post(github::pull_action))
+        .route("/v1/sessions/{tab}/github/ask", post(github::ask_agent))
+        .route("/v1/sessions/{tab}/push", post(github::push))
+        .route("/v1/pushes/stop", post(github::stop_pushes))
+        .route("/v1/pushes/{id}", get(github::push_progress))
+        .route("/v1/pushes/{id}/cancel", post(github::cancel_push))
         .route("/v1/sessions/{tab}/review", post(changes::review))
         .route("/v1/sessions/{tab}/comments", post(changes::comments))
         .route("/v1/sessions/{tab}/search", post(search::search))
@@ -1566,6 +1612,8 @@ impl RunningCore {
     /// then stops the server. Works on a poisoned lock too. Done here and not in a task, because the
     /// process exits right after this returns.
     pub fn shutdown(self) {
+        // Before the sessions end: no exit leaves a push running unseen.
+        self.state.github().stop_pushes(Duration::from_secs(2));
         let sessions: Vec<_> = self
             .state
             .0

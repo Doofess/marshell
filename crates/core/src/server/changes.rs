@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
-use crate::changes::{CHECK_BUDGET, ChangesCache, ChangesError, Check, READ_BUDGET, Target, reply_stamp};
+use crate::changes::{CHECK_BUDGET, ChangesError, Check, READ_BUDGET, Target, reply_stamp};
 
 /// The most marks a tree reply carries.
 pub(super) const MAX_MARKS: usize = 2_000;
@@ -65,6 +65,8 @@ fn empty_reply(kind: ChangesKind, folder: String, reason: Option<String>) -> Cha
         more_new: 0,
         new_cut: false,
         reason,
+        head: None,
+        pr_base_unfetched: None,
     }
 }
 
@@ -125,14 +127,17 @@ pub(super) fn changes_target(row: &SessionInfo, reported: Option<PathBuf>) -> Re
         moved: moved_from_launch(row, &checkout),
         checkout,
         task_base: None,
+        pr_base: None,
     })
 }
 
-/// `target` with the base branch of the task whose worktree it is.
-fn with_task_base(home: &std::path::Path, mut target: Target) -> Target {
-    target.task_base = crate::tasks::task_at(home, &target.checkout)
+/// `target` with the bases the checkout may be compared with: the base branch of the task whose worktree it is,
+/// and the base of the open pull request GitHub last reported for it.
+pub(super) fn with_bases(st: &AppState, mut target: Target) -> Target {
+    target.task_base = crate::tasks::task_at(st.home(), &target.checkout)
         .map(|t| t.base_branch)
         .filter(|b| !b.is_empty());
+    target.pr_base = st.github().pr_base(&target.checkout);
     target
 }
 
@@ -151,8 +156,7 @@ fn error_reply(error: ChangesError, folder: &str, target: &Target) -> ChangesRep
 
 /// The reply to a request. Blocking.
 fn answer(
-    cache: &ChangesCache,
-    home: &std::path::Path,
+    st: &AppState,
     row: &SessionInfo,
     reported: Option<PathBuf>,
     req: &ChangesRequest,
@@ -162,9 +166,10 @@ fn answer(
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_default();
     let target = match changes_target(row, reported) {
-        Ok(target) => with_task_base(home, target),
+        Ok(target) => with_bases(st, target),
         Err(none) => return none.into_reply(),
     };
+    let (cache, home) = (st.changes(), st.home());
     let check = match cache.check(home, &target, Instant::now() + CHECK_BUDGET, cancel) {
         Ok(check) => check,
         Err(e) => return error_reply(e, &folder, &target),
@@ -183,7 +188,7 @@ fn answer(
 }
 
 /// Sets the flag when it is dropped, so a request the app aborts stops the blocking work (as the search's does).
-struct CancelOnDrop(Arc<AtomicBool>);
+pub(super) struct CancelOnDrop(pub(super) Arc<AtomicBool>);
 
 impl Drop for CancelOnDrop {
     fn drop(&mut self) {
@@ -200,11 +205,10 @@ pub async fn changes(State(st): State<AppState>, Path(tab): Path<String>, Json(r
     if candidate_of(&row, reported.clone()).is_none() {
         return (StatusCode::NOT_FOUND, "This session has no folder.").into_response();
     }
-    let home = st.home().to_path_buf();
-    let cache = st.changes_arc();
     let cancel = Arc::new(AtomicBool::new(false));
     let _stop = CancelOnDrop(cancel.clone());
-    let done = tokio::task::spawn_blocking(move || answer(&cache, &home, &row, reported, &req, &cancel)).await;
+    let state = st.clone();
+    let done = tokio::task::spawn_blocking(move || answer(&state, &row, reported, &req, &cancel)).await;
     match done {
         Ok(reply) => Json(reply).into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -228,7 +232,7 @@ fn busy_reason(busy: Busy) -> &'static str {
 
 /// The agent of a session that can take typed text now, or the 409 that says why not: "no_agent" for a plain shell,
 /// "not_ready" when Claude Code's settings can't be read in time, else the `busy` reason.
-async fn agent_ready(
+pub(super) async fn agent_ready(
     st: &AppState,
     tab: &str,
     row: &SessionInfo,
@@ -245,7 +249,7 @@ async fn agent_ready(
 }
 
 /// Types `bytes` into the session as `sessions::input` does: it answers in the terminal, and no Enter follows.
-fn type_in(st: &AppState, tab: &str, session: &crate::pty::Session, bytes: Vec<u8>) {
+pub(super) fn type_in(st: &AppState, tab: &str, session: &crate::pty::Session, bytes: Vec<u8>) {
     st.holds().release_tab(tab);
     st.registry().note_input(tab);
     session.write_input(bytes);
@@ -402,12 +406,13 @@ pub(super) fn tree_marks(st: &AppState, row: Option<&SessionInfo>, root: &Root) 
     let Some(prefix) = root_prefix(root_path, checkout) else {
         return Vec::new();
     };
-    let target = with_task_base(
-        st.home(),
+    let target = with_bases(
+        st,
         Target {
             checkout: checkout.clone(),
             moved: row.is_some_and(|r| moved_from_launch(r, checkout)),
             task_base: None,
+            pr_base: None,
         },
     );
     match st.changes_arc().marks(st.home().to_path_buf(), target) {

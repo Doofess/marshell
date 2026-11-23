@@ -1,10 +1,11 @@
 import type { MenuItem } from "../../components/ContextMenu/menuKeys";
 import type { ChangesSettings } from "../../generated/ChangesSettings";
+import type { BarButton, BarMenuItem } from "./pullModel";
 import { CHANGES_DEFAULTS } from "./changesSettings";
 import type { Item, Row, Section } from "./model";
 
 export type SettingKey = keyof ChangesSettings;
-const SETTING_LABELS: Record<SettingKey, string> = { hide_whitespace: "Hide whitespace changes", wrap: "Wrap long lines" };
+const SETTING_LABELS: Record<SettingKey, string> = { hide_whitespace: "Hide whitespace changes", wrap: "Wrap long lines", pull_requests: "Show pull requests from GitHub" };
 const NO_FILES = "No files are changed";
 const UNREAD = "Your settings couldn't be read";
 const LOADING = "Your settings aren't read yet";
@@ -15,7 +16,7 @@ export const settingLabel = (key: SettingKey): string => SETTING_LABELS[key];
  * The Changes panel's ⋯ menu: Refresh, the review action (left out where `review` is null), folding all files, and the two switches.
  * The switches are disabled until the settings are read, and read as the defaults after a read that failed.
  */
-export function changesMenuItems(o: { settings: ChangesSettings | null; failed: boolean; review: string | null; hasFiles: boolean }): MenuItem[] {
+export function changesMenuItems(o: { settings: ChangesSettings | null; failed: boolean; review: string | null; hasFiles: boolean; github: BarMenuItem[]; main: BarButton | null }): MenuItem[] {
   const s = o.settings ?? (o.failed ? CHANGES_DEFAULTS : null);
   const noFiles = o.hasFiles ? {} : { disabled: NO_FILES };
   const unread = o.settings === null ? { disabled: o.failed ? UNREAD : LOADING } : {};
@@ -23,6 +24,7 @@ export function changesMenuItems(o: { settings: ChangesSettings | null; failed: 
   return [
     { id: "refresh", label: "Refresh" },
     ...(o.review === null ? [] : [{ id: "review", label: o.review }]),
+    ...githubRows(o.github, o.main),
     { separator: true },
     { id: "fold-all", label: "Fold all files", ...noFiles },
     { id: "unfold-all", label: "Unfold all files", ...noFiles },
@@ -32,10 +34,27 @@ export function changesMenuItems(o: { settings: ChangesSettings | null; failed: 
   ];
 }
 
+const MAIN_ACTIONS: readonly string[] = ["push", "create", "merge", "auto_merge", "ready"];
+const MENU_IDS: readonly string[] = ["push", "merge", "draft", "cancel_auto_merge", "hide", "ask_open", "ask_switch", "copy_switch", "open_on_github", "copy_link"];
+
+/** The pull request bar's rows, under a separator: its main button when that is a pull request action, then its ⋯ rows. None gives nothing. */
+function githubRows(menu: BarMenuItem[], main: BarButton | null): MenuItem[] {
+  const first = main !== null && MAIN_ACTIONS.includes(main.id) && !menu.some((m) => m.id === main.id) ? [main] : [];
+  if (first.length + menu.length === 0) return [];
+  const row = (id: string, label: string, disabled: string | null): MenuItem => ({ id, label, ...(disabled === null ? {} : { disabled }) });
+  return [{ separator: true }, ...first.map((b) => row(`github:main:${b.id}`, b.label, b.disabled)), ...menu.map((m) => row(`github:menu:${m.id}`, m.label, m.disabled))];
+}
+
 /** What a ⋯ menu row id asks for; null for an id the menu doesn't hold. */
-export type ChangesChoice = { kind: "refresh" | "review" | "fold-all" | "unfold-all" } | { kind: "setting"; key: SettingKey };
+export type ChangesChoice = { kind: "refresh" | "review" | "fold-all" | "unfold-all" } | { kind: "setting"; key: SettingKey } | { kind: "github"; from: "main" | "menu"; id: string };
 export function changesChoice(id: string): ChangesChoice | null {
   if (id === "refresh" || id === "review" || id === "fold-all" || id === "unfold-all") return { kind: id };
+  const [head, from, rest] = id.split(":");
+  if (head === "github" && rest !== undefined) {
+    if (from === "main" && MAIN_ACTIONS.includes(rest)) return { kind: "github", from, id: rest };
+    if (from === "menu" && MENU_IDS.includes(rest)) return { kind: "github", from, id: rest };
+    return null;
+  }
   if (id.startsWith("setting:")) {
     const key = id.slice("setting:".length);
     if (key === "hide_whitespace" || key === "wrap") return { kind: "setting", key };

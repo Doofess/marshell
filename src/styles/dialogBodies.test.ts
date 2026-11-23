@@ -14,6 +14,7 @@ const rule = (css: string, selector: string) => [...css.matchAll(/([^{}]+)\{([^{
 const DIALOGS: Array<{ name: string; file: string; root: string; body: string; foot: string }> = [
   { name: "the fix sheet", file: "features/doctor/Doctor.css", root: ".fix-sheet", body: ".fix-sheet__body", foot: ".fix-sheet__foot" },
   { name: "the onboarding frame", file: "features/onboarding/Onboarding.css", root: ".onboarding", body: ".onboarding__body", foot: ".onboarding__foot" },
+  { name: "the pull request sheets", file: "features/changes/PullSheets.css", root: ".close-dialog__sheet.pull-sheet", body: ".pull-sheet__body", foot: ".pull-sheet__foot" },
 ];
 
 describe("dialog bodies", () => {

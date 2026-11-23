@@ -9,7 +9,7 @@ const teal = { ...DEFAULT_APPEARANCE, accent: "teal" };
 const N = { needs_you: { banner: true, sound: true }, done: { banner: true, sound: true }, error: { banner: true, sound: true }, subagent_sound: false, quiet_hours: { enabled: false, start: "22:00", end: "08:00" }, terminal_alerts: true };
 const BR = { terminal_links: true, open_agent_html: true, cookies: "always" as const };
 const FI = { preview_tabs: true, auto_save: false, tab_indents: true, word_wrap: false, indent_guides: true, whitespace: false, scroll_past_end: false, tab_size: 4, tree_position: "automatic" as const };
-const CH = { hide_whitespace: false, wrap: false };
+const CH = { hide_whitespace: false, wrap: false, pull_requests: true };
 const N_OFF = { ...N, needs_you: { banner: true, sound: false } };
 
 function setup(get: () => Promise<Settings>) {
@@ -353,6 +353,26 @@ describe("SettingsSync: files", () => {
     await expect(sync.load()).rejects.toThrow();
     expect(sync.readFailed).toBe(true);
     expect(sync.files).toBeNull();
+  });
+});
+
+describe("SettingsSync: changes", () => {
+  const read = async (): Promise<Settings> => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, browser: BR, files: FI, changes: CH });
+
+  it("reads pull requests as off after that switch alone was turned off", async () => {
+    const { api, sync } = setup(read);
+    await sync.load();
+    await sync.setChanges({ pull_requests: false });
+    expect(api.put).toHaveBeenLastCalledWith(ep, expect.objectContaining({ changes: { hide_whitespace: false, wrap: false, pull_requests: false } }));
+    expect(sync.changes).toEqual({ hide_whitespace: false, wrap: false, pull_requests: false });
+  });
+
+  it("keeps the same object when a save changed nothing in them", async () => {
+    const { sync } = setup(read);
+    await sync.load();
+    const before = sync.changes;
+    await sync.setChanges({ wrap: false });
+    expect(sync.changes).toBe(before);
   });
 });
 

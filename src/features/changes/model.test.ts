@@ -22,6 +22,8 @@ const reply = (files: DiffFile[], diff: string, extra: Partial<ChangesReply> = {
   truncated: false,
   more_new: 0, new_cut: false,
   reason: null,
+  head: null,
+  pr_base_unfetched: null,
   ...extra,
 });
 const head = (path: string, before = "") => `diff --git a/${path} b/${path}\n${before}index 1..2 100644\n--- a/${path}\n+++ b/${path}\n`;
