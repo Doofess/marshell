@@ -162,7 +162,7 @@ describe("refocusOf", () => {
   });
 });
 
-const reply = (o: Partial<ChangesReply>): ChangesReply => ({ kind: "listed", stamp: "s", folder: "C:\\repo", moved: false, branch: "main", detached: null, base: "origin/main", unrelated: false, ahead: 0, uncommitted: false, files: [], diff: "", truncated: false, more_new: 0, new_cut: false, reason: null, ...o });
+const reply = (o: Partial<ChangesReply>): ChangesReply => ({ kind: "listed", stamp: "s", folder: "C:\\repo", moved: false, branch: "main", detached: null, base: "origin/main", unrelated: false, ahead: 0, uncommitted: false, files: [], diff: "", truncated: false, more_new: 0, new_cut: false, reason: null, head: null, pr_base_unfetched: null, ...o });
 const empty = (r: ChangesReply | null, noFolder = false) => renderToStaticMarkup(<ChangesEmpty reply={r} noFolder={noFolder} onRetry={() => {}} />);
 
 describe("ChangesEmpty", () => {

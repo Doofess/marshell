@@ -21,7 +21,7 @@
 - **A branch name is checked with `github::valid_branch(b)`:** `refs::valid_name("refs/heads/{b}")` (which takes a full ref, never a bare branch) and `b` doesn't start with `-` or `+`. A commit id is checked with `refs::Oid::parse`, a node id with `^[A-Za-z0-9_=-]{1,100}$`.
 - **A name written into a command a person or an agent may run** (`git switch {default}`, `gh run view … --repo {repo}`) must also match `^[A-Za-z0-9._/][A-Za-z0-9._/-]*$` (`github::command_safe`). A name that doesn't is named in prose only, and the command is left out.
 - **Every revision given to the sandbox's git is a commit id,** never a name: the sandbox has no refs. Ids come from `Check::head_oid`, `refs::resolve`, or GitHub's answer after `Oid::parse`.
-- **Every action names the checkout it was confirmed for.** `PushRequest`, `CreatePull`, `MergeRequest` and `PullAction` carry `checkout`; the core answers 409 "The session moved to another folder. Look again before you go on." when it isn't the session's checkout now, and for merge and pull actions when `id` and `number` aren't the pull request the core last saw for that checkout and branch.
+- **Every action names the checkout it was confirmed for.** `PushRequest`, `CreatePull`, `PullMergeRequest` and `PullAction` carry `checkout`; the core answers 409 "The session moved to another folder. Look again before you go on." when it isn't the session's checkout now, and for merge and pull actions when `id` and `number` aren't the pull request the core last saw for that checkout and branch.
 - Nothing asks GitHub while the Changes panel is hidden, the window is unfocused, or "Show pull requests from GitHub" is off.
 - Tests use a temp folder as the Marshell home and a fake gh (`gh-marshell-test`, Task 4), found by its full path. No test reaches the network or runs the real `gh`. Fixtures use `octo-org/widgets`, never a real name.
 - Multi-CLI: the three typed requests are the same bytes for Claude Code, Codex, Copilot CLI, Qwen Code and Antigravity. Nothing vendor-specific is added.
@@ -109,7 +109,7 @@ pub struct PushProgress {
 }
 pub struct CreatePull { pub checkout: String, pub title: String, pub body: String, pub base: String, pub draft: bool, pub branch: String, pub head: String }
 pub struct CreatedPull { pub number: u32, pub url: String }
-pub struct MergeRequest { pub checkout: String, pub number: u32, pub method: MergeMethod, pub head: String, pub id: String, pub auto: bool }
+pub struct PullMergeRequest { pub checkout: String, pub number: u32, pub method: MergeMethod, pub head: String, pub id: String, pub auto: bool }
 pub enum PullActionKind { Ready, Draft, CancelAutoMerge }
 pub struct PullAction { pub checkout: String, pub id: String, pub number: u32, pub action: PullActionKind }#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AskRequest {
@@ -490,7 +490,7 @@ impl GithubState {
 
 ```rust
 // POST /v1/sessions/{tab}/github/create   CreatePull  -> CreatedPull
-// POST /v1/sessions/{tab}/github/merge    MergeRequest -> 204
+// POST /v1/sessions/{tab}/github/merge    PullMergeRequest -> 204
 // POST /v1/sessions/{tab}/github/pull     PullAction  -> 204
 ```
 

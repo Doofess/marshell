@@ -134,7 +134,11 @@ fn lenient_changes<'de, D: serde::Deserializer<'de>>(d: D) -> Result<ChangesSett
         }
         return Ok(out);
     };
-    for (name, slot) in [("hide_whitespace", &mut out.hide_whitespace), ("wrap", &mut out.wrap)] {
+    for (name, slot) in [
+        ("hide_whitespace", &mut out.hide_whitespace),
+        ("wrap", &mut out.wrap),
+        ("pull_requests", &mut out.pull_requests),
+    ] {
         match fields.get(name) {
             None => {}
             Some(serde_json::Value::Bool(b)) => *slot = *b,
@@ -470,23 +474,38 @@ mod tests {
         let changes = load(home.path()).changes;
         assert!(!changes.wrap);
         assert!(!changes.hide_whitespace);
-        write_settings(home.path(), r#"{"changes": {"wrap": true, "hide_whitespace": 3}}"#);
+        assert!(changes.pull_requests);
+        write_settings(
+            home.path(),
+            r#"{"changes": {"wrap": true, "hide_whitespace": 3, "pull_requests": "no"}}"#,
+        );
         assert_eq!(
             load(home.path()).changes,
             ChangesSettings {
                 hide_whitespace: false,
-                wrap: true
+                wrap: true,
+                pull_requests: true
             }
         );
         let s = Settings {
             changes: ChangesSettings {
                 hide_whitespace: true,
                 wrap: true,
+                pull_requests: false,
             },
             ..Settings::default()
         };
         save(home.path(), &s).unwrap();
         assert_eq!(load(home.path()).changes, s.changes);
+    }
+
+    #[test]
+    fn a_settings_file_without_pull_requests_reads_it_as_on() {
+        let home = tempfile::tempdir().unwrap();
+        write_settings(home.path(), r#"{"changes": {"wrap": true, "hide_whitespace": true}}"#);
+        let changes = load(home.path()).changes;
+        assert!(changes.pull_requests);
+        assert!(changes.wrap && changes.hide_whitespace);
     }
 
     fn write_settings(home: &Path, json: &str) {

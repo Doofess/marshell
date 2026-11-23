@@ -7,7 +7,7 @@ const section = (rows: Row[], status: Section["status"] = "modified"): Section =
 const rowItem = (file: Section, at: number): Item => ({ kind: "row", key: `row:${file.path}:${at}`, file, at });
 const rowsOf = (items: MenuItem[]): MenuRow[] => items.filter(isAction);
 const labels = (items: MenuItem[]) => items.map((i) => (isAction(i) ? i.label : "-"));
-const on = { settings: { hide_whitespace: true, wrap: false }, failed: false, review: "Ask Claude Code to review (types /code-review)", hasFiles: true };
+const on = { settings: { hide_whitespace: true, wrap: false, pull_requests: true }, failed: false, review: "Ask Claude Code to review (types /code-review)", hasFiles: true };
 
 describe("changesMenuItems", () => {
   it("leaves review out for a plain shell", () => {

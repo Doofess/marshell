@@ -16,7 +16,7 @@ const switchOf = (html: string, label: string): string => {
 };
 
 beforeEach(() => {
-  state.settings = { hide_whitespace: false, wrap: true };
+  state.settings = { hide_whitespace: false, wrap: true, pull_requests: true };
   state.failed = false;
   state.set = () => Promise.resolve();
 });

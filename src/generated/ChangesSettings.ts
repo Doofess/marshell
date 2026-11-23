@@ -3,4 +3,8 @@
 /**
  * The Changes panel's settings, in `settings.json` under `changes`.
  */
-export type ChangesSettings = { hide_whitespace: boolean, wrap: boolean, };
+export type ChangesSettings = { hide_whitespace: boolean, wrap: boolean, 
+/**
+ * Show the pull request bar, which asks GitHub. On unless turned off.
+ */
+pull_requests: boolean, };

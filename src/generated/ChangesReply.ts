@@ -41,4 +41,12 @@ new_cut: boolean,
 /**
  * Refused and Failed: the sentence.
  */
-reason: string | null, };
+reason: string | null, 
+/**
+ * The full commit id of `HEAD`.
+ */
+head: string | null, 
+/**
+ * The pull request's base branch, when GitHub has it and this checkout does not.
+ */
+pr_base_unfetched: string | null, };

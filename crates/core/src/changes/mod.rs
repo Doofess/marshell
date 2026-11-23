@@ -560,6 +560,8 @@ fn build_reply(
         more_new: check.more_new,
         new_cut: check.new_cut,
         reason: None,
+        head: None,
+        pr_base_unfetched: None,
     })
 }
 

@@ -4,7 +4,7 @@ import { CHANGES_DEFAULTS } from "./changesSettings";
 import type { Item, Row, Section } from "./model";
 
 export type SettingKey = keyof ChangesSettings;
-const SETTING_LABELS: Record<SettingKey, string> = { hide_whitespace: "Hide whitespace changes", wrap: "Wrap long lines" };
+const SETTING_LABELS: Record<SettingKey, string> = { hide_whitespace: "Hide whitespace changes", wrap: "Wrap long lines", pull_requests: "Show pull requests from GitHub" };
 const NO_FILES = "No files are changed";
 const UNREAD = "Your settings couldn't be read";
 const LOADING = "Your settings aren't read yet";

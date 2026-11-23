@@ -65,6 +65,8 @@ fn empty_reply(kind: ChangesKind, folder: String, reason: Option<String>) -> Cha
         more_new: 0,
         new_cut: false,
         reason,
+        head: None,
+        pr_base_unfetched: None,
     }
 }
 

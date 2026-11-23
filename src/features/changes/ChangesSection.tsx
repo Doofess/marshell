@@ -8,7 +8,7 @@ import "../appearance/AppearanceSections.css";
 
 const NOT_SAVED = "The setting wasn't saved.";
 
-type Flag = "hide_whitespace" | "wrap";
+type Flag = Exclude<keyof ChangesSettings, "pull_requests">;
 
 const FLAGS: ReadonlyArray<{ key: Flag; label: string; line: string }> = [
   { key: "hide_whitespace", label: "Hide whitespace changes", line: "Leaves out lines that differ only in spaces and tabs." },
