@@ -59,6 +59,21 @@ describe("placeThread", () => {
     const t = thread({ file: true, rows: [], start: null, end: null, original_start: null, original_end: null });
     expect(placeThread(t, section("a.txt", [hunk, add("one", 1)]))).toEqual({ at: null, changed: false });
   });
+  it("a thread finds its rows in a checkout whose lines hold what the core took out of them", () => {
+    // The core sends a thread's rows without control and hidden characters; the checkout's own diff keeps them.
+    const crlf = section("a.txt", [hunk, add("one\r", 1), add("two\r", 2)]);
+    expect(placeThread(thread(), crlf)).toEqual({ at: 2, changed: false, start: 2, end: 2 });
+    const marked = section("a.txt", [hunk, add("\u{feff}one", 1), add("t\u{200b}w\fo\u{e0041}", 2)]);
+    expect(placeThread(thread(), marked)).toEqual({ at: 2, changed: false, start: 2, end: 2 });
+    const joined = thread({ rows: [{ kind: "add", text: "\u{1f937}\u{200d}\u{2642}\u{fe0f}" }] });
+    expect(placeThread(joined, section("a.txt", [hunk, add("one", 1), add("\u{1f937}\u{200d}\u{2642}\u{fe0f}\r", 2)]))).toEqual({ at: 2, changed: false, start: 2, end: 2 });
+  });
+  it("a tab and a space still tell two rows apart, and the quote keeps the row as it was sent", () => {
+    expect(placeThread(thread(), section("a.txt", [hunk, add("one", 1), add("t wo", 2)]))).toEqual({ at: 2, changed: true });
+    expect(placeThread(thread(), section("a.txt", [hunk, add("one", 1), add("t\two", 2)]))).toEqual({ at: 2, changed: true });
+    const joined = thread({ rows: [{ kind: "add", text: "\u{1f937}\u{200d}\u{2642}\u{fe0f}" }] });
+    expect(threadAnchor(joined)?.quote).toEqual(["\u{1f937}\u{200d}\u{2642}\u{fe0f}"]);
+  });
   it("a thread whose file is not in the diff has no placement", () => {
     expect(placeThread(thread(), undefined)).toBeNull();
     expect(placeThread(thread(), section("a.txt", [], { note: "cut" }))).toBeNull();

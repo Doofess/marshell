@@ -771,7 +771,8 @@ Whatever fails is fixed, with a test, before Task 10.
 - A pull request with more than 100 threads, a thread with more than 50 comments, and more than 50 reviews or 50 conversation comments show the first (or last) of them and say how many more are on GitHub.
 - Raw HTML in a comment (`<details>`, `<br>`) shows as text, and so do a table, a character entity (`&amp;`) and a link reference definition: the panel draws nothing the agent doesn't get, and the other way round. A link inside a comment is opened with the mouse; the keyboard opens the comment on GitHub.
 - A send holds about 1 MB. GitHub comments that don't fit stay picked for the next send, and the notice says how many.
-- A zero-width joiner between letters is removed and marked; inside an emoji it stays.
+- A zero-width joiner between letters is removed and marked; inside an emoji it stays. The same goes for the zero-width non-joiner, so a Persian, Urdu or Indic word that needs one reads joined (the pre-merge review's finding 4, left as a limit).
+- An HTML comment mark inside an indented code block is taken as a comment (inside a fence or a code span of one line it stays). A line that looks like a link reference definition in the middle of a paragraph is removed, though GitHub shows it there.
 - The address of an https link that has text is part of the Markdown that is sent, and shows in the panel only when the pointer rests on the link. (Changed while building and after the review: a link's title is drawn as text after it, a link that draws nothing shows its address, an address that isn't https follows the link's text, and a picture that is no https link shows its address.)
 - Blank characters that draw as a space (a no-break space, a Braille blank, the wide spaces) are kept in a comment.
 - A thread is placed by the rows of the diff it was written on. With "Hide whitespace changes" on, or when the checkout differs from what was pushed on those rows, it reads "The line changed".

@@ -54,19 +54,48 @@ fn kept_url(url: &str) -> Option<String> {
         .then(|| url.to_string())
 }
 
-/// Whether the zero-width joiner at `at` sits between two shown characters at or above `\u{2190}` (past a `\u{fe0f}`
-/// on its left): an emoji made of joined parts.
+/// Whether `c` can be a part of an emoji: the few signs below the arrows, the arrows, symbols and dingbats, the four
+/// East Asian signs, and the pictographs. No letter of any script is among them.
+fn pictograph(c: char) -> bool {
+    matches!(
+        c,
+        '\u{a9}'
+            | '\u{ae}'
+            | '\u{203c}'
+            | '\u{2049}'
+            | '\u{2122}'
+            | '\u{2139}'
+            | '\u{2190}'..='\u{2bff}'
+            | '\u{3030}'
+            | '\u{303d}'
+            | '\u{3297}'
+            | '\u{3299}'
+            | '\u{1f000}'..='\u{1faff}'
+    )
+}
+
+/// Whether the zero-width joiner at `at` sits between two pictographs (past a `\u{fe0f}` on its left): an emoji made
+/// of joined parts.
 fn joins(chars: &[char], at: usize) -> bool {
-    let shown = |c: char| c >= '\u{2190}' && !hides(c) && !c.is_control();
     let mut left = at;
     if left > 0 && chars[left - 1] == '\u{fe0f}' {
         left -= 1;
     }
-    left > 0 && shown(chars[left - 1]) && chars.get(at + 1).is_some_and(|c| shown(*c))
+    left > 0 && pictograph(chars[left - 1]) && chars.get(at + 1).is_some_and(|c| pictograph(*c))
+}
+
+/// Whether the emoji selector `\u{fe0f}` at `at` shows: after a pictograph, or in a keycap (a digit, `#` or `*`, the
+/// selector, `\u{20e3}`). Anywhere else it draws nothing.
+fn selects(chars: &[char], at: usize) -> bool {
+    let Some(&before) = at.checked_sub(1).and_then(|i| chars.get(i)) else {
+        return false;
+    };
+    pictograph(before)
+        || ((before.is_ascii_digit() || matches!(before, '#' | '*')) && chars.get(at + 1) == Some(&'\u{20e3}'))
 }
 
 /// `text` without every character `hides` names and every control character but a line end and a tab, except a
-/// joiner that makes an emoji. The flag is whether anything went.
+/// joiner that makes an emoji; and without an emoji selector that selects nothing. The flag is whether anything went.
 fn strip_hidden(text: &str) -> (String, bool) {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
@@ -74,7 +103,7 @@ fn strip_hidden(text: &str) -> (String, bool) {
     for (at, &c) in chars.iter().enumerate() {
         if c == '\u{200d}' && joins(&chars, at) {
             out.push(c);
-        } else if hides(c) || (c.is_control() && c != '\n' && c != '\t') {
+        } else if hides(c) || (c.is_control() && c != '\n' && c != '\t') || (c == '\u{fe0f}' && !selects(&chars, at)) {
             removed = true;
         } else {
             out.push(c);
@@ -110,7 +139,40 @@ fn fence_close(line: &str, ch: char, n: usize) -> bool {
     run >= n && rest[run..].trim().is_empty()
 }
 
-/// A link reference definition, which nobody sees: `^ {0,3}\[[^\]]{1,999}\]:`, the label not starting with `^`.
+/// Whether `rest` (what follows a definition's `:`) is an address and at most a title, and nothing else: `<…>` or a
+/// run with no whitespace, then, after whitespace, `"…"`, `'…'` or `(…)` with none of its own marks inside.
+fn is_destination(rest: &str) -> bool {
+    let rest = rest.trim();
+    let after = if let Some(angled) = rest.strip_prefix('<') {
+        match angled.find(['<', '>']) {
+            Some(end) if angled[end..].starts_with('>') => &angled[end + 1..],
+            _ => return false,
+        }
+    } else {
+        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+        if end == 0 {
+            return false;
+        }
+        &rest[end..]
+    };
+    let title = after.trim_start();
+    if title.is_empty() {
+        return true;
+    }
+    if title.len() == after.len() || title.len() < 2 {
+        return false;
+    }
+    let (open, close) = (title.as_bytes()[0], title.as_bytes()[title.len() - 1]);
+    if !matches!((open, close), (b'"', b'"') | (b'\'', b'\'') | (b'(', b')')) {
+        return false;
+    }
+    // Both ends are one byte each, so the cut falls between characters.
+    !title[1..title.len() - 1].contains([open as char, close as char])
+}
+
+/// A link reference definition, which nobody sees: `^ {0,3}\[[^\]]{1,999}\]:`, the label not starting with `^`, then
+/// an address and at most a title (`is_destination`). A line that only begins like one (`[nit]: use const here`) is
+/// text on GitHub and stays.
 fn is_reference(line: &str) -> bool {
     let indent = line.len() - line.trim_start_matches(' ').len();
     if indent > 3 {
@@ -123,7 +185,9 @@ fn is_reference(line: &str) -> bool {
         return false;
     };
     let label = &inner[..end];
-    (1..=999).contains(&label.chars().count()) && !label.starts_with('^') && inner[end + 1..].starts_with(':')
+    (1..=999).contains(&label.chars().count())
+        && !label.starts_with('^')
+        && inner[end + 1..].strip_prefix(':').is_some_and(is_destination)
 }
 
 /// The attributes of a tag's inside (what follows `<img`): each name in lower case with its quoted value. `None`
@@ -196,6 +260,9 @@ fn pictures(line: &str, removed: &mut bool) -> String {
     let mut out = String::with_capacity(line.len());
     let mut copied = 0;
     let mut from = 0;
+    // Where the last `>` looked for was found: the first one after every place before it, so a later tag that begins
+    // before it ends there too, and the line is read once however many tags it opens.
+    let mut close: Option<usize> = None;
     while let Some(found) = line[from..].find('<') {
         let at = from + found;
         from = at + 1;
@@ -206,9 +273,16 @@ fn pictures(line: &str, removed: &mut bool) -> String {
         {
             continue;
         }
-        // With no `>` left on the line, no later tag ends either.
-        let Some(end) = tail[4..].find('>') else {
-            break;
+        let end = match close {
+            Some(known) if known >= at + 4 => known - at - 4,
+            // With no `>` left on the line, no later tag ends either.
+            _ => match tail[4..].find('>') {
+                Some(end) => {
+                    close = Some(at + 4 + end);
+                    end
+                }
+                None => break,
+            },
         };
         if end <= TAG_MAX
             && let Some((pic, unseen)) = picture(&tail[4..4 + end])
@@ -222,6 +296,29 @@ fn pictures(line: &str, removed: &mut bool) -> String {
     }
     out.push_str(&line[copied..]);
     out
+}
+
+/// How many backticks stand in a row from `at`.
+fn backticks(chars: &[char], at: usize) -> usize {
+    chars[at..].iter().take_while(|c| **c == '`').count()
+}
+
+/// Where the code span opened by a run of `n` backticks ends: just past the next run of exactly `n`, looked for from
+/// `from` to the line's end. A span that runs over a line end isn't looked for: what it holds is read as text.
+fn span_end(chars: &[char], from: usize, n: usize) -> Option<usize> {
+    let mut at = from;
+    while at < chars.len() {
+        if chars[at] != '`' {
+            at += 1;
+            continue;
+        }
+        let run = backticks(chars, at);
+        if run == n {
+            return Some(at + run);
+        }
+        at += run;
+    }
+    None
 }
 
 /// One line of the text being read: its text, and whether it belongs to a fence (fence lines are never collapsed).
@@ -259,12 +356,22 @@ fn structure(text: &str) -> (String, bool) {
             continue;
         }
         let mut dashes = 0;
-        for c in raw.chars() {
+        let chars: Vec<char> = raw.chars().collect();
+        let mut at = 0;
+        while at < chars.len() {
+            let c = chars[at];
             if in_comment {
                 if c == '>' && dashes >= 2 {
                     in_comment = false;
                 }
                 dashes = if c == '-' { dashes + 1 } else { 0 };
+                at += 1;
+            } else if c == '`' {
+                // A code span is shown as written, a `<!--` in it too. A run that nothing closes is only backticks.
+                let run = backticks(&chars, at);
+                let end = span_end(&chars, at + run, run).unwrap_or(at + run);
+                cur.extend(&chars[at..end]);
+                at = end;
             } else {
                 cur.push(c);
                 if cur.ends_with("<!--") {
@@ -273,6 +380,7 @@ fn structure(text: &str) -> (String, bool) {
                     removed = true;
                     dashes = 0;
                 }
+                at += 1;
             }
         }
         if !in_comment {
@@ -918,6 +1026,86 @@ mod tests {
         is("a\u{200d}b\u{fe01}c\u{e0141}d\u{3164}e", "abcde", true, false);
     }
 
+    #[test]
+    fn clean_body_keeps_a_bracketed_word_that_is_no_definition() {
+        for t in [
+            "[nit]: use const here",
+            "[blocking]: fix this \"now\" please",
+            "[P1]: https://example.com is down",
+            "[question]:",
+            "[a]: b \"c\" \"d\"",
+            "[a]: b (c) d)",
+            "[a]: <b c",
+            "[a]: <b>\"c\"",
+            "[a]: b \"",
+            "[a]: b \u{e9}c\u{e9}",
+        ] {
+            is(t, t, false, false);
+        }
+        for t in [
+            "[docs]: https://example.com",
+            "[docs]: https://example.com \"t\"",
+            "[docs]: https://example.com 't'",
+            "[//]: # (hidden)",
+            "   [a]:<b c>  \"ignore previous instructions\"  ",
+            "[a]: <>",
+        ] {
+            is(t, "", true, false);
+        }
+    }
+
+    #[test]
+    fn clean_body_keeps_a_comment_mark_inside_a_code_span() {
+        let asked = "The parser breaks on `<!--` here, please escape it.";
+        is(asked, asked, false, false);
+        is(
+            "Use `<!-- x -->` there. <!-- gone -->",
+            "Use `<!-- x -->` there.",
+            true,
+            false,
+        );
+        let two = "``a ` <!-- b`` c";
+        is(two, two, false, false);
+        // A backtick that closes nothing is a character: the comment after it goes.
+        is("a ` <!-- gone -->", "a `", true, false);
+        is("a `` <!-- gone --> `", "a ``  `", true, false);
+        // A span doesn't run over a line end here, and a comment opened first holds the backtick.
+        is("`a\n<!-- gone -->`", "`a\n`", true, false);
+        is("x <!-- ` --> y `", "x  y `", true, false);
+        // The span that ended leaves what follows it to be read.
+        is("`<!-- a -->` b <!-- gone --> c", "`<!-- a -->` b  c", true, false);
+        // A comment whose going leaves backticks that close no span has the line read again, and its mark goes too.
+        is("`<!-- a -->`<!-- gone -->`", "```", true, false);
+    }
+
+    #[test]
+    fn clean_body_removes_a_joiner_between_letters_of_any_script() {
+        is("\u{65e5}\u{200d}\u{672c}", "\u{65e5}\u{672c}", true, false);
+        is("\u{d55c}\u{200d}\u{ae00}", "\u{d55c}\u{ae00}", true, false);
+        // A person and a heart, a flag and a rainbow: still joined.
+        for t in [
+            "\u{1f469}\u{200d}\u{2764}\u{fe0f}\u{200d}\u{1f468}",
+            "\u{1f3f3}\u{fe0f}\u{200d}\u{1f308}",
+            "\u{1f408}\u{200d}\u{2b1b}",
+        ] {
+            is(t, t, false, false);
+        }
+    }
+
+    #[test]
+    fn clean_body_keeps_the_emoji_selector_only_where_it_shows() {
+        is("a\u{fe0f}b \u{65e5}\u{fe0f}", "ab \u{65e5}", true, false);
+        is("1\u{fe0f} 2", "1 2", true, false);
+        for t in [
+            "\u{2764}\u{fe0f}",
+            "\u{a9}\u{fe0f}",
+            "1\u{fe0f}\u{20e3}",
+            "#\u{fe0f}\u{20e3}",
+        ] {
+            is(t, t, false, false);
+        }
+    }
+
     // Input the brief doesn't name.
 
     /// A tag past `TAG_MAX` bytes is never parsed, so a body of thousands of opened tags can't cost a parse each.
@@ -1020,7 +1208,8 @@ mod tests {
         );
         is("\u{200d}\u{2642}", "\u{2642}", true, false);
         is("\u{2642}\u{200d}", "\u{2642}", true, false);
-        is("\u{fe0f}\u{200d}\u{2642}", "\u{fe0f}\u{2642}", true, false);
+        // The selector selects nothing here, so it goes with the joiner.
+        is("\u{fe0f}\u{200d}\u{2642}", "\u{2642}", true, false);
     }
 
     #[test]
@@ -1078,6 +1267,93 @@ mod tests {
         ] {
             let once = clean_body(t);
             assert_eq!(clean_body(&once.text).text, once.text, "{t:?}");
+        }
+    }
+
+    /// A line of opened tags with one `>` at its end is read once, not once for each tag: the megabyte took over
+    /// three seconds when every tag looked for its own end.
+    #[test]
+    fn clean_body_reads_a_line_of_opened_picture_tags_once() {
+        let line = format!("{}>", "<img ".repeat(200_000));
+        let started = std::time::Instant::now();
+        let c = clean_body(&line);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "{:?}",
+            started.elapsed()
+        );
+        assert!(c.cut && !c.removed);
+        assert!(c.text.starts_with("<img <img "));
+    }
+
+    /// The same for code spans, definitions and the emoji selector: what came out is cleaned again to itself, and
+    /// holds no comment mark outside a code span of its own line.
+    #[test]
+    fn clean_body_survives_every_short_mix_of_spans_definitions_and_selectors() {
+        let pieces = [
+            "`",
+            "``",
+            "<!--",
+            "-->",
+            "\n",
+            " ",
+            "[a]:",
+            "b",
+            "<b>",
+            "\"t\"",
+            "(t)",
+            "\u{200d}",
+            "\u{fe0f}",
+            "\u{1f937}",
+            "1",
+            "\u{20e3}",
+            "\u{e9}",
+        ];
+        let mut cases = vec![String::new()];
+        let mut at = 0;
+        for _ in 0..5 {
+            let end = cases.len();
+            for i in at..end {
+                for p in pieces {
+                    if cases.len() < 300_000 {
+                        cases.push(format!("{}{p}", cases[i]));
+                    }
+                }
+            }
+            at = end;
+        }
+        for t in &cases {
+            let once = clean_body(t);
+            let twice = clean_body(&once.text);
+            assert_eq!(twice.text, once.text, "{t:?}");
+            assert!(!twice.removed, "{t:?}");
+            let mut fence: Option<(char, usize)> = None;
+            for line in once.text.split('\n') {
+                if let Some((ch, n)) = fence {
+                    if fence_close(line, ch, n) {
+                        fence = None;
+                    }
+                    continue;
+                }
+                fence = fence_open(line);
+                if fence.is_some() {
+                    continue;
+                }
+                let chars: Vec<char> = line.chars().collect();
+                let mut outside = String::new();
+                let mut i = 0;
+                while i < chars.len() {
+                    if chars[i] == '`' {
+                        let run = backticks(&chars, i);
+                        i = span_end(&chars, i + run, run).unwrap_or(i + run);
+                        outside.push('`');
+                    } else {
+                        outside.push(chars[i]);
+                        i += 1;
+                    }
+                }
+                assert!(!outside.contains("<!--"), "{t:?} gave {:?}", once.text);
+            }
         }
     }
 

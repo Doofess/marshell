@@ -3,7 +3,7 @@ import type { PullNote } from "../../generated/PullNote";
 import type { ReviewThread } from "../../generated/ReviewThread";
 import { place, rowsAnchor, type Placement } from "./comments";
 import { copy } from "./copy";
-import type { Section } from "./model";
+import type { Row, Section } from "./model";
 import { threadCopy } from "./threadCopy";
 
 /** How many characters of a comment's text a label reads. */
@@ -16,20 +16,36 @@ const cut = (text: string, max: number) => {
   return points.length <= max ? text : points.slice(0, max).join("");
 };
 
-/** The thread as a draft comment's anchor: its rows hashed as `anchorOf` hashes them. Null for a file comment or a thread with no rows. */
+/**
+ * What the core may take out of a thread's rows (`hides` and `strip_hidden` in `crates/core/src/github`): control characters but the tab,
+ * and every character that draws nothing, with the joiner and the selector it keeps inside an emoji. The checkout's own diff keeps them (a
+ * CR at each line's end, a byte order mark on the first), so a thread's rows and the diff's are compared without them.
+ */
+const UNSEEN =
+  /[\u0000-\u0008\u000a-\u001f\u007f-\u009f\u{ad}\u{34f}\u{61c}\u{115f}\u{1160}\u{17b4}\u{17b5}\u{180b}-\u{180f}\u{200b}-\u{200f}\u{2028}-\u{202e}\u{2060}-\u{206f}\u{3164}\u{fe00}-\u{fe0f}\u{feff}\u{ffa0}\u{fff0}-\u{fffb}\u{1bca0}-\u{1bca3}\u{1d173}-\u{1d17a}\u{e0000}-\u{e0fff}]/gu;
+const seen = <T extends Pick<Row, "kind" | "text">>(r: T): T => (r.kind === "hunk" ? r : { ...r, text: r.text.replace(UNSEEN, "") });
+const seenRows = new WeakMap<Row[], Row[]>();
+/** A section's rows without what `UNSEEN` names, kept per rows array (as `hashesOf` keeps its hashes). */
+const comparable = (rows: Row[]): Row[] => {
+  let c = seenRows.get(rows);
+  if (!c) seenRows.set(rows, (c = rows.map(seen)));
+  return c;
+};
+
+/** The thread as a draft comment's anchor: its rows without what `UNSEEN` names, hashed as `anchorOf` hashes them, and quoted as they were sent. Null for a file comment or a thread with no rows. */
 export function threadAnchor(t: ReviewThread): DraftComment | null {
   if (t.file || t.rows.length === 0) return null;
   const end = t.end ?? t.original_end ?? 1;
   const start = t.start ?? t.original_start ?? end;
-  return { id: t.id, path: t.path, side: t.side, start, end, ...rowsAnchor(t.rows), text: "" };
+  return { id: t.id, path: t.path, side: t.side, start, end, ...rowsAnchor(t.rows.map(seen)), quote: rowsAnchor(t.rows).quote, text: "" };
 }
 
-/** Where the thread sits in its file's section: null when the diff has no such file (or the section has no rows); `{at: null, changed: false}` for a file comment; else `place(threadAnchor(t), file)`. */
+/** Where the thread sits in its file's section: null when the diff has no such file (or the section has no rows); `{at: null, changed: false}` for a file comment; else `place(threadAnchor(t), file)` on the section's rows without what `UNSEEN` names. */
 export function placeThread(t: ReviewThread, file: Section | undefined): Placement | null {
   if (file === undefined || file.rows.length === 0) return null;
   if (t.file) return { at: null, changed: false };
   const anchor = threadAnchor(t);
-  return anchor === null ? { at: null, changed: true } : place(anchor, file);
+  return anchor === null ? { at: null, changed: true } : place(anchor, { ...file, rows: comparable(file.rows) });
 }
 
 /** Unresolved threads on current lines, in GitHub's order. */

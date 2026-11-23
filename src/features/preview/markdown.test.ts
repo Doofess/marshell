@@ -113,6 +113,14 @@ describe("renderCommentMarkdown", () => {
     expect(seen(used)).toContain("[text][a]");
     expect(seen(used)).toContain("[a]: https://example.com");
   });
+  it("a comment mark the core left shows as written, in a code span and outside one", () => {
+    const span = renderCommentMarkdown("The parser breaks on `<!--` here.");
+    expect(span).toContain("<code>&lt;!--</code>");
+    const outside = seen(renderCommentMarkdown("a <!-- still shown --> b\n\n<!-- a block\nof it -->\n\n[nit]: use const here"));
+    expect(outside).toContain("&lt;!-- still shown --&gt;");
+    expect(outside).toContain("of it --&gt;");
+    expect(outside).toContain("[nit]: use const here");
+  });
   it("a fence's info string shows whole", () => {
     const out = renderCommentMarkdown("```suggestion run this first\nx\n```");
     expect(seen(out)).toContain("suggestion run this first");
