@@ -40,6 +40,16 @@ describe("ChangesPanel.css", () => {
     expect(forcedRule(".changes__box-text")).toContain("border: 1px solid CanvasText");
   });
 
+  // A GitHub thread is a second tint of the draft's look: tokens only, and in forced colours the draft's system-colour edge.
+  it("draws GitHub's threads with tokens, and gives them the draft's system colours in forced colours", () => {
+    const THREAD_CLASSES = ["changes__thread", "changes__thread-head", "changes__thread-chip", "changes__thread-comment", "changes__thread-body", "changes__thread-note", "changes__talk", "changes__line"];
+    const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => THREAD_CLASSES.some((c) => m[1]!.includes(`.${c}`)));
+    for (const c of THREAD_CLASSES) expect(rules.some((m) => m[1]!.includes(`.${c}`)), c).toBe(true);
+    for (const m of rules) expect(m[2], m[1]!.trim()).not.toMatch(/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i);
+    expect(forcedRule(".changes__thread")).toContain("background: Canvas");
+    expect(forcedRule(".changes__thread")).toContain("color: CanvasText");
+  });
+
   // The rows that keep their own colours (forced-color-adjust: none) must not keep the theme's ring, hover or selection fill.
   it("gives the rows' focus ring, hover and selection system colours in forced colours", () => {
     expect(forcedRule(".changes__item:focus-visible")).toContain("outline-color: CanvasText");

@@ -76,19 +76,29 @@ export function threadLabel(t: ReviewThread, placed: Placement | null, state: Se
   for (const c of t.comments.slice(1, LABEL_COMMENTS)) label += `. ${threadCopy.replyBy(authorOf(c))}: ${cut(c.body, LABEL_CHARS)}`;
   const more = Math.max(0, t.comments.length - LABEL_COMMENTS) + t.more_comments;
   if (more > 0) label += `. ${threadCopy.moreComments(more).replace(/\.$/, "")}`;
-  const all = [
-    ...(t.resolved ? [threadCopy.resolved] : []),
-    ...(t.outdated ? [threadCopy.outdated] : []),
-    ...(placed?.changed ? [copy.changed(start !== end)] : []),
-    ...marks(t.comments.some((c) => c.hidden_removed), state, agent),
-  ];
+  const all = threadMarks(t, placed, state, agent);
   return all.length === 0 ? label : `${label}. ${all.join(". ")}`;
 }
+
+/** The marks that apply to a thread, in the order its label reads them and its chips show them. */
+export function threadMarks(t: ReviewThread, placed: Placement | null, state: SendState, agent: string | null): string[] {
+  const anchor = threadAnchor(t);
+  const range = (placed?.start ?? anchor?.start) !== (placed?.end ?? anchor?.end);
+  return [
+    ...(t.resolved ? [threadCopy.resolved] : []),
+    ...(t.outdated ? [threadCopy.outdated] : []),
+    ...(placed?.changed ? [copy.changed(range)] : []),
+    ...marks(t.comments.some((c) => c.hidden_removed), state, agent),
+  ];
+}
+
+/** The marks that apply to a review or comment of the pull request. */
+export const noteMarks = (n: PullNote, state: SendState, agent: string | null): string[] => marks(n.hidden_removed, state, agent);
 
 /** "Review by alice · Changes requested: …" or "Comment by alice: …", then the marks that apply. */
 export function noteLabel(n: PullNote, state: SendState, agent: string | null): string {
   const who = n.kind === "review" ? threadCopy.reviewBy(authorOf(n), n.verdict) : threadCopy.commentBy(authorOf(n));
-  const all = marks(n.hidden_removed, state, agent);
+  const all = noteMarks(n, state, agent);
   const label = `${who}: ${cut(n.body, LABEL_CHARS)}`;
   return all.length === 0 ? label : `${label}. ${all.join(". ")}`;
 }
