@@ -144,6 +144,11 @@ pub fn git_sandbox_dir(home: &Path) -> PathBuf {
     home.join("git-sandbox")
 }
 
+/// `<home>/gh`: the working folder of every GitHub CLI call, never a checkout. It holds nothing of the user's.
+pub fn gh_dir(home: &Path) -> PathBuf {
+    home.join("gh")
+}
+
 /// `<home>/doctor/last-fix.json`: the last fix the Doctor applied, which "Undo last fix" puts back.
 pub fn doctor_last_fix(home: &Path) -> PathBuf {
     home.join("doctor").join("last-fix.json")

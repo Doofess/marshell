@@ -1,5 +1,6 @@
 //! GitHub, as the Changes panel's pull request bar knows it.
 
+pub mod gh;
 pub mod remote;
 
 use crate::gitbox::refs;
