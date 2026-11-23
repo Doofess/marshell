@@ -7,7 +7,7 @@
 use super::AppState;
 use super::attachments::{effective_agent, paste_pieces};
 use super::files::{Root, checkout_above, checkout_of, links_refused, refused, row_of};
-use super::fill::{Busy, busy};
+use super::fill::{Busy, NotReady, busy};
 use super::sessions::cannot_resume;
 use crate::paths;
 use crate::profiles::detect::{
@@ -227,7 +227,7 @@ fn busy_reason(busy: Busy) -> &'static str {
 }
 
 /// The agent of a session that can take typed text now, or the 409 that says why not: "no_agent" for a plain shell,
-/// else the `busy` reason.
+/// "not_ready" when Claude Code's settings can't be read in time, else the `busy` reason.
 async fn agent_ready(
     st: &AppState,
     tab: &str,
@@ -238,8 +238,9 @@ async fn agent_ready(
         return Err("no_agent");
     };
     match busy(st, tab, row, session).await {
-        Some(why) => Err(busy_reason(why)),
-        None => Ok(agent),
+        Err(NotReady) => Err("not_ready"),
+        Ok(Some(why)) => Err(busy_reason(why)),
+        Ok(None) => Ok(agent),
     }
 }
 

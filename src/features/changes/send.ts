@@ -21,6 +21,8 @@ export function refusalNotice(reason: Refusal, name: string, what: "send" | "rev
       return what === "send" ? `${name} runs elevated, so Marshell can't paste into it. The comments are kept.` : `${name} runs elevated, so nothing was typed.`;
     case "no_agent":
       return `${name} runs no agent, ${end}`;
+    case "not_ready":
+      return `${name} isn't ready yet, ${end}`;
     default: {
       const unreachable: never = reason;
       return unreachable;

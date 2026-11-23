@@ -125,14 +125,38 @@ pub(super) fn assess(
     }
 }
 
-/// Why `session` takes no text now, if it doesn't. Reads Claude Code's settings off the async workers.
-pub(super) async fn busy(st: &AppState, tab: &str, row: &SessionInfo, session: &crate::pty::Session) -> Option<Busy> {
+/// How long Send and Review wait for Claude Code's settings before they call the session not ready.
+const HOOKS_LOOKUP: Duration = Duration::from_secs(5);
+
+/// Claude Code's settings took longer than `HOOKS_LOOKUP` to read.
+#[derive(Debug)]
+pub(super) struct NotReady;
+
+/// The hook state `lookup` reads, or `NotReady` past `limit`. A lookup that failed reads as no hooks, as in `fill`.
+async fn hooks_within(
+    limit: Duration,
+    lookup: impl std::future::Future<Output = Result<Option<HookInstall>, tokio::task::JoinError>>,
+) -> Result<Option<HookInstall>, NotReady> {
+    tokio::time::timeout(limit, lookup)
+        .await
+        .map(|done| done.ok().flatten())
+        .map_err(|_| NotReady)
+}
+
+/// Why `session` takes no text now, if it doesn't. Reads Claude Code's settings off the async workers, for at most
+/// `HOOKS_LOOKUP`: past it the session isn't ready, as `fill` answers.
+pub(super) async fn busy(
+    st: &AppState,
+    tab: &str,
+    row: &SessionInfo,
+    session: &crate::pty::Session,
+) -> Result<Option<Busy>, NotReady> {
     let hooks = if row.agent.as_deref() == Some("claude") {
-        read_hooks(st).await.ok().flatten()
+        hooks_within(HOOKS_LOOKUP, read_hooks(st)).await?
     } else {
         None
     };
-    assess(st, tab, row, session, hooks).busy
+    Ok(assess(st, tab, row, session, hooks).busy)
 }
 
 pub async fn fill(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<FillRequest>) -> Response {
@@ -215,6 +239,18 @@ fn write(st: &AppState, tab: &str, session: &crate::pty::Session, text: String) 
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    /// A settings read that never ends makes the session not ready, rather than a Send that never answers.
+    #[tokio::test]
+    async fn a_hook_lookup_past_its_limit_is_not_ready() {
+        let slow = std::future::pending::<Result<Option<HookInstall>, tokio::task::JoinError>>();
+        assert!(matches!(
+            hooks_within(Duration::from_millis(20), slow).await,
+            Err(NotReady)
+        ));
+        let quick = async { Ok::<_, tokio::task::JoinError>(None) };
+        assert!(matches!(hooks_within(Duration::from_millis(20), quick).await, Ok(None)));
+    }
 
     #[test]
     fn check_text_refuses_controls() {

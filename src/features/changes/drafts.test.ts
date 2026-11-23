@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ChangesDrafts } from "../../generated/ChangesDrafts";
 import type { DraftComment } from "../../generated/DraftComment";
 import type { Placement } from "./comments";
-import { elsewhere, sendMessageOf, shownComments, unkept, withComments, withFolds } from "./drafts";
+import { elsewhere, keptBox, sendMessageOf, shownComments, unkept, withComments, withFolds } from "./drafts";
 import type { Section } from "./model";
 
 const A = "C:\\work\\repoA";
@@ -32,6 +32,21 @@ describe("withComments", () => {
   it("takes the shown checkout and base for the first comment, and keeps the folds", () => {
     expect(withComments({ ...onA, comments: [] }, showingA, [c("1", 1)])).toEqual({ checkout: A, base: "origin/develop", comments: [c("1", 1)], folds: { "src/a.ts": false } });
     expect(withComments(undefined, showingA, [c("1", 1)])).toEqual({ checkout: A, base: "origin/develop", comments: [c("1", 1)], folds: {} });
+  });
+});
+
+describe("keptBox", () => {
+  const { id: _id, text: _text, ...anchor } = c("9", 30);
+  const same = (x: DraftComment) => x;
+  it("keeps a new comment on the checkout its box was opened on, even when another is shown by now", () => {
+    const kept = keptBox(undefined, { state: { anchor, id: null }, text: "typed", on: { folder: A, base: "main" } }, anchor, "n1", same);
+    expect(kept).toEqual({ checkout: A, base: "main", comments: [{ ...anchor, id: "n1", text: "typed" }], folds: {} });
+  });
+  it("adds after the earlier comments, and an edit changes only its own text", () => {
+    const added = keptBox(onA, { state: { anchor, id: null }, text: "two", on: { folder: A, base: "main" } }, anchor, "n2", same);
+    expect(added.comments.map((x) => x.id)).toEqual(["1", "n2"]);
+    const edited = keptBox(onA, { state: { anchor: c("1", 12), id: "1" }, text: "new words", on: { folder: A, base: "main" } }, anchor, "unused", same);
+    expect(edited.comments).toEqual([{ ...c("1", 12), text: "new words" }]);
   });
 });
 

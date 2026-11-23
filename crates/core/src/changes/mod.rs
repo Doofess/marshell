@@ -41,6 +41,8 @@ const SUBMODULE_NETWORK: &str =
     "A submodule of this repository points to a network folder, so Changes doesn't read it.";
 /// The sentence for an index holding a path that isn't UTF-8 (`gitbox::worktree`).
 const ODD_NAME: &str = "A file name in this repository isn't UTF-8, so Changes doesn't read it.";
+/// A list of changed files cut at `MAX_RAW` would show part of the changes as all of them.
+const TOO_MANY_CHANGED: &str = "This checkout has too many changed files for Changes.";
 /// The most `diff --raw` output that is read.
 const MAX_RAW: usize = 8 * 1024 * 1024;
 /// The most `ls-files` output that is read.
@@ -122,6 +124,14 @@ impl From<RefError> for Halt {
 
 fn failed(sentence: &str) -> Halt {
     Halt::Err(ChangesError::Failed(sentence.to_string()))
+}
+
+/// The changed files `git diff --raw -z` listed, refused when its output reached the cap.
+fn raw_entries(raw: &[u8], capped: bool) -> Result<Vec<RawEntry>, Halt> {
+    if capped {
+        return Err(failed(TOO_MANY_CHANGED));
+    }
+    Ok(parse_raw(raw))
 }
 
 /// Runs git and collects at most `max` bytes; true when there was more.
@@ -253,7 +263,7 @@ fn compute(
         Reach::Late => return Err(Halt::Late),
     }
 
-    let (raw, _) = collect(
+    let (raw, capped) = collect(
         git,
         &[
             "diff",
@@ -270,7 +280,7 @@ fn compute(
         cancel,
         MAX_RAW,
     )?;
-    let entries = parse_raw(&raw);
+    let entries = raw_entries(&raw, capped)?;
     let stats: Vec<Option<FileStamp>> = entries
         .iter()
         .map(|e| {
@@ -1275,6 +1285,17 @@ mod tests {
         git.refresh().unwrap();
         let next = tracked_paths(&git, &mut cache, far(), &AtomicBool::new(false)).unwrap();
         assert!(next.paths.contains("d.txt"));
+    }
+
+    /// A list of changed files cut at its cap would show part of the changes as all of them.
+    #[test]
+    fn a_raw_diff_past_its_cap_is_refused() {
+        let record = b":100644 100644 aaaa bbbb M\0a.txt\0";
+        assert_eq!(raw_entries(record, false).map(|e| e.len()).ok(), Some(1));
+        let Err(Halt::Err(ChangesError::Failed(why))) = raw_entries(record, true) else {
+            panic!("a capped list is refused");
+        };
+        assert_eq!(why, "This checkout has too many changed files for Changes.");
     }
 
     /// A walk the deadline cuts is as slow as a finished one: it isn't run again on every check.

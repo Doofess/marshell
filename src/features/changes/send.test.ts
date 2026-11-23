@@ -52,6 +52,8 @@ describe("runSend", () => {
 describe("refusalNotice", () => {
   it("words each reason for Send and for Review", () => {
     expect(refusalNotice("ended", "Claude", "send")).toBe("Claude has ended, so the comments are kept.");
+    expect(refusalNotice("not_ready", "Claude", "send")).toBe("Claude isn't ready yet, so the comments are kept.");
+    expect(refusalNotice("not_ready", "Claude", "review")).toBe("Claude isn't ready yet, so nothing was typed.");
     expect(refusalNotice("paused", "Claude", "send")).toBe("Claude is paused, so the comments are kept.");
     expect(refusalNotice("elevated", "Claude", "send")).toBe("Claude runs elevated, so Marshell can't paste into it. The comments are kept.");
     expect(refusalNotice("no_agent", "the shell", "send")).toBe("the shell runs no agent, so the comments are kept.");

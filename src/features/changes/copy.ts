@@ -41,6 +41,7 @@ export const copy = {
     large: "New file over 256 KiB, not shown.",
     whitespace: "Only whitespace changed.",
     gone: "No changes in this file now.",
+    cut: "This file is past the 4 MiB cut, so its lines aren't shown.",
   },
   /** What a screen reader hears when Shift+Up or Down widens the rows. */
   selected: (count: number) => `${n(count)} ${count === 1 ? "line" : "lines"} selected`,

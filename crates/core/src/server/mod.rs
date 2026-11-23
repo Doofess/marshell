@@ -48,11 +48,8 @@ pub(crate) use files::existing_file as local_file;
 pub(crate) use files::{links_refused, refused};
 /// The text check of `fill`, for the command line to run before it creates a session.
 pub use fill::check_text;
-pub(crate) use ignores::{MAX_POINTER_BYTES, common_dir, git_dir, read_capped};
-// The walk of a checkout's untracked files is first used by the Changes panel's next task, so these are
-// unused until then.
-#[allow(unused_imports)]
 pub(crate) use ignores::{Ignores, walk_unignored};
+pub(crate) use ignores::{MAX_POINTER_BYTES, common_dir, git_dir, read_capped};
 
 use crate::profiles::detect::{Probe, detect_profiles};
 use crate::registry::{Registry, Relaunch};

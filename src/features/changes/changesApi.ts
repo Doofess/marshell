@@ -17,8 +17,8 @@ export async function readChanges(tab: string, req: ChangesRequest): Promise<Cha
   }
 }
 
-export type Refusal = "ended" | "elevated" | "paused" | "waiting" | "no_agent";
-const REFUSALS: readonly string[] = ["ended", "elevated", "paused", "waiting", "no_agent"];
+export type Refusal = "ended" | "elevated" | "paused" | "waiting" | "no_agent" | "not_ready";
+const REFUSALS: readonly string[] = ["ended", "elevated", "paused", "waiting", "no_agent", "not_ready"];
 
 /** Why the core refused to type into the session (a 409 with `{ reason }`), or null for any other failure. */
 export function refusalOf(e: unknown): Refusal | null {

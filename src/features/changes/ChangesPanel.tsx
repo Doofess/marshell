@@ -11,7 +11,7 @@ import { type ChangesChoice, changesChoice, changesMenuItems, headerMenuItems, l
 import { type BoxAction, CommentBox, boxLabel } from "./CommentBox";
 import { type BoxState, anchorKey, boxAfter } from "./boxModel";
 import { MAX_COMMENTS, type Placement, anchorOf, place, renumbered } from "./comments";
-import { commentsOf, elsewhere, sendMessageOf, shownComments, unkept, withComments, withFolds } from "./drafts";
+import { type OpenBox, commentsOf, elsewhere, keptBox, sendMessageOf, shownComments, unkept, withFolds } from "./drafts";
 import { copy } from "./copy";
 import { type Item, type Row, type Section, cutFiles, focusIndex, itemsOf, sectionsOf } from "./model";
 import { reviewLabel } from "./review";
@@ -108,7 +108,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
   const { drafts } = p;
 
   // The comment box (its text lives here, so a poll never loses it), the Send bar's question and a send under way.
-  const [open, setOpen] = useState<{ state: BoxState; text: string } | null>(null);
+  const [open, setOpen] = useState<OpenBox | null>(null);
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -145,7 +145,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
   const summary = useMemo(() => {
     if (!listed) return "Changes";
     return copy.summary(
-      sections.filter((s) => s.note !== "gone").length,
+      sections.filter((s) => s.note !== "gone" && s.note !== "cut").length,
       sections.reduce((n, s) => n + s.added, 0),
       sections.reduce((n, s) => n + s.removed, 0),
     );
@@ -188,7 +188,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
     if (item.kind === "comment") {
       const { id, text, ...anchor } = item.comment;
       focusBox.current = true;
-      setOpen({ state: { anchor, id }, text });
+      setOpen({ state: { anchor, id }, text, on: { folder: listed.folder, base: listed.base } });
       return;
     }
     if (item.kind !== "row") return;
@@ -200,7 +200,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
     if (count >= MAX_COMMENTS) return p.announce(`A session holds at most ${MAX_COMMENTS} comments.`);
     const ats = held.map((i) => i.at);
     focusBox.current = true;
-    setOpen({ state: { anchor: anchorOf(item.file, Math.min(...ats), Math.max(...ats)), id: null }, text: "" });
+    setOpen({ state: { anchor: anchorOf(item.file, Math.min(...ats), Math.max(...ats)), id: null }, text: "", on: { folder: listed.folder, base: listed.base } });
   };
 
   /** Where the box's rows are now. */
@@ -214,13 +214,11 @@ export function ChangesPanel(p: ChangesPanelProps) {
     if (!current || !listed) return;
     const text = current.text;
     if (action === "close" || text.trim() === "") return;
-    const comments = drafts?.comments ?? [];
-    const { id } = current.state;
     // Saved at the lines its rows are on now, which a reply during the writing may have moved.
     const anchor = renumbered(current.state.anchor, placeBox(current.state));
-    const next = id === null ? [...comments, { ...anchor, id: crypto.randomUUID(), text }] : comments.map((c) => (c.id === id ? { ...renumbered(c, placements.get(c.id)), text } : c));
-    p.onDrafts(withComments(drafts, listed, next));
-    p.announce(action === "add" ? `Comment added. ${next.length} to send.` : "Comment kept as a draft.");
+    const next = keptBox(drafts, current, anchor, crypto.randomUUID(), (c) => renumbered(c, placements.get(c.id)));
+    p.onDrafts(next);
+    p.announce(action === "add" ? `Comment added. ${next.comments.length} to send.` : "Comment kept as a draft.");
   };
 
   const removeComment = (index: number) => {

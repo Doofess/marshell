@@ -19,7 +19,7 @@ export type Section = {
   status: DiffStatus;
   added: number;
   removed: number;
-  note?: DiffNote | "whitespace" | "gone";
+  note?: DiffNote | "whitespace" | "gone" | "cut";
   rows: Row[];
   folded: boolean;
   foldReason?: "big" | "lockfile" | "minified" | "budget";
@@ -126,7 +126,15 @@ export function cutFiles(reply: ChangesReply): number {
   return pastCut(reply, partsOf(reply)).size;
 }
 
-/** `openPath` is the open comment box's file: like a comment's, it stays as a "gone" section when it leaves the diff. */
+/**
+ * Whether a file with no rows under `-w` changed only whitespace: a modified file whose part names no mode change. A rename, a new or
+ * deleted empty file and a mode change have no rows either, and their part says what they are.
+ */
+function onlyWhitespace(status: Section["status"], part: string | undefined): boolean {
+  return status === "modified" && !(part ?? "").split("\n").some((l) => l.startsWith("old mode ") || l.startsWith("new mode "));
+}
+
+/** `openPath` is the open comment box's file: like a comment's, it stays as a "gone" section when it leaves the diff, or a "cut" one past the cut. */
 export function sectionsOf(reply: ChangesReply, folds: Record<string, boolean>, drafts: DraftComment[], hideWhitespace: boolean, openPath?: string): Section[] {
   const diffs = partsOf(reply);
   const cut = pastCut(reply, diffs);
@@ -141,7 +149,7 @@ export function sectionsOf(reply: ChangesReply, folds: Record<string, boolean>, 
       else if (r.kind === "del") section.removed++;
     }
     if (f.note !== null) section.note = f.note;
-    else if (rows.length === 0 && hideWhitespace) section.note = "whitespace";
+    else if (rows.length === 0 && hideWhitespace && onlyWhitespace(f.status, diffs.get(f.path))) section.note = "whitespace";
     if (rows.length > 0) {
       const reason = foldReasonOf(f.path, rows, openRows);
       const override = Object.hasOwn(folds, f.path) ? folds[f.path] : undefined;
@@ -152,9 +160,11 @@ export function sectionsOf(reply: ChangesReply, folds: Record<string, boolean>, 
     return section;
   });
 
+  // A file past the cut that holds a comment (or the open box) keeps a section with no rows, so the comment can still be edited or deleted.
+  const kept = new Set(openPath === undefined ? drafts.map((d) => d.path) : [...drafts.map((d) => d.path), openPath]);
+  for (const f of reply.files) if (cut.has(f.path) && kept.has(f.path)) sections.push({ path: f.path, status: f.status, added: 0, removed: 0, note: "cut", rows: [], folded: false });
   const known = new Set(reply.files.map((f) => f.path));
-  const kept = openPath === undefined ? drafts.map((d) => d.path) : [...drafts.map((d) => d.path), openPath];
-  const gone = [...new Set(kept.filter((p) => !known.has(p)))].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  const gone = [...kept].filter((p) => !known.has(p)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   for (const path of gone) sections.push({ path, status: "modified", added: 0, removed: 0, note: "gone", rows: [], folded: false });
   return sections;
 }

@@ -103,6 +103,21 @@ describe("sectionsOf", () => {
     expect(sectionsOf(reply([file("w.ts")], ""), {}, [], true)[0]?.note).toBe("whitespace");
     expect(sectionsOf(reply([file("w.ts")], ""), {}, [], false)[0]?.note).toBeUndefined();
   });
+  it("doesn't call a rename, a new empty file or a mode change whitespace, with whitespace hidden", () => {
+    const renamed = "diff --git a/old.ts b/new.ts\nsimilarity index 100%\nrename from old.ts\nrename to new.ts\n";
+    const empty = "diff --git a/e.ts b/e.ts\nnew file mode 100644\nindex 0000000..e69de29\n";
+    const mode = "diff --git a/m.sh b/m.sh\nold mode 100644\nnew mode 100755\n";
+    const r = reply([file("new.ts", { old_path: "old.ts", status: "renamed" }), file("e.ts", { status: "added" }), file("m.sh")], renamed + empty + mode);
+    expect(sectionsOf(r, {}, [], true).map((x) => x.note)).toEqual([undefined, undefined, undefined]);
+  });
+  it("keeps a comment on a file past the cut under a note that says so, where it can be edited or deleted", () => {
+    const cut = reply([file("a.ts"), file("b.ts"), file("c.ts", { status: "added" })], adds("a.ts", 1), { truncated: true });
+    const s = sectionsOf(cut, {}, [draft({ id: "1", path: "c.ts" })], false);
+    expect(s.map((x) => x.path)).toEqual(["a.ts", "c.ts"]);
+    expect(s[1]).toMatchObject({ status: "added", note: "cut", rows: [], folded: false });
+    // The open box's file too, like a comment's.
+    expect(sectionsOf(cut, {}, [], false, "b.ts").map((x) => [x.path, x.note])).toEqual([["a.ts", undefined], ["b.ts", "cut"]]);
+  });
   it("keeps a comment on a reverted file under a gone section, at the end in path order", () => {
     const s = sectionsOf(reply([file("src/a.ts")], A), {}, [draft({ id: "1", path: "z.ts" }), draft({ id: "2", path: "m.ts" }), draft({ id: "3", path: "z.ts" })], false);
     expect(s.map((x) => x.path)).toEqual(["src/a.ts", "m.ts", "z.ts"]);

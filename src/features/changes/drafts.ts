@@ -1,5 +1,6 @@
 import type { ChangesDrafts } from "../../generated/ChangesDrafts";
 import type { DraftComment } from "../../generated/DraftComment";
+import type { BoxAnchor, BoxState } from "./boxModel";
 import { type Placement, messageOf } from "./comments";
 import type { Section } from "./model";
 import { treeFolderOk } from "../pane/paneRules";
@@ -16,6 +17,20 @@ const away = (drafts: ChangesDrafts | undefined, folder: string): boolean => dra
 /** The drafts with `comments` in place of their own. While earlier comments exist they keep the checkout and base those were written against. */
 export function withComments(drafts: ChangesDrafts | undefined, shown: Shown, comments: DraftComment[]): ChangesDrafts {
   return { ...withFolds(drafts, shown, {}), comments };
+}
+
+/** An open comment box: what it is about, its text, and the checkout and base shown when it was opened. */
+export type OpenBox = { state: BoxState; text: string; on: Shown };
+
+/**
+ * The drafts once a box's text is kept. A new comment goes in at `anchor` (where its rows are now) with `id`, on the checkout the box
+ * was opened on, so a shell that moved to another repository meanwhile doesn't take it along; an edit takes the new text, its lines
+ * renumbered by `now`.
+ */
+export function keptBox(drafts: ChangesDrafts | undefined, box: OpenBox, anchor: BoxAnchor, id: string, now: (c: DraftComment) => DraftComment): ChangesDrafts {
+  const comments = drafts?.comments ?? [];
+  const next = box.state.id === null ? [...comments, { ...anchor, id, text: box.text }] : comments.map((c) => (c.id === box.state.id ? { ...now(c), text: box.text } : c));
+  return withComments(drafts, box.on, next);
 }
 
 /** The drafts with `folds` added. While comments exist they keep the checkout and base they were written against. */
