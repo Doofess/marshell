@@ -73,7 +73,7 @@ describe("DoctorPage", () => {
   });
   it("running: says what is being checked and is busy, with no live region", () => {
     const h = page(null, "running", { elapsedMs: 400 });
-    expect(h).toContain("Checking Claude Code, Codex, Antigravity and Qwen Code");
+    expect(h).toContain("Checking Claude Code, Codex, Antigravity, Qwen Code and Copilot CLI…");
     expect(h).toContain('aria-busy="true"');
     expect(h).not.toMatch(/aria-live|role="status"|role="alert"/);
   });
@@ -161,6 +161,13 @@ describe("DoctorPage", () => {
       expect((h.match(/type="checkbox"/g) ?? []).length).toBe(0);
       expect(h).toContain("Qwen Code has no doctor command");
       expect(h).toContain("Reinstall Codex to restore the sandbox helpers.");
+    });
+    it("a CLI with no doctor command says so under Info, Copilot CLI too", () => {
+      const h = page(DOCTOR_CLI, "ready");
+      expect(h).toMatch(/>Info <span class="doctor__group-count">/);
+      const info = h.slice(h.search(/>Info <span class="doctor__group-count">/));
+      expect(info).toContain("Copilot CLI has no doctor command.");
+      expect(info).toContain("Qwen Code has no doctor command.");
     });
   });
 
