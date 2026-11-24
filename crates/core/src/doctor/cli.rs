@@ -52,6 +52,7 @@ fn item(
         path: None,
         open_agents: false,
         unchecked: false,
+        action: None,
     }
 }
 

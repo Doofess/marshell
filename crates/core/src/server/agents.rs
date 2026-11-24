@@ -9,6 +9,7 @@ use crate::agents::claude::{self, hooks};
 use crate::agents::codex::{self, trust};
 use crate::agents::common::Bridge;
 use crate::agents::copilot::hooks as copilot_hooks;
+use crate::agents::copilot::kept::{self, Kept};
 use crate::agents::install::{codex_newer, install_kind, update_text};
 use crate::agents::qwen::hooks as qwen_hooks;
 use crate::agents::settings_view::{
@@ -215,8 +216,27 @@ struct QwenInputs {
     chain_text: Option<String>,
 }
 
+/// The hooks files the person kept, from Marshell's own record. A record that is missing or can't be read keeps none.
+pub(crate) fn copilot_kept_record(marshell_home: &Path) -> Kept {
+    let text = std::fs::read_to_string(kept::record_path(marshell_home)).ok();
+    Kept::parse(text.as_deref())
+}
+
+/// The hooks file isn't Marshell's whole file, and it still holds what the person kept (PLAN §9, 6n3 decision 20).
+pub(crate) fn copilot_hooks_file_is_kept(kept: &Kept, hooks_path: &Path, hooks_text: Option<&str>) -> bool {
+    let Some(text) = hooks_text else {
+        return false;
+    };
+    copilot_hooks::file_problem(Some(text)) == Some(copilot_hooks::FileProblem::NotMarshells)
+        && read_value(text)
+            .ok()
+            .is_some_and(|file| file.is_object() && kept.holds(hooks_path, &file))
+}
+
 /// Copilot CLI's three files and where they are; the text is `None` for a missing file.
 struct CopilotInputs {
+    /// The person kept the hooks file as it is: a plan changes only Marshell's own entries in it.
+    kept: bool,
     hooks_path: PathBuf,
     settings_path: PathBuf,
     chain_path: Option<PathBuf>,
@@ -532,8 +552,17 @@ impl AppState {
                 let (hooks_path, settings_path) = (copilot_hooks::hooks_path(&dir), copilot_hooks::settings_path(&dir));
                 let hooks_text = read_text(&hooks_path).map_err(|e| refused(&e))?;
                 let settings_text = read_text(&settings_path).map_err(|e| refused(&e))?;
+                // The replace is the Doctor's fix a person picked; otherwise a kept file changes only Marshell's entries.
+                let is_kept = !replace_foreign
+                    && copilot_hooks_file_is_kept(
+                        &copilot_kept_record(&self.0.home),
+                        &hooks_path,
+                        hooks_text.as_deref(),
+                    );
                 let plan = if replace_foreign {
                     copilot_hooks::install_plan_over
+                } else if is_kept {
+                    copilot_hooks::install_plan_kept
                 } else {
                     copilot_hooks::install_plan
                 };
@@ -557,6 +586,31 @@ impl AppState {
     /// The plan to take Marshell's hooks out of `distro`.
     fn distro_remove(&self, adapter: Adapter, distro: &str) -> Result<RemovePreview, Fail> {
         let home = self.distro_target(distro)?.home;
+        // A hooks file the person kept loses only Marshell's entries, which `marshell uninstall` doesn't plan.
+        if matches!(adapter, Adapter::Copilot) {
+            let dir = home.join(".copilot");
+            let (hooks_path, settings_path) = (copilot_hooks::hooks_path(&dir), copilot_hooks::settings_path(&dir));
+            let hooks_text = read_text(&hooks_path).map_err(|e| refused(&e))?;
+            let settings_text = read_text(&settings_path).map_err(|e| refused(&e))?;
+            if copilot_hooks_file_is_kept(&copilot_kept_record(&self.0.home), &hooks_path, hooks_text.as_deref()) {
+                let plan = copilot_hooks::remove_plan_kept(
+                    &copilot_hooks::Files {
+                        hooks_path: &hooks_path,
+                        hooks_text: hooks_text.as_deref(),
+                        settings_path: &settings_path,
+                        settings_text: settings_text.as_deref(),
+                        chain_path: None,
+                        chain_text: None,
+                    },
+                    Some(distro),
+                )
+                .map_err(|e| refused(&e))?;
+                return Ok(RemovePreview {
+                    preview: self.0.config.preview(plan.changes),
+                    statusline_left: plan.statusline_left,
+                });
+            }
+        }
         let agent = match adapter {
             Adapter::Claude => AGENT,
             Adapter::Codex => CODEX,
@@ -609,7 +663,9 @@ impl AppState {
         let chain_path = paths::statusline_chain(&self.0.home, COPILOT);
         // The chain is Marshell's own file; a chain that cannot be read is the same as none.
         let chain_text = std::fs::read_to_string(&chain_path).ok();
+        let kept = copilot_hooks_file_is_kept(&copilot_kept_record(&self.0.home), &hooks_path, hooks_text.as_deref());
         Ok(CopilotInputs {
+            kept,
             hooks_path,
             settings_path,
             chain_path: Some(chain_path),
@@ -1929,6 +1985,8 @@ fn hook_install_changes_with(
             st.ensure_bridge(want)?;
             let plan = if replace_foreign {
                 copilot_hooks::install_plan_over
+            } else if inputs.kept {
+                copilot_hooks::install_plan_kept
             } else {
                 copilot_hooks::install_plan
             };
@@ -2083,7 +2141,12 @@ pub async fn remove_plan(
         }
         (Adapter::Copilot, None) => {
             let inputs = st.copilot_inputs()?;
-            let plan = copilot_hooks::remove_plan(&inputs.files(), None).map_err(|e| refused(&e))?;
+            let plan = if inputs.kept {
+                copilot_hooks::remove_plan_kept(&inputs.files(), None)
+            } else {
+                copilot_hooks::remove_plan(&inputs.files(), None)
+            }
+            .map_err(|e| refused(&e))?;
             Ok(RemovePreview {
                 preview: st.0.config.preview(plan.changes),
                 statusline_left: plan.statusline_left,

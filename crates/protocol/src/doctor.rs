@@ -16,6 +16,17 @@ pub enum DoctorGroup {
     Info,
 }
 
+/// A button a Doctor row carries besides the fix's checkbox.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum DoctorAction {
+    /// "Keep my file": Marshell accepts the person's part of a file it set up.
+    Keep,
+    /// "Stop keeping": Marshell takes that acceptance back.
+    StopKeeping,
+}
+
 /// One finding of the Doctor's checks.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -49,6 +60,10 @@ pub struct DoctorItem {
     #[serde(default, skip_serializing_if = "is_false")]
     #[ts(optional, as = "Option<bool>")]
     pub unchecked: bool,
+    /// A button on the row that changes what Marshell remembers, not a file of a CLI.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub action: Option<DoctorAction>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -103,6 +118,15 @@ pub struct DoctorFixRequest {
     pub item_ids: Vec<String>,
 }
 
+/// The Doctor row's button to press: `keep` is true for "Keep my file", false for "Stop keeping".
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DoctorKeepRequest {
+    /// The item's id, such as `hooksfile.copilot`.
+    pub id: String,
+    pub keep: bool,
+}
+
 /// One preview that fixes the chosen items.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -145,6 +169,7 @@ mod tests {
             path: None,
             open_agents: false,
             unchecked: false,
+            action: None,
         }
     }
 
@@ -163,6 +188,22 @@ mod tests {
     fn groups_are_camel_case() {
         assert_eq!(serde_json::to_value(DoctorGroup::Waste).unwrap(), "waste");
         assert_eq!(serde_json::to_value(DoctorGroup::Info).unwrap(), "info");
+    }
+
+    #[test]
+    fn actions_are_camel_case_and_left_out_when_absent() {
+        assert_eq!(serde_json::to_value(DoctorAction::Keep).unwrap(), "keep");
+        assert_eq!(serde_json::to_value(DoctorAction::StopKeeping).unwrap(), "stopKeeping");
+        assert!(
+            !serde_json::to_value(item())
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .contains_key("action")
+        );
+        let mut with = item();
+        with.action = Some(DoctorAction::StopKeeping);
+        assert_eq!(serde_json::to_value(&with).unwrap()["action"], "stopKeeping");
     }
 
     #[test]

@@ -380,6 +380,7 @@ pub(crate) fn items(
         path,
         open_agents: false,
         unchecked: false,
+        action: None,
     };
 
     if let Some(why) = &agent.unreadable {

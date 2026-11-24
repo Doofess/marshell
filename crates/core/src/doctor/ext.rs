@@ -480,6 +480,7 @@ fn inventory_items(inv: &Inventory, out: &mut Vec<(DoctorItem, Option<Switch>)>)
         path: path.map(|p| p.display().to_string()),
         open_agents: false,
         unchecked: false,
+        action: None,
     };
 
     // 1. Files that don't parse.

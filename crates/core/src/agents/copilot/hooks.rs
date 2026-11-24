@@ -117,11 +117,18 @@ fn entries_of(file: &Value) -> impl Iterator<Item = (&str, &Value)> {
         .flat_map(|(event, entries)| entries.iter().map(move |entry| (event, entry)))
 }
 
-/// The file is Marshell's: it has a `hooks` object, and every event holds only entries Marshell wrote. A file with no
+/// The file is Marshell's: it holds no key but `version` and `hooks`, it has a `hooks` object, and every event holds only
+/// entries Marshell wrote (a key of the person's makes it theirs: a whole-file plan would take it away). A file with no
 /// entry at all (every list empty, or no list) proves nothing by its entries, and deleting or overwriting it is a
 /// write to a file someone else may have made: it is Marshell's only when its text is the one `hooks_file` writes with
 /// the status off (line endings aside).
 fn is_marshells(file: &Value, text: &str) -> bool {
+    if file
+        .as_object()
+        .is_some_and(|root| root.keys().any(|k| k != "version" && k != "hooks"))
+    {
+        return false;
+    }
     let Some(hooks) = file.get("hooks").and_then(Value::as_object) else {
         return false;
     };
@@ -155,17 +162,6 @@ pub fn file_problem(text: Option<&str>) -> Option<FileProblem> {
     (!is_marshells(&file, text)).then_some(FileProblem::NotMarshells)
 }
 
-/// The hooks file has a top-level key other than `version` and `hooks`.
-fn has_other_keys(text: &str) -> bool {
-    read_value(text)
-        .ok()
-        .and_then(|file| {
-            file.as_object()
-                .map(|o| o.keys().any(|k| k != "version" && k != "hooks"))
-        })
-        .unwrap_or(false)
-}
-
 /// What a plan does with a hooks file that parses and isn't Marshell's.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Foreign {
@@ -184,9 +180,6 @@ fn marshells_hooks<'a>(files: &Files<'a>, foreign: Foreign) -> Result<(Option<&'
         return Ok((None, false));
     };
     match file_problem(Some(text)) {
-        // A kept file holding something besides `version` and `hooks` is the person's file even when every entry in it is
-        // Marshell's: a whole-file plan over it would take the rest away.
-        None if foreign == Foreign::Keep && has_other_keys(text) => Ok((Some(text), true)),
         None => Ok((Some(text), false)),
         Some(FileProblem::DoesNotParse { .. }) => Err(does_not_parse(files.hooks_path, text)),
         Some(FileProblem::NotMarshells) if foreign != Foreign::Refuse => Ok((Some(text), true)),
@@ -1137,6 +1130,25 @@ mod tests {
             file_problem(Some("{\"hooks\": ")),
             Some(FileProblem::DoesNotParse { line, .. }) if line >= 1
         ));
+    }
+
+    #[test]
+    fn a_file_with_a_key_besides_version_and_hooks_is_not_marshells_even_with_only_its_entries() {
+        let mut file: Value = serde_json::from_str(&hooks_file(&bridge(), &BOTH)).unwrap();
+        assert_eq!(file_problem(Some(&file.to_string())), None);
+        file["disableAllHooks"] = json!(true);
+        assert_eq!(file_problem(Some(&file.to_string())), Some(FileProblem::NotMarshells));
+        // A whole-file plan over it is refused, and a replace is the only way to overwrite it.
+        let state = State {
+            hooks: Some(file.to_string()),
+            ..State::default()
+        };
+        assert_eq!(
+            try_install(&state, &bridge(), &BOTH),
+            Err(PlanError::NotMarshells {
+                path: hooks_path(&copilot_home())
+            })
+        );
     }
 
     fn try_over(state: &State, b: &Bridge, want: &HookPlanRequest) -> Result<ChangeSet, PlanError> {
