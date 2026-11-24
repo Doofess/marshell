@@ -2870,6 +2870,203 @@ async fn a_copilot_session_end_from_a_wsl_tab_clears_the_mark() {
     assert_eq!(info.live, None);
 }
 
+// `/clear` in a Copilot tab inside WSL (issue #154): it sends the same requested `sessionEnd` as `/exit`, and the status
+// line naming the new session follows. The end waits out the hold, as a Windows tab's does.
+
+/// How long a requested end waits in these tests: long enough that the samples taken inside the window can't race its end
+/// on a loaded machine.
+const WSL_HOLD: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// A WSL state whose requested Copilot end waits `hold`.
+fn wsl_copilot_hold_state(hold: std::time::Duration) -> AppState {
+    wsl_copilot_state().with_copilot_end_hold(hold)
+}
+
+/// A WSL tab where `copilot` was typed into the shell: a hook of session A marked the row (it has no agent of its own).
+async fn typed_copilot_tab(app: &axum::Router, st: &AppState) -> String {
+    let tab = start_shell(app, "wsl-ubuntu").await;
+    post_copilot(app, &tab, "userPromptSubmitted", "userPromptSubmitted").await;
+    let live = row(st, &tab).live.map(|l| l.state);
+    assert_eq!(
+        (foreground_agent(st, &tab).as_deref(), live),
+        (Some("copilot"), Some(LiveState::Working))
+    );
+    tab
+}
+
+/// A WSL tab launched as Copilot: the row has an agent, so no hook marks it.
+async fn launched_copilot_tab(app: &axum::Router, st: &AppState) -> String {
+    let p = project();
+    st.registry().reserve(
+        "wsl-copilot-tab",
+        marshell_core::registry::Relaunch {
+            elevated: false,
+            profile_id: "wsl-ubuntu".into(),
+            agent: Some("copilot".into()),
+            cwd: p.repo.to_string_lossy().into_owned(),
+            mode: None,
+            name: "Copilot".into(),
+            preset: None,
+        },
+    );
+    let tab = "wsl-copilot-tab".to_string();
+    assert_eq!(st.wsl_distro_of_tab(&tab).as_deref(), Some(DISTRO));
+    post_copilot(app, &tab, "sessionStart", "sessionStart").await;
+    let info = row(st, &tab);
+    assert_eq!(
+        (info.agent.as_deref(), info.live.map(|l| l.state)),
+        (Some("copilot"), Some(LiveState::Idle))
+    );
+    tab
+}
+
+/// What the row shows: the agent its foreground names and its live state.
+fn shown(st: &AppState, tab: &str) -> (Option<String>, Option<LiveState>) {
+    let info = row(st, tab);
+    (info.foreground.and_then(|f| f.agent), info.live.map(|l| l.state))
+}
+
+/// `/clear`'s end of session A, with the reason Copilot gives for it.
+fn clear_end() -> serde_json::Value {
+    copilot_end_of(COPILOT_A, "sessionEnd")
+}
+
+#[tokio::test]
+async fn a_clear_in_a_wsl_tab_typed_into_the_shell_keeps_the_agent_mark() {
+    let st = wsl_copilot_hold_state(WSL_HOLD);
+    let app = router(st.clone());
+    let tab = typed_copilot_tab(&app, &st).await;
+
+    // `/clear`: A's end first, then the status line naming B inside the hold.
+    let started = std::time::Instant::now();
+    let (code, _) = post_copilot_as(&app, "event", Some(&tab), &clear_end()).await;
+    assert_eq!(code, StatusCode::NO_CONTENT);
+    let mut seen = vec![shown(&st, &tab)];
+    post_copilot_as(
+        &app,
+        "statusline",
+        Some(&tab),
+        &copilot_statusline_of("idle", COPILOT_B),
+    )
+    .await;
+    // From the end until well after the hold has passed.
+    while started.elapsed() < WSL_HOLD + std::time::Duration::from_millis(400) {
+        seen.push(shown(&st, &tab));
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    stop(&st, &tab);
+    assert!(
+        seen.iter()
+            .all(|(agent, live)| agent.as_deref() == Some("copilot") && live.is_some_and(|l| l != LiveState::Ended)),
+        "the row lost its agent or read Ended: {seen:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_clear_in_a_wsl_tab_launched_as_copilot_never_reads_ended() {
+    let st = wsl_copilot_hold_state(WSL_HOLD);
+    let app = router(st.clone());
+    let tab = launched_copilot_tab(&app, &st).await;
+
+    let started = std::time::Instant::now();
+    let (code, _) = post_copilot_as(&app, "event", Some(&tab), &clear_end()).await;
+    assert_eq!(code, StatusCode::NO_CONTENT);
+    let mut seen = vec![shown(&st, &tab).1];
+    post_copilot_as(
+        &app,
+        "statusline",
+        Some(&tab),
+        &copilot_statusline_of("idle", COPILOT_B),
+    )
+    .await;
+    while started.elapsed() < WSL_HOLD + std::time::Duration::from_millis(400) {
+        seen.push(shown(&st, &tab).1);
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    stop(&st, &tab);
+    assert!(
+        seen.iter().all(|live| live.is_some_and(|l| l != LiveState::Ended)),
+        "the row read Ended: {seen:?}"
+    );
+}
+
+#[tokio::test]
+async fn an_exit_in_a_wsl_copilot_tab_clears_the_mark_or_reads_ended_after_the_hold() {
+    let hold = std::time::Duration::from_millis(1500);
+    let st = wsl_copilot_hold_state(hold);
+    let app = router(st.clone());
+    let typed = typed_copilot_tab(&app, &st).await;
+    let launched = launched_copilot_tab(&app, &st).await;
+
+    // No status line names a newer session: both ends are held first, then they apply.
+    for tab in [&typed, &launched] {
+        let (code, _) = post_copilot_as(&app, "event", Some(tab), &clear_end()).await;
+        assert_eq!(code, StatusCode::NO_CONTENT);
+    }
+    let typed_at_once = shown(&st, &typed);
+    let launched_at_once = shown(&st, &launched);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let (mut typed_after, mut launched_after) = (shown(&st, &typed), shown(&st, &launched));
+    while (typed_after != (None, None) || launched_after.1 != Some(LiveState::Ended))
+        && std::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        typed_after = shown(&st, &typed);
+        launched_after = shown(&st, &launched);
+    }
+    stop(&st, &typed);
+    stop(&st, &launched);
+
+    assert_eq!(
+        typed_at_once.0.as_deref(),
+        Some("copilot"),
+        "the mark went before the hold ended"
+    );
+    assert_ne!(launched_at_once.1, Some(LiveState::Ended), "the end was not held");
+    // After the hold: a shell again, with no status left behind, and the launched row Ended.
+    assert_eq!(typed_after, (None, None));
+    assert_eq!(launched_after.1, Some(LiveState::Ended));
+}
+
+#[tokio::test]
+async fn an_unrequested_copilot_end_in_a_wsl_tab_is_not_held() {
+    let st = wsl_copilot_hold_state(WSL_HOLD);
+    let app = router(st.clone());
+    let typed = typed_copilot_tab(&app, &st).await;
+    let launched = launched_copilot_tab(&app, &st).await;
+
+    // Any reason but `user_exit` isn't a request: the mark clears and the row folds at once, as today.
+    let mut end = clear_end();
+    end["reason"] = "complete".into();
+    for tab in [&typed, &launched] {
+        let (code, _) = post_copilot_as(&app, "event", Some(tab), &end).await;
+        assert_eq!(code, StatusCode::NO_CONTENT);
+    }
+    let (typed_after, launched_after) = (shown(&st, &typed), shown(&st, &launched));
+    stop(&st, &typed);
+    stop(&st, &launched);
+    assert_eq!(typed_after, (None, None));
+    assert_eq!(launched_after.1, Some(LiveState::Ended));
+}
+
+#[tokio::test]
+async fn a_wsl_tab_that_closes_during_the_hold_is_left_alone() {
+    let hold = std::time::Duration::from_millis(300);
+    let st = wsl_copilot_hold_state(hold);
+    let app = router(st.clone());
+    let tab = typed_copilot_tab(&app, &st).await;
+
+    post_copilot_as(&app, "event", Some(&tab), &clear_end()).await;
+    stop(&st, &tab);
+    assert!(st.registry().close(&tab).is_some());
+    tokio::time::sleep(hold + std::time::Duration::from_millis(500)).await;
+    // The end applied to nothing: no row is open for the tab, and a later hook for it is still answered.
+    assert!(!st.registry().is_open(&tab));
+    assert!(st.registry().snapshot().sessions.iter().all(|s| s.tab_id != tab));
+    let (code, _) = post_copilot(&app, &tab, "userPromptSubmitted", "userPromptSubmitted").await;
+    assert_eq!(code, StatusCode::NO_CONTENT);
+}
+
 #[tokio::test]
 async fn a_wsl_copilot_session_links_its_distro_transcript() {
     let st = wsl_copilot_state();

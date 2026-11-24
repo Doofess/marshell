@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { nameContainsLabel } from "../../lib/labelInName";
 import { DoctorPage } from "./DoctorPage";
 import { showProgress } from "./doctorUi";
-import { DOCTOR_CLEAR, DOCTOR_CLI, DOCTOR_PROBLEMS, DOCTOR_REPORT, UNDO_FIXED } from "./fixtures";
+import { DOCTOR_CLEAR, DOCTOR_CLI, DOCTOR_KEEP, DOCTOR_PROBLEMS, DOCTOR_REPORT, UNDO_FIXED } from "./fixtures";
 import { initialSelection } from "./report";
 import type { DoctorReport } from "./types";
 
@@ -73,7 +73,7 @@ describe("DoctorPage", () => {
   });
   it("running: says what is being checked and is busy, with no live region", () => {
     const h = page(null, "running", { elapsedMs: 400 });
-    expect(h).toContain("Checking Claude Code, Codex, Antigravity and Qwen Code");
+    expect(h).toContain("Checking Claude Code, Codex, Antigravity, Qwen Code and Copilot CLI…");
     expect(h).toContain('aria-busy="true"');
     expect(h).not.toMatch(/aria-live|role="status"|role="alert"/);
   });
@@ -161,6 +161,54 @@ describe("DoctorPage", () => {
       expect((h.match(/type="checkbox"/g) ?? []).length).toBe(0);
       expect(h).toContain("Qwen Code has no doctor command");
       expect(h).toContain("Reinstall Codex to restore the sandbox helpers.");
+    });
+    it("a CLI with no doctor command says so under Info, Copilot CLI too", () => {
+      const h = page(DOCTOR_CLI, "ready");
+      expect(h).toMatch(/>Info <span class="doctor__group-count">/);
+      const info = h.slice(h.search(/>Info <span class="doctor__group-count">/));
+      expect(info).toContain("Copilot CLI has no doctor command.");
+      expect(info).toContain("Qwen Code has no doctor command.");
+    });
+  });
+
+  describe("Keep my file and Stop keeping", () => {
+    it("a row with action keep has a Keep my file button after its checkbox and text, named with the title", () => {
+      const h = page(DOCTOR_KEEP, "ready", { onKeep: noop });
+      expect(h).toMatch(/<button type="button"[^>]*aria-label="Keep my file: [^"]*isn&#x27;t Marshell&#x27;s file any more"[^>]*>Keep my file<\/button>/);
+      expect(h.indexOf(`type="checkbox"`)).toBeLessThan(h.indexOf(">Keep my file<"));
+      expect(h.indexOf("holds something Marshell")).toBeLessThan(h.indexOf(">Keep my file<"));
+    });
+    it("a row with action stopKeeping has a Stop keeping button and no checkbox", () => {
+      const h = page(DOCTOR_KEEP, "ready", { onKeep: noop });
+      expect(h).toMatch(/aria-label="Stop keeping: Copilot CLI&#x27;s hooks file has your changes"[^>]*>Stop keeping<\/button>/);
+      expect((h.match(/type="checkbox"/g) ?? []).length).toBe(1);
+    });
+    it("rows without an action have neither button", () => {
+      const h = page(DOCTOR_REPORT, "ready");
+      expect(h).not.toContain("Keep my file");
+      expect(h).not.toContain("Stop keeping");
+    });
+    it("the busy row's button keeps the focus (aria-disabled) and reads Keeping…, and the unchecked row stays unchecked", () => {
+      const h = page(DOCTOR_KEEP, "ready", { onKeep: noop, keeping: "hooksfile.copilot" });
+      expect(h).toMatch(/<button type="button"[^>]*aria-disabled="true"[^>]*>Keeping…<\/button>/);
+      expect(h).not.toMatch(/<button[^>]*disabled=""[^>]*>Keeping…/);
+      // Both rows are one file's: the button that replaces the pressed one is found by this mark.
+      expect((h.match(/data-doctor-keep="copilot\|"/g) ?? []).length).toBe(2);
+      expect(h).toContain(">Stop keeping<");
+      expect((h.match(/checked=""/g) ?? []).length).toBe(0);
+    });
+    it("while a fix is applied, the Keep my file and Stop keeping buttons are aria-disabled, as the checkboxes are disabled", () => {
+      const h = page(DOCTOR_KEEP, "fixing", { onKeep: noop });
+      expect(h).toMatch(/<button type="button"[^>]*aria-disabled="true"[^>]*>Keep my file<\/button>/);
+      expect(h).toMatch(/<button type="button"[^>]*aria-disabled="true"[^>]*>Stop keeping<\/button>/);
+      // After a fix the checkboxes wait for the next run, and the two buttons work: a press starts that run.
+      for (const phase of ["ready", "fixed"] as const) {
+        expect(page(DOCTOR_KEEP, phase, { onKeep: noop })).not.toMatch(/<button type="button"[^>]*aria-disabled="true"[^>]*>(Keep my file|Stop keeping)<\/button>/);
+      }
+    });
+    it("a failed press shows the server's message in the page's error line", () => {
+      const h = page(DOCTOR_KEEP, "ready", { onKeep: noop, keepError: "This item can't be fixed any more. Run the check again." });
+      expect(h).toMatch(/<p class="doctor__failed"[^>]*>[^<]*Run the check again\./);
     });
   });
 });

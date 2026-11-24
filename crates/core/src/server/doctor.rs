@@ -5,12 +5,15 @@
 
 use super::AppState;
 use super::agents::{
-    Adapter, Refusal, adapter, agy_setup_of, changed_since, changes_of, codex_setup_of, hook_install_changes,
-    qwen_setup_of, settings_file, setup_of,
+    Adapter, Refusal, adapter, agy_setup_of, changed_since, changes_of, codex_setup_of, copilot_hooks_file_is_kept,
+    copilot_install_over_changes, copilot_kept_record, copilot_setup_of, hook_install_changes, qwen_setup_of,
+    settings_file, setup_of,
 };
 use super::doctor_ext;
 use super::doctor_usage;
 use crate::agents::common::Gate;
+use crate::agents::copilot::hooks::{FileProblem, file_problem};
+use crate::agents::copilot::kept::{self, Kept};
 use crate::config::guard::unverbatim;
 use crate::config::hash::{hash_bytes, hash_file};
 use crate::config::jsonc::{parse_problem, read_value};
@@ -33,7 +36,8 @@ use marshell_protocol::config::{
     SnapshotFileInfo,
 };
 use marshell_protocol::doctor::{
-    DoctorFixPlan, DoctorFixRequest, DoctorItem, DoctorLastFix, DoctorReport, DoctorSummary,
+    DoctorAction, DoctorFixPlan, DoctorFixRequest, DoctorItem, DoctorKeepRequest, DoctorLastFix, DoctorReport,
+    DoctorSummary,
 };
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -43,7 +47,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 type Fail = (StatusCode, String);
 
 /// The CLIs the Doctor checks, in the report's order.
-const AGENTS: [&str; 4] = ["claude", "codex", "antigravity", "qwen"];
+const AGENTS: [&str; 5] = ["claude", "codex", "antigravity", "qwen", "copilot"];
 
 pub async fn run(State(st): State<AppState>) -> (StatusCode, Json<DoctorSummary>) {
     request_run(&st);
@@ -281,7 +285,9 @@ pub(crate) fn facts_of(st: &AppState) -> Gathered {
         "claude" => setup_of(st),
         "codex" => codex_setup_of(st),
         "antigravity" => agy_setup_of(st),
-        _ => qwen_setup_of(st),
+        "qwen" => qwen_setup_of(st),
+        "copilot" => copilot_setup_of(st),
+        _ => Err((StatusCode::NOT_FOUND, "no such agent".to_string())),
     });
     let (distro, stopped, distro_homes) = distro_facts(st, &entries);
     let facts: Vec<AgentFacts> = facts.into_iter().chain(distro).collect();
@@ -382,6 +388,7 @@ fn running_managed_distros(st: &AppState, entries: &[ManagedEntry]) -> Vec<Strin
 /// since either would start it. Runs `wsl.exe` and reads shares, so callers go through `spawn_blocking`.
 fn distro_facts(st: &AppState, entries: &[ManagedEntry]) -> (Vec<AgentFacts>, Vec<String>, Vec<(String, PathBuf)>) {
     let (up, stopped) = partition_managed_distros(st, entries);
+    let kept = copilot_kept_record(&st.0.home);
     let mut facts = Vec::new();
     let mut homes = Vec::new();
     for distro in &up {
@@ -389,7 +396,7 @@ fn distro_facts(st: &AppState, entries: &[ManagedEntry]) -> (Vec<AgentFacts>, Ve
             Ok(target) => {
                 homes.push((distro.clone(), target.home.clone()));
                 for agent in AGENTS {
-                    facts.push(distro_agent_facts(agent, distro, &target, entries));
+                    facts.push(distro_agent_facts(agent, distro, &target, entries, &kept));
                 }
             }
             // It was running a moment ago and gave no home: each CLI says it couldn't be checked.
@@ -411,12 +418,14 @@ fn failed_facts(agent: &'static str, distro: Option<String>, message: String) ->
         found: false,
         path: PathBuf::new(),
         file: FileState::Ok,
+        problem_path: None,
         hooks: marshell_protocol::agents::HookInstall::None,
         approve_installed: false,
         has_own_statusline: false,
         chained: false,
         trust: None,
         set_up: false,
+        kept: false,
         bridge: PathBuf::new(),
         bridge_exists: false,
         version_note: None,
@@ -465,6 +474,10 @@ fn notify_facts(agent: &str, hooks_path: &Path, hooks: Option<&serde_json::Value
     if agent == "antigravity" {
         return n;
     }
+    if agent == "copilot" {
+        // `hooks_path` is `<copilot home>/hooks/marshell.json`; Copilot's own toasts are read on Windows only.
+        return copilot_notify(hooks_path, true);
+    }
     if agent == "codex" {
         // Codex has no Notification hook event, so a group under it never runs: only its notify command counts.
         n.file = hooks_path.with_file_name("config.toml");
@@ -473,6 +486,53 @@ fn notify_facts(agent: &str, hooks_path: &Path, hooks: Option<&serde_json::Value
     }
     n.hook_commands = hooks.map(notification_hooks).unwrap_or_default();
     n
+}
+
+/// Copilot's toasts are turned off by its variable (`value`). Where a test named Copilot's home the process environment
+/// doesn't count, as for `COPILOT_HOME` itself.
+fn copilot_toasts_off(home_named: bool, value: Option<&std::ffi::OsStr>) -> bool {
+    !home_named && crate::agents::copilot::notify::toasts_off_by_env(value)
+}
+
+/// What Copilot CLI notifies by itself, from its `settings.json` and every `*.json` in the `hooks` folder beside Marshell's
+/// file (`hooks_path`, which is read too: only the entries that aren't Marshell's count). A file that doesn't parse, or
+/// is over the config size limit, is skipped. `toasts` is false in a distro, whatever `settings.json` says.
+fn copilot_notify(hooks_path: &Path, toasts: bool) -> checks::NotifyFacts {
+    use crate::agents::copilot::{hooks as copilot_hooks, notify};
+    let folder = hooks_path.parent().unwrap_or(hooks_path);
+    let settings_path = folder
+        .parent()
+        .map(copilot_hooks::settings_path)
+        .unwrap_or_else(|| folder.join("settings.json"));
+    let mut files: Vec<(PathBuf, serde_json::Value)> = Vec::new();
+    for entry in std::fs::read_dir(folder).into_iter().flatten().flatten() {
+        let path = entry.path();
+        let is_json = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("json"));
+        if !is_json || !entry.file_type().is_ok_and(|t| t.is_file()) {
+            continue;
+        }
+        // Any file can be dropped in the folder: one over the config size limit is not a hooks file Marshell reads.
+        if std::fs::metadata(&path).is_ok_and(|m| m.len() > crate::config::preview::MAX_CONFIG_BYTES) {
+            continue;
+        }
+        if let Some(value) = std::fs::read_to_string(&path).ok().and_then(|t| read_value(&t).ok()) {
+            files.push((path, value));
+        }
+    }
+    let settings = std::fs::read_to_string(&settings_path)
+        .ok()
+        .and_then(|t| read_value(&t).ok());
+    checks::NotifyFacts {
+        file: hooks_path.to_path_buf(),
+        hook_commands: notify::own_hooks(&files, settings.as_ref()),
+        toasts: toasts && settings.as_ref().is_some_and(notify::toasts_on),
+        settings_read_only: std::fs::metadata(&settings_path).is_ok_and(|m| m.permissions().readonly()),
+        settings: settings_path,
+        ..Default::default()
+    }
 }
 
 /// One file of a distro as a value and whether it is read-only: `Ok(None)` when it isn't there, and the line and
@@ -499,6 +559,7 @@ fn distro_agent_facts(
     distro: &str,
     target: &super::DistroTarget,
     entries: &[ManagedEntry],
+    kept: &Kept,
 ) -> AgentFacts {
     use crate::agents::antigravity::hooks as agy;
     use crate::agents::common::Bridge;
@@ -510,12 +571,16 @@ fn distro_agent_facts(
         name: distro.to_string(),
         path: target.bridge.clone(),
     };
+    if agent == "copilot" {
+        return distro_copilot_facts(distro, target, entries, kept, &bridge);
+    }
     // Antigravity's hooks are in `hooks.json`, with the status line in `settings.json`.
     let files: Vec<PathBuf> = match agent {
         "claude" => vec![home.join(".claude").join("settings.json")],
         "codex" => vec![home.join(".codex").join("hooks.json")],
         "antigravity" => vec![agy::hooks_path(home), agy::settings_path(home)],
-        _ => vec![home.join(".qwen").join("settings.json")],
+        "qwen" => vec![home.join(".qwen").join("settings.json")],
+        _ => return failed_facts(agent, Some(distro.to_string()), "no such agent".to_string()),
     };
     let path = files[0].clone();
     let mut facts = AgentFacts {
@@ -523,8 +588,10 @@ fn distro_agent_facts(
         distro: Some(distro.to_string()),
         found: true,
         set_up: set_up_of(entries, &path),
+        kept: false,
         path,
         file: FileState::Ok,
+        problem_path: None,
         hooks: HookInstall::None,
         approve_installed: false,
         // A distro keeps no chain: its own status line is left alone, so nothing here says it isn't chained.
@@ -588,10 +655,11 @@ fn distro_agent_facts(
             let f = agy::inspect_for(first, values[1].as_ref(), None, &bridge);
             (f.install, f.approve_installed)
         }
-        _ => {
+        "qwen" => {
             let f = qwen::hooks::inspect_for(first.unwrap_or(&none), None, &bridge);
             (f.install, f.approve_installed)
         }
+        _ => return failed_facts(agent, Some(distro.to_string()), "no such agent".to_string()),
     };
     facts.hooks = install;
     facts.approve_installed = approve_installed;
@@ -599,10 +667,152 @@ fn distro_agent_facts(
     facts
 }
 
+/// What Copilot CLI's hooks file is, read as text: its text when it is there, `Some(state)` when it doesn't parse, isn't
+/// Marshell's, or exists and can't be read as UTF-8 text, and whether the person kept it. A file that isn't Marshell's
+/// but still holds what the record says the person kept is kept: no problem, and Marshell changes only its own entries
+/// in it. Any other file that isn't Marshell's is replaced by the Doctor's fix unless `cannot_fix` says why not: the file
+/// or `settings.json` is read-only, or the file can't be shown in a preview because it isn't text. It can be kept when
+/// it is text that parses to an object.
+fn copilot_hooks_problem(
+    hooks_path: &Path,
+    settings_path: &Path,
+    kept: &Kept,
+) -> (Option<String>, Option<FileState>, bool) {
+    use crate::agents::copilot::hooks::{FileProblem, file_problem};
+    let no_preview = Some(FileState::NotOurs {
+        cannot_fix: Some(NO_PREVIEW),
+        keepable: false,
+    });
+    let text = match hooks_file_bytes(hooks_path) {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(text) => text,
+            Err(_) => return (None, no_preview, false),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (None, None, false),
+        Err(_) => return (None, no_preview, false),
+    };
+    let read_only = |p: &Path| std::fs::metadata(p).is_ok_and(|m| m.permissions().readonly());
+    let (problem, is_kept) = match file_problem(Some(&text)) {
+        None => (None, false),
+        Some(FileProblem::DoesNotParse { line, message }) => (Some(FileState::Unparsable { line, message }), false),
+        Some(FileProblem::NotMarshells) if copilot_hooks_file_is_kept(kept, hooks_path, Some(&text)) => (None, true),
+        Some(FileProblem::NotMarshells) => (
+            Some(FileState::NotOurs {
+                cannot_fix: (read_only(hooks_path) || read_only(settings_path)).then_some(READ_ONLY),
+                keepable: read_value(&text).is_ok_and(|file| file.is_object()),
+            }),
+            false,
+        ),
+    };
+    (Some(text), problem, is_kept)
+}
+
+/// A hooks file's bytes. Never more than the config size limit is read: a larger file is an error, as is one that
+/// can't be read.
+fn hooks_file_bytes(path: &Path) -> std::io::Result<Vec<u8>> {
+    use crate::config::preview::MAX_CONFIG_BYTES;
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(MAX_CONFIG_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_CONFIG_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "the file is over the config size limit",
+        ));
+    }
+    Ok(bytes)
+}
+
+use checks::READ_ONLY;
+const NO_PREVIEW: &str = "Marshell can't show this file in a preview. Move it away, then run the check again.";
+
+/// Copilot CLI's facts in a distro: its two files as text, read against the distro's bridge. A distro keeps no chain.
+fn distro_copilot_facts(
+    distro: &str,
+    target: &super::DistroTarget,
+    entries: &[ManagedEntry],
+    kept: &Kept,
+    bridge: &crate::agents::common::Bridge,
+) -> AgentFacts {
+    use crate::agents::copilot::hooks as copilot_hooks;
+    let dir = target.home.join(".copilot");
+    let (hooks_path, settings_path) = (copilot_hooks::hooks_path(&dir), copilot_hooks::settings_path(&dir));
+    let mut facts = AgentFacts {
+        agent: "copilot",
+        distro: Some(distro.to_string()),
+        found: true,
+        set_up: set_up_of(entries, &hooks_path),
+        kept: false,
+        path: hooks_path.clone(),
+        file: FileState::Ok,
+        problem_path: None,
+        hooks: marshell_protocol::agents::HookInstall::None,
+        approve_installed: false,
+        has_own_statusline: false,
+        chained: false,
+        trust: None,
+        bridge: PathBuf::from(&target.bridge),
+        bridge_exists: bridge.exists(),
+        version_note: None,
+        retention_unset: None,
+        managed_settings: None,
+        notify: Default::default(),
+        error: None,
+    };
+    let settings_text = match std::fs::read_to_string(&settings_path) {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            facts.file = FileState::Unparsable {
+                line: 1,
+                message: e.to_string(),
+            };
+            facts.problem_path = Some(settings_path);
+            return facts;
+        }
+    };
+    if let Some((line, message)) = settings_text.as_deref().and_then(parse_problem) {
+        facts.file = FileState::Unparsable { line, message };
+        facts.problem_path = Some(settings_path);
+        return facts;
+    }
+    let (hooks_text, problem, is_kept) = copilot_hooks_problem(&hooks_path, &settings_path, kept);
+    facts.kept = is_kept;
+    if let Some(problem) = problem {
+        facts.file = problem;
+        return facts;
+    }
+    if hooks_text.is_none() && settings_text.is_none() {
+        facts.file = FileState::Missing;
+        return facts;
+    }
+    let read_only = |p: &Path| std::fs::metadata(p).is_ok_and(|m| m.permissions().readonly());
+    if read_only(&hooks_path) || read_only(&settings_path) {
+        facts.file = FileState::ReadOnly;
+    }
+    let found = copilot_hooks::inspect(
+        &copilot_hooks::Files {
+            hooks_path: &hooks_path,
+            hooks_text: hooks_text.as_deref(),
+            settings_path: &settings_path,
+            settings_text: settings_text.as_deref(),
+            chain_path: None,
+            chain_text: None,
+        },
+        bridge,
+    );
+    facts.hooks = found.install;
+    facts.notify = copilot_notify(&hooks_path, false);
+    facts
+}
+
 fn facts_from(st: &AppState, agent: &'static str, setup: AgentSetup, entries: &[ManagedEntry]) -> AgentFacts {
     // Antigravity's hooks are in `hooks.json`; the others keep them in the file their setup names.
     let path = PathBuf::from(setup.hooks_path.as_deref().unwrap_or(&setup.settings_path));
-    let file = match setup.settings_state {
+    let mut problem_path = None;
+    let mut file = match setup.settings_state {
         SettingsState::Ok => FileState::Ok,
         SettingsState::Missing => FileState::Missing,
         SettingsState::ReadOnly => FileState::ReadOnly,
@@ -613,9 +823,24 @@ fn facts_from(st: &AppState, agent: &'static str, setup: AgentSetup, entries: &[
                 .map_or((1, "the file can't be read".to_string()), |p| {
                     (p.line, p.message.clone())
                 });
+            if agent == "copilot" {
+                // The hooks file is `path`; it is `settings.json` that doesn't parse.
+                problem_path = Some(PathBuf::from(&setup.settings_path));
+            }
             FileState::Unparsable { line, message }
         }
     };
+    let mut kept = false;
+    if agent == "copilot" && !matches!(file, FileState::Unparsable { .. }) {
+        let record = copilot_kept_record(&st.0.home);
+        let (_, problem, is_kept) = copilot_hooks_problem(&path, Path::new(&setup.settings_path), &record);
+        kept = is_kept;
+        if let Some(problem) = problem {
+            file = problem;
+        } else if std::fs::metadata(&path).is_ok_and(|m| m.permissions().readonly()) {
+            file = FileState::ReadOnly;
+        }
+    }
     let version_note = if setup.found {
         match version_gate(agent, setup.version.as_deref()) {
             Gate::Unknown(note) => Some(note),
@@ -634,14 +859,23 @@ fn facts_from(st: &AppState, agent: &'static str, setup: AgentSetup, entries: &[
         _ => None,
     };
     // Only a CLI on this machine is asked what it notifies by itself.
-    let notify = if setup.found {
+    let notify = if agent == "copilot" && matches!(file, FileState::NotOurs { .. } | FileState::Unparsable { .. }) {
+        // A hooks file that isn't Marshell's or a settings file that doesn't parse says nothing about notifications.
+        checks::NotifyFacts::default()
+    } else if setup.found {
         let hooks = matches!(file, FileState::Ok | FileState::ReadOnly)
             .then(|| {
                 let text = std::fs::read_to_string(&path).ok()?;
                 read_value(&text).ok()
             })
             .flatten();
-        notify_facts(agent, &path, hooks.as_ref())
+        let mut notify = notify_facts(agent, &path, hooks.as_ref());
+        // A tab starts Copilot in the app's environment, so the variable that turns its toasts off is read from it.
+        let off = std::env::var_os(crate::agents::copilot::notify::TOASTS_OFF_ENV);
+        if agent == "copilot" && copilot_toasts_off(st.copilot_home_named().is_some(), off.as_deref()) {
+            notify.toasts = false;
+        }
+        notify
     } else {
         checks::NotifyFacts::default()
     };
@@ -650,8 +884,10 @@ fn facts_from(st: &AppState, agent: &'static str, setup: AgentSetup, entries: &[
         distro: None,
         found: setup.found,
         set_up: set_up_of(entries, &path),
+        kept,
         path,
         file,
+        problem_path,
         hooks: setup.hooks,
         approve_installed: setup.approve_installed,
         has_own_statusline: setup.has_own_statusline,
@@ -673,7 +909,9 @@ fn version_gate(agent: &str, version: Option<&str>) -> Gate {
         "claude" => claude::version_gate(version),
         "codex" => codex::version_gate(version),
         "antigravity" => antigravity::version_gate(version),
-        _ => qwen::version_gate(version),
+        "qwen" => qwen::version_gate(version),
+        "copilot" => crate::agents::copilot::version_gate(version),
+        _ => Gate::Known,
     }
 }
 
@@ -794,6 +1032,8 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
 
     let mut edits: Vec<FileEdit> = Vec::new();
     let mut switches: Vec<Switch> = Vec::new();
+    // Copilot CLI's settings files whose `/notifications` this fix turns off.
+    let mut own_settings: Vec<String> = Vec::new();
     for (item, facts) in &picked {
         match item.id.split('.').next() {
             Some("hooks") => {
@@ -805,7 +1045,26 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
                 };
                 edits.extend(changes.edits);
             }
+            // Copilot CLI's hooks file holds what Marshell didn't write, and the person picked the fix that replaces it. The
+            // plan is built against the text the file has now.
+            Some("hooksfile") if facts.agent == "copilot" => {
+                let want = HookPlanRequest {
+                    status: true,
+                    ..hooks_want_of(facts, &entries)
+                };
+                let changes = match &facts.distro {
+                    Some(distro) => st.distro_copilot_install_over(distro, &want)?,
+                    None => copilot_install_over_changes(st, &want)?,
+                };
+                edits.extend(changes.edits);
+            }
             Some("retention") => edits.push(retention_edit(facts)?),
+            // Copilot CLI's own `notifications` turned off, against the text `settings.json` has now.
+            Some("toasts") if facts.agent == "copilot" => {
+                let edit = toasts_edit(facts)?;
+                own_settings.push(edit.path.clone());
+                edits.push(edit);
+            }
             // A server or a skill turned off: the switch is read again from the inventory just gathered. Two items for one
             // server (a failed measurement and an unused server) give the same switch, which is taken once.
             Some("mcp" | "skill" | "mcpfail" | "mcpunused" | "skillunused") => {
@@ -842,7 +1101,7 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
     // managed.json.
     let preview =
         st.0.config
-            .preview_mixed(cs, &|edit| is_own_edit(edit) || ext_edits.contains(edit));
+            .preview_mixed(cs, &|edit| is_own_edit(edit, &own_settings) || ext_edits.contains(edit));
     let restart = restart_list(st, &picked);
     *st.doctor().pending.lock().unwrap_or_else(|e| e.into_inner()) = Some(PendingFix {
         changeset_id: preview.changeset_id.clone(),
@@ -859,8 +1118,28 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
 const RETENTION_POINTER: &str = "/cleanupPeriodDays";
 
 /// An edit of a setting that is the person's own: managed.json records no key for it.
-fn is_own_edit(edit: &FileEdit) -> bool {
-    matches!(&edit.op, EditOp::JsonSet { pointer, .. } if pointer == RETENTION_POINTER)
+/// `copilot_settings` are the paths of Copilot CLI's settings files this fix turns `/notifications` off in.
+fn is_own_edit(edit: &FileEdit, copilot_settings: &[String]) -> bool {
+    matches!(&edit.op, EditOp::JsonSet { pointer, .. }
+        if pointer == RETENTION_POINTER || (pointer == NOTIFICATIONS_POINTER && copilot_settings.contains(&edit.path)))
+}
+
+const NOTIFICATIONS_POINTER: &str = "/notifications";
+
+/// Copilot CLI's `notifications` set to `false` in its `settings.json`, against the text of the file as it is now.
+fn toasts_edit(facts: &AgentFacts) -> Result<FileEdit, Fail> {
+    let path = &facts.notify.settings;
+    let text = std::fs::read_to_string(path).map_err(|_| cant_fix())?;
+    Ok(FileEdit {
+        path: path.to_string_lossy().into_owned(),
+        scope: ConfigScope::User,
+        op: EditOp::JsonSet {
+            pointer: NOTIFICATIONS_POINTER.to_string(),
+            value: "false".to_string(),
+        },
+        expected_hash: Some(hash_bytes(text.as_bytes())),
+        applies: Applies::NewSessions,
+    })
 }
 
 /// Claude Code's `cleanupPeriodDays` set to a year, against the text of the file as it is now.
@@ -887,23 +1166,34 @@ fn hooks_want_of(facts: &AgentFacts, entries: &[ManagedEntry]) -> HookPlanReques
         facts.approve_installed || managed_pointer(entries, &facts.path, |p| p.contains("/PermissionRequest"));
     // A distro keeps no chain, and Codex has no status line.
     let chains = facts.distro.is_none() && facts.agent != "codex";
-    let statusline = chains
-        && (facts.chained || {
-            // Antigravity keeps its status line in `settings.json`, beside the `config` folder of its hooks.
-            let settings = (facts.agent == "antigravity")
-                .then(|| {
-                    facts
-                        .path
-                        .parent()
-                        .and_then(Path::parent)
-                        .map(|gemini| gemini.join("antigravity-cli").join("settings.json"))
-                })
-                .flatten();
-            [Some(facts.path.clone()), settings]
-                .into_iter()
-                .flatten()
-                .any(|path| managed_pointer(entries, &path, |p| under(p, "/statusLine")))
-        });
+    // Copilot CLI's status line is in `settings.json`, beside the `hooks` folder, and a distro install writes one too.
+    let copilot_line = facts.agent == "copilot"
+        && (facts.chained
+            || facts
+                .path
+                .parent()
+                .and_then(Path::parent)
+                .map(|dir| dir.join("settings.json"))
+                .is_some_and(|settings| managed_pointer(entries, &settings, |p| under(p, "/statusLine"))));
+    let statusline = copilot_line
+        || chains
+            && facts.agent != "copilot"
+            && (facts.chained || {
+                // Antigravity keeps its status line in `settings.json`, beside the `config` folder of its hooks.
+                let settings = (facts.agent == "antigravity")
+                    .then(|| {
+                        facts
+                            .path
+                            .parent()
+                            .and_then(Path::parent)
+                            .map(|gemini| gemini.join("antigravity-cli").join("settings.json"))
+                    })
+                    .flatten();
+                [Some(facts.path.clone()), settings]
+                    .into_iter()
+                    .flatten()
+                    .any(|path| managed_pointer(entries, &path, |p| under(p, "/statusLine")))
+            });
     HookPlanRequest {
         status: true,
         statusline,
@@ -1019,6 +1309,67 @@ pub async fn fix_apply(State(st): State<AppState>, Json(req): Json<ApplyRequest>
         Ok(Err(ApplyError::Failed(e))) => server_error(format!("{e:#}")),
         Err(e) => server_error(e),
     }
+}
+
+/// `POST /v1/doctor/keep`: "Keep my file" (`keep: true`) or "Stop keeping" (`keep: false`) on the row with `id`. The facts
+/// are read again, and the row must be in them with that action: anything else is a 422 that writes nothing. It writes
+/// Marshell's own record of kept hooks files and nothing of a CLI's, then asks for a new run of the checks, as a fix
+/// does, and answers 202 with the summary.
+pub async fn keep(State(st): State<AppState>, Json(req): Json<DoctorKeepRequest>) -> Response {
+    let work = {
+        let st = st.clone();
+        move || keep_of(&st, &req)
+    };
+    match tokio::task::spawn_blocking(work).await {
+        Ok(Ok(())) => {
+            request_run(&st);
+            (StatusCode::ACCEPTED, Json(st.doctor().summary.borrow().clone())).into_response()
+        }
+        Ok(Err((status, message))) => (status, message).into_response(),
+        Err(e) => server_error(e),
+    }
+}
+
+fn keep_of(st: &AppState, req: &DoctorKeepRequest) -> Result<(), Fail> {
+    let action = if req.keep {
+        DoctorAction::Keep
+    } else {
+        DoctorAction::StopKeeping
+    };
+    // The files as they are now: the report may be minutes old.
+    let gathered = facts_of(st);
+    let now = checks::items(&gathered.facts, &gathered.stopped, banners_on(st));
+    let item = now
+        .iter()
+        .find(|i| i.id == req.id && i.action == Some(action))
+        .ok_or_else(cant_fix)?;
+    let facts = gathered
+        .facts
+        .iter()
+        .find(|f| Some(f.agent) == item.agent.as_deref() && f.distro == item.distro)
+        .filter(|f| f.agent == "copilot")
+        .ok_or_else(cant_fix)?;
+    let record_path = kept::record_path(&st.0.home);
+    let mut record = copilot_kept_record(&st.0.home);
+    if req.keep {
+        // The person's part is read again, so what is recorded is what is in the file now.
+        let bytes = hooks_file_bytes(&facts.path).map_err(|_| cant_fix())?;
+        let text = String::from_utf8(bytes).map_err(|_| cant_fix())?;
+        let file = read_value(&text)
+            .ok()
+            .filter(serde_json::Value::is_object)
+            .ok_or_else(cant_fix)?;
+        if file_problem(Some(&text)) != Some(FileProblem::NotMarshells) {
+            return Err(cant_fix());
+        }
+        record.keep(&facts.path, &file);
+    } else if !record.drop_path(&facts.path) {
+        return Err(cant_fix());
+    }
+    store::write_bytes_atomic(&record_path, record.to_text().as_bytes()).map_err(|e| {
+        tracing::warn!("the doctor could not write the kept hooks record: {e:#}");
+        (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}"))
+    })
 }
 
 /// The last fix in this run of the app, else the one on disk (which has no restart list).
@@ -1295,14 +1646,14 @@ pub(in crate::server) mod tests {
                 Ok(setup(agent))
             }
         });
-        assert_eq!(facts.len(), 4);
+        assert_eq!(facts.len(), 5);
         let items = checks::items(&facts, &[], true);
         let ids: Vec<&str> = items.iter().map(|i| i.id.as_str()).collect();
         let failed = items.iter().find(|i| i.id == "error.codex").unwrap();
         assert_eq!(failed.group, DoctorGroup::Info);
         assert_eq!(failed.detail, "the home folder is not known");
         // The others were read and found, with no file: each gets its setup line.
-        for agent in ["claude", "antigravity", "qwen"] {
+        for agent in ["claude", "antigravity", "qwen", "copilot"] {
             assert!(ids.contains(&format!("setup.{agent}").as_str()), "{ids:?}");
         }
         assert!(!ids.contains(&"setup.codex"), "{ids:?}");
@@ -1471,6 +1822,7 @@ pub(in crate::server) mod tests {
                 file: config.clone(),
                 command: Some("a.exe x".into()),
                 hook_commands: Vec::new(),
+                ..Default::default()
             }
         );
         // A config.toml that doesn't parse gives no command.
@@ -1518,6 +1870,8 @@ pub(in crate::server) mod tests {
             .with_codex_hooks(project.join("codex-home").join("hooks.json"))
             .with_agy_home(project.join("agy-home"))
             .with_qwen_home(project.join("qwen-home"))
+            .with_copilot_home(root.join("copilot-home"))
+            .with_copilot_version(Some("1.0.106".into()))
             .with_qwen_system_settings(root.join("qwen-system.json"))
             .with_skill_home(root.join("skill-home"))
             .with_claude_compact_paths(root.join("claude-home"), vec![root.join("claude-managed.json")])
@@ -1840,6 +2194,1053 @@ pub(in crate::server) mod tests {
         );
     }
 
+    // Copilot CLI (slice 6n3): its facts, its hooks item and its plain lines. Every file is under the test's temp folder.
+
+    fn copilot_files(dir: &Path) -> (PathBuf, PathBuf) {
+        let copilot = crate::projects::canonical(dir).join("copilot-home").join(".copilot");
+        (
+            copilot.join("hooks").join("marshell.json"),
+            copilot.join("settings.json"),
+        )
+    }
+
+    /// Sets Copilot CLI's hooks up through its own plan, as "Set up" does.
+    fn install_copilot(st: &AppState) {
+        let want = HookPlanRequest {
+            status: true,
+            statusline: true,
+            approve: false,
+            skill: false,
+            distro: None,
+        };
+        let cs = hook_install_changes(st, Adapter::Copilot, &want).expect("a plan");
+        let preview = st.0.config.preview_mixed(cs, &|_| false);
+        let req = ApplyRequest {
+            changeset_id: preview.changeset_id.clone(),
+            expected_hashes: preview
+                .files
+                .iter()
+                .map(|f| ExpectedHash {
+                    path: f.path.clone(),
+                    hash: f.before_hash.clone(),
+                })
+                .collect(),
+        };
+        st.0.config.apply(&req, now_ms()).expect("applied");
+    }
+
+    fn copilot_facts(st: &AppState) -> AgentFacts {
+        facts_of(st)
+            .facts
+            .into_iter()
+            .find(|f| f.agent == "copilot" && f.distro.is_none())
+            .expect("copilot's facts")
+    }
+
+    async fn report_of(st: &AppState) -> DoctorReport {
+        run_once(st, Arc::new(facts_of)).await.expect("a run");
+        last_report(st)
+    }
+
+    fn has_item(report: &DoctorReport, id: &str) -> bool {
+        report.items.iter().any(|i| i.id == id)
+    }
+
+    #[test]
+    fn copilot_is_the_fifth_fact() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (hooks, _) = copilot_files(dir.path());
+        let facts = facts_of(&st).facts;
+        assert_eq!(facts.len(), 5);
+        assert_eq!(facts[4].agent, "copilot");
+        assert!(!facts[4].set_up);
+        install_copilot(&st);
+        let f = copilot_facts(&st);
+        assert_eq!(f.path, hooks);
+        assert!(f.set_up, "{f:?}");
+        assert_eq!(f.file, FileState::Ok);
+        assert_eq!(f.hooks, marshell_protocol::agents::HookInstall::Installed);
+    }
+
+    #[tokio::test]
+    async fn copilot_hooks_gone_are_fixed_with_the_status_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (hooks, settings) = copilot_files(dir.path());
+        install_copilot(&st);
+        assert!(settings.exists());
+        std::fs::remove_file(&hooks).unwrap();
+        let report = report_of(&st).await;
+        assert!(has_item(&report, "hooks.copilot"), "{:?}", report.items);
+        let want = hooks_want_of(&copilot_facts(&st), &managed_entries(&st));
+        assert!(want.statusline, "the line Marshell set is kept");
+
+        // The person also took the status line out by hand: the fix puts both back.
+        write(&settings, "{}");
+        let report = report_of(&st).await;
+        assert!(has_item(&report, "hooks.copilot"), "{:?}", report.items);
+        let plan = fix_of(&st, vec!["hooks.copilot".into()]).expect("a plan");
+        let paths: Vec<&str> = plan.preview.files.iter().map(|f| f.path.as_str()).collect();
+        assert!(paths.iter().any(|p| p.ends_with("marshell.json")), "{paths:?}");
+        assert!(paths.iter().any(|p| p.ends_with("settings.json")), "{paths:?}");
+        assert!(
+            paths
+                .iter()
+                .all(|p| p.contains("copilot-home") || p.ends_with("statusline-chain.json")),
+            "{paths:?}"
+        );
+    }
+
+    /// Applies a fix plan the way the route does, and waits for the run that follows.
+    async fn apply_fix_plan(st: &AppState, plan: &DoctorFixPlan) {
+        let req = ApplyRequest {
+            changeset_id: plan.preview.changeset_id.clone(),
+            expected_hashes: plan
+                .preview
+                .files
+                .iter()
+                .map(|f| ExpectedHash {
+                    path: f.path.clone(),
+                    hash: f.before_hash.clone(),
+                })
+                .collect(),
+        };
+        let applied = fix_apply(State(st.clone()), Json(req)).await;
+        assert_eq!(applied.status(), StatusCode::OK);
+        wait_idle(st).await;
+    }
+
+    #[allow(clippy::permissions_set_readonly_false)]
+    fn set_read_only(path: &Path, on: bool) {
+        let mut perms = std::fs::metadata(path).unwrap().permissions();
+        perms.set_readonly(on);
+        std::fs::set_permissions(path, perms).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_hooks_file_that_is_not_marshells_is_fixed_when_picked_and_undone() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (hooks, settings) = copilot_files(dir.path());
+        install_copilot(&st);
+        let own = std::fs::read_to_string(&hooks).unwrap();
+        let theirs = r#"{"version":1,"hooks":{"preToolUse":[{"type":"command","exec":"mine.exe","args":["a"]}]}}"#;
+        for text in ["{}", theirs] {
+            std::fs::write(&hooks, text).unwrap();
+            let settings_before = std::fs::read(&settings).unwrap();
+            let report = report_of(&st).await;
+            let item = report
+                .items
+                .iter()
+                .find(|i| i.id == "hooksfile.copilot")
+                .expect("the item");
+            assert!(
+                item.fixable && item.unchecked && item.group == DoctorGroup::Broken,
+                "{item:?}"
+            );
+            assert_eq!(item.cannot_fix, None);
+            assert!(!has_item(&report, "hooks.copilot"), "{:?}", report.items);
+
+            let plan = fix_of(&st, vec!["hooksfile.copilot".into()]).expect("a plan");
+            assert_eq!(plan.item_ids, ["hooksfile.copilot"]);
+            let paths: Vec<&str> = plan.preview.files.iter().map(|f| f.path.as_str()).collect();
+            assert_eq!(paths.len(), 1, "{paths:?}");
+            assert!(paths[0].ends_with("marshell.json"), "{paths:?}");
+            // Planning writes nothing.
+            assert_eq!(std::fs::read_to_string(&hooks).unwrap(), text);
+
+            apply_fix_plan(&st, &plan).await;
+            assert_eq!(std::fs::read_to_string(&hooks).unwrap(), own, "Marshell's hooks again");
+            assert_eq!(
+                std::fs::read(&settings).unwrap(),
+                settings_before,
+                "the status line stays in place"
+            );
+            let report = report_of(&st).await;
+            assert!(!has_item(&report, "hooksfile.copilot"), "{:?}", report.items);
+            assert!(!has_item(&report, "hooks.copilot"), "{:?}", report.items);
+            assert!(copilot_facts(&st).set_up);
+
+            let undone = undo(State(st.clone())).await;
+            assert_eq!(undone.status(), StatusCode::OK);
+            assert_eq!(std::fs::read_to_string(&hooks).unwrap(), text, "byte-equal after Undo");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_agents_page_still_refuses_a_hooks_file_that_is_not_marshells() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (hooks, _) = copilot_files(dir.path());
+        install_copilot(&st);
+        std::fs::write(&hooks, "{}").unwrap();
+        let want = hooks_want_of(&copilot_facts(&st), &managed_entries(&st));
+        assert!(hook_install_changes(&st, Adapter::Copilot, &want).is_err());
+        assert!(copilot_install_over_changes(&st, &want).is_ok());
+        // A file that doesn't parse is refused by both.
+        std::fs::write(&hooks, "{ \"hooks\": ").unwrap();
+        assert!(hook_install_changes(&st, Adapter::Copilot, &want).is_err());
+        assert!(copilot_install_over_changes(&st, &want).is_err());
+    }
+
+    #[tokio::test]
+    async fn a_hooks_file_that_is_not_text_is_reported_and_not_fixed() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (hooks, _) = copilot_files(dir.path());
+        // Another CLI has something to fix meanwhile: Claude Code's retention.
+        write(&dir.path().join("project").join("settings.json"), "{}");
+        install_copilot(&st);
+        std::fs::write(&hooks, [0xff, 0xfe, 0x7b, 0x7d]).unwrap();
+        let report = report_of(&st).await;
+        assert!(!has_item(&report, "hooks.copilot"), "{:?}", report.items);
+        let item = report
+            .items
+            .iter()
+            .find(|i| i.id == "hooksfile.copilot")
+            .expect("the item");
+        assert!(!item.fixable && !item.unchecked && item.group == DoctorGroup::Broken);
+        assert_eq!(
+            item.cannot_fix.as_deref(),
+            Some("Marshell can't show this file in a preview. Move it away, then run the check again.")
+        );
+        assert!(fix_of(&st, vec!["hooksfile.copilot".into()]).is_err());
+        assert!(fix_of(&st, vec!["retention.claude".into()]).is_ok());
+        assert_eq!(std::fs::read(&hooks).unwrap(), [0xff, 0xfe, 0x7b, 0x7d]);
+    }
+
+    #[tokio::test]
+    async fn a_hooks_file_that_is_not_marshells_beside_no_settings_file_is_still_fixable() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (hooks, settings) = copilot_files(dir.path());
+        write(&dir.path().join("project").join("settings.json"), "{}");
+        install_copilot(&st);
+        std::fs::write(&hooks, "{}").unwrap();
+        std::fs::remove_file(&settings).unwrap();
+        let report = report_of(&st).await;
+        let item = report
+            .items
+            .iter()
+            .find(|i| i.id == "hooksfile.copilot")
+            .expect("the item");
+        assert!(item.fixable, "{item:?}");
+        assert!(!has_item(&report, "hooks.copilot"), "{:?}", report.items);
+        assert!(fix_of(&st, vec!["retention.claude".into()]).is_ok());
+        assert!(fix_of(&st, vec!["hooksfile.copilot".into()]).is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_read_only_file_beside_a_hooks_file_that_is_not_marshells_makes_the_item_unfixable() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (hooks, settings) = copilot_files(dir.path());
+        write(&dir.path().join("project").join("settings.json"), "{}");
+        install_copilot(&st);
+        std::fs::write(&hooks, "{}").unwrap();
+        for file in [&hooks, &settings] {
+            set_read_only(file, true);
+            let report = report_of(&st).await;
+            let outcome = report
+                .items
+                .iter()
+                .find(|i| i.id == "hooksfile.copilot")
+                .map(|i| (i.fixable, i.cannot_fix.clone()));
+            let refused = fix_of(&st, vec!["hooksfile.copilot".into()]).is_err();
+            let others = fix_of(&st, vec!["retention.claude".into()]).is_ok();
+            set_read_only(file, false);
+            assert_eq!(
+                outcome,
+                Some((false, Some("The file is read-only.".to_string()))),
+                "{file:?}"
+            );
+            assert!(refused && others, "{file:?}");
+            assert!(!has_item(&report, "hooks.copilot"), "{:?}", report.items);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_distro_hooks_file_that_is_not_marshells_is_fixed_when_picked_and_undone() {
+        use marshell_protocol::api::{Profile, ShellFamily};
+        let dir = tempfile::tempdir().unwrap();
+        let root = crate::projects::canonical(dir.path());
+        let ubuntu = Profile {
+            id: "ubuntu".into(),
+            name: "Ubuntu".into(),
+            command: vec!["wsl.exe".into(), "-d".into(), "Ubuntu".into()],
+            family: ShellFamily::Wsl,
+            cwd: None,
+            env: Vec::new(),
+            shell_integration: false,
+            terminal_theme: None,
+            detected: true,
+        };
+        let ubuntu_home = root.join("ubuntu-home");
+        let st = pinned_with(&root, vec![ubuntu])
+            .with_wsl_version(Some("1.0.0".into()))
+            .with_running_distros(|| vec!["Ubuntu".to_string()])
+            .with_distro_target(Some(super::super::DistroTarget {
+                home: ubuntu_home.clone(),
+                bridge: mnt(&paths::bridge_exe(&root.join("home"))),
+            }));
+        let hooks = ubuntu_home.join(".copilot").join("hooks").join("marshell.json");
+        let want = HookPlanRequest {
+            status: true,
+            statusline: true,
+            approve: false,
+            skill: false,
+            distro: Some("Ubuntu".into()),
+        };
+        let cs = st.distro_install(Adapter::Copilot, "Ubuntu", &want).expect("a plan");
+        let preview = st.0.config.preview_mixed(cs, &|_| false);
+        let req = ApplyRequest {
+            changeset_id: preview.changeset_id.clone(),
+            expected_hashes: preview
+                .files
+                .iter()
+                .map(|f| ExpectedHash {
+                    path: f.path.clone(),
+                    hash: f.before_hash.clone(),
+                })
+                .collect(),
+        };
+        st.0.config.apply(&req, now_ms()).expect("applied");
+        let own = std::fs::read_to_string(&hooks).unwrap();
+
+        std::fs::write(&hooks, "{}").unwrap();
+        let report = report_of(&st).await;
+        let item = report
+            .items
+            .iter()
+            .find(|i| i.id == "hooksfile.copilot@Ubuntu")
+            .unwrap_or_else(|| panic!("{:?}", report.items));
+        assert!(item.fixable && item.unchecked, "{item:?}");
+        assert!(!has_item(&report, "hooks.copilot@Ubuntu"), "{:?}", report.items);
+
+        let plan = fix_of(&st, vec!["hooksfile.copilot@Ubuntu".into()]).expect("a plan");
+        assert!(
+            plan.preview.files.iter().all(|f| f.path.contains("ubuntu-home")),
+            "{:?}",
+            plan.preview.files
+        );
+        apply_fix_plan(&st, &plan).await;
+        assert_eq!(std::fs::read_to_string(&hooks).unwrap(), own);
+        let report = report_of(&st).await;
+        assert!(!has_item(&report, "hooksfile.copilot@Ubuntu"), "{:?}", report.items);
+        assert!(!has_item(&report, "hooks.copilot@Ubuntu"), "{:?}", report.items);
+
+        let undone = undo(State(st.clone())).await;
+        assert_eq!(undone.status(), StatusCode::OK);
+        assert_eq!(std::fs::read_to_string(&hooks).unwrap(), "{}");
+    }
+
+    // Copilot CLI's own notifications and notification hooks (slice 6n3, decisions 2, 8 and 14).
+
+    /// Settings text as a person's editor could leave it: a BOM, a comment, CRLF, a trailing comma, and `notifications`
+    /// set to `value` (JSON text). Built on what "Set up" wrote, so the status line stays.
+    fn settings_with_notifications(settings: &Path, value: &str) -> String {
+        let text = std::fs::read_to_string(settings).unwrap();
+        let body = text.trim_end().strip_suffix('}').unwrap().trim_end().to_string();
+        let text = format!("\u{feff}// mine\n{body},\n  \"notifications\": {value}, // toasts\n}}\n");
+        let text = text.replace('\n', "\r\n");
+        std::fs::write(settings, &text).unwrap();
+        text
+    }
+
+    #[test]
+    fn copilots_own_hooks_and_toasts_are_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (hooks, settings) = copilot_files(dir.path());
+        install_copilot(&st);
+        settings_with_notifications(&settings, "true");
+        let folder = hooks.parent().unwrap();
+        write(
+            &folder.join("b.json"),
+            r#"{"hooks": {"notification": [{"type": "command", "command": "b1"}]}}"#,
+        );
+        write(
+            &folder.join("a.json"),
+            r#"{"hooks": {"notification": [{"type": "command", "bash": "a1"}]}}"#,
+        );
+        write(&folder.join("bad.json"), "{not json");
+        write(&folder.join("notes.txt"), "notification");
+        let f = copilot_facts(&st);
+        assert!(f.notify.toasts, "{f:?}");
+        assert_eq!(f.notify.settings, settings);
+        assert_eq!(
+            f.notify.hook_commands,
+            ["a1", "b1"],
+            "Marshell's own entries are never listed"
+        );
+        assert!(!f.notify.settings_read_only);
+    }
+
+    #[tokio::test]
+    async fn a_hooks_file_of_the_persons_own_entries_is_read_when_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (hooks, _) = foreign_copilot(&st, dir.path());
+        edit_hooks(&hooks, |file| {
+            file["hooks"]["notification"]
+                .as_array_mut()
+                .unwrap()
+                .insert(0, serde_json::json!({"type": "command", "command": "mine.exe"}));
+        });
+        // Not kept yet: the file isn't Marshell's, so no notify fact.
+        report_of(&st).await;
+        assert!(copilot_facts(&st).notify.hook_commands.is_empty());
+        assert_eq!(press(&st, "hooksfile.copilot", true).await.0, StatusCode::ACCEPTED);
+        let f = copilot_facts(&st);
+        assert!(f.kept);
+        assert_eq!(f.notify.hook_commands, ["mine.exe"], "{f:?}");
+    }
+
+    #[test]
+    fn a_distros_toasts_are_always_off_but_its_hooks_are_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".copilot");
+        write(&home.join("settings.json"), r#"{"notifications": true}"#);
+        write(
+            &home.join("hooks").join("mine.json"),
+            r#"{"hooks": {"notification": [{"type": "command", "command": "x"}]}}"#,
+        );
+        let hooks = home.join("hooks").join("marshell.json");
+        let distro = copilot_notify(&hooks, false);
+        assert!(!distro.toasts);
+        assert_eq!(distro.hook_commands, ["x"]);
+        assert!(copilot_notify(&hooks, true).toasts);
+    }
+
+    #[test]
+    fn a_hooks_file_over_the_size_limit_is_not_read_for_its_notification_hooks() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".copilot");
+        let small = r#"{"hooks": {"notification": [{"type": "command", "command": "small"}]}}"#;
+        write(&home.join("hooks").join("mine.json"), small);
+        let mut big = r#"{"hooks": {"notification": [{"type": "command", "command": "big"}]}}"#.to_string();
+        big.push_str(&" ".repeat(crate::config::preview::MAX_CONFIG_BYTES as usize));
+        write(&home.join("hooks").join("export.json"), &big);
+        let facts = copilot_notify(&home.join("hooks").join("marshell.json"), true);
+        assert_eq!(facts.hook_commands, ["small"]);
+    }
+
+    #[test]
+    fn marshells_hooks_file_over_the_size_limit_is_not_read_and_offers_no_keep() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".copilot");
+        let hooks = home.join("hooks").join("marshell.json");
+        let mut big = r#"{"hooks": {"notification": [{"type": "command", "command": "mine"}]}}"#.to_string();
+        big.push_str(&" ".repeat(crate::config::preview::MAX_CONFIG_BYTES as usize));
+        write(&hooks, &big);
+        let (text, problem, is_kept) = copilot_hooks_problem(&hooks, &home.join("settings.json"), &Kept::parse(None));
+        assert_eq!(text, None);
+        assert_eq!(
+            problem,
+            Some(FileState::NotOurs {
+                cannot_fix: Some(NO_PREVIEW),
+                keepable: false
+            })
+        );
+        assert!(!is_kept);
+    }
+
+    #[test]
+    fn the_toast_off_variable_is_not_read_where_a_test_named_copilots_home() {
+        let one = Some(std::ffi::OsStr::new("1"));
+        assert!(copilot_toasts_off(false, one));
+        assert!(!copilot_toasts_off(true, one));
+        assert!(!copilot_toasts_off(false, None));
+    }
+
+    #[test]
+    fn only_a_literal_true_gives_a_toast_fact() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (_, settings) = copilot_files(dir.path());
+        install_copilot(&st);
+        for (value, on) in [("true", true), ("\"true\"", false), ("1", false), ("false", false)] {
+            settings_with_notifications(&settings, value);
+            assert_eq!(copilot_facts(&st).notify.toasts, on, "{value}");
+        }
+    }
+
+    #[tokio::test]
+    async fn copilots_toast_item_is_fixed_by_one_edit_that_keeps_every_other_byte() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (_, settings) = copilot_files(dir.path());
+        install_copilot(&st);
+        let before = settings_with_notifications(&settings, "true");
+        let report = report_of(&st).await;
+        let item = item_of(&report, "toasts.copilot").unwrap_or_else(|| panic!("{:?}", report.items));
+        assert!(item.fixable && !item.unchecked, "{item:?}");
+
+        let plan = fix_of(&st, vec!["toasts.copilot".into()]).expect("a plan");
+        assert_eq!(plan.item_ids, ["toasts.copilot"]);
+        assert_eq!(plan.preview.files.len(), 1, "{:?}", plan.preview.files);
+        apply_fix_plan(&st, &plan).await;
+        let after = std::fs::read_to_string(&settings).unwrap();
+        assert_eq!(
+            after,
+            before.replacen("\"notifications\": true", "\"notifications\": false", 1)
+        );
+        assert!(
+            !format!("{:?}", managed_entries(&st)).contains("/notifications"),
+            "managed.json must not name the person's own setting"
+        );
+        let report = report_of(&st).await;
+        assert!(!has_item(&report, "toasts.copilot"), "{:?}", report.items);
+
+        let undone = undo(State(st.clone())).await;
+        assert_eq!(undone.status(), StatusCode::OK);
+        assert_eq!(std::fs::read(&settings).unwrap(), before.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn the_toast_fix_and_the_hooks_fix_apply_together() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (hooks, settings) = copilot_files(dir.path());
+        install_copilot(&st);
+        settings_with_notifications(&settings, "true");
+        std::fs::remove_file(&hooks).unwrap();
+        let report = report_of(&st).await;
+        assert!(has_item(&report, "hooks.copilot"), "{:?}", report.items);
+        // The status line is still Marshell's, so its hooks count as set up and both items are there.
+        assert!(has_item(&report, "toasts.copilot"), "{:?}", report.items);
+        let plan = fix_of(&st, vec!["toasts.copilot".into(), "hooks.copilot".into()]).expect("a plan");
+        apply_fix_plan(&st, &plan).await;
+        assert!(
+            std::fs::read_to_string(&settings)
+                .unwrap()
+                .contains("\"notifications\": false")
+        );
+        assert_eq!(
+            copilot_facts(&st).hooks,
+            marshell_protocol::agents::HookInstall::Installed
+        );
+    }
+
+    #[tokio::test]
+    async fn a_string_true_gives_no_toast_item() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (_, settings) = copilot_files(dir.path());
+        install_copilot(&st);
+        settings_with_notifications(&settings, "\"true\"");
+        let report = report_of(&st).await;
+        assert!(!has_item(&report, "toasts.copilot"), "{:?}", report.items);
+    }
+
+    // "Keep my file" and "Stop keeping" (slice 6n3, decision 20).
+
+    fn persons_entry() -> serde_json::Value {
+        serde_json::json!({"type": "command", "bash": "echo mine"})
+    }
+
+    /// Changes the hooks file as a person with an editor would: the text is parsed, changed and written back.
+    fn edit_hooks(path: &Path, change: impl FnOnce(&mut serde_json::Value)) {
+        let mut file: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        change(&mut file);
+        std::fs::write(path, serde_json::to_string_pretty(&file).unwrap()).unwrap();
+    }
+
+    /// The person's own entry at the head of Marshell's `preToolUse` list.
+    fn add_persons_entry(file: &mut serde_json::Value) {
+        file["hooks"]["preToolUse"]
+            .as_array_mut()
+            .unwrap()
+            .insert(0, persons_entry());
+    }
+
+    fn item_of<'a>(report: &'a DoctorReport, id: &str) -> Option<&'a DoctorItem> {
+        report.items.iter().find(|i| i.id == id)
+    }
+
+    /// Presses a Doctor row's button, and waits for the run that follows a success. The status and the body.
+    async fn press(st: &AppState, id: &str, keep_it: bool) -> (StatusCode, String) {
+        let answer = keep(
+            State(st.clone()),
+            Json(DoctorKeepRequest {
+                id: id.into(),
+                keep: keep_it,
+            }),
+        )
+        .await;
+        let status = answer.status();
+        let body = axum::body::to_bytes(answer.into_body(), usize::MAX).await.unwrap();
+        wait_idle(st).await;
+        (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    /// The hooks file after a person added an entry of their own, and the settings file, as bytes.
+    fn foreign_copilot(st: &AppState, dir: &Path) -> (PathBuf, PathBuf) {
+        let (hooks, settings) = copilot_files(dir);
+        install_copilot(st);
+        edit_hooks(&hooks, add_persons_entry);
+        (hooks, settings)
+    }
+
+    fn record_holds(st: &AppState, hooks: &Path) -> bool {
+        let text = std::fs::read_to_string(kept::record_path(&st.0.home)).ok();
+        let file = serde_json::from_str(&std::fs::read_to_string(hooks).unwrap()).unwrap();
+        Kept::parse(text.as_deref()).holds(hooks, &file)
+    }
+
+    #[tokio::test]
+    async fn keep_my_file_writes_only_the_record_and_the_fix_then_changes_only_marshells_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (hooks, settings) = foreign_copilot(&st, dir.path());
+        let report = report_of(&st).await;
+        let row = item_of(&report, "hooksfile.copilot").expect("the item");
+        assert_eq!(row.action, Some(DoctorAction::Keep), "{row:?}");
+
+        // Keep: the record is written, and neither of Copilot's files changes.
+        let (hooks_before, settings_before) = (std::fs::read(&hooks).unwrap(), std::fs::read(&settings).unwrap());
+        let record = kept::record_path(&st.0.home);
+        assert!(!record.exists());
+        assert_eq!(press(&st, "hooksfile.copilot", true).await.0, StatusCode::ACCEPTED);
+        assert_eq!(std::fs::read(&hooks).unwrap(), hooks_before);
+        assert_eq!(std::fs::read(&settings).unwrap(), settings_before);
+        assert!(record_holds(&st, &hooks));
+        let leftovers: Vec<_> = std::fs::read_dir(record.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+        let report = last_report(&st);
+        let row = item_of(&report, "hookskept.copilot").expect("the kept row");
+        assert_eq!(row.action, Some(DoctorAction::StopKeeping));
+        assert_eq!(row.group, DoctorGroup::Info);
+        assert!(
+            !has_item(&report, "hooksfile.copilot") && !has_item(&report, "hooks.copilot"),
+            "{:?}",
+            report.items
+        );
+        assert!(copilot_facts(&st).kept);
+
+        // One of Marshell's entries is deleted by hand: the hooks fix puts back only it.
+        edit_hooks(&hooks, |f| {
+            f["hooks"].as_object_mut().unwrap().shift_remove("sessionStart");
+        });
+        let report = report_of(&st).await;
+        let row = item_of(&report, "hooks.copilot").expect("the hooks item is back");
+        assert!(row.fixable && row.unchecked, "{row:?}");
+        assert!(has_item(&report, "hookskept.copilot") && !has_item(&report, "hooksfile.copilot"));
+        let want = hooks_want_of(&copilot_facts(&st), &managed_entries(&st));
+        let changes = hook_install_changes(&st, Adapter::Copilot, &want).expect("a plan");
+        let on_hooks: Vec<_> = changes
+            .edits
+            .iter()
+            .filter(|e| e.path == hooks.to_string_lossy())
+            .collect();
+        assert!(!on_hooks.is_empty());
+        assert!(
+            on_hooks
+                .iter()
+                .all(|e| matches!(e.op, EditOp::JsonSet { .. } | EditOp::JsonRemove { .. })),
+            "{on_hooks:?}"
+        );
+        let plan = fix_of(&st, vec!["hooks.copilot".into()]).expect("a plan");
+        let before_fix = std::fs::read(&hooks).unwrap();
+        apply_fix_plan(&st, &plan).await;
+        let after: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&hooks).unwrap()).unwrap();
+        assert_eq!(after["hooks"]["preToolUse"][0], persons_entry());
+        assert!(after["hooks"]["sessionStart"].is_array());
+        let report = last_report(&st);
+        assert!(!has_item(&report, "hooks.copilot") && has_item(&report, "hookskept.copilot"));
+        assert_eq!(
+            copilot_facts(&st).hooks,
+            marshell_protocol::agents::HookInstall::Installed
+        );
+        assert!(record_holds(&st, &hooks), "the file is still kept");
+        let undone = undo(State(st.clone())).await;
+        assert_eq!(undone.status(), StatusCode::OK);
+        assert_eq!(std::fs::read(&hooks).unwrap(), before_fix, "byte-equal after Undo");
+
+        // The person's own entry changes: the item comes back and the kept row goes.
+        edit_hooks(&hooks, |f| {
+            f["hooks"]["preToolUse"][0]["bash"] = serde_json::json!("echo other")
+        });
+        let report = report_of(&st).await;
+        assert!(has_item(&report, "hooksfile.copilot"), "{:?}", report.items);
+        assert!(!has_item(&report, "hookskept.copilot"), "{:?}", report.items);
+        assert!(!record_holds(&st, &hooks));
+        // A fix of the hooks does not take what the person wrote away: the file is not kept now, so it is refused.
+        let want = hooks_want_of(&copilot_facts(&st), &managed_entries(&st));
+        assert!(hook_install_changes(&st, Adapter::Copilot, &want).is_err());
+    }
+
+    #[tokio::test]
+    async fn stop_keeping_brings_the_item_back_and_the_replace_fix_works_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (hooks, _) = foreign_copilot(&st, dir.path());
+        let foreign = std::fs::read_to_string(&hooks).unwrap();
+        assert_eq!(press(&st, "hooksfile.copilot", true).await.0, StatusCode::ACCEPTED);
+        assert!(has_item(&last_report(&st), "hookskept.copilot"));
+
+        // The wrong button on a row: refused, nothing is written.
+        let record = kept::record_path(&st.0.home);
+        let record_before = std::fs::read(&record).unwrap();
+        assert_eq!(
+            press(&st, "hookskept.copilot", true).await.0,
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+        assert_eq!(std::fs::read(&record).unwrap(), record_before);
+
+        assert_eq!(press(&st, "hookskept.copilot", false).await.0, StatusCode::ACCEPTED);
+        assert_eq!(
+            std::fs::read_to_string(&hooks).unwrap(),
+            foreign,
+            "the file is not touched"
+        );
+        assert!(!record_holds(&st, &hooks));
+        let report = last_report(&st);
+        assert!(has_item(&report, "hooksfile.copilot"), "{:?}", report.items);
+        assert!(!has_item(&report, "hookskept.copilot"), "{:?}", report.items);
+        assert_eq!(
+            item_of(&report, "hooksfile.copilot").unwrap().action,
+            Some(DoctorAction::Keep)
+        );
+
+        // The replace fix works as before, and Undo gives the person's file back.
+        let plan = fix_of(&st, vec!["hooksfile.copilot".into()]).expect("a plan");
+        apply_fix_plan(&st, &plan).await;
+        let report = last_report(&st);
+        assert!(
+            !has_item(&report, "hooksfile.copilot") && !has_item(&report, "hooks.copilot"),
+            "{:?}",
+            report.items
+        );
+        let undone = undo(State(st.clone())).await;
+        assert_eq!(undone.status(), StatusCode::OK);
+        assert_eq!(std::fs::read_to_string(&hooks).unwrap(), foreign);
+    }
+
+    #[tokio::test]
+    async fn keep_refuses_what_the_fresh_items_do_not_offer_and_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (hooks, _) = copilot_files(dir.path());
+        install_copilot(&st);
+        let record = kept::record_path(&st.0.home);
+        let cant = "This item can't be fixed any more. Run the check again.";
+        report_of(&st).await;
+
+        // Marshell's own file has no item; an id that isn't in the items; the other button.
+        for (id, keep_it) in [
+            ("hooksfile.copilot", true),
+            ("hookskept.copilot", false),
+            ("nothing.copilot", true),
+            ("hooks.claude", true),
+            ("", false),
+        ] {
+            let (status, body) = press(&st, id, keep_it).await;
+            assert_eq!(
+                (status, body.as_str()),
+                (StatusCode::UNPROCESSABLE_ENTITY, cant),
+                "{id} {keep_it}"
+            );
+        }
+        assert!(!record.exists());
+
+        // A foreign file: Stop keeping is not offered, and a file that is not text has no Keep.
+        edit_hooks(&hooks, add_persons_entry);
+        report_of(&st).await;
+        let (status, body) = press(&st, "hooksfile.copilot", false).await;
+        assert_eq!((status, body.as_str()), (StatusCode::UNPROCESSABLE_ENTITY, cant));
+        std::fs::write(&hooks, [0xff, 0xfe, 0x7b, 0x7d]).unwrap();
+        let report = report_of(&st).await;
+        assert_eq!(item_of(&report, "hooksfile.copilot").unwrap().action, None);
+        let (status, body) = press(&st, "hooksfile.copilot", true).await;
+        assert_eq!((status, body.as_str()), (StatusCode::UNPROCESSABLE_ENTITY, cant));
+        assert_eq!(std::fs::read(&hooks).unwrap(), [0xff, 0xfe, 0x7b, 0x7d]);
+        // Text that parses to something other than an object has no Keep either.
+        std::fs::write(&hooks, "[1]").unwrap();
+        let report = report_of(&st).await;
+        assert_eq!(item_of(&report, "hooksfile.copilot").unwrap().action, None);
+        assert_eq!(
+            press(&st, "hooksfile.copilot", true).await.0,
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+        assert!(!record.exists(), "nothing was written");
+    }
+
+    #[tokio::test]
+    async fn a_read_only_hooks_file_can_be_kept_and_reads_as_read_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (hooks, _) = foreign_copilot(&st, dir.path());
+        set_read_only(&hooks, true);
+        let report = report_of(&st).await;
+        let row = item_of(&report, "hooksfile.copilot").expect("the item");
+        let shown = (row.fixable, row.action, row.cannot_fix.clone());
+        let (status, _) = press(&st, "hooksfile.copilot", true).await;
+        let (file, kept_now) = {
+            let f = copilot_facts(&st);
+            (f.file, f.kept)
+        };
+        set_read_only(&hooks, false);
+        assert_eq!(
+            shown,
+            (
+                false,
+                Some(DoctorAction::Keep),
+                Some("The file is read-only.".to_string())
+            )
+        );
+        assert_eq!(status, StatusCode::ACCEPTED);
+        assert_eq!(file, FileState::ReadOnly);
+        assert!(kept_now);
+    }
+
+    #[tokio::test]
+    async fn a_kept_file_in_a_distro_is_kept_fixed_entry_by_entry_and_not_kept_any_more() {
+        use marshell_protocol::api::{Profile, ShellFamily};
+        let dir = tempfile::tempdir().unwrap();
+        let root = crate::projects::canonical(dir.path());
+        let ubuntu = Profile {
+            id: "ubuntu".into(),
+            name: "Ubuntu".into(),
+            command: vec!["wsl.exe".into(), "-d".into(), "Ubuntu".into()],
+            family: ShellFamily::Wsl,
+            cwd: None,
+            env: Vec::new(),
+            shell_integration: false,
+            terminal_theme: None,
+            detected: true,
+        };
+        let ubuntu_home = root.join("ubuntu-home");
+        let st = pinned_with(&root, vec![ubuntu])
+            .with_wsl_version(Some("1.0.0".into()))
+            .with_running_distros(|| vec!["Ubuntu".to_string()])
+            .with_distro_target(Some(super::super::DistroTarget {
+                home: ubuntu_home.clone(),
+                bridge: mnt(&paths::bridge_exe(&root.join("home"))),
+            }));
+        let distro_hooks = ubuntu_home.join(".copilot").join("hooks").join("marshell.json");
+        let want = HookPlanRequest {
+            status: true,
+            statusline: true,
+            approve: false,
+            skill: false,
+            distro: Some("Ubuntu".into()),
+        };
+        let cs = st.distro_install(Adapter::Copilot, "Ubuntu", &want).expect("a plan");
+        let preview = st.0.config.preview_mixed(cs, &|_| false);
+        let req = ApplyRequest {
+            changeset_id: preview.changeset_id.clone(),
+            expected_hashes: preview
+                .files
+                .iter()
+                .map(|f| ExpectedHash {
+                    path: f.path.clone(),
+                    hash: f.before_hash.clone(),
+                })
+                .collect(),
+        };
+        st.0.config.apply(&req, now_ms()).expect("applied");
+        // Windows' own file is set up and kept too.
+        let (hooks, _) = foreign_copilot(&st, dir.path());
+        for file in [&hooks, &distro_hooks] {
+            edit_hooks(file, add_persons_entry);
+        }
+        let report = report_of(&st).await;
+        for id in ["hooksfile.copilot", "hooksfile.copilot@Ubuntu"] {
+            assert_eq!(item_of(&report, id).unwrap().action, Some(DoctorAction::Keep), "{id}");
+        }
+        assert_eq!(
+            press(&st, "hooksfile.copilot@Ubuntu", true).await.0,
+            StatusCode::ACCEPTED
+        );
+        assert_eq!(press(&st, "hooksfile.copilot", true).await.0, StatusCode::ACCEPTED);
+        let report = last_report(&st);
+        for id in ["hookskept.copilot", "hookskept.copilot@Ubuntu"] {
+            assert!(has_item(&report, id), "{id}: {:?}", report.items);
+        }
+        assert!(record_holds(&st, &distro_hooks) && record_holds(&st, &hooks));
+
+        // A hooks fix in the distro puts one entry back and leaves the rest.
+        edit_hooks(&distro_hooks, |f| {
+            f["hooks"].as_object_mut().unwrap().shift_remove("sessionStart");
+        });
+        let report = report_of(&st).await;
+        assert!(has_item(&report, "hooks.copilot@Ubuntu"), "{:?}", report.items);
+        assert!(!has_item(&report, "hooks.copilot"), "{:?}", report.items);
+        let plan = fix_of(&st, vec!["hooks.copilot@Ubuntu".into()]).expect("a plan");
+        apply_fix_plan(&st, &plan).await;
+        let after: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&distro_hooks).unwrap()).unwrap();
+        assert_eq!(after["hooks"]["preToolUse"][0], persons_entry());
+        assert!(after["hooks"]["sessionStart"].is_array());
+        let report = last_report(&st);
+        assert!(has_item(&report, "hookskept.copilot@Ubuntu") && !has_item(&report, "hooks.copilot@Ubuntu"));
+
+        // Stop keeping in the distro leaves Windows' file kept.
+        assert_eq!(
+            press(&st, "hookskept.copilot@Ubuntu", false).await.0,
+            StatusCode::ACCEPTED
+        );
+        let report = last_report(&st);
+        assert!(has_item(&report, "hooksfile.copilot@Ubuntu"), "{:?}", report.items);
+        assert!(has_item(&report, "hookskept.copilot"), "{:?}", report.items);
+        assert!(!record_holds(&st, &distro_hooks) && record_holds(&st, &hooks));
+    }
+
+    #[tokio::test]
+    async fn a_read_only_copilot_file_makes_its_hooks_item_unfixable() {
+        use crate::agents::common::Bridge;
+        use crate::agents::copilot::hooks as copilot_hooks;
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (hooks, settings) = copilot_files(dir.path());
+        install_copilot(&st);
+        // Marshell's own file with no entry: the hooks read as incomplete.
+        let own_empty = copilot_hooks::hooks_file(
+            &Bridge::local(&st.0.home),
+            &HookPlanRequest {
+                status: false,
+                statusline: false,
+                approve: false,
+                skill: false,
+                distro: None,
+            },
+        );
+        std::fs::write(&hooks, own_empty).unwrap();
+        for file in [&hooks, &settings] {
+            let mut perms = std::fs::metadata(file).unwrap().permissions();
+            perms.set_readonly(true);
+            std::fs::set_permissions(file, perms).unwrap();
+            let report = report_of(&st).await;
+            let item = report.items.iter().find(|i| i.id == "hooks.copilot").expect("the item");
+            assert!(!item.fixable, "{item:?}");
+            assert_eq!(item.cannot_fix.as_deref(), Some("The file is read-only."));
+            #[allow(clippy::permissions_set_readonly_false)]
+            {
+                let mut perms = std::fs::metadata(file).unwrap().permissions();
+                perms.set_readonly(false);
+                std::fs::set_permissions(file, perms).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn an_unparsable_copilot_settings_file_is_the_one_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (_, settings) = copilot_files(dir.path());
+        install_copilot(&st);
+        write(&settings, "{ \"statusLine\": ");
+        let f = copilot_facts(&st);
+        assert!(matches!(f.file, FileState::Unparsable { .. }), "{:?}", f.file);
+        assert_eq!(f.problem_path, Some(settings.clone()));
+        let items = checks::items(&[f], &[], true);
+        let parse = items.iter().find(|i| i.id == "parse.copilot").expect("the item");
+        assert!(
+            parse.title.starts_with(&settings.display().to_string()),
+            "{}",
+            parse.title
+        );
+        assert_eq!(parse.path.as_deref(), Some(settings.display().to_string().as_str()));
+    }
+
+    /// A distro's `/mnt/<drive>/...` form of a Windows path.
+    fn mnt(path: &Path) -> String {
+        let text = path.to_string_lossy().replace('\\', "/");
+        let text = text.strip_prefix("//?/").unwrap_or(&text).to_string();
+        format!("/mnt/{}{}", text[..1].to_ascii_lowercase(), &text[2..])
+    }
+
+    #[test]
+    fn copilot_in_a_distro_reads_its_two_files_as_text() {
+        use crate::agents::common::Bridge;
+        use crate::agents::copilot::hooks as copilot_hooks;
+        let dir = tempfile::tempdir().unwrap();
+        let root = crate::projects::canonical(dir.path());
+        let bridge_exe = root.join("bridge").join("marshell-hook.exe");
+        write(&bridge_exe, "");
+        let target = super::super::DistroTarget {
+            home: root.join("ubuntu-home"),
+            bridge: mnt(&bridge_exe),
+        };
+        let dot = target.home.join(".copilot");
+        let (hooks, settings) = (dot.join("hooks").join("marshell.json"), dot.join("settings.json"));
+
+        let none = distro_agent_facts("copilot", "Ubuntu", &target, &[], &Kept::default());
+        assert_eq!(none.file, FileState::Missing);
+        assert_eq!(none.path, hooks);
+
+        let bridge = Bridge::Distro {
+            name: "Ubuntu".into(),
+            path: target.bridge.clone(),
+        };
+        let want = HookPlanRequest {
+            status: true,
+            statusline: false,
+            approve: false,
+            skill: false,
+            distro: Some("Ubuntu".into()),
+        };
+        write(&hooks, &copilot_hooks::hooks_file(&bridge, &want));
+        let command = copilot_hooks::statusline_command(&bridge).unwrap();
+        write(
+            &settings,
+            &serde_json::json!({"statusLine": {"type": "command", "command": command}}).to_string(),
+        );
+        let entries = [entry(&hooks.to_string_lossy(), None)];
+        let f = distro_agent_facts("copilot", "Ubuntu", &target, &entries, &Kept::default());
+        assert_eq!(f.file, FileState::Ok, "{f:?}");
+        assert_eq!(f.hooks, marshell_protocol::agents::HookInstall::Installed, "{f:?}");
+        assert!(f.set_up);
+        assert_eq!(f.distro.as_deref(), Some("Ubuntu"));
+
+        write(&hooks, "{}");
+        let f = distro_agent_facts("copilot", "Ubuntu", &target, &entries, &Kept::default());
+        assert_eq!(
+            f.file,
+            FileState::NotOurs {
+                cannot_fix: None,
+                keepable: true
+            }
+        );
+
+        // The status line is asked for when managed.json says Marshell set it; a Qwen Code fact never is.
+        let mut with_line = entries.to_vec();
+        with_line.push(entry(&settings.to_string_lossy(), Some("/statusLine")));
+        write(&hooks, &copilot_hooks::hooks_file(&bridge, &want));
+        let f = distro_agent_facts("copilot", "Ubuntu", &target, &with_line, &Kept::default());
+        assert!(hooks_want_of(&f, &with_line).statusline);
+        assert!(!hooks_want_of(&f, &entries).statusline);
+        let q = distro_agent_facts("qwen", "Ubuntu", &target, &with_line, &Kept::default());
+        assert!(!hooks_want_of(&q, &with_line).statusline);
+    }
+
+    #[test]
+    fn an_unknown_agent_gets_failed_facts() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = super::super::DistroTarget {
+            home: dir.path().join("h"),
+            bridge: "/mnt/c/x.exe".into(),
+        };
+        let f = distro_agent_facts("nobody", "Ubuntu", &target, &[], &Kept::default());
+        assert!(f.error.is_some());
+    }
+
+    #[test]
+    fn copilot_has_no_doctor_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path()).with_doctor_runner(claude_ok_codex_fails);
+        let items = cli_doctor_items(&st);
+        assert!(
+            items.iter().any(|i| i.title == "Copilot CLI has no doctor command."),
+            "{items:?}"
+        );
+    }
+
     // MCP servers and skills (slice 7c1). `with_ext_home` points the readers at a fake home, and a pinned PATH check
     // makes `ghost` the one command that isn't there.
 
@@ -1892,9 +3293,9 @@ pub(in crate::server) mod tests {
         run_once(&st, Arc::new(facts_of)).await.expect("a run");
         let report = last_report(&st);
         let ids = broken_ext_ids(&report);
-        // Claude Code and Qwen Code both read the project's `.mcp.json`, so its server is two items, beside Codex's
-        // server and Qwen Code's skill.
-        assert_eq!(ids.len(), 4, "{:?}", report.items);
+        // Claude Code, Qwen Code and Copilot CLI all read the project's `.mcp.json`, so its server is three items,
+        // beside Codex's server and Qwen Code's skill.
+        assert_eq!(ids.len(), 5, "{:?}", report.items);
         assert!(
             report.items.iter().filter(|i| ids.contains(&i.id)).all(|i| i.fixable),
             "{:?}",
@@ -2068,7 +3469,7 @@ pub(in crate::server) mod tests {
         let inv = doctor_ext::inventories(&st, &facts, &[]);
         let mut agents: Vec<&str> = inv.iter().map(|i| i.agent).collect();
         agents.sort();
-        assert_eq!(agents, ["antigravity", "claude", "qwen"]);
+        assert_eq!(agents, ["antigravity", "claude", "copilot", "qwen"]);
     }
 
     #[tokio::test]
@@ -2111,6 +3512,10 @@ pub(in crate::server) mod tests {
             &ubuntu_home.join(".qwen").join("settings.json"),
             r#"{"mcpServers":{"in-distro":{"command":"ghost"}}}"#,
         );
+        write(
+            &ubuntu_home.join(".copilot").join("mcp-config.json"),
+            r#"{"mcpServers":{"in-distro-copilot":{"command":"ghost"}}}"#,
+        );
         // A project of Windows holds a server too; the distro never reads it.
         write(
             &project.join(".mcp.json"),
@@ -2123,11 +3528,26 @@ pub(in crate::server) mod tests {
             .iter()
             .filter(|i| i.distro.as_deref() == Some("Ubuntu"))
             .collect();
-        assert_eq!(in_distro.len(), 4, "{:?}", gathered.ext);
+        assert_eq!(in_distro.len(), 5, "{:?}", gathered.ext);
         let qwen = in_distro.iter().find(|i| i.agent == "qwen").unwrap();
         assert_eq!(qwen.servers.len(), 1);
         assert_eq!(
             qwen.servers[0].transport,
+            Transport::Stdio {
+                command: "ghost".into(),
+                state: CommandState::NotChecked
+            }
+        );
+        // Copilot CLI's distro inventory is the distro's own `~/.copilot`, at user level, with no command checked.
+        let copilot = in_distro.iter().find(|i| i.agent == "copilot").unwrap();
+        let mut names: Vec<&str> = copilot.servers.iter().map(|s| s.name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, ["github-mcp-server", "in-distro-copilot"]);
+        let own = copilot.servers.iter().find(|s| s.name == "in-distro-copilot").unwrap();
+        assert_eq!(own.origin, Origin::User);
+        assert_eq!(own.file, ubuntu_home.join(".copilot").join("mcp-config.json"));
+        assert_eq!(
+            own.transport,
             Transport::Stdio {
                 command: "ghost".into(),
                 state: CommandState::NotChecked
@@ -2150,5 +3570,322 @@ pub(in crate::server) mod tests {
             "{:?}",
             gathered.ext
         );
+    }
+
+    /// The ids of the Broken Copilot server items in the report.
+    fn copilot_broken_ids(report: &DoctorReport) -> Vec<String> {
+        report
+            .items
+            .iter()
+            .filter(|i| i.group == DoctorGroup::Broken && i.id.starts_with("mcp.copilot."))
+            .map(|i| i.id.clone())
+            .collect()
+    }
+
+    fn apply_plan(plan: &DoctorFixPlan) -> ApplyRequest {
+        ApplyRequest {
+            changeset_id: plan.preview.changeset_id.clone(),
+            expected_hashes: plan
+                .preview
+                .files
+                .iter()
+                .map(|f| ExpectedHash {
+                    path: f.path.clone(),
+                    hash: f.before_hash.clone(),
+                })
+                .collect(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_broken_copilot_server_is_turned_off_in_a_settings_file_that_keeps_its_other_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, ext) = ext_state(dir.path());
+        let mcp = ext.join(".copilot").join("mcp-config.json");
+        let settings = ext.join(".copilot").join("settings.json");
+        write(
+            &mcp,
+            "// mine\n{\"mcpServers\": {\"ghostly\": {\"command\": \"ghost\"}, \"ghosty\": {\"command\": \"ghost\"}, \"fine\": {\"command\": \"node\"}}}\n",
+        );
+        let original = "\u{feff}{\r\n  // my settings\r\n  \"theme\": \"dark\", // keep\r\n}\r\n";
+        write(&settings, original);
+
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        let report = last_report(&st);
+        let gathered = facts_of(&st);
+        let copilot = gathered
+            .ext
+            .iter()
+            .find(|i| i.agent == "copilot" && i.distro.is_none())
+            .expect("a Copilot inventory");
+        assert_eq!(
+            copilot.servers.iter().filter(|s| s.name != "github-mcp-server").count(),
+            3
+        );
+
+        // Two picked servers are one edit of the list, in the settings file.
+        let ids = copilot_broken_ids(&report);
+        assert_eq!(ids.len(), 2, "{:?}", report.items);
+        assert!(report.items.iter().filter(|i| ids.contains(&i.id)).all(|i| i.fixable));
+        let plan = fix_of(&st, ids.clone()).expect("a plan");
+        assert!(plan.preview.can_apply, "{:?}", plan.preview);
+        assert_eq!(plan.preview.files.len(), 1, "two servers are one edit of the list");
+        assert_eq!(Path::new(&plan.preview.files[0].path), settings);
+        let applied = fix_apply(State(st.clone()), Json(apply_plan(&plan))).await;
+        assert_eq!(applied.status(), StatusCode::OK);
+        wait_idle(&st).await;
+
+        let after = std::fs::read_to_string(&settings).unwrap();
+        assert!(
+            after.starts_with("\u{feff}{\r\n  // my settings\r\n  \"theme\": \"dark\", // keep\r\n"),
+            "{after:?}"
+        );
+        let value = crate::config::jsonc::read_value(&after).unwrap();
+        assert_eq!(value["theme"], "dark");
+        let mut list: Vec<&str> = value["disabledMcpServers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        list.sort();
+        assert_eq!(list, ["ghostly", "ghosty"]);
+        // The server files are never written.
+        assert!(std::fs::read_to_string(&mcp).unwrap().starts_with("// mine\n"));
+
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        assert!(copilot_broken_ids(&last_report(&st)).is_empty());
+
+        let undone = undo(State(st.clone())).await;
+        assert_eq!(undone.status(), StatusCode::OK);
+        wait_idle(&st).await;
+        assert_eq!(std::fs::read(&settings).unwrap(), original.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn a_copilot_settings_file_that_is_missing_is_created_and_undo_removes_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, ext) = ext_state(dir.path());
+        let settings = ext.join(".copilot").join("settings.json");
+        write(
+            &ext.join(".copilot").join("mcp-config.json"),
+            r#"{"mcpServers": {"ghostly": {"command": "ghost"}}}"#,
+        );
+
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        let ids = copilot_broken_ids(&last_report(&st));
+        assert_eq!(ids.len(), 1);
+        let plan = fix_of(&st, ids).expect("a plan");
+        let applied = fix_apply(State(st.clone()), Json(apply_plan(&plan))).await;
+        assert_eq!(applied.status(), StatusCode::OK);
+        wait_idle(&st).await;
+        let value = crate::config::jsonc::read_value(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+        assert_eq!(value["disabledMcpServers"], serde_json::json!(["ghostly"]));
+
+        let undone = undo(State(st.clone())).await;
+        assert_eq!(undone.status(), StatusCode::OK);
+        wait_idle(&st).await;
+        assert!(!settings.exists());
+    }
+
+    #[tokio::test]
+    async fn a_copilot_list_that_is_not_an_array_makes_its_servers_report_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, ext) = ext_state(dir.path());
+        let settings = ext.join(".copilot").join("settings.json");
+        write(
+            &ext.join(".copilot").join("mcp-config.json"),
+            r#"{"mcpServers": {"ghostly": {"command": "ghost"}}}"#,
+        );
+        write(&settings, "{\"disabledMcpServers\": \"ghostly\"}");
+        let before = std::fs::read(&settings).unwrap();
+
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        let report = last_report(&st);
+        let item = report
+            .items
+            .iter()
+            .find(|i| i.id.starts_with("mcp.copilot."))
+            .unwrap_or_else(|| panic!("no item: {:?}", report.items));
+        assert!(!item.fixable);
+        assert_eq!(
+            item.cannot_fix.as_deref(),
+            Some(
+                format!(
+                    "Marshell can't edit {} safely, so it leaves the file alone. Turn the server off in Copilot CLI.",
+                    settings.display()
+                )
+                .as_str()
+            )
+        );
+        assert_eq!(std::fs::read(&settings).unwrap(), before);
+    }
+
+    /// The ids of the Broken Copilot skill items in the report.
+    fn copilot_skill_ids(report: &DoctorReport) -> Vec<String> {
+        report
+            .items
+            .iter()
+            .filter(|i| i.group == DoctorGroup::Broken && i.id.starts_with("skill.copilot."))
+            .map(|i| i.id.clone())
+            .collect()
+    }
+
+    fn copilot_skill(ext: &Path, folder: &str, text: &str) {
+        write(&ext.join(".copilot").join("skills").join(folder).join("SKILL.md"), text);
+    }
+
+    #[tokio::test]
+    async fn a_copilot_skill_over_the_description_limit_is_turned_off_and_one_without_a_description_is_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, ext) = ext_state(dir.path());
+        let settings = ext.join(".copilot").join("settings.json");
+        copilot_skill(
+            &ext,
+            "longdesc",
+            &format!("---\nname: longdesc\ndescription: {}\n---\nbody\n", "d".repeat(1025)),
+        );
+        copilot_skill(&ext, "nodesc", "---\nname: nodesc\n---\nA first line.\n");
+        copilot_skill(
+            &ext,
+            "fine",
+            &format!("---\nname: fine\ndescription: {}\n---\n", "d".repeat(1024)),
+        );
+
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        let report = last_report(&st);
+        let ids = copilot_skill_ids(&report);
+        assert_eq!(ids.len(), 1, "{:?}", report.items);
+        let item = report.items.iter().find(|i| i.id == ids[0]).unwrap();
+        assert_eq!(item.title, "Copilot CLI's skill longdesc doesn't load");
+        assert_eq!(
+            item.detail,
+            "Its description is over 1,024 characters. The fix turns it off and doesn't delete it."
+        );
+        assert!(item.fixable, "{item:?}");
+
+        let plan = fix_of(&st, ids).expect("a plan");
+        assert!(plan.preview.can_apply, "{:?}", plan.preview);
+        assert_eq!(plan.preview.files.len(), 1);
+        assert_eq!(Path::new(&plan.preview.files[0].path), settings);
+        let applied = fix_apply(State(st.clone()), Json(apply_plan(&plan))).await;
+        assert_eq!(applied.status(), StatusCode::OK);
+        wait_idle(&st).await;
+        let value = crate::config::jsonc::read_value(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+        assert_eq!(value["disabledSkills"], serde_json::json!(["longdesc"]));
+        // The skill's own file is never written.
+        assert!(
+            std::fs::read_to_string(ext.join(".copilot").join("skills").join("longdesc").join("SKILL.md"))
+                .unwrap()
+                .starts_with("---\nname: longdesc\n")
+        );
+
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        assert!(copilot_skill_ids(&last_report(&st)).is_empty());
+
+        let undone = undo(State(st.clone())).await;
+        assert_eq!(undone.status(), StatusCode::OK);
+        wait_idle(&st).await;
+        assert!(!settings.exists());
+    }
+
+    #[tokio::test]
+    async fn a_picked_copilot_server_and_a_picked_skill_are_one_edit_per_list_in_one_settings_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, ext) = ext_state(dir.path());
+        let settings = ext.join(".copilot").join("settings.json");
+        write(
+            &ext.join(".copilot").join("mcp-config.json"),
+            r#"{"mcpServers": {"ghostly": {"command": "ghost"}}}"#,
+        );
+        copilot_skill(&ext, "bad", "---\nname: bad\ndescription: d\n---\nbody\n");
+        copilot_skill(&ext, "unclosed", "---\nname: unclosed\ndescription: d\n");
+        let original = "\u{feff}{\r\n  // mine\r\n  \"theme\": \"dark\",\r\n  \"disabledSkills\": [\"old\"],\r\n}\r\n";
+        write(&settings, original);
+
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        let report = last_report(&st);
+        let mut ids = copilot_broken_ids(&report);
+        let skills = copilot_skill_ids(&report);
+        assert_eq!((ids.len(), skills.len()), (1, 1), "{:?}", report.items);
+        ids.extend(skills);
+        let plan = fix_of(&st, ids).expect("a plan");
+        assert!(plan.preview.can_apply, "{:?}", plan.preview);
+        assert_eq!(plan.preview.files.len(), 1, "one settings file");
+        assert_eq!(Path::new(&plan.preview.files[0].path), settings);
+        let applied = fix_apply(State(st.clone()), Json(apply_plan(&plan))).await;
+        assert_eq!(applied.status(), StatusCode::OK);
+        wait_idle(&st).await;
+
+        let after = std::fs::read_to_string(&settings).unwrap();
+        assert!(
+            after.starts_with("\u{feff}{\r\n  // mine\r\n  \"theme\": \"dark\",\r\n"),
+            "{after:?}"
+        );
+        let value = crate::config::jsonc::read_value(&after).unwrap();
+        assert_eq!(value["disabledMcpServers"], serde_json::json!(["ghostly"]));
+        assert_eq!(value["disabledSkills"], serde_json::json!(["old", "unclosed"]));
+
+        let undone = undo(State(st.clone())).await;
+        assert_eq!(undone.status(), StatusCode::OK);
+        wait_idle(&st).await;
+        assert_eq!(std::fs::read(&settings).unwrap(), original.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn a_copilot_skill_list_that_is_not_an_array_makes_its_broken_skills_report_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, ext) = ext_state(dir.path());
+        let settings = ext.join(".copilot").join("settings.json");
+        copilot_skill(&ext, "unclosed", "---\nname: unclosed\ndescription: d\n");
+        write(&settings, "{\"disabledSkills\": \"unclosed\"}");
+        let before = std::fs::read(&settings).unwrap();
+
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        let report = last_report(&st);
+        let ids = copilot_skill_ids(&report);
+        assert_eq!(ids.len(), 1, "{:?}", report.items);
+        let item = report.items.iter().find(|i| i.id == ids[0]).unwrap();
+        assert!(!item.fixable);
+        assert_eq!(
+            item.cannot_fix.as_deref(),
+            Some(
+                format!(
+                    "Marshell can't edit {} safely, so it leaves the file alone. Turn the skill off in Copilot CLI.",
+                    settings.display()
+                )
+                .as_str()
+            )
+        );
+        assert_eq!(std::fs::read(&settings).unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn skills_past_copilots_listing_budget_are_one_report_only_item_with_a_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, ext) = ext_state(dir.path());
+        for i in 0..200 {
+            copilot_skill(
+                &ext,
+                &format!("skill{i:03}"),
+                &format!("---\nname: skill{i:03}\ndescription: {}\n---\n", "d".repeat(15)),
+            );
+        }
+
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        let report = last_report(&st);
+        let item = report
+            .items
+            .iter()
+            .find(|i| i.id == "skilllisting.copilot")
+            .unwrap_or_else(|| panic!("no listing item: {:?}", report.items));
+        assert_eq!(item.group, DoctorGroup::Waste);
+        assert_eq!(item.title, "Copilot CLI lists 69 skills by name only");
+        assert!(!item.fixable);
+        assert_eq!(
+            item.cannot_fix.as_deref(),
+            Some("Shorten the longest descriptions, or turn off skills you don't use.")
+        );
+        assert!(copilot_skill_ids(&report).is_empty());
     }
 }

@@ -8,7 +8,7 @@ use marshell_protocol::doctor::{DoctorGroup, DoctorItem};
 use super::checks::display_name;
 use crate::config::hash::hash_bytes;
 
-const ORDER: [&str; 4] = ["claude", "codex", "antigravity", "qwen"];
+const ORDER: [&str; 5] = ["claude", "codex", "antigravity", "qwen", "copilot"];
 const FIX_NOTE: &str = " The fix turns it off and doesn't delete it.";
 
 /// Where the CLI's files are, as the server resolved them. A reader never reads the environment.
@@ -31,6 +31,12 @@ pub struct ExtRoots {
     pub qwen_runtime: PathBuf,
     /// `<home>/.gemini`.
     pub gemini_dir: PathBuf,
+    /// COPILOT_HOME or `<home>/.copilot`.
+    pub copilot_dir: PathBuf,
+    /// COPILOT_HOME is set and not blank (Copilot CLI then skips `~/.agents/skills`).
+    pub copilot_home_set: bool,
+    /// COPILOT_OFFLINE is `true`: Copilot CLI loads no built-in server.
+    pub copilot_offline: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +45,8 @@ pub enum Origin {
     Project(PathBuf),
     Plugin(String),
     Bundled,
+    /// Comes with the CLI, and is judged and switched like the person's own (Copilot CLI's GitHub server).
+    BuiltIn,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,6 +130,8 @@ pub enum Expand {
     Braces,
     /// `$VAR`, `${VAR}`
     Dollar,
+    /// `$VAR`, `${VAR}`, `${VAR:-default}`
+    DollarDefault,
 }
 
 /// Why a server isn't started by "Measure MCP servers".
@@ -246,6 +256,8 @@ pub enum SkillState {
     NoBlock,
     Missing(&'static str),
     BadName,
+    /// A field over the CLI's limit: (field, limit in characters). The CLI refuses the skill (Copilot CLI).
+    TooLong(&'static str, usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -280,6 +292,9 @@ pub fn created_ms(skill_file: &Path) -> Option<u64> {
 pub struct Caps {
     pub per_skill: Option<usize>,
     pub listing_first_line_over: Option<usize>,
+    /// The CLI describes skills in full up to this many characters of listing and only names the rest (Copilot CLI).
+    /// The reader sets `name_only` on the skills past it.
+    pub listing_named_over: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -432,6 +447,19 @@ fn build(inv: &[Inventory], sig: &Signals) -> Vec<(DoctorItem, Option<Switch>)> 
     out
 }
 
+/// `1024` as `1,024`.
+fn thousands(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
 pub(crate) fn tokens(chars: usize) -> usize {
     chars.div_ceil(4)
 }
@@ -480,6 +508,7 @@ fn inventory_items(inv: &Inventory, out: &mut Vec<(DoctorItem, Option<Switch>)>)
         path: path.map(|p| p.display().to_string()),
         open_agents: false,
         unchecked: false,
+        action: None,
     };
 
     // 1. Files that don't parse.
@@ -550,6 +579,7 @@ fn inventory_items(inv: &Inventory, out: &mut Vec<(DoctorItem, Option<Switch>)>)
             SkillState::NoBlock => "Its SKILL.md doesn't start with a --- block that closes.".to_string(),
             SkillState::Missing(field) => format!("Its SKILL.md has no {field}."),
             SkillState::BadName => format!("Its name has characters {cli} refuses."),
+            SkillState::TooLong(field, limit) => format!("Its {field} is over {} characters.", thousands(*limit)),
         };
         let mut item = mk(
             format!("skill.{}.{}{suffix}", inv.agent, item_key(&s.file, &s.origin, &s.name)),
@@ -614,6 +644,33 @@ fn inventory_items(inv: &Inventory, out: &mut Vec<(DoctorItem, Option<Switch>)>)
         );
         item.cannot_fix = Some("Shorten the longest descriptions, or turn off skills you don't use.".into());
         out.push((item, None));
+    }
+    if let Some(cap) = inv.caps.listing_named_over {
+        let named = listed
+            .iter()
+            .filter(|s| s.name_only && s.origin != Origin::Bundled)
+            .count();
+        if named > 0 {
+            let mut item = mk(
+                format!("skilllisting.{}{suffix}", inv.agent),
+                DoctorGroup::Waste,
+                format!(
+                    "{cli}{place} lists {} by name only",
+                    if named == 1 {
+                        "1 skill".to_string()
+                    } else {
+                        format!("{named} skills")
+                    }
+                ),
+                format!(
+                    "Its skill listing is over the {} characters it describes in full, so the skills past that get no description.",
+                    thousands(cap)
+                ),
+                None,
+            );
+            item.cannot_fix = Some("Shorten the longest descriptions, or turn off skills you don't use.".into());
+            out.push((item, None));
+        }
     }
     if !listed.is_empty() {
         let counted = |s: &Skill| -> usize {
@@ -1080,6 +1137,117 @@ mod tests {
     }
 
     #[test]
+    fn a_skill_over_a_limit_is_broken_and_fixable_through_its_switch() {
+        let mut i = inv("copilot");
+        let add = |name: &str| {
+            Ok(Switch::JsonAdd {
+                file: PathBuf::from("C:/h/.copilot/settings.json"),
+                pointer: "/disabledSkills".into(),
+                name: name.into(),
+            })
+        };
+        let mut a = skill("a", 1);
+        a.state = SkillState::TooLong("name", 64);
+        a.switch = add("a");
+        let mut b = skill("b", 1);
+        b.state = SkillState::TooLong("description", 1024);
+        b.switch = add("b");
+        let mut c = skill("c", 1);
+        c.state = SkillState::TooLong("description", 1024);
+        c.switch = Err(NoSwitch::SameName);
+        i.skills = vec![c, b, a];
+
+        let items = items(&[i], &Signals::default());
+        let broken = with_prefix(&items, "skill.copilot.");
+        assert_eq!(broken.len(), 3);
+        assert!(broken.iter().all(|it| it.group == DoctorGroup::Broken));
+        assert_eq!(broken[0].title, "Copilot CLI's skill a doesn't load");
+        assert_eq!(
+            broken[0].detail,
+            "Its name is over 64 characters. The fix turns it off and doesn't delete it."
+        );
+        assert!(broken[0].fixable);
+        assert_eq!(
+            broken[1].detail,
+            "Its description is over 1,024 characters. The fix turns it off and doesn't delete it."
+        );
+        assert!(!broken[2].fixable);
+        assert_eq!(broken[2].detail, "Its description is over 1,024 characters.");
+        assert_eq!(
+            broken[2].cannot_fix.as_deref(),
+            Some("Copilot CLI turns skills off by name, and another skill named c is in use.")
+        );
+        // A skill Copilot refuses isn't listed, so it isn't in the cost.
+        assert!(with_prefix(&items, "skillcost.").is_empty());
+    }
+
+    #[test]
+    fn skills_listed_by_name_only_are_one_waste_item_with_the_count() {
+        let named = |n: usize| {
+            let mut i = inv("copilot");
+            i.caps.listing_named_over = Some(15_000);
+            for k in 0..n {
+                let mut s = skill(&format!("s{k}"), 15);
+                s.name_only = true;
+                i.skills.push(s);
+            }
+            i.skills.push(skill("described", 15));
+            // None of these counts: off, hidden, not loading and bundled skills.
+            let mut off = skill("off", 15);
+            off.name_only = true;
+            off.off = true;
+            let mut hidden = skill("hidden", 15);
+            hidden.name_only = true;
+            hidden.hidden = true;
+            let mut bad = skill("bad", 15);
+            bad.name_only = true;
+            bad.state = SkillState::NoBlock;
+            let mut bundled = skill("bundled", 15);
+            bundled.name_only = true;
+            bundled.origin = Origin::Bundled;
+            i.skills.extend([off, hidden, bad, bundled]);
+            i
+        };
+
+        let items_of = |i: Inventory| super::items(&[i], &Signals::default());
+        let all = items_of(named(69));
+        let l = with_prefix(&all, "skilllisting.");
+        assert_eq!(l.len(), 1);
+        assert_eq!(l[0].id, "skilllisting.copilot");
+        assert_eq!(l[0].group, DoctorGroup::Waste);
+        assert!(!l[0].fixable);
+        assert_eq!(l[0].title, "Copilot CLI lists 69 skills by name only");
+        assert_eq!(
+            l[0].detail,
+            "Its skill listing is over the 15,000 characters it describes in full, so the skills past that get no description."
+        );
+        assert_eq!(
+            l[0].cannot_fix.as_deref(),
+            Some("Shorten the longest descriptions, or turn off skills you don't use.")
+        );
+        assert_eq!(l[0].path, None);
+        assert_eq!(l[0].agent.as_deref(), Some("copilot"));
+
+        let one = items_of(named(1));
+        assert_eq!(
+            with_prefix(&one, "skilllisting.")[0].title,
+            "Copilot CLI lists 1 skill by name only"
+        );
+        // None named, or no cap: no item. A distro's item keeps the id and sets the distro.
+        assert!(with_prefix(&items_of(named(0)), "skilllisting.").is_empty());
+        let mut no_cap = named(3);
+        no_cap.caps.listing_named_over = None;
+        assert!(with_prefix(&items_of(no_cap), "skilllisting.").is_empty());
+        let mut wsl = named(2);
+        wsl.distro = Some("Ubuntu".into());
+        let wsl = items_of(wsl);
+        let l = with_prefix(&wsl, "skilllisting.");
+        assert_eq!(l[0].id, "skilllisting.copilot@Ubuntu");
+        assert_eq!(l[0].distro.as_deref(), Some("Ubuntu"));
+        assert_eq!(l[0].title, "Copilot CLI in Ubuntu lists 2 skills by name only");
+    }
+
+    #[test]
     fn cost_line() {
         let mut i = inv("claude");
         i.skills.push(skill("a", 7));
@@ -1200,6 +1368,27 @@ mod tests {
                 "Claude Code's skills add about 2 tokens to each session",
                 "Qwen Code's q can't be read",
                 "Claude Code's w in Debian can't be read",
+            ]
+        );
+    }
+
+    #[test]
+    fn copilot_comes_after_qwen_and_a_built_in_server_is_judged_like_the_persons_own() {
+        let mut copilot = inv("copilot");
+        let mut gh = server("github-mcp-server", "f", missing("zz"), Err(NoSwitch::SameName));
+        gh.origin = Origin::BuiltIn;
+        copilot.servers.push(gh);
+        let mut qwen = inv("qwen");
+        qwen.unreadable.push((PathBuf::from("q"), "Bad.".into()));
+        let titles: Vec<String> = items(&[copilot, qwen], &Signals::default())
+            .into_iter()
+            .map(|i| i.title)
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                "Qwen Code's q can't be read",
+                "Copilot CLI's MCP server github-mcp-server can't start"
             ]
         );
     }

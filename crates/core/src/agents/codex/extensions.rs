@@ -34,6 +34,7 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
         caps: Caps {
             per_skill: Some(DESCRIPTION_CAP),
             listing_first_line_over: None,
+            listing_named_over: None,
         },
         servers: Vec::new(),
         skills: Vec::new(),
@@ -516,7 +517,7 @@ fn skill_of(
     let description = meta.description.as_deref().unwrap_or("");
     let off = turned_off(rules, &file, &name);
     let switch = match &origin {
-        Origin::User | Origin::Project(_) => Ok(Switch::CodexSkill {
+        Origin::User | Origin::Project(_) | Origin::BuiltIn => Ok(Switch::CodexSkill {
             file: config.to_path_buf(),
             skill: file.clone(),
         }),
@@ -574,6 +575,9 @@ mod tests {
             claude_tool_search: None,
             qwen_runtime: root.join(".qwen"),
             gemini_dir: root.join(".gemini"),
+            copilot_dir: root.join(".copilot"),
+            copilot_home_set: false,
+            copilot_offline: false,
         };
         (root, roots)
     }

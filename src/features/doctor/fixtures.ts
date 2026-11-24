@@ -77,6 +77,17 @@ export const DOCTOR_CLI: DoctorReport = {
     { id: "cli.codex.sandbox.helpers", agent: "codex", group: "broken", title: "Codex's doctor: Sandbox helpers are missing", detail: "Check sandbox.helpers, found by codex doctor. Marshell reports it and doesn't change it.", fixable: false, cannot_fix: "Reinstall Codex to restore the sandbox helpers.", open_agents: false },
     { id: "cli.claude.5f1c2a9e", agent: "claude", group: "info", title: "Claude Code's doctor: Multiple installations found", detail: "Found by claude doctor. Marshell reports it and doesn't change it.", fixable: false, cannot_fix: "Fix: Remove the npm installation with npm uninstall -g @anthropic-ai/claude-code", open_agents: false },
     { id: "cli.qwen", agent: "qwen", group: "info", title: "Qwen Code has no doctor command.", detail: "Marshell's own checks still cover its hooks and settings.", fixable: false, open_agents: false },
+    { id: "cli.copilot", agent: "copilot", group: "info", title: "Copilot CLI has no doctor command.", detail: "Marshell's own checks still cover its hooks and settings.", fixable: false, open_agents: false },
+  ],
+};
+
+/** The two rows that carry a button: a Copilot hooks file that isn't Marshell's any more, and one the person kept. */
+export const DOCTOR_KEEP: DoctorReport = {
+  checked_at_ms: NOW - 12_000,
+  duration_ms: 1_100,
+  items: [
+    { id: "hooksfile.copilot", agent: "copilot", group: "broken", title: "C:\\Users\\you\\.copilot\\hooks\\marshell.json isn't Marshell's file any more", detail: "Marshell set Copilot CLI's hooks up in it, and it now holds something Marshell didn't write. Keep it as it is, or pick the fix to replace it with Marshell's hooks.", fixable: true, unchecked: true, open_agents: false, action: "keep" },
+    { id: "hookskept.copilot", agent: "copilot", group: "info", title: "Copilot CLI's hooks file has your changes", detail: "You kept C:\\Users\\you\\.copilot\\hooks\\marshell.json as it is. Marshell changes only its own hooks in it.", fixable: false, open_agents: false, action: "stopKeeping" },
   ],
 };
 

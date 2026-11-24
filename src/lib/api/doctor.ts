@@ -2,6 +2,7 @@ import type { ApplyRequest } from "../../generated/ApplyRequest";
 import type { ApplyResult } from "../../generated/ApplyResult";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { DoctorFixPlan } from "../../generated/DoctorFixPlan";
+import type { DoctorKeepRequest } from "../../generated/DoctorKeepRequest";
 import type { DoctorLastFix } from "../../generated/DoctorLastFix";
 import type { DoctorReport } from "../../generated/DoctorReport";
 import type { DoctorSummary } from "../../generated/DoctorSummary";
@@ -11,6 +12,9 @@ import { api, ApiError } from "./client";
 
 /** Starts a check. The answer is the summary at that moment; the finished one arrives as a `doctor` frame. */
 export const runDoctor = (ep: Endpoint) => api<DoctorSummary>(ep, "POST", "/v1/doctor/run");
+
+/** Presses a row's Keep my file (`keep` true) or Stop keeping (false); the core then asks for a new run. A 422 says the item can't be changed any more. */
+export const keepDoctorItem = (ep: Endpoint, id: string, keep: boolean) => api<DoctorSummary>(ep, "POST", "/v1/doctor/keep", { id, keep } satisfies DoctorKeepRequest);
 
 /** Starts the CLI doctors (`claude doctor`, `codex doctor`); a click while they run joins that run. The finished one arrives as a `doctor` frame. */
 export const runCliDoctors = (ep: Endpoint) => api<DoctorSummary>(ep, "POST", "/v1/doctor/cli");

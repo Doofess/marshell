@@ -3,15 +3,15 @@
 use std::path::PathBuf;
 
 use marshell_protocol::agents::{HookInstall, HookTrust};
-use marshell_protocol::doctor::{DoctorGroup, DoctorItem};
+use marshell_protocol::doctor::{DoctorAction, DoctorGroup, DoctorItem};
 
 /// What the retention item says about the other CLIs.
 pub const RETENTION_OTHERS: &str =
-    "Codex and Qwen Code have no setting that deletes chats by age, and Antigravity documents none.";
+    "Codex, Qwen Code and Copilot CLI have no setting that deletes chats by age, and Antigravity documents none.";
 
-const READ_ONLY: &str = "The file is read-only.";
+pub(crate) const READ_ONLY: &str = "The file is read-only.";
 const CANNOT_TRUST: &str = "Marshell can't trust hooks for you. Open /hooks in Codex and trust them.";
-const ORDER: [&str; 4] = ["claude", "codex", "antigravity", "qwen"];
+const ORDER: [&str; 5] = ["claude", "codex", "antigravity", "qwen", "copilot"];
 
 /// The state of the file a CLI's hooks live in.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,7 +19,17 @@ pub enum FileState {
     Ok,
     Missing,
     ReadOnly,
-    Unparsable { line: u32, message: String },
+    Unparsable {
+        line: u32,
+        message: String,
+    },
+    /// Copilot CLI: the hooks file holds something Marshell didn't write, or can't be read as text. `cannot_fix` says
+    /// why the fix (which replaces the file) isn't offered; `None` offers it. `keepable`: the file is text that parses
+    /// to an object, so the person can keep it as it is.
+    NotOurs {
+        cannot_fix: Option<&'static str>,
+        keepable: bool,
+    },
 }
 
 /// What a CLI notifies by itself outside the terminal, besides Marshell. A bell or an OSC 9 inside the terminal isn't
@@ -34,12 +44,18 @@ pub struct NotifyFacts {
     /// The `command` of every hook under `hooks.Notification` that `agents::common::is_ours` doesn't claim
     /// (Claude Code, Codex and Qwen Code), in file order.
     pub hook_commands: Vec<String>,
+    /// Copilot CLI (Windows): its own `notifications` setting is `true` in `settings`. Always false in a distro.
+    pub toasts: bool,
+    /// Copilot CLI: its `settings.json`.
+    pub settings: PathBuf,
+    /// Copilot CLI: `settings` is read-only.
+    pub settings_read_only: bool,
 }
 
 /// Everything the checks need to know about one CLI, on Windows or in one WSL distro.
 #[derive(Debug, Clone)]
 pub struct AgentFacts {
-    /// "claude" | "codex" | "antigravity" | "qwen"
+    /// "claude" | "codex" | "antigravity" | "qwen" | "copilot"
     pub agent: &'static str,
     pub distro: Option<String>,
     /// The CLI is on this machine (always true for a distro's facts).
@@ -47,6 +63,8 @@ pub struct AgentFacts {
     /// The file its hooks live in.
     pub path: PathBuf,
     pub file: FileState,
+    /// The file `file` speaks of when it isn't `path` (Copilot CLI's `settings.json`).
+    pub problem_path: Option<PathBuf>,
     pub hooks: HookInstall,
     pub approve_installed: bool,
     pub has_own_statusline: bool,
@@ -55,6 +73,8 @@ pub struct AgentFacts {
     pub trust: Option<HookTrust>,
     /// managed.json names hooks Marshell wrote in `path`.
     pub set_up: bool,
+    /// Copilot CLI: the person kept the hooks file as it is, and it still holds what they kept.
+    pub kept: bool,
     /// The bridge program the hooks run.
     pub bridge: PathBuf,
     /// The file at `bridge` is there. Orphaned hooks with it in place run another program (Codex and Antigravity
@@ -79,6 +99,7 @@ pub fn display_name(agent: &str) -> &'static str {
         "codex" => "Codex",
         "antigravity" => "Antigravity",
         "qwen" => "Qwen Code",
+        "copilot" => "Copilot CLI",
         _ => "This CLI",
     }
 }
@@ -113,6 +134,7 @@ pub fn items(facts: &[AgentFacts], stopped: &[String], banners_on: bool) -> Vec<
             path: None,
             open_agents: false,
             unchecked: false,
+            action: None,
         });
     }
     out
@@ -136,6 +158,7 @@ fn cli_items(f: &AgentFacts, banners_on: bool, out: &mut Vec<DoctorItem>) {
         path: None,
         open_agents: false,
         unchecked: false,
+        action: None,
     };
 
     if let Some(err) = &f.error {
@@ -149,10 +172,56 @@ fn cli_items(f: &AgentFacts, banners_on: bool, out: &mut Vec<DoctorItem>) {
         return;
     }
 
+    if let FileState::NotOurs { cannot_fix, keepable } = &f.file {
+        if f.set_up {
+            let mut detail =
+                format!("Marshell set {cli}'s hooks up in it, and it now holds something Marshell didn't write.");
+            match (cannot_fix.is_none(), *keepable) {
+                (true, true) => detail.push_str(" Keep it as it is, or pick the fix to replace it with Marshell's hooks."),
+                (false, true) => detail.push_str(" You can keep it as it is."),
+                (true, false) => detail.push_str(
+                    " The fix replaces the file with Marshell's hooks. Hooks of your own go in another .json file in that folder.",
+                ),
+                (false, false) => {}
+            }
+            let mut i = mk(
+                "hooksfile",
+                DoctorGroup::Broken,
+                cannot_fix.is_none(),
+                format!("{path} isn't Marshell's file any more"),
+                detail,
+            );
+            i.cannot_fix = cannot_fix.map(str::to_string);
+            // The fix overwrites what a person wrote, so the person picks it.
+            i.unchecked = cannot_fix.is_none();
+            i.path = Some(path.clone());
+            if *keepable && f.agent == "copilot" {
+                i.action = Some(DoctorAction::Keep);
+            }
+            out.push(i);
+        } else if f.distro.is_none() && f.found {
+            let mut i = mk(
+                "setup",
+                DoctorGroup::Info,
+                false,
+                format!("Hooks aren't set up for {cli}."),
+                "Agents sets them up, with a preview first.".into(),
+            );
+            i.open_agents = true;
+            out.push(i);
+        }
+        return;
+    }
+
     let unparsable = matches!(f.file, FileState::Unparsable { .. });
     let mut found = Vec::new();
 
     if let FileState::Unparsable { line, message } = &f.file {
+        let path = f
+            .problem_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| path.clone());
         let mut i = mk(
             "parse",
             DoctorGroup::Broken,
@@ -165,6 +234,18 @@ fn cli_items(f: &AgentFacts, banners_on: bool, out: &mut Vec<DoctorItem>) {
         i.path = Some(path.clone());
         found.push(i);
     } else {
+        if f.kept && f.agent == "copilot" {
+            let mut i = mk(
+                "hookskept",
+                DoctorGroup::Info,
+                false,
+                format!("{cli}'s hooks file has your changes"),
+                format!("You kept {path} as it is. Marshell changes only its own hooks in it."),
+            );
+            i.path = Some(path.clone());
+            i.action = Some(DoctorAction::StopKeeping);
+            found.push(i);
+        }
         let hooks = match f.hooks {
             HookInstall::None if f.set_up => Some((
                 format!("{cli}'s hooks{place} are gone"),
@@ -197,6 +278,12 @@ fn cli_items(f: &AgentFacts, banners_on: bool, out: &mut Vec<DoctorItem>) {
         if let Some((title, detail)) = hooks {
             let mut i = mk("hooks", DoctorGroup::Broken, true, title, detail);
             i.path = Some(path.clone());
+            if f.kept && f.agent == "copilot" {
+                // The person's part of the file stays; only Marshell's entries are put back.
+                i.detail
+                    .push_str(" The fix puts back only Marshell's hooks and leaves the rest of the file as it is.");
+                i.unchecked = true;
+            }
             found.push(i);
         }
         if f.agent == "codex" && f.hooks != HookInstall::None {
@@ -290,6 +377,24 @@ fn cli_items(f: &AgentFacts, banners_on: bool, out: &mut Vec<DoctorItem>) {
             i.cannot_fix = Some("Marshell doesn't change your notify command.".into());
             found.push(i);
         }
+        // Copilot CLI's own `notifications` setting, once Marshell's hooks are set up for it (a kept file included).
+        if f.agent == "copilot" && f.distro.is_none() && n.toasts && f.hooks != HookInstall::None {
+            let settings = n.settings.display().to_string();
+            let mut i = mk(
+                "toasts",
+                DoctorGroup::Broken,
+                !n.settings_read_only,
+                format!("{cli} shows its own notifications"),
+                format!(
+                    "notifications is on in {settings}, so {cli} raises a Windows notification beside Marshell's. The fix turns it off there. Marshell's notifications stay."
+                ),
+            );
+            i.path = Some(settings);
+            if n.settings_read_only {
+                i.cannot_fix = Some(READ_ONLY.into());
+            }
+            found.push(i);
+        }
         if !n.hook_commands.is_empty() {
             let mut i = with_file(mk(
                 "notify",
@@ -304,7 +409,8 @@ fn cli_items(f: &AgentFacts, banners_on: bool, out: &mut Vec<DoctorItem>) {
     }
 
     if f.file == FileState::ReadOnly {
-        for i in found.iter_mut().filter(|i| i.fixable) {
+        // The toast fix writes `settings.json`, whose own read-only state the item already has.
+        for i in found.iter_mut().filter(|i| i.fixable && !i.id.starts_with("toasts.")) {
             i.fixable = false;
             i.cannot_fix = Some(READ_ONLY.into());
         }
@@ -323,12 +429,14 @@ mod tests {
             found: true,
             path: PathBuf::from("C:/h/settings.json"),
             file: FileState::Ok,
+            problem_path: None,
             hooks: HookInstall::Installed,
             approve_installed: false,
             has_own_statusline: false,
             chained: false,
             trust: None,
             set_up: true,
+            kept: false,
             bridge: PathBuf::from("C:/m/bridge.exe"),
             bridge_exists: true,
             version_note: None,
@@ -557,7 +665,7 @@ mod tests {
             DoctorGroup::Info,
             true,
             "Claude Code deletes transcripts after 30 days",
-            "History and resume lose sessions older than that. The fix sets cleanupPeriodDays to 365. Codex and Qwen Code have no setting that deletes chats by age, and Antigravity documents none.",
+            "History and resume lose sessions older than that. The fix sets cleanupPeriodDays to 365. Codex, Qwen Code and Copilot CLI have no setting that deletes chats by age, and Antigravity documents none.",
             None,
         );
         f.retention_unset = Some(false);
@@ -566,7 +674,7 @@ mod tests {
 
     #[test]
     fn retention_is_claude_codes_only() {
-        for agent in ["codex", "antigravity", "qwen"] {
+        for agent in ["codex", "antigravity", "qwen", "copilot"] {
             let mut f = facts(agent);
             f.retention_unset = Some(true);
             assert!(items(&[f], &[], true).is_empty(), "{agent}");
@@ -660,6 +768,7 @@ mod tests {
             f
         };
         let all = [
+            mk("copilot", None),
             mk("qwen", None),
             mk("claude", Some("Ubuntu")),
             mk("antigravity", None),
@@ -678,11 +787,242 @@ mod tests {
                 "hooks.codex",
                 "hooks.antigravity",
                 "hooks.qwen",
+                "hooks.copilot",
                 "hooks.codex@Debian",
                 "hooks.claude@Ubuntu",
                 "wsl.Zed"
             ]
         );
+    }
+
+    #[test]
+    fn copilot_is_named_and_its_hooks_can_be_gone() {
+        assert_eq!(display_name("copilot"), "Copilot CLI");
+        let mut f = facts("copilot");
+        f.hooks = HookInstall::None;
+        let i = one(f);
+        assert_eq!(i.id, "hooks.copilot");
+        assert_eq!(i.title, "Copilot CLI's hooks are gone");
+        assert_eq!(i.group, DoctorGroup::Broken);
+        assert!(i.fixable);
+    }
+
+    #[test]
+    fn a_hooks_file_that_is_not_marshells_is_one_item_a_person_can_pick_to_fix() {
+        for hooks in [HookInstall::None, HookInstall::Installed, HookInstall::Partial] {
+            let mut f = facts("copilot");
+            f.file = FileState::NotOurs {
+                cannot_fix: None,
+                keepable: false,
+            };
+            f.hooks = hooks;
+            f.notify.hook_commands = vec!["x".into()];
+            let i = one(f);
+            check(
+                &i,
+                "hooksfile.copilot",
+                DoctorGroup::Broken,
+                true,
+                "C:/h/settings.json isn't Marshell's file any more",
+                "Marshell set Copilot CLI's hooks up in it, and it now holds something Marshell didn't write. The fix replaces the file with Marshell's hooks. Hooks of your own go in another .json file in that folder.",
+                None,
+            );
+            assert!(
+                i.unchecked,
+                "the fix overwrites what a person wrote, so the person picks it"
+            );
+        }
+    }
+
+    #[test]
+    fn a_hooks_file_that_cannot_be_replaced_is_one_unfixable_item_with_the_reason() {
+        for reason in [
+            "The file is read-only.",
+            "Marshell can't show this file in a preview. Move it away, then run the check again.",
+        ] {
+            let mut f = facts("copilot");
+            f.file = FileState::NotOurs {
+                cannot_fix: Some(reason),
+                keepable: false,
+            };
+            f.notify.hook_commands = vec!["x".into()];
+            let v = items(&[f], &[], true);
+            assert_eq!(v.len(), 1, "{v:?}");
+            check(
+                &v[0],
+                "hooksfile.copilot",
+                DoctorGroup::Broken,
+                false,
+                "C:/h/settings.json isn't Marshell's file any more",
+                "Marshell set Copilot CLI's hooks up in it, and it now holds something Marshell didn't write.",
+                Some(reason),
+            );
+            assert!(!v[0].unchecked);
+        }
+    }
+
+    const NOT_MARSHELLS: &str =
+        "Marshell set Copilot CLI's hooks up in it, and it now holds something Marshell didn't write.";
+
+    #[test]
+    fn a_hooks_file_that_can_be_kept_and_replaced_offers_keep_and_the_fix() {
+        let mut f = facts("copilot");
+        f.file = FileState::NotOurs {
+            cannot_fix: None,
+            keepable: true,
+        };
+        let i = one(f);
+        check(
+            &i,
+            "hooksfile.copilot",
+            DoctorGroup::Broken,
+            true,
+            "C:/h/settings.json isn't Marshell's file any more",
+            &format!("{NOT_MARSHELLS} Keep it as it is, or pick the fix to replace it with Marshell's hooks."),
+            None,
+        );
+        assert!(i.unchecked);
+        assert_eq!(i.action, Some(DoctorAction::Keep));
+        assert_eq!(i.path.as_deref(), Some("C:/h/settings.json"));
+    }
+
+    #[test]
+    fn a_read_only_hooks_file_can_still_be_kept() {
+        let mut f = facts("copilot");
+        f.file = FileState::NotOurs {
+            cannot_fix: Some(READ_ONLY),
+            keepable: true,
+        };
+        let i = one(f);
+        check(
+            &i,
+            "hooksfile.copilot",
+            DoctorGroup::Broken,
+            false,
+            "C:/h/settings.json isn't Marshell's file any more",
+            &format!("{NOT_MARSHELLS} You can keep it as it is."),
+            Some(READ_ONLY),
+        );
+        assert!(!i.unchecked);
+        assert_eq!(i.action, Some(DoctorAction::Keep));
+    }
+
+    #[test]
+    fn a_hooks_file_that_is_not_text_has_no_action() {
+        let reason = "Marshell can't show this file in a preview. Move it away, then run the check again.";
+        let mut f = facts("copilot");
+        f.file = FileState::NotOurs {
+            cannot_fix: Some(reason),
+            keepable: false,
+        };
+        let i = one(f);
+        check(
+            &i,
+            "hooksfile.copilot",
+            DoctorGroup::Broken,
+            false,
+            "C:/h/settings.json isn't Marshell's file any more",
+            NOT_MARSHELLS,
+            Some(reason),
+        );
+        assert_eq!(i.action, None);
+    }
+
+    #[test]
+    fn a_kept_file_with_its_hooks_in_place_is_one_info_row_with_stop_keeping() {
+        let mut f = facts("copilot");
+        f.kept = true;
+        let i = one(f);
+        check(
+            &i,
+            "hookskept.copilot",
+            DoctorGroup::Info,
+            false,
+            "Copilot CLI's hooks file has your changes",
+            "You kept C:/h/settings.json as it is. Marshell changes only its own hooks in it.",
+            None,
+        );
+        assert_eq!(i.action, Some(DoctorAction::StopKeeping));
+        assert_eq!(i.path.as_deref(), Some("C:/h/settings.json"));
+        assert!(!i.unchecked);
+    }
+
+    #[test]
+    fn a_kept_file_with_hooks_missing_has_the_row_and_a_fix_that_touches_only_marshells_entries() {
+        let tail = " The fix puts back only Marshell's hooks and leaves the rest of the file as it is.";
+        for hooks in [HookInstall::Partial, HookInstall::None, HookInstall::Orphaned] {
+            let mut f = facts("copilot");
+            f.kept = true;
+            f.hooks = hooks;
+            let v = items(&[f], &[], true);
+            assert_eq!(
+                v.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
+                ["hookskept.copilot", "hooks.copilot"],
+                "{hooks:?}"
+            );
+            assert_eq!(v[0].action, Some(DoctorAction::StopKeeping));
+            let fix = &v[1];
+            assert!(
+                fix.fixable && fix.unchecked && fix.group == DoctorGroup::Broken,
+                "{fix:?}"
+            );
+            assert!(fix.detail.ends_with(tail), "{}", fix.detail);
+            assert_eq!(fix.action, None);
+        }
+    }
+
+    #[test]
+    fn a_hooks_file_nobody_kept_gets_no_unchecked_fix_sentence() {
+        let mut f = facts("copilot");
+        f.hooks = HookInstall::Partial;
+        let i = one(f);
+        assert!(!i.unchecked);
+        assert!(!i.detail.contains("leaves the rest of the file"), "{}", i.detail);
+    }
+
+    #[test]
+    fn only_copilots_items_ever_have_an_action() {
+        for agent in ["claude", "codex", "antigravity", "qwen"] {
+            let mut f = facts(agent);
+            f.kept = true;
+            f.hooks = HookInstall::Partial;
+            f.file = FileState::NotOurs {
+                cannot_fix: None,
+                keepable: true,
+            };
+            let v = items(&[f.clone()], &["Ubuntu".into()], true);
+            assert!(v.iter().all(|i| i.action.is_none()), "{agent}: {v:?}");
+            f.file = FileState::Ok;
+            let v = items(&[f], &[], true);
+            assert!(v.iter().all(|i| i.action.is_none()), "{agent}: {v:?}");
+        }
+    }
+
+    #[test]
+    fn a_foreign_hooks_file_that_was_never_set_up_is_only_the_setup_row() {
+        let mut f = facts("copilot");
+        f.file = FileState::NotOurs {
+            cannot_fix: None,
+            keepable: true,
+        };
+        f.set_up = false;
+        let i = one(f);
+        assert_eq!(i.id, "setup.copilot");
+        assert_eq!(i.group, DoctorGroup::Info);
+        assert_eq!(i.title, "Hooks aren't set up for Copilot CLI.");
+    }
+
+    #[test]
+    fn an_unparsable_file_names_the_problem_path_when_it_is_set() {
+        let mut f = facts("copilot");
+        f.file = FileState::Unparsable {
+            line: 2,
+            message: "bad".into(),
+        };
+        f.problem_path = Some(PathBuf::from("C:/c/settings.json"));
+        let i = one(f);
+        assert_eq!(i.title, "C:/c/settings.json doesn't parse");
+        assert_eq!(i.path.as_deref(), Some("C:/c/settings.json"));
     }
 
     #[test]
@@ -727,6 +1067,7 @@ mod tests {
             file: PathBuf::from("C:/h/config.toml"),
             command: Some("a.exe x".into()),
             hook_commands: Vec::new(),
+            ..Default::default()
         };
         let v = items(&[f], &[], true);
         assert_eq!(v.len(), 1, "{v:?}");
@@ -754,6 +1095,105 @@ mod tests {
             DoctorGroup::Info,
             false,
             "Claude Code runs your own Notification hook",
+            "It runs toast.exe a; b.sh. If that shows a desktop notification, you get two.",
+            Some("Marshell doesn't change your hooks."),
+        );
+    }
+
+    fn copilot_toasts() -> AgentFacts {
+        let mut f = facts("copilot");
+        f.path = PathBuf::from("C:/c/hooks/marshell.json");
+        f.notify.toasts = true;
+        f.notify.settings = PathBuf::from("C:/c/settings.json");
+        f
+    }
+
+    const TOAST_ID: &str = "toasts.copilot";
+
+    #[test]
+    fn copilots_own_notifications_are_a_broken_item_checked_by_default() {
+        for hooks in [HookInstall::Installed, HookInstall::Partial, HookInstall::Orphaned] {
+            let mut f = copilot_toasts();
+            f.hooks = hooks;
+            let v = items(&[f], &[], true);
+            let i = v
+                .iter()
+                .find(|i| i.id == TOAST_ID)
+                .unwrap_or_else(|| panic!("{hooks:?}: {v:?}"));
+            check(
+                i,
+                TOAST_ID,
+                DoctorGroup::Broken,
+                true,
+                "Copilot CLI shows its own notifications",
+                "notifications is on in C:/c/settings.json, so Copilot CLI raises a Windows notification beside Marshell's. The fix turns it off there. Marshell's notifications stay.",
+                None,
+            );
+            assert!(!i.unchecked);
+            assert_eq!(i.path.as_deref(), Some("C:/c/settings.json"));
+        }
+    }
+
+    #[test]
+    fn a_kept_hooks_file_counts_as_set_up_for_the_toast_item() {
+        let mut f = copilot_toasts();
+        f.kept = true;
+        assert!(items(&[f], &[], true).iter().any(|i| i.id == TOAST_ID));
+    }
+
+    #[test]
+    fn copilots_toast_item_needs_banners_hooks_windows_and_a_readable_file() {
+        let ids =
+            |f: AgentFacts, banners| -> Vec<String> { items(&[f], &[], banners).into_iter().map(|i| i.id).collect() };
+        assert!(!ids(copilot_toasts(), false).contains(&TOAST_ID.to_string()));
+        let mut none = copilot_toasts();
+        none.hooks = HookInstall::None;
+        none.set_up = false;
+        assert!(!ids(none, true).contains(&TOAST_ID.to_string()));
+        let mut distro = copilot_toasts();
+        distro.distro = Some("Ubuntu".into());
+        assert!(!ids(distro, true).iter().any(|i| i.starts_with("toasts.")));
+        let mut bad = copilot_toasts();
+        bad.file = FileState::Unparsable {
+            line: 1,
+            message: "x".into(),
+        };
+        assert!(!ids(bad, true).contains(&TOAST_ID.to_string()));
+        let mut foreign = copilot_toasts();
+        foreign.file = FileState::NotOurs {
+            cannot_fix: None,
+            keepable: true,
+        };
+        assert!(!ids(foreign, true).contains(&TOAST_ID.to_string()));
+        let mut off = copilot_toasts();
+        off.notify.toasts = false;
+        assert!(!ids(off, true).contains(&TOAST_ID.to_string()));
+    }
+
+    #[test]
+    fn a_read_only_settings_file_makes_the_toast_item_unfixable() {
+        let mut f = copilot_toasts();
+        f.notify.settings_read_only = true;
+        let v = items(&[f], &[], true);
+        let i = v.iter().find(|i| i.id == TOAST_ID).expect("the item");
+        assert!(!i.fixable);
+        assert_eq!(i.cannot_fix.as_deref(), Some("The file is read-only."));
+    }
+
+    #[test]
+    fn copilots_notification_hooks_are_info_like_the_others() {
+        let mut f = copilot_toasts();
+        f.notify.toasts = false;
+        f.notify.file = PathBuf::from("C:/c/hooks/mine.json");
+        f.notify.hook_commands = vec!["toast.exe a".into(), "b.sh".into()];
+        let v = items(&[f], &[], true);
+        assert_eq!(v.len(), 1, "{v:?}");
+        check(
+            &v[0],
+            "notify.copilot",
+            DoctorGroup::Info,
+            false,
+            "Copilot CLI runs your own Notification hook",
             "It runs toast.exe a; b.sh. If that shows a desktop notification, you get two.",
             Some("Marshell doesn't change your hooks."),
         );

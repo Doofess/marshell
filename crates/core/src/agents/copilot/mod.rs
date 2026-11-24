@@ -1,9 +1,13 @@
 //! GitHub Copilot CLI (`copilot`): its own hooks file and its status line, planned as config changes.
 
 pub mod exe;
+pub mod extensions;
 pub mod hooks;
+pub mod kept;
+pub mod notify;
 pub mod status;
 pub mod transcript;
+pub mod usage;
 pub mod writes;
 
 use serde_json::{Value, json};

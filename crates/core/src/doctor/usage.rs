@@ -380,6 +380,7 @@ pub(crate) fn items(
         path,
         open_agents: false,
         unchecked: false,
+        action: None,
     };
 
     if let Some(why) = &agent.unreadable {
@@ -489,7 +490,11 @@ pub(crate) fn items(
         let used_in_window = h.last.is_some_and(|l| l >= cutoff);
         if !used_in_window && since.is_some_and(|s| s <= cutoff) {
             let (what, tail) = if kind == "mcp" {
-                ("MCP server", format!("It still starts with every {cli} session."))
+                let mut tail = format!("It still starts with every {cli} session.");
+                if *origin == Origin::BuiltIn {
+                    tail.push_str(&format!(" It comes with {cli}."));
+                }
+                ("MCP server", tail)
             } else {
                 (
                     "skill",
@@ -928,6 +933,56 @@ mod tests {
         assert_eq!(it.title, "Claude Code's MCP server gh wasn't used in 30 days");
         assert!(it.detail.starts_with("It still starts with every Claude Code session."));
         assert!(it.fixable && sw.is_some());
+    }
+
+    #[test]
+    fn an_unused_built_in_server_says_it_comes_with_the_cli() {
+        let mut i = inv("copilot");
+        let mut s = server("github-mcp-server", UsedAs::Server("github-mcp-server".into()));
+        s.origin = Origin::BuiltIn;
+        s.switch = Ok(Switch::JsonAdd {
+            file: PathBuf::from("C:/h/.copilot/settings.json"),
+            pointer: "/disabledMcpServers".into(),
+            name: "github-mcp-server".into(),
+        });
+        i.servers.push(s);
+        let mut store = UsageStore::default();
+        store
+            .agents
+            .insert("copilot".into(), covered().agents.remove("claude").unwrap());
+        store.first_sight.insert(
+            format!(
+                "copilot:{}",
+                item_key(&i.servers[0].file, &i.servers[0].origin, "github-mcp-server")
+            ),
+            NOW - 40 * D,
+        );
+        let out = run(&i, &store, &[]);
+        assert_eq!(out.len(), 1, "{out:?}");
+        assert!(out[0].id.starts_with("mcpunused.copilot."));
+        assert_eq!(out[0].group, DoctorGroup::Waste);
+        assert!(out[0].fixable && out[0].unchecked);
+        assert_eq!(
+            out[0].detail,
+            "It still starts with every Copilot CLI session. It comes with Copilot CLI. The fix turns it off and doesn't delete it."
+        );
+
+        // Used in one project only: the broad-scope verdict is for the person's own servers alone.
+        let used = store
+            .agents
+            .get_mut("copilot")
+            .unwrap()
+            .used
+            .entry("server:github-mcp-server".into())
+            .or_default();
+        used.last_ms = NOW - D;
+        used.places.insert("c:/dev/airport".into(), NOW - D);
+        let projects = [PathBuf::from(r"C:\dev\Airport")];
+        assert!(run(&i, &store, &projects).is_empty());
+        i.servers[0].origin = Origin::User;
+        store.first_sight.clear();
+        let out = run(&i, &store, &projects);
+        assert_eq!(with_prefix(&out, "mcpbroad.").len(), 1, "{out:?}");
     }
 
     #[test]

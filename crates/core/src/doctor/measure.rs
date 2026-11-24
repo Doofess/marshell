@@ -141,6 +141,7 @@ pub(crate) fn items(inv: &Inventory, measured: Option<&Measurements>, out: &mut 
         path,
         open_agents: false,
         unchecked: false,
+        action: None,
     };
 
     if let Some(distro) = &inv.distro {

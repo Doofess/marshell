@@ -14,7 +14,7 @@ use tower::ServiceExt;
 
 const TOKEN: &str = "test-token";
 const PORT: u16 = 5557;
-const AGENTS: [&str; 4] = ["claude", "codex", "antigravity", "qwen"];
+const AGENTS: [&str; 5] = ["claude", "codex", "antigravity", "qwen", "copilot"];
 
 struct Env {
     _dir: tempfile::TempDir,
@@ -31,6 +31,8 @@ struct Env {
     agy_hooks: PathBuf,
     agy_settings: PathBuf,
     qwen: PathBuf,
+    copilot_hooks: PathBuf,
+    copilot_settings: PathBuf,
 }
 
 /// Every CLI is found (at a path that doesn't exist, so nothing runs) and every file lives in the recorded project.
@@ -97,10 +99,17 @@ fn build_on(find: fn(&str) -> Option<PathBuf>, on_start: bool, running: Option<f
             .join("qwen-home")
             .join(".qwen")
             .join("settings.json"),
+        copilot_hooks: copilot_dir(&root).join("hooks").join("marshell.json"),
+        copilot_settings: copilot_dir(&root).join("settings.json"),
         root,
         find,
         running,
     }
+}
+
+/// Copilot CLI's own folder under the state's pinned home.
+fn copilot_dir(root: &Path) -> PathBuf {
+    root.join("copilot-home").join(".copilot")
 }
 
 /// The state over the folders under `root`, which a restart builds again on the same folders.
@@ -139,6 +148,8 @@ fn state_on(
     .with_codex_hooks(codex)
     .with_agy_home(agy_home)
     .with_qwen_home(qwen_home)
+    .with_copilot_home(root.join("copilot-home"))
+    .with_copilot_version(Some("1.0.106".into()))
     // The MCP servers and skills are read under a scratch home, never the developer's.
     .with_ext_home(root.join("ext-home"))
     .with_qwen_system_settings(root.join("qwen-system.json"))
@@ -173,6 +184,7 @@ impl Env {
             "claude" => &self.claude,
             "codex" => &self.codex,
             "antigravity" => &self.agy_hooks,
+            "copilot" => &self.copilot_hooks,
             _ => &self.qwen,
         }
     }
@@ -248,6 +260,21 @@ async fn report(e: &Env) -> Value {
     wait_report(e).await
 }
 
+/// A report from a run that started after this call: `report` can return the one from before.
+async fn fresh_report(e: &Env) -> Value {
+    let before = get(&e.app, "/v1/doctor/report").await.1["checked_at_ms"].as_u64();
+    for _ in 0..200 {
+        // A run asked for while one is going is folded into it, so ask until a newer report shows.
+        post(&e.app, "/v1/doctor/run", json!({})).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let (status, body) = get(&e.app, "/v1/doctor/report").await;
+        if status == StatusCode::OK && body["checked_at_ms"].as_u64() != before {
+            return body;
+        }
+    }
+    panic!("no newer report within 10 s");
+}
+
 async fn wait_report(e: &Env) -> Value {
     for _ in 0..200 {
         let (status, body) = get(&e.app, "/v1/doctor/report").await;
@@ -299,6 +326,11 @@ fn seed_own_hooks(e: &Env, agent: &str) {
         "claude" => write(&e.claude, &own_groups(&claude::hooks::STATUS_EVENTS)),
         "codex" => write(&e.codex, &own_groups(&codex::hooks::STATUS_EVENTS)),
         "qwen" => write(&e.qwen, &own_groups(&qwen::hooks::STATUS_EVENTS)),
+        // `marshell.json` is Marshell's whole file, so the person's own hooks go in a file beside it.
+        "copilot" => write(
+            &e.copilot_hooks.with_file_name("mine.json"),
+            &json!({"version": 1, "hooks": {"sessionStart": [{"type": "command", "bash": "my-hook"}]}}),
+        ),
         // Antigravity keeps Marshell's entries under one named hook; the person's own hooks have other names.
         _ => {
             let mut mine = serde_json::Map::new();
@@ -319,7 +351,13 @@ async fn set_up_follows_each_clis_real_plans() {
         let e = env();
         install(&e, agent).await;
         // Every Marshell entry gone by hand; the managed record still names the file.
-        write(e.hooks_file(agent), &json!({}));
+        if agent == "copilot" {
+            // `{}` is a file Marshell didn't write; its own file is gone.
+            assert!(e.copilot_settings.exists(), "the install wrote the status line");
+            std::fs::remove_file(e.hooks_file(agent)).unwrap();
+        } else {
+            write(e.hooks_file(agent), &json!({}));
+        }
         if agent == "antigravity" {
             write(&e.agy_settings, &json!({}));
         }
@@ -338,7 +376,7 @@ async fn hooks_off_reads_as_never_set_up() {
         seed_own_hooks(&e, agent);
         install(&e, agent).await;
         let entries = marshell_core::config::managed::list(&e.home).unwrap();
-        if agent != "antigravity" {
+        if agent != "antigravity" && agent != "copilot" {
             // The evidence: an event that already had a group is appended to, which the record keeps as `/-`.
             assert!(
                 entries
@@ -348,7 +386,13 @@ async fn hooks_off_reads_as_never_set_up() {
             );
         }
         remove(&e, agent).await;
-        let text = std::fs::read_to_string(e.hooks_file(agent)).unwrap();
+        // Copilot's removal deletes Marshell's own file, and the person's hooks are in the one beside it.
+        let theirs = if agent == "copilot" {
+            e.copilot_hooks.with_file_name("mine.json")
+        } else {
+            e.hooks_file(agent).to_path_buf()
+        };
+        let text = std::fs::read_to_string(theirs).unwrap();
         assert!(text.contains("my-"), "{agent}: the person's hooks stay: {text}");
 
         let r = report(&e).await;
@@ -398,6 +442,7 @@ async fn doctor_routes_refuse_without_the_bearer() {
         ("GET", "/v1/doctor/report"),
         ("POST", "/v1/doctor/fix"),
         ("POST", "/v1/doctor/fix/apply"),
+        ("POST", "/v1/doctor/keep"),
         ("GET", "/v1/doctor/undo"),
         ("POST", "/v1/doctor/undo"),
     ] {
@@ -1123,4 +1168,202 @@ async fn a_finished_run_reaches_the_events_socket() {
     .await
     .expect("no finished doctor frame within 10 s");
     assert_eq!(finished["data"]["running"], false, "{finished}");
+}
+
+// "Keep my file" and "Stop keeping" for Copilot CLI's hooks file (slice 6n3, decision 20).
+
+fn persons_entry() -> Value {
+    json!({"type": "command", "bash": "echo mine"})
+}
+
+fn read_json(path: &Path) -> Value {
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+/// Puts the person's own entry at the head of Marshell's `preToolUse` list.
+fn add_persons_entry(path: &Path) {
+    let mut file = read_json(path);
+    file["hooks"]["preToolUse"]
+        .as_array_mut()
+        .unwrap()
+        .insert(0, persons_entry());
+    write(path, &file);
+}
+
+fn set_persons_bash(path: &Path, bash: &str) {
+    let mut file = read_json(path);
+    file["hooks"]["preToolUse"][0]["bash"] = json!(bash);
+    write(path, &file);
+}
+
+/// How many entries of Marshell's (tagged `mshl1`) the hooks file holds.
+fn ours_in(file: &Value) -> usize {
+    file["hooks"]
+        .as_object()
+        .unwrap()
+        .values()
+        .flat_map(|entries| entries.as_array().unwrap())
+        .filter(|entry| entry.to_string().contains("mshl1"))
+        .count()
+}
+
+/// Waits for a report that has the item (or lacks it): the run a button press asks for ends after it.
+async fn wait_for_item(app: &axum::Router, id: &str, present: bool) -> Value {
+    for _ in 0..200 {
+        let (status, body) = get(app, "/v1/doctor/report").await;
+        if status == StatusCode::OK && item(&body, id).is_some() == present {
+            return body;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!(
+        "no report with {id} {} within 10 s",
+        if present { "present" } else { "gone" }
+    );
+}
+
+async fn press(app: &axum::Router, id: &str, keep: bool) -> StatusCode {
+    post(app, "/v1/doctor/keep", json!({"id": id, "keep": keep})).await.0
+}
+
+#[tokio::test]
+async fn keep_my_file_over_http_writes_only_the_record_and_the_agents_page_then_works_on_entries() {
+    let e = env();
+    install(&e, "copilot").await;
+    add_persons_entry(&e.copilot_hooks);
+    let r = report(&e).await;
+    assert_eq!(
+        item(&r, "hooksfile.copilot").expect("the item")["action"],
+        "keep",
+        "{:?}",
+        ids(&r)
+    );
+
+    // Nothing but the record is written.
+    let (hooks_before, settings_before) = (
+        std::fs::read(&e.copilot_hooks).unwrap(),
+        std::fs::read(&e.copilot_settings).unwrap(),
+    );
+    assert_eq!(press(&e.app, "hooksfile.copilot", true).await, StatusCode::ACCEPTED);
+    let r = wait_for_item(&e.app, "hookskept.copilot", true).await;
+    assert_eq!(item(&r, "hookskept.copilot").unwrap()["action"], "stopKeeping");
+    assert!(item(&r, "hooksfile.copilot").is_none() && item(&r, "hooks.copilot").is_none());
+    assert_eq!(std::fs::read(&e.copilot_hooks).unwrap(), hooks_before);
+    assert_eq!(std::fs::read(&e.copilot_settings).unwrap(), settings_before);
+    assert!(
+        marshell_core::agents::copilot::kept::record_path(&e.home).exists(),
+        "the record is in Marshell's folder"
+    );
+
+    // Set up puts one missing entry of Marshell's back and keeps the person's.
+    let mut file = read_json(&e.copilot_hooks);
+    file["hooks"]
+        .as_object_mut()
+        .unwrap()
+        .shift_remove("sessionStart")
+        .expect("an entry to lose");
+    write(&e.copilot_hooks, &file);
+    let ours = ours_in(&file);
+    let (status, preview) = post(&e.app, "/v1/agents/copilot/hooks/plan", WANT()).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["can_apply"], true, "{preview}");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    let file = read_json(&e.copilot_hooks);
+    assert_eq!(file["hooks"]["preToolUse"][0], persons_entry());
+    assert_eq!(ours_in(&file), ours + 1);
+
+    // Turn off takes Marshell's entries out and leaves the file and the person's entry.
+    remove(&e, "copilot").await;
+    let file = read_json(&e.copilot_hooks);
+    assert_eq!(ours_in(&file), 0);
+    assert_eq!(file["hooks"]["preToolUse"][0], persons_entry());
+    // The file is the person's alone now: the Doctor doesn't call the hooks it just took out "gone".
+    let r = fresh_report(&e).await;
+    let managed = std::fs::read_to_string(e.home.join("managed.json")).unwrap();
+    assert!(!managed.contains("marshell.json"), "{managed}");
+    assert!(item(&r, "hooks.copilot").is_none(), "{:?}", ids(&r));
+    assert!(item(&r, "hooksfile.copilot").is_none(), "{:?}", ids(&r));
+
+    // A person's entry that changed: the file isn't kept any more, so the Agents page refuses it again.
+    set_persons_bash(&e.copilot_hooks, "echo other");
+    let (status, _) = post(&e.app, "/v1/agents/copilot/hooks/plan", WANT()).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn turning_off_a_kept_file_that_already_lost_marshells_entries_still_hands_it_back() {
+    let e = env();
+    install(&e, "copilot").await;
+    add_persons_entry(&e.copilot_hooks);
+    report(&e).await;
+    assert_eq!(press(&e.app, "hooksfile.copilot", true).await, StatusCode::ACCEPTED);
+    wait_for_item(&e.app, "hookskept.copilot", true).await;
+
+    // The person takes Marshell's entries out by hand, so Turn off has nothing to change in the hooks file.
+    let mut file = read_json(&e.copilot_hooks);
+    for (_, entries) in file["hooks"].as_object_mut().unwrap() {
+        entries
+            .as_array_mut()
+            .unwrap()
+            .retain(|entry| *entry == persons_entry());
+    }
+    write(&e.copilot_hooks, &file);
+    let hooks_before = std::fs::read(&e.copilot_hooks).unwrap();
+
+    remove(&e, "copilot").await;
+    assert_eq!(std::fs::read(&e.copilot_hooks).unwrap(), hooks_before);
+    let r = fresh_report(&e).await;
+    let managed = std::fs::read_to_string(e.home.join("managed.json")).unwrap();
+    assert!(!managed.contains("marshell.json"), "{managed}");
+    assert!(item(&r, "hooks.copilot").is_none(), "{:?}", ids(&r));
+}
+
+#[tokio::test]
+async fn stop_keeping_over_http_brings_the_item_back_and_a_wrong_press_is_refused() {
+    let e = env();
+    install(&e, "copilot").await;
+    add_persons_entry(&e.copilot_hooks);
+    report(&e).await;
+    let cant = |status| assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    cant(press(&e.app, "hookskept.copilot", false).await);
+    cant(press(&e.app, "hooksfile.copilot", false).await);
+    cant(press(&e.app, "nothing.copilot", true).await);
+    assert!(!marshell_core::agents::copilot::kept::record_path(&e.home).exists());
+
+    assert_eq!(press(&e.app, "hooksfile.copilot", true).await, StatusCode::ACCEPTED);
+    wait_for_item(&e.app, "hookskept.copilot", true).await;
+    cant(press(&e.app, "hookskept.copilot", true).await);
+    assert_eq!(press(&e.app, "hookskept.copilot", false).await, StatusCode::ACCEPTED);
+    let r = wait_for_item(&e.app, "hookskept.copilot", false).await;
+    assert_eq!(item(&r, "hooksfile.copilot").expect("back")["action"], "keep");
+}
+
+#[tokio::test]
+async fn a_kept_hooks_file_in_a_distro_is_kept_and_turned_off_entry_by_entry() {
+    let e = build_with(found, false, Some(ubuntu_running));
+    install_in_ubuntu(&e, "copilot").await;
+    let hooks = e.wsl_home.join(".copilot").join("hooks").join("marshell.json");
+    add_persons_entry(&hooks);
+    let r = report(&e).await;
+    assert_eq!(
+        item(&r, "hooksfile.copilot@Ubuntu").unwrap_or_else(|| panic!("{:?}", ids(&r)))["action"],
+        "keep"
+    );
+    assert_eq!(
+        press(&e.app, "hooksfile.copilot@Ubuntu", true).await,
+        StatusCode::ACCEPTED
+    );
+    wait_for_item(&e.app, "hookskept.copilot@Ubuntu", true).await;
+
+    let (status, removal) = post(&e.app, "/v1/agents/copilot/hooks/remove-plan?distro=Ubuntu", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{removal}");
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&removal["preview"])).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    let file = read_json(&hooks);
+    assert_eq!(ours_in(&file), 0);
+    assert_eq!(file["hooks"]["preToolUse"][0], persons_entry());
+    let r = fresh_report(&e).await;
+    assert!(item(&r, "hooks.copilot@Ubuntu").is_none(), "{:?}", ids(&r));
+    assert!(item(&r, "hooksfile.copilot@Ubuntu").is_none(), "{:?}", ids(&r));
 }

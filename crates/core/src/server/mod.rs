@@ -1505,6 +1505,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/doctor/report", get(doctor::report))
         .route("/v1/doctor/fix", post(doctor::fix))
         .route("/v1/doctor/fix/apply", post(doctor::fix_apply))
+        .route("/v1/doctor/keep", post(doctor::keep))
         .route("/v1/doctor/undo", get(doctor::last_fix).post(doctor::undo))
         .route("/v1/history", get(history::list))
         .route("/v1/history/import", get(history::import_status))

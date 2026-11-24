@@ -36,12 +36,16 @@ fn roots_under(home: &Path, claude_settings: Option<PathBuf>) -> ExtRoots {
         claude_tool_search: None,
         qwen_runtime: home.join(".qwen"),
         gemini_dir: home.join(".gemini"),
+        copilot_dir: home.join(".copilot"),
+        copilot_home_set: false,
+        copilot_offline: false,
     }
 }
 
 /// Windows roots. With `ext_home` set by a test, every CLI folder is at its default under it and the environment isn't
 /// read; `claude_settings` is the pinned `claude_settings` when set, else `<ext_home>/.claude/settings.json`.
-/// Otherwise the user home with CLAUDE_CONFIG_DIR, CODEX_HOME and QWEN_HOME, and `claude_settings_path`. A unit test
+/// Otherwise the user home with CLAUDE_CONFIG_DIR, CODEX_HOME, QWEN_HOME and COPILOT_HOME (Copilot CLI's folder is the
+/// one the setup reads, `copilot_dir`), COPILOT_OFFLINE, and `claude_settings_path`. A unit test
 /// that names no home gets none, so no test reads the developer's.
 pub(crate) fn windows_roots(st: &AppState) -> Option<ExtRoots> {
     if let Some(home) = &st.0.ext_home {
@@ -60,7 +64,12 @@ pub(crate) fn windows_roots(st: &AppState) -> Option<ExtRoots> {
         None => (home.join(".claude"), home.join(".claude.json")),
     };
     let qwen_dir = crate::agents::qwen::home(&|k| std::env::var(k).ok(), &home);
+    // A Copilot home a test named is used as it is, and the environment isn't read for it.
+    let copilot_env = |key: &str| st.copilot_home_named().is_none().then(|| env(key)).flatten();
     Some(ExtRoots {
+        copilot_dir: st.copilot_dir().unwrap_or_else(|| home.join(".copilot")),
+        copilot_home_set: copilot_env("COPILOT_HOME").is_some(),
+        copilot_offline: copilot_env("COPILOT_OFFLINE").is_some_and(|v| v.trim().eq_ignore_ascii_case("true")),
         claude_tool_search: env("ENABLE_TOOL_SEARCH"),
         qwen_runtime: env("QWEN_RUNTIME_DIR").map_or_else(|| qwen_dir.clone(), PathBuf::from),
         gemini_dir: home.join(".gemini"),
@@ -114,12 +123,13 @@ fn read_inventory(
     projects: &[PathBuf],
     command: &dyn Fn(&str) -> CommandState,
 ) -> Option<Inventory> {
-    use crate::agents::{antigravity, claude, codex, qwen};
+    use crate::agents::{antigravity, claude, codex, copilot, qwen};
     Some(match agent {
         "claude" => claude::extensions::inventory(roots, projects, command),
         "codex" => codex::extensions::inventory(roots, projects, command),
         "antigravity" => antigravity::extensions::inventory(roots, projects, command),
         "qwen" => qwen::extensions::inventory(roots, projects, command),
+        "copilot" => copilot::extensions::inventory(roots, projects, command),
         _ => return None,
     })
 }

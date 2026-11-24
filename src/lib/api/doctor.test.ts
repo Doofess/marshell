@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { Endpoint } from "../../generated/Endpoint";
 import { ApiError } from "./client";
-import { applyFix, doctorReport, lastFix, planFix, runDoctor, undoDifferences, undoFix } from "./doctor";
+import { applyFix, doctorReport, keepDoctorItem, lastFix, planFix, runDoctor, undoDifferences, undoFix } from "./doctor";
 
 const endpoint: Endpoint = { port: 9, token: "t", platform: "windows" };
 const reply = (body: unknown, status = 200) => vi.fn().mockImplementation(async () => new Response(status === 204 ? null : typeof body === "string" ? body : JSON.stringify(body), { status }));
@@ -31,6 +31,12 @@ describe("doctor api", () => {
     vi.stubGlobal("fetch", f);
     expect(await runDoctor(endpoint)).toEqual({ running: true, issues: 0 });
     expect(call(f)).toMatchObject({ url: "http://127.0.0.1:9/v1/doctor/run", method: "POST", body: undefined });
+  });
+  it("keepDoctorItem posts the id and the direction to /v1/doctor/keep", async () => {
+    const f = reply({ running: true }, 202);
+    vi.stubGlobal("fetch", f);
+    expect(await keepDoctorItem(endpoint, "hooksfile.copilot", true)).toEqual({ running: true });
+    expect(call(f)).toMatchObject({ url: "http://127.0.0.1:9/v1/doctor/keep", method: "POST", body: { id: "hooksfile.copilot", keep: true } });
   });
   it("doctorReport gets the report, or null on a 204", async () => {
     const f = reply({ items: [], checked_at_ms: 1 });

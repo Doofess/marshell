@@ -110,7 +110,7 @@ fn expand(text: &str, how: Expand, env: &[(String, String)]) -> String {
         {
             let inner: String = chars[i + 2..i + 2 + len].iter().collect();
             let (name, default) = match (how, inner.split_once(":-")) {
-                (Expand::Braces, Some((n, d))) => (n, Some(d)),
+                (Expand::Braces | Expand::DollarDefault, Some((n, d))) => (n, Some(d)),
                 _ => (inner.as_str(), None),
             };
             if is_name(name) {
@@ -124,7 +124,8 @@ fn expand(text: &str, how: Expand, env: &[(String, String)]) -> String {
             }
         }
         // `$NAME`, Dollar only.
-        if how == Expand::Dollar && chars.get(i + 1).copied().is_some_and(is_name_start) {
+        if matches!(how, Expand::Dollar | Expand::DollarDefault) && chars.get(i + 1).copied().is_some_and(is_name_start)
+        {
             let len = chars[i + 1..].iter().take_while(|c| is_name_char(**c)).count();
             let name: String = chars[i + 1..i + 1 + len].iter().collect();
             match lookup(env, &name) {
@@ -350,6 +351,23 @@ mod tests {
         ];
         let ready = ready_of(&l, &base).expect("ready");
         assert_eq!(ready.args, ["/h/a", "/h", "$MISSING", "${X:-d}"]);
+
+        // DollarDefault: `$NAME`, `${NAME}` and `${NAME:-default}`; an unset name stays as written unless it has a
+        // default, and a set name wins over its default.
+        let mut l = launch("tool");
+        l.expand = Expand::DollarDefault;
+        l.args = vec![
+            "$HOME_X/a".into(),
+            "${HOME_X}".into(),
+            "${HOME_X:-d}".into(),
+            "${X:-d}".into(),
+            "$MISSING".into(),
+            "${MISSING}".into(),
+        ];
+        l.env = env_of(&[("E", "${SECRET}-${X:-z}")]);
+        let ready = ready_of(&l, &base).expect("ready");
+        assert_eq!(ready.args, ["/h/a", "/h", "/h", "d", "$MISSING", "${MISSING}"]);
+        assert_eq!(get(&ready, "E"), Some("s3-z"));
 
         // With no expansion nothing changes.
         let mut l = launch("tool");
@@ -591,6 +609,59 @@ mod tests {
         let again = last_report(&st);
         assert_eq!(again.measured_at_ms, report.measured_at_ms);
         assert!(again.items.iter().any(|i| i.id == "mcpcost.claude"));
+    }
+
+    fn copilot_stub(ready: &Ready) -> Result<Listed, Failure> {
+        // Only the user's stub may start: the project's server isn't approved and the others are remote.
+        assert_eq!(named(ready), "stub");
+        Ok(tool_named("stub-t"))
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn measure_counts_copilots_remote_and_unapproved_servers_as_not_measured() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = program(dir.path());
+        let (st, ext) = ext_state(dir.path());
+        let st = st.with_probe(copilot_stub);
+        // A user server that starts, and a remote one. The built-in GitHub server is added by itself.
+        write(
+            &ext.join(".copilot").join("mcp-config.json"),
+            &serde_json::json!({"mcpServers": {
+                "stub": entry(&exe, "stub"),
+                "rem": {"type": "http", "url": "https://example.invalid/mcp"},
+            }})
+            .to_string(),
+        );
+        // The pinned state's project holds a server, and no `trustedFolders` names it.
+        let project = crate::projects::canonical(dir.path()).join("project");
+        write(
+            &project.join(".mcp.json"),
+            &serde_json::json!({"mcpServers": {"proj": entry(&exe, "proj")}}).to_string(),
+        );
+
+        crate::server::doctor::request_run(&st);
+        wait_idle(&st).await;
+        request_measure(&st);
+        wait_idle(&st).await;
+        let report = last_report(&st);
+        assert!(report.measured_at_ms.is_some(), "{report:?}");
+        let cost = report
+            .items
+            .iter()
+            .find(|i| i.id == "mcpcost.copilot")
+            .unwrap_or_else(|| panic!("no cost line: {:?}", report.items));
+        assert!(
+            cost.detail.starts_with("1 measured. The largest: stub ("),
+            "{}",
+            cost.detail
+        );
+        assert!(
+            cost.detail.ends_with(
+                "Not measured: 2 remote servers, 1 that Copilot CLI hasn't approved. Marshell counts the tools' full definitions. Copilot CLI may load them on demand for some models, which costs less."
+            ),
+            "{}",
+            cost.detail
+        );
     }
 
     static JOIN_CALLS: AtomicUsize = AtomicUsize::new(0);

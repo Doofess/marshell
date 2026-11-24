@@ -3,7 +3,7 @@ import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { DoctorSummary } from "../../generated/DoctorSummary";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { SessionInfo } from "../../generated/SessionInfo";
-import { applyFix, doctorReport, lastFix, measureMcpServers, planFix, runCliDoctors, runDoctor, undoDifferences, undoFix } from "../../lib/api/doctor";
+import { applyFix, doctorReport, keepDoctorItem, lastFix, measureMcpServers, planFix, runCliDoctors, runDoctor, undoDifferences, undoFix } from "../../lib/api/doctor";
 import { ApiError } from "../../lib/api/client";
 import { useDialogFocus } from "../../lib/useDialogFocus";
 import { useCoverPage } from "../browser/pageCover";
@@ -15,7 +15,9 @@ import { measureDoneAnnouncement } from "./measure";
 import { useClickRun } from "./useClickRun";
 import { planRestarts, skippedReceipt } from "./doctorRestart";
 import { fixAnnouncement, undoRefusedAnnouncement } from "./doctorUi";
+import { keepDone, keepFocusKey, keepFocusLost, pressKeep } from "./keep";
 import { selectedFixable } from "./report";
+import type { DoctorItem } from "./types";
 import { DifferencesSheet, FixSheet } from "./FixSheet";
 import "./LiveDoctor.css";
 
@@ -43,6 +45,10 @@ export type LiveDoctorProps = {
 export function LiveDoctor({ endpoint, summary, infos, isWorking, actions, announce, onOpenAgents, onClose }: LiveDoctorProps) {
   const [m, dispatch] = useReducer(doctorReducer, INITIAL_DOCTOR);
   const [diff, setDiff] = useState<ConfigPreview | null>(null);
+  const [keeping, setKeeping] = useState<string>();
+  const [keepError, setKeepError] = useState<string>();
+  // The mark of the button a press swapped away (`keepFocusKey`), until the report that holds its successor is shown.
+  const keepFocus = useRef<{ key: string; id: string }>(undefined);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const startedAt = useRef(Date.now());
   const root = useRef<HTMLDivElement>(null);
@@ -121,6 +127,37 @@ export function LiveDoctor({ endpoint, summary, infos, isWorking, actions, annou
     done: measureDoneAnnouncement,
     failed: (e) => `Couldn't measure the MCP servers: ${e}`,
   });
+
+  // Keep my file and Stop keeping write nothing of the CLI's: the core remembers the choice and asks for a new run.
+  const keep = async (item: DoctorItem) => {
+    if (!endpoint || !item.action || keeping || m.phase === "fixing") return;
+    setKeepError(undefined);
+    setKeeping(item.id);
+    // Set before the request: the new report can be shown before the reply is handled, and the focus effect runs once
+    // per report. Until the row is gone the effect leaves this alone.
+    keepFocus.current = { key: keepFocusKey(item), id: item.id };
+    const r = await pressKeep(() => keepDoctorItem(endpoint, item.id, item.action === "keep"), load);
+    setKeeping(undefined);
+    if (!r.ok) {
+      keepFocus.current = undefined;
+      setKeepError(r.message);
+      announce(r.message);
+      return;
+    }
+    announce(keepDone(item.action));
+  };
+
+  // A press swaps the row for its other form. The pressed button is gone with it, so the focus goes to the button that
+  // took its place, unless the person has moved the focus somewhere else in the meantime.
+  useEffect(() => {
+    const want = keepFocus.current;
+    // Until the new report is shown the pressed row is still there, with the focus on its button.
+    if (!want || !m.report || m.report.items.some((i) => i.id === want.id)) return;
+    keepFocus.current = undefined;
+    if (!keepFocusLost(document.activeElement, document.body, root.current)) return;
+    const next = [...(root.current?.querySelectorAll<HTMLElement>("[data-doctor-keep]") ?? [])].find((b) => b.dataset.doctorKeep === want.key);
+    (next ?? root.current)?.focus();
+  }, [m.report]);
 
   const fix = async () => {
     if (!endpoint || !m.report) return;
@@ -226,6 +263,9 @@ export function LiveDoctor({ endpoint, summary, infos, isWorking, actions, annou
         onShowDifferences={() => void showDifferences()}
         onOpenAgents={onOpenAgents}
         onRestart={() => void restart()}
+        onKeep={(item) => void keep(item)}
+        keeping={keeping}
+        keepError={keepError}
       />
       {m.plan && (
         <div className="live-doctor__sheet">

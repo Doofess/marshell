@@ -17,11 +17,29 @@ pub struct ManagedEntry {
 
 /// What a ChangeSet did to one path.
 pub enum Change<'a> {
-    Set { path: &'a Path, pointer: &'a str },
-    Remove { path: &'a Path, pointer: &'a str },
-    Created { path: &'a Path },
-    Deleted { path: &'a Path },
-    Restored { path: &'a Path, changeset_id: &'a str },
+    Set {
+        path: &'a Path,
+        pointer: &'a str,
+    },
+    Remove {
+        path: &'a Path,
+        pointer: &'a str,
+    },
+    Created {
+        path: &'a Path,
+    },
+    Deleted {
+        path: &'a Path,
+    },
+    Restored {
+        path: &'a Path,
+        changeset_id: &'a str,
+    },
+    /// A file the person keeps as their own, after Marshell's last entries left it: nothing in it is Marshell's, so
+    /// every record of it goes, as for a deleted file. The file itself stays.
+    HandedBack {
+        path: &'a Path,
+    },
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -127,6 +145,10 @@ pub fn updated(home: &Path, changeset_id: &str, changes: &[Change], now_ms: u64)
                 let path = path.to_string_lossy();
                 entries.retain(|e| !(same_path(&e.path, &path) && e.changeset_id == *undone));
             }
+            Change::HandedBack { path } => {
+                let path = path.to_string_lossy();
+                entries.retain(|e| !same_path(&e.path, &path));
+            }
         }
     }
     Ok(entries)
@@ -153,6 +175,45 @@ mod tests {
     fn apply(home: &Path, id: &str, changes: &[Change], now: u64) {
         let next = updated(home, id, changes, now).unwrap();
         save(home, &next).unwrap();
+    }
+
+    #[test]
+    fn a_file_handed_back_loses_its_records_and_no_other_files() {
+        let home = tempfile::tempdir().unwrap();
+        let other = Path::new("/home/u/.claude/other.json");
+        apply(
+            home.path(),
+            "c1",
+            &[
+                Change::Created { path: file() },
+                // An event Marshell added whole: taking its entry out by index leaves this record behind.
+                Change::Set {
+                    path: file(),
+                    pointer: "/hooks/Stop",
+                },
+                Change::Created { path: other },
+            ],
+            1,
+        );
+        assert_eq!(list(home.path()).unwrap().len(), 3);
+        apply(
+            home.path(),
+            "c2",
+            &[
+                Change::Remove {
+                    path: file(),
+                    pointer: "/hooks/Stop/0",
+                },
+                Change::HandedBack { path: file() },
+            ],
+            2,
+        );
+        let left: Vec<(String, Option<String>)> = list(home.path())
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.path, e.pointer))
+            .collect();
+        assert_eq!(left, vec![(other.to_string_lossy().into_owned(), None)]);
     }
 
     #[test]

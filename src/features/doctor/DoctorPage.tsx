@@ -8,7 +8,7 @@ import { DoctorRow } from "./DoctorRow";
 import { UndoToast } from "./UndoToast";
 import { showProgress } from "./doctorUi";
 import { counts, fixHeadline, groups, selectedFixable } from "./report";
-import type { DoctorLastFix, DoctorReport } from "./types";
+import type { DoctorItem, DoctorLastFix, DoctorReport } from "./types";
 import { undoOffer, undoState } from "./undo";
 import "./Doctor.css";
 
@@ -37,6 +37,12 @@ export type DoctorPageProps = {
   onOpenAgents: () => void;
   /** The toast's "Restart them"; the brief's prop list leaves it out, but the toast needs it. */
   onRestart?: () => void;
+  /** A row's Keep my file or Stop keeping: it writes nothing of the CLI's and checks no row. */
+  onKeep?: (item: DoctorItem) => void;
+  /** The id of the row whose Keep or Stop keeping request is running. */
+  keeping?: string;
+  /** Why the last Keep or Stop keeping press failed. */
+  keepError?: string;
 };
 
 /**
@@ -44,7 +50,7 @@ export type DoctorPageProps = {
  * 150 ms of a check; a failure says why and offers Run again; after a fix each fixed row says Fixed in words, the receipt toast
  * floats for 10 seconds and then Undo last fix stays in the header. Info (managed settings) is listed and never has a control.
  */
-export function DoctorPage({ report, phase, selected, undo, nowMs, elapsedMs = 0, failure, onToggle, onFix, onRunAgain, cliRunning, onRunCliDoctors, measuring, onMeasure, onUndo, onShowDifferences, onOpenAgents, onRestart }: DoctorPageProps) {
+export function DoctorPage({ report, phase, selected, undo, nowMs, elapsedMs = 0, failure, onToggle, onFix, onRunAgain, cliRunning, onRunCliDoctors, measuring, onMeasure, onUndo, onShowDifferences, onOpenAgents, onRestart, onKeep, keeping, keepError }: DoctorPageProps) {
   const uid = useId();
   const c = report ? counts(report) : { issues: 0, fixable: 0, unfixable: 0, offered: 0 };
   const chosen = report ? selectedFixable(report, selected).length : 0;
@@ -98,8 +104,9 @@ export function DoctorPage({ report, phase, selected, undo, nowMs, elapsedMs = 0
     <div className="doctor">
       <Page title="Doctor" subtitle={`Checked ${checked}`} actions={actions}>
         <div className="doctor__body" aria-busy={phase === "running" || phase === "fixing" ? "true" : undefined}>
-          {phase === "running" && showProgress(elapsedMs) && <p className="doctor__progress">Checking Claude Code, Codex, Antigravity and Qwen Code…</p>}
+          {phase === "running" && showProgress(elapsedMs) && <p className="doctor__progress">Checking Claude Code, Codex, Antigravity, Qwen Code and Copilot CLI…</p>}
           {phase === "failed" && <p className="doctor__failed">The doctor could not run: {failure}</p>}
+          {keepError && <p className="doctor__failed">{keepError}</p>}
           {clear && <EmptyState title={clearCopy.title} body={clearCopy.body} />}
           {listed && !clear && (
             <p className="doctor__summary">
@@ -126,7 +133,7 @@ export function DoctorPage({ report, phase, selected, undo, nowMs, elapsedMs = 0
                 </h2>
                 <ul className="doctor__list">
                   {g.items.map((i) => (
-                    <DoctorRow key={i.id} item={i} fixed={fixedIds.has(i.id)} checked={selected.has(i.id)} disabled={phase !== "ready"} onToggle={onToggle} onOpenAgents={onOpenAgents} />
+                    <DoctorRow key={i.id} item={i} fixed={fixedIds.has(i.id)} checked={selected.has(i.id)} disabled={phase !== "ready"} fixing={phase === "fixing"} keeping={keeping === i.id} onToggle={onToggle} onOpenAgents={onOpenAgents} onKeep={onKeep} />
                   ))}
                 </ul>
               </section>

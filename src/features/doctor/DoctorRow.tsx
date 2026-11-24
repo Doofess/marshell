@@ -1,4 +1,5 @@
 import { AuxGlyph, StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
+import { keepFocusKey, keepLabel, keepName } from "./keep";
 import type { DoctorGroup, DoctorItem } from "./types";
 import "./Doctor.css";
 
@@ -13,13 +14,13 @@ function Mark({ group, done }: { group: DoctorGroup; done: boolean }) {
   );
 }
 
-type Props = { item: DoctorItem; fixed?: boolean; checked?: boolean; disabled?: boolean; onToggle?: (id: string) => void; onOpenAgents?: () => void };
+type Props = { item: DoctorItem; fixed?: boolean; checked?: boolean; disabled?: boolean; fixing?: boolean; keeping?: boolean; onToggle?: (id: string) => void; onOpenAgents?: () => void; onKeep?: (item: DoctorItem) => void };
 
 /**
  * One finding: a glyph, the title (with a checkbox when Marshell can fix it), what it means, the file, and why it cannot be
  * fixed when it cannot. The group heading above the row says Broken, Waste or Info; a fixed row says Fixed in words.
  */
-export function DoctorRow({ item, fixed = false, checked = false, disabled = false, onToggle, onOpenAgents }: Props) {
+export function DoctorRow({ item, fixed = false, checked = false, disabled = false, fixing = false, keeping = false, onToggle, onOpenAgents, onKeep }: Props) {
   const title = (
     <>
       {fixed && <span className="doctor__word">Fixed</span>} <span dir="auto">{item.title}</span>
@@ -54,6 +55,14 @@ export function DoctorRow({ item, fixed = false, checked = false, disabled = fal
           <div>
             <button type="button" className="doctor__btn" onClick={onOpenAgents}>
               Open Agents
+            </button>
+          </div>
+        )}
+        {item.action && (
+          <div>
+            {/* aria-disabled, not disabled: the pressed button keeps the focus while its request runs. Off too while a fix is applied. */}
+            <button type="button" className="doctor__btn" data-doctor-keep={keepFocusKey(item)} aria-label={keepName(item.action, item.title, keeping)} aria-disabled={keeping || fixing ? "true" : undefined} onClick={keeping || fixing ? undefined : () => onKeep?.(item)}>
+              {keepLabel(item.action, keeping)}
             </button>
           </div>
         )}

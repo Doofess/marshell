@@ -585,6 +585,7 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
         caps: Caps {
             per_skill: None,
             listing_first_line_over: Some(LISTING_CUT),
+            listing_named_over: None,
         },
         servers,
         skills,
@@ -634,6 +635,9 @@ mod tests {
             claude_tool_search: None,
             qwen_runtime: h.join(".qwen"),
             gemini_dir: h.join(".gemini"),
+            copilot_dir: h.join(".copilot"),
+            copilot_home_set: false,
+            copilot_offline: false,
         }
     }
 

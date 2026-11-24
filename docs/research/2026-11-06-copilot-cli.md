@@ -551,3 +551,106 @@ Source: `help-config.txt` ([help config]) and the table in `docs\cli-config-dir-
 10. Any on-disk "update available" record besides a newer pkg dir.
 11. The shape of `lastLoggedInUser` and `loggedInUsers` in a signed-in `config.json`.
 12. Whether a running interactive Copilot writes over a settings edit made while it runs.
+
+---
+
+## Part 3: the Doctor (6n3)
+
+A static read on 2026-11-24 of the same 1.0.106 bundle, for slice 6n3 (PLAN §9, "Slice 6n3 decisions (2026-11-24)"). No session was started and nothing under the real `~/.copilot` was read. Only `--help`, `help <topic>` and `<sub> --help` were run. The Rust modules (`runtime.node`, `cli-native.node`) give strings only, so a compiled number or rule is marked "not found". Tags: [cli-main], [rt], [schema], [help], [chg] (`changelog.json`). "Inferred" means the source points that way and no line says it.
+
+### Built-in MCP servers
+
+- `github-mcp-server` is the one built-in server [cli-main: `_.githubMcpServerName()`]. It is a remote HTTP server (`https://api.githubcopilot.com/mcp`, `/mcp/readonly`) [rt].
+- It loads only for a signed-in account: with no auth its config resolves to nothing and the server is left out [cli-main]. `COPILOT_OFFLINE=true` turns it off [help]. It is never added when the person's own config has a server under that key [cli-main].
+- `githubiq` is a toolset header on the GitHub server behind a server-side flag, not a server of its own [cli-main], though `--disable-builtin-mcps` names it [help].
+- `computer-use` and `browser-use` are bundled plugins (`plugins\computer-use`, `plugins\browser-use` in the bundle), both off by default. `computer-use` is turned on by its name in `enabledMcpServers`, `browser-use` by `enabledPlugins["browser-use"]` [cli-main].
+- `playwright`, `fetch` and `time` are not built in: no trace in cli-main or the native modules. The docs' list (Part 2, Q5) is stale.
+- `disabledMcpServers` turns the GitHub server off: `copilot mcp disable <name>` adds any server's name to it, built-in included, and `--disable-builtin-mcps` works through the same disabled set [cli-main]. Inferred, not run.
+
+### `disabledMcpServers` and `disabledSkills`
+
+- `disabledMcpServers` matches the configured key exactly: case-sensitive, no patterns [cli-main: `disabledServers.includes(name)`]. User, workspace and plugin servers sit in one merged map and are treated alike (inferred; the merge is native). The effective list is the user's, plus the repository's `.github/copilot/settings*.json`, plus `--disable-mcp-server`, minus `--enable-mcp-server`.
+- `disabledSkills` holds a skill's name, and `plugin:name` for a plugin's skill. The UI also matches the bare name of a plugin skill [cli-main]. The real match is native (`skillsIsDisabled`), so its case rule is not found. The list covers project, personal, plugin and built-in skills.
+
+### Skills
+
+- Folders [help, chg]: project `.github/skills`, `.agents/skills`, `.claude/skills`, at every level from the working directory up to the git root; personal `<Copilot home>/skills` and `~/.agents/skills`. `~/.claude/skills` is not read (1.0.36). `~/.agents/skills` is not loaded when `COPILOT_HOME` or `--config-dir` is set (1.0.66). Priority: project, plugin dirs, personal, custom (1.0.55). A project's `.claude/commands/*.md` load as commands, ranked below skills.
+- No trust gate for skills was found: the trust messages name only repository hooks and workspace MCP servers.
+- Frontmatter messages [rt, `skill_discovery/core.rs`]: "missing or malformed YAML frontmatter", "name must not be empty", "name must start with an ASCII letter or number and contain only ASCII letters (a-z, A-Z), numbers, hyphens, underscores, dots, colons, and spaces", "name must be at most N characters", "description must be at most N characters", "could not derive a valid skill name from the folder path". So a missing `name` falls back to the folder's name (inferred). N is compiled in: 64 and 1024 are the documented values, not confirmed. Whether a skill over a limit is skipped, cut or loaded is not found.
+- A duplicate name is skipped: "Skipped duplicate skill name '...' from '...'; a higher-priority entry with the same name was already loaded" [rt].
+- The listing [rt, `skills_base/prompt.rs`]: `<available_skills>` with `<skill><name>…</name><description>…</description><location>…</location></skill>`. `SKILL_CHAR_BUDGET` is an environment variable the runtime reads; its default is not found. Skills over the budget are listed by name only, after "Additional skills available (invoke by name): " (inferred, with chg 1.0.32).
+- `disable-model-invocation: true`: the skill tool answers that the model can't invoke it. Whether it is left out of the listing is not found. `user-invocable: false` only hides the slash command.
+
+### MCP config and tool loading
+
+- An entry is skipped ("Skipping invalid MCP server "<name>" in <file>") when it isn't an object, has neither `command` nor `url`, has a bad name (empty, a control character, `}`, a leading, trailing or double `/`), a `url` that isn't HTTP(S), a `type` outside local, stdio, http and sse, or an out-of-range `timeout` [rt]. A `.mcp.json` without the `mcpServers` wrapper is read too (0.0.401).
+- Whether `mcp-config.json` and `.mcp.json` take comments is still not found.
+- `toolSearch` (boolean, no default stated) turns on deferred tool loading; a server's `deferTools` is `auto` (default) or `never`. Whether tools are deferred is decided per model and by server-side flags (`TOOL_SEARCH_ANTHROPIC`, `TOOL_SEARCH_OPENAI`, `TOOL_SEARCH_DISABLED` and others) [rt]. Deferred tools are listed to the model by name (1.0.88). A server's instructions reach the model only for an allowlisted server (`--allow-all-mcp-server-instructions`).
+- Workspace servers need a trusted folder. Trust is `trustedFolders` in `config.json` ("not in settings.json, so `copilot config` cannot change it") [help]. The element format, whether a parent covers its children, and the case and slash rules are not found (the comparison is native).
+
+### Desktop notifications
+
+- `notifications` (boolean, default false) is the exact key, read from the merged settings; `copilot config notifications on` sets it [cli-main, help].
+- Copilot turns on focus reporting (`ESC[?1004h`) and listens for `ESC[I` and `ESC[O`. A toast is held back only while the last focus event was a focus-in. With a focus-out last, or no focus event yet, the toast is sent; a terminal that doesn't answer focus reporting never holds one back [cli-main].
+- It fires on an attention event and on `session.idle` after 100 ms, at most once per 5 s (attention) or 2 s (idle). `COPILOT_DISABLE_DESKTOP_NOTIFICATIONS` set to exactly `1` turns it off.
+
+### Session events for the usage scan [schema]
+
+- An MCP call is a `tool.execution_start` with `mcpServerName` (the configured key), `mcpToolName`, `mcpTransport` (`stdio`, `http`, `sse`, `memory`) and `mcpConfigSource` (`user`, `workspace`, `plugin`, `builtin`).
+- A skill's use is a `skill.invoked` with `name`, `path`, `source`, `trigger` (`user-invoked`, `agent-invoked`, `context-load`) and `pluginName`. A typed `/name` gives the same event with `user-invoked` (inferred).
+- Neither is marked always-ephemeral in the schema; `session.skills_loaded` and the `session.mcp_*` events are, so they never reach `events.jsonl`.
+
+### Plugins
+
+- An installed plugin is in `<Copilot home>/installed-plugins/<marketplace>/<plugin>` (or the record's `cache_path`), or `installed-plugins/_direct/<source id>` [cli-main]. The list is `installedPlugins` in `config.json`: records with `name`, `marketplace`, `version`, `enabled`, `cache_path`, `source`. `enabledPlugins` in `settings.json` maps `name@marketplace` to a boolean (the key's form is inferred).
+- A plugin's servers come from its manifest's `mcpServers` (inline, or a path such as `.mcp.json`) and from `mcp.json`, `.mcp.json` and `.github/mcp.json` in its folder; its skills from the manifest's `skills` folder. The manifest is `plugin.json`, `.plugin/plugin.json`, `.github/plugin/plugin.json` or `.claude-plugin/plugin.json`.
+
+### What 6n3's first task saw
+
+Copilot CLI 1.0.106 ran headless (`copilot -p`, `copilot skill list --json`, `copilot mcp list --json`) on 2026-11-24 in a scratch home under `%TEMP%\copilot-6n3-t1`, against the fake model, with nobody signed in. The fake model logged every request, so "the model gets" below is what the request held.
+
+**Skills**
+
+1. A skill fails to load, with a message, when its name is over 64 characters, its name has a character outside the rule, its description is over 1,024 characters, its frontmatter block doesn't close, or its YAML doesn't parse. Nothing is cut: a 1,025-character description is refused like a 3,000-character one.
+2. A skill with no `name` loads under its folder's name. A skill with no `description` loads too, and its description is the first line of its body.
+3. Two skills with one name: the project's is listed, the personal one is gone from the list.
+4. `disabledSkills` matches the name exactly and case-sensitively (`Good-Skill` doesn't turn `good-skill` off). The skill stays in `skill list` with `enabled: false`, and the personal skill of the same name does not take its place.
+5. The model gets `<available_skills>` in the system message, one `<skill>` per skill with `<name>`, `<description>` and `<location>` (`project`, `user`, `builtin`): project skills first, then personal, then the three bundled ones (`customize-cloud-agent`, `github-pr-media`, `pr-stack`, about 1,000 characters together). A skill with `disable-model-invocation: true` is left out. It still shows in `skill list`.
+6. The listing has a budget of 15,000 characters, counted over the block's text and not over the descriptions: with 200 skills of 194-character descriptions the described part was 14,863 characters and the next entry (293 with its line break) was left out, and with 200 skills of 15-character descriptions it was 14,953 and the next (114) was left out. An entry costs its name, its description and 91 characters of tags and line break, after 19 for the block's opening line (131 entries of 114 make 14,953 with it). Every skill past the budget, bundled ones included, is only named, after "Additional skills available (invoke by name): ".
+7. Project skills are looked for from the working folder upwards, and outside a git repository the walk doesn't stop at the folder: a scratch folder under the profile that was no repository got the profile's own `.claude\skills` as `project` skills. (The run's requests went only to the loopback fake.) Later runs used a git repository.
+
+**MCP servers**
+
+8. `mcp-config.json` takes comments and trailing commas.
+9. `github-mcp-server` is there with nobody signed in and with no provider set: `mcp list` shows it as `builtin`, `http`, `enabled`, at `https://api.individual.githubcopilot.com/mcp/readonly`, and the model gets five of its tools with their full definitions (about 4,300 characters). The static read's "only for a signed-in account" is wrong for 1.0.106.
+10. `computer-use` also shows in `mcp list` as `builtin` and enabled, and none of its tools reach the model.
+11. `disabledMcpServers` matches the key exactly and case-sensitively, and `["github-mcp-server"]` turns the built-in server off (`enabled: false`).
+12. A project's `.mcp.json` is skipped in a folder that isn't trusted, with a warning that names `trustedFolders` in `config.json`. `trustedFolders` is an array of folder paths. A listed folder covers its subfolders, the comparison ignores case, takes `/` or `\` and a trailing separator, and from a subfolder the repository root's `.mcp.json` still loads. In a trusted folder a `.mcp.json` without the `mcpServers` wrapper loads too. `.github\mcp.json` is not read: its server never showed, with `.mcp.json` empty or not. A server in `.mcp.json` with a user server's name replaces it (`source: workspace`, the project's arguments).
+13. `config.json` itself starts with two `//` comment lines, so it is read as JSON with comments.
+14. The model gets an MCP tool as `<server>-<tool>` (`scratch-echo-echo`) with its full description and schema. `toolSearch` true or false changed nothing with the custom provider: nothing was deferred. The server's `instructions` did not reach the model.
+
+**Events**
+
+15. An MCP call is written to `events.jsonl` as `tool.execution_start` with `toolName` (`scratch-echo-echo`), `mcpServerName`, `mcpConfigServerName`, `mcpTransport` (`stdio`), `mcpConfigSource` (`user`) and `mcpToolName`.
+16. A skill the model invokes is written as `skill.invoked` with `name`, `path` (the `SKILL.md` file), `source` (`project`), `pluginName`, `description`, `trigger` (`agent-invoked`) and `content`, which is the skill's whole body. A reader takes `name` and `path` and nothing else.
+17. `copilot -p "/good-skill"` sends the text to the model as it is: prompt mode runs no slash command. In an interactive tab of the dev app a typed `/marshell` wrote `skill.invoked` with `trigger: user-invoked` and `source: personal-copilot`.
+18. Fixtures: `crates/core/tests/fixtures/copilot/transcripts/1.0.106/00000000-0000-4000-8000-000000000274.jsonl` (the MCP call) and `…000000000251.jsonl` (the skill use).
+
+**The toast, from a Marshell tab** (the dev app on scratch homes, `"notifications": true` in the scratch `settings.json`, Marshell's hooks set up for Copilot, the fake model)
+
+19. While the tab's terminal had the focus, a finished prompt and a permission request raised no Windows notification: the notification history of `GitHub.Copilot.CLI` stayed empty.
+20. With the focus taken off the terminal (the textarea blurred, which makes xterm.js report focus-out), the next finished turn raised one: the history held a toast "hello / Agent finished: done". So focus reporting passes through Marshell's terminal and ConPTY, and Copilot's own toast shows whenever the person is not in that tab, which is when Marshell's banner shows too.
+21. Raising the first toast, Copilot registered its app id in the real registry (`HKCU\Software\Classes\AppUserModelId\GitHub.Copilot.CLI`); no scratch variable moves that. The dev window also took the foreground when it started.
+
+### Open after the static read
+
+Settled by the first task: 1, 2, 3, 4, 5, 6 and 7 (see above). Still open: 8, for a signed-in `config.json` and an installed plugin (the built-in server was seen).
+
+1. What Copilot does with a skill over a frontmatter limit, with no `name`, with no `description`, and with frontmatter that doesn't parse.
+2. The listing budget's default and what is cut past it; whether `disable-model-invocation` leaves a skill out.
+3. Whether `mcp-config.json` and `.mcp.json` take comments and trailing commas.
+4. The shape of `trustedFolders` and how a folder is compared.
+5. Whether `tool.execution_start` and `skill.invoked` are written to `events.jsonl`, with which fields.
+6. Whether a toast shows from a Marshell tab.
+7. Whether tools are deferred with a custom provider and no account.
+8. The built-in server, a signed-in `config.json` and an installed plugin can't be seen on this PC: nobody is signed in.

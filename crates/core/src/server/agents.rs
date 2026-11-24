@@ -9,6 +9,7 @@ use crate::agents::claude::{self, hooks};
 use crate::agents::codex::{self, trust};
 use crate::agents::common::Bridge;
 use crate::agents::copilot::hooks as copilot_hooks;
+use crate::agents::copilot::kept::{self, Kept};
 use crate::agents::install::{codex_newer, install_kind, update_text};
 use crate::agents::qwen::hooks as qwen_hooks;
 use crate::agents::settings_view::{
@@ -215,8 +216,27 @@ struct QwenInputs {
     chain_text: Option<String>,
 }
 
+/// The hooks files the person kept, from Marshell's own record. A record that is missing or can't be read keeps none.
+pub(crate) fn copilot_kept_record(marshell_home: &Path) -> Kept {
+    let text = std::fs::read_to_string(kept::record_path(marshell_home)).ok();
+    Kept::parse(text.as_deref())
+}
+
+/// The hooks file isn't Marshell's whole file, and it still holds what the person kept (PLAN §9, 6n3 decision 20).
+pub(crate) fn copilot_hooks_file_is_kept(kept: &Kept, hooks_path: &Path, hooks_text: Option<&str>) -> bool {
+    let Some(text) = hooks_text else {
+        return false;
+    };
+    copilot_hooks::file_problem(Some(text)) == Some(copilot_hooks::FileProblem::NotMarshells)
+        && read_value(text)
+            .ok()
+            .is_some_and(|file| file.is_object() && kept.holds(hooks_path, &file))
+}
+
 /// Copilot CLI's three files and where they are; the text is `None` for a missing file.
 struct CopilotInputs {
+    /// The person kept the hooks file as it is: a plan changes only Marshell's own entries in it.
+    kept: bool,
     hooks_path: PathBuf,
     settings_path: PathBuf,
     chain_path: Option<PathBuf>,
@@ -472,6 +492,23 @@ impl AppState {
         distro: &str,
         want: &HookPlanRequest,
     ) -> Result<ChangeSet, Fail> {
+        self.distro_install_with(adapter, distro, want, false)
+    }
+
+    /// `distro_install` for Copilot CLI, except that a hooks file that parses and isn't Marshell's is replaced with
+    /// Marshell's hooks. Only the Doctor's fix, which a person picks, asks for it.
+    pub(crate) fn distro_copilot_install_over(&self, distro: &str, want: &HookPlanRequest) -> Result<ChangeSet, Fail> {
+        self.distro_install_with(Adapter::Copilot, distro, want, true)
+    }
+
+    /// `replace_foreign` matters only to Copilot CLI, whose hooks file is wholly Marshell's.
+    fn distro_install_with(
+        &self,
+        adapter: Adapter,
+        distro: &str,
+        want: &HookPlanRequest,
+        replace_foreign: bool,
+    ) -> Result<ChangeSet, Fail> {
         let target = self.distro_target(distro)?;
         self.ensure_bridge(want)?;
         let bridge = Bridge::Distro {
@@ -515,7 +552,21 @@ impl AppState {
                 let (hooks_path, settings_path) = (copilot_hooks::hooks_path(&dir), copilot_hooks::settings_path(&dir));
                 let hooks_text = read_text(&hooks_path).map_err(|e| refused(&e))?;
                 let settings_text = read_text(&settings_path).map_err(|e| refused(&e))?;
-                copilot_hooks::install_plan(
+                // The replace is the Doctor's fix a person picked; otherwise a kept file changes only Marshell's entries.
+                let is_kept = !replace_foreign
+                    && copilot_hooks_file_is_kept(
+                        &copilot_kept_record(&self.0.home),
+                        &hooks_path,
+                        hooks_text.as_deref(),
+                    );
+                let plan = if replace_foreign {
+                    copilot_hooks::install_plan_over
+                } else if is_kept {
+                    copilot_hooks::install_plan_kept
+                } else {
+                    copilot_hooks::install_plan
+                };
+                plan(
                     &copilot_hooks::Files {
                         hooks_path: &hooks_path,
                         hooks_text: hooks_text.as_deref(),
@@ -535,6 +586,32 @@ impl AppState {
     /// The plan to take Marshell's hooks out of `distro`.
     fn distro_remove(&self, adapter: Adapter, distro: &str) -> Result<RemovePreview, Fail> {
         let home = self.distro_target(distro)?.home;
+        // A hooks file the person kept loses only Marshell's entries, which `marshell uninstall` doesn't plan.
+        if matches!(adapter, Adapter::Copilot) {
+            let dir = home.join(".copilot");
+            let (hooks_path, settings_path) = (copilot_hooks::hooks_path(&dir), copilot_hooks::settings_path(&dir));
+            let hooks_text = read_text(&hooks_path).map_err(|e| refused(&e))?;
+            let settings_text = read_text(&settings_path).map_err(|e| refused(&e))?;
+            if copilot_hooks_file_is_kept(&copilot_kept_record(&self.0.home), &hooks_path, hooks_text.as_deref()) {
+                let plan = copilot_hooks::remove_plan_kept(
+                    &copilot_hooks::Files {
+                        hooks_path: &hooks_path,
+                        hooks_text: hooks_text.as_deref(),
+                        settings_path: &settings_path,
+                        settings_text: settings_text.as_deref(),
+                        chain_path: None,
+                        chain_text: None,
+                    },
+                    Some(distro),
+                )
+                .map_err(|e| refused(&e))?;
+                // With Marshell's entries out, the file is the person's alone: `managed.json` stops naming it.
+                return Ok(RemovePreview {
+                    preview: self.0.config.preview_handing_back(plan.changes, &[hooks_path]),
+                    statusline_left: plan.statusline_left,
+                });
+            }
+        }
         let agent = match adapter {
             Adapter::Claude => AGENT,
             Adapter::Codex => CODEX,
@@ -587,7 +664,9 @@ impl AppState {
         let chain_path = paths::statusline_chain(&self.0.home, COPILOT);
         // The chain is Marshell's own file; a chain that cannot be read is the same as none.
         let chain_text = std::fs::read_to_string(&chain_path).ok();
+        let kept = copilot_hooks_file_is_kept(&copilot_kept_record(&self.0.home), &hooks_path, hooks_text.as_deref());
         Ok(CopilotInputs {
+            kept,
             hooks_path,
             settings_path,
             chain_path: Some(chain_path),
@@ -1836,6 +1915,22 @@ fn settings_undo_of(st: &AppState, agent: &str, kind: Adapter, snapshot_id: &str
 /// The plan that sets up `adapter`'s hooks for Windows: the same one the Agents dialog's "Set up" makes. It puts the
 /// bridge back first when `want` asks for status hooks and it is missing.
 pub(crate) fn hook_install_changes(st: &AppState, adapter: Adapter, want: &HookPlanRequest) -> Result<ChangeSet, Fail> {
+    hook_install_changes_with(st, adapter, want, false)
+}
+
+/// `hook_install_changes` for Copilot CLI, except that a hooks file that parses and isn't Marshell's is replaced with
+/// Marshell's hooks. Only the Doctor's fix, which a person picks, asks for it.
+pub(crate) fn copilot_install_over_changes(st: &AppState, want: &HookPlanRequest) -> Result<ChangeSet, Fail> {
+    hook_install_changes_with(st, Adapter::Copilot, want, true)
+}
+
+/// `replace_foreign` matters only to Copilot CLI, whose hooks file is wholly Marshell's.
+fn hook_install_changes_with(
+    st: &AppState,
+    adapter: Adapter,
+    want: &HookPlanRequest,
+    replace_foreign: bool,
+) -> Result<ChangeSet, Fail> {
     match adapter {
         Adapter::Claude => {
             let inputs = st.inputs()?;
@@ -1889,7 +1984,14 @@ pub(crate) fn hook_install_changes(st: &AppState, adapter: Adapter, want: &HookP
         Adapter::Copilot => {
             let inputs = st.copilot_inputs()?;
             st.ensure_bridge(want)?;
-            copilot_hooks::install_plan(&inputs.files(), &Bridge::local(&st.0.home), want)
+            let plan = if replace_foreign {
+                copilot_hooks::install_plan_over
+            } else if inputs.kept {
+                copilot_hooks::install_plan_kept
+            } else {
+                copilot_hooks::install_plan
+            };
+            plan(&inputs.files(), &Bridge::local(&st.0.home), want)
         }
     }
     .map_err(|e| refused(&e))
@@ -2040,9 +2142,20 @@ pub async fn remove_plan(
         }
         (Adapter::Copilot, None) => {
             let inputs = st.copilot_inputs()?;
-            let plan = copilot_hooks::remove_plan(&inputs.files(), None).map_err(|e| refused(&e))?;
+            let files = inputs.files();
+            let (plan, preview) = if inputs.kept {
+                // With Marshell's entries out, the kept file is the person's alone: `managed.json` stops naming it.
+                let plan = copilot_hooks::remove_plan_kept(&files, None).map_err(|e| refused(&e))?;
+                let handed_back = [files.hooks_path.to_path_buf()];
+                let preview = st.0.config.preview_handing_back(plan.changes.clone(), &handed_back);
+                (plan, preview)
+            } else {
+                let plan = copilot_hooks::remove_plan(&files, None).map_err(|e| refused(&e))?;
+                let preview = st.0.config.preview(plan.changes.clone());
+                (plan, preview)
+            };
             Ok(RemovePreview {
-                preview: st.0.config.preview(plan.changes),
+                preview,
                 statusline_left: plan.statusline_left,
             })
         }
