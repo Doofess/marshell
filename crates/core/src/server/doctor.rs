@@ -475,11 +475,8 @@ fn notify_facts(agent: &str, hooks_path: &Path, hooks: Option<&serde_json::Value
         return n;
     }
     if agent == "copilot" {
-        // `hooks_path` is `<copilot home>/hooks/marshell.json`; Copilot's own toasts are read on Windows only. A tab
-        // starts Copilot in the app's environment, so the variable that turns the toasts off is read from it.
-        use crate::agents::copilot::notify::{TOASTS_OFF_ENV, toasts_off_by_env};
-        let off = toasts_off_by_env(std::env::var_os(TOASTS_OFF_ENV).as_deref());
-        return copilot_notify(hooks_path, !off);
+        // `hooks_path` is `<copilot home>/hooks/marshell.json`; Copilot's own toasts are read on Windows only.
+        return copilot_notify(hooks_path, true);
     }
     if agent == "codex" {
         // Codex has no Notification hook event, so a group under it never runs: only its notify command counts.
@@ -489,6 +486,12 @@ fn notify_facts(agent: &str, hooks_path: &Path, hooks: Option<&serde_json::Value
     }
     n.hook_commands = hooks.map(notification_hooks).unwrap_or_default();
     n
+}
+
+/// Copilot's toasts are turned off by its variable (`value`). Where a test named Copilot's home the process environment
+/// doesn't count, as for `COPILOT_HOME` itself.
+fn copilot_toasts_off(home_named: bool, value: Option<&std::ffi::OsStr>) -> bool {
+    !home_named && crate::agents::copilot::notify::toasts_off_by_env(value)
 }
 
 /// What Copilot CLI notifies by itself, from its `settings.json` and every `*.json` in the `hooks` folder beside Marshell's
@@ -866,7 +869,13 @@ fn facts_from(st: &AppState, agent: &'static str, setup: AgentSetup, entries: &[
                 read_value(&text).ok()
             })
             .flatten();
-        notify_facts(agent, &path, hooks.as_ref())
+        let mut notify = notify_facts(agent, &path, hooks.as_ref());
+        // A tab starts Copilot in the app's environment, so the variable that turns its toasts off is read from it.
+        let off = std::env::var_os(crate::agents::copilot::notify::TOASTS_OFF_ENV);
+        if agent == "copilot" && copilot_toasts_off(st.copilot_home_named().is_some(), off.as_deref()) {
+            notify.toasts = false;
+        }
+        notify
     } else {
         checks::NotifyFacts::default()
     };
@@ -2635,6 +2644,14 @@ pub(in crate::server) mod tests {
             })
         );
         assert!(!is_kept);
+    }
+
+    #[test]
+    fn the_toast_off_variable_is_not_read_where_a_test_named_copilots_home() {
+        let one = Some(std::ffi::OsStr::new("1"));
+        assert!(copilot_toasts_off(false, one));
+        assert!(!copilot_toasts_off(true, one));
+        assert!(!copilot_toasts_off(false, None));
     }
 
     #[test]

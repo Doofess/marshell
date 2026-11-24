@@ -351,7 +351,8 @@ pub fn install_plan_over(files: &Files, bridge: &Bridge, want: &HookPlanRequest)
 
 /// `install_plan` for a hooks file the person keeps: over a file that parses and isn't Marshell's, only Marshell's own
 /// entries change, by JSON edits that leave every other byte as it is (PLAN §9, decision 20). Each event of `EVENTS`
-/// ends with exactly one entry of Marshell's, equal to the one `hooks_file` writes; entries of Marshell's under any
+/// is left with exactly one entry of Marshell's, equal to the one `hooks_file` writes and in the place an entry of
+/// Marshell's already had (at the end when there was none); entries of Marshell's under any
 /// other event go; a missing `version` gets 1. With `want.status` off Marshell's entries go and the file stays. Over
 /// Marshell's own file or no file it is `install_plan`. A hooks file that doesn't parse, or whose `hooks` (or an
 /// event's list that would be edited) isn't an object (or a list), is refused.
