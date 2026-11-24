@@ -7,11 +7,11 @@ use marshell_protocol::doctor::{DoctorGroup, DoctorItem};
 
 /// What the retention item says about the other CLIs.
 pub const RETENTION_OTHERS: &str =
-    "Codex and Qwen Code have no setting that deletes chats by age, and Antigravity documents none.";
+    "Codex, Qwen Code and Copilot CLI have no setting that deletes chats by age, and Antigravity documents none.";
 
 const READ_ONLY: &str = "The file is read-only.";
 const CANNOT_TRUST: &str = "Marshell can't trust hooks for you. Open /hooks in Codex and trust them.";
-const ORDER: [&str; 4] = ["claude", "codex", "antigravity", "qwen"];
+const ORDER: [&str; 5] = ["claude", "codex", "antigravity", "qwen", "copilot"];
 
 /// The state of the file a CLI's hooks live in.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,7 +19,12 @@ pub enum FileState {
     Ok,
     Missing,
     ReadOnly,
-    Unparsable { line: u32, message: String },
+    Unparsable {
+        line: u32,
+        message: String,
+    },
+    /// Copilot CLI: the hooks file holds something Marshell didn't write, or can't be read as text.
+    NotOurs,
 }
 
 /// What a CLI notifies by itself outside the terminal, besides Marshell. A bell or an OSC 9 inside the terminal isn't
@@ -39,7 +44,7 @@ pub struct NotifyFacts {
 /// Everything the checks need to know about one CLI, on Windows or in one WSL distro.
 #[derive(Debug, Clone)]
 pub struct AgentFacts {
-    /// "claude" | "codex" | "antigravity" | "qwen"
+    /// "claude" | "codex" | "antigravity" | "qwen" | "copilot"
     pub agent: &'static str,
     pub distro: Option<String>,
     /// The CLI is on this machine (always true for a distro's facts).
@@ -47,6 +52,8 @@ pub struct AgentFacts {
     /// The file its hooks live in.
     pub path: PathBuf,
     pub file: FileState,
+    /// The file `file` speaks of when it isn't `path` (Copilot CLI's `settings.json`).
+    pub problem_path: Option<PathBuf>,
     pub hooks: HookInstall,
     pub approve_installed: bool,
     pub has_own_statusline: bool,
@@ -79,6 +86,7 @@ pub fn display_name(agent: &str) -> &'static str {
         "codex" => "Codex",
         "antigravity" => "Antigravity",
         "qwen" => "Qwen Code",
+        "copilot" => "Copilot CLI",
         _ => "This CLI",
     }
 }
@@ -149,10 +157,42 @@ fn cli_items(f: &AgentFacts, banners_on: bool, out: &mut Vec<DoctorItem>) {
         return;
     }
 
+    if f.file == FileState::NotOurs {
+        if f.set_up {
+            let mut i = mk(
+                "hooksfile",
+                DoctorGroup::Broken,
+                false,
+                format!("{path} isn't Marshell's file any more"),
+                format!("Marshell set {cli}'s hooks up in it, and it now holds something Marshell didn't write."),
+            );
+            i.cannot_fix =
+                Some("Marshell writes only a hooks file it made. Move the file away, then run the check again.".into());
+            i.path = Some(path.clone());
+            out.push(i);
+        } else if f.distro.is_none() && f.found {
+            let mut i = mk(
+                "setup",
+                DoctorGroup::Info,
+                false,
+                format!("Hooks aren't set up for {cli}."),
+                "Agents sets them up, with a preview first.".into(),
+            );
+            i.open_agents = true;
+            out.push(i);
+        }
+        return;
+    }
+
     let unparsable = matches!(f.file, FileState::Unparsable { .. });
     let mut found = Vec::new();
 
     if let FileState::Unparsable { line, message } = &f.file {
+        let path = f
+            .problem_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| path.clone());
         let mut i = mk(
             "parse",
             DoctorGroup::Broken,
@@ -323,6 +363,7 @@ mod tests {
             found: true,
             path: PathBuf::from("C:/h/settings.json"),
             file: FileState::Ok,
+            problem_path: None,
             hooks: HookInstall::Installed,
             approve_installed: false,
             has_own_statusline: false,
@@ -557,7 +598,7 @@ mod tests {
             DoctorGroup::Info,
             true,
             "Claude Code deletes transcripts after 30 days",
-            "History and resume lose sessions older than that. The fix sets cleanupPeriodDays to 365. Codex and Qwen Code have no setting that deletes chats by age, and Antigravity documents none.",
+            "History and resume lose sessions older than that. The fix sets cleanupPeriodDays to 365. Codex, Qwen Code and Copilot CLI have no setting that deletes chats by age, and Antigravity documents none.",
             None,
         );
         f.retention_unset = Some(false);
@@ -566,7 +607,7 @@ mod tests {
 
     #[test]
     fn retention_is_claude_codes_only() {
-        for agent in ["codex", "antigravity", "qwen"] {
+        for agent in ["codex", "antigravity", "qwen", "copilot"] {
             let mut f = facts(agent);
             f.retention_unset = Some(true);
             assert!(items(&[f], &[], true).is_empty(), "{agent}");
@@ -660,6 +701,7 @@ mod tests {
             f
         };
         let all = [
+            mk("copilot", None),
             mk("qwen", None),
             mk("claude", Some("Ubuntu")),
             mk("antigravity", None),
@@ -678,11 +720,64 @@ mod tests {
                 "hooks.codex",
                 "hooks.antigravity",
                 "hooks.qwen",
+                "hooks.copilot",
                 "hooks.codex@Debian",
                 "hooks.claude@Ubuntu",
                 "wsl.Zed"
             ]
         );
+    }
+
+    #[test]
+    fn copilot_is_named_and_its_hooks_can_be_gone() {
+        assert_eq!(display_name("copilot"), "Copilot CLI");
+        let mut f = facts("copilot");
+        f.hooks = HookInstall::None;
+        let i = one(f);
+        assert_eq!(i.id, "hooks.copilot");
+        assert_eq!(i.title, "Copilot CLI's hooks are gone");
+        assert_eq!(i.group, DoctorGroup::Broken);
+        assert!(i.fixable);
+    }
+
+    #[test]
+    fn a_hooks_file_that_is_not_marshells_is_one_unfixable_item() {
+        for hooks in [HookInstall::None, HookInstall::Installed, HookInstall::Partial] {
+            let mut f = facts("copilot");
+            f.file = FileState::NotOurs;
+            f.hooks = hooks;
+            f.notify.hook_commands = vec!["x".into()];
+            let i = one(f);
+            check(
+                &i,
+                "hooksfile.copilot",
+                DoctorGroup::Broken,
+                false,
+                "C:/h/settings.json isn't Marshell's file any more",
+                "Marshell set Copilot CLI's hooks up in it, and it now holds something Marshell didn't write.",
+                Some("Marshell writes only a hooks file it made. Move the file away, then run the check again."),
+            );
+        }
+        let mut f = facts("copilot");
+        f.file = FileState::NotOurs;
+        f.set_up = false;
+        let i = one(f);
+        assert_eq!(i.id, "setup.copilot");
+        assert_eq!(i.group, DoctorGroup::Info);
+        assert_eq!(i.title, "Hooks aren't set up for Copilot CLI.");
+    }
+
+    #[test]
+    fn an_unparsable_file_names_the_problem_path_when_it_is_set() {
+        let mut f = facts("copilot");
+        f.file = FileState::Unparsable {
+            line: 2,
+            message: "bad".into(),
+        };
+        f.problem_path = Some(PathBuf::from("C:/c/settings.json"));
+        let i = one(f);
+        assert_eq!(i.title, "C:/c/settings.json doesn't parse");
+        assert_eq!(i.path.as_deref(), Some("C:/c/settings.json"));
     }
 
     #[test]

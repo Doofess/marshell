@@ -5,8 +5,8 @@
 
 use super::AppState;
 use super::agents::{
-    Adapter, Refusal, adapter, agy_setup_of, changed_since, changes_of, codex_setup_of, hook_install_changes,
-    qwen_setup_of, settings_file, setup_of,
+    Adapter, Refusal, adapter, agy_setup_of, changed_since, changes_of, codex_setup_of, copilot_setup_of,
+    hook_install_changes, qwen_setup_of, settings_file, setup_of,
 };
 use super::doctor_ext;
 use super::doctor_usage;
@@ -43,7 +43,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 type Fail = (StatusCode, String);
 
 /// The CLIs the Doctor checks, in the report's order.
-const AGENTS: [&str; 4] = ["claude", "codex", "antigravity", "qwen"];
+const AGENTS: [&str; 5] = ["claude", "codex", "antigravity", "qwen", "copilot"];
 
 pub async fn run(State(st): State<AppState>) -> (StatusCode, Json<DoctorSummary>) {
     request_run(&st);
@@ -281,7 +281,9 @@ pub(crate) fn facts_of(st: &AppState) -> Gathered {
         "claude" => setup_of(st),
         "codex" => codex_setup_of(st),
         "antigravity" => agy_setup_of(st),
-        _ => qwen_setup_of(st),
+        "qwen" => qwen_setup_of(st),
+        "copilot" => copilot_setup_of(st),
+        _ => Err((StatusCode::NOT_FOUND, "no such agent".to_string())),
     });
     let (distro, stopped, distro_homes) = distro_facts(st, &entries);
     let facts: Vec<AgentFacts> = facts.into_iter().chain(distro).collect();
@@ -411,6 +413,7 @@ fn failed_facts(agent: &'static str, distro: Option<String>, message: String) ->
         found: false,
         path: PathBuf::new(),
         file: FileState::Ok,
+        problem_path: None,
         hooks: marshell_protocol::agents::HookInstall::None,
         approve_installed: false,
         has_own_statusline: false,
@@ -465,6 +468,10 @@ fn notify_facts(agent: &str, hooks_path: &Path, hooks: Option<&serde_json::Value
     if agent == "antigravity" {
         return n;
     }
+    if agent == "copilot" {
+        // Copilot's notification hooks and toasts are read by their own check.
+        return n;
+    }
     if agent == "codex" {
         // Codex has no Notification hook event, so a group under it never runs: only its notify command counts.
         n.file = hooks_path.with_file_name("config.toml");
@@ -510,12 +517,16 @@ fn distro_agent_facts(
         name: distro.to_string(),
         path: target.bridge.clone(),
     };
+    if agent == "copilot" {
+        return distro_copilot_facts(distro, target, entries, &bridge);
+    }
     // Antigravity's hooks are in `hooks.json`, with the status line in `settings.json`.
     let files: Vec<PathBuf> = match agent {
         "claude" => vec![home.join(".claude").join("settings.json")],
         "codex" => vec![home.join(".codex").join("hooks.json")],
         "antigravity" => vec![agy::hooks_path(home), agy::settings_path(home)],
-        _ => vec![home.join(".qwen").join("settings.json")],
+        "qwen" => vec![home.join(".qwen").join("settings.json")],
+        _ => return failed_facts(agent, Some(distro.to_string()), "no such agent".to_string()),
     };
     let path = files[0].clone();
     let mut facts = AgentFacts {
@@ -525,6 +536,7 @@ fn distro_agent_facts(
         set_up: set_up_of(entries, &path),
         path,
         file: FileState::Ok,
+        problem_path: None,
         hooks: HookInstall::None,
         approve_installed: false,
         // A distro keeps no chain: its own status line is left alone, so nothing here says it isn't chained.
@@ -588,10 +600,11 @@ fn distro_agent_facts(
             let f = agy::inspect_for(first, values[1].as_ref(), None, &bridge);
             (f.install, f.approve_installed)
         }
-        _ => {
+        "qwen" => {
             let f = qwen::hooks::inspect_for(first.unwrap_or(&none), None, &bridge);
             (f.install, f.approve_installed)
         }
+        _ => return failed_facts(agent, Some(distro.to_string()), "no such agent".to_string()),
     };
     facts.hooks = install;
     facts.approve_installed = approve_installed;
@@ -599,10 +612,106 @@ fn distro_agent_facts(
     facts
 }
 
+/// What Copilot CLI's hooks file is, read as text: its text when it is there, and `Some(state)` when it doesn't
+/// parse, isn't Marshell's, or exists and can't be read as UTF-8 text.
+fn copilot_hooks_problem(hooks_path: &Path) -> (Option<String>, Option<FileState>) {
+    use crate::agents::copilot::hooks::{FileProblem, file_problem};
+    let text = match std::fs::read(hooks_path) {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(text) => text,
+            Err(_) => return (None, Some(FileState::NotOurs)),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return (None, None),
+        Err(_) => return (None, Some(FileState::NotOurs)),
+    };
+    let problem = file_problem(Some(&text)).map(|p| match p {
+        FileProblem::DoesNotParse { line, message } => FileState::Unparsable { line, message },
+        FileProblem::NotMarshells => FileState::NotOurs,
+    });
+    (Some(text), problem)
+}
+
+/// Copilot CLI's facts in a distro: its two files as text, read against the distro's bridge. A distro keeps no chain.
+fn distro_copilot_facts(
+    distro: &str,
+    target: &super::DistroTarget,
+    entries: &[ManagedEntry],
+    bridge: &crate::agents::common::Bridge,
+) -> AgentFacts {
+    use crate::agents::copilot::hooks as copilot_hooks;
+    let dir = target.home.join(".copilot");
+    let (hooks_path, settings_path) = (copilot_hooks::hooks_path(&dir), copilot_hooks::settings_path(&dir));
+    let mut facts = AgentFacts {
+        agent: "copilot",
+        distro: Some(distro.to_string()),
+        found: true,
+        set_up: set_up_of(entries, &hooks_path),
+        path: hooks_path.clone(),
+        file: FileState::Ok,
+        problem_path: None,
+        hooks: marshell_protocol::agents::HookInstall::None,
+        approve_installed: false,
+        has_own_statusline: false,
+        chained: false,
+        trust: None,
+        bridge: PathBuf::from(&target.bridge),
+        bridge_exists: bridge.exists(),
+        version_note: None,
+        retention_unset: None,
+        managed_settings: None,
+        notify: Default::default(),
+        error: None,
+    };
+    let settings_text = match std::fs::read_to_string(&settings_path) {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            facts.file = FileState::Unparsable {
+                line: 1,
+                message: e.to_string(),
+            };
+            facts.problem_path = Some(settings_path);
+            return facts;
+        }
+    };
+    if let Some((line, message)) = settings_text.as_deref().and_then(parse_problem) {
+        facts.file = FileState::Unparsable { line, message };
+        facts.problem_path = Some(settings_path);
+        return facts;
+    }
+    let (hooks_text, problem) = copilot_hooks_problem(&hooks_path);
+    if let Some(problem) = problem {
+        facts.file = problem;
+        return facts;
+    }
+    if hooks_text.is_none() && settings_text.is_none() {
+        facts.file = FileState::Missing;
+        return facts;
+    }
+    let read_only = |p: &Path| std::fs::metadata(p).is_ok_and(|m| m.permissions().readonly());
+    if read_only(&hooks_path) || read_only(&settings_path) {
+        facts.file = FileState::ReadOnly;
+    }
+    let found = copilot_hooks::inspect(
+        &copilot_hooks::Files {
+            hooks_path: &hooks_path,
+            hooks_text: hooks_text.as_deref(),
+            settings_path: &settings_path,
+            settings_text: settings_text.as_deref(),
+            chain_path: None,
+            chain_text: None,
+        },
+        bridge,
+    );
+    facts.hooks = found.install;
+    facts
+}
+
 fn facts_from(st: &AppState, agent: &'static str, setup: AgentSetup, entries: &[ManagedEntry]) -> AgentFacts {
     // Antigravity's hooks are in `hooks.json`; the others keep them in the file their setup names.
     let path = PathBuf::from(setup.hooks_path.as_deref().unwrap_or(&setup.settings_path));
-    let file = match setup.settings_state {
+    let mut problem_path = None;
+    let mut file = match setup.settings_state {
         SettingsState::Ok => FileState::Ok,
         SettingsState::Missing => FileState::Missing,
         SettingsState::ReadOnly => FileState::ReadOnly,
@@ -613,9 +722,21 @@ fn facts_from(st: &AppState, agent: &'static str, setup: AgentSetup, entries: &[
                 .map_or((1, "the file can't be read".to_string()), |p| {
                     (p.line, p.message.clone())
                 });
+            if agent == "copilot" {
+                // The hooks file is `path`; it is `settings.json` that doesn't parse.
+                problem_path = Some(PathBuf::from(&setup.settings_path));
+            }
             FileState::Unparsable { line, message }
         }
     };
+    if agent == "copilot" && !matches!(file, FileState::Unparsable { .. }) {
+        let (_, problem) = copilot_hooks_problem(&path);
+        if let Some(problem) = problem {
+            file = problem;
+        } else if std::fs::metadata(&path).is_ok_and(|m| m.permissions().readonly()) {
+            file = FileState::ReadOnly;
+        }
+    }
     let version_note = if setup.found {
         match version_gate(agent, setup.version.as_deref()) {
             Gate::Unknown(note) => Some(note),
@@ -652,6 +773,7 @@ fn facts_from(st: &AppState, agent: &'static str, setup: AgentSetup, entries: &[
         set_up: set_up_of(entries, &path),
         path,
         file,
+        problem_path,
         hooks: setup.hooks,
         approve_installed: setup.approve_installed,
         has_own_statusline: setup.has_own_statusline,
@@ -673,7 +795,9 @@ fn version_gate(agent: &str, version: Option<&str>) -> Gate {
         "claude" => claude::version_gate(version),
         "codex" => codex::version_gate(version),
         "antigravity" => antigravity::version_gate(version),
-        _ => qwen::version_gate(version),
+        "qwen" => qwen::version_gate(version),
+        "copilot" => crate::agents::copilot::version_gate(version),
+        _ => Gate::Known,
     }
 }
 
@@ -887,23 +1011,34 @@ fn hooks_want_of(facts: &AgentFacts, entries: &[ManagedEntry]) -> HookPlanReques
         facts.approve_installed || managed_pointer(entries, &facts.path, |p| p.contains("/PermissionRequest"));
     // A distro keeps no chain, and Codex has no status line.
     let chains = facts.distro.is_none() && facts.agent != "codex";
-    let statusline = chains
-        && (facts.chained || {
-            // Antigravity keeps its status line in `settings.json`, beside the `config` folder of its hooks.
-            let settings = (facts.agent == "antigravity")
-                .then(|| {
-                    facts
-                        .path
-                        .parent()
-                        .and_then(Path::parent)
-                        .map(|gemini| gemini.join("antigravity-cli").join("settings.json"))
-                })
-                .flatten();
-            [Some(facts.path.clone()), settings]
-                .into_iter()
-                .flatten()
-                .any(|path| managed_pointer(entries, &path, |p| under(p, "/statusLine")))
-        });
+    // Copilot CLI's status line is in `settings.json`, beside the `hooks` folder, and a distro install writes one too.
+    let copilot_line = facts.agent == "copilot"
+        && (facts.chained
+            || facts
+                .path
+                .parent()
+                .and_then(Path::parent)
+                .map(|dir| dir.join("settings.json"))
+                .is_some_and(|settings| managed_pointer(entries, &settings, |p| under(p, "/statusLine"))));
+    let statusline = copilot_line
+        || chains
+            && facts.agent != "copilot"
+            && (facts.chained || {
+                // Antigravity keeps its status line in `settings.json`, beside the `config` folder of its hooks.
+                let settings = (facts.agent == "antigravity")
+                    .then(|| {
+                        facts
+                            .path
+                            .parent()
+                            .and_then(Path::parent)
+                            .map(|gemini| gemini.join("antigravity-cli").join("settings.json"))
+                    })
+                    .flatten();
+                [Some(facts.path.clone()), settings]
+                    .into_iter()
+                    .flatten()
+                    .any(|path| managed_pointer(entries, &path, |p| under(p, "/statusLine")))
+            });
     HookPlanRequest {
         status: true,
         statusline,
@@ -1295,14 +1430,14 @@ pub(in crate::server) mod tests {
                 Ok(setup(agent))
             }
         });
-        assert_eq!(facts.len(), 4);
+        assert_eq!(facts.len(), 5);
         let items = checks::items(&facts, &[], true);
         let ids: Vec<&str> = items.iter().map(|i| i.id.as_str()).collect();
         let failed = items.iter().find(|i| i.id == "error.codex").unwrap();
         assert_eq!(failed.group, DoctorGroup::Info);
         assert_eq!(failed.detail, "the home folder is not known");
         // The others were read and found, with no file: each gets its setup line.
-        for agent in ["claude", "antigravity", "qwen"] {
+        for agent in ["claude", "antigravity", "qwen", "copilot"] {
             assert!(ids.contains(&format!("setup.{agent}").as_str()), "{ids:?}");
         }
         assert!(!ids.contains(&"setup.codex"), "{ids:?}");
@@ -1518,6 +1653,8 @@ pub(in crate::server) mod tests {
             .with_codex_hooks(project.join("codex-home").join("hooks.json"))
             .with_agy_home(project.join("agy-home"))
             .with_qwen_home(project.join("qwen-home"))
+            .with_copilot_home(root.join("copilot-home"))
+            .with_copilot_version(Some("1.0.106".into()))
             .with_qwen_system_settings(root.join("qwen-system.json"))
             .with_skill_home(root.join("skill-home"))
             .with_claude_compact_paths(root.join("claude-home"), vec![root.join("claude-managed.json")])
@@ -1837,6 +1974,275 @@ pub(in crate::server) mod tests {
                 .items
                 .iter()
                 .any(|i| i.id.ends_with("@Debian") && i.id.starts_with("cli."))
+        );
+    }
+
+    // Copilot CLI (slice 6n3): its facts, its hooks item and its plain lines. Every file is under the test's temp folder.
+
+    fn copilot_files(dir: &Path) -> (PathBuf, PathBuf) {
+        let copilot = crate::projects::canonical(dir).join("copilot-home").join(".copilot");
+        (
+            copilot.join("hooks").join("marshell.json"),
+            copilot.join("settings.json"),
+        )
+    }
+
+    /// Sets Copilot CLI's hooks up through its own plan, as "Set up" does.
+    fn install_copilot(st: &AppState) {
+        let want = HookPlanRequest {
+            status: true,
+            statusline: true,
+            approve: false,
+            skill: false,
+            distro: None,
+        };
+        let cs = hook_install_changes(st, Adapter::Copilot, &want).expect("a plan");
+        let preview = st.0.config.preview_mixed(cs, &|_| false);
+        let req = ApplyRequest {
+            changeset_id: preview.changeset_id.clone(),
+            expected_hashes: preview
+                .files
+                .iter()
+                .map(|f| ExpectedHash {
+                    path: f.path.clone(),
+                    hash: f.before_hash.clone(),
+                })
+                .collect(),
+        };
+        st.0.config.apply(&req, now_ms()).expect("applied");
+    }
+
+    fn copilot_facts(st: &AppState) -> AgentFacts {
+        facts_of(st)
+            .facts
+            .into_iter()
+            .find(|f| f.agent == "copilot" && f.distro.is_none())
+            .expect("copilot's facts")
+    }
+
+    async fn report_of(st: &AppState) -> DoctorReport {
+        run_once(st, Arc::new(facts_of)).await.expect("a run");
+        last_report(st)
+    }
+
+    fn has_item(report: &DoctorReport, id: &str) -> bool {
+        report.items.iter().any(|i| i.id == id)
+    }
+
+    #[test]
+    fn copilot_is_the_fifth_fact() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (hooks, _) = copilot_files(dir.path());
+        let facts = facts_of(&st).facts;
+        assert_eq!(facts.len(), 5);
+        assert_eq!(facts[4].agent, "copilot");
+        assert!(!facts[4].set_up);
+        install_copilot(&st);
+        let f = copilot_facts(&st);
+        assert_eq!(f.path, hooks);
+        assert!(f.set_up, "{f:?}");
+        assert_eq!(f.file, FileState::Ok);
+        assert_eq!(f.hooks, marshell_protocol::agents::HookInstall::Installed);
+    }
+
+    #[tokio::test]
+    async fn copilot_hooks_gone_are_fixed_with_the_status_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (hooks, settings) = copilot_files(dir.path());
+        install_copilot(&st);
+        assert!(settings.exists());
+        std::fs::remove_file(&hooks).unwrap();
+        let report = report_of(&st).await;
+        assert!(has_item(&report, "hooks.copilot"), "{:?}", report.items);
+        let want = hooks_want_of(&copilot_facts(&st), &managed_entries(&st));
+        assert!(want.statusline, "the line Marshell set is kept");
+
+        // The person also took the status line out by hand: the fix puts both back.
+        write(&settings, "{}");
+        let report = report_of(&st).await;
+        assert!(has_item(&report, "hooks.copilot"), "{:?}", report.items);
+        let plan = fix_of(&st, vec!["hooks.copilot".into()]).expect("a plan");
+        let paths: Vec<&str> = plan.preview.files.iter().map(|f| f.path.as_str()).collect();
+        assert!(paths.iter().any(|p| p.ends_with("marshell.json")), "{paths:?}");
+        assert!(paths.iter().any(|p| p.ends_with("settings.json")), "{paths:?}");
+        assert!(
+            paths
+                .iter()
+                .all(|p| p.contains("copilot-home") || p.ends_with("statusline-chain.json")),
+            "{paths:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_hooks_file_that_is_not_marshells_is_reported_and_never_fixed() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (hooks, settings) = copilot_files(dir.path());
+        // Another CLI has something to fix meanwhile: Claude Code's retention.
+        write(&dir.path().join("project").join("settings.json"), "{}");
+        install_copilot(&st);
+        for bytes in [b"{}".to_vec(), vec![0xff, 0xfe, 0x7b, 0x7d]] {
+            std::fs::write(&hooks, &bytes).unwrap();
+            let report = report_of(&st).await;
+            assert!(has_item(&report, "hooksfile.copilot"), "{:?}", report.items);
+            assert!(!has_item(&report, "hooks.copilot"), "{:?}", report.items);
+            let item = report.items.iter().find(|i| i.id == "hooksfile.copilot").unwrap();
+            assert!(!item.fixable && item.group == DoctorGroup::Broken);
+            assert!(fix_of(&st, vec!["hooksfile.copilot".into()]).is_err());
+            assert!(fix_of(&st, vec!["retention.claude".into()]).is_ok());
+        }
+        // With settings.json gone beside a `{}` hooks file.
+        std::fs::write(&hooks, "{}").unwrap();
+        std::fs::remove_file(&settings).unwrap();
+        let report = report_of(&st).await;
+        assert!(has_item(&report, "hooksfile.copilot"), "{:?}", report.items);
+        assert!(!has_item(&report, "hooks.copilot"), "{:?}", report.items);
+        assert!(fix_of(&st, vec!["retention.claude".into()]).is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_read_only_copilot_file_makes_its_hooks_item_unfixable() {
+        use crate::agents::common::Bridge;
+        use crate::agents::copilot::hooks as copilot_hooks;
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (hooks, settings) = copilot_files(dir.path());
+        install_copilot(&st);
+        // Marshell's own file with no entry: the hooks read as incomplete.
+        let own_empty = copilot_hooks::hooks_file(
+            &Bridge::local(&st.0.home),
+            &HookPlanRequest {
+                status: false,
+                statusline: false,
+                approve: false,
+                skill: false,
+                distro: None,
+            },
+        );
+        std::fs::write(&hooks, own_empty).unwrap();
+        for file in [&hooks, &settings] {
+            let mut perms = std::fs::metadata(file).unwrap().permissions();
+            perms.set_readonly(true);
+            std::fs::set_permissions(file, perms).unwrap();
+            let report = report_of(&st).await;
+            let item = report.items.iter().find(|i| i.id == "hooks.copilot").expect("the item");
+            assert!(!item.fixable, "{item:?}");
+            assert_eq!(item.cannot_fix.as_deref(), Some("The file is read-only."));
+            #[allow(clippy::permissions_set_readonly_false)]
+            {
+                let mut perms = std::fs::metadata(file).unwrap().permissions();
+                perms.set_readonly(false);
+                std::fs::set_permissions(file, perms).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn an_unparsable_copilot_settings_file_is_the_one_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (_, settings) = copilot_files(dir.path());
+        install_copilot(&st);
+        write(&settings, "{ \"statusLine\": ");
+        let f = copilot_facts(&st);
+        assert!(matches!(f.file, FileState::Unparsable { .. }), "{:?}", f.file);
+        assert_eq!(f.problem_path, Some(settings.clone()));
+        let items = checks::items(&[f], &[], true);
+        let parse = items.iter().find(|i| i.id == "parse.copilot").expect("the item");
+        assert!(
+            parse.title.starts_with(&settings.display().to_string()),
+            "{}",
+            parse.title
+        );
+        assert_eq!(parse.path.as_deref(), Some(settings.display().to_string().as_str()));
+    }
+
+    /// A distro's `/mnt/<drive>/...` form of a Windows path.
+    fn mnt(path: &Path) -> String {
+        let text = path.to_string_lossy().replace('\\', "/");
+        let text = text.strip_prefix("//?/").unwrap_or(&text).to_string();
+        format!("/mnt/{}{}", text[..1].to_ascii_lowercase(), &text[2..])
+    }
+
+    #[test]
+    fn copilot_in_a_distro_reads_its_two_files_as_text() {
+        use crate::agents::common::Bridge;
+        use crate::agents::copilot::hooks as copilot_hooks;
+        let dir = tempfile::tempdir().unwrap();
+        let root = crate::projects::canonical(dir.path());
+        let bridge_exe = root.join("bridge").join("marshell-hook.exe");
+        write(&bridge_exe, "");
+        let target = super::super::DistroTarget {
+            home: root.join("ubuntu-home"),
+            bridge: mnt(&bridge_exe),
+        };
+        let dot = target.home.join(".copilot");
+        let (hooks, settings) = (dot.join("hooks").join("marshell.json"), dot.join("settings.json"));
+
+        let none = distro_agent_facts("copilot", "Ubuntu", &target, &[]);
+        assert_eq!(none.file, FileState::Missing);
+        assert_eq!(none.path, hooks);
+
+        let bridge = Bridge::Distro {
+            name: "Ubuntu".into(),
+            path: target.bridge.clone(),
+        };
+        let want = HookPlanRequest {
+            status: true,
+            statusline: false,
+            approve: false,
+            skill: false,
+            distro: Some("Ubuntu".into()),
+        };
+        write(&hooks, &copilot_hooks::hooks_file(&bridge, &want));
+        let command = copilot_hooks::statusline_command(&bridge).unwrap();
+        write(
+            &settings,
+            &serde_json::json!({"statusLine": {"type": "command", "command": command}}).to_string(),
+        );
+        let entries = [entry(&hooks.to_string_lossy(), None)];
+        let f = distro_agent_facts("copilot", "Ubuntu", &target, &entries);
+        assert_eq!(f.file, FileState::Ok, "{f:?}");
+        assert_eq!(f.hooks, marshell_protocol::agents::HookInstall::Installed, "{f:?}");
+        assert!(f.set_up);
+        assert_eq!(f.distro.as_deref(), Some("Ubuntu"));
+
+        write(&hooks, "{}");
+        let f = distro_agent_facts("copilot", "Ubuntu", &target, &entries);
+        assert_eq!(f.file, FileState::NotOurs);
+
+        // The status line is asked for when managed.json says Marshell set it; a Qwen Code fact never is.
+        let mut with_line = entries.to_vec();
+        with_line.push(entry(&settings.to_string_lossy(), Some("/statusLine")));
+        write(&hooks, &copilot_hooks::hooks_file(&bridge, &want));
+        let f = distro_agent_facts("copilot", "Ubuntu", &target, &with_line);
+        assert!(hooks_want_of(&f, &with_line).statusline);
+        assert!(!hooks_want_of(&f, &entries).statusline);
+        let q = distro_agent_facts("qwen", "Ubuntu", &target, &with_line);
+        assert!(!hooks_want_of(&q, &with_line).statusline);
+    }
+
+    #[test]
+    fn an_unknown_agent_gets_failed_facts() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = super::super::DistroTarget {
+            home: dir.path().join("h"),
+            bridge: "/mnt/c/x.exe".into(),
+        };
+        let f = distro_agent_facts("nobody", "Ubuntu", &target, &[]);
+        assert!(f.error.is_some());
+    }
+
+    #[test]
+    fn copilot_has_no_doctor_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path()).with_doctor_runner(claude_ok_codex_fails);
+        let items = cli_doctor_items(&st);
+        assert!(
+            items.iter().any(|i| i.title == "Copilot CLI has no doctor command."),
+            "{items:?}"
         );
     }
 

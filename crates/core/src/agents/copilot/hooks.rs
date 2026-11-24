@@ -138,18 +138,33 @@ fn unix_lines(text: &str) -> String {
     text.replace("\r\n", "\n")
 }
 
+/// What is wrong with a hooks file that is there: it doesn't parse, or it isn't Marshell's whole file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileProblem {
+    DoesNotParse { line: u32, message: String },
+    NotMarshells,
+}
+
+/// The hooks file's problem, if any; a missing file (`None`) has none.
+pub fn file_problem(text: Option<&str>) -> Option<FileProblem> {
+    let text = text?;
+    let Ok(file) = read_value(text) else {
+        let (line, message) = parse_problem(text).unwrap_or((1, "The file does not parse.".to_string()));
+        return Some(FileProblem::DoesNotParse { line, message });
+    };
+    (!is_marshells(&file, text)).then_some(FileProblem::NotMarshells)
+}
+
 /// The hooks file's text when it is there and Marshell's. A file that doesn't parse, or isn't Marshell's, is an error.
 fn marshells_hooks<'a>(files: &Files<'a>) -> Result<Option<&'a str>, PlanError> {
     let Some(text) = files.hooks_text else { return Ok(None) };
-    let Ok(file) = read_value(text) else {
-        return Err(does_not_parse(files.hooks_path, text));
-    };
-    if !is_marshells(&file, text) {
-        return Err(PlanError::NotMarshells {
+    match file_problem(Some(text)) {
+        None => Ok(Some(text)),
+        Some(FileProblem::DoesNotParse { .. }) => Err(does_not_parse(files.hooks_path, text)),
+        Some(FileProblem::NotMarshells) => Err(PlanError::NotMarshells {
             path: files.hooks_path.to_path_buf(),
-        });
+        }),
     }
-    Ok(Some(text))
 }
 
 /// The settings as a value (a missing file is `{}`). Only a file that doesn't parse, or isn't an object, is refused.
@@ -902,6 +917,24 @@ mod tests {
                 "{text}"
             );
         }
+    }
+
+    #[test]
+    fn file_problem_tells_what_is_wrong_with_a_hooks_file() {
+        assert_eq!(file_problem(None), None);
+        let own = hooks_file(&bridge(), &BOTH);
+        assert_eq!(file_problem(Some(&own)), None);
+        assert_eq!(file_problem(Some(&own_empty_text())), None);
+        for text in [
+            "{}",
+            r#"{"hooks":{"sessionStart":[{"type":"command","command":"mine"}]}}"#,
+        ] {
+            assert_eq!(file_problem(Some(text)), Some(FileProblem::NotMarshells), "{text}");
+        }
+        assert!(matches!(
+            file_problem(Some("{\"hooks\": ")),
+            Some(FileProblem::DoesNotParse { line, .. }) if line >= 1
+        ));
     }
 
     #[test]

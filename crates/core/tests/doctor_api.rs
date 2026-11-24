@@ -14,7 +14,7 @@ use tower::ServiceExt;
 
 const TOKEN: &str = "test-token";
 const PORT: u16 = 5557;
-const AGENTS: [&str; 4] = ["claude", "codex", "antigravity", "qwen"];
+const AGENTS: [&str; 5] = ["claude", "codex", "antigravity", "qwen", "copilot"];
 
 struct Env {
     _dir: tempfile::TempDir,
@@ -31,6 +31,8 @@ struct Env {
     agy_hooks: PathBuf,
     agy_settings: PathBuf,
     qwen: PathBuf,
+    copilot_hooks: PathBuf,
+    copilot_settings: PathBuf,
 }
 
 /// Every CLI is found (at a path that doesn't exist, so nothing runs) and every file lives in the recorded project.
@@ -97,10 +99,17 @@ fn build_on(find: fn(&str) -> Option<PathBuf>, on_start: bool, running: Option<f
             .join("qwen-home")
             .join(".qwen")
             .join("settings.json"),
+        copilot_hooks: copilot_dir(&root).join("hooks").join("marshell.json"),
+        copilot_settings: copilot_dir(&root).join("settings.json"),
         root,
         find,
         running,
     }
+}
+
+/// Copilot CLI's own folder under the state's pinned home.
+fn copilot_dir(root: &Path) -> PathBuf {
+    root.join("copilot-home").join(".copilot")
 }
 
 /// The state over the folders under `root`, which a restart builds again on the same folders.
@@ -139,6 +148,8 @@ fn state_on(
     .with_codex_hooks(codex)
     .with_agy_home(agy_home)
     .with_qwen_home(qwen_home)
+    .with_copilot_home(root.join("copilot-home"))
+    .with_copilot_version(Some("1.0.106".into()))
     // The MCP servers and skills are read under a scratch home, never the developer's.
     .with_ext_home(root.join("ext-home"))
     .with_qwen_system_settings(root.join("qwen-system.json"))
@@ -173,6 +184,7 @@ impl Env {
             "claude" => &self.claude,
             "codex" => &self.codex,
             "antigravity" => &self.agy_hooks,
+            "copilot" => &self.copilot_hooks,
             _ => &self.qwen,
         }
     }
@@ -299,6 +311,11 @@ fn seed_own_hooks(e: &Env, agent: &str) {
         "claude" => write(&e.claude, &own_groups(&claude::hooks::STATUS_EVENTS)),
         "codex" => write(&e.codex, &own_groups(&codex::hooks::STATUS_EVENTS)),
         "qwen" => write(&e.qwen, &own_groups(&qwen::hooks::STATUS_EVENTS)),
+        // `marshell.json` is Marshell's whole file, so the person's own hooks go in a file beside it.
+        "copilot" => write(
+            &e.copilot_hooks.with_file_name("mine.json"),
+            &json!({"version": 1, "hooks": {"sessionStart": [{"type": "command", "bash": "my-hook"}]}}),
+        ),
         // Antigravity keeps Marshell's entries under one named hook; the person's own hooks have other names.
         _ => {
             let mut mine = serde_json::Map::new();
@@ -319,7 +336,13 @@ async fn set_up_follows_each_clis_real_plans() {
         let e = env();
         install(&e, agent).await;
         // Every Marshell entry gone by hand; the managed record still names the file.
-        write(e.hooks_file(agent), &json!({}));
+        if agent == "copilot" {
+            // `{}` is a file Marshell didn't write; its own file is gone.
+            assert!(e.copilot_settings.exists(), "the install wrote the status line");
+            std::fs::remove_file(e.hooks_file(agent)).unwrap();
+        } else {
+            write(e.hooks_file(agent), &json!({}));
+        }
         if agent == "antigravity" {
             write(&e.agy_settings, &json!({}));
         }
@@ -338,7 +361,7 @@ async fn hooks_off_reads_as_never_set_up() {
         seed_own_hooks(&e, agent);
         install(&e, agent).await;
         let entries = marshell_core::config::managed::list(&e.home).unwrap();
-        if agent != "antigravity" {
+        if agent != "antigravity" && agent != "copilot" {
             // The evidence: an event that already had a group is appended to, which the record keeps as `/-`.
             assert!(
                 entries
@@ -348,7 +371,13 @@ async fn hooks_off_reads_as_never_set_up() {
             );
         }
         remove(&e, agent).await;
-        let text = std::fs::read_to_string(e.hooks_file(agent)).unwrap();
+        // Copilot's removal deletes Marshell's own file, and the person's hooks are in the one beside it.
+        let theirs = if agent == "copilot" {
+            e.copilot_hooks.with_file_name("mine.json")
+        } else {
+            e.hooks_file(agent).to_path_buf()
+        };
+        let text = std::fs::read_to_string(theirs).unwrap();
         assert!(text.contains("my-"), "{agent}: the person's hooks stay: {text}");
 
         let r = report(&e).await;
