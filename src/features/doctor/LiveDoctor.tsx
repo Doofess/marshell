@@ -15,7 +15,7 @@ import { measureDoneAnnouncement } from "./measure";
 import { useClickRun } from "./useClickRun";
 import { planRestarts, skippedReceipt } from "./doctorRestart";
 import { fixAnnouncement, undoRefusedAnnouncement } from "./doctorUi";
-import { pressKeep } from "./keep";
+import { keepDone, keepFocusKey, pressKeep } from "./keep";
 import { selectedFixable } from "./report";
 import type { DoctorItem } from "./types";
 import { DifferencesSheet, FixSheet } from "./FixSheet";
@@ -47,6 +47,8 @@ export function LiveDoctor({ endpoint, summary, infos, isWorking, actions, annou
   const [diff, setDiff] = useState<ConfigPreview | null>(null);
   const [keeping, setKeeping] = useState<string>();
   const [keepError, setKeepError] = useState<string>();
+  // The mark of the button a press swapped away (`keepFocusKey`), until the report that holds its successor is shown.
+  const keepFocus = useRef<{ key: string; id: string }>(undefined);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const startedAt = useRef(Date.now());
   const root = useRef<HTMLDivElement>(null);
@@ -136,8 +138,24 @@ export function LiveDoctor({ endpoint, summary, infos, isWorking, actions, annou
     if (!r.ok) {
       setKeepError(r.message);
       announce(r.message);
+      return;
     }
+    keepFocus.current = { key: keepFocusKey(item), id: item.id };
+    announce(keepDone(item.action));
   };
+
+  // A press swaps the row for its other form. The pressed button is gone with it, so the focus goes to the button that
+  // took its place, unless the person has moved the focus somewhere else in the meantime.
+  useEffect(() => {
+    const want = keepFocus.current;
+    // Until the new report is shown the pressed row is still there, with the focus on its button.
+    if (!want || !m.report || m.report.items.some((i) => i.id === want.id)) return;
+    keepFocus.current = undefined;
+    const lost = document.activeElement === null || document.activeElement === document.body;
+    if (!lost) return;
+    const next = [...(root.current?.querySelectorAll<HTMLElement>("[data-doctor-keep]") ?? [])].find((b) => b.dataset.doctorKeep === want.key);
+    (next ?? root.current)?.focus();
+  }, [m.report]);
 
   const fix = async () => {
     if (!endpoint || !m.report) return;

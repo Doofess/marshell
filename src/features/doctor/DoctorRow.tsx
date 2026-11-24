@@ -1,5 +1,5 @@
 import { AuxGlyph, StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
-import { keepLabel, keepName } from "./keep";
+import { keepFocusKey, keepLabel, keepName } from "./keep";
 import type { DoctorGroup, DoctorItem } from "./types";
 import "./Doctor.css";
 
@@ -60,7 +60,8 @@ export function DoctorRow({ item, fixed = false, checked = false, disabled = fal
         )}
         {item.action && (
           <div>
-            <button type="button" className="doctor__btn" aria-label={keepName(item.action, item.title, keeping)} disabled={keeping} onClick={() => onKeep?.(item)}>
+            {/* aria-disabled, not disabled: the pressed button keeps the focus while its request runs. */}
+            <button type="button" className="doctor__btn" data-doctor-keep={keepFocusKey(item)} aria-label={keepName(item.action, item.title, keeping)} aria-disabled={keeping ? "true" : undefined} onClick={keeping ? undefined : () => onKeep?.(item)}>
               {keepLabel(item.action, keeping)}
             </button>
           </div>

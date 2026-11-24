@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../lib/api/client";
-import { keepLabel, keepName, pressKeep } from "./keep";
+import { keepDone, keepFocusKey, keepLabel, keepName, pressKeep } from "./keep";
 
 describe("keep buttons", () => {
   it("label the action, and say what is happening while the request runs", () => {
@@ -29,5 +29,14 @@ describe("keep buttons", () => {
     const load = async () => {};
     expect(await pressKeep(() => Promise.reject(new ApiError(422, "This item can't be fixed any more. Run the check again.")), load)).toEqual({ ok: false, message: "This item can't be fixed any more. Run the check again." });
     expect(await pressKeep(() => Promise.reject(new ApiError(500, "")), load)).toEqual({ ok: false, message: "Marshell couldn't change that." });
+  });
+  it("keepFocusKey is the row's CLI and distro, so the row that replaces a pressed one is found", () => {
+    expect(keepFocusKey({ agent: "copilot" })).toBe("copilot|");
+    expect(keepFocusKey({ agent: "copilot", distro: "Ubuntu" })).toBe("copilot|Ubuntu");
+    expect(keepFocusKey({})).toBe("|");
+  });
+  it("keepDone says what Marshell now does", () => {
+    expect(keepDone("keep")).toBe("Marshell keeps your file as it is.");
+    expect(keepDone("stopKeeping")).toBe("Marshell no longer keeps that file.");
   });
 });

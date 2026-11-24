@@ -181,9 +181,12 @@ describe("DoctorPage", () => {
       expect(h).not.toContain("Keep my file");
       expect(h).not.toContain("Stop keeping");
     });
-    it("the busy row's button is disabled and reads Keeping…, and the unchecked row stays unchecked", () => {
+    it("the busy row's button keeps the focus (aria-disabled) and reads Keeping…, and the unchecked row stays unchecked", () => {
       const h = page(DOCTOR_KEEP, "ready", { onKeep: noop, keeping: "hooksfile.copilot" });
-      expect(h).toMatch(/<button type="button"[^>]*disabled=""[^>]*>Keeping…<\/button>/);
+      expect(h).toMatch(/<button type="button"[^>]*aria-disabled="true"[^>]*>Keeping…<\/button>/);
+      expect(h).not.toMatch(/<button[^>]*disabled=""[^>]*>Keeping…/);
+      // Both rows are one file's: the button that replaces the pressed one is found by this mark.
+      expect((h.match(/data-doctor-keep="copilot\|"/g) ?? []).length).toBe(2);
       expect(h).toContain(">Stop keeping<");
       expect((h.match(/checked=""/g) ?? []).length).toBe(0);
     });

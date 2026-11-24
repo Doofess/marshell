@@ -6,7 +6,15 @@ export const keepLabel = (action: DoctorAction, busy: boolean) => (action === "k
 /** The button's accessible name: its visible text first, then the row it belongs to. */
 export const keepName = (action: DoctorAction, title: string, busy: boolean) => `${keepLabel(action, busy)}: ${title}`;
 
-export type KeepOutcome = { ok: true } | { ok: false; message: string };
+/** What the announcer says once a press went through. */
+export const keepDone = (action: DoctorAction) => (action === "keep" ? "Marshell keeps your file as it is." : "Marshell no longer keeps that file.");
+/**
+ * The mark both of one file's rows carry on their button ("isn't Marshell's file any more" and "has your changes"):
+ * a press swaps one row for the other, and the focus follows to the button that took its place.
+ */
+export const keepFocusKey = (item: { agent?: string | null; distro?: string | null }) => `${item.agent ?? ""}|${item.distro ?? ""}`;
+
+export type KeepOutcome ={ ok: true } | { ok: false; message: string };
 
 /**
  * Sends the press and follows the run the core asked for the way a run started here is followed: a run that is already
