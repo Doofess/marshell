@@ -149,9 +149,53 @@
   color: var(--text-1);
 }
 .doctor__file code,
+.doctor__load-files code,
 .fix-sheet code {
   font-family: var(--font-mono);
   overflow-wrap: anywhere;
+}
+
+/* The files each CLI loads: closed until asked for, with the browser's own marker on the summary. */
+.doctor__loads {
+  font-size: var(--text-12);
+  color: var(--text-1);
+}
+.doctor__loads summary {
+  inline-size: fit-content;
+  min-block-size: 24px;
+  padding-block: var(--space-1);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.doctor__loads summary:active {
+  color: var(--text-2);
+}
+.doctor__load-cli,
+.doctor__load-note {
+  margin: 0;
+  text-wrap: pretty;
+}
+.doctor__load-cli {
+  margin-block-start: var(--space-2);
+  font-weight: 600;
+}
+.doctor__load-note {
+  color: var(--text-2);
+}
+.doctor__load-files {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* An imported file sits one step in from the file that imports it. */
+.doctor__load-files li {
+  padding-inline-start: calc(var(--depth) * 1.25em);
+  overflow-wrap: anywhere;
+}
+/* A file that loads later, or not at all, is quieter; its note says which in words. */
+.doctor__load-files li[data-when="whenUsed"],
+.doctor__load-files li[data-when="notLoaded"] {
+  color: var(--text-2);
 }
 
 /* Buttons are plain fills; the primary one takes the accent. */
@@ -182,6 +226,7 @@
 }
 .doctor__btn:focus-visible,
 .doctor__link:focus-visible,
+.doctor__loads summary:focus-visible,
 .toast__btn:focus-visible,
 .fix-sheet__btn:focus-visible,
 .fix-sheet__title:focus-visible {
@@ -327,6 +372,12 @@
     accent-color: Highlight;
   }
   .doctor__check input:focus-visible {
+    outline: 2px solid Highlight;
+  }
+  .doctor__loads summary {
+    color: CanvasText;
+  }
+  .doctor__loads summary:focus-visible {
     outline: 2px solid Highlight;
   }
   .doctor__btn,
