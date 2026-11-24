@@ -475,8 +475,11 @@ fn notify_facts(agent: &str, hooks_path: &Path, hooks: Option<&serde_json::Value
         return n;
     }
     if agent == "copilot" {
-        // `hooks_path` is `<copilot home>/hooks/marshell.json`; Copilot's own toasts are read on Windows only.
-        return copilot_notify(hooks_path, true);
+        // `hooks_path` is `<copilot home>/hooks/marshell.json`; Copilot's own toasts are read on Windows only. A tab
+        // starts Copilot in the app's environment, so the variable that turns the toasts off is read from it.
+        use crate::agents::copilot::notify::{TOASTS_OFF_ENV, toasts_off_by_env};
+        let off = toasts_off_by_env(std::env::var_os(TOASTS_OFF_ENV).as_deref());
+        return copilot_notify(hooks_path, !off);
     }
     if agent == "codex" {
         // Codex has no Notification hook event, so a group under it never runs: only its notify command counts.
@@ -677,7 +680,7 @@ fn copilot_hooks_problem(
         cannot_fix: Some(NO_PREVIEW),
         keepable: false,
     });
-    let text = match std::fs::read(hooks_path) {
+    let text = match hooks_file_bytes(hooks_path) {
         Ok(bytes) => match String::from_utf8(bytes) {
             Ok(text) => text,
             Err(_) => return (None, no_preview, false),
@@ -699,6 +702,24 @@ fn copilot_hooks_problem(
         ),
     };
     (Some(text), problem, is_kept)
+}
+
+/// A hooks file's bytes. Never more than the config size limit is read: a larger file is an error, as is one that
+/// can't be read.
+fn hooks_file_bytes(path: &Path) -> std::io::Result<Vec<u8>> {
+    use crate::config::preview::MAX_CONFIG_BYTES;
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(MAX_CONFIG_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_CONFIG_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "the file is over the config size limit",
+        ));
+    }
+    Ok(bytes)
 }
 
 use checks::READ_ONLY;
@@ -1323,7 +1344,7 @@ fn keep_of(st: &AppState, req: &DoctorKeepRequest) -> Result<(), Fail> {
     let mut record = copilot_kept_record(&st.0.home);
     if req.keep {
         // The person's part is read again, so what is recorded is what is in the file now.
-        let bytes = std::fs::read(&facts.path).map_err(|_| cant_fix())?;
+        let bytes = hooks_file_bytes(&facts.path).map_err(|_| cant_fix())?;
         let text = String::from_utf8(bytes).map_err(|_| cant_fix())?;
         let file = read_value(&text)
             .ok()
@@ -2594,6 +2615,26 @@ pub(in crate::server) mod tests {
         write(&home.join("hooks").join("export.json"), &big);
         let facts = copilot_notify(&home.join("hooks").join("marshell.json"), true);
         assert_eq!(facts.hook_commands, ["small"]);
+    }
+
+    #[test]
+    fn marshells_hooks_file_over_the_size_limit_is_not_read_and_offers_no_keep() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".copilot");
+        let hooks = home.join("hooks").join("marshell.json");
+        let mut big = r#"{"hooks": {"notification": [{"type": "command", "command": "mine"}]}}"#.to_string();
+        big.push_str(&" ".repeat(crate::config::preview::MAX_CONFIG_BYTES as usize));
+        write(&hooks, &big);
+        let (text, problem, is_kept) = copilot_hooks_problem(&hooks, &home.join("settings.json"), &Kept::parse(None));
+        assert_eq!(text, None);
+        assert_eq!(
+            problem,
+            Some(FileState::NotOurs {
+                cannot_fix: Some(NO_PREVIEW),
+                keepable: false
+            })
+        );
+        assert!(!is_kept);
     }
 
     #[test]

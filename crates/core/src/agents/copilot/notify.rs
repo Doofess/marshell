@@ -10,6 +10,14 @@ pub fn toasts_on(settings: &Value) -> bool {
     settings.get("notifications") == Some(&Value::Bool(true))
 }
 
+/// The variable that turns Copilot's own toasts off, whatever `settings.json` says, when it is exactly `1`.
+pub const TOASTS_OFF_ENV: &str = "COPILOT_DISABLE_DESKTOP_NOTIFICATIONS";
+
+/// `value` is that variable in the environment Copilot starts in.
+pub fn toasts_off_by_env(value: Option<&std::ffi::OsStr>) -> bool {
+    value == Some(std::ffi::OsStr::new("1"))
+}
+
 /// The command a hook entry runs, as text: the first of `powershell`, `command` and `bash`, else `exec` with its `args`
 /// joined by spaces, else the `url` of an `http` entry. A `prompt` entry, and one with none of these, gives `None`.
 fn command_of(entry: &Value) -> Option<String> {
@@ -65,8 +73,12 @@ fn commands_in(value: &Value, out: &mut Vec<String>) {
 }
 
 /// The commands of the person's own `notification` hooks: the files in file-name order, each in file order, then
-/// `settings.hooks.notification`. Marshell's own entries are never listed.
+/// `settings.hooks.notification`. Marshell's own entries are never listed. `disableAllHooks` in a hooks file turns off
+/// that file's hooks, and in `settings.json` every file's.
 pub fn own_hooks(files: &[(PathBuf, Value)], settings: Option<&Value>) -> Vec<String> {
+    if settings.is_some_and(|s| s.get("disableAllHooks") == Some(&Value::Bool(true))) {
+        return Vec::new();
+    }
     let mut sorted: Vec<&(PathBuf, Value)> = files.iter().collect();
     sorted.sort_by(|a, b| a.0.file_name().cmp(&b.0.file_name()));
     let mut out = Vec::new();
@@ -184,5 +196,25 @@ mod tests {
         );
         let settings = json!({"disableAllHooks": true, "hooks": {"notification": [{"command": "c"}]}});
         assert!(own_hooks(&[off, other], Some(&settings)).is_empty());
+    }
+
+    #[test]
+    fn disable_all_hooks_in_settings_turns_off_the_hooks_of_every_file() {
+        let hook = json!({"hooks": {"notification": [{"type": "command", "command": "a"}]}});
+        let off = json!({"disableAllHooks": true});
+        assert!(own_hooks(&[file("x.json", hook.clone())], Some(&off)).is_empty());
+        // Only a literal `true` is the switch.
+        let text = json!({"disableAllHooks": "true"});
+        assert_eq!(own_hooks(&[file("x.json", hook)], Some(&text)), ["a"]);
+    }
+
+    #[test]
+    fn only_the_variable_set_to_exactly_1_turns_the_toasts_off() {
+        use std::ffi::OsStr;
+        assert!(toasts_off_by_env(Some(OsStr::new("1"))));
+        for other in ["", "0", "true", " 1", "11"] {
+            assert!(!toasts_off_by_env(Some(OsStr::new(other))), "{other:?}");
+        }
+        assert!(!toasts_off_by_env(None));
     }
 }
