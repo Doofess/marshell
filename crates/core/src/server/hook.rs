@@ -134,6 +134,7 @@ pub async fn post(
     // mark comes first, so the check below sees it and an event of another agent in that tab is dropped.
     let mut left_wsl = false;
     let mut on_wsl = false;
+    let mut wsl_held = false;
     // Each agent names its session and its start and end in its own way.
     let (session_id, session_ends, session_starts) = if agent == "copilot" {
         (
@@ -155,12 +156,21 @@ pub async fn post(
     {
         on_wsl = true;
         if session_ends {
-            // The agent is gone from the row: nothing is left to fold into a status, even when no earlier hook marked it.
-            // A row launched as an agent (History's Resume opens `claude --resume ...; exec bash -l`) outlives the agent
-            // and has no mark to clear: it folds the SessionEnd as a Windows tab does, and shows Ended.
-            let cleared = st.registry().clear_hook_agent(tab, &agent, session_id);
-            let launched = st.registry().row(tab).is_some_and(|row| row.agent.is_some());
-            left_wsl = cleared || !launched;
+            // A Copilot end the person asked for (`/clear` sends the same one as `/exit`) waits, as on Windows: the mark
+            // and the fold both wait with it (`hold_copilot_end`), so a `/clear` keeps the row's agent and never reads
+            // Ended. An end that names an older session than the tab's isn't held: it goes the way every end goes.
+            wsl_held = agent == "copilot"
+                && role == HookRole::Event
+                && copilot::is_requested_end(&json)
+                && copilot_session(&st, role, tab, &json).await != CopilotSession::Stale;
+            if !wsl_held {
+                // The agent is gone from the row: nothing is left to fold into a status, even when no earlier hook marked
+                // it. A row launched as an agent (History's Resume opens `claude --resume ...; exec bash -l`) outlives the
+                // agent and has no mark to clear: it folds the SessionEnd as a Windows tab does, and shows Ended.
+                let cleared = st.registry().clear_hook_agent(tab, &agent, session_id);
+                let launched = st.registry().row(tab).is_some_and(|row| row.agent.is_some());
+                left_wsl = cleared || !launched;
+            }
         } else if matches!(role, HookRole::Event | HookRole::Permission | HookRole::Statusline) {
             // A SessionStart runs the session again, even an ended one resumed under its own id.
             if session_starts {
@@ -256,11 +266,13 @@ pub async fn post(
                 return;
             }
             if !left_wsl {
-                if agent == "copilot" && role == HookRole::Event && !on_wsl && copilot::is_requested_end(&json) {
+                if wsl_held
+                    || (agent == "copilot" && role == HookRole::Event && !on_wsl && copilot::is_requested_end(&json))
+                {
                     // `/clear` ends the old session before anything names the new one, so the end waits: a status
                     // line or an event that links the tab to a newer session meanwhile drops it. The answer to the
                     // hook doesn't wait.
-                    hold_copilot_end(&st, tab, &json, at_ms);
+                    hold_copilot_end(&st, tab, &json, at_ms, wsl_held);
                 } else {
                     fold_live_with(&st, &agent, role, tab, &json, at_ms, held).await;
                 }
@@ -356,16 +368,33 @@ async fn copilot_session(st: &AppState, role: HookRole, tab: &str, body: &serde_
 
 /// Folds a Copilot `sessionEnd` the person asked for after `copilot_end_hold`, in a detached task. The task asks
 /// `copilot_session` again with the same body: when the tab has named or been linked to a newer session meanwhile the
-/// end is dropped, else it folds as it would have at once. Nothing is held across the wait. A late newer link between the
-/// second check and the fold is a window of microseconds whose worst case is the row reading Ended for as long as
-/// the status line takes to arrive, which is what it did before the hold.
-fn hold_copilot_end(st: &AppState, tab: &str, body: &serde_json::Value, at_ms: u64) {
+/// end is dropped, else it folds as it would have at once. Nothing is held across the wait, and the state is read again
+/// after it: the tab may have closed, or the session been replaced.
+///
+/// For a WSL tab (`wsl`) the end's two effects wait together, because the hook's mark and the registry's ended session
+/// are the row's agent: after the wait, and only when the end isn't stale, the mark is cleared, the session is recorded
+/// as ended and the end folds only where it did at once before (a row launched as the agent, which has no mark to
+/// clear). A tab that is gone has no row, so nothing is cleared or folded.
+///
+/// A late newer link between the second check and the fold is a window of microseconds whose worst case is the row
+/// reading Ended for as long as the status line takes to arrive, which is what it did before the hold.
+fn hold_copilot_end(st: &AppState, tab: &str, body: &serde_json::Value, at_ms: u64, wsl: bool) {
     let (st, tab, body) = (st.clone(), tab.to_string(), body.clone());
     tokio::spawn(async move {
         tokio::time::sleep(st.copilot_end_hold()).await;
-        if copilot_session(&st, HookRole::Event, &tab, &body).await != CopilotSession::Stale {
-            fold_live_with(&st, "copilot", HookRole::Event, &tab, &body, at_ms, false).await;
+        if copilot_session(&st, HookRole::Event, &tab, &body).await == CopilotSession::Stale {
+            return;
         }
+        if wsl {
+            let cleared = st
+                .registry()
+                .clear_hook_agent(&tab, "copilot", copilot::session_id_of(&body));
+            let launched = st.registry().row(&tab).is_some_and(|row| row.agent.is_some());
+            if cleared || !launched {
+                return;
+            }
+        }
+        fold_live_with(&st, "copilot", HookRole::Event, &tab, &body, at_ms, false).await;
     });
 }
 
