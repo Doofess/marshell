@@ -310,7 +310,7 @@ fn cost_of(name: &str, entry: &Value, plugin: bool) -> CostRule {
 }
 
 /// A path as Codex's trust table compares it: without a `\\?\` prefix, `\` as `/`, without a trailing `/` or case.
-fn trust_key(path: &str) -> String {
+pub(crate) fn trust_key(path: &str) -> String {
     let path = path.strip_prefix(r"\\?\").unwrap_or(path);
     path.replace('\\', "/").trim_end_matches('/').to_lowercase()
 }

@@ -856,7 +856,7 @@ fn cli_rank(agent: &str) -> usize {
 }
 
 /// A path as the expansion shows it: project-relative, `~/…` under the home, else in full.
-fn display(path: &Path, project: Option<&Path>, home: &Path) -> String {
+pub fn display(path: &Path, project: Option<&Path>, home: &Path) -> String {
     if let Some(rel) = project.and_then(|p| relative_to(path, p)) {
         return rel;
     }
