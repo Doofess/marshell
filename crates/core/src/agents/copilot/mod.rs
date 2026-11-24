@@ -2,6 +2,7 @@
 
 pub mod exe;
 pub mod hooks;
+pub mod kept;
 pub mod status;
 pub mod transcript;
 pub mod writes;

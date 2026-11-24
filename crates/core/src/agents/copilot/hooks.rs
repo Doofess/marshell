@@ -155,16 +155,41 @@ pub fn file_problem(text: Option<&str>) -> Option<FileProblem> {
     (!is_marshells(&file, text)).then_some(FileProblem::NotMarshells)
 }
 
-/// The hooks file's text when it is there and Marshell's, and whether it is a foreign file kept for replacing. A file
-/// that doesn't parse is an error; one that isn't Marshell's is too, unless `replace_foreign`.
-fn marshells_hooks<'a>(files: &Files<'a>, replace_foreign: bool) -> Result<(Option<&'a str>, bool), PlanError> {
+/// The hooks file has a top-level key other than `version` and `hooks`.
+fn has_other_keys(text: &str) -> bool {
+    read_value(text)
+        .ok()
+        .and_then(|file| {
+            file.as_object()
+                .map(|o| o.keys().any(|k| k != "version" && k != "hooks"))
+        })
+        .unwrap_or(false)
+}
+
+/// What a plan does with a hooks file that parses and isn't Marshell's.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Foreign {
+    /// Plans nothing and says so.
+    Refuse,
+    /// Replaces the whole file with Marshell's hooks.
+    Replace,
+    /// The person keeps the file: only Marshell's own entries change.
+    Keep,
+}
+
+/// The hooks file's text when it is there and Marshell's, and whether it is a foreign file a plan goes on with. A file
+/// that doesn't parse is an error; one that isn't Marshell's is too, if `foreign` is `Refuse`.
+fn marshells_hooks<'a>(files: &Files<'a>, foreign: Foreign) -> Result<(Option<&'a str>, bool), PlanError> {
     let Some(text) = files.hooks_text else {
         return Ok((None, false));
     };
     match file_problem(Some(text)) {
+        // A kept file holding something besides `version` and `hooks` is the person's file even when every entry in it is
+        // Marshell's: a whole-file plan over it would take the rest away.
+        None if foreign == Foreign::Keep && has_other_keys(text) => Ok((Some(text), true)),
         None => Ok((Some(text), false)),
         Some(FileProblem::DoesNotParse { .. }) => Err(does_not_parse(files.hooks_path, text)),
-        Some(FileProblem::NotMarshells) if replace_foreign => Ok((Some(text), true)),
+        Some(FileProblem::NotMarshells) if foreign != Foreign::Refuse => Ok((Some(text), true)),
         Some(FileProblem::NotMarshells) => Err(PlanError::NotMarshells {
             path: files.hooks_path.to_path_buf(),
         }),
@@ -252,10 +277,9 @@ pub fn inspect(files: &Files, bridge: &Bridge) -> Found {
         _ => false,
     };
 
-    let (all, ours) = hooks.as_ref().map_or((0, 0), |file| {
-        let ours = entries_of(file).filter(|(_, e)| is_ours(e)).count();
-        (entries_of(file).count(), ours)
-    });
+    let ours = hooks
+        .as_ref()
+        .map_or(0, |file| entries_of(file).filter(|(_, e)| is_ours(e)).count());
     let exact_events = hooks.as_ref().map_or(0, |file| {
         EVENTS
             .iter()
@@ -274,7 +298,7 @@ pub fn inspect(files: &Files, bridge: &Bridge) -> Found {
     } else if !bridge.exists() {
         HookInstall::Orphaned
     } else if exact_events == EVENTS.len()
-        && all == EVENTS.len()
+        // Entries of the person's own (in a file they keep) don't count against it: Marshell's are what is checked.
         && ours == EVENTS.len()
         // A line that isn't Marshell's is the person's to keep: a setup with the status line off leaves it (as Qwen's).
         && (!line_ours || line_current)
@@ -322,60 +346,173 @@ fn set(pointer: &str, value: &Value) -> EditOp {
 /// In a distro (`bridge` is `Bridge::Distro`, and `files` holds no chain file) there is no chain: the person's own
 /// status line stays as it is, with a note, and Marshell's own line says `--no-chain`.
 pub fn install_plan(files: &Files, bridge: &Bridge, want: &HookPlanRequest) -> Result<ChangeSet, PlanError> {
-    plan_install(files, bridge, want, false)
+    plan_install(files, bridge, want, Foreign::Refuse)
 }
 
 /// `install_plan`, except that a hooks file that parses and isn't Marshell's is replaced with Marshell's hooks
 /// (`ReplaceText` against its present text). The Doctor's fix uses it, once the person has picked it. A file that
 /// doesn't parse is still refused, and so is a foreign file when `want.status` is off, which would delete it.
 pub fn install_plan_over(files: &Files, bridge: &Bridge, want: &HookPlanRequest) -> Result<ChangeSet, PlanError> {
-    plan_install(files, bridge, want, true)
+    plan_install(files, bridge, want, Foreign::Replace)
+}
+
+/// `install_plan` for a hooks file the person keeps: over a file that parses and isn't Marshell's, only Marshell's own
+/// entries change, by JSON edits that leave every other byte as it is (PLAN §9, decision 20). Each event of `EVENTS`
+/// ends with exactly one entry of Marshell's, equal to the one `hooks_file` writes; entries of Marshell's under any
+/// other event go; a missing `version` gets 1. With `want.status` off Marshell's entries go and the file stays. Over
+/// Marshell's own file or no file it is `install_plan`. A hooks file that doesn't parse, or whose `hooks` (or an
+/// event's list that would be edited) isn't an object (or a list), is refused.
+pub fn install_plan_kept(files: &Files, bridge: &Bridge, want: &HookPlanRequest) -> Result<ChangeSet, PlanError> {
+    plan_install(files, bridge, want, Foreign::Keep)
+}
+
+/// `remove_plan` for a hooks file the person keeps: Marshell's entries come out of it (highest index first) and the file
+/// and the person's entries stay. The status line and chain are handled as `remove_plan` does.
+pub fn remove_plan_kept(files: &Files, distro: Option<&str>) -> Result<RemovePlan, PlanError> {
+    plan_remove(files, distro, Foreign::Keep)
+}
+
+/// `/` and `~` in an event's name, as a JSON pointer token.
+fn esc(token: &str) -> String {
+    token.replace('~', "~0").replace('/', "~1")
+}
+
+fn not_editable(path: &Path, pointer: &str) -> PlanError {
+    PlanError::NotAnObject {
+        path: path.to_path_buf(),
+        pointer: pointer.to_string(),
+    }
+}
+
+/// The ops that take Marshell's entries out of the entries of one event, highest index first.
+fn remove_ours(event: &str, entries: &[Value]) -> impl Iterator<Item = EditOp> {
+    let event = esc(event);
+    entries
+        .iter()
+        .enumerate()
+        .rev()
+        .filter(|(_, e)| is_ours(e))
+        .map(move |(i, _)| EditOp::JsonRemove {
+            pointer: format!("/hooks/{event}/{i}"),
+        })
+}
+
+/// The ops over a kept hooks file that parses and isn't Marshell's: what leaves one entry of Marshell's per event of
+/// `EVENTS` (with `install`), and none anywhere else. Any other key of the file, and the person's entries, stay.
+fn kept_ops(path: &Path, file: &Value, install: Option<(&Bridge, &HookPlanRequest)>) -> Result<Vec<EditOp>, PlanError> {
+    let Some(root) = file.as_object() else {
+        return Err(not_editable(path, ""));
+    };
+    let hooks = match root.get("hooks") {
+        None => None,
+        Some(Value::Object(hooks)) => Some(hooks),
+        Some(_) => return Err(not_editable(path, "/hooks")),
+    };
+    let wanted = install.filter(|(_, want)| want.status);
+    let mut ops = Vec::new();
+    if wanted.is_some() && !root.contains_key("version") {
+        ops.push(set("/version", &json!(1)));
+    }
+    // Events outside `EVENTS`, and every event when nothing is wanted: Marshell's entries come out.
+    for (event, entries) in hooks.into_iter().flatten() {
+        let listed = EVENTS.iter().any(|(e, _, _)| e == event);
+        if let Some(entries) = entries.as_array().filter(|_| !(listed && wanted.is_some())) {
+            ops.extend(remove_ours(event, entries));
+        }
+    }
+    let Some((bridge, _)) = wanted else {
+        return Ok(ops);
+    };
+    for (event, role, timeout) in EVENTS {
+        let entry = entry_of(bridge, event, role, timeout);
+        let token = esc(event);
+        match hooks.and_then(|h| h.get(event)) {
+            None => ops.push(set(&format!("/hooks/{token}"), &json!([entry]))),
+            Some(Value::Array(entries)) => {
+                // The one kept is the exact entry when there is one, else the first of Marshell's.
+                let mine: Vec<usize> = (0..entries.len()).filter(|i| is_ours(&entries[*i])).collect();
+                let keep = mine
+                    .iter()
+                    .copied()
+                    .find(|i| entries[*i] == entry)
+                    .or(mine.first().copied());
+                match keep {
+                    None => ops.push(set(&format!("/hooks/{token}/-"), &entry)),
+                    Some(i) if entries[i] != entry => ops.push(set(&format!("/hooks/{token}/{i}"), &entry)),
+                    Some(_) => {}
+                }
+                ops.extend(
+                    mine.into_iter()
+                        .rev()
+                        .filter(|i| Some(*i) != keep)
+                        .map(|i| EditOp::JsonRemove {
+                            pointer: format!("/hooks/{token}/{i}"),
+                        }),
+                );
+            }
+            Some(_) => return Err(not_editable(path, &format!("/hooks/{token}"))),
+        }
+    }
+    Ok(ops)
 }
 
 fn plan_install(
     files: &Files,
     bridge: &Bridge,
     want: &HookPlanRequest,
-    replace_foreign: bool,
+    foreign_file: Foreign,
 ) -> Result<ChangeSet, PlanError> {
     let title = "Set up Copilot CLI hooks".to_string();
-    let (existing, foreign) = marshells_hooks(files, replace_foreign)?;
-    if foreign && !want.status {
+    let (existing, foreign) = marshells_hooks(files, foreign_file)?;
+    if foreign && !want.status && foreign_file == Foreign::Replace {
         return Err(PlanError::NotMarshells {
             path: files.hooks_path.to_path_buf(),
         });
     }
-    let hooks_edit = match (existing, want.status.then(|| hooks_file(bridge, want))) {
-        (None, None) => None,
-        (None, Some(content)) => Some(edit(
-            files.hooks_path,
-            ConfigScope::User,
-            EditOp::CreateFile { content },
-            None,
-        )),
-        (Some(text), Some(content)) if text == content => None,
-        (Some(text), Some(content)) => Some(edit(
-            files.hooks_path,
-            ConfigScope::User,
-            EditOp::ReplaceText { content },
-            Some(text),
-        )),
-        (Some(text), None) => Some(edit(
-            files.hooks_path,
-            ConfigScope::User,
-            EditOp::DeleteFile,
-            Some(text),
-        )),
-    };
-    let mut edits: Vec<FileEdit> = hooks_edit.into_iter().collect();
-    let mut how = match edits.first().map(|e| &e.op) {
-        Some(EditOp::DeleteFile) => "Removes Marshell's hooks file".to_string(),
-        Some(_) => format!(
-            "Writes Marshell's own hooks file with {} entries so Marshell can show what {AGENT_NAME} is doing",
-            EVENTS.len()
-        ),
-        None => String::new(),
-    };
+    let kept = foreign && foreign_file == Foreign::Keep;
+    let mut edits: Vec<FileEdit> = Vec::new();
+    let mut how = String::new();
+    if let (Some(text), true) = (existing, kept) {
+        let file = read_value(text).map_err(|_| does_not_parse(files.hooks_path, text))?;
+        let ops = kept_ops(files.hooks_path, &file, Some((bridge, want)))?;
+        edits.extend(
+            ops.into_iter()
+                .map(|op| edit(files.hooks_path, ConfigScope::User, op, Some(text))),
+        );
+    } else {
+        let hooks_edit = match (existing, want.status.then(|| hooks_file(bridge, want))) {
+            (None, None) => None,
+            (None, Some(content)) => Some(edit(
+                files.hooks_path,
+                ConfigScope::User,
+                EditOp::CreateFile { content },
+                None,
+            )),
+            (Some(text), Some(content)) if text == content => None,
+            (Some(text), Some(content)) => Some(edit(
+                files.hooks_path,
+                ConfigScope::User,
+                EditOp::ReplaceText { content },
+                Some(text),
+            )),
+            (Some(text), None) => Some(edit(
+                files.hooks_path,
+                ConfigScope::User,
+                EditOp::DeleteFile,
+                Some(text),
+            )),
+        };
+        edits.extend(hooks_edit);
+        how = match edits.first().map(|e| &e.op) {
+            Some(EditOp::DeleteFile) => "Removes Marshell's hooks file".to_string(),
+            Some(_) => format!(
+                "Writes Marshell's own hooks file with {} entries so Marshell can show what {AGENT_NAME} is doing",
+                EVENTS.len()
+            ),
+            None => String::new(),
+        };
+    }
+    let hooks_changed_in_kept = kept && !edits.is_empty();
 
     let mut left_alone = None;
     if want.status && want.statusline {
@@ -434,7 +571,14 @@ fn plan_install(
     } else {
         format!("{how}.")
     };
-    if foreign {
+    if hooks_changed_in_kept {
+        let note = format!("Changes only Marshell's hooks in {}.", files.hooks_path.display());
+        reason = if how.is_empty() {
+            note
+        } else {
+            format!("{note} {reason}")
+        };
+    } else if foreign && !kept {
         reason = format!(
             "{reason} Replaces {} with Marshell's hooks.",
             files.hooks_path.display()
@@ -483,8 +627,12 @@ fn saved_line(chain_text: Option<&str>, in_distro: bool) -> Saved {
 /// In a distro (`distro` is its name) there is no chain: a status line of Marshell's was added over none, and the key
 /// goes, and any other is the person's, left alone.
 pub fn remove_plan(files: &Files, distro: Option<&str>) -> Result<RemovePlan, PlanError> {
+    plan_remove(files, distro, Foreign::Refuse)
+}
+
+fn plan_remove(files: &Files, distro: Option<&str>, foreign_file: Foreign) -> Result<RemovePlan, PlanError> {
     let title = "Turn Copilot CLI hooks off".to_string();
-    let (hooks, _) = marshells_hooks(files, false)?;
+    let (hooks, foreign) = marshells_hooks(files, foreign_file)?;
     let settings = parse_settings(files.settings_path, files.settings_text)?;
 
     let mut statusline_left = false;
@@ -520,10 +668,25 @@ pub fn remove_plan(files: &Files, distro: Option<&str>) -> Result<RemovePlan, Pl
         _ => {}
     }
 
-    let mut edits: Vec<FileEdit> = hooks
-        .map(|text| edit(files.hooks_path, ConfigScope::User, EditOp::DeleteFile, Some(text)))
-        .into_iter()
-        .collect();
+    let kept = foreign && foreign_file == Foreign::Keep;
+    let mut edits: Vec<FileEdit> = Vec::new();
+    match hooks {
+        Some(text) if kept => {
+            let file = read_value(text).map_err(|_| does_not_parse(files.hooks_path, text))?;
+            edits.extend(
+                kept_ops(files.hooks_path, &file, None)?
+                    .into_iter()
+                    .map(|op| edit(files.hooks_path, ConfigScope::User, op, Some(text))),
+            );
+        }
+        Some(text) => edits.push(edit(
+            files.hooks_path,
+            ConfigScope::User,
+            EditOp::DeleteFile,
+            Some(text),
+        )),
+        None => {}
+    }
     let hooks_gone = !edits.is_empty();
     edits.extend(
         ops.into_iter()
@@ -541,6 +704,14 @@ pub fn remove_plan(files: &Files, distro: Option<&str>) -> Result<RemovePlan, Pl
         });
     }
     let mut reason = match (hooks_gone, line_note.is_empty()) {
+        (true, false) if kept => format!(
+            "Removes Marshell's hooks from {} and keeps the rest. It {line_note}.",
+            files.hooks_path.display()
+        ),
+        (true, true) if kept => format!(
+            "Removes Marshell's hooks from {} and keeps the rest.",
+            files.hooks_path.display()
+        ),
         (true, false) => format!("Deletes Marshell's hooks file and {line_note}."),
         (true, true) => "Deletes Marshell's hooks file.".to_string(),
         (false, false) => format!("It {line_note}."),
@@ -1283,6 +1454,450 @@ mod tests {
         let plan = with_files(&State::settings(&their_settings()), |files| remove_plan(files, None)).unwrap();
         assert!(plan.changes.edits.is_empty());
         assert!(!plan.statusline_left);
+    }
+
+    // ---- a hooks file the person keeps ----
+
+    /// A person's hooks file with a comment, tabs and uneven indentation.
+    const PERSONS: &str = "// my hooks\n{\n\t\"version\": 1, // the version\n   \"hooks\": {\n\t\"sessionStart\": [\n\t\t  {\"type\": \"command\", \"bash\": \"echo mine\"}   // mine\n\t]\n  }\n}\n";
+
+    fn real_bridge() -> (tempfile::TempDir, Bridge) {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("bin").join("marshell-hook.exe");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, b"x").unwrap();
+        (dir, Bridge::Local(exe))
+    }
+    fn with_hooks(text: &str) -> State {
+        State {
+            hooks: Some(text.to_string()),
+            ..State::default()
+        }
+    }
+    fn try_kept(state: &State, b: &Bridge, want: &HookPlanRequest) -> Result<ChangeSet, PlanError> {
+        with_files(state, |files| install_plan_kept(files, b, want))
+    }
+    fn kept_install(state: &State, b: &Bridge, want: &HookPlanRequest) -> (ChangeSet, State) {
+        let cs = try_kept(state, b, want).unwrap();
+        let after = apply(&cs, state);
+        (cs, after)
+    }
+    fn kept_remove(state: &State) -> (RemovePlan, State) {
+        let plan = with_files(state, |files| remove_plan_kept(files, None)).unwrap();
+        let after = apply(&plan.changes, state);
+        (plan, after)
+    }
+    fn hooks_edits(cs: &ChangeSet) -> Vec<&FileEdit> {
+        let path = hooks_path(&copilot_home()).to_string_lossy().into_owned();
+        cs.edits.iter().filter(|e| e.path == path).collect()
+    }
+    fn no_whole_file_op(cs: &ChangeSet) {
+        for e in hooks_edits(cs) {
+            assert!(
+                matches!(e.op, EditOp::JsonSet { .. } | EditOp::JsonRemove { .. }),
+                "{:?}",
+                e.op
+            );
+            assert!(e.expected_hash.is_some());
+        }
+    }
+    fn ours_under<'a>(file: &'a Value, event: &str) -> Vec<&'a Value> {
+        file["hooks"][event]
+            .as_array()
+            .map(|a| a.iter().filter(|e| is_ours(e)).collect())
+            .unwrap_or_default()
+    }
+    fn found(state: &State, b: &Bridge) -> HookInstall {
+        with_files(state, |files| inspect(files, b)).install
+    }
+    fn part(state: &State) -> String {
+        crate::agents::copilot::kept::persons_part(&value(state.hooks.as_deref().unwrap()))
+    }
+
+    #[test]
+    fn a_kept_install_adds_marshells_entries_and_keeps_the_persons_bytes() {
+        let (_dir, real) = real_bridge();
+        let state = with_hooks(PERSONS);
+        let (cs, after) = kept_install(&state, &real, &BOTH);
+        no_whole_file_op(&cs);
+        assert!(
+            cs.reason.starts_with(&format!(
+                "Changes only Marshell's hooks in {}.",
+                hooks_path(&copilot_home()).display()
+            )),
+            "{}",
+            cs.reason
+        );
+        let text = after.hooks.as_deref().unwrap();
+        // The comments, the tabs and the uneven indentation stand byte for byte up to the end of the person's entry; the
+        // appended entry follows it, and the person's trailing comment stays after the array's last element.
+        let entry_end = PERSONS.find("echo mine\"}").unwrap() + "echo mine\"}".len();
+        assert!(text.starts_with(&PERSONS[..entry_end]), "{text}");
+        assert!(text[entry_end..].starts_with(','), "{text}");
+        assert!(text.contains("   // mine\n\t]"), "{text}");
+        assert!(text.contains("// my hooks\n{\n\t\"version\": 1, // the version\n   \"hooks\": {\n"));
+        let file = value(text);
+        assert_eq!(
+            file["hooks"]["sessionStart"][0],
+            json!({"type": "command", "bash": "echo mine"})
+        );
+        for (event, role, timeout) in EVENTS {
+            let ours = ours_under(&file, event);
+            assert_eq!(ours.len(), 1, "{event}");
+            assert_eq!(*ours[0], entry_of(&real, event, role, timeout), "{event}");
+        }
+        assert_eq!(file["hooks"].as_object().unwrap().len(), EVENTS.len());
+        assert_eq!(found(&after, &real), HookInstall::Installed);
+        assert_eq!(part(&after), part(&state));
+        // The person's entry stays first under sessionStart, Marshell's is appended.
+        assert_eq!(file["hooks"]["sessionStart"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_kept_install_uses_appends_sets_and_removes_by_pointer() {
+        let (_dir, real) = real_bridge();
+        let cs = try_kept(&with_hooks(PERSONS), &real, &BOTH).unwrap();
+        let pointers: Vec<&str> = hooks_edits(&cs)
+            .iter()
+            .map(|e| match &e.op {
+                EditOp::JsonSet { pointer, .. } => pointer.as_str(),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        // Appended to an event that has an array, set whole under one that has none.
+        assert!(pointers.contains(&"/hooks/sessionStart/-"), "{pointers:?}");
+        assert!(pointers.contains(&"/hooks/preToolUse"), "{pointers:?}");
+        assert!(!pointers.contains(&"/version"), "{pointers:?}");
+        for e in hooks_edits(&cs) {
+            assert_eq!(e.expected_hash, Some(hash_bytes(PERSONS.as_bytes())));
+            assert_eq!(e.scope, ConfigScope::User);
+        }
+    }
+
+    #[test]
+    fn a_kept_install_sets_a_changed_entry_in_place_and_adds_none_twice() {
+        let (_dir, real) = real_bridge();
+        let old = Bridge::Local(PathBuf::from("D:/Old Home/.marshell/bin/marshell-hook.exe"));
+        let (_, installed) = kept_install(&with_hooks(PERSONS), &old, &BOTH);
+        let (cs, after) = kept_install(&installed, &real, &BOTH);
+        no_whole_file_op(&cs);
+        let sets: Vec<&str> = hooks_edits(&cs)
+            .iter()
+            .filter_map(|e| match &e.op {
+                EditOp::JsonSet { pointer, .. } => Some(pointer.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sets.len(), EVENTS.len(), "{sets:?}");
+        // Marshell's entry sits at index 1 under sessionStart (after the person's) and 0 elsewhere.
+        assert!(sets.contains(&"/hooks/sessionStart/1"), "{sets:?}");
+        assert!(sets.contains(&"/hooks/agentStop/0"), "{sets:?}");
+        let file = value(after.hooks.as_deref().unwrap());
+        for (event, role, timeout) in EVENTS {
+            let ours = ours_under(&file, event);
+            assert_eq!(ours.len(), 1, "{event}");
+            assert_eq!(*ours[0], entry_of(&real, event, role, timeout), "{event}");
+        }
+        assert_eq!(found(&after, &real), HookInstall::Installed);
+        assert_eq!(part(&after), part(&installed));
+        assert!(after.hooks.as_deref().unwrap().starts_with("// my hooks\n"));
+    }
+
+    #[test]
+    fn a_kept_install_leaves_one_of_two_entries_of_marshells() {
+        let (_dir, real) = real_bridge();
+        let (_, installed) = kept_install(&with_hooks(PERSONS), &real, &BOTH);
+        // A second one of Marshell's, with another bridge, and a third; the person's stays between.
+        let mut file = value(installed.hooks.as_deref().unwrap());
+        let stale = entry_of(&bridge(), "preToolUse", "event", 5);
+        let arr = file["hooks"]["preToolUse"].as_array_mut().unwrap();
+        arr.push(json!({"type": "command", "bash": "echo between"}));
+        arr.push(stale.clone());
+        arr.push(stale);
+        let doubled = with_hooks(&serde_json::to_string_pretty(&file).unwrap());
+        assert_eq!(found(&doubled, &real), HookInstall::Partial);
+        let (cs, after) = kept_install(&doubled, &real, &BOTH);
+        no_whole_file_op(&cs);
+        // The extras go highest index first.
+        let removes: Vec<&str> = hooks_edits(&cs)
+            .iter()
+            .filter_map(|e| match &e.op {
+                EditOp::JsonRemove { pointer } => Some(pointer.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(removes, ["/hooks/preToolUse/3", "/hooks/preToolUse/2"], "{removes:?}");
+        let file = value(after.hooks.as_deref().unwrap());
+        assert_eq!(ours_under(&file, "preToolUse").len(), 1);
+        assert_eq!(
+            *ours_under(&file, "preToolUse")[0],
+            entry_of(&real, "preToolUse", "event", 5)
+        );
+        assert_eq!(
+            file["hooks"]["preToolUse"][1],
+            json!({"type": "command", "bash": "echo between"})
+        );
+        assert_eq!(found(&after, &real), HookInstall::Installed);
+        assert_eq!(part(&after), part(&doubled));
+    }
+
+    #[test]
+    fn a_kept_install_removes_marshells_entries_under_other_events() {
+        let (_dir, real) = real_bridge();
+        let text = "{\"version\": 1, \"hooks\": {\"preCompact\": [{\"bash\": \"mine\"}, {\"type\": \"command\", \"exec\": \"x.exe\", \"args\": [\"--tag\", \"mshl1\"]}]}}";
+        let (cs, after) = kept_install(&with_hooks(text), &real, &BOTH);
+        no_whole_file_op(&cs);
+        let file = value(after.hooks.as_deref().unwrap());
+        assert_eq!(file["hooks"]["preCompact"], json!([{"bash": "mine"}]));
+        assert_eq!(found(&after, &real), HookInstall::Installed);
+    }
+
+    #[test]
+    fn a_kept_install_over_an_empty_object_adds_the_version_and_the_hooks() {
+        let (_dir, real) = real_bridge();
+        let (cs, after) = kept_install(&with_hooks("{}"), &real, &BOTH);
+        no_whole_file_op(&cs);
+        let file = value(after.hooks.as_deref().unwrap());
+        assert_eq!(file["version"], 1);
+        for (event, role, timeout) in EVENTS {
+            assert_eq!(
+                file["hooks"][event],
+                json!([entry_of(&real, event, role, timeout)]),
+                "{event}"
+            );
+        }
+        assert_eq!(found(&after, &real), HookInstall::Installed);
+        // A hooks object with no arrays, and a version already there.
+        let (_, after) = kept_install(&with_hooks("{\"version\": 2, \"hooks\": {}}"), &real, &BOTH);
+        assert_eq!(value(after.hooks.as_deref().unwrap())["version"], 2);
+        assert_eq!(found(&after, &real), HookInstall::Installed);
+    }
+
+    #[test]
+    fn a_kept_install_run_twice_plans_no_hooks_edit_the_second_time() {
+        let (_dir, real) = real_bridge();
+        for text in [PERSONS, "{\"disableAllHooks\": false}"] {
+            let (_, once) = kept_install(&with_hooks(text), &real, &BOTH);
+            let again = try_kept(&once, &real, &BOTH).unwrap();
+            assert!(hooks_edits(&again).is_empty(), "{text}: {:?}", again.edits);
+            assert!(again.edits.is_empty(), "{text}: {:?}", again.edits);
+            assert_eq!(part(&once), part(&with_hooks(text)), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_kept_install_with_the_status_off_removes_marshells_entries_and_keeps_the_file() {
+        let (_dir, real) = real_bridge();
+        let (_, installed) = kept_install(&with_hooks(PERSONS), &real, &BOTH);
+        let off = HookPlanRequest { status: false, ..BOTH };
+        let (cs, after) = kept_install(&installed, &real, &off);
+        no_whole_file_op(&cs);
+        // Only the hooks file's edits: the status line is left to the status flag.
+        assert!(
+            cs.edits
+                .iter()
+                .all(|e| e.path == hooks_path(&copilot_home()).to_string_lossy())
+        );
+        let file = value(after.hooks.as_deref().unwrap());
+        for (event, _, _) in EVENTS {
+            assert!(ours_under(&file, event).is_empty(), "{event}");
+        }
+        assert_eq!(
+            file["hooks"]["sessionStart"],
+            json!([{"type": "command", "bash": "echo mine"}])
+        );
+        assert!(
+            after
+                .hooks
+                .as_deref()
+                .unwrap()
+                .starts_with("// my hooks\n{\n\t\"version\": 1, // the version\n")
+        );
+        // The status line is still Marshell's, so the install is partial, not gone.
+        assert_eq!(found(&after, &real), HookInstall::Partial);
+        assert_eq!(part(&after), part(&installed));
+        // Nothing of Marshell's: nothing to plan, and no refusal.
+        assert!(try_kept(&with_hooks(PERSONS), &real, &off).unwrap().edits.is_empty());
+    }
+
+    #[test]
+    fn a_kept_install_builds_the_same_settings_edits_as_install_plan() {
+        let (_dir, real) = real_bridge();
+        let state = State {
+            hooks: Some(PERSONS.to_string()),
+            settings: Some(their_settings()),
+            chain: None,
+        };
+        let kept = try_kept(&state, &real, &BOTH).unwrap();
+        let plain = try_install(
+            &State {
+                hooks: None,
+                ..state.clone()
+            },
+            &real,
+            &BOTH,
+        )
+        .unwrap();
+        let not_hooks = |cs: &ChangeSet| -> Vec<FileEdit> {
+            cs.edits
+                .iter()
+                .filter(|e| e.path != hooks_path(&copilot_home()).to_string_lossy())
+                .cloned()
+                .collect()
+        };
+        assert_eq!(not_hooks(&kept), not_hooks(&plain));
+        assert!(!not_hooks(&kept).is_empty());
+        let after = apply(&kept, &state);
+        assert!(
+            after
+                .settings
+                .as_deref()
+                .unwrap()
+                .contains("statusline --agent copilot")
+        );
+        assert!(after.chain.is_some());
+    }
+
+    #[test]
+    fn a_kept_removal_removes_only_marshells_entries() {
+        let (_dir, real) = real_bridge();
+        let (_, installed) = kept_install(
+            &State {
+                settings: Some(their_settings()),
+                ..with_hooks(PERSONS)
+            },
+            &real,
+            &BOTH,
+        );
+        let (plan, removed) = kept_remove(&installed);
+        no_whole_file_op(&plan.changes);
+        assert_eq!(plan.changes.title, "Turn Copilot CLI hooks off");
+        assert!(
+            plan.changes.reason.starts_with(&format!(
+                "Removes Marshell's hooks from {} and keeps the rest.",
+                hooks_path(&copilot_home()).display()
+            )),
+            "{}",
+            plan.changes.reason
+        );
+        // Highest index first within an event: the removals under one event never go up.
+        let mut last: std::collections::HashMap<String, usize> = Default::default();
+        for e in hooks_edits(&plan.changes) {
+            let EditOp::JsonRemove { pointer } = &e.op else {
+                panic!("{:?}", e.op)
+            };
+            let (event, index) = pointer.rsplit_once('/').unwrap();
+            let index: usize = index.parse().unwrap();
+            if let Some(before) = last.insert(event.to_string(), index) {
+                assert!(index < before, "{pointer}");
+            }
+        }
+        let text = removed.hooks.as_deref().unwrap();
+        assert!(text.starts_with("// my hooks\n{\n\t\"version\": 1, // the version\n   \"hooks\": {\n"));
+        let file = value(text);
+        for (event, _, _) in EVENTS {
+            assert!(ours_under(&file, event).is_empty(), "{event}");
+        }
+        assert_eq!(
+            file["hooks"]["sessionStart"],
+            json!([{"type": "command", "bash": "echo mine"}])
+        );
+        assert_eq!(part(&removed), part(&installed));
+        // The status line goes as remove_plan puts it back, and the chain goes.
+        assert_eq!(removed.settings.as_deref(), Some(their_settings().as_str()));
+        assert_eq!(removed.chain, None);
+        assert!(!plan.statusline_left);
+        assert_eq!(found(&removed, &real), HookInstall::None);
+    }
+
+    #[test]
+    fn a_kept_removal_removes_two_of_marshells_in_one_event_highest_first() {
+        let (_dir, real) = real_bridge();
+        let ours = |n: u32| json!({"type": "command", "exec": "x.exe", "args": ["--tag", "mshl1", n.to_string()]});
+        let file = json!({"version": 1, "hooks": {"preToolUse": [ours(0), {"bash": "mine"}, ours(2), ours(3)]}});
+        let state = with_hooks(&serde_json::to_string(&file).unwrap());
+        let (plan, removed) = kept_remove(&state);
+        let removes: Vec<String> = hooks_edits(&plan.changes)
+            .iter()
+            .map(|e| match &e.op {
+                EditOp::JsonRemove { pointer } => pointer.clone(),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            removes,
+            ["/hooks/preToolUse/3", "/hooks/preToolUse/2", "/hooks/preToolUse/0"]
+        );
+        assert_eq!(
+            value(removed.hooks.as_deref().unwrap())["hooks"]["preToolUse"],
+            json!([{"bash": "mine"}])
+        );
+        let _ = real;
+    }
+
+    #[test]
+    fn the_kept_plans_equal_the_plain_ones_over_marshells_own_file_and_no_file() {
+        let (_, installed) = install(&State::default());
+        let moved = Bridge::Local(PathBuf::from("D:/Other Home/.marshell/bin/marshell-hook.exe"));
+        for state in [State::default(), installed.clone()] {
+            for b in [bridge(), moved.clone()] {
+                assert_eq!(try_kept(&state, &b, &BOTH), try_install(&state, &b, &BOTH));
+            }
+            let plain = with_files(&state, |files| remove_plan(files, None));
+            let kept = with_files(&state, |files| remove_plan_kept(files, None));
+            assert_eq!(
+                kept.map(|p| (p.changes, p.statusline_left)),
+                plain.map(|p| (p.changes, p.statusline_left))
+            );
+        }
+        // Over a file of Marshell's with no entries, too.
+        let empty = with_hooks(&own_empty_text());
+        assert_eq!(
+            try_kept(&empty, &bridge(), &BOTH),
+            try_install(&empty, &bridge(), &BOTH)
+        );
+    }
+
+    #[test]
+    fn the_kept_plans_refuse_a_hooks_file_that_does_not_parse_or_has_a_shape_they_cannot_edit() {
+        let path = hooks_path(&copilot_home());
+        let broken = with_hooks("{ \"hooks\": ");
+        match try_kept(&broken, &bridge(), &BOTH) {
+            Err(PlanError::DoesNotParse { path: p, .. }) => assert_eq!(p, path),
+            other => panic!("{other:?}"),
+        }
+        match with_files(&broken, |files| remove_plan_kept(files, None)) {
+            Err(PlanError::DoesNotParse { path: p, .. }) => assert_eq!(p, path),
+            other => panic!("{:?}", other.map(|p| p.changes)),
+        }
+        let refused = |pointer: &str| PlanError::NotAnObject {
+            path: path.clone(),
+            pointer: pointer.to_string(),
+        };
+        for (text, pointer) in [
+            ("[1]", ""),
+            ("{\"hooks\": []}", "/hooks"),
+            ("{\"hooks\": null}", "/hooks"),
+            ("{\"hooks\": {\"sessionStart\": {\"a\": 1}}}", "/hooks/sessionStart"),
+            ("{\"hooks\": {\"sessionEnd\": \"x\"}}", "/hooks/sessionEnd"),
+        ] {
+            assert_eq!(
+                try_kept(&with_hooks(text), &bridge(), &BOTH),
+                Err(refused(pointer)),
+                "{text}"
+            );
+        }
+        // Removing needs only the shapes it reads: a bad `hooks` is refused, an event Marshell has no entry in is not.
+        assert_eq!(
+            with_files(&with_hooks("{\"hooks\": []}"), |files| remove_plan_kept(files, None)).err(),
+            Some(refused("/hooks"))
+        );
+        assert!(
+            with_files(&with_hooks("{\"hooks\": {\"x\": 5}}"), |files| remove_plan_kept(
+                files, None
+            ))
+            .is_ok()
+        );
     }
 
     // ---- inspect ----
