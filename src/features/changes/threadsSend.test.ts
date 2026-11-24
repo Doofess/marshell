@@ -254,14 +254,14 @@ describe("afterSendPicked", () => {
 });
 
 describe("pruned", () => {
-  it("drops what GitHub no longer lists as unresolved", () => {
+  it("drops what GitHub lists as resolved or with another count, and keeps what it doesn't list", () => {
     const r = reply({
       threads: [thread({ id: "OPEN" }), thread({ id: "DONE", resolved: true }), thread({ id: "BIG", comments: [comment(), comment({ id: 2 })] })],
       notes: [note({ id: "N1" })],
     });
     const d = drafts({ picked: [pick("OPEN"), pick("DONE"), pick("N1"), pick("N2")], sent: [mark("BIG", 1), mark("OPEN", 1), mark("N1", 1), mark("DONE", 1)] });
     const out = pruned(d, r)!;
-    expect(out.picked.map((p) => p.id)).toEqual(["OPEN", "N1"]);
+    expect(out.picked.map((p) => p.id)).toEqual(["OPEN", "N1", "N2"]);
     expect(out.sent.map((s) => s.id)).toEqual(["OPEN", "N1"]);
   });
 
@@ -272,11 +272,19 @@ describe("pruned", () => {
     expect(pruned(undefined, r)).toBeUndefined();
   });
 
-  it("keeps an id the reply doesn't list while the reply is cut", () => {
+  // A thread's id is GitHub's own, so an answer that doesn't list it says nothing about it: the reply may be cut, the thread may
+  // be hidden for now, or the answer is for a pull request of the same number in another repository the shell moved to.
+  it("keeps an id the reply doesn't list, cut or not", () => {
     const d = drafts({ picked: [pick("FAR")], sent: [mark("FARSENT", 1)] });
-    expect(pruned(d, reply())!.picked).toEqual([]);
+    expect(pruned(d, reply())).toBe(d);
     expect(pruned(d, reply({ more_threads: 2 }))).toBe(d);
     expect(pruned(d, reply({ more_notes: true }))).toBe(d);
+  });
+
+  it("a pull request of the same number in another repository leaves the first one's picks, notes and sent marks", () => {
+    const d = drafts({ picked: [{ ...pick("A1"), note: "mine" }, pick("A2")], sent: [mark("A3", 2)] });
+    const other = reply({ threads: [thread({ id: "B1" }), thread({ id: "B2", resolved: true })], notes: [note({ id: "BN" })] });
+    expect(pruned(d, other)).toBe(d);
   });
 
   it("a reply for one pull request leaves another's picks and sent marks alone", () => {

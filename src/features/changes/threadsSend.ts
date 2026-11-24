@@ -138,23 +138,22 @@ export function afterSendPicked(drafts: ChangesDrafts, number: number, went: rea
 }
 
 /**
- * The drafts without the ids picked for `threads.number` that GitHub no longer lists as unresolved threads or as notes, and without
- * that pull request's sent marks whose thread is gone, resolved or has another count. Entries of other pull requests are never judged
- * (drafts outlive a branch switch). An id the reply doesn't list at all stays while the reply is cut (`more_threads > 0` or
- * `more_notes`): it may be past the cut. The same object when nothing goes.
+ * The drafts without the picks of `threads.number` whose thread the reply lists as resolved, and without that pull request's sent
+ * marks whose thread or note the reply lists resolved or with another count. An id the reply doesn't list stays: an id is GitHub's
+ * own, so the reply says nothing about it (it may be past the reply's cut, hidden for now, or the reply is for a pull request of the
+ * same number in another repository the shell moved to). Such a pick is neither counted nor sent (`pickedItems`). Entries of other
+ * pull requests are never judged (drafts outlive a branch switch). The same object when nothing goes.
  */
 export function pruned(drafts: ChangesDrafts | undefined, threads: PullThreads): ChangesDrafts | undefined {
   if (drafts === undefined) return undefined;
-  const cutOff = threads.more_threads > 0 || threads.more_notes;
   const byId = new Map(threads.threads.map((t) => [t.id, t]));
   const notes = new Set(threads.notes.map((n) => n.id));
-  const listed = (id: string) => byId.has(id) || notes.has(id);
-  const keepPick = (p: PickedComment) => p.number !== threads.number || notes.has(p.id) || (byId.has(p.id) && !byId.get(p.id)!.resolved) || (cutOff && !listed(p.id));
+  const keepPick = (p: PickedComment) => p.number !== threads.number || byId.get(p.id)?.resolved !== true;
   const keepSent = (s: SentComment) => {
     if (s.number !== threads.number) return true;
     const t = byId.get(s.id);
     if (t !== undefined) return !t.resolved && commentCount(t) === s.count;
-    return notes.has(s.id) ? s.count === 1 : cutOff && !listed(s.id);
+    return !notes.has(s.id) || s.count === 1;
   };
   const picked = drafts.picked.filter(keepPick);
   const sent = drafts.sent.filter(keepSent);

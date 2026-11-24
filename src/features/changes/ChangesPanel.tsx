@@ -215,7 +215,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per session
   }, [p.session]);
 
-  // A new answer: the picks and sent marks GitHub no longer holds go, and the comments the user hasn't seen are announced.
+  // A new answer: the picks and sent marks of what it lists as resolved or changed go, and the comments the user hasn't seen are announced.
   const seenThreads = useRef<PullThreads | null>(null);
   useEffect(() => {
     if (threads === null) {

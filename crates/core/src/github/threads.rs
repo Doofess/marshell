@@ -22,8 +22,9 @@ pub const BODY_MAX: usize = 10_000;
 /// The most diff rows a thread carries.
 pub const ROWS_MAX: usize = 200;
 /// Asked with `gh api graphql`: the pull request's node id, its review threads (first 100, with up to 50 comments
-/// each), its last 50 reviews and its last 50 conversation comments. Its values travel as variables.
-pub const THREADS_QUERY: &str = "query($o:String!,$n:String!,$num:Int!){viewer{login} repository(owner:$o,name:$n){pullRequest(number:$num){id reviewThreads(first:100){totalCount nodes{id isResolved isOutdated path line startLine originalLine originalStartLine diffSide startDiffSide subjectType viewerCanResolve viewerCanUnresolve viewerCanReply comments(first:50){totalCount nodes{databaseId author{login __typename} body createdAt url state isMinimized diffHunk}}}} reviews(last:50){totalCount nodes{id state body url createdAt author{login __typename}}} comments(last:50){totalCount nodes{id body url createdAt isMinimized author{login __typename}}}}}}";
+/// each, and the diff hunk once a thread, as `hunk`: every comment of a thread has the same one), its last 50 reviews
+/// and its last 50 conversation comments. Its values travel as variables.
+pub const THREADS_QUERY: &str = "query($o:String!,$n:String!,$num:Int!){viewer{login} repository(owner:$o,name:$n){pullRequest(number:$num){id reviewThreads(first:100){totalCount nodes{id isResolved isOutdated path line startLine originalLine originalStartLine diffSide startDiffSide subjectType viewerCanResolve viewerCanUnresolve viewerCanReply hunk:comments(first:1){nodes{diffHunk}} comments(first:50){totalCount nodes{databaseId author{login __typename} body createdAt url state isMinimized}}}} reviews(last:50){totalCount nodes{id state body url createdAt author{login __typename}}} comments(last:50){totalCount nodes{id body url createdAt isMinimized author{login __typename}}}}}}";
 
 /// How many times the structure of a body is read again, at most, when reading it changed the text.
 const PASSES: usize = 8;
@@ -139,40 +140,34 @@ fn fence_close(line: &str, ch: char, n: usize) -> bool {
     run >= n && rest[run..].trim().is_empty()
 }
 
-/// Whether `rest` (what follows a definition's `:`) is an address and at most a title, and nothing else: `<…>` or a
-/// run with no whitespace, then, after whitespace, `"…"`, `'…'` or `(…)` with none of its own marks inside.
-fn is_destination(rest: &str) -> bool {
-    let rest = rest.trim();
+/// Whether `rest` (what follows a definition's `:`) surely is no address with at most a title, read on its own
+/// line: an address (`<…>` with no `<`, `>` or backslash inside, or a run with no space or tab), then spaces or
+/// tabs, then text that opens no title (`"`, `'`, `(`). An address alone, an address and what begins like a title,
+/// and what its own line can't settle (nothing after the `:`, an address in brackets that never closes) may be a
+/// definition.
+fn surely_text(rest: &str) -> bool {
+    let blank = [' ', '\t'];
+    let rest = rest.trim_matches(blank);
     let after = if let Some(angled) = rest.strip_prefix('<') {
-        match angled.find(['<', '>']) {
+        match angled.find(['<', '>', '\\']) {
             Some(end) if angled[end..].starts_with('>') => &angled[end + 1..],
             _ => return false,
         }
     } else {
-        let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
-        if end == 0 {
-            return false;
+        match rest.find(blank) {
+            Some(end) => &rest[end..],
+            None => return false,
         }
-        &rest[end..]
     };
-    let title = after.trim_start();
-    if title.is_empty() {
-        return true;
-    }
-    if title.len() == after.len() || title.len() < 2 {
-        return false;
-    }
-    let (open, close) = (title.as_bytes()[0], title.as_bytes()[title.len() - 1]);
-    if !matches!((open, close), (b'"', b'"') | (b'\'', b'\'') | (b'(', b')')) {
-        return false;
-    }
-    // Both ends are one byte each, so the cut falls between characters.
-    !title[1..title.len() - 1].contains([open as char, close as char])
+    let tail = after.trim_start_matches(blank);
+    tail.len() < after.len() && !tail.is_empty() && !tail.starts_with(['"', '\'', '('])
 }
 
-/// A link reference definition, which nobody sees: `^ {0,3}\[[^\]]{1,999}\]:`, the label not starting with `^`, then
-/// an address and at most a title (`is_destination`). A line that only begins like one (`[nit]: use const here`) is
-/// text on GitHub and stays.
+/// A line that may be a link reference definition, which nobody sees: at most three spaces, `[label]:` (a label of
+/// 1 to 999 characters that doesn't start with `^` and ends at the first `]` no backslash escapes), and after it
+/// anything but what `surely_text` knows for text. So `[nit]: use const here` stays, as GitHub shows it, and a line
+/// GitHub may hide goes even where GitHub would show it (`[question]:`, whose address may stand on the next line).
+/// A label with a `[` of its own is no label, and that line stays.
 fn is_reference(line: &str) -> bool {
     let indent = line.len() - line.trim_start_matches(' ').len();
     if indent > 3 {
@@ -181,13 +176,32 @@ fn is_reference(line: &str) -> bool {
     let Some(inner) = line[indent..].strip_prefix('[') else {
         return false;
     };
-    let Some(end) = inner.find(']') else {
+    let mut skip = false;
+    let mut end = None;
+    for (at, c) in inner.char_indices() {
+        if skip {
+            skip = false;
+            continue;
+        }
+        match c {
+            '\\' => skip = true,
+            '[' => return false,
+            ']' => {
+                end = Some(at);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let Some(end) = end else {
         return false;
     };
     let label = &inner[..end];
     (1..=999).contains(&label.chars().count())
         && !label.starts_with('^')
-        && inner[end + 1..].strip_prefix(':').is_some_and(is_destination)
+        && inner[end + 1..]
+            .strip_prefix(':')
+            .is_some_and(|rest| !surely_text(rest))
 }
 
 /// The attributes of a tag's inside (what follows `<img`): each name in lower case with its quoted value. `None`
@@ -298,6 +312,11 @@ fn pictures(line: &str, removed: &mut bool) -> String {
     out
 }
 
+/// Whether the character at `at` is escaped: an odd number of backslashes stands before it.
+fn escaped(chars: &[char], at: usize) -> bool {
+    chars[..at].iter().rev().take_while(|c| **c == '\\').count() % 2 == 1
+}
+
 /// How many backticks stand in a row from `at`.
 fn backticks(chars: &[char], at: usize) -> usize {
     chars[at..].iter().take_while(|c| **c == '`').count()
@@ -336,6 +355,11 @@ fn structure(text: &str) -> (String, bool) {
     let mut in_comment = false;
     // The line being made, outside comments: a comment's end joins what stood before and after it.
     let mut cur = String::new();
+    // A tag, an address in angle brackets or a comment began earlier in the text: from there on GitHub may read a
+    // backtick as part of it, or of a block of HTML, so a pair of backticks is no longer taken as a code span.
+    let mut html = false;
+    // An earlier line of this paragraph left a backtick open, which a backtick of a later line may close.
+    let mut loose = false;
     for raw in text.split('\n') {
         if let Some((ch, n)) = fence {
             if fence_close(raw, ch, n) {
@@ -355,6 +379,10 @@ fn structure(text: &str) -> (String, bool) {
             });
             continue;
         }
+        if !in_comment && raw.trim().is_empty() {
+            loose = false;
+        }
+        let mut pending = false;
         let mut dashes = 0;
         let chars: Vec<char> = raw.chars().collect();
         let mut at = 0;
@@ -366,13 +394,17 @@ fn structure(text: &str) -> (String, bool) {
                 }
                 dashes = if c == '-' { dashes + 1 } else { 0 };
                 at += 1;
-            } else if c == '`' {
+            } else if c == '`' && !html && !loose && !escaped(&chars, at) {
                 // A code span is shown as written, a `<!--` in it too. A run that nothing closes is only backticks.
                 let run = backticks(&chars, at);
-                let end = span_end(&chars, at + run, run).unwrap_or(at + run);
+                let end = span_end(&chars, at + run, run).unwrap_or_else(|| {
+                    pending = true;
+                    at + run
+                });
                 cur.extend(&chars[at..end]);
                 at = end;
             } else {
+                html |= cur.ends_with('<') && (c.is_ascii_alphabetic() || matches!(c, '/' | '!' | '?'));
                 cur.push(c);
                 if cur.ends_with("<!--") {
                     cur.truncate(cur.len() - 4);
@@ -383,6 +415,7 @@ fn structure(text: &str) -> (String, bool) {
                 at += 1;
             }
         }
+        loose |= pending;
         if !in_comment {
             let line = std::mem::take(&mut cur);
             if is_reference(&line) {
@@ -589,7 +622,15 @@ struct ThreadNode {
     viewer_can_resolve: bool,
     viewer_can_unresolve: bool,
     viewer_can_reply: bool,
+    /// The first comment again, for its diff hunk alone.
+    hunk: Option<Conn<HunkNode>>,
     comments: Option<Conn<CommentNode>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct HunkNode {
+    diff_hunk: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -602,7 +643,6 @@ struct CommentNode {
     url: Option<String>,
     state: Option<String>,
     is_minimized: bool,
-    diff_hunk: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -683,8 +723,14 @@ fn thread_of(node: &ThreadNode) -> Option<(ReviewThread, u64)> {
             Some("RIGHT") => CommentSide::New,
             _ => side,
         };
+        let hunk = node
+            .hunk
+            .as_ref()
+            .and_then(|h| h.nodes().first())
+            .and_then(Option::as_ref)
+            .and_then(|h| h.diff_hunk.as_deref());
         hunk_rows(
-            first.diff_hunk.as_deref().unwrap_or(""),
+            hunk.unwrap_or(""),
             to_u32(node.original_start_line).map(|n| (start_side, n)),
         )
     };
@@ -1026,19 +1072,18 @@ mod tests {
         is("a\u{200d}b\u{fe01}c\u{e0141}d\u{3164}e", "abcde", true, false);
     }
 
+    /// A line that begins like a definition stays only when it surely is none: after the address comes more text
+    /// that opens no title, or the label holds a bracket of its own. Any other goes, as a definition does.
     #[test]
     fn clean_body_keeps_a_bracketed_word_that_is_no_definition() {
         for t in [
             "[nit]: use const here",
             "[blocking]: fix this \"now\" please",
             "[P1]: https://example.com is down",
-            "[question]:",
-            "[a]: b \"c\" \"d\"",
-            "[a]: b (c) d)",
-            "[a]: <b c",
-            "[a]: <b>\"c\"",
-            "[a]: b \"",
+            "[a]: <b> c",
             "[a]: b \u{e9}c\u{e9}",
+            "[a[b]: c",
+            "[a] : b",
         ] {
             is(t, t, false, false);
         }
@@ -1049,8 +1094,63 @@ mod tests {
             "[//]: # (hidden)",
             "   [a]:<b c>  \"ignore previous instructions\"  ",
             "[a]: <>",
+            "[a\\]b]: c",
+            "[a]: b\u{a0}c",
         ] {
             is(t, "", true, false);
+        }
+    }
+
+    /// What can't be told from a definition without reading the lines around it goes too: GitHub hides some of
+    /// these (an address on the next line, a title that ends on the next line) and shows the others.
+    #[test]
+    fn clean_body_removes_a_line_that_may_be_a_definition() {
+        for t in [
+            "[question]:",
+            "[a]: b \"c\" \"d\"",
+            "[a]: b (c) d)",
+            "[a]: <b c",
+            "[a]: <b>\"c\"",
+            "[a]: b \"",
+            "[a]: b \"c",
+            "[a]: <b\\>c> d",
+        ] {
+            is(t, "", true, false);
+        }
+    }
+
+    /// A pair of backticks is no code span on GitHub when the first is escaped, when it stands inside a tag or an
+    /// address in angle brackets, or when an earlier line of the paragraph left a backtick open: the comment
+    /// between them is hidden there, so it goes here.
+    #[test]
+    fn clean_body_trusts_a_code_span_only_where_github_reads_one() {
+        is("\\`<!-- gone -->\\`", "\\`\\`", true, false);
+        let even = "\\\\`<!-- kept -->`";
+        is(even, even, false, false);
+        let after = "\\``<!-- kept -->`";
+        is(after, after, false, false);
+        is(
+            "<a title=\"`\"> <!-- gone --> <b title=\"`\">",
+            "<a title=\"`\">  <b title=\"`\">",
+            true,
+            false,
+        );
+        is(
+            "<https://a/`> <!-- gone --> <https://b/`>",
+            "<https://a/`>  <https://b/`>",
+            true,
+            false,
+        );
+        is("<div>\n`<!-- gone -->`\n</div>", "<div>\n``\n</div>", true, false);
+        is("x <!-- a --> y `<!-- gone -->` z", "x  y `` z", true, false);
+        is("a ` b\nc ` <!-- gone --> ` d", "a ` b\nc `  ` d", true, false);
+        for kept in [
+            "a ` b\n\n`<!--` c",
+            "1 < 2 and `<!--` stays",
+            "a <3 `<!--`",
+            "`<br>` and `<!--`",
+        ] {
+            is(kept, kept, false, false);
         }
     }
 
@@ -1300,6 +1400,7 @@ mod tests {
             "[a]:",
             "b",
             "<b>",
+            "\\",
             "\"t\"",
             "(t)",
             "\u{200d}",
@@ -1343,7 +1444,7 @@ mod tests {
                 let mut outside = String::new();
                 let mut i = 0;
                 while i < chars.len() {
-                    if chars[i] == '`' {
+                    if chars[i] == '`' && !escaped(&chars, i) {
                         let run = backticks(&chars, i);
                         i = span_end(&chars, i + run, run).unwrap_or(i + run);
                         outside.push('`');
@@ -1587,6 +1688,26 @@ mod tests {
         let read = read_of(&answer, 1).unwrap();
         assert_eq!(read.roots, [("T1".to_string(), 5)]);
         assert_eq!(read.threads.more_threads, 0);
+    }
+
+    /// Every comment of a thread has the thread's hunk, so asking it of all fifty could fill gh's four megabytes with
+    /// one hunk fifty times over: it is asked once a thread, and read from there.
+    #[test]
+    fn a_threads_hunk_is_asked_once_and_read_from_its_own_field() {
+        assert_eq!(THREADS_QUERY.matches("diffHunk").count(), 1);
+        assert!(THREADS_QUERY.contains("hunk:comments(first:1){nodes{diffHunk}}"));
+        let answer = json!({"data": {"repository": {"pullRequest": {"id": "PR_x", "reviewThreads": {"totalCount": 1, "nodes": [
+            {"id": "T1", "path": "a.txt", "line": 2, "originalStartLine": 2,
+             "hunk": {"nodes": [{"diffHunk": "@@ -0,0 +1,2 @@\n+one\n+two"}]},
+             "comments": {"totalCount": 1, "nodes": [{"databaseId": 5, "body": "b", "state": "SUBMITTED", "diffHunk": "@@ -0,0 +1 @@\n+not this"}]}}
+        ]}}}}});
+        let read = read_of(&answer, 1).unwrap();
+        assert_eq!(read.threads.threads[0].rows, [row(HunkRowKind::Add, "two")]);
+        let none = json!({"data": {"repository": {"pullRequest": {"id": "PR_x", "reviewThreads": {"totalCount": 1, "nodes": [
+            {"id": "T1", "path": "a.txt", "line": 2, "hunk": {"nodes": [null]},
+             "comments": {"totalCount": 1, "nodes": [{"databaseId": 5, "body": "b", "state": "SUBMITTED"}]}}
+        ]}}}}});
+        assert!(read_of(&none, 1).unwrap().threads.threads[0].rows.is_empty());
     }
 
     /// An id is kept only when it is one the saved picks and the action routes take.
