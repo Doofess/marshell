@@ -26,20 +26,11 @@ fn refuse() -> Fail {
 
 /// Every CLI folder at its default under `home`. `claude_settings` is the pinned file, else `<home>/.claude/`.
 fn roots_under(home: &Path, claude_settings: Option<PathBuf>) -> ExtRoots {
-    ExtRoots {
-        home: home.to_path_buf(),
-        claude_dir: home.join(".claude"),
-        claude_json: home.join(".claude.json"),
-        claude_settings: claude_settings.unwrap_or_else(|| home.join(".claude").join("settings.json")),
-        codex_home: home.join(".codex"),
-        qwen_dir: home.join(".qwen"),
-        claude_tool_search: None,
-        qwen_runtime: home.join(".qwen"),
-        gemini_dir: home.join(".gemini"),
-        copilot_dir: home.join(".copilot"),
-        copilot_home_set: false,
-        copilot_offline: false,
+    let mut roots = ExtRoots::under(home);
+    if let Some(settings) = claude_settings {
+        roots.claude_settings = settings;
     }
+    roots
 }
 
 /// Windows roots. With `ext_home` set by a test, every CLI folder is at its default under it and the environment isn't

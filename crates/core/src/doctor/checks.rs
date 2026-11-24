@@ -11,7 +11,7 @@ pub const RETENTION_OTHERS: &str =
 
 pub(crate) const READ_ONLY: &str = "The file is read-only.";
 const CANNOT_TRUST: &str = "Marshell can't trust hooks for you. Open /hooks in Codex and trust them.";
-const ORDER: [&str; 5] = ["claude", "codex", "antigravity", "qwen", "copilot"];
+pub(crate) const ORDER: [&str; 5] = ["claude", "codex", "antigravity", "qwen", "copilot"];
 
 /// The state of the file a CLI's hooks live in.
 #[derive(Debug, Clone, PartialEq, Eq)]

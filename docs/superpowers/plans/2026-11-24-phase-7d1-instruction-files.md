@@ -100,7 +100,7 @@ The protocol gains one optional field on `DoctorItem`, `loads`. The Doctor row r
     - A file row is `<path>` followed by its note. Notes are joined with ", ", from these phrases:
       - "about <t> tokens";
       - "imported by <path>";
-      - "auto memory, first 200 lines or 25 KB";
+      - "auto memory", followed by the CLI's own limit from the file's `notes`: "first 200 lines or 25 KB" for Claude Code, "first 200 lines" for Qwen Code;
       - "loads when used";
       - "not loaded: <reason>";
       - "cut: <what>";
@@ -437,7 +437,7 @@ The rules (from the research note, §1, and Task 1's findings):
 10. **Auto memory:**
     - Off when `autoMemoryEnabled` is false in the merged settings.
     - The folder is `autoMemoryDirectory` from the user settings when set. Otherwise it is `roots.claude_dir/projects/<memory_dir_name(repo root)>/memory`, where the repo root is `projects::project_of(project)`, so a worktree shares its main checkout's memory (Task 1 confirms both).
-    - `MEMORY.md` there is `Role::Memory`, and its `chars` are the first `MEMORY_LINES` lines or `MEMORY_BYTES` bytes, whichever is shorter.
+    - `MEMORY.md` there is `Role::Memory`, and its `chars` are the first `MEMORY_LINES` lines or `MEMORY_BYTES` bytes, whichever is shorter. Its `notes` are `["first 200 lines or 25 KB"]`.
     - `memory_dir_name` replaces every character that isn't an ASCII letter or digit with `-` (`C:\dev\Airport` → `C--dev-Airport`).
     - With no project, there is no memory row.
 11. **Cuts:** a file over 4 MiB (`Text::TooLarge`) gives a Cut with `id_part = hash_part(path)`. The file is `NotLoaded("over 4 MiB")` and counts nothing.
@@ -573,7 +573,7 @@ The rules:
    - `.qwen/QWEN.local.md` at the git root loads only with a git root. `project/.qwen/rules/**/*.md` follow rule 3.
 6. **Imports:** `ImportSyntax::At`, depth 5, `ImportBase::File`, `inside = Some(project root)`, `outside_reason = "outside the project"`, `home = None`, `clean = strip_html_comments`. A missing import keeps its literal text, which is already in the file's chars, and its row is `NotLoaded("not found")`.
 7. **No limits, so no cuts,** and the load's `notes` hold "Qwen Code documents no limit." Nothing below `project` loads (path rules are covered above).
-8. **Auto memory** (finding 14), each file `Role::Memory`, at start, counted up to its first `MEMORY_LINES` (200) lines:
+8. **Auto memory** (finding 14), each file `Role::Memory`, at start, with `notes` of `["first 200 lines"]`, counted up to its first `MEMORY_LINES` (200) lines:
    - `qwen_dir/memories/MEMORY.md`, at user level;
    - with a project, `qwen_dir/projects/<memory_dir_name(project)>/memory/MEMORY.md`.
    - `memory_dir_name` is the project's own path (a worktree has its own folder, unlike Claude Code), lowercased, with every character that isn't an ASCII letter or digit as `-`: `C:\dev\Airport` gives `c--dev-airport`.
