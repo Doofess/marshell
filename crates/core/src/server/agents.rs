@@ -472,6 +472,23 @@ impl AppState {
         distro: &str,
         want: &HookPlanRequest,
     ) -> Result<ChangeSet, Fail> {
+        self.distro_install_with(adapter, distro, want, false)
+    }
+
+    /// `distro_install` for Copilot CLI, except that a hooks file that parses and isn't Marshell's is replaced with
+    /// Marshell's hooks. Only the Doctor's fix, which a person picks, asks for it.
+    pub(crate) fn distro_copilot_install_over(&self, distro: &str, want: &HookPlanRequest) -> Result<ChangeSet, Fail> {
+        self.distro_install_with(Adapter::Copilot, distro, want, true)
+    }
+
+    /// `replace_foreign` matters only to Copilot CLI, whose hooks file is wholly Marshell's.
+    fn distro_install_with(
+        &self,
+        adapter: Adapter,
+        distro: &str,
+        want: &HookPlanRequest,
+        replace_foreign: bool,
+    ) -> Result<ChangeSet, Fail> {
         let target = self.distro_target(distro)?;
         self.ensure_bridge(want)?;
         let bridge = Bridge::Distro {
@@ -515,7 +532,12 @@ impl AppState {
                 let (hooks_path, settings_path) = (copilot_hooks::hooks_path(&dir), copilot_hooks::settings_path(&dir));
                 let hooks_text = read_text(&hooks_path).map_err(|e| refused(&e))?;
                 let settings_text = read_text(&settings_path).map_err(|e| refused(&e))?;
-                copilot_hooks::install_plan(
+                let plan = if replace_foreign {
+                    copilot_hooks::install_plan_over
+                } else {
+                    copilot_hooks::install_plan
+                };
+                plan(
                     &copilot_hooks::Files {
                         hooks_path: &hooks_path,
                         hooks_text: hooks_text.as_deref(),
@@ -1836,6 +1858,22 @@ fn settings_undo_of(st: &AppState, agent: &str, kind: Adapter, snapshot_id: &str
 /// The plan that sets up `adapter`'s hooks for Windows: the same one the Agents dialog's "Set up" makes. It puts the
 /// bridge back first when `want` asks for status hooks and it is missing.
 pub(crate) fn hook_install_changes(st: &AppState, adapter: Adapter, want: &HookPlanRequest) -> Result<ChangeSet, Fail> {
+    hook_install_changes_with(st, adapter, want, false)
+}
+
+/// `hook_install_changes` for Copilot CLI, except that a hooks file that parses and isn't Marshell's is replaced with
+/// Marshell's hooks. Only the Doctor's fix, which a person picks, asks for it.
+pub(crate) fn copilot_install_over_changes(st: &AppState, want: &HookPlanRequest) -> Result<ChangeSet, Fail> {
+    hook_install_changes_with(st, Adapter::Copilot, want, true)
+}
+
+/// `replace_foreign` matters only to Copilot CLI, whose hooks file is wholly Marshell's.
+fn hook_install_changes_with(
+    st: &AppState,
+    adapter: Adapter,
+    want: &HookPlanRequest,
+    replace_foreign: bool,
+) -> Result<ChangeSet, Fail> {
     match adapter {
         Adapter::Claude => {
             let inputs = st.inputs()?;
@@ -1889,7 +1927,12 @@ pub(crate) fn hook_install_changes(st: &AppState, adapter: Adapter, want: &HookP
         Adapter::Copilot => {
             let inputs = st.copilot_inputs()?;
             st.ensure_bridge(want)?;
-            copilot_hooks::install_plan(&inputs.files(), &Bridge::local(&st.0.home), want)
+            let plan = if replace_foreign {
+                copilot_hooks::install_plan_over
+            } else {
+                copilot_hooks::install_plan
+            };
+            plan(&inputs.files(), &Bridge::local(&st.0.home), want)
         }
     }
     .map_err(|e| refused(&e))

@@ -155,12 +155,16 @@ pub fn file_problem(text: Option<&str>) -> Option<FileProblem> {
     (!is_marshells(&file, text)).then_some(FileProblem::NotMarshells)
 }
 
-/// The hooks file's text when it is there and Marshell's. A file that doesn't parse, or isn't Marshell's, is an error.
-fn marshells_hooks<'a>(files: &Files<'a>) -> Result<Option<&'a str>, PlanError> {
-    let Some(text) = files.hooks_text else { return Ok(None) };
+/// The hooks file's text when it is there and Marshell's, and whether it is a foreign file kept for replacing. A file
+/// that doesn't parse is an error; one that isn't Marshell's is too, unless `replace_foreign`.
+fn marshells_hooks<'a>(files: &Files<'a>, replace_foreign: bool) -> Result<(Option<&'a str>, bool), PlanError> {
+    let Some(text) = files.hooks_text else {
+        return Ok((None, false));
+    };
     match file_problem(Some(text)) {
-        None => Ok(Some(text)),
+        None => Ok((Some(text), false)),
         Some(FileProblem::DoesNotParse { .. }) => Err(does_not_parse(files.hooks_path, text)),
+        Some(FileProblem::NotMarshells) if replace_foreign => Ok((Some(text), true)),
         Some(FileProblem::NotMarshells) => Err(PlanError::NotMarshells {
             path: files.hooks_path.to_path_buf(),
         }),
@@ -318,8 +322,29 @@ fn set(pointer: &str, value: &Value) -> EditOp {
 /// In a distro (`bridge` is `Bridge::Distro`, and `files` holds no chain file) there is no chain: the person's own
 /// status line stays as it is, with a note, and Marshell's own line says `--no-chain`.
 pub fn install_plan(files: &Files, bridge: &Bridge, want: &HookPlanRequest) -> Result<ChangeSet, PlanError> {
+    plan_install(files, bridge, want, false)
+}
+
+/// `install_plan`, except that a hooks file that parses and isn't Marshell's is replaced with Marshell's hooks
+/// (`ReplaceText` against its present text). The Doctor's fix uses it, once the person has picked it. A file that
+/// doesn't parse is still refused, and so is a foreign file when `want.status` is off, which would delete it.
+pub fn install_plan_over(files: &Files, bridge: &Bridge, want: &HookPlanRequest) -> Result<ChangeSet, PlanError> {
+    plan_install(files, bridge, want, true)
+}
+
+fn plan_install(
+    files: &Files,
+    bridge: &Bridge,
+    want: &HookPlanRequest,
+    replace_foreign: bool,
+) -> Result<ChangeSet, PlanError> {
     let title = "Set up Copilot CLI hooks".to_string();
-    let existing = marshells_hooks(files)?;
+    let (existing, foreign) = marshells_hooks(files, replace_foreign)?;
+    if foreign && !want.status {
+        return Err(PlanError::NotMarshells {
+            path: files.hooks_path.to_path_buf(),
+        });
+    }
     let hooks_edit = match (existing, want.status.then(|| hooks_file(bridge, want))) {
         (None, None) => None,
         (None, Some(content)) => Some(edit(
@@ -409,6 +434,12 @@ pub fn install_plan(files: &Files, bridge: &Bridge, want: &HookPlanRequest) -> R
     } else {
         format!("{how}.")
     };
+    if foreign {
+        reason = format!(
+            "{reason} Replaces {} with Marshell's hooks.",
+            files.hooks_path.display()
+        );
+    }
     if let Some(note) = left_alone {
         reason = format!("{reason} {note}");
     }
@@ -453,7 +484,7 @@ fn saved_line(chain_text: Option<&str>, in_distro: bool) -> Saved {
 /// goes, and any other is the person's, left alone.
 pub fn remove_plan(files: &Files, distro: Option<&str>) -> Result<RemovePlan, PlanError> {
     let title = "Turn Copilot CLI hooks off".to_string();
-    let hooks = marshells_hooks(files)?;
+    let (hooks, _) = marshells_hooks(files, false)?;
     let settings = parse_settings(files.settings_path, files.settings_text)?;
 
     let mut statusline_left = false;
@@ -935,6 +966,89 @@ mod tests {
             file_problem(Some("{\"hooks\": ")),
             Some(FileProblem::DoesNotParse { line, .. }) if line >= 1
         ));
+    }
+
+    fn try_over(state: &State, b: &Bridge, want: &HookPlanRequest) -> Result<ChangeSet, PlanError> {
+        with_files(state, |files| install_plan_over(files, b, want))
+    }
+
+    #[test]
+    fn install_plan_over_replaces_a_hooks_file_that_is_not_marshells() {
+        let path = hooks_path(&copilot_home());
+        let theirs = r#"{"version":1,"hooks":{"preToolUse":[{"type":"command","exec":"mine.exe","args":["a"]}]}}"#;
+        let (reference, _) = install(&State::default());
+        for text in ["{}", theirs] {
+            let state = State {
+                hooks: Some(text.to_string()),
+                ..State::default()
+            };
+            // install_plan still refuses it.
+            assert_eq!(
+                try_install(&state, &bridge(), &BOTH),
+                Err(PlanError::NotMarshells { path: path.clone() }),
+                "{text}"
+            );
+            let (cs, after) = {
+                let cs = try_over(&state, &bridge(), &BOTH).unwrap();
+                let after = apply(&cs, &state);
+                (cs, after)
+            };
+            let EditOp::ReplaceText { content } = &cs.edits[0].op else {
+                panic!("{:?}", cs.edits[0].op)
+            };
+            assert_eq!(content, &hooks_file(&bridge(), &BOTH), "{text}");
+            assert_eq!(cs.edits[0].path, path.to_string_lossy());
+            assert_eq!(cs.edits[0].expected_hash, Some(hash_bytes(text.as_bytes())));
+            assert_eq!(after.hooks.as_deref(), Some(expected_hooks_text(BRIDGE_PATH).as_str()));
+            // The settings edits are the ones a missing hooks file gets.
+            assert_eq!(cs.edits[1..], reference.edits[1..], "{text}");
+            assert!(
+                cs.reason
+                    .contains(&format!("Replaces {} with Marshell's hooks.", path.display())),
+                "{}",
+                cs.reason
+            );
+        }
+    }
+
+    #[test]
+    fn install_plan_over_is_install_plan_for_marshells_own_file_and_no_file() {
+        let (_, installed) = install(&State::default());
+        for state in [State::default(), installed.clone()] {
+            assert_eq!(
+                try_over(&state, &bridge(), &BOTH),
+                try_install(&state, &bridge(), &BOTH)
+            );
+        }
+        let moved = Bridge::Local(PathBuf::from("D:/Other Home/.marshell/bin/marshell-hook.exe"));
+        let (a, b) = (
+            try_over(&installed, &moved, &BOTH).unwrap(),
+            try_install(&installed, &moved, &BOTH).unwrap(),
+        );
+        assert_eq!(a, b);
+        assert!(!a.reason.contains("Replaces"), "{}", a.reason);
+    }
+
+    #[test]
+    fn install_plan_over_never_replaces_what_does_not_parse_nor_deletes_a_foreign_file() {
+        let path = hooks_path(&copilot_home());
+        let broken = State {
+            hooks: Some("{ \"hooks\": ".to_string()),
+            ..State::default()
+        };
+        match try_over(&broken, &bridge(), &BOTH) {
+            Err(PlanError::DoesNotParse { path: p, .. }) => assert_eq!(p, path),
+            other => panic!("{other:?}"),
+        }
+        // With the status off a foreign file would be deleted: that stays refused.
+        let foreign = State {
+            hooks: Some("{}".to_string()),
+            ..State::default()
+        };
+        assert_eq!(
+            try_over(&foreign, &bridge(), &HookPlanRequest { status: false, ..BOTH }),
+            Err(PlanError::NotMarshells { path })
+        );
     }
 
     #[test]

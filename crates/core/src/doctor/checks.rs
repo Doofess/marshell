@@ -9,7 +9,7 @@ use marshell_protocol::doctor::{DoctorGroup, DoctorItem};
 pub const RETENTION_OTHERS: &str =
     "Codex, Qwen Code and Copilot CLI have no setting that deletes chats by age, and Antigravity documents none.";
 
-const READ_ONLY: &str = "The file is read-only.";
+pub(crate) const READ_ONLY: &str = "The file is read-only.";
 const CANNOT_TRUST: &str = "Marshell can't trust hooks for you. Open /hooks in Codex and trust them.";
 const ORDER: [&str; 5] = ["claude", "codex", "antigravity", "qwen", "copilot"];
 
@@ -23,8 +23,11 @@ pub enum FileState {
         line: u32,
         message: String,
     },
-    /// Copilot CLI: the hooks file holds something Marshell didn't write, or can't be read as text.
-    NotOurs,
+    /// Copilot CLI: the hooks file holds something Marshell didn't write, or can't be read as text. `cannot_fix` says
+    /// why the fix (which replaces the file) isn't offered; `None` offers it.
+    NotOurs {
+        cannot_fix: Option<&'static str>,
+    },
 }
 
 /// What a CLI notifies by itself outside the terminal, besides Marshell. A bell or an OSC 9 inside the terminal isn't
@@ -157,17 +160,25 @@ fn cli_items(f: &AgentFacts, banners_on: bool, out: &mut Vec<DoctorItem>) {
         return;
     }
 
-    if f.file == FileState::NotOurs {
+    if let FileState::NotOurs { cannot_fix } = &f.file {
         if f.set_up {
+            let mut detail =
+                format!("Marshell set {cli}'s hooks up in it, and it now holds something Marshell didn't write.");
+            if cannot_fix.is_none() {
+                detail.push_str(
+                    " The fix replaces the file with Marshell's hooks. Hooks of your own go in another .json file in that folder.",
+                );
+            }
             let mut i = mk(
                 "hooksfile",
                 DoctorGroup::Broken,
-                false,
+                cannot_fix.is_none(),
                 format!("{path} isn't Marshell's file any more"),
-                format!("Marshell set {cli}'s hooks up in it, and it now holds something Marshell didn't write."),
+                detail,
             );
-            i.cannot_fix =
-                Some("Marshell writes only a hooks file it made. Move the file away, then run the check again.".into());
+            i.cannot_fix = cannot_fix.map(str::to_string);
+            // The fix overwrites what a person wrote, so the person picks it.
+            i.unchecked = cannot_fix.is_none();
             i.path = Some(path.clone());
             out.push(i);
         } else if f.distro.is_none() && f.found {
@@ -741,10 +752,10 @@ mod tests {
     }
 
     #[test]
-    fn a_hooks_file_that_is_not_marshells_is_one_unfixable_item() {
+    fn a_hooks_file_that_is_not_marshells_is_one_item_a_person_can_pick_to_fix() {
         for hooks in [HookInstall::None, HookInstall::Installed, HookInstall::Partial] {
             let mut f = facts("copilot");
-            f.file = FileState::NotOurs;
+            f.file = FileState::NotOurs { cannot_fix: None };
             f.hooks = hooks;
             f.notify.hook_commands = vec!["x".into()];
             let i = one(f);
@@ -752,14 +763,48 @@ mod tests {
                 &i,
                 "hooksfile.copilot",
                 DoctorGroup::Broken,
+                true,
+                "C:/h/settings.json isn't Marshell's file any more",
+                "Marshell set Copilot CLI's hooks up in it, and it now holds something Marshell didn't write. The fix replaces the file with Marshell's hooks. Hooks of your own go in another .json file in that folder.",
+                None,
+            );
+            assert!(
+                i.unchecked,
+                "the fix overwrites what a person wrote, so the person picks it"
+            );
+        }
+    }
+
+    #[test]
+    fn a_hooks_file_that_cannot_be_replaced_is_one_unfixable_item_with_the_reason() {
+        for reason in [
+            "The file is read-only.",
+            "Marshell can't show this file in a preview. Move it away, then run the check again.",
+        ] {
+            let mut f = facts("copilot");
+            f.file = FileState::NotOurs {
+                cannot_fix: Some(reason),
+            };
+            f.notify.hook_commands = vec!["x".into()];
+            let v = items(&[f], &[], true);
+            assert_eq!(v.len(), 1, "{v:?}");
+            check(
+                &v[0],
+                "hooksfile.copilot",
+                DoctorGroup::Broken,
                 false,
                 "C:/h/settings.json isn't Marshell's file any more",
                 "Marshell set Copilot CLI's hooks up in it, and it now holds something Marshell didn't write.",
-                Some("Marshell writes only a hooks file it made. Move the file away, then run the check again."),
+                Some(reason),
             );
+            assert!(!v[0].unchecked);
         }
+    }
+
+    #[test]
+    fn a_foreign_hooks_file_that_was_never_set_up_is_only_the_setup_row() {
         let mut f = facts("copilot");
-        f.file = FileState::NotOurs;
+        f.file = FileState::NotOurs { cannot_fix: None };
         f.set_up = false;
         let i = one(f);
         assert_eq!(i.id, "setup.copilot");
