@@ -8,7 +8,7 @@
 
 **Tech Stack:** Rust (axum, serde_json, `config::jsonc`), React + TypeScript, Vitest through `renderToStaticMarkup`. No protocol type changes, so `src/generated/` stays as it is.
 
-**Spec:** `docs/PLAN.md` §9, "Slice 6n3 decisions (2026-11-24)", 1 to 21, which rests on "Slice 7a decisions", "Slice 7b decisions" and "Slice 7c decisions". Evidence: `docs/research/2026-11-06-copilot-cli.md`, part 3, where "What 6n3's first task saw" (findings 1 to 21) is what Copilot 1.0.106 really did and overrides the static read above it.
+**Spec:** `docs/PLAN.md` §9, "Slice 6n3 decisions (2026-11-24)", 1 to 22, which rests on "Slice 7a decisions", "Slice 7b decisions" and "Slice 7c decisions". Evidence: `docs/research/2026-11-06-copilot-cli.md`, part 3, where "What 6n3's first task saw" (findings 1 to 21) is what Copilot 1.0.106 really did and overrides the static read above it.
 
 **Checked before planning (2026-11-24, on `origin/main` 8aca488a, Copilot CLI 1.0.106):**
 - No Doctor file names Copilot. `server/doctor.rs:46` `AGENTS`, `doctor/checks.rs:14` `ORDER` and `doctor/ext.rs:11` `ORDER` hold four agents, and `tests/doctor_api.rs:17` `AGENTS` too.
@@ -39,7 +39,7 @@
   - Retention (`RETENTION_OTHERS`): "Codex, Qwen Code and Copilot CLI have no setting that deletes chats by age, and Antigravity documents none."
   - The doctor line: "Copilot CLI has no doctor command." (the distro wording is whatever `doctor::cli::no_doctor_item` gives the other CLIs).
   - The toast item's title: "Copilot CLI shows its own notifications". Detail: "notifications is on in <settings path>, so Copilot CLI raises a Windows notification beside Marshell's. The fix turns it off there. Marshell's notifications stay."
-  - A hooks file that isn't Marshell's: title "<hooks path> isn't Marshell's file any more"; detail "Marshell set Copilot CLI's hooks up in it, and it now holds something Marshell didn't write."; `cannot_fix` "Marshell writes only a hooks file it made. Move the file away, then run the check again."
+  - A hooks file that isn't Marshell's: title "<hooks path> isn't Marshell's file any more"; detail "Marshell set Copilot CLI's hooks up in it, and it now holds something Marshell didn't write. The fix replaces the file with Marshell's hooks. Hooks of your own go in another .json file in that folder."; fixable and not pre-checked (Task 2b). Where it can't be replaced, the detail ends after "didn't write." and `cannot_fix` is "The file is read-only.", or for a file that isn't text or can't be read "Marshell can't show this file in a preview. Move it away, then run the check again."
   - A skill Copilot refuses for length: "Its name is over 64 characters." and "Its description is over 1,024 characters."
   - The listing item's title: "Copilot CLI lists <n> skills by name only" ("1 skill" for one). Detail: "Its skill listing is over the 15,000 characters it describes in full, so the skills past that get no description." `cannot_fix`: "Shorten the longest descriptions, or turn off skills you don't use."
   - The built-in server's extra sentence, straight after an item's own detail and before the fix note: " It comes with Copilot CLI."
@@ -50,7 +50,7 @@
 
 ## Review focus
 
-1. **A `hooks\marshell.json` that the person replaced, emptied to `{}`, saved in another encoding, made read-only, or that doesn't parse, while `managed.json` still names it; the same with `settings.json` missing; and a `settings.json` that doesn't parse beside a good hooks file.** The item names the file at fault, is not fixable, and a fix of other picked items still goes through. Tests in Task 2.
+1. **A `hooks\marshell.json` that the person replaced, emptied to `{}`, saved in another encoding, made read-only, or that doesn't parse, while `managed.json` still names it; the same with `settings.json` missing; and a `settings.json` that doesn't parse beside a good hooks file.** The item names the file at fault, a fix of other picked items still goes through, and only a file that parses and is writable can be replaced, by a fix that is never pre-checked and that Undo takes back byte for byte. Tests in Tasks 2 and 2b.
 2. **A `settings.json` with comments, a trailing comma, a BOM and CRLF, where `notifications` is `true`, `"true"`, `1`, missing or `false`, or `disabledMcpServers` is a string or an array that holds a number.** Only a literal `true` gives the toast item. The fix keeps every other byte, Undo gives the file back byte-equal, and a list that isn't an array of strings makes the turn-off item report-only. Tests in Tasks 3 and 4.
 3. **An `mcp-config.json` or `.mcp.json` that is not an object, has entries that aren't objects, has a server with neither `command` nor `url`, has no `mcpServers` wrapper, or is larger than 4 MiB; a `config.json` that holds tokens, doesn't parse, or has `trustedFolders` or `installedPlugins` in another shape.** The reader never fails, lists what Copilot itself would load, starts nothing it can't show Copilot trusts, and no value of `config.json` reaches an item. Tests in Tasks 4 and 5.
 4. **An `events.jsonl` that is being written, ends in a cut line, holds unknown event types, has an empty `mcpServerName`, or belongs to a folder whose name isn't a UUID; a second scan after a session was resumed.** Only new lines are read the second time, a cut line is read once it is whole, and nothing is counted twice. Tests in Task 6.
@@ -105,6 +105,23 @@ Done before the tasks below were final; they are written from its results.
 - [ ] **Step 7: Implement in `server/doctor.rs`.** `AGENTS: [&str; 5]`. Every `_ =>` named in "Checked before planning" becomes explicit arms for `"qwen"` and `"copilot"`; there is no `unreachable!`, and an unknown agent gets `failed_facts` (~407). `facts_from` for Copilot: whenever the settings state isn't `Unparsable`, read the hooks file as text and map `file_problem` to `FileState::Unparsable` (with `problem_path` unset, the hooks file being `path`) or `FileState::NotOurs`; a hooks file that exists and can't be read as UTF-8 is `NotOurs`; a read-only hooks file or settings file is `ReadOnly`; when `settings.json` is the file that doesn't parse, `problem_path` is its path. `distro_agent_facts`: Copilot's two files as text, `copilot_hooks::inspect` with `chain_path: None`, and the same problems. `hooks_want_of`: for Copilot the status line's file is `settings.json` beside the `hooks` folder, and it is asked for on Windows and in a distro when the line is chained or `managed.json` names `/statusLine` there. Run `cargo test -p marshell-core -j 4 server::doctor`: PASS.
 - [ ] **Step 8: `tests/doctor_api.rs`.** `AGENTS` gets `"copilot"`; `Env` gets the Copilot hooks and settings paths; `hooks_file` and `seed_own_hooks` get Copilot arms (the person's own hooks go in `<home>/.copilot/hooks/mine.json`, since `marshell.json` is Marshell's whole file); in `set_up_follows_each_clis_real_plans` Copilot's hooks file is deleted instead of emptied; in `hooks_off_reads_as_never_set_up` Copilot is exempt from the `/-` pointer assert (its install has none) and "the person's hooks stay" is checked on `mine.json`, since removal deletes `marshell.json`. Run `cargo test -p marshell-core -j 4 --test doctor_api`: PASS.
 - [ ] **Step 9: Commit:** `feat(doctor): Copilot CLI's hooks are checked and fixed, and it gets the retention and doctor lines.`
+
+### Task 2b: The fix that replaces a hooks file that isn't Marshell's (decision 20; worker at `effort: high`)
+
+Task 2 built the item with no fix; the user then chose the fix (decision 20).
+
+**Files:**
+- Modify: `crates/core/src/agents/copilot/hooks.rs`, `crates/core/src/server/agents.rs`, `crates/core/src/doctor/checks.rs`, `crates/core/src/server/doctor.rs`
+
+**Interfaces:**
+- Produces: `copilot_hooks::install_plan_over(files: &Files, bridge: &Bridge, want: &HookPlanRequest) -> Result<ChangeSet, PlanError>` (as `install_plan`, but a hooks file that parses and isn't Marshell's is replaced with `EditOp::ReplaceText` against its present text); `FileState::NotOurs { cannot_fix: Option<&'static str> }`; `fix_of` arm `Some("hooksfile")`.
+
+- [ ] **Step 1: Failing tests in `copilot/hooks.rs`.** Over `{}` and over a file with the person's own entry: `install_plan_over` gives a `ReplaceText` of the hooks file whose content is `hooks_file(bridge, want)` and whose expected hash is the present text's, with the same settings edits `install_plan` gives over a missing hooks file, and a summary line "Replaces <hooks path> with Marshell's hooks."; over a file that doesn't parse it is `DoesNotParse`; over Marshell's own file and over no file it equals `install_plan`. `install_plan` itself still answers `NotMarshells` for `{}`.
+- [ ] **Step 2: Implement** (one shared body with a private `replace_foreign: bool`). Run `cargo test -p marshell-core -j 4 --lib agents::copilot::hooks`: PASS.
+- [ ] **Step 3: Failing tests in `checks.rs`.** `NotOurs { cannot_fix: None }` with `set_up`: `hooksfile.copilot`, Broken, `fixable: true`, `unchecked: true`, the detail with the fix sentences. `NotOurs { cannot_fix: Some(reason) }`: not fixable, `cannot_fix` the reason, the detail without the fix sentences. Still the only Copilot item either way.
+- [ ] **Step 4: Failing tests in `server/doctor.rs`.** With `{}` over the hooks file after an install: the item is fixable; `fix_of(["hooksfile.copilot"])` plans a `ReplaceText` of the hooks file; applying it leaves no `hooksfile.copilot` and no `hooks.copilot` item and the status line in place; Undo gives the hooks file back byte-equal (`{}`). The same over a temp distro home. A hooks file that isn't UTF-8: not fixable ("Marshell can't show this file in a preview. Move it away, then run the check again."), `fix_of` refuses its id, and another CLI's item picked alone still plans. A read-only hooks file or settings file beside a `{}` hooks file: the item shows, not fixable, "The file is read-only.". The Agents page's Set up plan for Copilot still refuses `{}`.
+- [ ] **Step 5: Implement.** `server/agents.rs`: the Copilot arms of `hook_install_changes` and `distro_install` share their bodies with two new `pub(crate)` entry points that call `install_plan_over` (no behaviour change for the existing callers). `server/doctor.rs`: `copilot_hooks_problem` fills `cannot_fix`; `fix_of` gets `Some("hooksfile")`, Copilot only, with `hooks_want_of` (status asked for). Run `cargo test -p marshell-core -j 4 --lib server::` and `--test doctor_api`: PASS.
+- [ ] **Step 6: Commit:** `feat(doctor): a Copilot CLI hooks file that isn't Marshell's any more can be replaced by a fix the person picks.`
 
 ### Task 3: Copilot's own toasts and notification hooks (core)
 
@@ -240,7 +257,7 @@ The failing tests of Step 1 are the evidence decision 4 asks for; Task 9 confirm
 
 - [ ] **Step 1:** Run `marshell-live-check` with a fresh literal scratch folder and `-CopilotFake`. Say first that the dev window takes the foreground when it starts. Over CDP, on the Doctor page:
   - With Copilot's hooks set up: no Copilot item but its cost and usage lines. Delete `hooks\marshell.json`: "Copilot CLI's hooks are gone" is pre-checked; Fix shows the preview, applies, and a new Copilot tab shows live status; Undo last fix removes the file again.
-  - Write `{}` over the hooks file: the "isn't Marshell's file any more" item shows, with no checkbox.
+  - Write `{}` over the hooks file: the "isn't Marshell's file any more" item shows, not pre-checked; picked, its fix previews the replacement, applies, and Undo last fix gives `{}` back.
   - `"notifications": true` in the scratch `settings.json` (with a comment in the file): the toast item shows pre-checked; Fix sets it to `false` and keeps the comment; with Marshell's banners switched off in Settings the item is gone.
   - A hooks file `hooks\mine.json` with a `notification` entry: the Info item names its command.
   - "Run CLI doctors": "Copilot CLI has no doctor command."
