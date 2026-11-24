@@ -76,19 +76,31 @@ impl Files {
     }
 
     /// The text of a `SKILL.md`, or None when it isn't there, isn't UTF-8 text, can't be read, or is over the size
-    /// limit (then it is in `unreadable`). Never more than the limit is read.
+    /// limit. All but the first put it in `unreadable`. Never more than the limit is read.
     fn skill_text(&mut self, path: &Path) -> Option<String> {
+        use std::io::ErrorKind::{NotADirectory, NotFound};
         let mut bytes = Vec::new();
-        std::fs::File::open(path)
-            .ok()?
-            .take(MAX_CONFIG_BYTES + 1)
-            .read_to_end(&mut bytes)
-            .ok()?;
+        let read = std::fs::File::open(path).and_then(|f| f.take(MAX_CONFIG_BYTES + 1).read_to_end(&mut bytes));
+        match read {
+            Ok(_) => {}
+            // No `SKILL.md` there: the folder isn't a skill.
+            Err(e) if matches!(e.kind(), NotFound | NotADirectory) => return None,
+            Err(e) => {
+                self.fail(path, unreadable::io(&e));
+                return None;
+            }
+        }
         if bytes.len() as u64 > MAX_CONFIG_BYTES {
             self.fail(path, TOO_LARGE_DETAIL.to_string());
             return None;
         }
-        String::from_utf8(bytes).ok()
+        match String::from_utf8(bytes) {
+            Ok(text) => Some(text),
+            Err(_) => {
+                self.fail(path, unreadable::NOT_UTF8.to_string());
+                None
+            }
+        }
     }
 
     /// `key` of Copilot's `config.json` and nothing else of it. The file is read each time and never kept.
@@ -455,28 +467,51 @@ fn settle_skills(skills: &mut [Skill]) {
     }
 
     // The listing: project skills by name, then personal ones, then plugins'. Every skill from the first that would
-    // take the listing past its budget on is only named.
+    // take the listing past its budget on is only named. A session lists one project's skills, so each project is
+    // walked by itself, and a skill is only named when a session in some project only names it.
     let rank = |s: &Skill| match s.origin {
         Origin::Project(_) => 0,
         Origin::User => 1,
         _ => 2,
     };
-    let mut order: Vec<usize> = (0..skills.len())
-        .filter(|&i| !skills[i].off && !skills[i].hidden && skills[i].state == SkillState::Ok)
+    let mut projects: Vec<Option<PathBuf>> = skills
+        .iter()
+        .filter_map(|s| match &s.origin {
+            Origin::Project(p) => Some(Some(p.clone())),
+            _ => None,
+        })
         .collect();
-    order.sort_by(|&a, &b| {
-        (rank(&skills[a]), &skills[a].name, &skills[a].file).cmp(&(rank(&skills[b]), &skills[b].name, &skills[b].file))
-    });
-    let mut total = LISTING_OPENING;
-    let mut over = false;
-    for i in order {
-        let s = &mut skills[i];
-        let cost = s.name.chars().count() + s.listed_chars + ENTRY_OVERHEAD;
-        if over || total + cost > LISTING_BUDGET {
-            over = true;
-            s.name_only = true;
-        } else {
-            total += cost;
+    projects.sort();
+    projects.dedup();
+    if projects.is_empty() {
+        projects.push(None);
+    }
+    for project in projects {
+        let mut order: Vec<usize> = (0..skills.len())
+            .filter(|&i| !skills[i].off && !skills[i].hidden && skills[i].state == SkillState::Ok)
+            .filter(|&i| match &skills[i].origin {
+                Origin::Project(p) => Some(p) == project.as_ref(),
+                _ => true,
+            })
+            .collect();
+        order.sort_by(|&a, &b| {
+            (rank(&skills[a]), &skills[a].name, &skills[a].file).cmp(&(
+                rank(&skills[b]),
+                &skills[b].name,
+                &skills[b].file,
+            ))
+        });
+        let mut total = LISTING_OPENING;
+        let mut over = false;
+        for i in order {
+            let s = &mut skills[i];
+            let cost = s.name.chars().count() + s.listed_chars + ENTRY_OVERHEAD;
+            if over || total + cost > LISTING_BUDGET {
+                over = true;
+                s.name_only = true;
+            } else {
+                total += cost;
+            }
         }
     }
 }
@@ -1923,6 +1958,48 @@ mod tests {
         assert!(inv.skills.iter().all(|s| s.name != "big"));
         assert!(inv.skills.iter().any(|s| s.name == "small"));
         assert_eq!(inv.unreadable, vec![(big, TOO_LARGE_DETAIL.to_string())]);
+    }
+
+    #[test]
+    fn a_skill_file_that_is_not_utf8_text_is_reported_and_a_missing_one_is_not() {
+        let h = tempfile::tempdir().unwrap();
+        let r = roots(h.path());
+        let dir = r.copilot_dir.join("skills");
+        let bad = skill_md(&dir, "bad", "");
+        std::fs::write(&bad, [0xff, 0xfe, b'-', 0x00, b'-', 0x00]).unwrap();
+        // A folder with no SKILL.md is not a skill, and nothing is said about it.
+        std::fs::create_dir_all(dir.join("empty")).unwrap();
+        skill_md(&dir, "small", &md(None, Some("d")));
+
+        let inv = inventory(&r, &[], &found);
+
+        assert!(inv.skills.iter().all(|s| s.name != "bad"));
+        assert!(inv.skills.iter().any(|s| s.name == "small"));
+        assert_eq!(inv.unreadable, vec![(bad, unreadable::NOT_UTF8.to_string())]);
+    }
+
+    #[test]
+    fn each_projects_listing_has_its_own_budget() {
+        let h = tempfile::tempdir().unwrap();
+        let r = roots(h.path());
+        // 19 + 8 * (3 + 906 + 91) = 8,019 in each project: under the budget alone, over it together.
+        let projects = [h.path().join("one"), h.path().join("two")];
+        for (p, project) in projects.iter().enumerate() {
+            let dir = project.join(".github").join("skills");
+            for i in 0..8 {
+                skill_md(&dir, &format!("p{p}{i}"), &md(None, Some(&"d".repeat(906))));
+            }
+        }
+        // 19 + 8,000 + 6 * 1,000 = 14,019 with a project's skills: every personal skill is described too.
+        let personal = r.copilot_dir.join("skills");
+        for i in 0..6 {
+            skill_md(&personal, &format!("u0{i}"), &md(None, Some(&"d".repeat(906))));
+        }
+        assert_eq!(named_only(&inventory(&r, &projects, &found)), [] as [&str; 0]);
+
+        // One more personal skill passes the budget in each project's session, and is the only one named.
+        skill_md(&personal, "u06", &md(None, Some(&"d".repeat(906))));
+        assert_eq!(named_only(&inventory(&r, &projects, &found)), ["u06"]);
     }
 
     // ---- plugins ----

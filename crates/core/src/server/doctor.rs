@@ -489,8 +489,8 @@ fn notify_facts(agent: &str, hooks_path: &Path, hooks: Option<&serde_json::Value
 }
 
 /// What Copilot CLI notifies by itself, from its `settings.json` and every `*.json` in the `hooks` folder beside Marshell's
-/// file (`hooks_path`, which is read too: only the entries that aren't Marshell's count). A file that doesn't parse is
-/// skipped. `toasts` is false in a distro, whatever `settings.json` says.
+/// file (`hooks_path`, which is read too: only the entries that aren't Marshell's count). A file that doesn't parse, or
+/// is over the config size limit, is skipped. `toasts` is false in a distro, whatever `settings.json` says.
 fn copilot_notify(hooks_path: &Path, toasts: bool) -> checks::NotifyFacts {
     use crate::agents::copilot::{hooks as copilot_hooks, notify};
     let folder = hooks_path.parent().unwrap_or(hooks_path);
@@ -506,6 +506,10 @@ fn copilot_notify(hooks_path: &Path, toasts: bool) -> checks::NotifyFacts {
             .and_then(|e| e.to_str())
             .is_some_and(|e| e.eq_ignore_ascii_case("json"));
         if !is_json || !entry.file_type().is_ok_and(|t| t.is_file()) {
+            continue;
+        }
+        // Any file can be dropped in the folder: one over the config size limit is not a hooks file Marshell reads.
+        if std::fs::metadata(&path).is_ok_and(|m| m.len() > crate::config::preview::MAX_CONFIG_BYTES) {
             continue;
         }
         if let Some(value) = std::fs::read_to_string(&path).ok().and_then(|t| read_value(&t).ok()) {
@@ -2577,6 +2581,19 @@ pub(in crate::server) mod tests {
         assert!(!distro.toasts);
         assert_eq!(distro.hook_commands, ["x"]);
         assert!(copilot_notify(&hooks, true).toasts);
+    }
+
+    #[test]
+    fn a_hooks_file_over_the_size_limit_is_not_read_for_its_notification_hooks() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".copilot");
+        let small = r#"{"hooks": {"notification": [{"type": "command", "command": "small"}]}}"#;
+        write(&home.join("hooks").join("mine.json"), small);
+        let mut big = r#"{"hooks": {"notification": [{"type": "command", "command": "big"}]}}"#.to_string();
+        big.push_str(&" ".repeat(crate::config::preview::MAX_CONFIG_BYTES as usize));
+        write(&home.join("hooks").join("export.json"), &big);
+        let facts = copilot_notify(&home.join("hooks").join("marshell.json"), true);
+        assert_eq!(facts.hook_commands, ["small"]);
     }
 
     #[test]
