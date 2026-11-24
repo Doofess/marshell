@@ -9,7 +9,7 @@ const teal = { ...DEFAULT_APPEARANCE, accent: "teal" };
 const N = { needs_you: { banner: true, sound: true }, done: { banner: true, sound: true }, error: { banner: true, sound: true }, subagent_sound: false, quiet_hours: { enabled: false, start: "22:00", end: "08:00" }, terminal_alerts: true };
 const BR = { terminal_links: true, open_agent_html: true, cookies: "always" as const };
 const FI = { preview_tabs: true, auto_save: false, tab_indents: true, word_wrap: false, indent_guides: true, whitespace: false, scroll_past_end: false, tab_size: 4, tree_position: "automatic" as const };
-const CH = { hide_whitespace: false, wrap: false, pull_requests: true };
+const CH = { hide_whitespace: false, wrap: false, pull_requests: true, resolved_comments: false };
 const N_OFF = { ...N, needs_you: { banner: true, sound: false } };
 
 function setup(get: () => Promise<Settings>) {
@@ -362,9 +362,16 @@ describe("SettingsSync: changes", () => {
   it("reads pull requests as off after that switch alone was turned off", async () => {
     const { api, sync } = setup(read);
     await sync.load();
-    await sync.setChanges({ pull_requests: false });
-    expect(api.put).toHaveBeenLastCalledWith(ep, expect.objectContaining({ changes: { hide_whitespace: false, wrap: false, pull_requests: false } }));
-    expect(sync.changes).toEqual({ hide_whitespace: false, wrap: false, pull_requests: false });
+    await sync.setChanges({ pull_requests: false, resolved_comments: false });
+    expect(api.put).toHaveBeenLastCalledWith(ep, expect.objectContaining({ changes: { hide_whitespace: false, wrap: false, pull_requests: false, resolved_comments: false } }));
+    expect(sync.changes).toEqual({ hide_whitespace: false, wrap: false, pull_requests: false, resolved_comments: false });
+  });
+
+  it("a change of resolved_comments alone reaches the store", async () => {
+    const { sync } = setup(read);
+    await sync.load();
+    await sync.setChanges({ resolved_comments: true });
+    expect(sync.changes?.resolved_comments).toBe(true);
   });
 
   it("keeps the same object when a save changed nothing in them", async () => {

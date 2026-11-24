@@ -17,7 +17,7 @@ const list = (checks: CiCheck[], agent: string | null = "Claude", more = 0) =>
   renderToStaticMarkup(<ChecksList view={checksOf(pull(checks, more))} agent={agent} now={1_000_000} id="c" onCheck={noop} onEscape={noop} />);
 const bar = (view: BarView) => renderToStaticMarkup(<PullBar view={view} agent="Claude" now={0} onMain={noop} onMenu={noop} onCheck={noop} onEscape={noop} />);
 
-const plain = (line: string, o: Partial<BarView> = {}): BarView => ({ line, second: null, notes: [], main: null, menu: [], checks: null, link: null, hide: false, scope: "other", ...o });
+const plain = (line: string, o: Partial<BarView> = {}): BarView => ({ line, second: null, notes: [], main: null, menu: [], checks: null, link: null, hide: false, scope: "other", resolve: null, talk: null, ...o });
 
 describe("PullBar", () => {
   it("draws the bar between the branch line and the diff", () => {
@@ -49,6 +49,23 @@ describe("PullBar", () => {
     expect(html).toContain('aria-expanded="false"');
     expect(html).toContain("Checks: 1 failed");
     expect(html).not.toContain("Ask Claude to fix");
+  });
+  it("draws the comments to resolve and the reviews and comments as buttons after the checks", () => {
+    const html = bar(plain("#7 Open", { scope: "pull", checks: checksOf(pull([check({})])), resolve: { label: "3 comments to resolve" }, talk: { label: "2 reviews and comments" } }));
+    expect(html).toContain(">3 comments to resolve</button>");
+    expect(html).toMatch(/<button[^>]*aria-expanded="false"[^>]*>2 reviews and comments<\/button>/);
+    expect(html.indexOf("Checks: 1 passed")).toBeLessThan(html.indexOf("3 comments to resolve"));
+    expect(html.indexOf("3 comments to resolve")).toBeLessThan(html.indexOf("2 reviews and comments"));
+    expect(html).not.toMatch(/<button[^>]*aria-expanded[^>]*>3 comments to resolve/);
+  });
+  it("tells an open list of notes by aria-expanded", () => {
+    const html = renderToStaticMarkup(<PullBar view={plain("#7 Open", { talk: { label: "2 reviews and comments" } })} agent={null} now={0} onMain={noop} onMenu={noop} onCheck={noop} onEscape={noop} talkOpen onTalk={noop} />);
+    expect(html).toMatch(/<button[^>]*aria-expanded="true"[^>]*>2 reviews and comments<\/button>/);
+  });
+  it("draws neither button for a view without them", () => {
+    const html = bar(plain("#7 Open"));
+    expect(html).not.toContain("to resolve");
+    expect(html).not.toContain("reviews and comments");
   });
   it("offers the method menu only with other methods", () => {
     const main = { id: "merge" as const, label: "Merge", disabled: null, method: "merge" as const };

@@ -112,6 +112,8 @@ export const COMMANDS: Command[] = [
   { id: "changes-push", label: "Push commits", group: "Window" },
   { id: "changes-merge", label: "Merge pull request\u2026", group: "Window" },
   { id: "changes-open-pull", label: "Open the pull request on GitHub", group: "Window" },
+  { id: "changes-next-comment", label: "Go to the next GitHub comment", group: "Window" },
+  { id: "changes-add-comments", label: "Add unresolved GitHub comments to send", group: "Window" },
   // The browser tab (Windows only for now: the window hides them elsewhere). None has a default key.
   { id: "new-browser-tab", label: "New browser tab", group: "Window" },
   { id: "open-url", label: "Open URL…", group: "Window" },

@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import type { PickedComment } from "../../generated/PickedComment";
+import type { SentComment } from "../../generated/SentComment";
 import type { PaneTab } from "../../generated/PaneTab";
 import type { PaneView } from "../../generated/PaneView";
 import type { SessionTabs } from "../../generated/SessionTabs";
@@ -176,7 +178,7 @@ describe("paneReducer", () => {
 
   describe("drafts", () => {
     const comment = (id: string) => ({ id, path: "a.ts", side: "new", start: 1, end: 1, rows: 1, first: "a1", hash: "b2", quote: ["+x"], text: "t" }) as unknown as NonNullable<SessionTabs["changes"]>["comments"][number];
-    const drafts = (comments: ReturnType<typeof comment>[], folds: Record<string, boolean> = {}) => ({ checkout: "c", base: null as string | null, comments, folds });
+    const drafts = (comments: ReturnType<typeof comment>[], folds: Record<string, boolean> = {}) => ({ checkout: "c", base: null as string | null, comments, picked: [] as PickedComment[], sent: [] as SentComment[], folds });
     const put = (d: ReturnType<typeof drafts> | null): PaneAction => ({ type: "drafts", session: "s", drafts: d });
     it("closing the last tab keeps the drafts", () => {
       const d = drafts([comment("c1")]);
@@ -197,6 +199,19 @@ describe("paneReducer", () => {
     it("drafts with only folds are kept", () => {
       expect(run(EMPTY, put(drafts([], { "a.ts": true }))).sessions.s?.changes?.folds).toEqual({ "a.ts": true });
     });
+    it("drafts keep picked and sent held to the core's rules", () => {
+      const pk = (id: string, note = "n"): PickedComment => ({ id, number: 3, note });
+      const d = { ...drafts([]), picked: [pk("a b"), pk("P1", "x".repeat(2001)), pk("P2"), pk("P2"), pk("P3")], sent: [{ id: "S1", number: 3, count: 0 }, { id: "S2", number: 3, count: 1 }] };
+      const got = run(EMPTY, put(d)).sessions.s!.changes!;
+      expect(got.picked.map((p) => p.id)).toEqual(["P2", "P3"]);
+      expect(got.sent.map((x) => x.id)).toEqual(["S2"]);
+      const many = { ...drafts([]), picked: Array.from({ length: 201 }, (_, i) => pk(`P${i}`)) };
+      expect(run(EMPTY, put(many)).sessions.s!.changes!.picked).toHaveLength(200);
+    });
+    it("drafts with only a picked comment are kept", () => {
+      const d = { ...drafts([]), picked: [{ id: "P1", number: 3, note: "" }] };
+      expect(run(EMPTY, put(d)).sessions.s?.changes?.picked).toHaveLength(1);
+    });
     it("drafts cap at 50 comments and 1,000 folds", () => {
       const comments = Array.from({ length: 60 }, (_, i) => comment(`c${i}`));
       const folds: Record<string, boolean> = {};
@@ -212,13 +227,13 @@ describe("paneReducer", () => {
     it("drafts keep only what the core accepts, so one odd file name never stops the layout saving", () => {
       const odd = { ...comment("c2"), path: "dir\\b.ts" };
       const badHash = { ...comment("c3"), hash: "XYZ" };
-      const got = run(EMPTY, put({ checkout: "c", base: `b\u0007${"b".repeat(250)}`, comments: [comment("c1"), odd, badHash], folds: { "a.ts": true, "x:y.ts": false, "../up": true } })).sessions.s!.changes!;
+      const got = run(EMPTY, put({ checkout: "c", base: `b\u0007${"b".repeat(250)}`, comments: [comment("c1"), odd, badHash], picked: [], sent: [], folds: { "a.ts": true, "x:y.ts": false, "../up": true } })).sessions.s!.changes!;
       expect(got.comments.map((c) => c.id)).toEqual(["c1"]);
       expect(got.folds).toEqual({ "a.ts": true });
       expect([...got.base!]).toHaveLength(200);
       expect(got.base!.startsWith("bbb")).toBe(true);
       expect(got.base!.endsWith("…")).toBe(true);
-      expect(run(EMPTY, put({ checkout: "c", base: "origin/main", comments: [comment("c1")], folds: {} })).sessions.s!.changes!.base).toBe("origin/main");
+      expect(run(EMPTY, put({ checkout: "c", base: "origin/main", comments: [comment("c1")], picked: [], sent: [], folds: {} })).sessions.s!.changes!.base).toBe("origin/main");
     });
   });
 

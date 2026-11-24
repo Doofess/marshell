@@ -3,6 +3,7 @@ import { selectedProps } from "../../components/a11y/SelectedMark";
 import type { LineTokens } from "../preview/highlight";
 import { copy } from "./copy";
 import { type Item, type Row, type Section, itemLabel } from "./model";
+import { type BodyHtml, NoteView, ThreadView, httpsLink, plainHtml } from "./ThreadView";
 import "./ChangesPanel.css";
 
 export type ItemRange = { from: number; to: number };
@@ -22,10 +23,31 @@ const CHUNK = 200;
 /** A key move focuses the new item only if the item appears within this long of the key. */
 const KEY_FOCUS_MS = 200;
 
-const pathOf = (item: Item): string => (item.kind === "comment" ? item.comment.path : item.file.path);
+/** The file an item belongs to; null for GitHub's reviews, comments and lines. */
+const pathOf = (item: Item): string | null => {
+  switch (item.kind) {
+    case "comment":
+      return item.comment.path;
+    case "thread":
+      return item.thread.path;
+    case "talk":
+    case "line":
+      return null;
+    default:
+      return item.file.path;
+  }
+};
+/** The index of the header of the file the item at `i` belongs to; `i` itself when the item has no file in the list. */
 const fileIndexOf = (items: Item[], i: number): number => {
   const path = pathOf(items[i]!);
-  return items.findIndex((x) => x.kind === "file" && x.file.path === path);
+  const at = path === null ? -1 : items.findIndex((x) => x.kind === "file" && x.file.path === path);
+  return at < 0 ? i : at;
+};
+/** An item's `aria-level`: a file is 1, and so is an item with no file of its own in the list (GitHub's reviews, comments and lines, a thread above the files); the rest sit under their file's header. */
+const levelOf = (items: Item[], i: number): 1 | 2 => {
+  const item = items[i]!;
+  if (item.kind === "file" || item.kind === "talk" || item.kind === "line") return 1;
+  return item.kind === "thread" && fileIndexOf(items, i) === i ? 1 : 2;
 };
 const rowOf = (item: Item | undefined): Row | undefined => (item?.kind === "row" ? item.file.rows[item.at] : undefined);
 /** A row a comment can start on or a range can hold: any row but a hunk's header. */
@@ -110,6 +132,7 @@ export function listKey(items: Item[], focus: number, key: string, mods: { shift
       return move(last);
     case "Enter":
       if (item.kind === "row" || item.kind === "comment") return { focus, open: "comment" };
+      if (item.kind === "thread" || item.kind === "talk") return { focus, open: "menu" };
       if (item.kind === "show") return { focus, unfold: item.file.path };
       if (item.kind === "file") {
         if (item.file.folded) return { focus, unfold: item.file.path };
@@ -149,6 +172,18 @@ type ItemProps = {
   onMenu(index: number, at: { x: number; y: number }): void;
   /** The token classes of a row's text, when its section is coloured. */
   tokens: LineTokens | undefined;
+  /** The item's `aria-level`: 1 for a file and for an item with no file of its own in the list, else 2. */
+  level: 1 | 2;
+  /** A GitHub comment's body as safe HTML. */
+  html: BodyHtml;
+  /** A click on an https link inside a body. */
+  onLink(url: string): void;
+};
+
+/** The link under a mouse event on a body, inside the item the handler is on. */
+const linkOf = (e: ReactMouseEvent<HTMLElement>): Element | null => {
+  const a = (e.target as Element).closest?.("a") ?? null;
+  return a !== null && e.currentTarget.contains(a) ? a : null;
 };
 
 /** A row's text in spans of the token classes; the text itself when nothing in it is coloured. */
@@ -170,12 +205,12 @@ function Coloured({ text, tokens }: { text: string; tokens: LineTokens | undefin
   return <>{parts}</>;
 }
 
-function EntryView({ item, index, tabStop, selected, onClick, onOpen, onMenu, tokens }: ItemProps) {
+function EntryView({ item, index, tabStop, selected, onClick, onOpen, onMenu, tokens, level, html, onLink }: ItemProps) {
   const common = {
     role: "treeitem",
     "data-changes-item": "",
     "data-changes-index": index,
-    "aria-level": item.kind === "file" ? 1 : 2,
+    "aria-level": level,
     "aria-label": itemLabel(item),
     tabIndex: tabStop ? 0 : -1,
     onClick: (e: ReactMouseEvent<HTMLElement>) => onClick(index, e),
@@ -186,6 +221,25 @@ function EntryView({ item, index, tabStop, selected, onClick, onOpen, onMenu, to
     },
   };
   const mark = (name: string) => selectedProps(selected, "selected", `changes__item ${name}`);
+  // A link in a body never navigates. A click on an https one is handed on; a press on any moves the keyboard to the item, so it
+  // never lands inside the hidden content; a middle click does nothing. A click elsewhere on the item moves the keyboard, as on a draft.
+  const body = {
+    onClick: (e: ReactMouseEvent<HTMLElement>) => {
+      const a = linkOf(e);
+      if (a === null) return common.onClick(e);
+      e.preventDefault();
+      const href = a.getAttribute("href") ?? "";
+      if (httpsLink(href)) onLink(href);
+    },
+    onAuxClick: (e: ReactMouseEvent<HTMLElement>) => linkOf(e) !== null && e.preventDefault(),
+    onMouseDown: (e: ReactMouseEvent<HTMLElement>) => {
+      if (linkOf(e) === null) return;
+      e.preventDefault();
+      if (e.button !== 0) return;
+      e.currentTarget.focus();
+      onClick(index, e);
+    },
+  };
   switch (item.kind) {
     case "file": {
       const { file } = item;
@@ -227,6 +281,24 @@ function EntryView({ item, index, tabStop, selected, onClick, onOpen, onMenu, to
         </div>
       );
     }
+    case "thread":
+      return (
+        <div {...common} {...body} {...mark("changes__thread")} data-kind="thread">
+          <ThreadView thread={item.thread} placed={item.placed} state={item.state} agent={item.agent} html={html} />
+        </div>
+      );
+    case "talk":
+      return (
+        <div {...common} {...body} {...mark("changes__talk")} data-kind="talk">
+          <NoteView note={item.note} state={item.state} agent={item.agent} html={html} />
+        </div>
+      );
+    case "line":
+      return (
+        <div {...common} {...mark("changes__line")} data-kind="line">
+          <span aria-hidden="true">{item.text}</span>
+        </div>
+      );
     case "row": {
       const row = item.file.rows[item.at]!;
       return (
@@ -268,6 +340,10 @@ export type DiffListProps = {
   colours?: Map<string, LineTokens[]>;
   /** The comment box, drawn right under the item at `after`. Its element carries its own React key. */
   box?: { after: number; node: ReactNode };
+  /** A GitHub comment's body as HTML that is safe to insert (the panel passes `remembered(safeCommentHtml, 500)`); escaped text without it. */
+  html?: BodyHtml;
+  /** A click on an https link in a comment's body. */
+  onLink?(url: string): void;
 };
 
 /** A file's items (header first) in blocks of CHUNK. A block's key is the file's and its number in the file, so rows added above it leave it mounted. */
@@ -308,12 +384,12 @@ export function refocusOf(held: Held, active: Element | null, body: Element | nu
 // A file can hold thousands of rows: a render of the list (a poll, the window's state) redraws only the rows whose props changed.
 const Entry = memo(EntryView);
 
-export function DiffList({ items, focus, range, wrap, onKey, onClickItem, onOpenItem, onMenuItem, colours, box: openBox }: DiffListProps) {
+export function DiffList({ items, focus, range, wrap, onKey, onClickItem, onOpenItem, onMenuItem, colours, box: openBox, html = plainHtml, onLink }: DiffListProps) {
   const box = useRef<HTMLDivElement>(null);
   const keyed = useRef<{ at: number; by: "key" | "click" }>({ at: 0, by: "key" });
   // The rows' handlers keep their identity across renders (so the memo holds) and call the latest props.
-  const latest = useRef({ onClickItem, onOpenItem, onMenuItem });
-  latest.current = { onClickItem, onOpenItem, onMenuItem };
+  const latest = useRef({ onClickItem, onOpenItem, onMenuItem, onLink });
+  latest.current = { onClickItem, onOpenItem, onMenuItem, onLink };
   const handlers = useMemo(
     () => ({
       click: (index: number, e: ReactMouseEvent<HTMLElement>) => {
@@ -322,6 +398,7 @@ export function DiffList({ items, focus, range, wrap, onKey, onClickItem, onOpen
       },
       open: (index: number) => latest.current.onOpenItem(index),
       menu: (index: number, at: { x: number; y: number }) => latest.current.onMenuItem(index, at),
+      link: (url: string) => latest.current.onLink?.(url),
     }),
     [],
   );
@@ -377,10 +454,12 @@ export function DiffList({ items, focus, range, wrap, onKey, onClickItem, onOpen
         selected={i >= lo && i <= hi && it.kind === "row"}
         onClick={handlers.click}
         onOpen={handlers.open}
+        level={levelOf(items, i)}
+        html={html}
+        onLink={handlers.link}
       />
     );
   };
-
 
   return (
     <div

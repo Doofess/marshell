@@ -1552,6 +1552,175 @@ pub struct ChangesDrafts {
     pub base: Option<String>,
     pub comments: Vec<DraftComment>,
     pub folds: BTreeMap<String, bool>,
+    /// GitHub threads and notes waiting in the send.
+    #[serde(default)]
+    pub picked: Vec<PickedComment>,
+    /// The threads and notes that already went to the agent.
+    #[serde(default)]
+    pub sent: Vec<SentComment>,
+}
+
+/// A GitHub thread or note (`id`, its node id) of pull request `number`, waiting in the send with the user's note.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PickedComment {
+    pub id: String,
+    pub number: u32,
+    pub note: String,
+}
+
+/// A thread or note that went to the agent when it held `count` comments.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SentComment {
+    pub id: String,
+    pub number: u32,
+    pub count: u32,
+}
+
+/// What a commented diff row is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum HunkRowKind {
+    Add,
+    Del,
+    Context,
+}
+
+/// One row of the diff a review thread was written on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct HunkRow {
+    pub kind: HunkRowKind,
+    pub text: String,
+}
+
+/// One comment of a review thread.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ThreadComment {
+    #[ts(type = "number")]
+    pub id: u64,
+    pub author: String,
+    pub bot: bool,
+    /// Cleaned Markdown.
+    pub body: String,
+    pub hidden_removed: bool,
+    pub cut: bool,
+    #[ts(type = "number | null")]
+    pub created_ms: Option<u64>,
+    pub url: Option<String>,
+}
+
+/// A review thread of a pull request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ReviewThread {
+    pub id: String,
+    pub path: String,
+    pub side: CommentSide,
+    /// A comment on the whole file: no rows and no lines.
+    pub file: bool,
+    /// The lines at the pull request's head commit. None for a file comment and an outdated thread.
+    pub start: Option<u32>,
+    pub end: Option<u32>,
+    /// The lines in the diff the first comment was written on.
+    pub original_start: Option<u32>,
+    pub original_end: Option<u32>,
+    pub resolved: bool,
+    pub outdated: bool,
+    pub can_resolve: bool,
+    pub can_unresolve: bool,
+    pub can_reply: bool,
+    /// The commented rows of that diff, first to last.
+    pub rows: Vec<HunkRow>,
+    pub comments: Vec<ThreadComment>,
+    pub more_comments: u32,
+    /// Comments GitHub hides (minimized), left out of `comments`.
+    pub minimized: u32,
+}
+
+/// What a pull request note is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum NoteKind {
+    Review,
+    Comment,
+}
+
+/// What a review decided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ReviewVerdict {
+    Approved,
+    ChangesRequested,
+    Commented,
+    Dismissed,
+}
+
+/// A review or a conversation comment of a pull request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PullNote {
+    pub id: String,
+    pub kind: NoteKind,
+    pub verdict: Option<ReviewVerdict>,
+    pub author: String,
+    pub bot: bool,
+    pub body: String,
+    pub hidden_removed: bool,
+    pub cut: bool,
+    #[ts(type = "number | null")]
+    pub created_ms: Option<u64>,
+    pub url: Option<String>,
+}
+
+/// POST /v1/sessions/{tab}/github/threads reply.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PullThreads {
+    pub number: u32,
+    /// The signed-in user's login.
+    pub viewer: String,
+    pub threads: Vec<ReviewThread>,
+    pub more_threads: u32,
+    pub notes: Vec<PullNote>,
+    pub more_notes: bool,
+}
+
+/// POST /v1/sessions/{tab}/github/threads request body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ThreadsRequest {
+    pub checkout: String,
+    pub id: String,
+    pub number: u32,
+}
+
+/// What a thread action does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ThreadActionKind {
+    Resolve,
+    Unresolve,
+    Reply,
+}
+
+/// A write to one review thread.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ThreadAction {
+    pub checkout: String,
+    pub id: String,
+    pub number: u32,
+    pub thread: String,
+    pub action: ThreadActionKind,
+    /// The reply's text; None for the other two.
+    pub body: Option<String>,
 }
 
 /// The answer for one asked folder.
@@ -1925,6 +2094,8 @@ pub struct ChangesSettings {
     pub wrap: bool,
     /// Show the pull request bar, which asks GitHub. On unless turned off.
     pub pull_requests: bool,
+    /// Show a pull request's resolved and outdated review comments in the diff.
+    pub resolved_comments: bool,
 }
 
 impl Default for ChangesSettings {
@@ -1933,6 +2104,7 @@ impl Default for ChangesSettings {
             hide_whitespace: false,
             wrap: false,
             pull_requests: true,
+            resolved_comments: false,
         }
     }
 }

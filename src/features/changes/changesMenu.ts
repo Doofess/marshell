@@ -3,9 +3,11 @@ import type { ChangesSettings } from "../../generated/ChangesSettings";
 import type { BarButton, BarMenuItem } from "./pullModel";
 import { CHANGES_DEFAULTS } from "./changesSettings";
 import type { Item, Row, Section } from "./model";
+import { threadCopy } from "./threadCopy";
+import type { SendState } from "./threads";
 
 export type SettingKey = keyof ChangesSettings;
-const SETTING_LABELS: Record<SettingKey, string> = { hide_whitespace: "Hide whitespace changes", wrap: "Wrap long lines", pull_requests: "Show pull requests from GitHub" };
+const SETTING_LABELS: Record<SettingKey, string> = { hide_whitespace: "Hide whitespace changes", wrap: "Wrap long lines", pull_requests: "Show pull requests from GitHub", resolved_comments: "Show resolved and outdated comments" };
 const NO_FILES = "No files are changed";
 const UNREAD = "Your settings couldn't be read";
 const LOADING = "Your settings aren't read yet";
@@ -31,11 +33,12 @@ export function changesMenuItems(o: { settings: ChangesSettings | null; failed: 
     { separator: true },
     setting("hide_whitespace"),
     setting("wrap"),
+    setting("resolved_comments"),
   ];
 }
 
 const MAIN_ACTIONS: readonly string[] = ["push", "create", "merge", "auto_merge", "ready"];
-const MENU_IDS: readonly string[] = ["push", "merge", "draft", "cancel_auto_merge", "hide", "ask_open", "ask_switch", "copy_switch", "open_on_github", "copy_link"];
+const MENU_IDS: readonly string[] = ["push", "merge", "draft", "cancel_auto_merge", "hide", "ask_open", "ask_switch", "copy_switch", "add_unresolved", "open_on_github", "copy_link"];
 
 /** The pull request bar's rows, under a separator: its main button when that is a pull request action, then its ⋯ rows. None gives nothing. */
 function githubRows(menu: BarMenuItem[], main: BarButton | null): MenuItem[] {
@@ -57,7 +60,7 @@ export function changesChoice(id: string): ChangesChoice | null {
   }
   if (id.startsWith("setting:")) {
     const key = id.slice("setting:".length);
-    if (key === "hide_whitespace" || key === "wrap") return { kind: "setting", key };
+    if (key === "hide_whitespace" || key === "wrap" || key === "resolved_comments") return { kind: "setting", key };
   }
   return null;
 }
@@ -89,7 +92,7 @@ export function openOf(item: Item | undefined): { file: Section; line: number | 
 /** The menu of a row: `count` is how many lines a range holds, so Copy reads "Copy lines". */
 export function lineMenuItems(item: Item, count = 1): MenuItem[] {
   const row = item.kind === "row" ? item.file.rows[item.at] : undefined;
-  const deleted = item.kind !== "comment" && item.file.status === "deleted";
+  const deleted = "file" in item && item.file.status === "deleted";
   return [
     { id: "comment", label: "Comment", ...(row?.kind === "hunk" ? { disabled: "A changed block can't take a comment" } : {}) },
     { id: "open", label: "Open in Files at this line", ...(deleted ? { disabled: DELETED } : {}) },
@@ -104,4 +107,31 @@ export function headerMenuItems(file: Section): MenuItem[] {
     { id: "fold", label: file.folded ? "Unfold" : "Fold", ...(file.rows.length === 0 ? { disabled: "The file has no lines to fold" } : {}) },
     { id: "copy-path", label: "Copy path" },
   ];
+}
+
+/** An item of GitHub's comments: a thread or a note. */
+export type CommentItem = Extract<Item, { kind: "thread" | "talk" }>;
+
+/** The address of a thread's first comment or of a note, when it is an https one. */
+export function addressOf(item: CommentItem): string | null {
+  const url = item.kind === "thread" ? item.thread.comments[0]?.url : item.note.url;
+  return typeof url === "string" && url.startsWith("https://") ? url : null;
+}
+
+/**
+ * The menu of a thread or a note: add to or remove from the send; for a thread your note, a reply on GitHub (off with the reason when the
+ * sign-in can't, or with "Replying…" while `replying`) and resolve or unresolve (off with the reason too); open and copy the address.
+ * A resolved thread leaves the send with GitHub's next answer (`pruned`), so adding it and its note row are off, with the reason.
+ * A note's own text isn't part of what a send carries of a GitHub note, so it has no note row.
+ */
+export function threadMenuItems(item: CommentItem, state: SendState, replying = false): MenuItem[] {
+  const m = threadCopy.menu;
+  const thread = item.kind === "thread" ? item.thread : null;
+  const address = addressOf(item);
+  const gone = thread?.resolved === true && !state.picked ? { disabled: threadCopy.resolvedNotSent } : {};
+  const rows: MenuItem[] = [state.picked ? { id: "unpick", label: m.unpick } : { id: "pick", label: m.pick, ...gone }];
+  if (thread !== null) rows.push({ id: "note", label: state.note === "" ? m.note : m.editNote, ...gone }, { id: "reply", label: m.reply, ...(!thread.can_reply ? { disabled: threadCopy.cantReply } : replying ? { disabled: threadCopy.replying } : {}) });
+  if (thread !== null) rows.push(thread.resolved ? { id: "unresolve", label: m.unresolve, ...(thread.can_unresolve ? {} : { disabled: threadCopy.cantUnresolve }) } : { id: "resolve", label: m.resolve, ...(thread.can_resolve ? {} : { disabled: threadCopy.cantResolve }) });
+  if (address !== null) rows.push({ id: "open", label: m.open }, { id: "copy-link", label: m.copyLink });
+  return rows;
 }

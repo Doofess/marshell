@@ -167,6 +167,10 @@ describe("the Changes panel's commands", () => {
     expect(commandShortcut("changes-merge")).toEqual({ kind: "changes", what: "merge" });
     expect(commandShortcut("changes-open-pull")).toEqual({ kind: "changes", what: "openPull" });
   });
+  it("maps the two commands for GitHub's review comments", () => {
+    expect(commandShortcut("changes-next-comment")).toEqual({ kind: "changes", what: "nextComment" });
+    expect(commandShortcut("changes-add-comments")).toEqual({ kind: "changes", what: "addComments" });
+  });
 });
 
 describe("the text tab's commands", () => {

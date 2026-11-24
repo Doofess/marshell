@@ -5,7 +5,7 @@ import type { PullStatus } from "../../generated/PullStatus";
 import { githubCopy as c, METHOD_BUTTONS, METHOD_LABELS, REVIEW_LABELS, SUMMARY_ORDER } from "./githubCopy";
 
 export type BarButtonId = "push" | "create" | "merge" | "auto_merge" | "ready" | "show_output" | "get_gh" | "copy_sign_in" | "retry";
-export type BarMenuId = "push" | "merge" | "draft" | "cancel_auto_merge" | "hide" | "ask_open" | "ask_switch" | "copy_switch" | "open_on_github" | "copy_link";
+export type BarMenuId = "push" | "merge" | "draft" | "cancel_auto_merge" | "hide" | "ask_open" | "ask_switch" | "copy_switch" | "add_unresolved" | "open_on_github" | "copy_link";
 
 /** A button of the bar. A button that is off stays in the view, with the sentence that says why in `disabled`. */
 export type BarButton = {
@@ -56,11 +56,14 @@ export type BarView = {
   hide: boolean;
   /** "branch": a branch with no pull request; "pull": a branch with one; "other": GitHub isn't available, or there is no branch to ask about. */
   scope: "branch" | "pull" | "other";
+  /** The pull request's comments to resolve and its reviews and comments: buttons the bar gets once GitHub's threads are read. */
+  resolve: { label: string } | null;
+  talk: { label: string } | null;
 };
 
 const FOLDED = new Set<CiCheck["state"]>(["passed", "neutral", "skipped"]);
 const https = (u: string | null | undefined): u is string => typeof u === "string" && u.startsWith("https://");
-const bar = (line: string, o: Partial<BarView> = {}): BarView => ({ line, second: null, notes: [], main: null, menu: [], checks: null, link: null, hide: false, scope: "other", ...o });
+const bar = (line: string, o: Partial<BarView> = {}): BarView => ({ line, second: null, notes: [], main: null, menu: [], checks: null, link: null, hide: false, scope: "other", resolve: null, talk: null, ...o });
 
 /** "Checks: 5 passed, 1 failed" and the checks split into the ones to list and the ones to fold. */
 export function checksOf(pull: PullStatus): ChecksView {

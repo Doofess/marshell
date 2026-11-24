@@ -13,7 +13,7 @@ use super::files::row_of;
 use super::sessions::cannot_resume;
 use crate::changes::{CHECK_BUDGET, ChangesError, Check, READ_BUDGET, Target, uncommitted_files};
 use crate::gitbox::refs;
-use crate::github::actions::{self, Rejection};
+use crate::github::actions::{self, NOT_THIS_THREAD, Rejection};
 use crate::github::ask::{AskContext, ask_text, typed_text};
 use crate::github::gh::{self, GhError};
 use crate::github::plan::{body_of, outgoing, refusal, refusal_for, title_of};
@@ -22,6 +22,7 @@ use crate::github::query::status_args;
 use crate::github::remote::{RemoteRepo, fetch_repo, push_repo};
 use crate::github::status::{Candidate, NEXT_IDLE_MS, Snapshot, snapshot_of};
 use crate::github::template::pull_template;
+use crate::github::threads;
 use crate::github::{
     Failure, Flight, Local, Outcome, Take, compare_url, failure_of, has_commit, in_history, local_counts, valid_branch,
 };
@@ -31,7 +32,8 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use marshell_protocol::api::{
     AskForm, AskReply, AskRequest, CreatePull, GithubKind, GithubReply, GithubRequest, OutgoingCommit, PullAction,
-    PullMergeRequest, PullState, PullStatus, PushPlan, PushPlanRequest, PushRequest, PushStarted,
+    PullMergeRequest, PullState, PullStatus, PushPlan, PushPlanRequest, PushRequest, PushStarted, ThreadAction,
+    ThreadActionKind, ThreadsRequest,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -882,6 +884,92 @@ pub async fn pull_action(State(st): State<AppState>, Path(tab): Path<String>, Js
                 StatusCode::NO_CONTENT.into_response()
             }
             Err(rejection) => rejected(state, rejection),
+        }
+    })
+    .await
+}
+
+const CANT_RESOLVE: &str = "GitHub doesn't let this sign-in resolve this thread.";
+const CANT_UNRESOLVE: &str = "GitHub doesn't let this sign-in unresolve this thread.";
+const CANT_REPLY: &str = "GitHub doesn't let this sign-in reply to this thread.";
+
+/// POST /v1/sessions/{tab}/github/threads: the review threads, reviews and comments of the branch's pull request. 404
+/// for a tab that doesn't exist, 400 for a request that is malformed, 409 for a refusal, 503 when gh or GitHub can't
+/// be used. The pull request must be the one the core last reported for this checkout and branch; what was read
+/// within `FRESH_GAP` answers again without a call, and what is read is kept for the actions on its threads.
+pub async fn threads(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<ThreadsRequest>) -> Response {
+    if row_of(&st, &tab).is_some()
+        && let Some(sentence) = actions::check_threads(&req)
+    {
+        return malformed(sentence);
+    }
+    let checkout = req.checkout.clone();
+    act_on(st, tab, checkout, NOT_THIS_PULL, move |state, ctx| {
+        if !is_seen(state, &ctx, &req.id, req.number) {
+            return refused(NOT_THIS_PULL);
+        }
+        let github = state.github();
+        let (checkout, branch) = (&ctx.target.checkout, &ctx.branch);
+        if let Some(kept) = github.threads_kept(checkout, branch, &req.id, req.number) {
+            return Json(kept).into_response();
+        }
+        let generation = github.generation(checkout, branch);
+        match threads::read(&ctx.gh, state.home(), &ctx.host, &ctx.repo, req.number) {
+            Ok(read) if read.pull_id != req.id => refused(NOT_THIS_PULL),
+            Ok(read) => {
+                let answer = read.threads.clone();
+                github.keep_threads(checkout, branch, generation, read);
+                Json(answer).into_response()
+            }
+            Err(e) => rejected(state, actions::rejection(e, &ctx.repo)),
+        }
+    })
+    .await
+}
+
+/// POST /v1/sessions/{tab}/github/thread: resolves, unresolves or replies to a thread of the branch's pull request.
+/// Answers as threads does, and 204 when done. The pull request must be the one the core last reported, the thread one
+/// the core read for it, and GitHub's own flag for the action true in that read; the reply goes under the thread's
+/// first comment as the core read it.
+pub async fn thread_action(
+    State(st): State<AppState>,
+    Path(tab): Path<String>,
+    Json(req): Json<ThreadAction>,
+) -> Response {
+    if row_of(&st, &tab).is_some()
+        && let Some(sentence) = actions::check_thread(&req)
+    {
+        return malformed(sentence);
+    }
+    let checkout = req.checkout.clone();
+    act_on(st, tab, checkout, NOT_THIS_PULL, move |state, ctx| {
+        if !is_seen(state, &ctx, &req.id, req.number) {
+            return refused(NOT_THIS_PULL);
+        }
+        let github = state.github();
+        let Some(seen) = github.thread_seen(&ctx.target.checkout, &ctx.branch, &req.id, req.number, &req.thread) else {
+            return refused(NOT_THIS_THREAD);
+        };
+        let (allowed, sentence) = match req.action {
+            ThreadActionKind::Resolve => (seen.can_resolve, CANT_RESOLVE),
+            ThreadActionKind::Unresolve => (seen.can_unresolve, CANT_UNRESOLVE),
+            ThreadActionKind::Reply => (seen.can_reply, CANT_REPLY),
+        };
+        if !allowed {
+            return refused(sentence);
+        }
+        match actions::thread_action(&ctx.gh, state.home(), &ctx.host, &ctx.repo, &req, seen.root) {
+            Ok(()) => {
+                github.mark_stale(&ctx.target.checkout);
+                StatusCode::NO_CONTENT.into_response()
+            }
+            Err(rejection) => {
+                // GitHub may have taken the write when its answer didn't come or couldn't be read: the next look asks.
+                if matches!(rejection, Rejection::Unavailable(_)) {
+                    github.mark_stale(&ctx.target.checkout);
+                }
+                rejected(state, rejection)
+            }
         }
     })
     .await

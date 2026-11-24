@@ -1,5 +1,7 @@
 import type { DraftComment } from "../../generated/DraftComment";
 import type { PaneView } from "../../generated/PaneView";
+import type { PickedComment } from "../../generated/PickedComment";
+import type { SentComment } from "../../generated/SentComment";
 import { VIEWPORTS } from "../browser/viewport";
 import { PANELS, isPanelId, panelOf } from "./panels";
 
@@ -34,6 +36,21 @@ export function draftCommentOk(c: DraftComment): boolean {
     points(c.text) <= 2000 &&
     !CONTROL_BUT_TAB_LF.test(c.text)
   );
+}
+
+export const DRAFT_PICKED_MAX = 200;
+export const DRAFT_SENT_MAX = 500;
+
+const nodeId = (id: string) => /^[A-Za-z0-9_=-]{1,100}$/.test(id);
+
+/** A picked GitHub comment the core keeps, as `validate_changes` in the core: a node id, a pull request number, a note of at most 2,000 characters (unique ids are the caller's). */
+export function pickedOk(p: PickedComment): boolean {
+  return nodeId(p.id) && p.number >= 1 && points(p.note) <= 2000 && !CONTROL_BUT_TAB_LF.test(p.note);
+}
+
+/** A sent mark the core keeps: a node id, a pull request number of 1 or more and a count of 1 to 100,000 (unique ids are the caller's). */
+export function sentOk(s: SentComment): boolean {
+  return nodeId(s.id) && s.number >= 1 && s.count >= 1 && s.count <= 100_000;
 }
 
 /** A compared base as the core keeps it: no control character, at most 200 characters (a longer one is cut, ending in "…"). */

@@ -18,12 +18,18 @@ export type PullBarProps = {
   onMenu(item: BarMenuItem): void;
   onCheck(action: CheckAction, check: CiCheck): void;
   onEscape(): void;
+  /** The button for the comments to resolve: the keyboard goes to the next one in the list. */
+  onResolve?(): void;
+  /** The button for the reviews and comments: opens or closes them in the list. */
+  onTalk?(): void;
+  /** Whether the reviews and comments are open in the list. */
+  talkOpen?: boolean;
 };
 
 type Open = { which: "method" | "more"; anchor: { x: number; y: number }; opener: HTMLElement };
 
 /** The pull request bar: one or two lines, the notes, the main button with its menus, and the checks behind a disclosure. */
-export function PullBar({ view, agent, now, onMain, onMenu, onCheck, onEscape }: PullBarProps) {
+export function PullBar({ view, agent, now, onMain, onMenu, onCheck, onEscape, onResolve, onTalk, talkOpen = false }: PullBarProps) {
   const uid = useId();
   const [checksOpen, setChecksOpen] = useState(false);
   const [open, setOpen] = useState<Open | null>(null);
@@ -79,6 +85,16 @@ export function PullBar({ view, agent, now, onMain, onMenu, onCheck, onEscape }:
         {view.checks !== null && (
           <button type="button" className="pull-bar__button" aria-expanded={checksOpen} aria-controls={listId} onClick={() => setChecksOpen((v) => !v)}>
             {view.checks.summary}
+          </button>
+        )}
+        {view.resolve !== null && (
+          <button type="button" className="pull-bar__button" onClick={() => onResolve?.()}>
+            {view.resolve.label}
+          </button>
+        )}
+        {view.talk !== null && (
+          <button type="button" className="pull-bar__button" aria-expanded={talkOpen} onClick={() => onTalk?.()}>
+            {view.talk.label}
           </button>
         )}
         {main !== null && (

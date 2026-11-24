@@ -77,6 +77,7 @@ import { askReview, postComments } from "../changes/changesApi";
 import { stopPushes } from "../changes/githubApi";
 import { reviewCommandOf } from "../changes/review";
 import { runReview, runSend, type SendResult } from "../changes/send";
+import { sendNotice } from "../changes/threadsPanel";
 import { EmptyFiles } from "../pane/EmptyFiles";
 import { PanelStack } from "../pane/PanelStack";
 import { KeptTabs } from "../pane/KeptTabs";
@@ -1323,10 +1324,11 @@ export function LiveApp() {
   };
   // The Changes panel's Send and Review: the comments' text goes into the session's prompt (or onto the clipboard), never Enter.
   const changesPanel = useRef<ChangesHandle | null>(null);
-  const sendComments = async (session: string, text: string, count: number): Promise<SendResult> => {
+  const sendComments = async (session: string, text: string, count: number, left = 0): Promise<SendResult> => {
     const delivery = deliveryFor(stateRef.current.rows.find((r) => r.id === session) ?? null);
     const result = await runSend({ delivery, count, message: text, post: (t) => postComments(session, t), write: (t) => navigator.clipboard.writeText(t) });
-    announce(result.notice);
+    // GitHub's picked comments that didn't fit the send stay picked, and the notice says so, sent or not.
+    announce(sendNotice(result.notice, left));
     if (result.focus && delivery !== null) focusDelivered(session, { name: delivery.name });
     return result;
   };
@@ -2436,7 +2438,7 @@ export function LiveApp() {
                 const d = deliveryFor(focusedRow ?? null);
                 return d !== null && "via" in d ? d.via : "paste";
               })()}
-              onSend={(text, count) => sendComments(paneSession, text, count)}
+              onSend={(text, count, left) => sendComments(paneSession, text, count, left)}
               onReview={(base) => void reviewChanges(paneSession, focusedInfo?.agent ?? null, base)}
               sessionName={focusedRow?.name}
               onTyped={() => focusDelivered(paneSession, { name: focusedRow?.name ?? "" })}

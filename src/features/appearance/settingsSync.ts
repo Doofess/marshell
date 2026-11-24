@@ -18,7 +18,7 @@ export class SettingsReadError extends Error {
 
 const DEFAULT_BROWSER: BrowserSettings = { terminal_links: true, open_agent_html: true, cookies: "always" };
 
-const DEFAULT_CHANGES: ChangesSettings = { hide_whitespace: false, wrap: false, pull_requests: true };
+const DEFAULT_CHANGES: ChangesSettings = { hide_whitespace: false, wrap: false, pull_requests: true, resolved_comments: false };
 const DEFAULT_FILES: FilesSettings = { preview_tabs: true, auto_save: false, tab_indents: true, word_wrap: false, indent_guides: true, whitespace: false, scroll_past_end: false, tab_size: 4, tree_position: "automatic" };
 
 const DEFAULT_NOTIFY: NotifySettings = {
@@ -56,7 +56,7 @@ export class SettingsSync {
   /** Keeps the current object when the fields are equal, so a store snapshot stays stable. */
   private setChangesValue(next: ChangesSettings): void {
     const cur = this.changesValue;
-    if (cur.hide_whitespace === next.hide_whitespace && cur.wrap === next.wrap && cur.pull_requests === next.pull_requests) return;
+    if (cur.hide_whitespace === next.hide_whitespace && cur.wrap === next.wrap && cur.pull_requests === next.pull_requests && cur.resolved_comments === next.resolved_comments) return;
     this.changesValue = next;
   }
 

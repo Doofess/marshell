@@ -182,6 +182,145 @@
   color: var(--text-2);
 }
 
+/*
+ * GitHub's comments: a review thread under its row, a review or a comment of the pull request above the files, and a line of
+ * text between them. A thread is a draft's indent and reading size on a second tint, the cool blue of the code scheme's
+ * functions, where a draft is grey, so the two never read alike; the head says "GitHub" and carries the thread's marks as
+ * chips. Fills only, no box. The body is the preview's Markdown at the panel's size.
+ */
+.changes__thread,
+.changes__talk,
+.changes__line {
+  padding-inline: var(--space-4);
+  block-size: auto;
+  line-height: var(--leading);
+  font-size: var(--text-12);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+.changes__thread,
+.changes__talk {
+  --github-tint: color-mix(in oklch, var(--code-token-function) 10%, transparent);
+  padding-block: var(--space-2);
+  background: var(--github-tint);
+}
+.changes__thread > *,
+.changes__talk > * {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-1);
+}
+.changes__line {
+  padding-block: var(--space-1);
+  color: var(--text-2);
+}
+
+.changes__thread-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-2);
+}
+.changes__thread-head [data-part="from"] {
+  font-weight: 600;
+}
+.changes__thread-head [data-part="chips"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+.changes__thread-chip {
+  padding-inline: var(--space-2);
+  border-radius: var(--radius);
+  background: color-mix(in oklch, var(--code-token-function) 20%, transparent);
+  color: var(--text-1);
+  font-size: var(--text-11);
+  white-space: nowrap;
+}
+.changes__thread [data-part="place"] {
+  margin: 0;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-11);
+}
+
+/* The code a thread's message quotes, drawn when the diff doesn't show it: the diff's mono at the place line's size; a long line wraps. */
+.changes__thread-quote {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-11);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.changes__thread-quote > span {
+  display: block;
+}
+
+/* A reply is set in from the comment above it. */
+.changes__thread-comment {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-1);
+}
+.changes__thread-comment + .changes__thread-comment {
+  padding-inline-start: var(--space-3);
+}
+.changes__thread-comment [data-part="meta"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  color: var(--text-2);
+}
+.changes__thread-comment [data-part="author"] {
+  color: var(--text-1);
+  font-weight: 600;
+}
+.changes__thread-note {
+  margin: 0;
+  color: var(--text-2);
+}
+
+/* The preview's Markdown rules, set for a narrow item: no page padding or column cap, the paper the item's own, and a code block
+   that scrolls sideways inside the item. Two classes, so these win over .markdown wherever the sheets load. */
+.changes__thread .changes__thread-body,
+.changes__talk .changes__thread-body {
+  --ink: var(--text-1);
+  --paper: var(--bg-base);
+  max-inline-size: none;
+  min-inline-size: 0;
+  padding: 0;
+  font-size: inherit;
+  line-height: var(--leading);
+}
+.changes__list .changes__thread-body pre {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  white-space: pre;
+}
+.changes__list .changes__thread-body pre code {
+  font-size: var(--text-12);
+}
+.changes__list .changes__thread-body h1,
+.changes__list .changes__thread-body h2,
+.changes__list .changes__thread-body h3,
+.changes__list .changes__thread-body h4,
+.changes__list .changes__thread-body h5,
+.changes__list .changes__thread-body h6 {
+  margin-block: var(--space-2) var(--space-1);
+  font-size: inherit;
+}
+.changes__list .changes__thread-body h2 {
+  padding-block-end: 0;
+  border-block-end: 0;
+}
+.changes__list .changes__thread-body .markdown__info {
+  margin-block-end: var(--space-1);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-11);
+}
+
 /* The comment box under a range's last row: a tinted text area and its hint, indented like a comment. */
 .changes__box {
   display: grid;
@@ -211,6 +350,19 @@
   margin: 0;
   color: var(--text-2);
   font-size: var(--text-12);
+}
+/* The reply box's button beside its hint, and the sentence of a reply GitHub refused or didn't answer, under the text area. */
+.changes__box-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+}
+.changes__box-error {
+  margin: 0;
+  color: var(--error);
+  font-size: var(--text-12);
+  overflow-wrap: anywhere;
 }
 
 /* The Send bar: the primary button is filled with the accent and the others tinted, told apart by fill and never by a box. */
@@ -286,7 +438,9 @@
   }
   .changes__row[data-kind="hunk"],
   .changes__file-head,
-  .changes__comment {
+  .changes__comment,
+  .changes__thread,
+  .changes__talk {
     forced-color-adjust: none;
     color: CanvasText;
     background: Canvas;
@@ -306,6 +460,10 @@
     background: Field;
     color: FieldText;
     border: 1px solid CanvasText;
+  }
+  .changes__box-error,
+  .changes__box-hint {
+    color: CanvasText;
   }
   .changes__send-button {
     background: ButtonFace;
@@ -333,6 +491,32 @@
   }
   .changes__send-button[aria-disabled="true"] {
     color: GrayText;
+  }
+  /* A comment keeps its own colours (forced-color-adjust: none), and so do all its parts: the Markdown's paper, ink, link and
+     rule are the system's, and so is the text of the chips, the meta, the place, the notes, the quote and a fence's info line. A chip
+     is told apart by a line, as a fill isn't drawn. */
+  .changes__thread .changes__thread-body,
+  .changes__talk .changes__thread-body {
+    --ink: CanvasText;
+    --paper: Canvas;
+    --accent: LinkText;
+    --hairline: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
+  .changes__thread-chip {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
+  .changes__thread-comment [data-part="meta"],
+  .changes__thread-comment [data-part="author"],
+  .changes__thread [data-part="place"],
+  .changes__thread-note,
+  .changes__thread-quote,
+  .changes__line,
+  .changes__list .changes__thread-body .markdown__info {
+    color: CanvasText;
   }
   .changes__box-text:focus-visible,
   .changes__send-button:focus-visible {

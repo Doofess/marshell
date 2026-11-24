@@ -1,10 +1,11 @@
 //! `~/.marshell/layout.json`: the tabs that were open and how the window was laid out. A missing,
 //! broken or newer-version file means the defaults, and `load` never writes.
 
+use crate::github::actions::valid_node_id;
 use crate::store::{self, Versioned};
 use marshell_protocol::api::{
-    ChangesDrafts, DraftComment, LauncherChoice, LayoutDoc, PaneTab, PaneView, Panels, RecentFile, SavedTab,
-    SessionMode, TreeState, TreeView, ViewLayout,
+    ChangesDrafts, DraftComment, LauncherChoice, LayoutDoc, PaneTab, PaneView, Panels, PickedComment, RecentFile,
+    SavedTab, SentComment, SessionMode, TreeState, TreeView, ViewLayout,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -197,6 +198,18 @@ fn lenient_changes(changes: &mut serde_json::Value) -> bool {
     if let Some(comments) = fields.get_mut("comments").and_then(Value::as_array_mut) {
         comments.retain(|c| serde_json::from_value::<DraftComment>(c.clone()).is_ok());
     }
+    if !fields.get("picked").is_some_and(Value::is_array) {
+        fields.insert("picked".into(), Value::Array(Vec::new()));
+    }
+    if let Some(picked) = fields.get_mut("picked").and_then(Value::as_array_mut) {
+        picked.retain(|p| serde_json::from_value::<PickedComment>(p.clone()).is_ok());
+    }
+    if !fields.get("sent").is_some_and(Value::is_array) {
+        fields.insert("sent".into(), Value::Array(Vec::new()));
+    }
+    if let Some(sent) = fields.get_mut("sent").and_then(Value::as_array_mut) {
+        sent.retain(|s| serde_json::from_value::<SentComment>(s.clone()).is_ok());
+    }
     if !fields.get("folds").is_some_and(Value::is_object) {
         fields.insert("folds".into(), Value::Object(Map::new()));
     }
@@ -239,6 +252,14 @@ const MAX_PATH_CHARS: usize = 4096;
 const MAX_TREE_FOLDERS: usize = 500;
 const MAX_BASE_CHARS: usize = 200;
 const MAX_COMMENTS: usize = 50;
+const MAX_PICKED: usize = 200;
+const MAX_SENT: usize = 500;
+const MAX_SENT_COUNT: u32 = 100_000;
+const MAX_PICKED_NOTE: usize = 2000;
+
+fn picked_note_ok(note: &str) -> bool {
+    note.chars().count() <= MAX_PICKED_NOTE && !note.chars().any(|ch| ch.is_control() && !matches!(ch, '\n' | '\t'))
+}
 const MAX_COMMENT_ROWS: u32 = 100_000;
 const MAX_COMMENT_HASH: usize = 16;
 const MAX_COMMENT_QUOTE_LINES: usize = 3;
@@ -408,6 +429,54 @@ fn validate_changes(session: &str, d: &ChangesDrafts) -> Result<(), String> {
             return Err(format!("{at}.comments.{}.{field} {rule}", c.id));
         }
     }
+    if d.picked.len() > MAX_PICKED {
+        return Err(format!(
+            "{at}.picked holds at most {MAX_PICKED}, not {}",
+            d.picked.len()
+        ));
+    }
+    let mut seen = BTreeSet::new();
+    for p in &d.picked {
+        if !seen.insert(&p.id) {
+            return Err(format!("{at}.picked.{}.id is used twice", p.id));
+        }
+        if !valid_node_id(&p.id) {
+            return Err(format!(
+                "{at}.picked.{}.id must be 1 to 100 of A-Z, a-z, 0-9, _, = and -",
+                p.id
+            ));
+        }
+        if p.number < 1 {
+            return Err(format!("{at}.picked.{}.number must be 1 or more", p.id));
+        }
+        if !picked_note_ok(&p.note) {
+            return Err(format!(
+                "{at}.picked.{}.note must be at most 2000 characters, with no control character but a newline and a tab",
+                p.id
+            ));
+        }
+    }
+    if d.sent.len() > MAX_SENT {
+        return Err(format!("{at}.sent holds at most {MAX_SENT}, not {}", d.sent.len()));
+    }
+    let mut seen = BTreeSet::new();
+    for s in &d.sent {
+        if !seen.insert(&s.id) {
+            return Err(format!("{at}.sent.{}.id is used twice", s.id));
+        }
+        if !valid_node_id(&s.id) {
+            return Err(format!(
+                "{at}.sent.{}.id must be 1 to 100 of A-Z, a-z, 0-9, _, = and -",
+                s.id
+            ));
+        }
+        if s.number < 1 {
+            return Err(format!("{at}.sent.{}.number must be 1 or more", s.id));
+        }
+        if !(1..=MAX_SENT_COUNT).contains(&s.count) {
+            return Err(format!("{at}.sent.{}.count must be 1 to {MAX_SENT_COUNT}", s.id));
+        }
+    }
     if d.folds.len() > MAX_FOLDS {
         return Err(format!("{at}.folds holds at most {MAX_FOLDS} files"));
     }
@@ -552,6 +621,19 @@ fn repair_pane(pane: &mut PaneView, tabs: &[SavedTab]) {
                 .comments
                 .retain(|c| comment_problem(c).is_none() && seen.insert(c.id.clone()));
             drafts.comments.truncate(MAX_COMMENTS);
+            let mut seen = BTreeSet::new();
+            drafts.picked.retain(|p| {
+                valid_node_id(&p.id) && p.number >= 1 && picked_note_ok(&p.note) && seen.insert(p.id.clone())
+            });
+            drafts.picked.truncate(MAX_PICKED);
+            let mut seen = BTreeSet::new();
+            drafts.sent.retain(|s| {
+                valid_node_id(&s.id)
+                    && s.number >= 1
+                    && (1..=MAX_SENT_COUNT).contains(&s.count)
+                    && seen.insert(s.id.clone())
+            });
+            drafts.sent.truncate(MAX_SENT);
             drafts.folds.retain(|f, _| tree_folder_ok(f));
             if drafts.folds.len() > MAX_FOLDS {
                 let keep: BTreeSet<String> = drafts.folds.keys().take(MAX_FOLDS).cloned().collect();
@@ -2109,7 +2191,155 @@ mod tests {
             base: Some("origin/main".into()),
             comments,
             folds: BTreeMap::from([("src/a.ts".to_string(), true)]),
+            picked: Vec::new(),
+            sent: Vec::new(),
         }
+    }
+
+    fn picked(id: &str) -> PickedComment {
+        PickedComment {
+            id: id.into(),
+            number: 7,
+            note: "Fix this\nplease".into(),
+        }
+    }
+
+    fn sent(id: &str) -> SentComment {
+        SentComment {
+            id: id.into(),
+            number: 7,
+            count: 2,
+        }
+    }
+
+    fn pane_of(d: ChangesDrafts) -> PaneView {
+        pane_with("s1", session_with_drafts(d))
+    }
+
+    #[test]
+    fn picked_and_sent_round_trip_through_layout_json() {
+        let home = tempfile::tempdir().unwrap();
+        let mut d = drafts(vec![]);
+        d.picked = vec![picked("PRRT_a"), picked("PRRC_b")];
+        d.sent = vec![sent("PRRT_c"), sent("PRRT_d")];
+        let mut doc = doc_with("a");
+        doc.view.pane = pane_with("a", session_with_drafts(d));
+        save(home.path(), &doc).unwrap();
+        assert_eq!(load(home.path()).view.pane, doc.view.pane);
+    }
+
+    #[test]
+    fn old_drafts_without_picked_or_sent_load_as_empty() {
+        let doc = load_with_pane(
+            serde_json::json!({
+                "open": true, "width": 480, "recent": [],
+                "sessions": {
+                    "ta": {
+                        "tabs": [], "active": null,
+                        "changes": {"checkout": "C:/work", "base": null, "comments": [], "folds": {"a": true}}
+                    }
+                }
+            }),
+            serde_json::json!(304),
+        );
+        let changes = doc.view.pane.sessions["ta"].changes.as_ref().unwrap();
+        assert!(changes.picked.is_empty() && changes.sent.is_empty());
+        assert_eq!(changes.folds.len(), 1);
+    }
+
+    #[test]
+    fn validate_refuses_a_bad_picked_or_sent() {
+        let bad_picked = |f: &dyn Fn(&mut PickedComment)| {
+            let mut p = picked("PRRT_a");
+            f(&mut p);
+            let mut d = drafts(vec![]);
+            d.picked = vec![p];
+            validate_pane(&pane_of(d))
+        };
+        for err in [
+            bad_picked(&|p| p.id = "a b".into()),
+            bad_picked(&|p| p.note = "a".repeat(2001)),
+            bad_picked(&|p| p.note = "a\u{7}b".into()),
+            bad_picked(&|p| p.number = 0),
+        ] {
+            assert!(err.unwrap_err().contains("changes.picked"));
+        }
+        assert!(bad_picked(&|p| p.note = String::new()).is_ok());
+        assert!(bad_picked(&|p| p.note = "a".repeat(2000)).is_ok());
+        let sent_with = |v: Vec<SentComment>| {
+            let mut d = drafts(vec![]);
+            d.sent = v;
+            validate_pane(&pane_of(d))
+        };
+        let mut s = sent("PRRT_a");
+        s.id = "a b".into();
+        assert!(sent_with(vec![s]).unwrap_err().contains("changes.sent"));
+        let mut s = sent("PRRT_a");
+        s.count = 0;
+        assert!(sent_with(vec![s]).unwrap_err().contains("changes.sent"));
+        let mut s = sent("PRRT_a");
+        s.count = 100_001;
+        assert!(sent_with(vec![s]).is_err());
+        let mut s = sent("PRRT_a");
+        s.number = 0;
+        assert!(sent_with(vec![s]).unwrap_err().contains("changes.sent"));
+        assert!(
+            sent_with(vec![sent("PRRT_a"), sent("PRRT_a")])
+                .unwrap_err()
+                .contains("changes.sent")
+        );
+        let many: Vec<SentComment> = (0..501).map(|i| sent(&format!("S{i}"))).collect();
+        assert!(sent_with(many).unwrap_err().contains("changes.sent"));
+        let mut d = drafts(vec![]);
+        d.picked = vec![picked("PRRT_a"), picked("PRRT_a")];
+        assert!(validate_pane(&pane_of(d)).unwrap_err().contains("changes.picked"));
+        let mut d = drafts(vec![]);
+        d.picked = (0..201).map(|i| picked(&format!("P{i}"))).collect();
+        assert!(validate_pane(&pane_of(d)).unwrap_err().contains("changes.picked"));
+    }
+
+    #[test]
+    fn repair_keeps_the_good_picked_and_sent() {
+        let mut d = drafts(vec![]);
+        let mut dup = picked("P1");
+        dup.note = "second".into();
+        let mut bad = picked("bad id");
+        bad.number = 0;
+        d.picked = vec![picked("P1"), bad, dup, picked("P2")];
+        d.picked.extend((0..250).map(|i| picked(&format!("Q{i}"))));
+        d.sent = (0..600).map(|i| sent(&format!("S{i}"))).collect();
+        let mut zero = sent("Z");
+        zero.count = 0;
+        d.sent.insert(0, zero);
+        let pane = repaired("s", session_with_drafts(d));
+        let changes = pane.sessions["s"].changes.as_ref().unwrap();
+        assert_eq!(changes.picked.len(), 200);
+        assert_eq!(changes.picked[0].note, "Fix this\nplease");
+        assert_eq!(changes.picked[1].id, "P2");
+        assert_eq!(changes.sent.len(), 500);
+        assert_eq!(changes.sent[0].id, "S0");
+
+        let good = |id: &str| serde_json::to_value(picked(id)).unwrap();
+        let doc = load_with_pane(
+            serde_json::json!({
+                "open": true, "width": 480, "recent": [],
+                "sessions": {
+                    "ta": {
+                        "tabs": [], "active": null,
+                        "changes": {
+                            "checkout": "C:/work", "base": null, "comments": [], "folds": {},
+                            "picked": [good("P1"), {"id": 3}, good("P2")],
+                            "sent": "nope"
+                        }
+                    }
+                }
+            }),
+            serde_json::json!(304),
+        );
+        let changes = doc.view.pane.sessions["ta"].changes.as_ref().unwrap();
+        let ids: Vec<&str> = changes.picked.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["P1", "P2"]);
+        assert!(changes.sent.is_empty());
     }
 
     fn session_with_drafts(d: ChangesDrafts) -> SessionTabs {

@@ -7,4 +7,8 @@ export type ChangesSettings = { hide_whitespace: boolean, wrap: boolean,
 /**
  * Show the pull request bar, which asks GitHub. On unless turned off.
  */
-pull_requests: boolean, };
+pull_requests: boolean, 
+/**
+ * Show a pull request's resolved and outdated review comments in the diff.
+ */
+resolved_comments: boolean, };

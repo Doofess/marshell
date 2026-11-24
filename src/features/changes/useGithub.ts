@@ -25,24 +25,28 @@ export function askedAt(mode: "ask" | "local", lastAsk: number, now: number): nu
   return mode === "ask" ? now : lastAsk;
 }
 
+/** Whether an answer counts as one of the bar's own asks of GitHub (the comments are read again after it), not a local recount. */
+export const countsAsAsk = (mode: "ask" | "local"): boolean => mode === "ask";
+
 const focused = () => typeof document === "undefined" || document.hasFocus();
 
-type State = { tab: string | null; reply: GithubReply | null };
+type State = { tab: string | null; reply: GithubReply | null; asked: number };
 
 /**
  * What GitHub says about one session's checkout. Holds `reply: null` and asks nothing while `on` is false or `tab` is
  * null; a new tab clears the reply at once, and an answer for an earlier tab is dropped. `refresh()` asks GitHub now.
+ * `asked` counts the answers to an ask (not a local recount) since the tab or the setting changed.
  */
 /** `head` is `recountKey` of what the panel lists: a change in it recounts at once. */
-export function useGithub(tab: string | null, shown: boolean, head: string | null, on: boolean): { reply: GithubReply | null; refresh: () => void } {
-  const [state, setState] = useState<State>({ tab, reply: null });
+export function useGithub(tab: string | null, shown: boolean, head: string | null, on: boolean): { reply: GithubReply | null; asked: number; refresh: () => void } {
+  const [state, setState] = useState<State>({ tab, reply: null, asked: 0 });
   const live = useRef({ tab, shown, head, on });
   live.current = { tab, shown, head, on };
   const run = useRef({ inFlight: false, asked: false, lastAsk: 0, nextMs: GITHUB_DEFAULT_MS, answeredHead: null as string | null, urgent: false });
 
   useEffect(() => {
     run.current = { inFlight: false, asked: false, lastAsk: 0, nextMs: GITHUB_DEFAULT_MS, answeredHead: null, urgent: false };
-    setState({ tab, reply: null });
+    setState({ tab, reply: null, asked: 0 });
   }, [tab, on]);
 
   useEffect(() => {
@@ -63,7 +67,7 @@ export function useGithub(tab: string | null, shown: boolean, head: string | nul
           r.asked = true;
           r.nextMs = reply.next_ms;
           r.answeredHead = askedHead;
-          setState({ tab: askedTab, reply });
+          setState((s) => ({ tab: askedTab, reply, asked: (s.tab === askedTab ? s.asked : 0) + (countsAsAsk(mode) ? 1 : 0) }));
         })
         .catch(() => {
           if (run.current === r) r.asked = true;
@@ -92,5 +96,5 @@ export function useGithub(tab: string | null, shown: boolean, head: string | nul
   }, []);
 
   const mine = on && tab !== null && state.tab === tab;
-  return { reply: mine ? state.reply : null, refresh };
+  return { reply: mine ? state.reply : null, asked: mine ? state.asked : 0, refresh };
 }

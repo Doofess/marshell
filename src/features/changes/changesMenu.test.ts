@@ -1,15 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { isAction, type MenuItem, type MenuRow } from "../../components/ContextMenu/menuKeys";
 import type { GithubReply } from "../../generated/GithubReply";
-import { changesChoice, changesMenuItems, headerMenuItems, lineMenuItems, openLineOf, openOf } from "./changesMenu";
+import type { PullNote } from "../../generated/PullNote";
+import type { ReviewThread } from "../../generated/ReviewThread";
+import { addressOf, changesChoice, changesMenuItems, headerMenuItems, lineMenuItems, openLineOf, openOf, threadMenuItems } from "./changesMenu";
 import { type BarButton, type BarMenuItem, barOf } from "./pullModel";
 import type { Item, Row, Section } from "./model";
+import type { SendState } from "./threads";
 
 const section = (rows: Row[], status: Section["status"] = "modified"): Section => ({ path: "a.ts", status, added: 1, removed: 1, rows, folded: false });
 const rowItem = (file: Section, at: number): Item => ({ kind: "row", key: `row:${file.path}:${at}`, file, at });
 const rowsOf = (items: MenuItem[]): MenuRow[] => items.filter(isAction);
 const labels = (items: MenuItem[]) => items.map((i) => (isAction(i) ? i.label : "-"));
-const on = { settings: { hide_whitespace: true, wrap: false, pull_requests: true }, failed: false, review: "Ask Claude Code to review (types /code-review)", hasFiles: true, github: [] as BarMenuItem[], main: null as BarButton | null };
+const on = { settings: { hide_whitespace: true, wrap: false, pull_requests: true, resolved_comments: false }, failed: false, review: "Ask Claude Code to review (types /code-review)", hasFiles: true, github: [] as BarMenuItem[], main: null as BarButton | null };
 const replyOf = (o: Partial<GithubReply> = {}): GithubReply => ({
   kind: "ready", checkout: "C:/p", host: "github.com", repo: "octo-org/widgets", branch: "feat", default_branch: "main", fork_of: null, compare_url: null, pull: null, closed: null,
   on_github: true, to_push: 2, github_ahead: false, can_write: true, merge_methods: ["merge"], auto_merge_allowed: true, push: null, push_blocked: null, reason: null, next_ms: 30_000, ...o,
@@ -17,7 +20,7 @@ const replyOf = (o: Partial<GithubReply> = {}): GithubReply => ({
 
 describe("changesMenuItems", () => {
   it("leaves review out for a plain shell", () => {
-    expect(labels(changesMenuItems({ ...on, review: null }))).toEqual(["Refresh", "-", "Fold all files", "Unfold all files", "-", "Hide whitespace changes", "Wrap long lines"]);
+    expect(labels(changesMenuItems({ ...on, review: null }))).toEqual(["Refresh", "-", "Fold all files", "Unfold all files", "-", "Hide whitespace changes", "Wrap long lines", "Show resolved and outdated comments"]);
     expect(labels(changesMenuItems(on))[1]).toBe(on.review);
   });
   it("adds the bar's rows under the review row", () => {
@@ -42,6 +45,12 @@ describe("changesMenuItems", () => {
     const rows = rowsOf(changesMenuItems(on));
     expect(rows.find((r) => r.id === "setting:hide_whitespace")?.checked).toBe(true);
     expect(rows.find((r) => r.id === "setting:wrap")?.checked).toBe(false);
+  });
+  it("lists the resolved comments switch after Wrap long lines and takes its row", () => {
+    const rows = rowsOf(changesMenuItems(on));
+    expect(rows.find((r) => r.id === "setting:resolved_comments")).toMatchObject({ label: "Show resolved and outdated comments", checked: false });
+    expect(changesChoice("setting:resolved_comments")).toEqual({ kind: "setting", key: "resolved_comments" });
+    expect(changesChoice("setting:nope")).toBeNull();
   });
   it("disables the switches while the settings are unread and reads defaults after a failed read", () => {
     const loading = rowsOf(changesMenuItems({ ...on, settings: null }));
@@ -123,5 +132,83 @@ describe("headerMenuItems", () => {
   });
   it("cannot open a deleted file", () => {
     expect(rowsOf(headerMenuItems(section([], "deleted"))).find((i) => i.id === "open")?.disabled).toBeTruthy();
+  });
+});
+
+describe("the comment menu", () => {
+  const thread = (over: Partial<ReviewThread> = {}): ReviewThread =>
+    ({ id: "PRRT_1", path: "a.ts", side: "new", file: false, start: 2, end: 2, original_start: 2, original_end: 2, resolved: false, outdated: false, can_resolve: true, can_unresolve: true, can_reply: true, rows: [], comments: [{ id: 1, author: "alice", bot: false, body: "x", hidden_removed: false, cut: false, created_ms: null, url: "https://github.com/o/r/pull/7#discussion_r1" }], more_comments: 0, minimized: 0, ...over }) as ReviewThread;
+  const none: SendState = { picked: false, note: "", sent: false };
+  const threadItem = (t: ReviewThread, state = none): Extract<Item, { kind: "thread" }> => ({ kind: "thread", key: `thread:${t.id}`, thread: t, placed: null, state, agent: null });
+  const noteItem = (over: Partial<PullNote> = {}): Extract<Item, { kind: "talk" }> => ({ kind: "talk", key: "talk:N1", note: { id: "N1", kind: "comment", verdict: null, author: "bob", bot: false, body: "hi", hidden_removed: false, cut: false, created_ms: null, url: "https://github.com/o/r/pull/7#issuecomment-1", ...over }, state: none, agent: null });
+
+  it("offers add, resolve, open and copy for an unresolved thread", () => {
+    const rows = rowsOf(threadMenuItems(threadItem(thread()), none));
+    expect(rows.map((r) => [r.id, r.label, r.disabled])).toEqual([
+      ["pick", "Add to send", undefined],
+      ["note", "Add your note…", undefined],
+      ["reply", "Reply on GitHub…", undefined],
+      ["resolve", "Resolve", undefined],
+      ["open", "Open on GitHub", undefined],
+      ["copy-link", "Copy link", undefined],
+    ]);
+  });
+  it("offers Edit your note once the thread has one", () => {
+    const state = { picked: true, note: "mine", sent: false };
+    const rows = rowsOf(threadMenuItems(threadItem(thread(), state), state));
+    expect(rows.map((r) => r.label).slice(0, 3)).toEqual(["Remove from send", "Edit your note…", "Reply on GitHub…"]);
+    expect(rows[1]!.id).toBe("note");
+  });
+  it("gives the reason Reply is off when the thread can't be replied to", () => {
+    const rows = rowsOf(threadMenuItems(threadItem(thread({ can_reply: false })), none));
+    expect(rows.find((r) => r.id === "reply")).toMatchObject({ label: "Reply on GitHub…", disabled: "GitHub doesn't let this sign-in reply to this thread." });
+  });
+  it("shows Reply off with Replying… while a reply is out", () => {
+    const rows = rowsOf(threadMenuItems(threadItem(thread()), none, true));
+    expect(rows.find((r) => r.id === "reply")).toMatchObject({ label: "Reply on GitHub…", disabled: "Replying…" });
+    expect(rowsOf(threadMenuItems(threadItem(thread()), none, false)).find((r) => r.id === "reply")?.disabled).toBeUndefined();
+    expect(rowsOf(threadMenuItems(threadItem(thread({ can_reply: false })), none, true)).find((r) => r.id === "reply")?.disabled).toBe("GitHub doesn't let this sign-in reply to this thread.");
+  });
+  it("offers Unresolve for a resolved thread, with the reason when the sign-in can't", () => {
+    const rows = rowsOf(threadMenuItems(threadItem(thread({ resolved: true, can_unresolve: false })), none));
+    expect(rows.find((r) => r.id === "unresolve")).toMatchObject({ label: "Unresolve", disabled: "GitHub doesn't let this sign-in unresolve this thread." });
+    expect(rows.find((r) => r.id === "resolve")).toBeUndefined();
+    expect(rowsOf(threadMenuItems(threadItem(thread({ resolved: true })), none)).find((r) => r.id === "unresolve")?.disabled).toBeUndefined();
+  });
+  // A resolved thread leaves the send with GitHub's next answer, so adding one would be undone without a word.
+  it("turns Add to send and the note row off for a resolved thread, with the reason", () => {
+    const rows = rowsOf(threadMenuItems(threadItem(thread({ resolved: true })), none));
+    expect(rows.find((r) => r.id === "pick")).toMatchObject({ label: "Add to send", disabled: "A resolved thread isn't sent. Unresolve it first." });
+    expect(rows.find((r) => r.id === "note")).toMatchObject({ label: "Add your note…", disabled: "A resolved thread isn't sent. Unresolve it first." });
+    const picked: SendState = { picked: true, note: "", sent: false };
+    expect(rowsOf(threadMenuItems(threadItem(thread({ resolved: true }), picked), picked))[0]).toEqual(expect.objectContaining({ id: "unpick", label: "Remove from send" }));
+    expect(rowsOf(threadMenuItems(threadItem(thread({ resolved: true }), picked), picked))[0]?.disabled).toBeUndefined();
+  });
+  it("gives the reason Resolve is off", () => {
+    const rows = rowsOf(threadMenuItems(threadItem(thread({ can_resolve: false })), none));
+    expect(rows.find((r) => r.id === "resolve")?.disabled).toBe("GitHub doesn't let this sign-in resolve this thread.");
+  });
+  it("offers Remove from send for a picked thread", () => {
+    const state = { picked: true, note: "", sent: false };
+    const rows = rowsOf(threadMenuItems(threadItem(thread(), state), state));
+    expect(rows[0]).toMatchObject({ id: "unpick", label: "Remove from send" });
+  });
+  it("gives a note no resolve row, and no Open or Copy link without an address", () => {
+    expect(labels(threadMenuItems(noteItem(), none))).toEqual(["Add to send", "Open on GitHub", "Copy link"]);
+    expect(labels(threadMenuItems(noteItem({ url: null }), none))).toEqual(["Add to send"]);
+    expect(labels(threadMenuItems(threadItem(thread({ comments: [] })), none))).toEqual(["Add to send", "Add your note…", "Reply on GitHub…", "Resolve"]);
+  });
+  it("gives a note neither a note row nor a reply row: its text is not what a send carries of it", () => {
+    const ids = rowsOf(threadMenuItems(noteItem(), none, false)).map((r) => r.id);
+    expect(ids).not.toContain("reply");
+    expect(ids).not.toContain("note");
+  });
+  it("takes only an https address", () => {
+    expect(addressOf(noteItem({ url: "http://x.test/" }))).toBeNull();
+    expect(addressOf(noteItem())).toBe("https://github.com/o/r/pull/7#issuecomment-1");
+    expect(addressOf(threadItem(thread()))).toBe("https://github.com/o/r/pull/7#discussion_r1");
+  });
+  it("knows the bar's row that adds the unresolved comments", () => {
+    expect(changesChoice("github:menu:add_unresolved")).toEqual({ kind: "github", from: "menu", id: "add_unresolved" });
   });
 });

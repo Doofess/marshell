@@ -3,8 +3,12 @@ import { describe, expect, it } from "vitest";
 import type { ChangesReply } from "../../generated/ChangesReply";
 import { ChangesEmpty, emptyNotices, noticesOf } from "./ChangesPanel";
 import { DiffList, chunksOf, keyFocuses, listKey, refocusOf } from "./DiffList";
+import type { PullNote } from "../../generated/PullNote";
+import type { ReviewThread } from "../../generated/ReviewThread";
+import type { Placement } from "./comments";
 import { copy } from "./copy";
 import { itemsOf, type Item, type Row, type Section } from "./model";
+import { threadLabel } from "./threads";
 
 const none = { shift: false, alt: false };
 const rows = (kinds: Row["kind"][]): Row[] => kinds.map((kind, i) => ({ kind, text: kind === "hunk" ? "@@ -1 +1 @@" : `line ${i}`, ...(kind === "del" ? { oldNo: i + 1 } : kind === "hunk" ? {} : { newNo: i + 42 }) }));
@@ -119,6 +123,72 @@ describe("DiffList", () => {
   });
 });
 
+describe("DiffList with GitHub's items", () => {
+  const thr = (id: string, path: string): ReviewThread => ({
+    id, path, side: "new", file: false, start: 42, end: 42, original_start: 42, original_end: 42, resolved: false, outdated: false,
+    can_resolve: true, can_unresolve: true, can_reply: true, rows: [{ kind: "add", text: "line 1" }],
+    comments: [{ id: 1, author: "monalisa", bot: false, body: "Fix <this>.", hidden_removed: false, cut: false, created_ms: null, url: null }], more_comments: 0, minimized: 0,
+  });
+  const talk: PullNote = { id: "n1", kind: "comment", verdict: null, author: "bob", bot: false, body: "Hi", hidden_removed: false, cut: false, created_ms: null, url: null };
+  const state = { picked: false, note: "", sent: false };
+  // 0 talk, 1 line, 2 thread (no file in the list), 3 file a, 4 hunk, 5 add, 6 thread under the add, 7 add, 8 context, 9 hunk, 10 add, 11 file b ...
+  const github = {
+    threads: [thr("orphan", "gone.txt"), thr("here", "a.ts")],
+    placements: new Map<string, Placement | null>([["orphan", null], ["here", { at: 1, changed: false, start: 42, end: 42 }]]),
+    notes: [talk],
+    lines: ["And 2 more comment threads on GitHub."],
+    state: () => state,
+    agent: null,
+  };
+  const list = itemsOf([A, B], [], new Map(), github);
+  const at = (kind: Item["kind"]) => list.findIndex((i) => i.kind === kind);
+  const thread = list.findIndex((i) => i.key === "thread:here");
+  const orphan = list.findIndex((i) => i.key === "thread:orphan");
+
+  it("lists the items as the kinds it draws", () => expect(list.map((i) => i.kind).slice(0, 6)).toEqual(["talk", "line", "thread", "file", "row", "row"]));
+  it("Enter on a thread opens its menu", () => {
+    expect(listKey(list, thread, "Enter", none, null)).toEqual({ focus: thread, open: "menu" });
+    expect(listKey(list, orphan, "Enter", none, null)).toEqual({ focus: orphan, open: "menu" });
+    expect(listKey(list, at("talk"), "Enter", none, null)).toEqual({ focus: at("talk"), open: "menu" });
+  });
+  it("Left on a thread goes to its file", () => {
+    expect(listKey(list, thread, "ArrowLeft", none, null).focus).toBe(at("file"));
+    expect(listKey(list, orphan, "ArrowLeft", none, null).focus).toBe(orphan);
+    expect(listKey(list, at("talk"), "ArrowLeft", none, null).focus).toBe(at("talk"));
+  });
+  it("Delete on a thread does nothing", () => {
+    for (const i of [thread, orphan, at("talk"), at("line")]) expect(listKey(list, i, "Delete", none, null)).toEqual({ focus: i });
+  });
+  it("a line item takes only the moves", () => {
+    const line = at("line");
+    expect(listKey(list, line, "Enter", none, null)).toEqual({ focus: line });
+    expect(listKey(list, line, "Delete", none, null)).toEqual({ focus: line });
+    expect(listKey(list, line, "ArrowDown", none, null).focus).toBe(line + 1);
+  });
+  it("draws a thread as a treeitem at level 2 under its file, with threadLabel as its label", () => {
+    const item = list[thread]!;
+    if (item.kind !== "thread") throw new Error("not a thread");
+    const html = draw(list, { focus: thread });
+    const el = html.match(/<div[^>]*data-changes-index="6"[^>]*>/)![0];
+    expect(el).toContain('role="treeitem"');
+    expect(el).toContain('aria-level="2"');
+    expect(el).toContain(`aria-label="${threadLabel(item.thread, item.placed, item.state, item.agent).replace(/</g, "&lt;").replace(/>/g, "&gt;")}"`);
+    expect(el).toContain("changes__thread");
+    expect(html).toContain("GitHub · monalisa");
+  });
+  it("gives a thread above the files, a review or comment and a line level 1", () => {
+    const html = draw(list);
+    for (const i of [orphan, at("talk"), at("line")]) expect(html.match(new RegExp(`<div[^>]*data-changes-index="${i}"[^>]*>`))![0]).toContain('aria-level="1"');
+    expect(html).toContain("changes__talk");
+    expect(html).toContain("changes__line");
+  });
+  it("draws a body through the html it is given, and as escaped text without one", () => {
+    expect(draw(list)).toContain("<p>Fix &lt;this&gt;.</p>");
+    const html = renderToStaticMarkup(<DiffList items={list} focus={0} range={null} wrap={false} onKey={() => {}} onClickItem={() => {}} onOpenItem={() => {}} onMenuItem={() => {}} html={() => "<p>cleaned</p>"} />);
+    expect(html).toContain("<p>cleaned</p>");
+  });
+});
+
 describe("DiffList blocks", () => {
   // A redraw keyed by the items' places would rebuild every block below a file that grew, and drop the keyboard.
   it("a file's blocks keep their keys when rows are added to a file above it", () => {
@@ -194,13 +264,13 @@ describe("ChangesEmpty", () => {
 describe("emptyNotices", () => {
   const c = { id: "1", path: "a.ts", side: "new" as const, start: 1, end: 1, rows: 1, first: "f", hash: "h", quote: ["x"], text: "t" };
   it("keeps the comments on another checkout in sight beside an empty diff, so they can still be sent or discarded", () => {
-    const drafts = { checkout: "C:\\other", base: "main", comments: [c], folds: {} };
+    const drafts = { checkout: "C:\\other", base: "main", comments: [c], picked: [], sent: [], folds: {} };
     expect(emptyNotices(reply({ folder: "r", base: null }), drafts)).toEqual([copy.noBase, "Send or discard the 1 comment on other first."]);
   });
   it("is a bare empty state with no comments elsewhere, or no list", () => {
     expect(emptyNotices(reply({ folder: "r" }), undefined)).toBeNull();
-    expect(emptyNotices(reply({ folder: "r" }), { checkout: "r", base: "main", comments: [c], folds: {} })).toBeNull();
-    expect(emptyNotices(null, { checkout: "C:\\other", base: "main", comments: [c], folds: {} })).toBeNull();
+    expect(emptyNotices(reply({ folder: "r" }), { checkout: "r", base: "main", comments: [c], picked: [], sent: [], folds: {} })).toBeNull();
+    expect(emptyNotices(null, { checkout: "C:\\other", base: "main", comments: [c], picked: [], sent: [], folds: {} })).toBeNull();
   });
 });
 

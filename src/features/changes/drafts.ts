@@ -64,6 +64,8 @@ export function withFolds(drafts: ChangesDrafts | undefined, shown: Shown, folds
     checkout: keep ? drafts.checkout : shown.folder,
     base: keep ? drafts.base : shown.base,
     comments: drafts?.comments ?? [],
+    picked: drafts?.picked ?? [],
+    sent: drafts?.sent ?? [],
     folds: inDiff === undefined ? all : Object.fromEntries(Object.entries(all).filter(([path]) => inDiff.has(path))),
   };
 }

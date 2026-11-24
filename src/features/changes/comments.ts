@@ -53,7 +53,7 @@ export function cyrb53(s: string): string {
   return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16).padStart(14, "0");
 }
 
-const keyOf = (r: Row) => `${r.kind}\u0000${r.text}`;
+export const keyOf = (r: Pick<Row, "kind" | "text">) => `${r.kind}\u0000${r.text}`;
 const SIGNS: Record<Row["kind"], string> = { hunk: "", context: " ", add: "+", del: "-" };
 
 /**
@@ -67,12 +67,13 @@ export function anchorOf(file: Section, from: number, to: number): Omit<DraftCom
     const no = side === "new" ? r.newNo : r.oldNo;
     return no === undefined ? [] : [no];
   });
+  return { path: file.path, side, start: Math.min(...numbers), end: Math.max(...numbers), ...rowsAnchor(rows) };
+}
+
+/** What identifies rows again: how many, the hash of the first, the hash of all, and the first lines quoted (signed when the kinds differ). Shared by `anchorOf` and a GitHub thread's anchor so the two can't drift. */
+export function rowsAnchor(rows: Pick<Row, "kind" | "text">[]): Pick<DraftComment, "rows" | "first" | "hash" | "quote"> {
   const signed = new Set(rows.map((r) => r.kind)).size > 1;
   return {
-    path: file.path,
-    side,
-    start: Math.min(...numbers),
-    end: Math.max(...numbers),
     rows: rows.length,
     first: cyrb53(keyOf(rows[0]!)),
     hash: cyrb53(rows.map(keyOf).join("\n")),
