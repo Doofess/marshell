@@ -2,6 +2,7 @@
 
 pub mod extensions;
 pub mod hooks;
+pub mod instructions;
 pub mod request;
 pub mod status;
 pub mod transcript;
