@@ -381,6 +381,7 @@ pub(crate) fn items(
         open_agents: false,
         unchecked: false,
         action: None,
+        loads: Vec::new(),
     };
 
     if let Some(why) = &agent.unreadable {

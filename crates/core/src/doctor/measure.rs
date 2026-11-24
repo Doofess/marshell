@@ -142,6 +142,7 @@ pub(crate) fn items(inv: &Inventory, measured: Option<&Measurements>, out: &mut 
         open_agents: false,
         unchecked: false,
         action: None,
+        loads: Vec::new(),
     };
 
     if let Some(distro) = &inv.distro {

@@ -64,6 +64,47 @@ pub struct DoctorItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub action: Option<DoctorAction>,
+    /// The instruction files each CLI loads, for a row that lists them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<DoctorLoad>>")]
+    pub loads: Vec<DoctorLoad>,
+}
+
+/// When a CLI loads an instruction file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum DoctorLoadWhen {
+    Start,
+    WhenUsed,
+    NotLoaded,
+}
+
+/// One instruction file in a CLI's load order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DoctorLoadFile {
+    /// Project-relative, `~/…`, or full.
+    pub path: String,
+    pub when: DoctorLoadWhen,
+    /// The row's note, already worded ("about 600 tokens, imported by CLAUDE.md").
+    pub note: String,
+    /// 0 for a file the CLI finds itself; 1 for a file it imports, 2 for one that file imports, and so on.
+    pub depth: u32,
+}
+
+/// The instruction files one CLI loads in one place.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DoctorLoad {
+    pub agent: String,
+    /// "Claude Code: about 2.4k tokens at start"
+    pub heading: String,
+    pub files: Vec<DoctorLoadFile>,
+    /// Sentences shown under the heading ("Copilot CLI documents no limit.").
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<String>>")]
+    pub notes: Vec<String>,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -170,6 +211,7 @@ mod tests {
             open_agents: false,
             unchecked: false,
             action: None,
+            loads: Vec::new(),
         }
     }
 
@@ -204,6 +246,32 @@ mod tests {
         let mut with = item();
         with.action = Some(DoctorAction::StopKeeping);
         assert_eq!(serde_json::to_value(&with).unwrap()["action"], "stopKeeping");
+    }
+
+    #[test]
+    fn an_item_without_loads_serializes_without_the_key() {
+        let json = serde_json::to_value(item()).unwrap();
+        assert!(!json.as_object().unwrap().contains_key("loads"));
+
+        let mut with = item();
+        with.loads = vec![DoctorLoad {
+            agent: "claude".into(),
+            heading: "Claude Code: about 600 tokens at start".into(),
+            files: vec![DoctorLoadFile {
+                path: "CLAUDE.md".into(),
+                when: DoctorLoadWhen::WhenUsed,
+                note: "about 600 tokens".into(),
+                depth: 0,
+            }],
+            notes: Vec::new(),
+        }];
+        let json = serde_json::to_value(&with).unwrap();
+        assert_eq!(json["loads"][0]["files"][0]["when"], "whenUsed");
+        assert!(!json["loads"][0].as_object().unwrap().contains_key("notes"));
+        assert_eq!(serde_json::from_value::<DoctorItem>(json).unwrap(), with);
+        // A report written before the field existed still reads.
+        let old = serde_json::to_value(item()).unwrap();
+        assert!(serde_json::from_value::<DoctorItem>(old).unwrap().loads.is_empty());
     }
 
     #[test]
