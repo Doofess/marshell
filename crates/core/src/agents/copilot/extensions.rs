@@ -543,10 +543,24 @@ fn same_part(a: &str, b: &str) -> bool {
 /// A plugin's folder from its `cache_path`: the path, with `..` and either slash resolved and the case ignored on
 /// Windows, must be inside `installed` (never the folder itself, and never by string prefix alone). The folder comes
 /// back built from `installed` and the parts below it.
+///
+/// In a distro Copilot writes its own Linux path (`/home/u/…`) and Marshell reads the folder through the distro's share
+/// (`\\wsl.localhost\<distro>\home\u\…`): such a path is compared with the folder below the share, with Linux's exact
+/// names.
 fn folder_inside(installed: &Path, given: &str) -> Option<PathBuf> {
-    let root = absolute_parts(&installed.to_string_lossy())?;
+    let installed_text = installed.to_string_lossy().replace('\\', "/");
+    let mut root = absolute_parts(&installed_text)?;
     let parts = absolute_parts(given)?;
-    if parts.len() <= root.len() || !root.iter().zip(&parts).all(|(a, b)| same_part(a, b)) {
+    let share = installed_text.starts_with("//")
+        && root
+            .first()
+            .is_some_and(|s| s.eq_ignore_ascii_case("wsl.localhost") || s.eq_ignore_ascii_case("wsl$"));
+    let linux = share && root.len() > 2 && given.starts_with('/') && !given.starts_with("//");
+    if linux {
+        root.drain(..2);
+    }
+    let same = |a: &String, b: &String| if linux { a == b } else { same_part(a, b) };
+    if parts.len() <= root.len() || !root.iter().zip(&parts).all(|(a, b)| same(a, b)) {
         return None;
     }
     let below = &parts[root.len()..];
@@ -2113,6 +2127,47 @@ mod tests {
             "the default folder only when the manifest names none"
         );
         assert_eq!(inv.servers.iter().filter(|s| s.name == "again-srv").count(), 1);
+    }
+
+    #[test]
+    fn a_distros_cache_path_is_its_linux_path_under_the_share() {
+        // Copilot in a distro writes `/home/u/…`; Marshell reads the same folder through `\\wsl.localhost\<distro>`.
+        let linux = "/home/u/.copilot/installed-plugins/mk/p1";
+        for share in [r"\\wsl.localhost\Ubuntu", r"\\wsl$\Ubuntu", r"\\WSL.LOCALHOST\Ubuntu"] {
+            let installed = PathBuf::from(format!(r"{share}\home\u\.copilot\installed-plugins"));
+            assert_eq!(
+                folder_inside(&installed, linux),
+                Some(installed.join("mk").join("p1")),
+                "{share}"
+            );
+            assert_eq!(
+                folder_inside(&installed, "/home/u/.copilot/installed-plugins/mk/x/../p1/"),
+                Some(installed.join("mk").join("p1"))
+            );
+            // Linux names are exact, and outside stays outside.
+            assert_eq!(
+                folder_inside(&installed, "/home/U/.copilot/installed-plugins/mk/p1"),
+                None
+            );
+            assert_eq!(
+                folder_inside(&installed, "/home/u/.copilot/installed-plugins-evil/p1"),
+                None
+            );
+            assert_eq!(
+                folder_inside(&installed, "/home/u/.copilot/installed-plugins/../x"),
+                None
+            );
+            assert_eq!(folder_inside(&installed, "/home/u/.copilot/installed-plugins"), None);
+            assert_eq!(
+                folder_inside(&installed, "/home/other/.copilot/installed-plugins/mk/p1"),
+                None
+            );
+        }
+        // Another share, and a Windows folder, never take a Linux path.
+        let server = PathBuf::from(r"\\files\Ubuntu\home\u\.copilot\installed-plugins");
+        assert_eq!(folder_inside(&server, linux), None);
+        let windows = PathBuf::from(r"C:\home\u\.copilot\installed-plugins");
+        assert_eq!(folder_inside(&windows, linux), None);
     }
 
     #[test]
