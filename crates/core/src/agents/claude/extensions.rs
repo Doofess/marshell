@@ -553,6 +553,7 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
         caps: Caps {
             per_skill: Some(PER_SKILL_CAP),
             listing_first_line_over: None,
+            listing_named_over: None,
         },
         servers,
         skills,

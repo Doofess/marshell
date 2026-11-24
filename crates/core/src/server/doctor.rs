@@ -3645,4 +3645,172 @@ pub(in crate::server) mod tests {
         );
         assert_eq!(std::fs::read(&settings).unwrap(), before);
     }
+
+    /// The ids of the Broken Copilot skill items in the report.
+    fn copilot_skill_ids(report: &DoctorReport) -> Vec<String> {
+        report
+            .items
+            .iter()
+            .filter(|i| i.group == DoctorGroup::Broken && i.id.starts_with("skill.copilot."))
+            .map(|i| i.id.clone())
+            .collect()
+    }
+
+    fn copilot_skill(ext: &Path, folder: &str, text: &str) {
+        write(&ext.join(".copilot").join("skills").join(folder).join("SKILL.md"), text);
+    }
+
+    #[tokio::test]
+    async fn a_copilot_skill_over_the_description_limit_is_turned_off_and_one_without_a_description_is_left_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, ext) = ext_state(dir.path());
+        let settings = ext.join(".copilot").join("settings.json");
+        copilot_skill(
+            &ext,
+            "longdesc",
+            &format!("---\nname: longdesc\ndescription: {}\n---\nbody\n", "d".repeat(1025)),
+        );
+        copilot_skill(&ext, "nodesc", "---\nname: nodesc\n---\nA first line.\n");
+        copilot_skill(
+            &ext,
+            "fine",
+            &format!("---\nname: fine\ndescription: {}\n---\n", "d".repeat(1024)),
+        );
+
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        let report = last_report(&st);
+        let ids = copilot_skill_ids(&report);
+        assert_eq!(ids.len(), 1, "{:?}", report.items);
+        let item = report.items.iter().find(|i| i.id == ids[0]).unwrap();
+        assert_eq!(item.title, "Copilot CLI's skill longdesc doesn't load");
+        assert_eq!(
+            item.detail,
+            "Its description is over 1,024 characters. The fix turns it off and doesn't delete it."
+        );
+        assert!(item.fixable, "{item:?}");
+
+        let plan = fix_of(&st, ids).expect("a plan");
+        assert!(plan.preview.can_apply, "{:?}", plan.preview);
+        assert_eq!(plan.preview.files.len(), 1);
+        assert_eq!(Path::new(&plan.preview.files[0].path), settings);
+        let applied = fix_apply(State(st.clone()), Json(apply_plan(&plan))).await;
+        assert_eq!(applied.status(), StatusCode::OK);
+        wait_idle(&st).await;
+        let value = crate::config::jsonc::read_value(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+        assert_eq!(value["disabledSkills"], serde_json::json!(["longdesc"]));
+        // The skill's own file is never written.
+        assert!(
+            std::fs::read_to_string(ext.join(".copilot").join("skills").join("longdesc").join("SKILL.md"))
+                .unwrap()
+                .starts_with("---\nname: longdesc\n")
+        );
+
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        assert!(copilot_skill_ids(&last_report(&st)).is_empty());
+
+        let undone = undo(State(st.clone())).await;
+        assert_eq!(undone.status(), StatusCode::OK);
+        wait_idle(&st).await;
+        assert!(!settings.exists());
+    }
+
+    #[tokio::test]
+    async fn a_picked_copilot_server_and_a_picked_skill_are_one_edit_per_list_in_one_settings_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, ext) = ext_state(dir.path());
+        let settings = ext.join(".copilot").join("settings.json");
+        write(
+            &ext.join(".copilot").join("mcp-config.json"),
+            r#"{"mcpServers": {"ghostly": {"command": "ghost"}}}"#,
+        );
+        copilot_skill(&ext, "bad", "---\nname: bad\ndescription: d\n---\nbody\n");
+        copilot_skill(&ext, "unclosed", "---\nname: unclosed\ndescription: d\n");
+        let original = "\u{feff}{\r\n  // mine\r\n  \"theme\": \"dark\",\r\n  \"disabledSkills\": [\"old\"],\r\n}\r\n";
+        write(&settings, original);
+
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        let report = last_report(&st);
+        let mut ids = copilot_broken_ids(&report);
+        let skills = copilot_skill_ids(&report);
+        assert_eq!((ids.len(), skills.len()), (1, 1), "{:?}", report.items);
+        ids.extend(skills);
+        let plan = fix_of(&st, ids).expect("a plan");
+        assert!(plan.preview.can_apply, "{:?}", plan.preview);
+        assert_eq!(plan.preview.files.len(), 1, "one settings file");
+        assert_eq!(Path::new(&plan.preview.files[0].path), settings);
+        let applied = fix_apply(State(st.clone()), Json(apply_plan(&plan))).await;
+        assert_eq!(applied.status(), StatusCode::OK);
+        wait_idle(&st).await;
+
+        let after = std::fs::read_to_string(&settings).unwrap();
+        assert!(
+            after.starts_with("\u{feff}{\r\n  // mine\r\n  \"theme\": \"dark\",\r\n"),
+            "{after:?}"
+        );
+        let value = crate::config::jsonc::read_value(&after).unwrap();
+        assert_eq!(value["disabledMcpServers"], serde_json::json!(["ghostly"]));
+        assert_eq!(value["disabledSkills"], serde_json::json!(["old", "unclosed"]));
+
+        let undone = undo(State(st.clone())).await;
+        assert_eq!(undone.status(), StatusCode::OK);
+        wait_idle(&st).await;
+        assert_eq!(std::fs::read(&settings).unwrap(), original.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn a_copilot_skill_list_that_is_not_an_array_makes_its_broken_skills_report_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, ext) = ext_state(dir.path());
+        let settings = ext.join(".copilot").join("settings.json");
+        copilot_skill(&ext, "unclosed", "---\nname: unclosed\ndescription: d\n");
+        write(&settings, "{\"disabledSkills\": \"unclosed\"}");
+        let before = std::fs::read(&settings).unwrap();
+
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        let report = last_report(&st);
+        let ids = copilot_skill_ids(&report);
+        assert_eq!(ids.len(), 1, "{:?}", report.items);
+        let item = report.items.iter().find(|i| i.id == ids[0]).unwrap();
+        assert!(!item.fixable);
+        assert_eq!(
+            item.cannot_fix.as_deref(),
+            Some(
+                format!(
+                    "Marshell can't edit {} safely, so it leaves the file alone. Turn the skill off in Copilot CLI.",
+                    settings.display()
+                )
+                .as_str()
+            )
+        );
+        assert_eq!(std::fs::read(&settings).unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn skills_past_copilots_listing_budget_are_one_report_only_item_with_a_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, ext) = ext_state(dir.path());
+        for i in 0..200 {
+            copilot_skill(
+                &ext,
+                &format!("skill{i:03}"),
+                &format!("---\nname: skill{i:03}\ndescription: {}\n---\n", "d".repeat(15)),
+            );
+        }
+
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        let report = last_report(&st);
+        let item = report
+            .items
+            .iter()
+            .find(|i| i.id == "skilllisting.copilot")
+            .unwrap_or_else(|| panic!("no listing item: {:?}", report.items));
+        assert_eq!(item.group, DoctorGroup::Waste);
+        assert_eq!(item.title, "Copilot CLI lists 69 skills by name only");
+        assert!(!item.fixable);
+        assert_eq!(
+            item.cannot_fix.as_deref(),
+            Some("Shorten the longest descriptions, or turn off skills you don't use.")
+        );
+        assert!(copilot_skill_ids(&report).is_empty());
+    }
 }

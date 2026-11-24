@@ -1,10 +1,14 @@
-//! Copilot CLI's MCP servers for the Doctor: where it keeps them, how each is turned off, and which of a project's
-//! it starts. The reader takes its roots as arguments and never reads the environment.
+//! Copilot CLI's MCP servers, skills and plugins for the Doctor: where it keeps them, how each is turned off, which of
+//! a project's it starts, and which skills it refuses or only names. The reader takes its roots as arguments and never
+//! reads the environment.
 //!
-//! Copilot's `config.json` may hold account tokens. Only the one key asked for is taken out of it, the file's parsed
-//! value is dropped at once, and nothing of it is kept in a type that prints, put in an item or logged.
+//! Copilot's `config.json` may hold account tokens. Only the keys asked for (`trustedFolders`, `installedPlugins`) are
+//! taken out of it, the file's parsed value is dropped at once, and nothing of it is kept in a type that prints, put
+//! in an item or logged. A plugin's folder comes from that file, so it is followed only when it is inside Copilot's
+//! `installed-plugins` folder, and the paths in a plugin's manifest only when they stay inside the plugin's folder.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -13,8 +17,9 @@ use crate::config::jsonc::read_value;
 use crate::config::preview::{MAX_CONFIG_BYTES, TOO_LARGE_DETAIL};
 use crate::doctor::ext::{
     Caps, CommandState, CostRule, Expand, ExtRoots, Hints, Inherit, Inventory, Launch, Listing, NoSwitch, NotMeasured,
-    Origin, Server, Switch, Transport, UsedAs, unreadable,
+    Origin, Server, Skill, SkillState, SkillUse, Switch, Transport, UsedAs, created_ms, skill_files, unreadable,
 };
+use crate::doctor::frontmatter::{self, Front};
 
 /// The GitHub server Copilot CLI loads itself, whoever is signed in.
 pub const GITHUB_SERVER: &str = "github-mcp-server";
@@ -62,9 +67,28 @@ impl Files {
         }
     }
 
+    /// A file is reported once, however many times it is read (`config.json` is read for each key asked of it).
     fn fail(&mut self, path: &Path, message: String) -> Option<Value> {
-        self.unreadable.push((path.to_path_buf(), message));
+        if !self.unreadable.iter().any(|(p, _)| p == path) {
+            self.unreadable.push((path.to_path_buf(), message));
+        }
         None
+    }
+
+    /// The text of a `SKILL.md`, or None when it isn't there, isn't UTF-8 text, can't be read, or is over the size
+    /// limit (then it is in `unreadable`). Never more than the limit is read.
+    fn skill_text(&mut self, path: &Path) -> Option<String> {
+        let mut bytes = Vec::new();
+        std::fs::File::open(path)
+            .ok()?
+            .take(MAX_CONFIG_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .ok()?;
+        if bytes.len() as u64 > MAX_CONFIG_BYTES {
+            self.fail(path, TOO_LARGE_DETAIL.to_string());
+            return None;
+        }
+        String::from_utf8(bytes).ok()
     }
 
     /// `key` of Copilot's `config.json` and nothing else of it. The file is read each time and never kept.
@@ -212,6 +236,8 @@ struct Settings {
     file: PathBuf,
     /// `disabledMcpServers`, or Err when it can't be edited.
     disabled: Result<Vec<String>, ()>,
+    /// `disabledSkills`, or Err when it can't be edited.
+    disabled_skills: Result<Vec<String>, ()>,
 }
 
 impl Settings {
@@ -229,9 +255,34 @@ impl Settings {
     fn off(&self, name: &str) -> bool {
         self.disabled.as_ref().is_ok_and(|l| l.iter().any(|n| n == name))
     }
+
+    fn skill_switch(&self, name: &str) -> Result<Switch, NoSwitch> {
+        match &self.disabled_skills {
+            Ok(_) => Ok(Switch::JsonAdd {
+                file: self.file.clone(),
+                pointer: DISABLED_SKILLS.to_string(),
+                name: name.to_string(),
+            }),
+            Err(()) => Err(NoSwitch::CantEdit(self.file.clone())),
+        }
+    }
+
+    fn skill_off(&self, name: &str) -> bool {
+        self.disabled_skills.as_ref().is_ok_and(|l| l.iter().any(|n| n == name))
+    }
 }
 
 const DISABLED_SERVERS: &str = "/disabledMcpServers";
+const DISABLED_SKILLS: &str = "/disabledSkills";
+
+/// A skill's name is at most this many characters, and its description too.
+const NAME_MAX: usize = 64;
+const DESCRIPTION_MAX: usize = 1024;
+/// Copilot describes skills in full up to this many characters of listing: the block's opening line is 19, and each
+/// skill costs its name, its description and 91 of tags and line break (research note, finding 6).
+const LISTING_BUDGET: usize = 15_000;
+const LISTING_OPENING: usize = 19;
+const ENTRY_OVERHEAD: usize = 91;
 
 /// Pushes the servers of `map`. `extra_off` are names a project's own settings turn off.
 #[allow(clippy::too_many_arguments)]
@@ -290,14 +341,370 @@ fn project_map(root: &Value) -> &Value {
     root.get("mcpServers").unwrap_or(root)
 }
 
+/// What a project's own `.github/copilot/settings*.json` list under `key` (`disabledMcpServers`, `disabledSkills`).
+fn project_off(files: &mut Files, project: &Path, key: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for name in ["settings.json", "settings.local.json"] {
+        let file = project.join(".github").join("copilot").join(name);
+        names.extend(strings(files.json(&file).as_ref().and_then(|v| v.get(key))));
+    }
+    names
+}
+
+/// Copilot refuses a skill whose name doesn't start with an ASCII letter or digit and go on with ASCII letters,
+/// digits, `-`, `_`, `.`, `:` and spaces.
+fn skill_name_ok(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':' | ' '))
+}
+
+/// The length in characters of the first line of a skill's body that isn't blank, with its frontmatter left out.
+fn first_body_line_chars(text: &str) -> usize {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text).replace("\r\n", "\n");
+    let lines: Vec<&str> = text.split('\n').collect();
+    if lines.first().map(|l| l.trim()) != Some("---") {
+        return 0;
+    }
+    let Some(close) = lines.iter().skip(1).position(|l| l.trim() == "---").map(|p| p + 1) else {
+        return 0;
+    };
+    lines[close + 1..]
+        .iter()
+        .map(|l| l.trim())
+        .find(|l| !l.is_empty())
+        .map_or(0, |l| l.chars().count())
+}
+
+/// Pushes the skills in `found` (folder name, `SKILL.md`). A plugin's skill is named `<plugin>:<skill>` and has no
+/// switch. `extra_off` are names a project's own settings turn off.
+fn skills_in(
+    files: &mut Files,
+    found: Vec<(String, PathBuf)>,
+    origin: &Origin,
+    extra_off: &[String],
+    settings: &Settings,
+    out: &mut Vec<Skill>,
+) {
+    for (folder, file) in found {
+        let Some(text) = files.skill_text(&file) else {
+            continue;
+        };
+        let (closed, meta) = match frontmatter::read(&text) {
+            Front::Read(m) => (Some(true), m),
+            Front::Unclear(m) => (Some(false), m),
+            Front::NoBlock => (None, Default::default()),
+        };
+        let given = meta.name.as_deref().map(str::trim).filter(|n| !n.is_empty());
+        let bare = given.unwrap_or(&folder).to_string();
+        let description = meta.description.as_deref().map(str::trim).filter(|d| !d.is_empty());
+        let state = match closed {
+            None => SkillState::NoBlock,
+            // Some line wasn't understood: nothing may be called wrong in it.
+            Some(false) => SkillState::Ok,
+            Some(true) if bare.chars().count() > NAME_MAX => SkillState::TooLong("name", NAME_MAX),
+            Some(true) if !skill_name_ok(&bare) => SkillState::BadName,
+            Some(true) if description.is_some_and(|d| d.chars().count() > DESCRIPTION_MAX) => {
+                SkillState::TooLong("description", DESCRIPTION_MAX)
+            }
+            Some(true) => SkillState::Ok,
+        };
+        let name = match origin {
+            Origin::Plugin(plugin) => format!("{plugin}:{bare}"),
+            _ => bare,
+        };
+        out.push(Skill {
+            created_ms: created_ms(&file),
+            used_as: vec![SkillUse::File(file.clone()), SkillUse::Name(name.clone())],
+            switch: match origin {
+                Origin::Plugin(plugin) => Err(NoSwitch::Plugin(plugin.clone())),
+                _ => settings.skill_switch(&name),
+            },
+            off: settings.skill_off(&name) || extra_off.contains(&name),
+            listed_chars: description.map_or_else(|| first_body_line_chars(&text), |d| d.chars().count()),
+            first_line_chars: description
+                .and_then(|d| d.lines().next())
+                .map_or(0, |l| l.chars().count()),
+            name_only: false,
+            hidden: meta.hidden,
+            name,
+            file,
+            origin: origin.clone(),
+            state,
+        });
+    }
+}
+
+/// The skills Copilot skips or can't switch apart, and the ones its listing only names.
+fn settle_skills(skills: &mut [Skill]) {
+    // A project's skill hides a personal skill of the same name from Copilot.
+    let project_names: HashSet<String> = skills
+        .iter()
+        .filter(|s| matches!(s.origin, Origin::Project(_)) && s.state == SkillState::Ok)
+        .map(|s| s.name.clone())
+        .collect();
+    for s in skills
+        .iter_mut()
+        .filter(|s| s.origin == Origin::User && project_names.contains(&s.name))
+    {
+        s.off = true;
+    }
+
+    // Copilot turns skills off by exact name, so a skill that shares its name with another in use (not off, and not
+    // broken itself) gets no switch: turning it off would turn off one that works.
+    let in_use: Vec<(String, bool)> = skills
+        .iter()
+        .map(|s| (s.name.clone(), !s.off && s.state == SkillState::Ok))
+        .collect();
+    for (i, s) in skills.iter_mut().enumerate() {
+        let shared = in_use
+            .iter()
+            .enumerate()
+            .any(|(j, (name, used))| j != i && *used && *name == s.name);
+        if !s.off && shared && s.switch.is_ok() {
+            s.switch = Err(NoSwitch::SameName);
+        }
+    }
+
+    // The listing: project skills by name, then personal ones, then plugins'. Every skill from the first that would
+    // take the listing past its budget on is only named.
+    let rank = |s: &Skill| match s.origin {
+        Origin::Project(_) => 0,
+        Origin::User => 1,
+        _ => 2,
+    };
+    let mut order: Vec<usize> = (0..skills.len())
+        .filter(|&i| !skills[i].off && !skills[i].hidden && skills[i].state == SkillState::Ok)
+        .collect();
+    order.sort_by(|&a, &b| {
+        (rank(&skills[a]), &skills[a].name, &skills[a].file).cmp(&(rank(&skills[b]), &skills[b].name, &skills[b].file))
+    });
+    let mut total = LISTING_OPENING;
+    let mut over = false;
+    for i in order {
+        let s = &mut skills[i];
+        let cost = s.name.chars().count() + s.listed_chars + ENTRY_OVERHEAD;
+        if over || total + cost > LISTING_BUDGET {
+            over = true;
+            s.name_only = true;
+        } else {
+            total += cost;
+        }
+    }
+}
+
+/// `path` as its parts, with `.` and `..` resolved by the text alone and either slash taken, or None when the path
+/// isn't absolute or `..` would climb out of its drive or share.
+fn absolute_parts(path: &str) -> Option<Vec<String>> {
+    let text = path.replace('\\', "/");
+    let text = text.strip_prefix("//?/").unwrap_or(&text);
+    let drive = text.len() >= 2 && text.as_bytes()[0].is_ascii_alphabetic() && text.as_bytes()[1] == b':';
+    if !drive && !text.starts_with('/') {
+        return None;
+    }
+    // What `..` can't climb above: a drive, or a share's server and name.
+    let floor = if drive {
+        1
+    } else if text.starts_with("//") {
+        2
+    } else {
+        0
+    };
+    let mut parts: Vec<String> = Vec::new();
+    for part in text.split('/').filter(|p| !p.is_empty() && *p != ".") {
+        if part == ".." {
+            if parts.len() <= floor {
+                return None;
+            }
+            parts.pop();
+        } else {
+            parts.push(part.to_string());
+        }
+    }
+    Some(parts)
+}
+
+/// One part of a path that can be joined without leaving the folder it is joined to.
+fn safe_part(part: &str) -> bool {
+    !part.is_empty()
+        && part != "."
+        && part != ".."
+        && !part.chars().any(|c| matches!(c, '/' | '\\' | ':') || c.is_control())
+}
+
+fn same_part(a: &str, b: &str) -> bool {
+    if cfg!(windows) {
+        a.to_lowercase() == b.to_lowercase()
+    } else {
+        a == b
+    }
+}
+
+/// A plugin's folder from its `cache_path`: the path, with `..` and either slash resolved and the case ignored on
+/// Windows, must be inside `installed` (never the folder itself, and never by string prefix alone). The folder comes
+/// back built from `installed` and the parts below it.
+fn folder_inside(installed: &Path, given: &str) -> Option<PathBuf> {
+    let root = absolute_parts(&installed.to_string_lossy())?;
+    let parts = absolute_parts(given)?;
+    if parts.len() <= root.len() || !root.iter().zip(&parts).all(|(a, b)| same_part(a, b)) {
+        return None;
+    }
+    let below = &parts[root.len()..];
+    below
+        .iter()
+        .all(|p| safe_part(p))
+        .then(|| below.iter().fold(installed.to_path_buf(), |dir, p| dir.join(p)))
+}
+
+/// A path from a plugin's manifest: relative, and inside the plugin's `folder` once `..` is resolved. The plugin's
+/// folder itself (`.`) counts.
+fn path_in(folder: &Path, relative: &str) -> Option<PathBuf> {
+    let text = relative.replace('\\', "/");
+    if text.starts_with('/') || text.contains(':') {
+        return None;
+    }
+    let mut parts: Vec<&str> = Vec::new();
+    for part in text.split('/').filter(|p| !p.is_empty() && *p != ".") {
+        if part == ".." {
+            parts.pop()?;
+        } else if safe_part(part) {
+            parts.push(part);
+        } else {
+            return None;
+        }
+    }
+    Some(parts.iter().fold(folder.to_path_buf(), |dir, p| dir.join(p)))
+}
+
+/// The manifests Copilot looks for in a plugin's folder, in its order.
+const MANIFESTS: [&str; 4] = [
+    "plugin.json",
+    ".plugin/plugin.json",
+    ".github/plugin/plugin.json",
+    ".claude-plugin/plugin.json",
+];
+
+/// The servers and skills of the plugin `name` in `folder`.
+fn read_plugin(
+    files: &mut Files,
+    folder: &Path,
+    name: &str,
+    settings: &Settings,
+    command: &dyn Fn(&str) -> CommandState,
+    servers: &mut Vec<Server>,
+    skills: &mut Vec<Skill>,
+) {
+    let origin = Origin::Plugin(name.to_string());
+    let manifest_file = MANIFESTS.iter().map(|m| folder.join(m)).find(|f| f.is_file());
+    let manifest = manifest_file.as_ref().and_then(|f| files.json(f));
+    let first = servers.len();
+    let mut read: Vec<PathBuf> = Vec::new();
+
+    if let (Some(manifest), Some(file)) = (&manifest, &manifest_file) {
+        match manifest.get("mcpServers") {
+            Some(object @ Value::Object(_)) => {
+                servers_in(Some(object), file, &origin, false, &[], settings, command, servers)
+            }
+            Some(Value::String(relative)) => {
+                if let Some(path) = path_in(folder, relative) {
+                    let value = files.json(&path);
+                    servers_in(
+                        value.as_ref().map(project_map),
+                        &path,
+                        &origin,
+                        false,
+                        &[],
+                        settings,
+                        command,
+                        servers,
+                    );
+                    read.push(path);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mcp = folder.join(".mcp.json");
+    if !read.contains(&mcp) {
+        let value = files.json(&mcp);
+        servers_in(
+            value.as_ref().map(project_map),
+            &mcp,
+            &origin,
+            false,
+            &[],
+            settings,
+            command,
+            servers,
+        );
+    }
+    for s in &mut servers[first..] {
+        s.switch = Err(NoSwitch::Plugin(name.to_string()));
+    }
+
+    let skills_dir = match manifest.as_ref().and_then(|m| m.get("skills")) {
+        Some(Value::String(relative)) => path_in(folder, relative),
+        _ => Some(folder.join("skills")),
+    };
+    if let Some(dir) = skills_dir {
+        skills_in(files, skill_files(&dir), &origin, &[], settings, skills);
+    }
+}
+
+/// The plugins in `installedPlugins` of the user's `config.json` that are enabled and not turned off in the user's
+/// settings, each read from its folder.
+fn read_plugins(
+    files: &mut Files,
+    roots: &ExtRoots,
+    settings: &Settings,
+    command: &dyn Fn(&str) -> CommandState,
+    servers: &mut Vec<Server>,
+    skills: &mut Vec<Skill>,
+) {
+    let Some(Value::Array(entries)) = files.config_field(&roots.copilot_dir.join("config.json"), "installedPlugins")
+    else {
+        return;
+    };
+    let installed = roots.copilot_dir.join("installed-plugins");
+    let user_settings = files.json(&settings.file);
+    let mut seen = HashSet::new();
+    for entry in &entries {
+        let text = |key: &str| entry.get(key).and_then(Value::as_str);
+        let (Some(name), Some(marketplace)) = (text("name"), text("marketplace")) else {
+            continue;
+        };
+        if entry.get("enabled") != Some(&Value::Bool(true)) || !safe_part(name) || !safe_part(marketplace) {
+            continue;
+        }
+        let key = format!("{name}@{marketplace}");
+        let turned_off = user_settings
+            .as_ref()
+            .and_then(|s| s.get("enabledPlugins")?.get(&key))
+            .is_some_and(|v| *v == Value::Bool(false));
+        let folder = match entry.get("cache_path") {
+            None | Some(Value::Null) => Some(installed.join(marketplace).join(name)),
+            Some(Value::String(path)) => folder_inside(&installed, path),
+            Some(_) => None,
+        };
+        if let (false, Some(folder)) = (turned_off, folder)
+            && seen.insert(key)
+        {
+            read_plugin(files, &folder, name, settings, command, servers, skills);
+        }
+    }
+}
+
 /// `command` judges a stdio server's command. `projects` are the folders to read project files in. The servers come
-/// from `mcp-config.json` and each project's `.mcp.json`, plus the GitHub server Copilot loads itself.
+/// from `mcp-config.json`, each project's `.mcp.json` and the installed plugins, plus the GitHub server Copilot loads
+/// itself. The skills come from Copilot's and the user's folders, each project's and the plugins'.
 pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) -> CommandState) -> Inventory {
     let mut files = Files::default();
     let mut servers = Vec::new();
+    let mut skills = Vec::new();
     let settings_file = roots.copilot_dir.join("settings.json");
     let settings = Settings {
         disabled: files.disabled(&settings_file, DISABLED_SERVERS),
+        disabled_skills: files.disabled(&settings_file, DISABLED_SKILLS),
         file: settings_file,
     };
 
@@ -315,22 +722,50 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
         &mut servers,
     );
 
+    let mut user_skills = vec![roots.copilot_dir.join("skills")];
+    if !roots.copilot_home_set {
+        user_skills.push(roots.home.join(".agents").join("skills"));
+    }
+    for dir in user_skills {
+        skills_in(
+            &mut files,
+            skill_files(&dir),
+            &Origin::User,
+            &[],
+            &settings,
+            &mut skills,
+        );
+    }
+
+    // Installed plugins.
+    read_plugins(&mut files, roots, &settings, command, &mut servers, &mut skills);
+
     // Projects. `trustedFolders` is read once, when a project has a server to start.
     let mut trusted_list: Option<Vec<String>> = None;
     for project in projects {
+        let found: Vec<(String, PathBuf)> = [".github", ".agents", ".claude"]
+            .iter()
+            .flat_map(|dir| skill_files(&project.join(dir).join("skills")))
+            .collect();
+        if !found.is_empty() {
+            let off = project_off(&mut files, project, "disabledSkills");
+            skills_in(
+                &mut files,
+                found,
+                &Origin::Project(project.clone()),
+                &off,
+                &settings,
+                &mut skills,
+            );
+        }
+
         let mcp_file = project.join(".mcp.json");
         let mcp = files.json(&mcp_file);
         let map = mcp.as_ref().map(project_map);
         if !map.and_then(Value::as_object).is_some_and(|m| !m.is_empty()) {
             continue;
         }
-        let mut extra_off = Vec::new();
-        for name in ["settings.json", "settings.local.json"] {
-            let file = project.join(".github").join("copilot").join(name);
-            extra_off.extend(strings(
-                files.json(&file).as_ref().and_then(|v| v.get("disabledMcpServers")),
-            ));
-        }
+        let extra_off = project_off(&mut files, project, "disabledMcpServers");
         let list =
             trusted_list.get_or_insert_with(|| trusted_folders(&mut files, &roots.copilot_dir.join("config.json")));
         servers_in(
@@ -361,14 +796,20 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
     }
 
     report_only_when_name_is_shared(&mut servers);
+    settle_skills(&mut skills);
 
     Inventory {
         agent: "copilot",
         distro: None,
         found: true,
-        caps: Caps::default(),
+        // Copilot cuts no description. It names the skills past its listing budget.
+        caps: Caps {
+            per_skill: None,
+            listing_first_line_over: None,
+            listing_named_over: Some(LISTING_BUDGET),
+        },
         servers,
-        skills: Vec::new(),
+        skills,
         unreadable: files.unreadable,
         hints: Hints {
             move_server: |_, project| {
@@ -732,6 +1173,34 @@ mod tests {
         let inv = inventory(&r, std::slice::from_ref(&project), &found);
         assert!(in_project(&inv, "p", &project).launch.is_ok());
         assert!(!format!("{inv:?}").contains("SECRET-6N3"));
+
+        // The same with `installedPlugins` in it: an entry's other fields and the rest of the file stay out.
+        let plugin = r.copilot_dir.join("installed-plugins").join("mk").join("pl");
+        put(
+            &plugin.join("plugin.json"),
+            r#"{"mcpServers": {"ps": {"command": "c"}}}"#,
+        );
+        skill_md(&plugin.join("skills"), "ps", &md(None, Some("d")));
+        put(
+            &r.copilot_dir.join("config.json"),
+            &format!(
+                "// User settings\n{{\"token\": \"SECRET-6N3\", \"copilot_tokens\": {{\"a\": \"SECRET-6N3\"}}, \"trustedFolders\": [{:?}], \"installedPlugins\": [{{\"name\": \"pl\", \"marketplace\": \"mk\", \"enabled\": true, \"token\": \"SECRET-6N3\", \"auth\": {{\"k\": \"SECRET-6N3\"}}}}]}}",
+                project.to_string_lossy()
+            ),
+        );
+        let inv = inventory(&r, std::slice::from_ref(&project), &found);
+        assert!(in_project(&inv, "p", &project).launch.is_ok());
+        assert!(has_server(&inv, "ps") && has_skill(&inv, "pl:ps"));
+        assert!(!format!("{inv:?}").contains("SECRET-6N3"));
+
+        // And with a config.json that doesn't parse.
+        put(
+            &r.copilot_dir.join("config.json"),
+            "{\"installedPlugins\": [], \"token\": \"SECRET-6N3\" oops}",
+        );
+        let inv = inventory(&r, std::slice::from_ref(&project), &found);
+        assert_eq!(inv.unreadable.len(), 1);
+        assert!(!format!("{inv:?}").contains("SECRET-6N3"));
     }
 
     #[test]
@@ -977,5 +1446,869 @@ mod tests {
             (inv.hints.move_server)("a", project),
             r"To load it only there, move its entry to mcpServers in C:\dev\p\.mcp.json."
         );
+        assert_eq!(
+            (inv.hints.move_skill)("a", project),
+            r"To load it only there, move its folder to C:\dev\p\.github\skills."
+        );
+    }
+
+    // ---- skills ----
+
+    fn skill_md(dir: &Path, folder: &str, text: &str) -> PathBuf {
+        let file = dir.join(folder).join("SKILL.md");
+        put(&file, text);
+        file
+    }
+
+    fn md(name: Option<&str>, description: Option<&str>) -> String {
+        let mut text = String::from("---\n");
+        if let Some(n) = name {
+            text.push_str(&format!("name: {n}\n"));
+        }
+        if let Some(d) = description {
+            text.push_str(&format!("description: {d}\n"));
+        }
+        text.push_str("---\nThe body.\n");
+        text
+    }
+
+    fn skill_of<'a>(inv: &'a Inventory, name: &str) -> &'a Skill {
+        inv.skills.iter().find(|s| s.name == name).unwrap_or_else(|| {
+            panic!(
+                "no skill {name}: {:?}",
+                inv.skills.iter().map(|s| &s.name).collect::<Vec<_>>()
+            )
+        })
+    }
+
+    fn skill_in<'a>(inv: &'a Inventory, name: &str, project: &Path) -> &'a Skill {
+        inv.skills
+            .iter()
+            .find(|s| s.name == name && s.origin == Origin::Project(project.to_path_buf()))
+            .unwrap_or_else(|| panic!("no skill {name} in {}", project.display()))
+    }
+
+    fn by_folder<'a>(inv: &'a Inventory, folder: &str) -> &'a Skill {
+        inv.skills
+            .iter()
+            .find(|s| s.file.parent().and_then(Path::file_name).is_some_and(|f| f == folder))
+            .unwrap_or_else(|| panic!("no skill in folder {folder}"))
+    }
+
+    fn skill_switch(r: &ExtRoots, name: &str) -> Result<Switch, NoSwitch> {
+        Ok(Switch::JsonAdd {
+            file: r.copilot_dir.join("settings.json"),
+            pointer: "/disabledSkills".into(),
+            name: name.into(),
+        })
+    }
+
+    fn named_only(inv: &Inventory) -> Vec<String> {
+        let mut names: Vec<String> = inv
+            .skills
+            .iter()
+            .filter(|s| s.name_only)
+            .map(|s| s.name.clone())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn skills_come_from_copilots_own_folders_and_never_from_claudes_user_folder() {
+        let h = tempfile::tempdir().unwrap();
+        let mut r = roots(h.path());
+        let project = h.path().join("proj");
+        skill_md(&r.copilot_dir.join("skills"), "own", &md(None, Some("d")));
+        skill_md(&r.copilot_dir.join("skills"), ".dot", &md(None, Some("d")));
+        skill_md(&h.path().join(".agents").join("skills"), "shared", &md(None, Some("d")));
+        skill_md(
+            &h.path().join(".claude").join("skills"),
+            "claudes",
+            &md(None, Some("d")),
+        );
+        skill_md(&project.join(".github").join("skills"), "gh", &md(None, Some("d")));
+        skill_md(&project.join(".agents").join("skills"), "ag", &md(None, Some("d")));
+        skill_md(&project.join(".claude").join("skills"), "cl", &md(None, Some("d")));
+        skill_md(&project.join(".copilot").join("skills"), "nope", &md(None, Some("d")));
+
+        let inv = inventory(&r, std::slice::from_ref(&project), &found);
+
+        let mut names: Vec<&str> = inv.skills.iter().map(|s| s.name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, ["ag", "cl", "gh", "own", "shared"]);
+        assert_eq!(skill_of(&inv, "own").origin, Origin::User);
+        assert_eq!(
+            skill_of(&inv, "own").file,
+            r.copilot_dir.join("skills").join("own").join("SKILL.md")
+        );
+        assert_eq!(skill_of(&inv, "shared").origin, Origin::User);
+        for n in ["gh", "ag", "cl"] {
+            assert_eq!(skill_of(&inv, n).origin, Origin::Project(project.clone()), "{n}");
+        }
+        assert_eq!(inv.caps.per_skill, None);
+        assert_eq!(inv.caps.listing_first_line_over, None);
+        assert_eq!(inv.caps.listing_named_over, Some(15_000));
+
+        // With COPILOT_HOME set Copilot skips ~/.agents/skills.
+        r.copilot_home_set = true;
+        let inv = inventory(&r, std::slice::from_ref(&project), &found);
+        assert!(inv.skills.iter().all(|s| s.name != "shared"));
+        assert!(inv.skills.iter().any(|s| s.name == "own"));
+    }
+
+    #[test]
+    fn a_skills_name_is_its_frontmatters_or_its_folders_and_the_rules_decide_its_state() {
+        let h = tempfile::tempdir().unwrap();
+        let r = roots(h.path());
+        let dir = r.copilot_dir.join("skills");
+        let rep = |c: &str, n: usize| c.repeat(n);
+        let cases: Vec<(&str, String, String, SkillState)> = vec![
+            (
+                "nob",
+                "just text, no frontmatter\n".into(),
+                "nob".into(),
+                SkillState::NoBlock,
+            ),
+            (
+                "open",
+                "---\nname: open\ndescription: d\n".into(),
+                "open".into(),
+                SkillState::NoBlock,
+            ),
+            ("n64", md(Some(&rep("n", 64)), Some("d")), rep("n", 64), SkillState::Ok),
+            (
+                "n65",
+                md(Some(&rep("n", 65)), Some("d")),
+                rep("n", 65),
+                SkillState::TooLong("name", 64),
+            ),
+            (
+                "both",
+                md(Some(&rep("m", 65)), Some(&rep("d", 2000))),
+                rep("m", 65),
+                SkillState::TooLong("name", 64),
+            ),
+            (
+                "bang",
+                md(Some("bad!name"), Some("d")),
+                "bad!name".into(),
+                SkillState::BadName,
+            ),
+            (
+                "lead",
+                md(Some("-lead"), Some("d")),
+                "-lead".into(),
+                SkillState::BadName,
+            ),
+            ("uni", md(Some("café"), Some("d")), "café".into(), SkillState::BadName),
+            (
+                "fine",
+                md(Some("a b:c.d_e-f"), Some("d")),
+                "a b:c.d_e-f".into(),
+                SkillState::Ok,
+            ),
+            ("d1024", md(None, Some(&rep("d", 1024))), "d1024".into(), SkillState::Ok),
+            (
+                "d1025",
+                md(None, Some(&rep("d", 1025))),
+                "d1025".into(),
+                SkillState::TooLong("description", 1024),
+            ),
+            ("wide", md(None, Some(&rep("é", 1024))), "wide".into(), SkillState::Ok),
+            (
+                "wider",
+                md(None, Some(&rep("é", 1025))),
+                "wider".into(),
+                SkillState::TooLong("description", 1024),
+            ),
+            ("noname", md(None, Some("d")), "noname".into(), SkillState::Ok),
+            ("nodesc", md(Some("nodesc"), None), "nodesc".into(), SkillState::Ok),
+            (
+                "unclear",
+                format!("---\nname: unclear\nnot a pair\ndescription: {}\n---\n", rep("d", 2000)),
+                "unclear".into(),
+                SkillState::Ok,
+            ),
+        ];
+        for (folder, text, _, _) in &cases {
+            skill_md(&dir, folder, text);
+        }
+
+        let inv = inventory(&r, &[], &found);
+
+        for (folder, _, name, state) in cases {
+            let s = by_folder(&inv, folder);
+            assert_eq!(s.name, name, "{folder}");
+            assert_eq!(s.state, state, "{folder}");
+        }
+    }
+
+    #[test]
+    fn what_a_skill_lists_is_its_description_or_the_first_line_of_its_body() {
+        let h = tempfile::tempdir().unwrap();
+        let r = roots(h.path());
+        let dir = r.copilot_dir.join("skills");
+        skill_md(
+            &dir,
+            "desc",
+            "---\nname: desc\ndescription:   abcde  \n---\nBody line.\n",
+        );
+        skill_md(
+            &dir,
+            "body",
+            "\u{feff}---\r\nname: body\r\n---\r\n\r\n  First line here  \r\nsecond\r\n",
+        );
+        skill_md(&dir, "empty", "---\nname: empty\n---\n\n\n");
+        skill_md(
+            &dir,
+            "blank",
+            "---\nname: blank\ndescription: \"\"\n---\nFrom the body\n",
+        );
+
+        let inv = inventory(&r, &[], &found);
+
+        assert_eq!(skill_of(&inv, "desc").listed_chars, 5);
+        assert_eq!(skill_of(&inv, "body").listed_chars, "First line here".len());
+        assert_eq!(skill_of(&inv, "empty").listed_chars, 0);
+        assert_eq!(skill_of(&inv, "blank").listed_chars, "From the body".len());
+        assert!(inv.skills.iter().all(|s| s.state == SkillState::Ok));
+    }
+
+    #[test]
+    fn disabled_skills_match_exactly_and_a_projects_own_settings_turn_off_its_skills_only() {
+        let h = tempfile::tempdir().unwrap();
+        let r = roots(h.path());
+        let (p1, p2) = (h.path().join("p1"), h.path().join("p2"));
+        put(
+            &r.copilot_dir.join("settings.json"),
+            "{\n  // mine\n  \"disabledSkills\": [\"good-skill\", \"u-off\",],\n}\n",
+        );
+        let user = r.copilot_dir.join("skills");
+        for n in ["good-skill", "u-off", "plain"] {
+            skill_md(&user, n, &md(None, Some("d")));
+        }
+        // The folder has another name: the skill's name is its frontmatter's, and a file system may ignore case.
+        skill_md(&user, "upper", &md(Some("Good-Skill"), Some("d")));
+        for p in [&p1, &p2] {
+            for n in ["a", "b", "c"] {
+                skill_md(&p.join(".github").join("skills"), n, &md(None, Some("d")));
+            }
+        }
+        skill_md(&p1.join(".github").join("skills"), "only1", &md(None, Some("d")));
+        put(
+            &p1.join(".github").join("copilot").join("settings.json"),
+            r#"{"disabledSkills": ["a"]}"#,
+        );
+        put(
+            &p1.join(".github").join("copilot").join("settings.local.json"),
+            r#"{"disabledSkills": ["b", 7]}"#,
+        );
+        put(
+            &p1.join(".github").join("copilot").join("other.json"),
+            r#"{"disabledSkills": ["c"]}"#,
+        );
+
+        let inv = inventory(&r, &[p1.clone(), p2.clone()], &found);
+
+        assert!(skill_of(&inv, "good-skill").off);
+        assert!(skill_of(&inv, "u-off").off);
+        assert!(!skill_of(&inv, "Good-Skill").off, "the match is exact");
+        assert!(!skill_of(&inv, "plain").off);
+        assert!(skill_in(&inv, "a", &p1).off);
+        assert!(skill_in(&inv, "b", &p1).off);
+        assert!(!skill_in(&inv, "c", &p1).off);
+        assert!(!skill_in(&inv, "a", &p2).off, "another project's settings don't count");
+        // The switch always writes the user's settings, for a project's skill too.
+        assert_eq!(skill_in(&inv, "only1", &p1).switch, skill_switch(&r, "only1"));
+        assert_eq!(skill_of(&inv, "plain").switch, skill_switch(&r, "plain"));
+        // A user list that names a project's skill turns it off.
+        put(&r.copilot_dir.join("settings.json"), r#"{"disabledSkills": ["c"]}"#);
+        let inv = inventory(&r, &[p1.clone(), p2.clone()], &found);
+        assert!(skill_in(&inv, "c", &p1).off && skill_in(&inv, "c", &p2).off);
+    }
+
+    #[test]
+    fn a_disabled_skills_list_that_isnt_an_array_of_strings_leaves_every_skill_with_no_switch() {
+        let h = tempfile::tempdir().unwrap();
+        let r = roots(h.path());
+        let settings = r.copilot_dir.join("settings.json");
+        skill_md(&r.copilot_dir.join("skills"), "a", &md(None, Some("d")));
+        for text in [
+            r#"{"disabledSkills": "a"}"#,
+            r#"{"disabledSkills": ["a", 1]}"#,
+            r#"{"disabledSkills": null}"#,
+            r#"{"disabledSkills": {"a": true}}"#,
+            r#"["a"]"#,
+            r#"{"disabledSkills": ["a"] oops"#,
+        ] {
+            put(&settings, text);
+            let inv = inventory(&r, &[], &found);
+            let a = skill_of(&inv, "a");
+            assert_eq!(a.switch, Err(NoSwitch::CantEdit(settings.clone())), "{text}");
+            assert!(!a.off, "{text}");
+        }
+        put(
+            &settings,
+            "\u{feff}{\r\n // c\r\n \"disabledSkills\": [\"a\",],\r\n}\r\n",
+        );
+        assert!(skill_of(&inventory(&r, &[], &found), "a").off);
+        put(&settings, "{}");
+        assert_eq!(skill_of(&inventory(&r, &[], &found), "a").switch, skill_switch(&r, "a"));
+    }
+
+    #[test]
+    fn a_skill_is_hidden_by_disable_model_invocation_and_is_used_by_its_file_or_its_name() {
+        let h = tempfile::tempdir().unwrap();
+        let r = roots(h.path());
+        let dir = r.copilot_dir.join("skills");
+        let quiet = skill_md(
+            &dir,
+            "quiet",
+            "---\nname: quiet\ndescription: d\ndisable-model-invocation: true\n---\n",
+        );
+        skill_md(
+            &dir,
+            "loud",
+            "---\nname: loud\ndescription: d\ndisable-model-invocation: false\n---\n",
+        );
+
+        let inv = inventory(&r, &[], &found);
+
+        assert!(skill_of(&inv, "quiet").hidden);
+        assert!(!skill_of(&inv, "loud").hidden);
+        assert_eq!(
+            skill_of(&inv, "quiet").used_as,
+            vec![SkillUse::File(quiet), SkillUse::Name("quiet".into())]
+        );
+    }
+
+    #[test]
+    fn a_personal_skill_a_project_skill_shadows_is_off_and_live_twins_are_report_only() {
+        let h = tempfile::tempdir().unwrap();
+        let r = roots(h.path());
+        let (p1, p2) = (h.path().join("p1"), h.path().join("p2"));
+        let user = r.copilot_dir.join("skills");
+        for n in ["shared", "solo", "Twin"] {
+            skill_md(&user, n, &md(None, Some("d")));
+        }
+        for p in [&p1, &p2] {
+            skill_md(&p.join(".github").join("skills"), "twin", &md(None, Some("d")));
+        }
+        skill_md(&p1.join(".github").join("skills"), "shared", &md(None, Some("d")));
+
+        let inv = inventory(&r, &[p1.clone(), p2.clone()], &found);
+
+        assert!(skill_of(&inv, "shared").off, "Copilot skips it for the project's");
+        assert!(!skill_in(&inv, "shared", &p1).off);
+        assert_eq!(skill_in(&inv, "shared", &p1).switch, skill_switch(&r, "shared"));
+        assert_eq!(skill_of(&inv, "solo").switch, skill_switch(&r, "solo"));
+        assert_eq!(skill_in(&inv, "twin", &p1).switch, Err(NoSwitch::SameName));
+        assert_eq!(skill_in(&inv, "twin", &p2).switch, Err(NoSwitch::SameName));
+        assert!(!skill_of(&inv, "Twin").off, "names that differ by case are two skills");
+        assert_eq!(skill_of(&inv, "Twin").switch, skill_switch(&r, "Twin"));
+
+        // One twin already off through its project's settings frees the other.
+        put(
+            &p2.join(".github").join("copilot").join("settings.json"),
+            r#"{"disabledSkills": ["twin"]}"#,
+        );
+        let inv = inventory(&r, &[p1.clone(), p2.clone()], &found);
+        assert!(skill_in(&inv, "twin", &p2).off);
+        assert_eq!(skill_in(&inv, "twin", &p1).switch, skill_switch(&r, "twin"));
+    }
+
+    #[test]
+    fn two_hundred_skills_are_described_131_and_named_69_as_copilot_did() {
+        // Research note, finding 6: 19 + 131 * (8 + 15 + 91) = 14,953, and the next entry would make 15,067.
+        let h = tempfile::tempdir().unwrap();
+        let r = roots(h.path());
+        for i in 0..200 {
+            skill_md(
+                &r.copilot_dir.join("skills"),
+                &format!("skill{i:03}"),
+                &md(None, Some(&"d".repeat(15))),
+            );
+        }
+        let inv = inventory(&r, &[], &found);
+        assert_eq!(inv.skills.len(), 200);
+        let named = named_only(&inv);
+        assert_eq!(named.len(), 69);
+        assert_eq!(named[0], "skill131");
+        assert_eq!(named[68], "skill199");
+
+        let h = tempfile::tempdir().unwrap();
+        let r = roots(h.path());
+        for i in 0..10 {
+            skill_md(
+                &r.copilot_dir.join("skills"),
+                &format!("small{i}"),
+                &md(None, Some("short")),
+            );
+        }
+        assert!(named_only(&inventory(&r, &[], &found)).is_empty());
+    }
+
+    #[test]
+    fn the_budget_is_spent_on_project_skills_first_and_on_listed_skills_only() {
+        let h = tempfile::tempdir().unwrap();
+        let r = roots(h.path());
+        let project = h.path().join("proj");
+        let pdir = project.join(".github").join("skills");
+        for i in 0..131 {
+            skill_md(&pdir, &format!("proj{i:04}"), &md(None, Some(&"d".repeat(15))));
+        }
+        // None of these takes from the budget: hidden, off, and one Copilot refuses.
+        skill_md(
+            &pdir,
+            "0hidden",
+            &format!(
+                "---\nname: 0hidden\ndescription: {}\ndisable-model-invocation: true\n---\n",
+                "h".repeat(1000)
+            ),
+        );
+        skill_md(&pdir, "0off", &md(None, Some(&"o".repeat(1000))));
+        skill_md(&pdir, "0long", &md(None, Some(&"l".repeat(1025))));
+        put(&r.copilot_dir.join("settings.json"), r#"{"disabledSkills": ["0off"]}"#);
+        // Sorts before every project skill by name, and is still listed after them.
+        skill_md(
+            &r.copilot_dir.join("skills"),
+            "aaaaaaaa",
+            &md(None, Some(&"d".repeat(15))),
+        );
+
+        let inv = inventory(&r, std::slice::from_ref(&project), &found);
+
+        assert_eq!(named_only(&inv), ["aaaaaaaa"]);
+        assert!(!skill_in(&inv, "0hidden", &project).name_only);
+        assert!(!skill_in(&inv, "0off", &project).name_only);
+        assert!(!skill_in(&inv, "0long", &project).name_only);
+    }
+
+    #[test]
+    fn a_skill_that_makes_the_listing_exactly_15000_is_described_and_one_more_character_is_not() {
+        let build = |last: usize| {
+            let h = tempfile::tempdir().unwrap();
+            let r = roots(h.path());
+            let dir = r.copilot_dir.join("skills");
+            // 19 + 14 * (3 + 906 + 91) = 14,019.
+            for i in 0..14 {
+                skill_md(&dir, &format!("s{i:02}"), &md(None, Some(&"d".repeat(906))));
+            }
+            // s14 costs 3 + last + 91: 887 makes 15,000 exactly.
+            skill_md(&dir, "s14", &md(None, Some(&"d".repeat(last))));
+            skill_md(&dir, "s15", &md(None, Some("d")));
+            named_only(&inventory(&r, &[], &found))
+        };
+        assert_eq!(build(887), ["s15"]);
+        assert_eq!(build(888), ["s14", "s15"]);
+    }
+
+    #[test]
+    fn a_skill_file_over_the_size_limit_is_not_read_and_is_reported() {
+        let h = tempfile::tempdir().unwrap();
+        let r = roots(h.path());
+        let dir = r.copilot_dir.join("skills");
+        let mut text = md(None, Some("d"));
+        text.push_str(&" ".repeat(MAX_CONFIG_BYTES as usize));
+        let big = skill_md(&dir, "big", &text);
+        skill_md(&dir, "small", &md(None, Some("d")));
+
+        let inv = inventory(&r, &[], &found);
+
+        assert!(inv.skills.iter().all(|s| s.name != "big"));
+        assert!(inv.skills.iter().any(|s| s.name == "small"));
+        assert_eq!(inv.unreadable, vec![(big, TOO_LARGE_DETAIL.to_string())]);
+    }
+
+    // ---- plugins ----
+
+    fn installed(r: &ExtRoots) -> PathBuf {
+        r.copilot_dir.join("installed-plugins")
+    }
+
+    /// `config.json` as Copilot writes it, with its two `//` lines, holding `installedPlugins`.
+    fn plugins_config(r: &ExtRoots, plugins: &serde_json::Value) {
+        put(
+            &r.copilot_dir.join("config.json"),
+            &format!(
+                "// User settings\n// Edit with care\n{}\n",
+                serde_json::json!({"installedPlugins": plugins})
+            ),
+        );
+    }
+
+    fn has_server(inv: &Inventory, name: &str) -> bool {
+        inv.servers.iter().any(|s| s.name == name)
+    }
+
+    fn has_skill(inv: &Inventory, name: &str) -> bool {
+        inv.skills.iter().any(|s| s.name == name)
+    }
+
+    /// A plugin folder with a manifest that holds one stdio server named `server`.
+    fn plugin_with_server(dir: &Path, server: &str) {
+        put(
+            &dir.join("plugin.json"),
+            &serde_json::json!({"mcpServers": {server: {"command": "c"}}}).to_string(),
+        );
+    }
+
+    #[test]
+    fn an_enabled_plugins_servers_and_skills_are_listed_and_none_can_be_switched() {
+        let h = tempfile::tempdir().unwrap();
+        let r = roots(h.path());
+        let dir = installed(&r).join("mk").join("good");
+        put(
+            &dir.join("plugin.json"),
+            r#"{"name": "good", "mcpServers": {"s1": {"command": "c"}, "web": {"url": "u"}}}"#,
+        );
+        put(&dir.join(".mcp.json"), r#"{"mcpServers": {"s2": {"command": "c"}}}"#);
+        let foo = skill_md(&dir.join("skills"), "foo", &md(None, Some("plugin skill")));
+        plugins_config(
+            &r,
+            &serde_json::json!([{"name": "good", "marketplace": "mk", "enabled": true, "version": "1.0"}]),
+        );
+
+        let inv = inventory(&r, &[], &found);
+
+        let s1 = server(&inv, "s1");
+        assert_eq!(s1.origin, Origin::Plugin("good".into()));
+        assert_eq!(s1.file, dir.join("plugin.json"));
+        assert_eq!(s1.switch, Err(NoSwitch::Plugin("good".into())));
+        assert_eq!(s1.launch, Err(NotMeasured::NotApproved));
+        assert_eq!(
+            s1.transport,
+            Transport::Stdio {
+                command: "c".into(),
+                state: CommandState::Found
+            }
+        );
+        assert_eq!(s1.used_as, UsedAs::Server("s1".into()));
+        let web = server(&inv, "web");
+        assert_eq!(web.launch, Err(NotMeasured::Remote));
+        assert_eq!(web.switch, Err(NoSwitch::Plugin("good".into())));
+        let s2 = server(&inv, "s2");
+        assert_eq!(s2.file, dir.join(".mcp.json"));
+        assert_eq!(s2.origin, Origin::Plugin("good".into()));
+
+        let skill = skill_of(&inv, "good:foo");
+        assert_eq!(skill.origin, Origin::Plugin("good".into()));
+        assert_eq!(skill.switch, Err(NoSwitch::Plugin("good".into())));
+        assert_eq!(skill.file, foo);
+        assert_eq!(
+            skill.used_as,
+            vec![SkillUse::File(foo), SkillUse::Name("good:foo".into())]
+        );
+        assert!(inv.unreadable.is_empty());
+    }
+
+    #[test]
+    fn a_plugin_is_read_only_when_it_is_enabled_and_the_users_settings_dont_turn_it_off() {
+        let h = tempfile::tempdir().unwrap();
+        let r = roots(h.path());
+        let names = ["on", "flag-off", "muted", "no-flag", "str-flag", "listed-on"];
+        for n in names {
+            plugin_with_server(&installed(&r).join("mk").join(n), &format!("srv-{n}"));
+        }
+        plugins_config(
+            &r,
+            &serde_json::json!([
+                {"name": "on", "marketplace": "mk", "enabled": true},
+                {"name": "flag-off", "marketplace": "mk", "enabled": false},
+                {"name": "muted", "marketplace": "mk", "enabled": true},
+                {"name": "no-flag", "marketplace": "mk"},
+                {"name": "str-flag", "marketplace": "mk", "enabled": "true"},
+                {"name": "listed-on", "marketplace": "mk", "enabled": true},
+                {"name": "on", "marketplace": "mk", "enabled": true},
+            ]),
+        );
+        put(
+            &r.copilot_dir.join("settings.json"),
+            r#"{"enabledPlugins": {"muted@mk": false, "listed-on@mk": true, "flag-off@mk": true}}"#,
+        );
+
+        let inv = inventory(&r, &[], &found);
+
+        let mut seen: Vec<&str> = inv
+            .servers
+            .iter()
+            .filter(|s| matches!(s.origin, Origin::Plugin(_)))
+            .map(|s| s.name.as_str())
+            .collect();
+        seen.sort();
+        assert_eq!(seen, ["srv-listed-on", "srv-on"], "a plugin listed twice is read once");
+    }
+
+    #[test]
+    fn a_plugins_manifest_is_the_first_of_four_and_its_paths_are_followed_inside_its_folder() {
+        let h = tempfile::tempdir().unwrap();
+        let r = roots(h.path());
+        let mk = installed(&r).join("mk");
+        // Two manifests: the first in Copilot's order wins.
+        put(
+            &mk.join("first").join(".github").join("plugin").join("plugin.json"),
+            r#"{"mcpServers": {"from-github": {"command": "c"}}}"#,
+        );
+        put(
+            &mk.join("first").join(".claude-plugin").join("plugin.json"),
+            r#"{"mcpServers": {"from-claude": {"command": "c"}}}"#,
+        );
+        put(
+            &mk.join("dot").join(".plugin").join("plugin.json"),
+            r#"{"mcpServers": {"from-dot": {"command": "c"}}}"#,
+        );
+        put(
+            &mk.join("claude").join(".claude-plugin").join("plugin.json"),
+            r#"{"mcpServers": {"only-claude": {"command": "c"}}}"#,
+        );
+        // A path to a file, with and without the `mcpServers` wrapper, and a skills folder of its own.
+        put(
+            &mk.join("paths").join("plugin.json"),
+            r#"{"mcpServers": "./sub/../conf/servers.json", "skills": "./custom"}"#,
+        );
+        put(
+            &mk.join("paths").join("conf").join("servers.json"),
+            r#"{"bare": {"command": "c"}}"#,
+        );
+        skill_md(&mk.join("paths").join("custom"), "mine", &md(None, Some("d")));
+        skill_md(&mk.join("paths").join("skills"), "default", &md(None, Some("d")));
+        put(
+            &mk.join("wrapped").join("plugin.json"),
+            r#"{"mcpServers": "conf.json"}"#,
+        );
+        put(
+            &mk.join("wrapped").join("conf.json"),
+            r#"{"mcpServers": {"wrapped-srv": {"command": "c"}}}"#,
+        );
+        // The manifest names `.mcp.json` itself: its servers are listed once.
+        put(
+            &mk.join("again").join("plugin.json"),
+            r#"{"mcpServers": "./.mcp.json"}"#,
+        );
+        put(
+            &mk.join("again").join(".mcp.json"),
+            r#"{"mcpServers": {"again-srv": {"command": "c"}}}"#,
+        );
+        plugins_config(
+            &r,
+            &serde_json::json!(
+                ["first", "dot", "claude", "paths", "wrapped", "again"]
+                    .map(|n| serde_json::json!({"name": n, "marketplace": "mk", "enabled": true}))
+            ),
+        );
+
+        let inv = inventory(&r, &[], &found);
+
+        assert!(has_server(&inv, "from-github") && !has_server(&inv, "from-claude"));
+        assert!(has_server(&inv, "from-dot") && has_server(&inv, "only-claude"));
+        assert!(has_server(&inv, "bare") && has_server(&inv, "wrapped-srv"));
+        assert_eq!(
+            server(&inv, "bare").file,
+            mk.join("paths").join("conf").join("servers.json")
+        );
+        assert!(has_skill(&inv, "paths:mine"), "the manifest's skills folder");
+        assert!(
+            !has_skill(&inv, "paths:default"),
+            "the default folder only when the manifest names none"
+        );
+        assert_eq!(inv.servers.iter().filter(|s| s.name == "again-srv").count(), 1);
+    }
+
+    #[test]
+    fn a_cache_path_is_followed_only_inside_the_installed_plugins_folder() {
+        let h = tempfile::tempdir().unwrap();
+        let r = roots(h.path());
+        let ip = installed(&r);
+        let ip_text = ip.to_string_lossy().into_owned();
+        // Each folder holds a server; only the ones inside `installed-plugins` may be read.
+        let refused = [
+            ("out", h.path().join("elsewhere").join("p1")),
+            ("evil", r.copilot_dir.join("installed-plugins-evil").join("p2")),
+            ("dots", r.copilot_dir.join("outside").join("p3")),
+            ("root", ip.clone()),
+            ("deep", r.copilot_dir.join("outside2").join("p6")),
+            ("parent", r.copilot_dir.clone()),
+        ];
+        for (n, dir) in &refused {
+            plugin_with_server(dir, &format!("leak-{n}"));
+        }
+        plugin_with_server(&ip.join("mk").join("p7"), "inside-slashes");
+        plugin_with_server(&ip.join("mk").join("p8"), "inside-case");
+        plugin_with_server(&ip.join("p9"), "inside-plain");
+        let entry = |n: &str, path: String| serde_json::json!({"name": n, "marketplace": "mk", "enabled": true, "cache_path": path});
+        plugins_config(
+            &r,
+            &serde_json::json!([
+                entry("out", refused[0].1.to_string_lossy().into_owned()),
+                entry("evil", refused[1].1.to_string_lossy().into_owned()),
+                entry("dots", format!("{ip_text}/../outside/p3")),
+                entry("root", ip_text.clone()),
+                entry("deep", format!("{ip_text}\\x\\..\\..\\outside2\\p6")),
+                entry("parent", format!("{ip_text}/..")),
+                entry("p7", format!("{ip_text}\\mk\\sub\\..\\p7")),
+                entry("p8", format!("{}/mk/p8", ip_text.to_uppercase())),
+                entry("p9a", format!("{ip_text}/")),
+                entry("p9", format!("{ip_text}/p9/")),
+            ]),
+        );
+
+        let inv = inventory(&r, &[], &found);
+
+        for (n, _) in &refused {
+            assert!(!has_server(&inv, &format!("leak-{n}")), "{n} is outside");
+        }
+        assert!(has_server(&inv, "inside-slashes"));
+        assert!(has_server(&inv, "inside-plain"));
+        // Case counts on Linux and macOS and not on Windows.
+        assert_eq!(has_server(&inv, "inside-case"), cfg!(windows));
+        assert!(inv.unreadable.is_empty());
+    }
+
+    #[test]
+    fn a_manifest_path_that_leaves_the_plugins_folder_is_not_followed() {
+        let h = tempfile::tempdir().unwrap();
+        let r = roots(h.path());
+        let mk = installed(&r).join("mk");
+        let outside = h.path().join("outside.json");
+        put(&outside, r#"{"mcpServers": {"esc-abs": {"command": "c"}}}"#);
+        put(
+            &mk.join("esc.json"),
+            r#"{"mcpServers": {"esc-dots": {"command": "c"}}}"#,
+        );
+        put(
+            &mk.join("esc2.json"),
+            r#"{"mcpServers": {"esc-deep": {"command": "c"}}}"#,
+        );
+        put(&mk.join("esc-skills").join("e").join("SKILL.md"), &md(None, Some("d")));
+        skill_md(&mk, "zz", &md(None, Some("d")));
+        skill_md(h.path(), "hh", &md(None, Some("d")));
+        let cases = [
+            ("a", serde_json::json!({"mcpServers": outside.to_string_lossy()})),
+            ("b", serde_json::json!({"mcpServers": "../esc.json"})),
+            ("c", serde_json::json!({"mcpServers": "sub/../../esc2.json"})),
+            ("d", serde_json::json!({"mcpServers": "C:/outside.json"})),
+            ("e", serde_json::json!({"mcpServers": "\\\\host\\share\\x.json"})),
+            ("f", serde_json::json!({"skills": "../esc-skills"})),
+            ("g", serde_json::json!({"skills": ".."})),
+            ("h", serde_json::json!({"skills": h.path().to_string_lossy()})),
+        ];
+        for (n, manifest) in &cases {
+            put(&mk.join(n).join("plugin.json"), &manifest.to_string());
+        }
+        plugins_config(
+            &r,
+            &serde_json::json!(
+                cases
+                    .iter()
+                    .map(|(n, _)| serde_json::json!({"name": n, "marketplace": "mk", "enabled": true}))
+                    .collect::<Vec<_>>()
+            ),
+        );
+
+        let inv = inventory(&r, &[], &found);
+
+        for n in ["esc-abs", "esc-dots", "esc-deep"] {
+            assert!(!has_server(&inv, n), "{n}");
+        }
+        assert!(
+            inv.skills.is_empty(),
+            "{:?}",
+            inv.skills.iter().map(|s| &s.name).collect::<Vec<_>>()
+        );
+        assert!(inv.unreadable.is_empty());
+    }
+
+    #[test]
+    fn a_plugin_whose_name_or_marketplace_would_leave_the_folder_gives_no_plugin_and_no_failure() {
+        let h = tempfile::tempdir().unwrap();
+        let r = roots(h.path());
+        let ip = installed(&r);
+        plugin_with_server(&ip, "leak-root");
+        plugin_with_server(&r.copilot_dir.join("x"), "leak-up");
+        plugin_with_server(&ip.join("mk").join("a").join("b"), "leak-sep");
+        plugin_with_server(&h.path().join("abs"), "leak-abs");
+        let abs = h.path().join("abs").to_string_lossy().into_owned();
+        let bad: Vec<(&str, &str)> = vec![
+            ("..", "mk"),
+            ("x", ".."),
+            (".", "mk"),
+            ("a/b", "mk"),
+            ("a\\b", "mk"),
+            ("x", "C:"),
+            ("", "mk"),
+            ("x", ""),
+            (abs.as_str(), "mk"),
+            ("x", abs.as_str()),
+            ("x", "mk/../.."),
+        ];
+        plugins_config(
+            &r,
+            &serde_json::json!(
+                bad.iter()
+                    .map(|(n, m)| serde_json::json!({"name": n, "marketplace": m, "enabled": true}))
+                    .collect::<Vec<_>>()
+            ),
+        );
+
+        let inv = inventory(&r, &[], &found);
+
+        assert!(inv.servers.iter().all(|s| s.name == GITHUB_SERVER), "{:?}", inv.servers);
+        assert!(inv.skills.is_empty());
+        assert!(inv.unreadable.is_empty());
+    }
+
+    #[test]
+    fn installed_plugins_in_another_shape_give_no_plugin_and_no_failure() {
+        let h = tempfile::tempdir().unwrap();
+        let r = roots(h.path());
+        plugin_with_server(&installed(&r).join("mk").join("x"), "leak");
+        for shape in [
+            serde_json::json!("x"),
+            serde_json::json!({"x": {"name": "x", "marketplace": "mk", "enabled": true}}),
+            serde_json::json!([1, "x", null, [1]]),
+            serde_json::json!([{"marketplace": "mk", "enabled": true}]),
+            serde_json::json!([{"name": 5, "marketplace": "mk", "enabled": true}]),
+            serde_json::json!([{"name": "x", "marketplace": ["mk"], "enabled": true}]),
+            serde_json::json!([{"name": "x", "marketplace": "mk", "enabled": true, "cache_path": 5}]),
+            serde_json::json!(null),
+        ] {
+            plugins_config(&r, &shape);
+            let inv = inventory(&r, &[], &found);
+            assert!(!has_server(&inv, "leak"), "{shape}");
+            assert!(inv.unreadable.is_empty(), "{shape}");
+        }
+        // No config.json at all, or a settings.json whose enabledPlugins isn't an object.
+        std::fs::remove_file(r.copilot_dir.join("config.json")).unwrap();
+        assert!(!has_server(&inventory(&r, &[], &found), "leak"));
+        plugins_config(
+            &r,
+            &serde_json::json!([{"name": "x", "marketplace": "mk", "enabled": true}]),
+        );
+        for text in [
+            r#"{"enabledPlugins": "x@mk"}"#,
+            r#"{"enabledPlugins": ["x@mk"]}"#,
+            "[1]",
+        ] {
+            put(&r.copilot_dir.join("settings.json"), text);
+            assert!(has_server(&inventory(&r, &[], &found), "leak"), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_config_json_that_doesnt_parse_is_reported_once_though_two_fields_are_read() {
+        let h = tempfile::tempdir().unwrap();
+        let r = roots(h.path());
+        let project = h.path().join("proj");
+        put(&project.join(".mcp.json"), r#"{"mcpServers": {"p": {"command": "c"}}}"#);
+        let config = r.copilot_dir.join("config.json");
+        put(&config, "{\n  \"token\": \"SECRET-6N3\" oops\n}\n");
+
+        let inv = inventory(&r, std::slice::from_ref(&project), &found);
+
+        assert_eq!(inv.unreadable.iter().filter(|(p, _)| *p == config).count(), 1);
+        assert_eq!(inv.unreadable.len(), 1);
+        assert!(!format!("{inv:?}").contains("SECRET-6N3"));
+        assert!(inv.servers.iter().all(|s| !matches!(s.origin, Origin::Plugin(_))));
     }
 }
