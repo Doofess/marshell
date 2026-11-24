@@ -7,6 +7,7 @@ pub mod kept;
 pub mod notify;
 pub mod status;
 pub mod transcript;
+pub mod usage;
 pub mod writes;
 
 use serde_json::{Value, json};

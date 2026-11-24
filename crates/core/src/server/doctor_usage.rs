@@ -50,6 +50,7 @@ pub(crate) fn scan_all(st: &AppState, inv: &[Inventory], roots: Option<&ExtRoots
             "codex" => crate::agents::codex::usage::scan(roots, &before),
             "antigravity" => crate::agents::antigravity::usage::scan(roots, &before),
             "qwen" => crate::agents::qwen::usage::scan(roots, &before),
+            "copilot" => crate::agents::copilot::usage::scan(roots, &before),
             _ => continue,
         };
         merge(found.agents.entry(i.agent.to_string()).or_default(), scan, now_ms);
@@ -362,6 +363,62 @@ pub(in crate::server) mod tests {
             "{}",
             doc.diff
         );
+    }
+
+    #[tokio::test]
+    async fn copilot_events_feed_the_usage_store_and_an_unused_server_reaches_the_report() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, _) = ext_state(dir.path());
+        let copilot = roots_of(&st).copilot_dir;
+        let exe = program(dir.path());
+        write(
+            &copilot.join("mcp-config.json"),
+            &serde_json::json!({"mcpServers": {
+                "scratch-echo": {"command": exe.to_string_lossy()},
+                "idle-srv": {"command": exe.to_string_lossy()},
+            }})
+            .to_string(),
+        );
+        // The fixture's MCP call to `scratch-echo`, and an older session so the history covers the 30 days.
+        let uuid = "00000000-0000-4000-8000-000000000274";
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/copilot/transcripts/1.0.106")
+            .join(format!("{uuid}.jsonl"));
+        let events = |id: &str| copilot.join("session-state").join(id).join("events.jsonl");
+        write(&events(uuid), &std::fs::read_to_string(fixture).unwrap());
+        write(
+            &events("00000000-0000-4000-8000-000000000001"),
+            &format!(
+                "{{\"type\":\"session.start\",\"data\":{{}},\"id\":\"i\",\"timestamp\":\"{}\"}}\n",
+                iso(now_ms() - 40 * DAY)
+            ),
+        );
+        seed_first_sight(&st, 40);
+
+        run_and_wait(&st).await;
+        let usage = st.doctor().usage.lock().unwrap().clone().expect("a usage store");
+        let copilot_store = &usage.agents["copilot"];
+        assert!(
+            copilot_store.used.contains_key("server:scratch-echo"),
+            "{copilot_store:?}"
+        );
+        assert_eq!(copilot_store.unreadable, None);
+        assert!(on_disk(&st).agents["copilot"].used.contains_key("server:scratch-echo"));
+
+        let report = st.doctor().report.lock().unwrap().clone().expect("a report");
+        let unused: Vec<_> = report
+            .items
+            .iter()
+            .filter(|i| i.id.starts_with("mcpunused.copilot."))
+            .collect();
+        // The server nobody called, and the built-in GitHub server; the one the log shows is not among them.
+        let named = |n: &str| unused.iter().filter(|i| i.title.contains(n)).count();
+        assert_eq!(
+            (unused.len(), named("idle-srv"), named("github-mcp-server")),
+            (2, 1, 1),
+            "{unused:#?}"
+        );
+        assert_eq!(named("scratch-echo"), 0);
     }
 
     #[test]
