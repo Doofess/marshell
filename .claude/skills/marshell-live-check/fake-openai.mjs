@@ -8,6 +8,8 @@
 //   EDIT <path>     an edit replacing "marshell" with "marshell edited" (edit, str_replace_editor)
 //   READ <path>     a read call (read_file, view)
 //   ASK <question>  a question to the user with the answers "yes" and "no" (Copilot's ask_user, interactive runs only)
+//   CALL <tool> [json]  a call of the tool with exactly that name (an MCP server's tool, Copilot's skill tool), with the
+//                   JSON object as its arguments, or with arguments filled from the tool's schema when none is given
 // After a tool result, or for any other text, it replies with the text "done".
 // Argument names are read from the tool's schema in the request, so a renamed parameter still gets a value.
 
@@ -87,10 +89,18 @@ function reply(body) {
   // Qwen sends a user turn as several text parts (system reminders first), so the last command line wins.
   // Copilot's plan mode puts "[[PLAN]] " before the prompt.
   const said = Array.isArray(last.content) ? last.content.map((p) => (typeof p === "string" ? p : p?.text ?? "")).join("\n") : textOf(last.content);
-  const matches = [...said.matchAll(/^(?:\[\[[A-Z]+\]\] )?(RUN|WRITE|EDIT|READ|ASK)[ \t]+(.+)$/gm)];
+  const matches = [...said.matchAll(/^(?:\[\[[A-Z]+\]\] )?(RUN|WRITE|EDIT|READ|ASK|CALL)[ \t]+(.+)$/gm)];
   const m = matches[matches.length - 1];
   if (!m) return { text: "done" };
   const offered = body.tools ?? [];
+  if (m[1] === "CALL") {
+    const [, wanted, json] = m[2].trim().match(/^(\S+)(?:[ \t]+(.+))?$/) ?? [];
+    const tool = offered.find((t) => t?.function?.name === wanted);
+    if (!tool) return { text: `no ${wanted} tool offered` };
+    const given = json ? safeJson(json) : null;
+    const args = given && typeof given === "object" ? given : argsFor(tool, "marshell");
+    return { call: { id: `call_${++callSeq}`, name: wanted, args: JSON.stringify(args) } };
+  }
   const names = VERB_TOOLS[m[1]];
   const tool = names.map((n) => offered.find((t) => t?.function?.name === n)).find(Boolean);
   if (!tool) return { text: `no ${names.join(" or ")} tool offered` };
