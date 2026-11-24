@@ -3,6 +3,7 @@
 
 pub mod extensions;
 pub mod hooks;
+pub mod instructions;
 pub mod policy;
 pub mod request;
 pub mod status;
