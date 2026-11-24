@@ -81,6 +81,16 @@ export const DOCTOR_CLI: DoctorReport = {
 };
 
 /** After "Measure MCP servers": a server's cost as an Info item and one that didn't start as an unchecked Broken item. */
+/** The two rows that carry a button: a Copilot hooks file that isn't Marshell's any more, and one the person kept. */
+export const DOCTOR_KEEP: DoctorReport = {
+  checked_at_ms: NOW - 12_000,
+  duration_ms: 1_100,
+  items: [
+    { id: "hooksfile.copilot", agent: "copilot", group: "broken", title: "C:\\Users\\you\\.copilot\\hooks\\marshell.json isn't Marshell's file any more", detail: "Marshell set Copilot CLI's hooks up in it, and it now holds something Marshell didn't write. Keep it as it is, or pick the fix to replace it with Marshell's hooks.", fixable: true, unchecked: true, open_agents: false, action: "keep" },
+    { id: "hookskept.copilot", agent: "copilot", group: "info", title: "Copilot CLI's hooks file has your changes", detail: "You kept C:\\Users\\you\\.copilot\\hooks\\marshell.json as it is. Marshell changes only its own hooks in it.", fixable: false, open_agents: false, action: "stopKeeping" },
+  ],
+};
+
 export const DOCTOR_MEASURED: DoctorReport = {
   checked_at_ms: NOW - 12_000,
   measured_at_ms: NOW - 20_000,

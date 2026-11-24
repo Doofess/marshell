@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { nameContainsLabel } from "../../lib/labelInName";
 import { DoctorPage } from "./DoctorPage";
 import { showProgress } from "./doctorUi";
-import { DOCTOR_CLEAR, DOCTOR_CLI, DOCTOR_PROBLEMS, DOCTOR_REPORT, UNDO_FIXED } from "./fixtures";
+import { DOCTOR_CLEAR, DOCTOR_CLI, DOCTOR_KEEP, DOCTOR_PROBLEMS, DOCTOR_REPORT, UNDO_FIXED } from "./fixtures";
 import { initialSelection } from "./report";
 import type { DoctorReport } from "./types";
 
@@ -161,6 +161,35 @@ describe("DoctorPage", () => {
       expect((h.match(/type="checkbox"/g) ?? []).length).toBe(0);
       expect(h).toContain("Qwen Code has no doctor command");
       expect(h).toContain("Reinstall Codex to restore the sandbox helpers.");
+    });
+  });
+
+  describe("Keep my file and Stop keeping", () => {
+    it("a row with action keep has a Keep my file button after its checkbox and text, named with the title", () => {
+      const h = page(DOCTOR_KEEP, "ready", { onKeep: noop });
+      expect(h).toMatch(/<button type="button"[^>]*aria-label="Keep my file: [^"]*isn&#x27;t Marshell&#x27;s file any more"[^>]*>Keep my file<\/button>/);
+      expect(h.indexOf(`type="checkbox"`)).toBeLessThan(h.indexOf(">Keep my file<"));
+      expect(h.indexOf("holds something Marshell")).toBeLessThan(h.indexOf(">Keep my file<"));
+    });
+    it("a row with action stopKeeping has a Stop keeping button and no checkbox", () => {
+      const h = page(DOCTOR_KEEP, "ready", { onKeep: noop });
+      expect(h).toMatch(/aria-label="Stop keeping: Copilot CLI&#x27;s hooks file has your changes"[^>]*>Stop keeping<\/button>/);
+      expect((h.match(/type="checkbox"/g) ?? []).length).toBe(1);
+    });
+    it("rows without an action have neither button", () => {
+      const h = page(DOCTOR_REPORT, "ready");
+      expect(h).not.toContain("Keep my file");
+      expect(h).not.toContain("Stop keeping");
+    });
+    it("the busy row's button is disabled and reads Keeping…, and the unchecked row stays unchecked", () => {
+      const h = page(DOCTOR_KEEP, "ready", { onKeep: noop, keeping: "hooksfile.copilot" });
+      expect(h).toMatch(/<button type="button"[^>]*disabled=""[^>]*>Keeping…<\/button>/);
+      expect(h).toContain(">Stop keeping<");
+      expect((h.match(/checked=""/g) ?? []).length).toBe(0);
+    });
+    it("a failed press shows the server's message in the page's error line", () => {
+      const h = page(DOCTOR_KEEP, "ready", { onKeep: noop, keepError: "This item can't be fixed any more. Run the check again." });
+      expect(h).toMatch(/<p class="doctor__failed"[^>]*>[^<]*Run the check again\./);
     });
   });
 });
