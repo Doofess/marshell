@@ -139,6 +139,7 @@ The protocol gains one optional field on `DoctorItem`, `loads`. The Doctor row r
 - **Only the start folder:** the estimate is for a session started at the project's root. A session started in a subfolder loads more with Codex, Copilot CLI and Claude Code (7d decision 6).
 - **Plugin instruction files** (Antigravity's `plugins/<name>/rules/`, Qwen Code's extension context files) aren't read. Phase 8's Extensions covers plugins (7c decision 6).
 - **Antigravity's `rules.json` manifest** isn't read: only the rule files in the rules folders are.
+- **Qwen Code's auto memory** is counted wherever its files exist: no setting that turns it off was looked for, and its 150-unit limit per line isn't modelled.
 - **A Claude Code file that loads later and is over 40,000 characters** gets a row note, not a Broken item: Claude Code loads its start and tells the agent to read the rest, so nothing is lost for good. This is the lead's reading of decision 4, for the user to judge.
 - **Below the root, only `.md` names are looked for,** 12 folders deep. A Codex fallback name without `.md` is found in the root-to-project chain but not below it.
 - **Claude Code's `--add-dir` folders** aren't checked.
@@ -185,7 +186,7 @@ The scratch project is `proj` (a `git init` folder) with a second checkout `proj
   - Stop with the skill's `stop`, which ends only what it started and deletes the sign-in copies. Remove the scratch folder only with the user's OK.
   - Commit: `docs(research): what the five CLIs load, seen in real sessions.`
 
-**The constants the later tasks use** (Task 1 updates this table; each lives in that CLI's `instructions.rs`):
+**The constants the later tasks use** (Task 1 updates this table; each lives in that CLI's `instructions.rs`). "Finding <n>" is a numbered finding under "What 7d1's first task saw" in the research note:
 
 | CLI | Constant | Planned value | Task 1 settles |
 |---|---|---|---|
@@ -196,18 +197,20 @@ The scratch project is `proj` (a `git init` folder) with a second checkout `proj
 | Claude Code | `SKIP_BYTES` | 4 MiB (`MAX_CONFIG_BYTES`) | — |
 | Claude Code | `WARN_LINES` | 200 (note only) | the real line count |
 | Codex | default `project_doc_max_bytes` | 32_768 | — |
-| Codex | a folder with no trust entry | loads its project files | loads or not |
+| Codex | a folder with no trust entry | loads its project files | seen: loads (finding 1) |
 | Antigravity | `RULE_BYTES`, `RULES_BUDGET_TOKENS` | 24_000, 20_000 | — |
-| Antigravity | include base | the including file's folder | which folder |
-| Antigravity | nested `GEMINI.md`/`AGENTS.md` below the root | when used | start or when used |
-| Antigravity | rule without a valid `trigger` | not loaded | loaded or not |
+| Antigravity | include base | the including file's folder | seen: that folder (finding 5) |
+| Antigravity | nested `GEMINI.md`/`AGENTS.md` below the project | not loaded | seen: only a session started in that folder or below loads it (finding 8) |
+| Antigravity | rule without a valid `trigger` | not loaded | seen: not loaded (finding 7) |
 | Qwen Code | `IMPORT_DEPTH` | 5 | — |
-| Qwen Code | folder trust on, no rule for the folder | loads no project file | loads or not |
-| Qwen Code | `context.fileName` in a project's settings | followed | followed or not |
-| Codex, Antigravity, Qwen Code, Copilot CLI | a memory file of their own | none | a file, or none found |
-| Copilot CLI | size limit | none | a limit, or "not seen up to N KB" |
-| Copilot CLI | an import of a file it also loads by name | counted twice | once or twice |
-| Copilot CLI | nested names | `AGENTS.md`, `CLAUDE.md` | which load at start |
+| Qwen Code | folder trust on, no rule for the folder | loads no project file | seen: loads none (finding 13) |
+| Qwen Code | `context.fileName` in a project's settings | followed | seen: followed (finding 11) |
+| Codex, Antigravity, Copilot CLI | a memory file of their own | none | seen: none found (findings 3, 9, 19) |
+| Qwen Code | auto memory: `MEMORY_LINES` | 200, for `~/.qwen/memories/MEMORY.md` and `~/.qwen/projects/<name>/memory/MEMORY.md` | seen (finding 14) |
+| Qwen Code | `~/.qwen/output-language.md` | a context file at every start | seen (finding 14) |
+| Copilot CLI | size limit | none | seen: none up to 256 KB (finding 15) |
+| Copilot CLI | an import of a file it also loads by name | counted twice | seen: sent twice (finding 16) |
+| Copilot CLI | nested names | `AGENTS.md`, `CLAUDE.md`, when used | seen: neither at start, both after a read beside them (finding 18) |
 | Copilot CLI | `IMPORT_DEPTH` | 5 | — |
 
 ### Task 2: The `loads` field on Doctor items (protocol; inline)
@@ -478,7 +481,7 @@ The rules (from the research note, §1, and Task 1's findings):
 The rules:
 1. **User level:** `roots.codex_home/AGENTS.override.md` when it is non-empty, else `AGENTS.md`. It loads at start and isn't counted against the budget. When the override wins and `AGENTS.md` exists, `AGENTS.md` is `NotLoaded("AGENTS.override.md is here")`.
 2. **`config.toml`:** read `project_doc_max_bytes` (default 32,768), `project_doc_fallback_filenames` (a fallback whose name has a `/` or `\` is ignored), and `project_root_markers` (default `[".git"]`).
-3. **Trust:** `untrusted` is true only when the entry that decides for the folder says `trust_level = "untrusted"`. The deciding entry is found the way `extensions.rs::trusted` finds it: the folder's own `[projects.'<trust_key>']`, else its git root's. A folder with no entry loads its files, unless Task 1 saw otherwise. When untrusted, every project file is `NotLoaded("Codex doesn't trust this folder")` and the load's `reason` is "Codex doesn't trust this folder".
+3. **Trust:** `untrusted` is true only when the entry that decides for the folder says `trust_level = "untrusted"`. The deciding entry is found the way `extensions.rs::trusted` finds it: the folder's own `[projects.'<trust_key>']`, else its git root's. A folder with no entry loads its files (finding 1). When untrusted, every project file is `NotLoaded("Codex doesn't trust this folder")` and the load's `reason` is "Codex doesn't trust this folder".
 4. **A zero budget:** `project_doc_max_bytes = 0` makes every project file `NotLoaded("project_doc_max_bytes is 0")`, with the `reason` "project_doc_max_bytes is 0".
 5. **The project root:** `place.marked_root(cx, markers)`. With none, or with an empty marker list, it is `project` itself.
 6. **Per folder,** from the root down to `project`: the first non-empty file of `AGENTS.override.md`, `AGENTS.md`, then the fallbacks, loads. The others that exist are `NotLoaded("<winner> is here")`.
@@ -533,7 +536,7 @@ The rules (Task 1's findings win where they differ):
    - Title: "Antigravity sends some rules as paths only in <project>".
    - Detail: "Its always-on and user rules are over 20,000 tokens, so these reach the agent as paths: <paths>."
    - `cannot_fix`: "Give the rules it needs only sometimes trigger: model_decision or glob."
-7. **Nested** `GEMINI.md` and `AGENTS.md`, per Task 1's finding.
+7. **Nested** `GEMINI.md` and `AGENTS.md` below `project`, through `cx.nested(project).named(…)`, are `NotLoaded("Antigravity loads it only in a session started in its folder")`. Finding 8: they loaded only that way, never after a file beside them was read.
 8. **Notes:** whatever Task 1 left unknown about Antigravity is one sentence in the load's `notes`, worded from the finding.
 
 - [ ] **Step 1: Write the failing tests:**
@@ -555,14 +558,14 @@ The rules (Task 1's findings win where they differ):
 - Modify: `agents/qwen/extensions.rs`, `agents/qwen/mod.rs`
 
 **Interfaces:**
-- `pub fn load(place: &Place, cx: &mut Reader) -> CliLoad`.
+- `pub fn load(place: &Place, cx: &mut Reader) -> CliLoad`, and `pub fn memory_dir_name(project: &Path) -> String`.
 - In `extensions.rs`: `folder_trusted` becomes `pub(crate)`, and the inline `security.folderTrust.enabled` expression inside `inventory` (~`:441`) moves into `pub(crate) fn folder_trust_on(…) -> bool` with the inputs it reads today. `inventory` calls it, so 7c's behaviour doesn't change.
 
 The rules:
 1. **Settings:** the system file (`place.qwen_system_settings`), the project's `.qwen/settings.json` (only when the folder is trusted) and the user's `qwen_dir/settings.json`, merged in the order `extensions.rs` already uses for them. All are read through `cx.read`.
-2. **Names:** `context.fileName`, a string or an array, replaces `["QWEN.md", "AGENTS.md"]`. When it is set and leaves out `AGENTS.md`, an existing `AGENTS.md` is `NotLoaded("context.fileName doesn't name it")`. A project-level value follows Task 1's finding.
-3. **User level:** `qwen_dir/<each name>`, and `qwen_dir/rules/**/*.md` through `cx.list`. A rule with `paths` loads when used, one without at start, and HTML comments are stripped.
-4. **Trust:** when `folder_trust_on` and the folder isn't trusted, the project files are `NotLoaded("Qwen Code doesn't trust this folder")`, with that `reason`. A folder no rule names follows Task 1's finding (planned: not trusted).
+2. **Names:** `context.fileName`, a string or an array, replaces `["QWEN.md", "AGENTS.md"]`. When it is set and leaves out `AGENTS.md`, an existing `AGENTS.md` is `NotLoaded("context.fileName doesn't name it")`. A project-level value is followed (finding 11).
+3. **User level:** `qwen_dir/<each name>`, and `qwen_dir/rules/**/*.md` through `cx.list`. A rule with `paths` loads when used, one without at start, and HTML comments are stripped. `qwen_dir/output-language.md`, which Qwen Code writes itself, loads at start when it exists (finding 14).
+4. **Trust:** when `folder_trust_on` and the folder isn't trusted, the project files are `NotLoaded("Qwen Code doesn't trust this folder")`, with that `reason`. A folder no rule names isn't trusted (finding 13).
 5. **The walk:** from the project root down to `project`, each name in each folder.
    - The root is `place.marked_root(cx, &[".git"])`.
    - With no `.git`: when `project` is under the user home, the walk starts just below the home; otherwise it starts at the ceiling (the filesystem root in production).
@@ -570,17 +573,26 @@ The rules:
    - `.qwen/QWEN.local.md` at the git root loads only with a git root. `project/.qwen/rules/**/*.md` follow rule 3.
 6. **Imports:** `ImportSyntax::At`, depth 5, `ImportBase::File`, `inside = Some(project root)`, `outside_reason = "outside the project"`, `home = None`, `clean = strip_html_comments`. A missing import keeps its literal text, which is already in the file's chars, and its row is `NotLoaded("not found")`.
 7. **No limits, so no cuts,** and the load's `notes` hold "Qwen Code documents no limit." Nothing below `project` loads (path rules are covered above).
+8. **Auto memory** (finding 14), each file `Role::Memory`, at start, counted up to its first `MEMORY_LINES` (200) lines:
+   - `qwen_dir/memories/MEMORY.md`, at user level;
+   - with a project, `qwen_dir/projects/<memory_dir_name(project)>/memory/MEMORY.md`.
+   - `memory_dir_name` is the project's own path (a worktree has its own folder, unlike Claude Code), lowercased, with every character that isn't an ASCII letter or digit as `-`: `C:\dev\Airport` gives `c--dev-airport`.
+   - A file that is missing or empty gives no row.
 
 - [ ] **Step 1: Write the failing tests:**
   - `default_names_load_root_to_project`;
   - `file_name_setting_replaces_the_list`;
   - `an_untrusted_folder_loads_no_project_file_and_still_its_user_file`;
-  - `a_folder_with_no_rule_follows_the_planned_answer`;
+  - `a_folder_with_no_rule_loads_no_project_file`;
   - `local_file_needs_a_git_root`;
   - `without_git_the_walk_starts_below_the_home`;
   - `an_import_outside_the_root_is_refused`;
   - `rules_strip_html_comments`;
-  - `the_no_limit_note_is_there`.
+  - `the_no_limit_note_is_there`;
+  - `the_output_language_file_loads_at_start`;
+  - `memory_counts_both_indexes_up_to_200_lines`: a 250-line user index and a 250-line project index each count 200 lines' characters;
+  - `memory_dir_name_lowercases_and_dashes`: `C:\dev\Airport` gives `c--dev-airport`;
+  - `an_empty_memory_index_gives_no_row`.
 - [ ] **Step 2:** Run `cargo test -p marshell-core -j 4 qwen::`. It should FAIL.
 - [ ] **Step 3:** Implement.
 - [ ] **Step 4:** Run the same command; it should PASS, with 7c's Qwen tests still green.
@@ -599,8 +611,8 @@ The rules:
    - At R: `.github/copilot-instructions.md` (start), `.github/instructions/**/*.instructions.md` (`applyTo` decides), and `.claude/rules/**/*.md` (with `paths`, when used; without, at start).
 3. **Imports:** `ImportSyntax::At`, `ImportBase::File`, depth `IMPORT_DEPTH`, `inside = Some(R)`, `outside_reason = "outside the repository"`, `home = None` (so a `~/` or absolute import isn't loaded), and `clean` leaves the text as it is. Imports apply only in `copilot-instructions.md`, `AGENTS.md` and `CLAUDE.md`. In `GEMINI.md` and `*.instructions.md` an `@` is plain text.
 4. **Duplicates:** a file whose bytes equal a file already loaded at start is `NotLoaded("same text as <path>")`. An import that repeats a file Copilot also loads by name counts twice: that is what Task 1's step 3 saw, or the finding there amends this.
-5. **The size limit** comes from Task 1. With none, there are no cuts, and the load's `notes` hold "Copilot CLI documents no limit." A limit Task 1 only bounded reads "Copilot CLI documents no limit; none was seen up to <N> KB."
-6. **Nested** `AGENTS.md` and `CLAUDE.md` below `project`: when used, unless Task 1 saw them at start.
+5. **No size limit:** none was seen up to 256 KB (finding 15). So there are no cuts, and the load's `notes` hold "Copilot CLI documents no limit; none was seen up to 256 KB."
+6. **Nested** `AGENTS.md` and `CLAUDE.md` below `project`: when used (finding 18).
 
 - [ ] **Step 1: Write the failing tests:**
   - `repo_files_load_from_the_git_root_to_the_project`;

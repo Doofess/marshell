@@ -188,3 +188,47 @@ Sharing rules that follow: one `AGENTS.md` serves Codex, Antigravity, Qwen and C
 5. Codex: nothing in the installed 0.171.0 contradicts the source file read from main; the source on `main` could be newer than 0.171.0 (strings for the budget warnings were matched in the binary).
 6. WSL: all CLIs use the distro's own `~` (separate from Windows); no WSL check was run here (Windows paths only). Marshell must read through `\\wsl$` or `wsl.exe` for those.
 7. The `cc-plugin-agents-md` plugin is behind a server-side gate `tengu_agents_md_mod` (default true); a session may not have it (documented "unavailable" cases).
+
+## What 7d1's first task saw
+
+Seen on 2026-11-24 in a live check's scratch homes (`marshell-live-check`, started with `-CodexAuth -AgyAuth -QwenFake -CopilotFake -CodexHome`). Each run was a session the dev app started in a scratch project folder, with the CLI's non-interactive form (`codex exec`, `agy -p`, `qwen -p`, `copilot -p`). Qwen Code's and Copilot CLI's facts are read from the fake models' request logs, so they are the exact text each CLI sent. Codex's and Antigravity's are a real model's answer to "which marker words do you see in your instructions".
+
+Versions: codex-cli 0.171.0, Qwen Code 0.26.5, Copilot CLI 1.0.106, Antigravity 1.5.14 for the first run and 1.5.16 after it (finding 20).
+
+### Codex
+
+1. **A folder with no trust entry loads its project `AGENTS.md`** (`codex exec`). With `trust_level = "untrusted"` the same folder's file isn't in the instructions. With `"trusted"` it is.
+2. **The 32,768-byte budget cuts, with this warning** (a 40,000-byte `AGENTS.md`, markers every 4,000 bytes, the last one seen at byte 32,000): "warning: Loaded only 32768 of 40000 bytes from `<path>\AGENTS.md` in environment `local` under the 32768-byte project instruction budget. Trim your project instructions to fit the budget. If you need to keep them all, increase `project_doc_max_bytes`."
+3. **No memory file of its own.** After five sessions the scratch `CODEX_HOME` holds `sessions/`, `cache/`, `skills/.system`, `plugins/` and no file Codex loads as instructions.
+
+### Antigravity
+
+4. **Both user files load:** `~/.gemini/GEMINI.md` and `~/.gemini/config/GEMINI.md` were both in the context, in that order, before the project's `GEMINI.md`.
+5. **An include resolves from the including file's folder.** `.agents/rules/a.md` held `@[x](sub/inc.md)`; the text of `.agents/rules/sub/inc.md` was loaded, and `<project>/sub/inc.md` wasn't.
+6. **A missing include is silent and stays as text.** The model quoted `@[y](nope/missing.md)` between the lines around it; nothing was printed about it.
+7. **A rule file with no `trigger:` isn't loaded,** and its path isn't named in the context either.
+8. **A `GEMINI.md` below the start folder never loaded.** `sub/GEMINI.md` wasn't in the context at start, nor after the agent read `sub/x.txt`, nor on the next turn of the same conversation. A session started in `sub/` had both the root's `GEMINI.md` and `sub/GEMINI.md`. So the walk is from the repository root down to the start folder, once, at start.
+9. **No memory file of its own.** The scratch `~/.gemini` gained `antigravity-cli/` (conversations, `brain/<conversation>`, logs, the updater) and nothing that loads as instructions.
+
+### Qwen Code
+
+10. **Default names:** `QWEN.md`, then `AGENTS.md`, each as `--- Context from: <path> ---`. A `CLAUDE.md` beside them isn't read.
+11. **`context.fileName` replaces the list, from the user's settings and from the project's.** With `["CLAUDE.md"]` in `~/.qwen/settings.json`, only `CLAUDE.md` was sent. With the same value only in `<project>/.qwen/settings.json`, the same.
+12. **Imports go 5 deep, and a missing one stays as text.** With a chain of six, the root file's marker and the next five were sent, the sixth wasn't. `@x.md` with no such file was sent as `@x.md`.
+13. **Folder trust (`security.folderTrust.enabled`):** a folder with no rule in `trustedFolders.json` gets no project file, the same as one marked `DO_NOT_TRUST`. `TRUST_FOLDER` loads it. The user's `~/.qwen/QWEN.md` loads in all three.
+14. **Two files nobody planned for load at every start:**
+    - `~/.qwen/output-language.md`, which Qwen Code writes itself (841 bytes), is sent as a context file after the project's.
+    - **Auto memory.** `~/.qwen/memories/MEMORY.md` and `~/.qwen/projects/<name>/memory/MEMORY.md` are both sent in the first request, as a "memory catalog". `<name>` is the start folder's full path, lowercased, with every character that isn't a letter or digit as `-` (`c--users-…-lc-7d1-1-p-qw1`). A git worktree gets a folder of its own; it doesn't share the main checkout's.
+    - Only the first 200 lines of each `MEMORY.md` are sent, followed by "> WARNING: MEMORY.md is 250 lines (limit: 200). Only part of it was loaded. Dropped 50 of 250 entries: …". The warning also names a "150-unit line limit" per entry, which wasn't tested.
+
+### Copilot CLI
+
+15. **No size limit was seen up to 256 KB.** A 65,508-byte and a 262,109-byte `AGENTS.md` were each sent whole (the last line's marker was in the request, whose size grew by the file's).
+16. **An imported file that also loads by name is sent twice.** With `CLAUDE.md` holding `@AGENTS.md` beside an `AGENTS.md`, the request had `AGENTS.md`'s text once as its own `<custom_instruction>` and once inside `CLAUDE.md`'s, as `<imported_custom_instruction source="<path>">` after the literal `@AGENTS.md`.
+17. **A missing import stays as text** (`@missing.md`), with no message.
+18. **Nested `AGENTS.md` and `CLAUDE.md` load when used.** `sub/AGENTS.md` and `sub/CLAUDE.md` weren't in the first request. After the agent read `sub/x.txt`, the next request carried both as "Custom instructions from sub/AGENTS.md. Apply these to any code you write here:".
+19. **No memory file of its own.** The scratch `COPILOT_HOME` holds `config.json`, `settings.json`, `session-store.db`, `session-state/` and logs.
+
+### Outside the facts
+
+20. **Antigravity updated the real install during the check.** The first `agy -p` ran 1.5.14; its updater then replaced `%LOCALAPPDATA%\agy\bin\agy.exe` with 1.5.16 (the old file is kept beside it as `agy.exe.<n>.old`), and wrote "Update successful, restart CLI to use" to the scratch `~/.gemini/antigravity-cli/updater/update_status.json`. The scratch `USERPROFILE` doesn't move the install. The same update would have come at the user's own next start.
