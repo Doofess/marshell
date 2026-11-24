@@ -232,3 +232,11 @@ Versions: codex-cli 0.171.0, Qwen Code 0.26.5, Copilot CLI 1.0.106, Antigravity 
 ### Outside the facts
 
 20. **Antigravity updated the real install during the check.** The first `agy -p` ran 1.5.14; its updater then replaced `%LOCALAPPDATA%\agy\bin\agy.exe` with 1.5.16 (the old file is kept beside it as `agy.exe.<n>.old`), and wrote "Update successful, restart CLI to use" to the scratch `~/.gemini/antigravity-cli/updater/update_status.json`. The scratch `USERPROFILE` doesn't move the install. The same update would have come at the user's own next start.
+
+### Claude Code
+
+The scratch Claude Code had no sign-in during the check, so its sessions weren't run. One fact comes from the Claude Code 2.1.331 session that built this slice, which ran in a linked git worktree of this repo:
+
+21. **A worktree shares its repository's auto memory, and the folder's name is the main checkout's path with every non-alphanumeric character as `-`.** The session's working folder was `C:\dev\Airport\.claude\worktrees\phase-7d1`, and its transcripts went under `~/.claude/projects/C--dev-Airport--claude-worktrees-phase-7d1/`. Its auto memory was `~/.claude/projects/C--dev-Airport/memory/`, the folder of the main checkout `C:\dev\Airport`.
+
+Still planned values, not seen: the import depth (4 hops below the root file, or 5), whether the memory cut is at 25,000 or 25,600 bytes, the line count of the start-up warning, and whether a missing import shows a message.

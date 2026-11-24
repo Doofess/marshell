@@ -192,7 +192,7 @@ The scratch project is `proj` (a `git init` folder) with a second checkout `proj
 |---|---|---|---|
 | Claude Code | `IMPORT_DEPTH` (hops below the root file) | 4 | 4 or 5 |
 | Claude Code | `MEMORY_LINES`, `MEMORY_BYTES` | 200, 25_000 | the byte count |
-| Claude Code | memory folder | `projects::project_of(project)`'s root, every non-alphanumeric character as `-` | the name, and whether a worktree shares it |
+| Claude Code | memory folder | `projects::project_of(project)`'s root, every non-alphanumeric character as `-` | seen: the main checkout's path, shared by a worktree (finding 21) |
 | Claude Code | `LATER_CHARS` (note only) | 40_000 | — |
 | Claude Code | `SKIP_BYTES` | 4 MiB (`MAX_CONFIG_BYTES`) | — |
 | Claude Code | `WARN_LINES` | 200 (note only) | the real line count |
