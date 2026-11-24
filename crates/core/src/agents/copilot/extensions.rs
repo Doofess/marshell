@@ -437,21 +437,9 @@ fn skills_in(
 
 /// The skills Copilot skips or can't switch apart, and the ones its listing only names.
 fn settle_skills(skills: &mut [Skill]) {
-    // A project's skill hides a personal skill of the same name from Copilot.
-    let project_names: HashSet<String> = skills
-        .iter()
-        .filter(|s| matches!(s.origin, Origin::Project(_)) && s.state == SkillState::Ok)
-        .map(|s| s.name.clone())
-        .collect();
-    for s in skills
-        .iter_mut()
-        .filter(|s| s.origin == Origin::User && project_names.contains(&s.name))
-    {
-        s.off = true;
-    }
-
     // Copilot turns skills off by exact name, so a skill that shares its name with another in use (not off, and not
-    // broken itself) gets no switch: turning it off would turn off one that works.
+    // broken itself) gets no switch: turning it off would turn off one that works. A project's skill hides a personal
+    // skill of its name only inside that project, so the personal one counts as in use.
     let in_use: Vec<(String, bool)> = skills
         .iter()
         .map(|s| (s.name.clone(), !s.off && s.state == SkillState::Ok))
@@ -1798,7 +1786,7 @@ mod tests {
     }
 
     #[test]
-    fn a_personal_skill_a_project_skill_shadows_is_off_and_live_twins_are_report_only() {
+    fn skills_in_use_under_one_name_are_report_only_and_a_shadowed_personal_skill_stays_in_use() {
         let h = tempfile::tempdir().unwrap();
         let r = roots(h.path());
         let (p1, p2) = (h.path().join("p1"), h.path().join("p2"));
@@ -1813,9 +1801,11 @@ mod tests {
 
         let inv = inventory(&r, &[p1.clone(), p2.clone()], &found);
 
-        assert!(skill_of(&inv, "shared").off, "Copilot skips it for the project's");
+        // Copilot skips the personal skill only inside p1, and `disabledSkills` would turn both off in every folder.
+        assert!(!skill_of(&inv, "shared").off, "it is in use in every other folder");
         assert!(!skill_in(&inv, "shared", &p1).off);
-        assert_eq!(skill_in(&inv, "shared", &p1).switch, skill_switch(&r, "shared"));
+        assert_eq!(skill_of(&inv, "shared").switch, Err(NoSwitch::SameName));
+        assert_eq!(skill_in(&inv, "shared", &p1).switch, Err(NoSwitch::SameName));
         assert_eq!(skill_of(&inv, "solo").switch, skill_switch(&r, "solo"));
         assert_eq!(skill_in(&inv, "twin", &p1).switch, Err(NoSwitch::SameName));
         assert_eq!(skill_in(&inv, "twin", &p2).switch, Err(NoSwitch::SameName));
