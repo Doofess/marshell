@@ -611,6 +611,59 @@ mod tests {
         assert!(again.items.iter().any(|i| i.id == "mcpcost.claude"));
     }
 
+    fn copilot_stub(ready: &Ready) -> Result<Listed, Failure> {
+        // Only the user's stub may start: the project's server isn't approved and the others are remote.
+        assert_eq!(named(ready), "stub");
+        Ok(tool_named("stub-t"))
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn measure_counts_copilots_remote_and_unapproved_servers_as_not_measured() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = program(dir.path());
+        let (st, ext) = ext_state(dir.path());
+        let st = st.with_probe(copilot_stub);
+        // A user server that starts, and a remote one. The built-in GitHub server is added by itself.
+        write(
+            &ext.join(".copilot").join("mcp-config.json"),
+            &serde_json::json!({"mcpServers": {
+                "stub": entry(&exe, "stub"),
+                "rem": {"type": "http", "url": "https://example.invalid/mcp"},
+            }})
+            .to_string(),
+        );
+        // The pinned state's project holds a server, and no `trustedFolders` names it.
+        let project = crate::projects::canonical(dir.path()).join("project");
+        write(
+            &project.join(".mcp.json"),
+            &serde_json::json!({"mcpServers": {"proj": entry(&exe, "proj")}}).to_string(),
+        );
+
+        crate::server::doctor::request_run(&st);
+        wait_idle(&st).await;
+        request_measure(&st);
+        wait_idle(&st).await;
+        let report = last_report(&st);
+        assert!(report.measured_at_ms.is_some(), "{report:?}");
+        let cost = report
+            .items
+            .iter()
+            .find(|i| i.id == "mcpcost.copilot")
+            .unwrap_or_else(|| panic!("no cost line: {:?}", report.items));
+        assert!(
+            cost.detail.starts_with("1 measured. The largest: stub ("),
+            "{}",
+            cost.detail
+        );
+        assert!(
+            cost.detail.ends_with(
+                "Not measured: 2 remote servers, 1 that Copilot CLI hasn't approved. Marshell counts the tools' full definitions. Copilot CLI may load them on demand for some models, which costs less."
+            ),
+            "{}",
+            cost.detail
+        );
+    }
+
     static JOIN_CALLS: AtomicUsize = AtomicUsize::new(0);
     static JOIN_HOLD: AtomicBool = AtomicBool::new(true);
 
