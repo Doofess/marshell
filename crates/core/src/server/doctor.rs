@@ -3218,9 +3218,9 @@ pub(in crate::server) mod tests {
         run_once(&st, Arc::new(facts_of)).await.expect("a run");
         let report = last_report(&st);
         let ids = broken_ext_ids(&report);
-        // Claude Code and Qwen Code both read the project's `.mcp.json`, so its server is two items, beside Codex's
-        // server and Qwen Code's skill.
-        assert_eq!(ids.len(), 4, "{:?}", report.items);
+        // Claude Code, Qwen Code and Copilot CLI all read the project's `.mcp.json`, so its server is three items,
+        // beside Codex's server and Qwen Code's skill.
+        assert_eq!(ids.len(), 5, "{:?}", report.items);
         assert!(
             report.items.iter().filter(|i| ids.contains(&i.id)).all(|i| i.fixable),
             "{:?}",
@@ -3394,7 +3394,7 @@ pub(in crate::server) mod tests {
         let inv = doctor_ext::inventories(&st, &facts, &[]);
         let mut agents: Vec<&str> = inv.iter().map(|i| i.agent).collect();
         agents.sort();
-        assert_eq!(agents, ["antigravity", "claude", "qwen"]);
+        assert_eq!(agents, ["antigravity", "claude", "copilot", "qwen"]);
     }
 
     #[tokio::test]
@@ -3437,6 +3437,10 @@ pub(in crate::server) mod tests {
             &ubuntu_home.join(".qwen").join("settings.json"),
             r#"{"mcpServers":{"in-distro":{"command":"ghost"}}}"#,
         );
+        write(
+            &ubuntu_home.join(".copilot").join("mcp-config.json"),
+            r#"{"mcpServers":{"in-distro-copilot":{"command":"ghost"}}}"#,
+        );
         // A project of Windows holds a server too; the distro never reads it.
         write(
             &project.join(".mcp.json"),
@@ -3449,11 +3453,26 @@ pub(in crate::server) mod tests {
             .iter()
             .filter(|i| i.distro.as_deref() == Some("Ubuntu"))
             .collect();
-        assert_eq!(in_distro.len(), 4, "{:?}", gathered.ext);
+        assert_eq!(in_distro.len(), 5, "{:?}", gathered.ext);
         let qwen = in_distro.iter().find(|i| i.agent == "qwen").unwrap();
         assert_eq!(qwen.servers.len(), 1);
         assert_eq!(
             qwen.servers[0].transport,
+            Transport::Stdio {
+                command: "ghost".into(),
+                state: CommandState::NotChecked
+            }
+        );
+        // Copilot CLI's distro inventory is the distro's own `~/.copilot`, at user level, with no command checked.
+        let copilot = in_distro.iter().find(|i| i.agent == "copilot").unwrap();
+        let mut names: Vec<&str> = copilot.servers.iter().map(|s| s.name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, ["github-mcp-server", "in-distro-copilot"]);
+        let own = copilot.servers.iter().find(|s| s.name == "in-distro-copilot").unwrap();
+        assert_eq!(own.origin, Origin::User);
+        assert_eq!(own.file, ubuntu_home.join(".copilot").join("mcp-config.json"));
+        assert_eq!(
+            own.transport,
             Transport::Stdio {
                 command: "ghost".into(),
                 state: CommandState::NotChecked
@@ -3476,5 +3495,154 @@ pub(in crate::server) mod tests {
             "{:?}",
             gathered.ext
         );
+    }
+
+    /// The ids of the Broken Copilot server items in the report.
+    fn copilot_broken_ids(report: &DoctorReport) -> Vec<String> {
+        report
+            .items
+            .iter()
+            .filter(|i| i.group == DoctorGroup::Broken && i.id.starts_with("mcp.copilot."))
+            .map(|i| i.id.clone())
+            .collect()
+    }
+
+    fn apply_plan(plan: &DoctorFixPlan) -> ApplyRequest {
+        ApplyRequest {
+            changeset_id: plan.preview.changeset_id.clone(),
+            expected_hashes: plan
+                .preview
+                .files
+                .iter()
+                .map(|f| ExpectedHash {
+                    path: f.path.clone(),
+                    hash: f.before_hash.clone(),
+                })
+                .collect(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_broken_copilot_server_is_turned_off_in_a_settings_file_that_keeps_its_other_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, ext) = ext_state(dir.path());
+        let mcp = ext.join(".copilot").join("mcp-config.json");
+        let settings = ext.join(".copilot").join("settings.json");
+        write(
+            &mcp,
+            "// mine\n{\"mcpServers\": {\"ghostly\": {\"command\": \"ghost\"}, \"ghosty\": {\"command\": \"ghost\"}, \"fine\": {\"command\": \"node\"}}}\n",
+        );
+        let original = "\u{feff}{\r\n  // my settings\r\n  \"theme\": \"dark\", // keep\r\n}\r\n";
+        write(&settings, original);
+
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        let report = last_report(&st);
+        let gathered = facts_of(&st);
+        let copilot = gathered
+            .ext
+            .iter()
+            .find(|i| i.agent == "copilot" && i.distro.is_none())
+            .expect("a Copilot inventory");
+        assert_eq!(
+            copilot.servers.iter().filter(|s| s.name != "github-mcp-server").count(),
+            3
+        );
+
+        // Two picked servers are one edit of the list, in the settings file.
+        let ids = copilot_broken_ids(&report);
+        assert_eq!(ids.len(), 2, "{:?}", report.items);
+        assert!(report.items.iter().filter(|i| ids.contains(&i.id)).all(|i| i.fixable));
+        let plan = fix_of(&st, ids.clone()).expect("a plan");
+        assert!(plan.preview.can_apply, "{:?}", plan.preview);
+        assert_eq!(plan.preview.files.len(), 1, "two servers are one edit of the list");
+        assert_eq!(Path::new(&plan.preview.files[0].path), settings);
+        let applied = fix_apply(State(st.clone()), Json(apply_plan(&plan))).await;
+        assert_eq!(applied.status(), StatusCode::OK);
+        wait_idle(&st).await;
+
+        let after = std::fs::read_to_string(&settings).unwrap();
+        assert!(
+            after.starts_with("\u{feff}{\r\n  // my settings\r\n  \"theme\": \"dark\", // keep\r\n"),
+            "{after:?}"
+        );
+        let value = crate::config::jsonc::read_value(&after).unwrap();
+        assert_eq!(value["theme"], "dark");
+        let mut list: Vec<&str> = value["disabledMcpServers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        list.sort();
+        assert_eq!(list, ["ghostly", "ghosty"]);
+        // The server files are never written.
+        assert!(std::fs::read_to_string(&mcp).unwrap().starts_with("// mine\n"));
+
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        assert!(copilot_broken_ids(&last_report(&st)).is_empty());
+
+        let undone = undo(State(st.clone())).await;
+        assert_eq!(undone.status(), StatusCode::OK);
+        wait_idle(&st).await;
+        assert_eq!(std::fs::read(&settings).unwrap(), original.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn a_copilot_settings_file_that_is_missing_is_created_and_undo_removes_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, ext) = ext_state(dir.path());
+        let settings = ext.join(".copilot").join("settings.json");
+        write(
+            &ext.join(".copilot").join("mcp-config.json"),
+            r#"{"mcpServers": {"ghostly": {"command": "ghost"}}}"#,
+        );
+
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        let ids = copilot_broken_ids(&last_report(&st));
+        assert_eq!(ids.len(), 1);
+        let plan = fix_of(&st, ids).expect("a plan");
+        let applied = fix_apply(State(st.clone()), Json(apply_plan(&plan))).await;
+        assert_eq!(applied.status(), StatusCode::OK);
+        wait_idle(&st).await;
+        let value = crate::config::jsonc::read_value(&std::fs::read_to_string(&settings).unwrap()).unwrap();
+        assert_eq!(value["disabledMcpServers"], serde_json::json!(["ghostly"]));
+
+        let undone = undo(State(st.clone())).await;
+        assert_eq!(undone.status(), StatusCode::OK);
+        wait_idle(&st).await;
+        assert!(!settings.exists());
+    }
+
+    #[tokio::test]
+    async fn a_copilot_list_that_is_not_an_array_makes_its_servers_report_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, ext) = ext_state(dir.path());
+        let settings = ext.join(".copilot").join("settings.json");
+        write(
+            &ext.join(".copilot").join("mcp-config.json"),
+            r#"{"mcpServers": {"ghostly": {"command": "ghost"}}}"#,
+        );
+        write(&settings, "{\"disabledMcpServers\": \"ghostly\"}");
+        let before = std::fs::read(&settings).unwrap();
+
+        run_once(&st, Arc::new(facts_of)).await.expect("a run");
+        let report = last_report(&st);
+        let item = report
+            .items
+            .iter()
+            .find(|i| i.id.starts_with("mcp.copilot."))
+            .unwrap_or_else(|| panic!("no item: {:?}", report.items));
+        assert!(!item.fixable);
+        assert_eq!(
+            item.cannot_fix.as_deref(),
+            Some(
+                format!(
+                    "Marshell can't edit {} safely, so it leaves the file alone. Turn the server off in Copilot CLI.",
+                    settings.display()
+                )
+                .as_str()
+            )
+        );
+        assert_eq!(std::fs::read(&settings).unwrap(), before);
     }
 }

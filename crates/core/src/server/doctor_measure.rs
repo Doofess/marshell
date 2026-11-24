@@ -110,7 +110,7 @@ fn expand(text: &str, how: Expand, env: &[(String, String)]) -> String {
         {
             let inner: String = chars[i + 2..i + 2 + len].iter().collect();
             let (name, default) = match (how, inner.split_once(":-")) {
-                (Expand::Braces, Some((n, d))) => (n, Some(d)),
+                (Expand::Braces | Expand::DollarDefault, Some((n, d))) => (n, Some(d)),
                 _ => (inner.as_str(), None),
             };
             if is_name(name) {
@@ -124,7 +124,8 @@ fn expand(text: &str, how: Expand, env: &[(String, String)]) -> String {
             }
         }
         // `$NAME`, Dollar only.
-        if how == Expand::Dollar && chars.get(i + 1).copied().is_some_and(is_name_start) {
+        if matches!(how, Expand::Dollar | Expand::DollarDefault) && chars.get(i + 1).copied().is_some_and(is_name_start)
+        {
             let len = chars[i + 1..].iter().take_while(|c| is_name_char(**c)).count();
             let name: String = chars[i + 1..i + 1 + len].iter().collect();
             match lookup(env, &name) {
@@ -350,6 +351,23 @@ mod tests {
         ];
         let ready = ready_of(&l, &base).expect("ready");
         assert_eq!(ready.args, ["/h/a", "/h", "$MISSING", "${X:-d}"]);
+
+        // DollarDefault: `$NAME`, `${NAME}` and `${NAME:-default}`; an unset name stays as written unless it has a
+        // default, and a set name wins over its default.
+        let mut l = launch("tool");
+        l.expand = Expand::DollarDefault;
+        l.args = vec![
+            "$HOME_X/a".into(),
+            "${HOME_X}".into(),
+            "${HOME_X:-d}".into(),
+            "${X:-d}".into(),
+            "$MISSING".into(),
+            "${MISSING}".into(),
+        ];
+        l.env = env_of(&[("E", "${SECRET}-${X:-z}")]);
+        let ready = ready_of(&l, &base).expect("ready");
+        assert_eq!(ready.args, ["/h/a", "/h", "/h", "d", "$MISSING", "${MISSING}"]);
+        assert_eq!(get(&ready, "E"), Some("s3-z"));
 
         // With no expansion nothing changes.
         let mut l = launch("tool");

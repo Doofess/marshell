@@ -8,7 +8,7 @@ use marshell_protocol::doctor::{DoctorGroup, DoctorItem};
 use super::checks::display_name;
 use crate::config::hash::hash_bytes;
 
-const ORDER: [&str; 4] = ["claude", "codex", "antigravity", "qwen"];
+const ORDER: [&str; 5] = ["claude", "codex", "antigravity", "qwen", "copilot"];
 const FIX_NOTE: &str = " The fix turns it off and doesn't delete it.";
 
 /// Where the CLI's files are, as the server resolved them. A reader never reads the environment.
@@ -31,6 +31,12 @@ pub struct ExtRoots {
     pub qwen_runtime: PathBuf,
     /// `<home>/.gemini`.
     pub gemini_dir: PathBuf,
+    /// COPILOT_HOME or `<home>/.copilot`.
+    pub copilot_dir: PathBuf,
+    /// COPILOT_HOME is set and not blank (Copilot CLI then skips `~/.agents/skills`).
+    pub copilot_home_set: bool,
+    /// COPILOT_OFFLINE is `true`: Copilot CLI loads no built-in server.
+    pub copilot_offline: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +45,8 @@ pub enum Origin {
     Project(PathBuf),
     Plugin(String),
     Bundled,
+    /// Comes with the CLI, and is judged and switched like the person's own (Copilot CLI's GitHub server).
+    BuiltIn,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,6 +130,8 @@ pub enum Expand {
     Braces,
     /// `$VAR`, `${VAR}`
     Dollar,
+    /// `$VAR`, `${VAR}`, `${VAR:-default}`
+    DollarDefault,
 }
 
 /// Why a server isn't started by "Measure MCP servers".
@@ -1201,6 +1211,27 @@ mod tests {
                 "Claude Code's skills add about 2 tokens to each session",
                 "Qwen Code's q can't be read",
                 "Claude Code's w in Debian can't be read",
+            ]
+        );
+    }
+
+    #[test]
+    fn copilot_comes_after_qwen_and_a_built_in_server_is_judged_like_the_persons_own() {
+        let mut copilot = inv("copilot");
+        let mut gh = server("github-mcp-server", "f", missing("zz"), Err(NoSwitch::SameName));
+        gh.origin = Origin::BuiltIn;
+        copilot.servers.push(gh);
+        let mut qwen = inv("qwen");
+        qwen.unreadable.push((PathBuf::from("q"), "Bad.".into()));
+        let titles: Vec<String> = items(&[copilot, qwen], &Signals::default())
+            .into_iter()
+            .map(|i| i.title)
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                "Qwen Code's q can't be read",
+                "Copilot CLI's MCP server github-mcp-server can't start"
             ]
         );
     }

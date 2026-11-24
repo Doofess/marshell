@@ -601,6 +601,9 @@ mod tests {
             claude_tool_search: None,
             qwen_runtime: h.join(".qwen"),
             gemini_dir: h.join(".gemini"),
+            copilot_dir: h.join(".copilot"),
+            copilot_home_set: false,
+            copilot_offline: false,
         }
     }
 

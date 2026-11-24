@@ -343,6 +343,9 @@ mod tests {
             claude_tool_search: None,
             qwen_runtime: root.join(".qwen"),
             gemini_dir: root.join(".gemini"),
+            copilot_dir: root.join(".copilot"),
+            copilot_home_set: false,
+            copilot_offline: false,
         };
         (root, roots)
     }
