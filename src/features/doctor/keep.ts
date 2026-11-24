@@ -14,7 +14,7 @@ export const keepDone = (action: DoctorAction) => (action === "keep" ? "Marshell
  */
 export const keepFocusKey = (item: { agent?: string | null; distro?: string | null }) => `${item.agent ?? ""}|${item.distro ?? ""}`;
 
-export type KeepOutcome ={ ok: true } | { ok: false; message: string };
+export type KeepOutcome = { ok: true } | { ok: false; message: string };
 
 /**
  * Sends the press and follows the run the core asked for the way a run started here is followed: a run that is already
