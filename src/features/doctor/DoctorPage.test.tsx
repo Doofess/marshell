@@ -197,6 +197,15 @@ describe("DoctorPage", () => {
       expect(h).toContain(">Stop keeping<");
       expect((h.match(/checked=""/g) ?? []).length).toBe(0);
     });
+    it("while a fix is applied, the Keep my file and Stop keeping buttons are aria-disabled, as the checkboxes are disabled", () => {
+      const h = page(DOCTOR_KEEP, "fixing", { onKeep: noop });
+      expect(h).toMatch(/<button type="button"[^>]*aria-disabled="true"[^>]*>Keep my file<\/button>/);
+      expect(h).toMatch(/<button type="button"[^>]*aria-disabled="true"[^>]*>Stop keeping<\/button>/);
+      // After a fix the checkboxes wait for the next run, and the two buttons work: a press starts that run.
+      for (const phase of ["ready", "fixed"] as const) {
+        expect(page(DOCTOR_KEEP, phase, { onKeep: noop })).not.toMatch(/<button type="button"[^>]*aria-disabled="true"[^>]*>(Keep my file|Stop keeping)<\/button>/);
+      }
+    });
     it("a failed press shows the server's message in the page's error line", () => {
       const h = page(DOCTOR_KEEP, "ready", { onKeep: noop, keepError: "This item can't be fixed any more. Run the check again." });
       expect(h).toMatch(/<p class="doctor__failed"[^>]*>[^<]*Run the check again\./);

@@ -133,7 +133,7 @@ export function DoctorPage({ report, phase, selected, undo, nowMs, elapsedMs = 0
                 </h2>
                 <ul className="doctor__list">
                   {g.items.map((i) => (
-                    <DoctorRow key={i.id} item={i} fixed={fixedIds.has(i.id)} checked={selected.has(i.id)} disabled={phase !== "ready"} keeping={keeping === i.id} onToggle={onToggle} onOpenAgents={onOpenAgents} onKeep={onKeep} />
+                    <DoctorRow key={i.id} item={i} fixed={fixedIds.has(i.id)} checked={selected.has(i.id)} disabled={phase !== "ready"} fixing={phase === "fixing"} keeping={keeping === i.id} onToggle={onToggle} onOpenAgents={onOpenAgents} onKeep={onKeep} />
                   ))}
                 </ul>
               </section>

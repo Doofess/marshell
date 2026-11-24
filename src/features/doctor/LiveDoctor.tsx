@@ -130,7 +130,7 @@ export function LiveDoctor({ endpoint, summary, infos, isWorking, actions, annou
 
   // Keep my file and Stop keeping write nothing of the CLI's: the core remembers the choice and asks for a new run.
   const keep = async (item: DoctorItem) => {
-    if (!endpoint || !item.action || keeping) return;
+    if (!endpoint || !item.action || keeping || m.phase === "fixing") return;
     setKeepError(undefined);
     setKeeping(item.id);
     const r = await pressKeep(() => keepDoctorItem(endpoint, item.id, item.action === "keep"), load);
