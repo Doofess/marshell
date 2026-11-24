@@ -647,10 +647,12 @@ impl ConfigService {
                     },
                 });
             }
-            // After the file's own changes: nothing in it is Marshell's from here on.
-            if handed_back.contains(&file.path) {
-                changes.push(Change::HandedBack { path: &file.target });
-            }
+        }
+        // After every file's own changes: nothing in a handed-back file is Marshell's from here on. That holds too
+        // when this change set changes nothing in it, because the person had already taken Marshell's entries out.
+        for path in &handed_back {
+            let target = files.iter().find(|f| f.path == *path).map_or(path, |f| &f.target);
+            changes.push(Change::HandedBack { path: target });
         }
         let managed_lock = lock(&shared.managed);
         let entries = match managed::updated(&shared.home, &preview.changeset_id, &changes, now_ms) {

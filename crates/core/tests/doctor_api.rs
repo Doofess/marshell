@@ -1292,6 +1292,34 @@ async fn keep_my_file_over_http_writes_only_the_record_and_the_agents_page_then_
 }
 
 #[tokio::test]
+async fn turning_off_a_kept_file_that_already_lost_marshells_entries_still_hands_it_back() {
+    let e = env();
+    install(&e, "copilot").await;
+    add_persons_entry(&e.copilot_hooks);
+    report(&e).await;
+    assert_eq!(press(&e.app, "hooksfile.copilot", true).await, StatusCode::ACCEPTED);
+    wait_for_item(&e.app, "hookskept.copilot", true).await;
+
+    // The person takes Marshell's entries out by hand, so Turn off has nothing to change in the hooks file.
+    let mut file = read_json(&e.copilot_hooks);
+    for (_, entries) in file["hooks"].as_object_mut().unwrap() {
+        entries
+            .as_array_mut()
+            .unwrap()
+            .retain(|entry| *entry == persons_entry());
+    }
+    write(&e.copilot_hooks, &file);
+    let hooks_before = std::fs::read(&e.copilot_hooks).unwrap();
+
+    remove(&e, "copilot").await;
+    assert_eq!(std::fs::read(&e.copilot_hooks).unwrap(), hooks_before);
+    let r = fresh_report(&e).await;
+    let managed = std::fs::read_to_string(e.home.join("managed.json")).unwrap();
+    assert!(!managed.contains("marshell.json"), "{managed}");
+    assert!(item(&r, "hooks.copilot").is_none(), "{:?}", ids(&r));
+}
+
+#[tokio::test]
 async fn stop_keeping_over_http_brings_the_item_back_and_a_wrong_press_is_refused() {
     let e = env();
     install(&e, "copilot").await;
