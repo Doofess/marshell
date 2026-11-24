@@ -14,6 +14,9 @@ export const keepDone = (action: DoctorAction) => (action === "keep" ? "Marshell
  */
 export const keepFocusKey = (item: { agent?: string | null; distro?: string | null }) => `${item.agent ?? ""}|${item.distro ?? ""}`;
 
+/** Whether a press left the focus nowhere: on nothing, on the body, or on the page itself, which takes it while a check hides the rows. */
+export const keepFocusLost = (active: unknown, body: unknown, page: unknown) => active === null || active === body || (page !== null && active === page);
+
 export type KeepOutcome = { ok: true } | { ok: false; message: string };
 
 /**

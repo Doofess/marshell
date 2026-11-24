@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../lib/api/client";
-import { keepDone, keepFocusKey, keepLabel, keepName, pressKeep } from "./keep";
+import { keepDone, keepFocusKey, keepFocusLost, keepLabel, keepName, pressKeep } from "./keep";
 
 describe("keep buttons", () => {
   it("label the action, and say what is happening while the request runs", () => {
@@ -13,6 +13,15 @@ describe("keep buttons", () => {
     expect(keepName("keep", "T", false)).toBe("Keep my file: T");
     expect(keepName("stopKeeping", "T", false)).toBe("Stop keeping: T");
     expect(keepName("keep", "T", true)).toBe("Keeping…: T");
+  });
+  it("the focus counts as lost on nothing, the body or the page itself, and not on another control", () => {
+    // The check a press starts takes the rows away for a moment, and the focus falls back to the page (live check).
+    const [body, page, other] = [{}, {}, {}];
+    expect(keepFocusLost(null, body, page)).toBe(true);
+    expect(keepFocusLost(body, body, page)).toBe(true);
+    expect(keepFocusLost(page, body, page)).toBe(true);
+    expect(keepFocusLost(other, body, page)).toBe(false);
+    expect(keepFocusLost(other, body, null)).toBe(false);
   });
   it("pressKeep loads the report when the run it asked for is already over", async () => {
     const calls: string[] = [];

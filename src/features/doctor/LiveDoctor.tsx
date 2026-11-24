@@ -15,7 +15,7 @@ import { measureDoneAnnouncement } from "./measure";
 import { useClickRun } from "./useClickRun";
 import { planRestarts, skippedReceipt } from "./doctorRestart";
 import { fixAnnouncement, undoRefusedAnnouncement } from "./doctorUi";
-import { keepDone, keepFocusKey, pressKeep } from "./keep";
+import { keepDone, keepFocusKey, keepFocusLost, pressKeep } from "./keep";
 import { selectedFixable } from "./report";
 import type { DoctorItem } from "./types";
 import { DifferencesSheet, FixSheet } from "./FixSheet";
@@ -151,8 +151,7 @@ export function LiveDoctor({ endpoint, summary, infos, isWorking, actions, annou
     // Until the new report is shown the pressed row is still there, with the focus on its button.
     if (!want || !m.report || m.report.items.some((i) => i.id === want.id)) return;
     keepFocus.current = undefined;
-    const lost = document.activeElement === null || document.activeElement === document.body;
-    if (!lost) return;
+    if (!keepFocusLost(document.activeElement, document.body, root.current)) return;
     const next = [...(root.current?.querySelectorAll<HTMLElement>("[data-doctor-keep]") ?? [])].find((b) => b.dataset.doctorKeep === want.key);
     (next ?? root.current)?.focus();
   }, [m.report]);
