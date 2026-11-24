@@ -96,7 +96,7 @@ SOFTWARE.
 
 - Packages: [ignore](https://crates.io/crates/ignore) 0.4.34 and [globset](https://crates.io/crates/globset) 0.4.21 (MIT OR Unlicense, used here under MIT)
 - Source: <https://github.com/BurntSushi/ripgrep>
-- Linked into `marshell-app.exe`; it reads `.gitignore` files for the Files panel.
+- Linked into `marshell-app.exe`; it reads `.gitignore` files for the Files panel and the Doctor, and matches Claude Code's `claudeMdExcludes` for the Doctor.
 
 ```
 The MIT License (MIT)
