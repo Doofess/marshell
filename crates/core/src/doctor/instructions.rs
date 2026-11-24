@@ -192,6 +192,14 @@ impl Reader {
         reader
     }
 
+    /// A reader whose time budget is already spent.
+    #[cfg(test)]
+    pub fn expired() -> Reader {
+        let mut reader = Reader::windows();
+        reader.deadline = Instant::now();
+        reader
+    }
+
     pub fn out_of_time(&self) -> bool {
         Instant::now() >= self.deadline
     }
