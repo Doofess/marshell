@@ -260,6 +260,21 @@ async fn report(e: &Env) -> Value {
     wait_report(e).await
 }
 
+/// A report from a run that started after this call: `report` can return the one from before.
+async fn fresh_report(e: &Env) -> Value {
+    let before = get(&e.app, "/v1/doctor/report").await.1["checked_at_ms"].as_u64();
+    for _ in 0..200 {
+        // A run asked for while one is going is folded into it, so ask until a newer report shows.
+        post(&e.app, "/v1/doctor/run", json!({})).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let (status, body) = get(&e.app, "/v1/doctor/report").await;
+        if status == StatusCode::OK && body["checked_at_ms"].as_u64() != before {
+            return body;
+        }
+    }
+    panic!("no newer report within 10 s");
+}
+
 async fn wait_report(e: &Env) -> Value {
     for _ in 0..200 {
         let (status, body) = get(&e.app, "/v1/doctor/report").await;
@@ -1263,6 +1278,12 @@ async fn keep_my_file_over_http_writes_only_the_record_and_the_agents_page_then_
     let file = read_json(&e.copilot_hooks);
     assert_eq!(ours_in(&file), 0);
     assert_eq!(file["hooks"]["preToolUse"][0], persons_entry());
+    // The file is the person's alone now: the Doctor doesn't call the hooks it just took out "gone".
+    let r = fresh_report(&e).await;
+    let managed = std::fs::read_to_string(e.home.join("managed.json")).unwrap();
+    assert!(!managed.contains("marshell.json"), "{managed}");
+    assert!(item(&r, "hooks.copilot").is_none(), "{:?}", ids(&r));
+    assert!(item(&r, "hooksfile.copilot").is_none(), "{:?}", ids(&r));
 
     // A person's entry that changed: the file isn't kept any more, so the Agents page refuses it again.
     set_persons_bash(&e.copilot_hooks, "echo other");
@@ -1314,4 +1335,7 @@ async fn a_kept_hooks_file_in_a_distro_is_kept_and_turned_off_entry_by_entry() {
     let file = read_json(&hooks);
     assert_eq!(ours_in(&file), 0);
     assert_eq!(file["hooks"]["preToolUse"][0], persons_entry());
+    let r = fresh_report(&e).await;
+    assert!(item(&r, "hooks.copilot@Ubuntu").is_none(), "{:?}", ids(&r));
+    assert!(item(&r, "hooksfile.copilot@Ubuntu").is_none(), "{:?}", ids(&r));
 }

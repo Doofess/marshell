@@ -605,8 +605,9 @@ impl AppState {
                     Some(distro),
                 )
                 .map_err(|e| refused(&e))?;
+                // With Marshell's entries out, the file is the person's alone: `managed.json` stops naming it.
                 return Ok(RemovePreview {
-                    preview: self.0.config.preview(plan.changes),
+                    preview: self.0.config.preview_handing_back(plan.changes, &[hooks_path]),
                     statusline_left: plan.statusline_left,
                 });
             }
@@ -2141,14 +2142,20 @@ pub async fn remove_plan(
         }
         (Adapter::Copilot, None) => {
             let inputs = st.copilot_inputs()?;
-            let plan = if inputs.kept {
-                copilot_hooks::remove_plan_kept(&inputs.files(), None)
+            let files = inputs.files();
+            let (plan, preview) = if inputs.kept {
+                // With Marshell's entries out, the kept file is the person's alone: `managed.json` stops naming it.
+                let plan = copilot_hooks::remove_plan_kept(&files, None).map_err(|e| refused(&e))?;
+                let handed_back = [files.hooks_path.to_path_buf()];
+                let preview = st.0.config.preview_handing_back(plan.changes.clone(), &handed_back);
+                (plan, preview)
             } else {
-                copilot_hooks::remove_plan(&inputs.files(), None)
-            }
-            .map_err(|e| refused(&e))?;
+                let plan = copilot_hooks::remove_plan(&files, None).map_err(|e| refused(&e))?;
+                let preview = st.0.config.preview(plan.changes.clone());
+                (plan, preview)
+            };
             Ok(RemovePreview {
-                preview: st.0.config.preview(plan.changes),
+                preview,
                 statusline_left: plan.statusline_left,
             })
         }

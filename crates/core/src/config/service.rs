@@ -85,6 +85,9 @@ struct Stored {
     /// Per planned file, one flag per op in the order `plan` keeps them: true for the person's own edit (Settings'
     /// form or raw text), whose JSON keys `managed.json` does not record.
     own_ops: Vec<Vec<bool>>,
+    /// The edits' paths of files that are the person's alone once this change is applied (`preview_handing_back`):
+    /// applying it drops every record of them from `managed.json`.
+    handed_back: Vec<PathBuf>,
 }
 
 /// A stored preview that can be applied now, copied out from under the previews lock.
@@ -93,6 +96,7 @@ struct Applicable {
     preview: ConfigPreview,
     targets: Vec<PathBuf>,
     own_ops: Vec<Vec<bool>>,
+    handed_back: Vec<PathBuf>,
 }
 
 #[derive(Default)]
@@ -321,6 +325,17 @@ impl ConfigService {
         self.store_preview(cs, &|_| None, own)
     }
 
+    /// `preview` for a change that takes Marshell's last entries out of files the person keeps as their own: once it
+    /// is applied, `managed.json` holds no record of the files in `paths` (the edits' paths), as if Marshell had
+    /// deleted them. The records of the change's other files are kept as with `preview`.
+    pub fn preview_handing_back(&self, cs: ChangeSet, paths: &[PathBuf]) -> ConfigPreview {
+        let preview = self.preview(cs);
+        if let Some(stored) = lock(&self.shared.previews).map.get_mut(&preview.changeset_id) {
+            stored.handed_back = paths.to_vec();
+        }
+        preview
+    }
+
     fn store_preview(
         &self,
         cs: ChangeSet,
@@ -360,6 +375,7 @@ impl ConfigService {
                 targets,
                 created: Instant::now(),
                 own_ops,
+                handed_back: Vec::new(),
             },
         );
         previews.prune();
@@ -494,6 +510,7 @@ impl ConfigService {
             preview: preview.clone(),
             targets: stored.targets.clone(),
             own_ops: stored.own_ops.clone(),
+            handed_back: stored.handed_back.clone(),
         })
     }
 
@@ -505,6 +522,7 @@ impl ConfigService {
             preview,
             targets,
             own_ops,
+            handed_back,
         } = self.stored(&req.changeset_id)?;
 
         // 2. Exactly the hashes that were shown, one per file.
@@ -628,6 +646,10 @@ impl ConfigService {
                         changeset_id: &restored[snapshot_id.as_str()],
                     },
                 });
+            }
+            // After the file's own changes: nothing in it is Marshell's from here on.
+            if handed_back.contains(&file.path) {
+                changes.push(Change::HandedBack { path: &file.target });
             }
         }
         let managed_lock = lock(&shared.managed);
