@@ -475,8 +475,8 @@ fn notify_facts(agent: &str, hooks_path: &Path, hooks: Option<&serde_json::Value
         return n;
     }
     if agent == "copilot" {
-        // Copilot's notification hooks and toasts are read by their own check.
-        return n;
+        // `hooks_path` is `<copilot home>/hooks/marshell.json`; Copilot's own toasts are read on Windows only.
+        return copilot_notify(hooks_path, true);
     }
     if agent == "codex" {
         // Codex has no Notification hook event, so a group under it never runs: only its notify command counts.
@@ -486,6 +486,43 @@ fn notify_facts(agent: &str, hooks_path: &Path, hooks: Option<&serde_json::Value
     }
     n.hook_commands = hooks.map(notification_hooks).unwrap_or_default();
     n
+}
+
+/// What Copilot CLI notifies by itself, from its `settings.json` and every `*.json` in the `hooks` folder beside Marshell's
+/// file (`hooks_path`, which is read too: only the entries that aren't Marshell's count). A file that doesn't parse is
+/// skipped. `toasts` is false in a distro, whatever `settings.json` says.
+fn copilot_notify(hooks_path: &Path, toasts: bool) -> checks::NotifyFacts {
+    use crate::agents::copilot::{hooks as copilot_hooks, notify};
+    let folder = hooks_path.parent().unwrap_or(hooks_path);
+    let settings_path = folder
+        .parent()
+        .map(copilot_hooks::settings_path)
+        .unwrap_or_else(|| folder.join("settings.json"));
+    let mut files: Vec<(PathBuf, serde_json::Value)> = Vec::new();
+    for entry in std::fs::read_dir(folder).into_iter().flatten().flatten() {
+        let path = entry.path();
+        let is_json = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("json"));
+        if !is_json || !entry.file_type().is_ok_and(|t| t.is_file()) {
+            continue;
+        }
+        if let Some(value) = std::fs::read_to_string(&path).ok().and_then(|t| read_value(&t).ok()) {
+            files.push((path, value));
+        }
+    }
+    let settings = std::fs::read_to_string(&settings_path)
+        .ok()
+        .and_then(|t| read_value(&t).ok());
+    checks::NotifyFacts {
+        file: hooks_path.to_path_buf(),
+        hook_commands: notify::own_hooks(&files, settings.as_ref()),
+        toasts: toasts && settings.as_ref().is_some_and(notify::toasts_on),
+        settings_read_only: std::fs::metadata(&settings_path).is_ok_and(|m| m.permissions().readonly()),
+        settings: settings_path,
+        ..Default::default()
+    }
 }
 
 /// One file of a distro as a value and whether it is read-only: `Ok(None)` when it isn't there, and the line and
@@ -739,6 +776,7 @@ fn distro_copilot_facts(
         bridge,
     );
     facts.hooks = found.install;
+    facts.notify = copilot_notify(&hooks_path, false);
     facts
 }
 
@@ -793,7 +831,10 @@ fn facts_from(st: &AppState, agent: &'static str, setup: AgentSetup, entries: &[
         _ => None,
     };
     // Only a CLI on this machine is asked what it notifies by itself.
-    let notify = if setup.found {
+    let notify = if agent == "copilot" && matches!(file, FileState::NotOurs { .. } | FileState::Unparsable { .. }) {
+        // A hooks file that isn't Marshell's or a settings file that doesn't parse says nothing about notifications.
+        checks::NotifyFacts::default()
+    } else if setup.found {
         let hooks = matches!(file, FileState::Ok | FileState::ReadOnly)
             .then(|| {
                 let text = std::fs::read_to_string(&path).ok()?;
@@ -957,6 +998,8 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
 
     let mut edits: Vec<FileEdit> = Vec::new();
     let mut switches: Vec<Switch> = Vec::new();
+    // Copilot CLI's settings files whose `/notifications` this fix turns off.
+    let mut own_settings: Vec<String> = Vec::new();
     for (item, facts) in &picked {
         match item.id.split('.').next() {
             Some("hooks") => {
@@ -982,6 +1025,12 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
                 edits.extend(changes.edits);
             }
             Some("retention") => edits.push(retention_edit(facts)?),
+            // Copilot CLI's own `notifications` turned off, against the text `settings.json` has now.
+            Some("toasts") if facts.agent == "copilot" => {
+                let edit = toasts_edit(facts)?;
+                own_settings.push(edit.path.clone());
+                edits.push(edit);
+            }
             // A server or a skill turned off: the switch is read again from the inventory just gathered. Two items for one
             // server (a failed measurement and an unused server) give the same switch, which is taken once.
             Some("mcp" | "skill" | "mcpfail" | "mcpunused" | "skillunused") => {
@@ -1018,7 +1067,7 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
     // managed.json.
     let preview =
         st.0.config
-            .preview_mixed(cs, &|edit| is_own_edit(edit) || ext_edits.contains(edit));
+            .preview_mixed(cs, &|edit| is_own_edit(edit, &own_settings) || ext_edits.contains(edit));
     let restart = restart_list(st, &picked);
     *st.doctor().pending.lock().unwrap_or_else(|e| e.into_inner()) = Some(PendingFix {
         changeset_id: preview.changeset_id.clone(),
@@ -1035,8 +1084,28 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
 const RETENTION_POINTER: &str = "/cleanupPeriodDays";
 
 /// An edit of a setting that is the person's own: managed.json records no key for it.
-fn is_own_edit(edit: &FileEdit) -> bool {
-    matches!(&edit.op, EditOp::JsonSet { pointer, .. } if pointer == RETENTION_POINTER)
+/// `copilot_settings` are the paths of Copilot CLI's settings files this fix turns `/notifications` off in.
+fn is_own_edit(edit: &FileEdit, copilot_settings: &[String]) -> bool {
+    matches!(&edit.op, EditOp::JsonSet { pointer, .. }
+        if pointer == RETENTION_POINTER || (pointer == NOTIFICATIONS_POINTER && copilot_settings.contains(&edit.path)))
+}
+
+const NOTIFICATIONS_POINTER: &str = "/notifications";
+
+/// Copilot CLI's `notifications` set to `false` in its `settings.json`, against the text of the file as it is now.
+fn toasts_edit(facts: &AgentFacts) -> Result<FileEdit, Fail> {
+    let path = &facts.notify.settings;
+    let text = std::fs::read_to_string(path).map_err(|_| cant_fix())?;
+    Ok(FileEdit {
+        path: path.to_string_lossy().into_owned(),
+        scope: ConfigScope::User,
+        op: EditOp::JsonSet {
+            pointer: NOTIFICATIONS_POINTER.to_string(),
+            value: "false".to_string(),
+        },
+        expected_hash: Some(hash_bytes(text.as_bytes())),
+        applies: Applies::NewSessions,
+    })
 }
 
 /// Claude Code's `cleanupPeriodDays` set to a year, against the text of the file as it is now.
@@ -1719,6 +1788,7 @@ pub(in crate::server) mod tests {
                 file: config.clone(),
                 command: Some("a.exe x".into()),
                 hook_commands: Vec::new(),
+                ..Default::default()
             }
         );
         // A config.toml that doesn't parse gives no command.
@@ -2429,6 +2499,164 @@ pub(in crate::server) mod tests {
         let undone = undo(State(st.clone())).await;
         assert_eq!(undone.status(), StatusCode::OK);
         assert_eq!(std::fs::read_to_string(&hooks).unwrap(), "{}");
+    }
+
+    // Copilot CLI's own notifications and notification hooks (slice 6n3, decisions 2, 8 and 14).
+
+    /// Settings text as a person's editor could leave it: a BOM, a comment, CRLF, a trailing comma, and `notifications`
+    /// set to `value` (JSON text). Built on what "Set up" wrote, so the status line stays.
+    fn settings_with_notifications(settings: &Path, value: &str) -> String {
+        let text = std::fs::read_to_string(settings).unwrap();
+        let body = text.trim_end().strip_suffix('}').unwrap().trim_end().to_string();
+        let text = format!("\u{feff}// mine\n{body},\n  \"notifications\": {value}, // toasts\n}}\n");
+        let text = text.replace('\n', "\r\n");
+        std::fs::write(settings, &text).unwrap();
+        text
+    }
+
+    #[test]
+    fn copilots_own_hooks_and_toasts_are_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (hooks, settings) = copilot_files(dir.path());
+        install_copilot(&st);
+        settings_with_notifications(&settings, "true");
+        let folder = hooks.parent().unwrap();
+        write(
+            &folder.join("b.json"),
+            r#"{"hooks": {"notification": [{"type": "command", "command": "b1"}]}}"#,
+        );
+        write(
+            &folder.join("a.json"),
+            r#"{"hooks": {"notification": [{"type": "command", "bash": "a1"}]}}"#,
+        );
+        write(&folder.join("bad.json"), "{not json");
+        write(&folder.join("notes.txt"), "notification");
+        let f = copilot_facts(&st);
+        assert!(f.notify.toasts, "{f:?}");
+        assert_eq!(f.notify.settings, settings);
+        assert_eq!(
+            f.notify.hook_commands,
+            ["a1", "b1"],
+            "Marshell's own entries are never listed"
+        );
+        assert!(!f.notify.settings_read_only);
+    }
+
+    #[tokio::test]
+    async fn a_hooks_file_of_the_persons_own_entries_is_read_when_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (hooks, _) = foreign_copilot(&st, dir.path());
+        edit_hooks(&hooks, |file| {
+            file["hooks"]["notification"]
+                .as_array_mut()
+                .unwrap()
+                .insert(0, serde_json::json!({"type": "command", "command": "mine.exe"}));
+        });
+        // Not kept yet: the file isn't Marshell's, so no notify fact.
+        report_of(&st).await;
+        assert!(copilot_facts(&st).notify.hook_commands.is_empty());
+        assert_eq!(press(&st, "hooksfile.copilot", true).await.0, StatusCode::ACCEPTED);
+        let f = copilot_facts(&st);
+        assert!(f.kept);
+        assert_eq!(f.notify.hook_commands, ["mine.exe"], "{f:?}");
+    }
+
+    #[test]
+    fn a_distros_toasts_are_always_off_but_its_hooks_are_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join(".copilot");
+        write(&home.join("settings.json"), r#"{"notifications": true}"#);
+        write(
+            &home.join("hooks").join("mine.json"),
+            r#"{"hooks": {"notification": [{"type": "command", "command": "x"}]}}"#,
+        );
+        let hooks = home.join("hooks").join("marshell.json");
+        let distro = copilot_notify(&hooks, false);
+        assert!(!distro.toasts);
+        assert_eq!(distro.hook_commands, ["x"]);
+        assert!(copilot_notify(&hooks, true).toasts);
+    }
+
+    #[test]
+    fn only_a_literal_true_gives_a_toast_fact() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (_, settings) = copilot_files(dir.path());
+        install_copilot(&st);
+        for (value, on) in [("true", true), ("\"true\"", false), ("1", false), ("false", false)] {
+            settings_with_notifications(&settings, value);
+            assert_eq!(copilot_facts(&st).notify.toasts, on, "{value}");
+        }
+    }
+
+    #[tokio::test]
+    async fn copilots_toast_item_is_fixed_by_one_edit_that_keeps_every_other_byte() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (_, settings) = copilot_files(dir.path());
+        install_copilot(&st);
+        let before = settings_with_notifications(&settings, "true");
+        let report = report_of(&st).await;
+        let item = item_of(&report, "toasts.copilot").unwrap_or_else(|| panic!("{:?}", report.items));
+        assert!(item.fixable && !item.unchecked, "{item:?}");
+
+        let plan = fix_of(&st, vec!["toasts.copilot".into()]).expect("a plan");
+        assert_eq!(plan.item_ids, ["toasts.copilot"]);
+        assert_eq!(plan.preview.files.len(), 1, "{:?}", plan.preview.files);
+        apply_fix_plan(&st, &plan).await;
+        let after = std::fs::read_to_string(&settings).unwrap();
+        assert_eq!(
+            after,
+            before.replacen("\"notifications\": true", "\"notifications\": false", 1)
+        );
+        assert!(
+            !format!("{:?}", managed_entries(&st)).contains("/notifications"),
+            "managed.json must not name the person's own setting"
+        );
+        let report = report_of(&st).await;
+        assert!(!has_item(&report, "toasts.copilot"), "{:?}", report.items);
+
+        let undone = undo(State(st.clone())).await;
+        assert_eq!(undone.status(), StatusCode::OK);
+        assert_eq!(std::fs::read(&settings).unwrap(), before.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn the_toast_fix_and_the_hooks_fix_apply_together() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (hooks, settings) = copilot_files(dir.path());
+        install_copilot(&st);
+        settings_with_notifications(&settings, "true");
+        std::fs::remove_file(&hooks).unwrap();
+        let report = report_of(&st).await;
+        assert!(has_item(&report, "hooks.copilot"), "{:?}", report.items);
+        // The status line is still Marshell's, so its hooks count as set up and both items are there.
+        assert!(has_item(&report, "toasts.copilot"), "{:?}", report.items);
+        let plan = fix_of(&st, vec!["toasts.copilot".into(), "hooks.copilot".into()]).expect("a plan");
+        apply_fix_plan(&st, &plan).await;
+        assert!(
+            std::fs::read_to_string(&settings)
+                .unwrap()
+                .contains("\"notifications\": false")
+        );
+        assert_eq!(
+            copilot_facts(&st).hooks,
+            marshell_protocol::agents::HookInstall::Installed
+        );
+    }
+
+    #[tokio::test]
+    async fn a_string_true_gives_no_toast_item() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = pinned(dir.path());
+        let (_, settings) = copilot_files(dir.path());
+        install_copilot(&st);
+        settings_with_notifications(&settings, "\"true\"");
+        let report = report_of(&st).await;
+        assert!(!has_item(&report, "toasts.copilot"), "{:?}", report.items);
     }
 
     // "Keep my file" and "Stop keeping" (slice 6n3, decision 20).

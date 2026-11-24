@@ -44,6 +44,12 @@ pub struct NotifyFacts {
     /// The `command` of every hook under `hooks.Notification` that `agents::common::is_ours` doesn't claim
     /// (Claude Code, Codex and Qwen Code), in file order.
     pub hook_commands: Vec<String>,
+    /// Copilot CLI (Windows): its own `notifications` setting is `true` in `settings`. Always false in a distro.
+    pub toasts: bool,
+    /// Copilot CLI: its `settings.json`.
+    pub settings: PathBuf,
+    /// Copilot CLI: `settings` is read-only.
+    pub settings_read_only: bool,
 }
 
 /// Everything the checks need to know about one CLI, on Windows or in one WSL distro.
@@ -371,6 +377,24 @@ fn cli_items(f: &AgentFacts, banners_on: bool, out: &mut Vec<DoctorItem>) {
             i.cannot_fix = Some("Marshell doesn't change your notify command.".into());
             found.push(i);
         }
+        // Copilot CLI's own `notifications` setting, once Marshell's hooks are set up for it (a kept file included).
+        if f.agent == "copilot" && f.distro.is_none() && n.toasts && f.hooks != HookInstall::None {
+            let settings = n.settings.display().to_string();
+            let mut i = mk(
+                "toasts",
+                DoctorGroup::Broken,
+                !n.settings_read_only,
+                format!("{cli} shows its own notifications"),
+                format!(
+                    "notifications is on in {settings}, so {cli} raises a Windows notification beside Marshell's. The fix turns it off there. Marshell's notifications stay."
+                ),
+            );
+            i.path = Some(settings);
+            if n.settings_read_only {
+                i.cannot_fix = Some(READ_ONLY.into());
+            }
+            found.push(i);
+        }
         if !n.hook_commands.is_empty() {
             let mut i = with_file(mk(
                 "notify",
@@ -385,7 +409,8 @@ fn cli_items(f: &AgentFacts, banners_on: bool, out: &mut Vec<DoctorItem>) {
     }
 
     if f.file == FileState::ReadOnly {
-        for i in found.iter_mut().filter(|i| i.fixable) {
+        // The toast fix writes `settings.json`, whose own read-only state the item already has.
+        for i in found.iter_mut().filter(|i| i.fixable && !i.id.starts_with("toasts.")) {
             i.fixable = false;
             i.cannot_fix = Some(READ_ONLY.into());
         }
@@ -1042,6 +1067,7 @@ mod tests {
             file: PathBuf::from("C:/h/config.toml"),
             command: Some("a.exe x".into()),
             hook_commands: Vec::new(),
+            ..Default::default()
         };
         let v = items(&[f], &[], true);
         assert_eq!(v.len(), 1, "{v:?}");
@@ -1069,6 +1095,105 @@ mod tests {
             DoctorGroup::Info,
             false,
             "Claude Code runs your own Notification hook",
+            "It runs toast.exe a; b.sh. If that shows a desktop notification, you get two.",
+            Some("Marshell doesn't change your hooks."),
+        );
+    }
+
+    fn copilot_toasts() -> AgentFacts {
+        let mut f = facts("copilot");
+        f.path = PathBuf::from("C:/c/hooks/marshell.json");
+        f.notify.toasts = true;
+        f.notify.settings = PathBuf::from("C:/c/settings.json");
+        f
+    }
+
+    const TOAST_ID: &str = "toasts.copilot";
+
+    #[test]
+    fn copilots_own_notifications_are_a_broken_item_checked_by_default() {
+        for hooks in [HookInstall::Installed, HookInstall::Partial, HookInstall::Orphaned] {
+            let mut f = copilot_toasts();
+            f.hooks = hooks;
+            let v = items(&[f], &[], true);
+            let i = v
+                .iter()
+                .find(|i| i.id == TOAST_ID)
+                .unwrap_or_else(|| panic!("{hooks:?}: {v:?}"));
+            check(
+                i,
+                TOAST_ID,
+                DoctorGroup::Broken,
+                true,
+                "Copilot CLI shows its own notifications",
+                "notifications is on in C:/c/settings.json, so Copilot CLI raises a Windows notification beside Marshell's. The fix turns it off there. Marshell's notifications stay.",
+                None,
+            );
+            assert!(!i.unchecked);
+            assert_eq!(i.path.as_deref(), Some("C:/c/settings.json"));
+        }
+    }
+
+    #[test]
+    fn a_kept_hooks_file_counts_as_set_up_for_the_toast_item() {
+        let mut f = copilot_toasts();
+        f.kept = true;
+        assert!(items(&[f], &[], true).iter().any(|i| i.id == TOAST_ID));
+    }
+
+    #[test]
+    fn copilots_toast_item_needs_banners_hooks_windows_and_a_readable_file() {
+        let ids =
+            |f: AgentFacts, banners| -> Vec<String> { items(&[f], &[], banners).into_iter().map(|i| i.id).collect() };
+        assert!(!ids(copilot_toasts(), false).contains(&TOAST_ID.to_string()));
+        let mut none = copilot_toasts();
+        none.hooks = HookInstall::None;
+        none.set_up = false;
+        assert!(!ids(none, true).contains(&TOAST_ID.to_string()));
+        let mut distro = copilot_toasts();
+        distro.distro = Some("Ubuntu".into());
+        assert!(!ids(distro, true).iter().any(|i| i.starts_with("toasts.")));
+        let mut bad = copilot_toasts();
+        bad.file = FileState::Unparsable {
+            line: 1,
+            message: "x".into(),
+        };
+        assert!(!ids(bad, true).contains(&TOAST_ID.to_string()));
+        let mut foreign = copilot_toasts();
+        foreign.file = FileState::NotOurs {
+            cannot_fix: None,
+            keepable: true,
+        };
+        assert!(!ids(foreign, true).contains(&TOAST_ID.to_string()));
+        let mut off = copilot_toasts();
+        off.notify.toasts = false;
+        assert!(!ids(off, true).contains(&TOAST_ID.to_string()));
+    }
+
+    #[test]
+    fn a_read_only_settings_file_makes_the_toast_item_unfixable() {
+        let mut f = copilot_toasts();
+        f.notify.settings_read_only = true;
+        let v = items(&[f], &[], true);
+        let i = v.iter().find(|i| i.id == TOAST_ID).expect("the item");
+        assert!(!i.fixable);
+        assert_eq!(i.cannot_fix.as_deref(), Some("The file is read-only."));
+    }
+
+    #[test]
+    fn copilots_notification_hooks_are_info_like_the_others() {
+        let mut f = copilot_toasts();
+        f.notify.toasts = false;
+        f.notify.file = PathBuf::from("C:/c/hooks/mine.json");
+        f.notify.hook_commands = vec!["toast.exe a".into(), "b.sh".into()];
+        let v = items(&[f], &[], true);
+        assert_eq!(v.len(), 1, "{v:?}");
+        check(
+            &v[0],
+            "notify.copilot",
+            DoctorGroup::Info,
+            false,
+            "Copilot CLI runs your own Notification hook",
             "It runs toast.exe a; b.sh. If that shows a desktop notification, you get two.",
             Some("Marshell doesn't change your hooks."),
         );
