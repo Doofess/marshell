@@ -133,14 +133,17 @@ export function LiveDoctor({ endpoint, summary, infos, isWorking, actions, annou
     if (!endpoint || !item.action || keeping || m.phase === "fixing") return;
     setKeepError(undefined);
     setKeeping(item.id);
+    // Set before the request: the new report can be shown before the reply is handled, and the focus effect runs once
+    // per report. Until the row is gone the effect leaves this alone.
+    keepFocus.current = { key: keepFocusKey(item), id: item.id };
     const r = await pressKeep(() => keepDoctorItem(endpoint, item.id, item.action === "keep"), load);
     setKeeping(undefined);
     if (!r.ok) {
+      keepFocus.current = undefined;
       setKeepError(r.message);
       announce(r.message);
       return;
     }
-    keepFocus.current = { key: keepFocusKey(item), id: item.id };
     announce(keepDone(item.action));
   };
 
