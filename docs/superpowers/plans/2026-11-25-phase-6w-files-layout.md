@@ -36,6 +36,8 @@
   - `EmptyPanel` is shared by Browser, Files and Changes (`pane/EmptyBrowser.tsx`, `pane/EmptyFiles.tsx`, `changes/`). Its short rule today is `@container (height < 280px)` (`EmptyPanel.css`), pinned by `EmptyPanel.css.test.ts:60`.
   - The strip is 28 px (`SidePane.css:8`), its buttons 24 px (`SidePane.css:172–177`).
   - `:not([inert] *)` and `:has()` work in WebView2, WKWebView 15.4+ and WebKitGTK 2.42+.
+- The tests below are written against helper names that stand for each test file's own: `body(…)` is `FilesBody.test.tsx`'s `render(…)` (give it `pathBar={<div className="path-bar" />}` in place of `<i>BAR</i>`), `bar()` is `PathBar.test.tsx`'s `render()`, `pane(…)` is `Preview.test.tsx`'s `html(file, more)`. `rule(sel)` (the text from `sel + " {"` to the next `}`) exists in `SidePane.css.test.ts` and `FileTree.css.test.ts`; add the same helper to `FilesBody.css.test.ts` and `EmptyPanel.css.test.ts`. Keep each assertion's meaning; fit its form to the file.
+- Plan review (Opus, 2026-11-26) checked the plan against the code; its ten findings are folded in below and marked "(review N)".
 - Items marked "not verified" are for the worker to check first, and to report if the code says otherwise.
 
 ## Review Focus
@@ -93,7 +95,8 @@ it("draws one line under the path bar, across the panel", () => {
   expect(rule(".path-bar")).toContain("border-block-end: 1px solid var(--hairline)");
 });
 it("never shrinks the path bar's buttons: the path gives way and scrolls", () => {
-  expect(rule(".path-bar__button")).toContain("flex: none");
+  // The first `.path-bar__button` block is shared with `.path-bar__folder`; the button's own block follows it (review 5).
+  expect(css).toMatch(/\n\.path-bar__button \{[^}]*flex: none;/);
   expect(rule(".path-bar__path")).toContain("min-inline-size: 0");
 });
 it("leaves a gutter between the code and a tree that follows it", () => {
@@ -148,7 +151,7 @@ Expected: the new tests FAIL (no `files-body__main`, no `file-tree-filter-box`).
 }
 ```
 
-Not verified: that a margin on `.cm-scroller` leaves the editor's status line (`src/features/editor/EditorFooter.tsx`) at the column's full width. If the status line moves with it, report it; the live check judges item 2.
+The status line is a sibling of `.cm-editor` (`TextTab.tsx:244`), so the margin doesn't move it; the live check looks at it all the same (item 2).
 
 - [ ] **Step 5: `TreeFilterBox.tsx` and `FileTree.css`**
 
@@ -201,6 +204,7 @@ git commit -m "fix(files): the path bar runs across the Files panel, and the fil
   - `afterOpen(how: "click" | "enter" | "double" | "space", o: { narrow: boolean; panel: PanelId }): { close: boolean; focus: PanelId | "tree-button" | null }`
   - `treeBack(before: string | null, now: string | null): boolean` (true when the last file has just closed)
 - Removes: `narrowAfterOpen` from `treeLayout.ts`, and its test.
+  - `filterTakesKeyboard(o: { narrow: boolean; opening: boolean; focusInFile: boolean }): boolean` (true only when all three are: the narrow tree opens over a file that holds the keyboard)
 - Produces: the path bar's tree button carries `data-tree-button=""`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -216,6 +220,14 @@ it("in the narrow layout every open shows the file; Space leaves the keyboard on
 });
 it("in the wide layout Space still leaves the tree and the keyboard as they are", () => {
   expect(afterOpen("space", { narrow: false, panel: "files" })).toEqual({ close: false, focus: null });
+});
+describe("filterTakesKeyboard", () => {
+  it("moves the keyboard to the filter box only when the narrow tree opens over a file that holds it (review 6)", () => {
+    expect(filterTakesKeyboard({ narrow: true, opening: true, focusInFile: true })).toBe(true);
+    expect(filterTakesKeyboard({ narrow: true, opening: true, focusInFile: false })).toBe(false);
+    expect(filterTakesKeyboard({ narrow: true, opening: false, focusInFile: true })).toBe(false);
+    expect(filterTakesKeyboard({ narrow: false, opening: true, focusInFile: true })).toBe(false);
+  });
 });
 describe("treeBack", () => {
   it("is true only when the last file closes", () => {
@@ -256,12 +268,12 @@ it("a wide panel never makes the file inert", () => {
 it("lays the narrow tree over the file in one cell, with no absolute placement", () => {
   expect(rule(".files-body[data-narrow] .files-body__main")).toContain("display: grid");
   expect(rule(".files-body[data-narrow] .files-body__main > *")).toContain("grid-area: 1 / 1");
-  expect(css).not.toContain("position: absolute");
-  expect(css).not.toContain("inset-block: 0;\n  z-index: 2");
+  // The file holds positioned boxes (`.preview__body`, CodeMirror's `.cm-editor` and `.cm-scroller`), which would paint over a tree with no z-index (review 1).
+  expect(rule(".files-body[data-narrow] .files-body__tree")).toContain("z-index: 1");
+  expect(rule(".files-body[data-narrow] .files-body__tree")).not.toContain("position");
+  expect(rule(".files-body")).not.toContain("position: relative");
 });
 ```
-
-(The divider's `::before` keeps `position: absolute`; scope the `not.toContain` to the text before `/* The divider` so it holds.)
 
 `PathBar.test.tsx` (add to `has the two buttons…`): `expect(html).toMatch(/<button[^>]*aria-label="Show file tree"[^>]*data-tree-button=""/)` (attribute order as React writes it; match either order).
 
@@ -273,8 +285,12 @@ it("skips what is inert: an editor or a body under the narrow tree never takes t
   paneFocusTarget({ querySelector: (s: string) => (seen.push(s), null) } as unknown as ParentNode, "files");
   expect(seen.find((s) => s.includes("cm-content"))).toContain(":not([inert] *)");
   expect(seen.find((s) => s.includes("preview__body"))).toContain(":not([inert] *)");
+  // With no file and no rows, the empty state's button is under the tree too (review 8).
+  expect(seen.find((s) => s.includes("empty-panel__button"))).toContain(":not([inert] *)");
 });
 ```
+
+`focusPane.test.ts:33` pins the editor's selector as an exact string: add the suffix there (review 5). `emptyTitle` is asked only for Changes; give it the suffix and check it by reading the selector in a Changes case.
 
 - [ ] **Step 2: Run them and watch them fail**
 
@@ -288,16 +304,20 @@ Remove `narrowAfterOpen`. `afterOpen` for the Files panel: wide is `{ close: fal
 - [ ] **Step 4: `FilesBody.tsx` and `FilesBody.css`**
 
 - `const covered = narrow && showTree;` The file column gets `inert={covered}`. In the narrow layout the tree column has no `style`; `px` is `treeWidth(width, panelWidth)` in the wide layout only (delete the narrow `Math.min(…, panelWidth - 40)` branch).
-- `parts` is unchanged: narrow is `[fileColumn, treeColumn]`, so the tree is later in the DOM and paints over the file.
+- `parts` is unchanged: narrow is `[fileColumn, treeColumn]`.
 - CSS: delete the three `.files-body[data-narrow]…__tree` rules (`position: absolute`, the two `data-edge` borders) and `position: relative` on `.files-body`. Add:
 
 ```css
-/* Under 480 px the tree takes the file's place: both sit in one cell and the tree, later in the DOM, covers the file whole. */
+/* Under 480 px the tree takes the file's place: both sit in one cell and the tree covers the file whole. A grid item takes a
+ * z-index with no position; without one the file's positioned boxes (the preview's body, the editor) would paint over the tree. */
 .files-body[data-narrow] .files-body__main {
   display: grid;
 }
 .files-body[data-narrow] .files-body__main > * {
   grid-area: 1 / 1;
+}
+.files-body[data-narrow] .files-body__tree {
+  z-index: 1;
 }
 ```
 
@@ -310,7 +330,8 @@ The tree keeps its opaque `background: var(--bg-base)` and, in forced colours, `
 - `PathBar`: `data-tree-button=""` on the "Show file tree" button.
 - `FilesPanel.openAt`: after `setOverlay(false)`, `if (after.focus === "tree-button") box.current?.querySelector<HTMLElement>("[data-tree-button]")?.focus(); else if (after.focus !== null) focusPane(after.focus);`. Update its comment.
 - `FilesPanel`: a ref holds the last `activePath`; an effect on `[activePath]` calls `setOverlay(true)` when `treeBack(last, activePath)`, then stores the new value.
-- `focusPane.ts`: the `editor` and `body` selectors end with `:not([inert] *)`. Say why in their comments. The `slot` selector is left alone (no browser tab sits in the Files body).
+- `FilesPanel.toggleTree` and `revealFolder` (review 6): making the file `inert` drops the keyboard to `<body>` when it was in the file (the Files menu, a palette command and a path-bar folder all open the tree from there). Before `setOverlay(true)`, read `focusInFile = box.current?.querySelector(".files-body__file")?.contains(document.activeElement) ?? false`; when `filterTakesKeyboard({ narrow, opening: true, focusInFile })`, set a ref that a `useLayoutEffect` on `[overlay]` consumes by focusing `filterBox.current`.
+- `focusPane.ts`: the `editor`, `body`, `emptyFirst` and `emptyTitle` selectors end with `:not([inert] *)`. Say why in their comments. The `slot` selector is left alone (no browser tab sits in the Files body).
 
 - [ ] **Step 6: Run the tests, then the build**
 
@@ -330,13 +351,15 @@ git commit -m "fix(files): under 480 px the tree takes the file's place, and Spa
 
 **Files:**
 - Create: `src/features/preview/headerSlot.ts`, `src/features/preview/headerSlot.test.ts`
-- Modify: `src/features/preview/Preview.tsx`, `src/features/files/PathBar.tsx`, `src/features/files/FilesPanel.tsx`, `src/features/files/FilesBody.css`
+- Create: `src/features/preview/headerRows.css.test.ts`
+- Modify: `src/features/preview/Preview.tsx`, `src/features/preview/Preview.css`, `src/features/files/PathBar.tsx`, `src/features/files/FilesPanel.tsx`, `src/features/files/FilesBody.css`
 - Test: `src/features/preview/Preview.test.tsx`, `src/features/files/PathBar.test.tsx`, `src/features/files/FilesBody.css.test.ts`
 
 **Interfaces:**
 - Produces, in `preview/headerSlot.ts`:
-  - `export const HeaderSlot = createContext<HTMLElement | null>(null);` (the element a Files tab's tools are drawn into)
-  - `export function headerPlace(o: { pathShown: boolean; active: boolean; slot: boolean }): "header" | "slot" | "none"`: `"header"` when `!pathShown`; else `"slot"` when `active && slot`; else `"none"`.
+  - `export const HeaderSlot = createContext<HTMLElement | null | undefined>(undefined);` The element a Files tab's tools are drawn into. `undefined` means no Files panel is around the tab (`LiveApp.tsx:2664` draws the tabs without one while the shell panel's shell is starting); `null` means the panel is there and its path bar isn't mounted yet (review 3).
+  - `export type SlotState = "absent" | "waiting" | "ready";` and `export function slotState(slot: HTMLElement | null | undefined): SlotState`.
+  - `export function headerPlace(o: { pathShown: boolean; active: boolean; slot: SlotState }): "header" | "slot" | "none"`: `"header"` when `!pathShown` or `slot === "absent"`; else `"slot"` when `active && slot === "ready"`; else `"none"`.
   - `export function insidePane(pane: Pick<Node, "contains">, slot: Pick<Node, "contains"> | null, to: Node | null): boolean`: whether `to` is in the pane or in the slot.
 - Produces: `PathBarProps` gains `toolsRef?: (el: HTMLElement | null) => void`; the bar draws `<div className="path-bar__tools" ref={toolsRef} />` between the `<nav>` and "Collapse all folders".
 
@@ -347,13 +370,22 @@ git commit -m "fix(files): under 480 px the tree takes the file's place, and Spa
 ```ts
 describe("headerPlace", () => {
   it("draws the pane's own header outside the Files panel", () => {
-    expect(headerPlace({ pathShown: false, active: true, slot: false })).toBe("header");
-    expect(headerPlace({ pathShown: false, active: false, slot: true })).toBe("header");
+    expect(headerPlace({ pathShown: false, active: true, slot: "absent" })).toBe("header");
+    expect(headerPlace({ pathShown: false, active: false, slot: "ready" })).toBe("header");
   });
   it("in Files only the tab on screen draws its tools, and only into the path bar", () => {
-    expect(headerPlace({ pathShown: true, active: true, slot: true })).toBe("slot");
-    expect(headerPlace({ pathShown: true, active: false, slot: true })).toBe("none");
-    expect(headerPlace({ pathShown: true, active: true, slot: false })).toBe("none");
+    expect(headerPlace({ pathShown: true, active: true, slot: "ready" })).toBe("slot");
+    expect(headerPlace({ pathShown: true, active: false, slot: "ready" })).toBe("none");
+    expect(headerPlace({ pathShown: true, active: true, slot: "waiting" })).toBe("none");
+  });
+  it("a Files tab drawn with no Files panel around it keeps a header, so its tools can be reached", () => {
+    expect(headerPlace({ pathShown: true, active: true, slot: "absent" })).toBe("header");
+    expect(headerPlace({ pathShown: true, active: false, slot: "absent" })).toBe("header");
+  });
+  it("tells no panel from a panel whose bar isn't mounted", () => {
+    expect(slotState(undefined)).toBe("absent");
+    expect(slotState(null)).toBe("waiting");
+    expect(slotState({} as HTMLElement)).toBe("ready");
   });
 });
 describe("insidePane", () => {
@@ -372,15 +404,27 @@ describe("insidePane", () => {
 `Preview.test.tsx` (add; use the file's existing way of rendering `PreviewPane`):
 
 ```tsx
-it("in the Files panel it draws no header of its own and no Back or Forward", () => {
-  const html = pane({ pathShown: true }); // a Markdown entry with text loaded
-  expect(html).not.toContain("preview__header");
-  expect(html).not.toContain('aria-label="Back"');
-  expect(html).not.toContain('aria-label="Forward"');
+it("in the Files panel it draws no Back or Forward, with or without a path bar to hold its tools", () => {
+  const alone = pane({ pathShown: true }); // no provider: the header stays, for the tools
+  expect(alone).toContain("preview__header");
+  expect(alone).not.toContain('aria-label="Back"');
+  expect(alone).not.toContain('aria-label="Forward"');
+  const inPanel = renderToStaticMarkup(<HeaderSlot value={null}>{/* the same pane */}</HeaderSlot>);
+  expect(inPanel).not.toContain("preview__header");
+  expect(inPanel).not.toContain('aria-label="Back"');
 });
 ```
 
-The existing header tests (11 lines name Back or Forward) render without `pathShown` and stay as they are.
+`Preview.test.tsx:86–91` (`leaves the name and folder out of the header when the path is shown elsewhere`) expects `aria-label="Back"` with `pathShown: true`: change that line to `not.toContain` (review 5). The other header tests render without `pathShown` and stay as they are.
+
+`headerRows.css.test.ts` (new; reads `Preview.css` from disk):
+
+```ts
+it("a preview with no header of its own gives the body the whole height (review 2)", () => {
+  expect(css).toMatch(/\.preview:not\(:has\(> \.preview__header\)\) \{\s*grid-template-rows: minmax\(0, 1fr\);/);
+  expect(css).toMatch(/\.preview:not\(:has\(> \.preview__header\)\):has\(\.web-link\) \{\s*grid-template-rows: auto minmax\(0, 1fr\);/);
+});
+```
 
 `PathBar.test.tsx` (add):
 
@@ -397,7 +441,8 @@ it("has a place for the file's tools between the path and its own buttons", () =
 ```ts
 it("an empty tools place takes no room, and a full one never shrinks", () => {
   expect(rule(".path-bar__tools")).toContain("flex: none");
-  expect(rule(".path-bar__tools:empty")).toContain("display: none");
+  // The "Updated" note is always drawn, so `:empty` would never match (review 4).
+  expect(rule(".path-bar__tools:not(:has(> :not(.preview__updated)))")).toContain("display: none");
 });
 ```
 
@@ -412,16 +457,27 @@ The three exports of the Interfaces block, each with a one-line doc comment.
 
 - [ ] **Step 4: `Preview.tsx`**
 
-- `const slot = useContext(HeaderSlot); const place = headerPlace({ pathShown, active, slot: slot !== null });`
+- `const slot = useContext(HeaderSlot); const place = headerPlace({ pathShown, active, slot: slotState(slot) });`
 - Split the header's children into `tools` (the size `preview__meta`, `preview__updated`, the `preview__views` group, `ViewportChip`, "Select region") and the rest (Back, Forward, the name and folder, `preview__spacer`).
-- `place === "header"`: the header exactly as today (Back, Forward, name, folder, the tools with the spacer where it is now). `place === "slot"`: `createPortal(tools, slot)` and no `<header>`. `place === "none"`: neither.
-- `onBlur` uses `insidePane(e.currentTarget, slot, e.relatedTarget as Node | null)`.
-- Alt+Left and Alt+Right stay as they are (decision 11). Not verified: that `active` is false for the kept tabs that are not selected; check `KeptTabs.tsx`'s `render(tab, active)` and report if not.
-- A React portal's events bubble through the React tree, so the section's `onKeyDown` and `onFocus` still hear the tools. Say so in a comment above the portal.
+- `place === "header"`: the header as today, but Back and Forward are drawn only when `!pathShown` (decision 5 holds in the fallback too). `place === "slot"`: `createPortal(tools, slot)` and no `<header>`. `place === "none"`: neither.
+- `onBlur` uses `insidePane(e.currentTarget, slot ?? null, e.relatedTarget as Node | null)`.
+- Alt+Left and Alt+Right stay as they are (decision 11). `active` is false for the kept tabs that are not selected (`KeptTabs.tsx`: `t.id === activeId`).
+- A React portal's events bubble through the React tree, so the section's `onKeyDown` and `onFocus` still hear the tools. Say so in a comment above the portal. For the same reason a right click on a tool doesn't reach the path bar's menu; the header's buttons had no menu before either (review 9, accepted).
+- `Preview.css` (review 2): `.preview` is `grid-template-rows: 28px minmax(0, 1fr)`, so a body with no header before it would land in the 28 px row. After the `.preview:has(.web-link)` rule add:
+
+```css
+/* In the Files panel the path bar holds the tools and the pane draws no header: the body takes the whole height. */
+.preview:not(:has(> .preview__header)) {
+  grid-template-rows: minmax(0, 1fr);
+}
+.preview:not(:has(> .preview__header)):has(.web-link) {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+```
 
 - [ ] **Step 5: `PathBar.tsx`, `FilesPanel.tsx`, `FilesBody.css`**
 
-- `PathBar`: the `path-bar__tools` div of the Interfaces block.
+- `PathBar`: the `path-bar__tools` div of the Interfaces block. The path's scroll is pinned to its end only when the path changes (`PathBar.tsx:23–27`), and the tools arrive in a later commit and narrow it: also pin it from a `ResizeObserver` on the `<nav>` (guarded by `typeof ResizeObserver === "undefined"`, disconnected on unmount), with the same right-to-left rule (review 7).
 - `FilesPanel`: `const [tools, setTools] = useState<HTMLElement | null>(null);` passes `toolsRef={setTools}` to `PathBar` and wraps its returned tree in `<HeaderSlot value={tools}>`. (`p.file` is created by `LiveApp` and rendered inside `FilesPanel`, so the context reaches it.)
 - CSS:
 
@@ -434,7 +490,8 @@ The three exports of the Interfaces block, each with a one-line doc comment.
   gap: var(--space-1);
   font-size: var(--text-12);
 }
-.path-bar__tools:empty {
+/* The "Updated" note is always drawn and is empty for a text file: with nothing else in it, the place takes no room. */
+.path-bar__tools:not(:has(> :not(.preview__updated))) {
   display: none;
 }
 ```
@@ -459,7 +516,7 @@ git commit -m "fix(files): a file's tools sit in the path bar, and Files draws n
 
 **Files:**
 - Create: `src/features/pane/emptyFit.ts`, `src/features/pane/emptyFit.test.ts`
-- Modify: `src/features/pane/EmptyPanel.tsx`, `src/features/pane/EmptyPanel.css`
+- Modify: `src/features/pane/EmptyPanel.tsx`, `src/features/pane/EmptyPanel.css`, `src/features/pane/EmptyFiles.tsx`, `src/features/pane/EmptyBrowser.tsx`
 - Test: `src/features/pane/EmptyPanel.css.test.ts`, `src/features/pane/EmptyPanel.test.tsx`
 
 **Interfaces:**
@@ -525,7 +582,7 @@ As the Interfaces block. `fitEmpty`'s comment says why it writes the attribute i
 
 - [ ] **Step 4: `EmptyPanel.tsx`**
 
-Refs on the panel and the column. A `useLayoutEffect` with no dependency list runs `fitEmpty` after every render (the list's length may have changed). A second `useLayoutEffect` (empty list) puts a `ResizeObserver` on the panel that runs `fitEmpty`, guarded by `typeof ResizeObserver === "undefined"`, and disconnects on unmount. `data-level` is never in the JSX, so React never resets it.
+Refs on the panel and the column. `EmptyPanel` gains `fitKey?: string | number`: what its content's height depends on beyond its words. `EmptyFiles` passes `recent.length` and `EmptyBrowser` its ports' count (`src/features/pane/EmptyBrowser.tsx`; both files are part of this task). A `useLayoutEffect` on `[title, line, actions.length, fitKey]` runs `fitEmpty`; `LiveApp` builds a new empty state on each of its renders, so an effect with no list would force three layouts every time (review 10). A second `useLayoutEffect` (empty list) puts a `ResizeObserver` on the panel that runs `fitEmpty`, guarded by `typeof ResizeObserver === "undefined"`, and disconnects on unmount. `data-level` is never in the JSX, so React never resets it.
 
 - [ ] **Step 5: `EmptyPanel.css`**
 
