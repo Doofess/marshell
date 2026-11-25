@@ -17,7 +17,7 @@ import { planRestarts, skippedReceipt } from "./doctorRestart";
 import { fixAnnouncement, undoRefusedAnnouncement } from "./doctorUi";
 import { keepDone, keepFocusKey, keepFocusLost, pressKeep } from "./keep";
 import { selectedFixable } from "./report";
-import type { DoctorItem } from "./types";
+import type { DoctorItem, DoctorOpen } from "./types";
 import { DifferencesSheet, FixSheet } from "./FixSheet";
 import "./LiveDoctor.css";
 
@@ -35,6 +35,8 @@ export type LiveDoctorProps = {
   /** The window's announcer. */
   announce: (text: string) => void;
   onOpenAgents: () => void;
+  /** A finding's "Open <file>". The owner closes the Doctor when the file opened. */
+  onOpenFile: (open: DoctorOpen) => void;
   onClose: () => void;
 };
 
@@ -42,7 +44,7 @@ export type LiveDoctorProps = {
  * The Doctor over the live window: opening it runs a check, and everything it changes goes through the core's preview and apply.
  * The page, the fix sheet and the toast are Task 7's components; this keeps their state (`doctorReducer`) and makes the calls.
  */
-export function LiveDoctor({ endpoint, summary, infos, isWorking, actions, announce, onOpenAgents, onClose }: LiveDoctorProps) {
+export function LiveDoctor({ endpoint, summary, infos, isWorking, actions, announce, onOpenAgents, onOpenFile, onClose }: LiveDoctorProps) {
   const [m, dispatch] = useReducer(doctorReducer, INITIAL_DOCTOR);
   const [diff, setDiff] = useState<ConfigPreview | null>(null);
   const [keeping, setKeeping] = useState<string>();
@@ -262,6 +264,7 @@ export function LiveDoctor({ endpoint, summary, infos, isWorking, actions, annou
         onUndo={() => void undo()}
         onShowDifferences={() => void showDifferences()}
         onOpenAgents={onOpenAgents}
+        onOpenFile={onOpenFile}
         onRestart={() => void restart()}
         onKeep={(item) => void keep(item)}
         keeping={keeping}
