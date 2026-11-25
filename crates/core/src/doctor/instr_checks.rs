@@ -846,6 +846,20 @@ fn opens(seat: &Seat, file: &Path, line: Option<usize>) -> Vec<DoctorOpen> {
     }]
 }
 
+/// The buttons for a finding about two files. Two files with one name (a project's `AGENTS.md` and the user's own)
+/// would get the same label, so both then say their path as the item's detail shows it.
+fn opens_of_two(seat: &Seat, a: (&Path, usize), b: (&Path, usize)) -> Vec<DoctorOpen> {
+    let mut out = opens(seat, a.0, Some(a.1));
+    out.extend(opens(seat, b.0, Some(b.1)));
+    if let [first, second] = out.as_mut_slice()
+        && first.label == second.label
+    {
+        first.label = format!("Open {}", display(a.0, seat.project.as_deref(), &seat.home));
+        second.label = format!("Open {}", display(b.0, seat.project.as_deref(), &seat.home));
+    }
+    out
+}
+
 fn item_of(f: &Finding, editable: &dyn Fn(&Path) -> bool) -> DoctorItem {
     let mut item = DoctorItem {
         id: id_of(f),
@@ -976,8 +990,7 @@ fn item_of(f: &Finding, editable: &dyn Fn(&Path) -> bool) -> DoctorItem {
                     name(b),
                     lines.1
                 );
-                item.opens = opens(seat, a, Some(lines.0));
-                item.opens.extend(opens(seat, b, Some(lines.1)));
+                item.opens = opens_of_two(seat, (a, lines.0), (b, lines.1));
             }
         }
         Finding::Clash {
@@ -1014,10 +1027,11 @@ fn item_of(f: &Finding, editable: &dyn Fn(&Path) -> bool) -> DoctorItem {
             let verb = if names.len() == 1 { "loads" } else { "load" };
             item.title = format!("{what} {place}");
             item.detail = format!("{} {} {} {verb} both.", said(a), said(b), list(&names));
-            item.opens = opens(seat, &a.file, Some(a.line));
-            if path_key(&a.file) != path_key(&b.file) {
-                item.opens.extend(opens(seat, &b.file, Some(b.line)));
-            }
+            item.opens = if path_key(&a.file) == path_key(&b.file) {
+                opens(seat, &a.file, Some(a.line))
+            } else {
+                opens_of_two(seat, (&a.file, a.line), (&b.file, b.line))
+            };
         }
     }
     item
@@ -1647,6 +1661,23 @@ mod tests {
         assert_eq!(item.opens[0].line, Some(1));
         assert_eq!(item.opens[1].line, Some(2));
         assert!(item.id.ends_with(".manager"), "{}", item.id);
+    }
+
+    #[test]
+    fn two_files_with_one_name_get_buttons_that_tell_them_apart() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = proj(tmp.path());
+        let root = p.join("AGENTS.md");
+        let nested = p.join("docs").join("AGENTS.md");
+        write(&root, "Use pnpm for the frontend.\n");
+        write(&nested, "Always run npm install first.\n");
+        let loads = vec![load("codex", &p, vec![file_row(&root), file_row(&nested)])];
+        let mut cx = Reader::windows();
+        let shown = items(&findings(&loads, &mut cx), std::slice::from_ref(&p), &yes);
+        let clashes = of_kind(&shown, "instrclash.");
+        assert_eq!(clashes.len(), 1, "{shown:?}");
+        let labels: Vec<&str> = clashes[0].opens.iter().map(|o| o.label.as_str()).collect();
+        assert_eq!(labels, ["Open AGENTS.md", "Open docs/AGENTS.md"]);
     }
 
     #[test]
