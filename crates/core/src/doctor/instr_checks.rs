@@ -13,10 +13,13 @@ use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use marshell_protocol::doctor::{DoctorGroup, DoctorItem, DoctorOpen};
 
 use super::checks::{dead_import_drops, display_name};
-use super::instr_text::backticked_paths;
+use super::ext::tokens;
+use super::instr_text::{
+    Block, Indent, IndentKind, Manager, Said, backticked_paths, blocks, indents, package_managers,
+};
 use super::instructions::{
-    CliLoad, ImportSyntax, Reader, Role, Text, When, cli_rank, display, folder_name, hash_part, id_tail, imports_at,
-    is_within, mask_html_comments, normalize, path_key,
+    CliLoad, ImportSyntax, LoadedFile, Reader, Role, Text, When, cli_rank, display, folder_name, hash_part, id_tail,
+    imports_at, is_within, mask_html_comments, normalize, path_key, tokens_text,
 };
 
 /// Where a finding sits. `project` is None for one whose files are all at user level.
@@ -48,12 +51,64 @@ pub enum Finding {
         file: PathBuf,
         paths: Vec<(usize, String)>,
     },
+    /// A file one CLI loads twice at start.
+    LoadedTwice {
+        seat: Seat,
+        agent: &'static str,
+        file: PathBuf,
+        /// How each of the two loads came about: None by its own name, Some(the importing file) as an import.
+        first: Option<PathBuf>,
+        second: Option<PathBuf>,
+        chars: usize,
+    },
+    /// Paragraphs that are in two files (`a` and `b`), or twice in one (`a == b`).
+    Repeats {
+        seat: Seat,
+        a: PathBuf,
+        b: PathBuf,
+        agents: Vec<&'static str>,
+        /// How many distinct paragraphs are repeated.
+        count: usize,
+        /// Where the first repeated paragraph is in `a` and in `b`.
+        lines: (usize, usize),
+        quote: String,
+        chars: usize,
+    },
+    Clash {
+        seat: Seat,
+        kind: ClashKind,
+        agents: Vec<&'static str>,
+        a: Spot,
+        b: Spot,
+    },
+}
+
+/// One line that takes a side in a clash.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Spot {
+    pub file: PathBuf,
+    pub line: usize,
+    pub says: String,
+    pub quote: String,
+    /// The file is outside the project the load is for.
+    pub user_level: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ClashKind {
+    Manager,
+    TabsSpaces,
+    Widths,
 }
 
 impl Finding {
     fn seat(&self) -> &Seat {
         match self {
-            Finding::DeadImport { seat, .. } | Finding::StalePaths { seat, .. } => seat,
+            Finding::DeadImport { seat, .. }
+            | Finding::StalePaths { seat, .. }
+            | Finding::LoadedTwice { seat, .. }
+            | Finding::Repeats { seat, .. }
+            | Finding::Clash { seat, .. } => seat,
         }
     }
 }
@@ -62,6 +117,10 @@ impl Finding {
 pub fn findings(loads: &[CliLoad], cx: &mut Reader) -> Vec<Finding> {
     let mut out = dead_imports(loads, cx);
     out.extend(stale_paths(loads, cx));
+    out.extend(loaded_twice(loads, cx));
+    let mut texts = Texts::default();
+    out.extend(repeats(loads, cx, &mut texts));
+    out.extend(clashes(loads, cx, &mut texts));
     out
 }
 
@@ -313,6 +372,378 @@ fn stale_paths(loads: &[CliLoad], cx: &mut Reader) -> Vec<Finding> {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Duplicates and clashes (decisions 5 and 7)
+
+/// The rows these checks look at: loaded at start, looked at (decision 15), and not empty.
+fn start_rows(load: &CliLoad) -> Vec<&LoadedFile> {
+    looked_at(load)
+        .into_iter()
+        .zip(&load.files)
+        .filter(|(ok, file)| *ok && matches!(file.when, When::Start) && file.chars > 0)
+        .map(|(_, file)| file)
+        .collect()
+}
+
+/// A file one load holds, once however many rows it has.
+struct Held {
+    path: PathBuf,
+    key: String,
+}
+
+fn held(load: &CliLoad, cx: &mut Reader) -> Vec<Held> {
+    let mut out: Vec<Held> = Vec::new();
+    for row in start_rows(load) {
+        let key = key_of(cx, &row.path);
+        if !out.iter().any(|h| h.key == key) {
+            out.push(Held {
+                path: row.path.clone(),
+                key,
+            });
+        }
+    }
+    out
+}
+
+/// What the text rules find in one file.
+#[derive(Default)]
+struct Parsed {
+    blocks: Vec<Block>,
+    managers: Vec<Said<Manager>>,
+    indents: Vec<Said<Indent>>,
+}
+
+/// Each file read and parsed once, whatever loads hold it.
+#[derive(Default)]
+struct Texts {
+    by_key: HashMap<String, Parsed>,
+}
+
+impl Texts {
+    /// Parses what isn't parsed yet. False when the run is out of time; the files after that one are not parsed.
+    fn load(&mut self, cx: &mut Reader, files: &[Held]) -> bool {
+        for file in files {
+            if self.by_key.contains_key(&file.key) {
+                continue;
+            }
+            if cx.out_of_time() {
+                return false;
+            }
+            let parsed = match cx.read(&file.path) {
+                Text::Text(text) => Parsed {
+                    blocks: blocks(&text),
+                    managers: package_managers(&text),
+                    indents: indents(&text),
+                },
+                _ => Parsed::default(),
+            };
+            self.by_key.insert(file.key.clone(), parsed);
+        }
+        true
+    }
+
+    /// A file `load` has parsed.
+    fn of(&self, file: &Held) -> &Parsed {
+        &self.by_key[&file.key]
+    }
+}
+
+/// Files one CLI loads twice at start. A file loaded twice is one finding for each CLI and seat.
+fn loaded_twice(loads: &[CliLoad], cx: &mut Reader) -> Vec<Finding> {
+    let mut out = Vec::new();
+    let mut done: Vec<(&'static str, Seat, String)> = Vec::new();
+    for load in loads {
+        let rows = start_rows(load);
+        let keys: Vec<String> = rows.iter().map(|row| key_of(cx, &row.path)).collect();
+        for j in 1..rows.len() {
+            // The file's first two rows: a third one adds nothing.
+            let Some(i) = (0..j).find(|&i| keys[i] == keys[j]) else {
+                continue;
+            };
+            if (i + 1..j).any(|k| keys[k] == keys[j]) {
+                continue;
+            }
+            let seat = seat_of(load, &rows[i].path);
+            let id = (load.agent, seat.clone(), keys[j].clone());
+            if done.contains(&id) {
+                continue;
+            }
+            done.push(id);
+            let by = |row: &LoadedFile| match &row.role {
+                Role::Import { by } => Some(by.clone()),
+                _ => None,
+            };
+            out.push(Finding::LoadedTwice {
+                seat,
+                agent: load.agent,
+                file: rows[i].path.clone(),
+                first: by(rows[i]),
+                second: by(rows[j]),
+                chars: rows[j].chars,
+            });
+        }
+    }
+    out
+}
+
+/// The blocks two files, or one file twice, have in common.
+struct Shared {
+    count: usize,
+    lines: (usize, usize),
+    quote: String,
+    chars: usize,
+}
+
+fn tally(out: &mut Option<Shared>, block: &Block, other_line: usize) {
+    match out {
+        Some(shared) => {
+            shared.count += 1;
+            shared.chars += block.chars;
+        }
+        None => {
+            *out = Some(Shared {
+                count: 1,
+                lines: (block.line, other_line),
+                quote: block.quote.clone(),
+                chars: block.chars,
+            });
+        }
+    }
+}
+
+/// The distinct blocks of `a` that `b` has too, in `a`'s order.
+fn shared_between(a: &[Block], b: &[Block]) -> Option<Shared> {
+    let mut seen: Vec<&str> = Vec::new();
+    let mut out = None;
+    for block in a {
+        if seen.contains(&block.folded.as_str()) {
+            continue;
+        }
+        let Some(other) = b.iter().find(|o| o.folded == block.folded) else {
+            continue;
+        };
+        seen.push(&block.folded);
+        tally(&mut out, block, other.line);
+    }
+    out
+}
+
+/// The distinct blocks a file has in two places, at the first of them.
+fn shared_within(blocks: &[Block]) -> Option<Shared> {
+    let mut seen: Vec<&str> = Vec::new();
+    let mut out = None;
+    for (k, block) in blocks.iter().enumerate() {
+        if seen.contains(&block.folded.as_str()) {
+            continue;
+        }
+        let Some(later) = blocks[k + 1..].iter().find(|o| o.folded == block.folded) else {
+            continue;
+        };
+        seen.push(&block.folded);
+        tally(&mut out, block, later.line);
+    }
+    out
+}
+
+struct RepeatGroup {
+    seat: Seat,
+    keys: (String, String),
+    a: PathBuf,
+    b: PathBuf,
+    agents: Vec<&'static str>,
+    shared: Shared,
+}
+
+/// Paragraphs in two files one CLI loads at start, or twice in one, grouped across loads by the pair of files.
+fn repeats(loads: &[CliLoad], cx: &mut Reader, texts: &mut Texts) -> Vec<Finding> {
+    let mut groups: Vec<RepeatGroup> = Vec::new();
+    for load in loads {
+        let files = held(load, cx);
+        if !texts.load(cx, &files) {
+            break;
+        }
+        for (x, fx) in files.iter().enumerate() {
+            // `files` holds a file once, so a file loaded twice in this load is not paired with itself.
+            for fy in &files[x..] {
+                let (bx, by) = (&texts.of(fx).blocks, &texts.of(fy).blocks);
+                let shared = if fx.key == fy.key {
+                    shared_within(bx)
+                } else {
+                    shared_between(bx, by)
+                };
+                let Some(shared) = shared else { continue };
+                let seat = Seat {
+                    project: load
+                        .project
+                        .clone()
+                        .filter(|p| is_within(&fx.path, p) || is_within(&fy.path, p)),
+                    distro: load.distro.clone(),
+                    home: load.home.clone(),
+                };
+                let keys = if fx.key <= fy.key {
+                    (fx.key.clone(), fy.key.clone())
+                } else {
+                    (fy.key.clone(), fx.key.clone())
+                };
+                match groups.iter_mut().find(|g| g.seat == seat && g.keys == keys) {
+                    Some(group) => {
+                        if !group.agents.contains(&load.agent) {
+                            group.agents.push(load.agent);
+                        }
+                    }
+                    None => groups.push(RepeatGroup {
+                        seat,
+                        keys,
+                        a: fx.path.clone(),
+                        b: fy.path.clone(),
+                        agents: vec![load.agent],
+                        shared,
+                    }),
+                }
+            }
+        }
+    }
+    groups
+        .into_iter()
+        .map(|mut group| {
+            group.agents.sort_by_key(|a| cli_rank(a));
+            Finding::Repeats {
+                seat: group.seat,
+                a: group.a,
+                b: group.b,
+                agents: group.agents,
+                count: group.shared.count,
+                lines: group.shared.lines,
+                quote: group.shared.quote,
+                chars: group.shared.chars,
+            }
+        })
+        .collect()
+}
+
+const CLASH_KINDS: [ClashKind; 3] = [ClashKind::Manager, ClashKind::TabsSpaces, ClashKind::Widths];
+
+/// A line that takes a side: `file` is an index into the load's held files.
+struct Side {
+    file: usize,
+    line: usize,
+    says: String,
+    quote: String,
+}
+
+/// The lines of a load that say something of this kind, in the load's order. Two sides clash when what they say
+/// differs.
+fn sides(kind: ClashKind, files: &[Held], texts: &Texts) -> Vec<Side> {
+    let mut out = Vec::new();
+    for (file, held) in files.iter().enumerate() {
+        let parsed = texts.of(held);
+        let side = |line: usize, says: String, quote: &str| Side {
+            file,
+            line,
+            says,
+            quote: quote.to_string(),
+        };
+        match kind {
+            ClashKind::Manager => out.extend(
+                parsed
+                    .managers
+                    .iter()
+                    .map(|s| side(s.line, s.what.name().to_string(), &s.quote)),
+            ),
+            ClashKind::TabsSpaces => out.extend(parsed.indents.iter().filter_map(|s| {
+                let says = match s.what.kind? {
+                    IndentKind::Tabs => "tabs",
+                    IndentKind::Spaces => "spaces",
+                };
+                Some(side(s.line, says.to_string(), &s.quote))
+            })),
+            ClashKind::Widths => out.extend(
+                parsed
+                    .indents
+                    .iter()
+                    .filter_map(|s| Some(side(s.line, format!("width {}", s.what.width?), &s.quote))),
+            ),
+        }
+    }
+    out
+}
+
+/// Package managers, tabs against spaces and indent widths that clash in what one CLI loads at start, user-level files
+/// included. One finding for each kind and seat; the CLIs are taken in the Doctor's order and the first with a pair
+/// gives it.
+fn clashes(loads: &[CliLoad], cx: &mut Reader, texts: &mut Texts) -> Vec<Finding> {
+    let mut order: Vec<&CliLoad> = loads.iter().collect();
+    order.sort_by_key(|load| cli_rank(load.agent));
+    let helds: Vec<Vec<Held>> = order.iter().map(|load| held(load, cx)).collect();
+    let ready: Vec<bool> = helds.iter().map(|files| texts.load(cx, files)).collect();
+    let mut done: Vec<(ClashKind, Seat)> = Vec::new();
+    let mut out = Vec::new();
+    for (n, load) in order.iter().enumerate() {
+        if !ready[n] {
+            continue;
+        }
+        let files = &helds[n];
+        let outside = |file: &Held| load.project.as_ref().is_none_or(|p| !is_within(&file.path, p));
+        for kind in CLASH_KINDS {
+            let all = sides(kind, files, texts);
+            // The first pair for the project's item, then for the user-level one: by the later line's place in the
+            // load, then the earlier's.
+            let mut best: [Option<(usize, usize)>; 2] = [None, None];
+            'scan: for j in 1..all.len() {
+                for i in 0..j {
+                    let (a, b) = (&all[i], &all[j]);
+                    if a.says == b.says || (a.file == b.file && a.line == b.line) {
+                        continue;
+                    }
+                    let user = usize::from(outside(&files[a.file]) && outside(&files[b.file]));
+                    best[user].get_or_insert((i, j));
+                    if best.iter().all(Option::is_some) {
+                        break 'scan;
+                    }
+                }
+            }
+            for (user, pair) in best.into_iter().enumerate() {
+                let Some((i, j)) = pair else { continue };
+                let seat = Seat {
+                    project: if user == 0 { load.project.clone() } else { None },
+                    distro: load.distro.clone(),
+                    home: load.home.clone(),
+                };
+                if done.contains(&(kind, seat.clone())) {
+                    continue;
+                }
+                done.push((kind, seat.clone()));
+                let (ka, kb) = (&files[all[i].file].key, &files[all[j].file].key);
+                let mut agents: Vec<&'static str> = Vec::new();
+                for (m, other) in order.iter().enumerate() {
+                    let same_place = other.distro == load.distro
+                        && (seat.project.is_none()
+                            || other.project.as_deref().map(path_key) == seat.project.as_deref().map(path_key));
+                    let holds = |key: &String| helds[m].iter().any(|h| &h.key == key);
+                    if same_place && holds(ka) && holds(kb) && !agents.contains(&other.agent) {
+                        agents.push(other.agent);
+                    }
+                }
+                let spot = |side: &Side| Spot {
+                    file: files[side.file].path.clone(),
+                    line: side.line,
+                    says: side.says.clone(),
+                    quote: side.quote.clone(),
+                    user_level: outside(&files[side.file]),
+                };
+                out.push(Finding::Clash {
+                    seat,
+                    kind,
+                    agents,
+                    a: spot(&all[i]),
+                    b: spot(&all[j]),
+                });
+            }
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // Items
 
 /// The id of the finding's item.
@@ -334,6 +765,21 @@ pub fn id_of(f: &Finding) -> String {
             )
         }
         Finding::StalePaths { file, .. } => format!("instrstale.{place}.{}{suffix}", hash_part(file)),
+        Finding::LoadedTwice { agent, file, .. } => {
+            format!("instrtwice.{agent}.{place}.{}{suffix}", hash_part(file))
+        }
+        Finding::Repeats { a, b, .. } => {
+            let (x, y) = if path_key(a) <= path_key(b) { (a, b) } else { (b, a) };
+            format!("instrrepeat.{place}.{}.{}{suffix}", hash_part(x), hash_part(y))
+        }
+        Finding::Clash { kind, .. } => {
+            let kind = match kind {
+                ClashKind::Manager => "manager",
+                ClashKind::TabsSpaces => "tabs",
+                ClashKind::Widths => "widths",
+            };
+            format!("instrclash.{place}.{kind}{suffix}")
+        }
     }
 }
 
@@ -364,7 +810,7 @@ fn open_path(path: &Path) -> String {
     }
 }
 
-fn opens(seat: &Seat, file: &Path, line: usize) -> Vec<DoctorOpen> {
+fn opens(seat: &Seat, file: &Path, line: Option<usize>) -> Vec<DoctorOpen> {
     if seat.distro.is_some() {
         return Vec::new();
     }
@@ -373,7 +819,7 @@ fn opens(seat: &Seat, file: &Path, line: usize) -> Vec<DoctorOpen> {
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
     vec![DoctorOpen {
         path: open_path(file),
-        line: u32::try_from(line).ok(),
+        line: line.and_then(|line| u32::try_from(line).ok()),
         label: format!("Open {name}"),
     }]
 }
@@ -427,7 +873,7 @@ fn item_of(f: &Finding, editable: &dyn Fn(&Path) -> bool) -> DoctorItem {
                 }
                 None => item.cannot_fix = Some("Marshell doesn't change this file.".to_string()),
             }
-            item.opens = opens(seat, file, *line);
+            item.opens = opens(seat, file, Some(*line));
         }
         Finding::StalePaths { seat, file, paths } => {
             let count = match paths.len() {
@@ -444,7 +890,112 @@ fn item_of(f: &Finding, editable: &dyn Fn(&Path) -> bool) -> DoctorItem {
             }
             item.title = format!("{} names {count} exist", shown(seat, file));
             item.detail = parts.join(" ");
-            item.opens = opens(seat, file, paths.first().map_or(1, |(line, _)| *line));
+            item.opens = opens(seat, file, paths.first().map(|(line, _)| *line));
+        }
+        Finding::LoadedTwice {
+            seat,
+            agent,
+            file,
+            first,
+            second,
+            chars,
+        } => {
+            let name = |path: &PathBuf| display(path, seat.project.as_deref(), &seat.home);
+            let how = match (first, second) {
+                (None, Some(by)) | (Some(by), None) => {
+                    format!("Once by its own name and once as an import of {}", name(by))
+                }
+                (Some(a), Some(b)) => format!("Once as an import of {} and once as an import of {}", name(a), name(b)),
+                (None, None) => "Twice by its own name".to_string(),
+            };
+            item.agent = Some((*agent).to_string());
+            let place = seat
+                .project
+                .as_deref()
+                .map_or_else(String::new, |project| format!(" in {}", folder_name(project)));
+            item.title = format!("{} loads {} twice{place}", display_name(agent), name(file));
+            item.detail = format!("{how}. About {} tokens are sent twice.", tokens_text(tokens(*chars)));
+            item.opens = opens(seat, file, None);
+        }
+        Finding::Repeats {
+            seat,
+            a,
+            b,
+            agents,
+            count,
+            lines,
+            quote,
+            chars,
+        } => {
+            let paragraphs = match count {
+                1 => "a paragraph".to_string(),
+                n => format!("{n} paragraphs"),
+            };
+            let names: Vec<&str> = agents.iter().map(|a| display_name(a)).collect();
+            let verb = if names.len() == 1 { "loads" } else { "load" };
+            let name = |path: &PathBuf| display(path, seat.project.as_deref(), &seat.home);
+            let sent = format!("About {} tokens are sent twice.", tokens_text(tokens(*chars)));
+            if path_key(a) == path_key(b) {
+                item.title = format!("{} repeats {paragraphs}", shown(seat, a));
+                item.detail = format!(
+                    "{} {verb} it. The first is at lines {} and {}: “{quote}”. {sent}",
+                    list(&names),
+                    lines.0,
+                    lines.1
+                );
+                item.opens = opens(seat, a, Some(lines.0));
+            } else {
+                item.title = format!("{} and {} repeat {paragraphs}", name(a), shown(seat, b));
+                item.detail = format!(
+                    "{} {verb} both. The first is at {}:{} and {}:{}: “{quote}”. {sent}",
+                    list(&names),
+                    name(a),
+                    lines.0,
+                    name(b),
+                    lines.1
+                );
+                item.opens = opens(seat, a, Some(lines.0));
+                item.opens.extend(opens(seat, b, Some(lines.1)));
+            }
+        }
+        Finding::Clash {
+            seat,
+            kind,
+            agents,
+            a,
+            b,
+        } => {
+            let what = match kind {
+                ClashKind::Manager => "Two package managers are named",
+                ClashKind::TabsSpaces => "Tabs and spaces are both asked for",
+                ClashKind::Widths => "Two indent widths are asked for",
+            };
+            let place = match &seat.project {
+                Some(project) => format!("in {}", folder_name(project)),
+                None => "at user level".to_string(),
+            };
+            let said = |spot: &Spot| {
+                format!(
+                    "{}:{}{} says {}: “{}”.",
+                    display(&spot.file, seat.project.as_deref(), &seat.home),
+                    spot.line,
+                    if spot.user_level && seat.project.is_some() {
+                        " (user level)"
+                    } else {
+                        ""
+                    },
+                    spot.says,
+                    spot.quote
+                )
+            };
+            let names: Vec<&str> = agents.iter().map(|a| display_name(a)).collect();
+            let verb = if names.len() == 1 { "loads" } else { "load" };
+            item.title = format!("{what} {place}");
+            item.detail = format!("{} {} {} {verb} both.", said(a), said(b), list(&names));
+            item.opens = opens(seat, &a.file, Some(a.line));
+            if path_key(&a.file) != path_key(&b.file) {
+                item.opens.extend(opens(seat, &b.file, Some(b.line)));
+            }
         }
     }
     item
@@ -481,8 +1032,9 @@ pub fn items(findings: &[Finding], projects: &[PathBuf], editable: &dyn Fn(&Path
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::doctor::instr_text::quote;
     use crate::doctor::instructions::{CliLoad, ImportStyle, LoadedFile, Reader, Role, When};
-    use marshell_protocol::doctor::{DoctorGroup, DoctorOpen};
+    use marshell_protocol::doctor::{DoctorGroup, DoctorItem, DoctorOpen};
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -883,6 +1435,331 @@ mod tests {
         let unique: std::collections::HashSet<_> = first.iter().collect();
         assert_eq!(unique.len(), 4);
         assert!(first.iter().any(|id| id.starts_with("instrstale.")));
+    }
+
+    fn file_chars(path: &Path, role: Role, raw: Option<&str>, chars: usize) -> LoadedFile {
+        LoadedFile {
+            chars,
+            ..row(path, role, When::Start, raw)
+        }
+    }
+
+    /// One line of exactly `n` characters made of words, which ends in a letter.
+    fn para(n: usize, seed: &str) -> String {
+        let mut text: String = format!("{seed} lorem ipsum dolor ").chars().cycle().take(n).collect();
+        text.pop();
+        text.push('z');
+        text
+    }
+
+    fn of_kind<'a>(shown: &'a [DoctorItem], prefix: &str) -> Vec<&'a DoctorItem> {
+        shown.iter().filter(|i| i.id.starts_with(prefix)).collect()
+    }
+
+    #[test]
+    fn a_file_loaded_by_name_and_as_an_import_is_loaded_twice() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = proj(tmp.path());
+        let claude = p.join("CLAUDE.md");
+        let agents = p.join("AGENTS.md");
+        write(&claude, "@AGENTS.md\n");
+        write(&agents, &para(1000, "alpha"));
+        let loads = vec![load(
+            "copilot",
+            &p,
+            vec![
+                file_row(&claude),
+                file_chars(&agents, Role::Import { by: claude.clone() }, Some("AGENTS.md"), 1000),
+                file_chars(&agents, Role::File, None, 1000),
+            ],
+        )];
+        let mut cx = Reader::windows();
+        let found = findings(&loads, &mut cx);
+        assert!(!found.iter().any(|f| matches!(f, Finding::Repeats { .. })), "{found:?}");
+        let shown = items(&found, std::slice::from_ref(&p), &yes);
+        let twice = of_kind(&shown, "instrtwice.");
+        assert_eq!(twice.len(), 1, "{shown:?}");
+        let item = twice[0];
+        assert_eq!(item.title, "Copilot CLI loads AGENTS.md twice in proj");
+        assert_eq!(
+            item.detail,
+            "Once by its own name and once as an import of CLAUDE.md. About 250 tokens are sent twice."
+        );
+        assert_eq!(item.group, DoctorGroup::Info);
+        assert!(!item.fixable);
+        assert_eq!(item.cannot_fix, None);
+        assert_eq!(item.agent.as_deref(), Some("copilot"));
+        assert_eq!(item.opens.len(), 1);
+        assert_eq!(item.opens[0].label, "Open AGENTS.md");
+        assert!(item.id.starts_with("instrtwice.copilot."), "{}", item.id);
+        assert!(!item.id.contains('@'));
+    }
+
+    #[test]
+    fn a_paragraph_in_two_files_is_a_repeat() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = proj(tmp.path());
+        let (claude, agents) = (p.join("CLAUDE.md"), p.join("AGENTS.md"));
+        let text = para(220, "beta");
+        write(&claude, &format!("# T\n\n{text}\n"));
+        write(&agents, &format!("a\n\nb\n\nc\n\n{text}\n"));
+        let loads = vec![
+            load("claude", &p, vec![file_row(&claude), file_row(&agents)]),
+            load("copilot", &p, vec![file_row(&agents), file_row(&claude)]),
+        ];
+        let mut cx = Reader::windows();
+        let found = findings(&loads, &mut cx);
+        let shown = items(&found, std::slice::from_ref(&p), &yes);
+        let repeats = of_kind(&shown, "instrrepeat.");
+        assert_eq!(repeats.len(), 1, "{shown:?}");
+        let item = repeats[0];
+        assert_eq!(item.title, "CLAUDE.md and AGENTS.md in proj repeat a paragraph");
+        assert_eq!(
+            item.detail,
+            format!(
+                "Claude Code and Copilot CLI load both. The first is at CLAUDE.md:3 and AGENTS.md:7: “{}”. About 55 \
+                 tokens are sent twice.",
+                quote(&text)
+            )
+        );
+        assert!(
+            item.detail
+                .starts_with("Claude Code and Copilot CLI load both. The first is at CLAUDE.md:3 and AGENTS.md:7: “")
+        );
+        assert!(item.detail.ends_with("About 55 tokens are sent twice."));
+        assert_eq!(item.group, DoctorGroup::Info);
+        assert!(!item.fixable);
+        assert_eq!(item.agent, None);
+        assert_eq!(item.opens.len(), 2);
+        assert_eq!(
+            (item.opens[0].label.as_str(), item.opens[0].line),
+            ("Open CLAUDE.md", Some(3))
+        );
+        assert_eq!(
+            (item.opens[1].label.as_str(), item.opens[1].line),
+            ("Open AGENTS.md", Some(7))
+        );
+        assert!(
+            !shown.iter().any(|i| i.id.starts_with("instrtwice.")),
+            "two different files are not loaded twice"
+        );
+    }
+
+    #[test]
+    fn three_repeated_paragraphs_are_plural() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = proj(tmp.path());
+        let (claude, agents) = (p.join("CLAUDE.md"), p.join("AGENTS.md"));
+        let text = format!(
+            "{}\n\n{}\n\n{}\n",
+            para(220, "one"),
+            para(220, "two"),
+            para(220, "three")
+        );
+        write(&claude, &text);
+        write(&agents, &text);
+        let loads = vec![load("claude", &p, vec![file_row(&claude), file_row(&agents)])];
+        let mut cx = Reader::windows();
+        let shown = items(&findings(&loads, &mut cx), std::slice::from_ref(&p), &yes);
+        let repeats = of_kind(&shown, "instrrepeat.");
+        assert_eq!(repeats.len(), 1);
+        assert_eq!(repeats[0].title, "CLAUDE.md and AGENTS.md in proj repeat 3 paragraphs");
+        assert!(
+            repeats[0].detail.ends_with("About 165 tokens are sent twice."),
+            "{}",
+            repeats[0].detail
+        );
+    }
+
+    #[test]
+    fn a_paragraph_twice_in_one_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = proj(tmp.path());
+        let claude = p.join("CLAUDE.md");
+        let text = para(240, "gamma");
+        write(
+            &claude,
+            &format!("{}{text}\n{}{text}\n", "\n".repeat(11), "\n".repeat(27)),
+        );
+        let loads = vec![load("claude", &p, vec![file_row(&claude)])];
+        let mut cx = Reader::windows();
+        let shown = items(&findings(&loads, &mut cx), std::slice::from_ref(&p), &yes);
+        let repeats = of_kind(&shown, "instrrepeat.");
+        assert_eq!(repeats.len(), 1, "{shown:?}");
+        assert_eq!(repeats[0].title, "CLAUDE.md in proj repeats a paragraph");
+        assert_eq!(
+            repeats[0].detail,
+            format!(
+                "Claude Code loads it. The first is at lines 12 and 40: “{}”. About 60 tokens are sent twice.",
+                quote(&text)
+            )
+        );
+        assert_eq!(repeats[0].opens.len(), 1);
+        assert_eq!(repeats[0].opens[0].line, Some(12));
+    }
+
+    #[test]
+    fn two_package_managers_clash_and_the_user_level_one_is_marked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = proj(tmp.path());
+        let user = tmp.path().join("home").join(".claude").join("CLAUDE.md");
+        let agents = p.join("AGENTS.md");
+        write(&user, "Always run npm install first.\n");
+        write(&agents, "# Rules\nUse pnpm for the frontend.\n");
+        let loads = vec![load("claude", &p, vec![file_row(&user), file_row(&agents)])];
+        let mut cx = Reader::windows();
+        let shown = items(&findings(&loads, &mut cx), std::slice::from_ref(&p), &yes);
+        let clashes = of_kind(&shown, "instrclash.");
+        assert_eq!(clashes.len(), 1, "{shown:?}");
+        let item = clashes[0];
+        assert_eq!(item.title, "Two package managers are named in proj");
+        assert_eq!(
+            item.detail,
+            "~/.claude/CLAUDE.md:1 (user level) says npm: “Always run npm install first.”. AGENTS.md:2 says pnpm: \
+             “Use pnpm for the frontend.”. Claude Code loads both."
+        );
+        assert_eq!(item.group, DoctorGroup::Info);
+        assert!(!item.fixable);
+        assert_eq!(item.agent, None);
+        assert_eq!(item.opens.len(), 2);
+        assert_eq!(item.opens[0].line, Some(1));
+        assert_eq!(item.opens[1].line, Some(2));
+        assert!(item.id.ends_with(".manager"), "{}", item.id);
+    }
+
+    #[test]
+    fn tabs_against_spaces_and_two_widths_are_their_own_items() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = proj(tmp.path());
+        let agents = p.join("AGENTS.md");
+        write(
+            &agents,
+            "Indent with tabs.\nUse 2 spaces for indentation.\nindent width 4\n",
+        );
+        let loads = vec![load("claude", &p, vec![file_row(&agents)])];
+        let mut cx = Reader::windows();
+        let shown = items(&findings(&loads, &mut cx), std::slice::from_ref(&p), &yes);
+        let clashes = of_kind(&shown, "instrclash.");
+        assert_eq!(clashes.len(), 2, "{shown:?}");
+        let tabs = clashes.iter().find(|i| i.id.contains(".tabs")).expect("tabs");
+        assert_eq!(tabs.title, "Tabs and spaces are both asked for in proj");
+        assert_eq!(
+            tabs.detail,
+            "AGENTS.md:1 says tabs: “Indent with tabs.”. AGENTS.md:2 says spaces: “Use 2 spaces for indentation.”. \
+             Claude Code loads both."
+        );
+        assert_eq!(tabs.opens.len(), 1);
+        let widths = clashes.iter().find(|i| i.id.contains(".widths")).expect("widths");
+        assert_eq!(widths.title, "Two indent widths are asked for in proj");
+        assert_eq!(
+            widths.detail,
+            "AGENTS.md:2 says width 2: “Use 2 spaces for indentation.”. AGENTS.md:3 says width 4: “indent width 4”. \
+             Claude Code loads both."
+        );
+    }
+
+    #[test]
+    fn two_clis_with_different_pairs_are_one_item() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = proj(tmp.path());
+        let (claude, agents, sub) = (
+            p.join("CLAUDE.md"),
+            p.join("AGENTS.md"),
+            p.join("sub").join("AGENTS.md"),
+        );
+        write(&claude, "Use pnpm for the frontend.\n");
+        write(&agents, "Always run npm install first.\n");
+        write(&sub, "Use yarn for everything.\n");
+        let loads = vec![
+            load("codex", &p, vec![file_row(&agents), file_row(&sub)]),
+            load("claude", &p, vec![file_row(&claude), file_row(&agents)]),
+        ];
+        let mut cx = Reader::windows();
+        let shown = items(&findings(&loads, &mut cx), std::slice::from_ref(&p), &yes);
+        let clashes = of_kind(&shown, "instrclash.");
+        assert_eq!(clashes.len(), 1, "{shown:?}");
+        assert_eq!(
+            clashes[0].detail,
+            "CLAUDE.md:1 says pnpm: “Use pnpm for the frontend.”. AGENTS.md:1 says npm: “Always run npm install \
+             first.”. Claude Code loads both."
+        );
+        assert!(clashes[0].id.starts_with("instrclash."));
+        assert!(clashes[0].id.ends_with(".manager"));
+    }
+
+    #[test]
+    fn a_clash_between_user_level_files_is_one_item_at_user_level() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (p1, p2) = (proj(tmp.path()), tmp.path().join("proj2"));
+        fs::create_dir_all(&p2).unwrap();
+        let rules = tmp.path().join("home").join(".claude");
+        let (u1, u2) = (rules.join("CLAUDE.md"), rules.join("rules").join("style.md"));
+        write(&u1, "Always run npm install first.\n");
+        write(&u2, "Use pnpm for the frontend.\n");
+        let (a1, a2) = (p1.join("AGENTS.md"), p2.join("AGENTS.md"));
+        write(&a1, "Use yarn for it.\n");
+        write(&a2, "Use yarn for it.\n");
+        let loads = vec![
+            load("claude", &p1, vec![file_row(&u1), file_row(&u2), file_row(&a1)]),
+            load("claude", &p2, vec![file_row(&u1), file_row(&u2), file_row(&a2)]),
+        ];
+        let mut cx = Reader::windows();
+        let shown = items(&findings(&loads, &mut cx), &[p1.clone(), p2.clone()], &yes);
+        let clashes = of_kind(&shown, "instrclash.");
+        assert_eq!(clashes.len(), 3, "{shown:?}");
+        assert_eq!(clashes[0].title, "Two package managers are named in proj");
+        assert_eq!(clashes[1].title, "Two package managers are named in proj2");
+        assert_eq!(clashes[2].title, "Two package managers are named at user level");
+        assert_eq!(clashes[2].id, "instrclash.user.manager");
+        assert_eq!(
+            clashes[2].detail,
+            "~/.claude/CLAUDE.md:1 says npm: “Always run npm install first.”. ~/.claude/rules/style.md:1 says pnpm: \
+             “Use pnpm for the frontend.”. Claude Code loads both."
+        );
+        assert_eq!(
+            clashes[0].detail,
+            "~/.claude/CLAUDE.md:1 (user level) says npm: “Always run npm install first.”. AGENTS.md:1 says yarn: \
+             “Use yarn for it.”. Claude Code loads both."
+        );
+    }
+
+    #[test]
+    fn memory_and_managed_files_are_left_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = proj(tmp.path());
+        let agents = p.join("AGENTS.md");
+        let other = tmp.path().join("home").join(".claude").join("MEMORY.md");
+        write(&agents, "Use pnpm for the frontend.\n");
+        write(&other, "Always run npm install first.\n");
+        for role in [Role::Memory, Role::Managed] {
+            let loads = vec![load(
+                "claude",
+                &p,
+                vec![file_row(&agents), row(&other, role, When::Start, None)],
+            )];
+            let mut cx = Reader::windows();
+            assert!(findings(&loads, &mut cx).is_empty());
+        }
+    }
+
+    #[test]
+    fn a_distro_gets_duplicates_and_clashes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = proj(tmp.path());
+        let dir = tmp.path().join("home").join(".claude");
+        let (u1, u2) = (dir.join("CLAUDE.md"), dir.join("style.md"));
+        write(&u1, "Always run npm install first.\n");
+        write(&u2, "Use pnpm for the frontend.\n");
+        let mut distro = load("claude", &p, vec![file_row(&u1), file_row(&u2)]);
+        distro.distro = Some("Ubuntu".into());
+        let mut cx = Reader::windows();
+        let shown = items(&findings(&[distro], &mut cx), std::slice::from_ref(&p), &yes);
+        let clashes = of_kind(&shown, "instrclash.");
+        assert_eq!(clashes.len(), 1, "{shown:?}");
+        assert_eq!(clashes[0].title, "Two package managers are named at user level");
+        assert!(clashes[0].id.ends_with("@Ubuntu"), "{}", clashes[0].id);
+        assert_eq!(clashes[0].distro.as_deref(), Some("Ubuntu"));
+        assert!(clashes[0].opens.is_empty());
     }
 
     #[test]
