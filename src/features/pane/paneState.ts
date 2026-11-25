@@ -78,7 +78,9 @@ export type PaneAction =
   | { type: "weights"; session?: string | null; weights: Weights }
   /** Writes the stack down when none is saved. */
   | { type: "pin"; session: string }
-  | { type: "width"; width: number | null };
+  | { type: "width"; width: number | null }
+  /** "Open as a session": the shell's set becomes the new session's; the shell has none after. */
+  | { type: "handOver"; from: string; to: string };
 
 const NO_TABS: SessionTabs = { tabs: [], active: null };
 
@@ -631,6 +633,19 @@ export function paneReducer(s: PaneView, a: PaneAction): PaneView {
       let n = 0;
       const tabs = raw.tabs.map((t) => (panelOf(t) === panel ? order[n++]! : t));
       return setTabs(s, a.session, { ...settle(raw), tabs });
+    }
+    case "handOver": {
+      const from = s.sessions[a.from];
+      const to = s.sessions[a.to];
+      if (!from || (to && to.tabs.length > 0)) return s;
+      const { [a.from]: _gone, ...rest } = s.sessions;
+      const next: SessionTabs = { tabs: from.tabs, active: from.active };
+      if (from.active_browser !== undefined) next.active_browser = from.active_browser;
+      const tree = to?.tree ?? from.tree;
+      if (tree !== undefined) next.tree = tree;
+      const changes = to?.changes ?? from.changes;
+      if (changes !== undefined) next.changes = changes;
+      return { ...s, sessions: { ...rest, [a.to]: next } };
     }
     case "show":
       return s.open ? s : shownWith(s, a.session);

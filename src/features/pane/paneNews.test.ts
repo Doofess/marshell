@@ -45,3 +45,14 @@ describe("panelHasNews", () => {
     expect(panelHasNews(newsReducer(none, { type: "add", items: [item("a", "files")] }), "browser")).toBe(false);
   });
 });
+
+describe("rename", () => {
+  it("rename moves the shell's news to the session", () => {
+    const s = new Set(["browser:shell", "files:s1"]);
+    expect(newsReducer(s, { type: "rename", from: "shell", to: "t9" })).toEqual(new Set(["browser:t9", "files:s1"]));
+  });
+  it("rename with nothing to move is the same set", () => {
+    const s = new Set(["files:s1"]);
+    expect(newsReducer(s, { type: "rename", from: "shell", to: "t9" })).toBe(s);
+  });
+});

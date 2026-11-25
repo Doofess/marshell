@@ -994,7 +994,10 @@ export function LiveApp() {
     const ep = endpointRef.current;
     if (!settled || !loaded || !ep || opens.length === 0) return;
     const taken = takeOpens(viewRef.current.pane, opens, new Set(answered.current.keys()), {
-      sessions: new Map(rows.map((r) => [r.id, { project: r.projectKey }])),
+      owner: (id) => {
+        const r = rows.find((x) => x.id === id);
+        return r ? { key: id, project: r.projectKey } : null;
+      },
       shown: focusedId ?? null,
       onScreen: panelsOn,
       refuses: (url) => shellRefuses(url, ownOrigins()),
@@ -1241,7 +1244,7 @@ export function LiveApp() {
   // Returns whether it hid the pane. `say: false` is for a caller with a line of its own to say with the hide (the cursor's receipt).
   const toTerminalFromPane = (say = true): boolean => {
     const covers = document.querySelector('[data-pane="cover"]') !== null;
-    if (leavePaneOutcome(covers) === "focus" || !viewRef.current.pane.open) {
+    if (leavePaneOutcome({ covers, alone: false, shellShown: false }) === "focus" || !viewRef.current.pane.open) {
       actions.focusTerminal();
       return false;
     }

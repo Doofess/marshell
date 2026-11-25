@@ -3,6 +3,7 @@ import type { PaneView } from "../../generated/PaneView";
 import type { Os } from "../../lib/keymap";
 import { isPageUrl, pageTitle, shellRefuses } from "../browser/address";
 import { isUnsaved } from "../editor/drafts";
+import { SHELL_OWNER } from "./paneOwner";
 import { panelHasNews } from "./paneNews";
 import { PANE_LIMITS, activeTab, openRefused, tabsOf } from "./paneState";
 import { PANELS, PANEL_LABEL, onScreen, panelOfPath, panelTabs, stackOf, type PanelId } from "./panels";
@@ -25,6 +26,9 @@ export function paneToggleOutcome(session: string | null | undefined, viewing: b
   return session == null || viewing ? "blocked" : "toggle";
 }
 export const TAB_LIMIT = `This session has ${PANE_LIMITS.tabs} tabs. Close one to open another.`;
+export const SHELL_TAB_LIMIT = `The shell panel has ${PANE_LIMITS.tabs} tabs. Close one to open another.`;
+/** The limit line for the pane's owner: SHELL_OWNER gives the shell panel's, any other key the session's. */
+export const tabLimitText = (key: string): string => (key === SHELL_OWNER ? SHELL_TAB_LIMIT : TAB_LIMIT);
 export const FOLDER_REFUSED = "A folder can't be shown in the side pane.";
 export const openedText = (name: string, panel: PanelId) => `Opened ${name} in ${PANEL_LABEL[panel]}.`;
 /** The announcement for a tab an agent opened with `marshell open`; `who` is the agent's name. */
@@ -133,10 +137,11 @@ export function paneTabFocus(s: { outcome: "none" | "show" | "step"; from: "pane
 /**
  * What leaving a pane tab for the terminal does (Esc, or Ctrl+Shift+Tab, in a tab). Beside the terminal, the keyboard just moves
  * there. In a window so narrow that the pane covers the terminal, the pane is hidden as well, so the keys never go to a program
- * out of sight.
+ * out of sight. A filling pane hides only when the shell panel isn't on screen (decision 16).
  */
-export function leavePaneOutcome(covers: boolean): "hide" | "focus" {
-  return covers ? "hide" : "focus";
+export function leavePaneOutcome(s: { covers: boolean; alone: boolean; shellShown: boolean }): "hide" | "focus" {
+  if (s.covers) return "hide";
+  return s.alone && !s.shellShown ? "hide" : "focus";
 }
 /** Said when leaving a tab hid the pane: the key that did it doesn't name the pane, so the line does, with the keys that bring it back. */
 export const paneHiddenText = (keys: string) => `The side pane is hidden. ${keys} shows it.`;
