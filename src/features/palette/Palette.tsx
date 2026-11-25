@@ -10,6 +10,7 @@ import { filterCommands, filterSessions, highlight, parseSessionNumber, sessionD
 import { emptyBox } from "./paletteList";
 import { rankFiles, splitPath, type FileHit } from "../preview/quickOpen";
 import type { PaletteSession } from "./fixtures";
+import { listFailed } from "../files/filesWait";
 import "./Palette.css";
 
 export type PaletteView = { query: string; activeIndex: number };
@@ -234,8 +235,8 @@ export function Palette({
         ? "Listing files…"
         : files?.status === "error"
         ? files.folder
-          ? `Can't list the files in ${files.folder}.`
-          : "Can't list files for this session."
+          ? listFailed(files.folder)
+          : listFailed(null)
         : query.trim() === ""
         ? "Type a file name"
         : `No file matches “${query}”`

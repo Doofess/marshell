@@ -299,7 +299,7 @@ describe("Palette: quick open while the list loads or fails", () => {
   it("says it can't list the folder on an error", () => {
     expect(only("zzz", { status: "error", folder: "marshell", seen: [] })).toContain("Can&#x27;t list the files in marshell.");
     const h = only("zzz", { status: "error", seen: [] });
-    expect(h).toContain("Can&#x27;t list files for this session.");
+    expect(h).toContain("Can&#x27;t list the files.");
     expect(h).not.toContain("No file matches");
   });
   it("renders the seen paths while the list loads", () => {

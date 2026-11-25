@@ -1204,7 +1204,11 @@ export function LiveApp() {
   // shell's path: that focus would flip the owner to the session.
   const toOwnerTerminal = (): void => {
     if (!ownerRef.current.shell) return actions.focusTerminal();
-    if (shellShownRef.current) return focusShellTerminal(document);
+    if (shellShownRef.current) {
+      // Folded for lack of room, the panel draws no terminal: open it first, as its command does.
+      if (shellAutoFolded(document)) setShellForced(true);
+      return focusShellTerminal(document);
+    }
     document.querySelector<HTMLElement>(".window__main")?.focus();
   };
   const keysOf = (panel: PanelId) => shortcutLabel(commandById(PANEL_COMMAND[panel]).binding!, os ?? "windows");
@@ -2965,7 +2969,7 @@ export function LiveApp() {
           }}
         />
       )}
-      {overlay === "palette" && os && <LivePalette recent={view.recent_commands} moved={MOVED_COMMANDS} sessions={paletteSessions(rows)} os={os} labels={liveLabels} hidden={hiddenCommands} tab={focusedId ?? null} filesOnly={filesOnly} onOpenFile={(path) => { setOverlay(null); openInPane({ path }); }} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
+      {overlay === "palette" && os && <LivePalette recent={view.recent_commands} moved={MOVED_COMMANDS} sessions={paletteSessions(rows)} os={os} labels={liveLabels} hidden={hiddenCommands} tab={owner.tabId} filesOnly={filesOnly} onOpenFile={(path) => { setOverlay(null); openInPane({ path }); }} onRun={runFromPalette} onClose={() => setOverlay(null)} />}
       {overlay === "departures" && (
         <LiveDepartures
           rows={taskRows}

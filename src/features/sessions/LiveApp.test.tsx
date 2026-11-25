@@ -886,3 +886,30 @@ describe("LiveApp: tree opens and saves", () => {
     expect(source).toContain("stateRef.current.infos.some((i) => i.tab_id === session)");
   });
 });
+
+describe("LiveApp: the shell panel owns the pane", () => {
+  const source = readFileSync(join(__dirname, "LiveApp.tsx"), "utf8");
+  // A top-level arrow function's text, from its `const` to the `};` that closes it at the component's indent.
+  const body = (name: string) => {
+    const start = source.indexOf(`  const ${name} = `);
+    expect(start).toBeGreaterThan(-1);
+    return source.slice(start, source.indexOf("\n  };", start));
+  };
+  it("lists the pane owner's folder in the palette's file list, so it works with no session", () => {
+    expect(source).toMatch(/<LivePalette [^\n]*tab=\{owner\.tabId\}/);
+    expect(source).not.toContain("tab={focusedId ?? null}");
+  });
+  it("opens a panel folded for lack of room before its terminal takes the keyboard back", () => {
+    expect(body("toOwnerTerminal")).toMatch(/if \(shellAutoFolded\(document\)\) setShellForced\(true\);\s*return focusShellTerminal\(document\);/);
+  });
+  it("asks for no shell while the panel shows that the shell didn't start", () => {
+    expect(source).toMatch(/\|\| failedFor === endpoint\) return;/);
+  });
+  it("gives the keyboard back to the owner's terminal, never the session's, from the pane, its commands, a region's add and a typed delivery", () => {
+    for (const name of ["toTerminalFromPane", "togglePanel", "paneRun", "addRegion"]) {
+      expect(body(name)).toMatch(/toOwnerTerminal/);
+      expect(body(name)).not.toContain("actions.focusTerminal()");
+    }
+    expect(source).toContain("onTyped={() => (owner.shell ? toOwnerTerminal() : focusDelivered(");
+  });
+});
