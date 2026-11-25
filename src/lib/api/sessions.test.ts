@@ -130,15 +130,28 @@ describe("sessions.restart", () => {
 });
 
 describe("the shell panel", () => {
-  it("opens it with a folder and size, and returns the tab id", async () => {
-    const open = respond({ tab_id: "p1" });
+  it("opens it with a folder and size, and returns the tab id and the folder", async () => {
+    const open = respond({ tab_id: "p1", cwd: "C:\\work" });
     vi.stubGlobal("fetch", open);
-    await expect(sessions.shellPanel(endpoint, "C:\\work", { cols: 70, rows: 20 })).resolves.toBe("p1");
+    await expect(sessions.shellPanel(endpoint, "C:\\work", { cols: 70, rows: 20 })).resolves.toEqual({
+      tabId: "p1",
+      cwd: "C:\\work",
+    });
     expect(call(open)).toMatchObject({
       url: "http://127.0.0.1:9/v1/shell-panel",
       method: "POST",
       body: { cwd: "C:\\work", cols: 70, rows: 20 },
     });
+  });
+
+  it("posts a null cwd with no session", async () => {
+    const open = respond({ tab_id: "p1", cwd: "C:\\Users\\me\\Marshell" });
+    vi.stubGlobal("fetch", open);
+    await expect(sessions.shellPanel(endpoint, null, { cols: 70, rows: 20 })).resolves.toEqual({
+      tabId: "p1",
+      cwd: "C:\\Users\\me\\Marshell",
+    });
+    expect(call(open)).toMatchObject({ body: { cwd: null, cols: 70, rows: 20 } });
   });
 
   it("adopts it and returns the tab id", async () => {

@@ -667,7 +667,7 @@ async fn launch(
 ) -> Result<(), ApiError> {
     let (session_id, folder) = (run.session_id.clone(), cwd.clone());
     spawn_into_map(
-        st, tab_id, number, generation, run, agent, cwd, size, scheme, record, elevated,
+        st, tab_id, number, generation, run, agent, cwd, size, scheme, record, elevated, true,
     )
     .await?;
     link_launched_session(st, tab_id, session_id.as_deref(), &folder).await;
@@ -690,6 +690,8 @@ async fn launch(
 /// the shell panel starts here and only gets a row when it is adopted. The exit callback carries
 /// `generation`, so a process that a restart replaced cannot mark its successor Exited.
 /// `record` is false for a tab whose output must not be kept (a sign-in tab); every other start passes true.
+/// `record_project` is false for a start whose folder the user didn't name (the shell panel in the default or the
+/// profile's folder), so that folder doesn't become a recent project; every other start passes true.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn spawn_into_map(
     st: &AppState,
@@ -703,6 +705,7 @@ pub(super) async fn spawn_into_map(
     scheme: Option<ColorScheme>,
     record: bool,
     elevated: bool,
+    record_project: bool,
 ) -> Result<(), ApiError> {
     let agent = agent.unwrap_or_else(|| "shell".into());
     let program = run
@@ -792,7 +795,7 @@ pub(super) async fn spawn_into_map(
             Some(spawn) => spawn(id, spec)?,
             None => Session::spawn(id, spec)?,
         };
-        if !project.is_empty() {
+        if record_project && !project.is_empty() {
             // The folder the process really started in. `record` skips the user's home folder.
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
