@@ -84,4 +84,8 @@ describe("SidePane.css", () => {
     expect(rule('.side-pane__tab[aria-selected="true"]')).toContain("background: var(--fill-strong)");
     expect(rule('.side-pane__tab[aria-selected="true"]')).not.toContain("border");
   });
+  it("cuts the selected mark's end bar to the tab's rounded shape", () => {
+    // The bar is a straight 2 px box on the end edge (SelectedMark.css); unclipped it stands past the rounded corners like a caret beside the tab.
+    expect(rule(".side-pane__tab")).toContain("overflow: clip");
+  });
 });
