@@ -30,7 +30,7 @@ const DEFAULT_NOTIFY: NotifySettings = {
   terminal_alerts: true,
 };
 
-type FlagChange = Partial<Pick<Settings, "pause_warned" | "onboarded" | "close_to_tray" | "status_off" | "notifications" | "history_import" | "history_limit_gb" | "history_limit_days" | "history_backup_dir" | "browser" | "files" | "changes">>;
+type FlagChange = Partial<Pick<Settings, "pause_warned" | "onboarded" | "close_to_tray" | "status_off" | "notifications" | "history_import" | "history_limit_gb" | "history_limit_days" | "history_backup_dir" | "default_folder" | "browser" | "files" | "changes">>;
 
 type SettingsApi = {
   get(ep: Endpoint): Promise<Settings>;
@@ -68,6 +68,8 @@ export class SettingsSync {
   private limitDays: number | null = null;
   /** The backup folder for the history. Kept from the last read, so every save sends it back unchanged. */
   private backupDir: string | null = null;
+  /** The default folder the person chose, or null for Marshell's own. Kept from the last read, so every save sends it back unchanged. */
+  private defaultFolderValue: string | null = null;
   /** The Browser panel settings. Kept from the last read, so every save sends them back unchanged. */
   private browserValue: BrowserSettings = DEFAULT_BROWSER;
   /** The Files settings. Kept from the last read, so every save sends them back unchanged. */
@@ -122,6 +124,7 @@ export class SettingsSync {
     this.limitGb = s.history_limit_gb;
     this.limitDays = s.history_limit_days;
     this.backupDir = s.history_backup_dir;
+    this.defaultFolderValue = s.default_folder;
     this.setBrowserValue(s.browser);
     this.setFilesValue(s.files);
     this.setChangesValue(s.changes);
@@ -220,6 +223,11 @@ export class SettingsSync {
     return this.backupDir;
   }
 
+  /** The default folder the person chose, as of the last read or write: null for Marshell's own. */
+  get defaultFolder(): string | null {
+    return this.defaultFolderValue;
+  }
+
   /** The notification settings, as of the last read or write. The defaults until a read works. */
   get notifications(): NotifySettings {
     return this.notify;
@@ -258,7 +266,7 @@ export class SettingsSync {
         throw new SettingsReadError();
       }
     }
-    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, close_to_tray: this.tray, status_off: this.off, notifications: this.notify, history_import: this.importOn, history_limit_gb: this.limitGb, history_limit_days: this.limitDays, history_backup_dir: this.backupDir, browser: this.browserValue, files: this.filesValue, changes: this.changesValue });
+    const s = await this.api.put(await this.getEndpoint(), { appearance: next, pause_warned: this.warned, onboarded: this.seen, close_to_tray: this.tray, status_off: this.off, notifications: this.notify, history_import: this.importOn, history_limit_gb: this.limitGb, history_limit_days: this.limitDays, history_backup_dir: this.backupDir, default_folder: this.defaultFolderValue, browser: this.browserValue, files: this.filesValue, changes: this.changesValue });
     this.warned = s.pause_warned;
     this.seen = s.onboarded;
     this.tray = s.close_to_tray;
@@ -268,6 +276,7 @@ export class SettingsSync {
     this.limitGb = s.history_limit_gb;
     this.limitDays = s.history_limit_days;
     this.backupDir = s.history_backup_dir;
+    this.defaultFolderValue = s.default_folder;
     this.setBrowserValue(s.browser);
     this.setFilesValue(s.files);
     this.setChangesValue(s.changes);
@@ -314,6 +323,11 @@ export class SettingsSync {
     await this.writeFlags({ history_backup_dir: dir });
   }
 
+  /** Saves the default folder, or goes back to Marshell's own with null. Reads first, like `save`, and sends every other field back unchanged. A refusal (400) rejects with the core's body as the message. */
+  async setDefaultFolder(dir: string | null): Promise<void> {
+    await this.writeFlags({ default_folder: dir });
+  }
+
   /** Records that the onboarding was seen. Reads first, like `save`, and sends the appearance and the pause warning back unchanged. */
   async markOnboarded(): Promise<void> {
     await this.writeFlags({ onboarded: true });
@@ -356,6 +370,7 @@ export class SettingsSync {
       history_limit_gb: this.limitGb,
       history_limit_days: this.limitDays,
       history_backup_dir: this.backupDir,
+      default_folder: this.defaultFolderValue,
       browser: this.browserValue, files: this.filesValue, changes: this.changesValue,
       ...change,
     });
@@ -368,6 +383,7 @@ export class SettingsSync {
     this.limitGb = s.history_limit_gb;
     this.limitDays = s.history_limit_days;
     this.backupDir = s.history_backup_dir;
+    this.defaultFolderValue = s.default_folder;
     this.setBrowserValue(s.browser);
     this.setFilesValue(s.files);
     this.setChangesValue(s.changes);

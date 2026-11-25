@@ -18,7 +18,7 @@ const R = {
   S3D: "The stash is shared by every session and worktree, so clear or an unnamed drop can destroy another session's work. Drop a stash by its SHA, and only your own.",
   S4: "Credential files and the real Marshell token are off limits (SCOPE.md). A live check reads its scratch home's token.",
   S5: "Don't name a test binary like a real CLI. Use a name like codex-marshell-test.exe.",
-  S6: "A live check runs with MARSHELL_HOME, CLAUDE_CONFIG_DIR and MARSHELL_CLAUDE_SETTINGS set to scratch folders. See the marshell-live-check skill.",
+  S6: "A live check runs with MARSHELL_HOME, CLAUDE_CONFIG_DIR, MARSHELL_CLAUDE_SETTINGS and MARSHELL_DEFAULT_FOLDER set to scratch folders. See the marshell-live-check skill.",
   S7: "This can't be undone. Confirm with the user first.",
   S8: "Run cargo fmt --all before a Rust commit.",
   F1: "src/generated is written by ts-rs. Change crates/protocol and run cargo test -p marshell-protocol.",
@@ -371,6 +371,14 @@ describe("S6: tauri dev outside a scratch environment", () => {
     "MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc MARSHELL_CLAUDE_SETTINGS=~/.claude/settings.json pnpm tauri dev",
     "MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc MARSHELL_CLAUDE_SETTINGS=$HOME/.claude.json pnpm tauri dev",
     "MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc MARSHELL_CLAUDE_SETTINGS=~/.claude/x/settings.local.json pnpm tauri dev",
+    // The app makes its default folder at start: without a scratch one it would make Marshell in the real home folder.
+    "MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc MARSHELL_CLAUDE_SETTINGS=/tmp/p/settings.local.json pnpm tauri dev",
+    "MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc MARSHELL_CLAUDE_SETTINGS=/tmp/p/settings.local.json MARSHELL_DEFAULT_FOLDER= pnpm tauri dev",
+    "MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc MARSHELL_CLAUDE_SETTINGS=/tmp/p/settings.local.json MARSHELL_DEFAULT_FOLDER=~/Marshell pnpm tauri dev",
+    "MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc MARSHELL_CLAUDE_SETTINGS=/tmp/p/settings.local.json MARSHELL_DEFAULT_FOLDER=$HOME/marshell pnpm tauri dev",
+    // A folder inside it: the app would make Marshell in the real home folder on the way.
+    "MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc MARSHELL_CLAUDE_SETTINGS=/tmp/p/settings.local.json MARSHELL_DEFAULT_FOLDER=~/Marshell/lc pnpm tauri dev",
+    "MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc MARSHELL_CLAUDE_SETTINGS=/tmp/p/settings.local.json MARSHELL_DEFAULT_FOLDER=$HOME/Marshell/a/b pnpm tauri dev",
   ];
   for (const c of bad) test(`Bash: ${c}`, () => denied(shell(c), R.S6));
   const badPs = [
@@ -380,24 +388,27 @@ describe("S6: tauri dev outside a scratch environment", () => {
     '$env:MARSHELL_HOME="$env:USERPROFILE\\.marshell"; $env:CLAUDE_CONFIG_DIR="C:\\s\\cc"; pnpm tauri dev',
     '$env:MARSHELL_HOME="C:\\s\\mh"; $env:CLAUDE_CONFIG_DIR="C:\\s\\cc"; pnpm tauri dev',
     '$env:MARSHELL_HOME="C:\\s\\mh"; $env:CLAUDE_CONFIG_DIR="C:\\s\\cc"; $env:MARSHELL_CLAUDE_SETTINGS="$env:USERPROFILE\\.claude\\settings.json"; pnpm tauri dev',
+    '$env:MARSHELL_HOME="C:\\s\\mh"; $env:CLAUDE_CONFIG_DIR="C:\\s\\cc"; $env:MARSHELL_CLAUDE_SETTINGS="C:\\s\\p\\settings.local.json"; pnpm tauri dev',
+    '$env:MARSHELL_HOME="C:\\s\\mh"; $env:CLAUDE_CONFIG_DIR="C:\\s\\cc"; $env:MARSHELL_CLAUDE_SETTINGS="C:\\s\\p\\settings.local.json"; $env:MARSHELL_DEFAULT_FOLDER="$env:USERPROFILE\\Marshell"; pnpm tauri dev',
   ];
   for (const c of badPs) test(`PowerShell: ${c}`, () => denied(ps(c), R.S6));
 
-  const SCRATCH3 = "MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc MARSHELL_CLAUDE_SETTINGS=/tmp/p/settings.local.json";
-  test("Bash: all three set to scratch folders", () =>
-    none(shell(`${SCRATCH3} WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 pnpm tauri dev`)));
-  test("Bash: env prefix with all three set", () => none(shell(`env ${SCRATCH3} pnpm tauri dev`)));
-  test("Bash: nohup with all three set", () => none(shell(`${SCRATCH3} nohup pnpm tauri dev &`)));
-  test("PowerShell: all three set to scratch folders", () =>
+  const SCRATCH4 =
+    "MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc MARSHELL_CLAUDE_SETTINGS=/tmp/p/settings.local.json MARSHELL_DEFAULT_FOLDER=/tmp/home/Marshell";
+  test("Bash: all four set to scratch folders", () =>
+    none(shell(`${SCRATCH4} WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 pnpm tauri dev`)));
+  test("Bash: env prefix with all four set", () => none(shell(`env ${SCRATCH4} pnpm tauri dev`)));
+  test("Bash: nohup with all four set", () => none(shell(`${SCRATCH4} nohup pnpm tauri dev &`)));
+  test("PowerShell: all four set to scratch folders", () =>
     none(
       ps(
-        '$env:MARSHELL_HOME="C:\\s\\mh"; $env:CLAUDE_CONFIG_DIR="C:\\s\\cc"; $env:MARSHELL_CLAUDE_SETTINGS="C:\\s\\p\\settings.local.json"; pnpm tauri dev',
+        '$env:MARSHELL_HOME="C:\\s\\mh"; $env:CLAUDE_CONFIG_DIR="C:\\s\\cc"; $env:MARSHELL_CLAUDE_SETTINGS="C:\\s\\p\\settings.local.json"; $env:MARSHELL_DEFAULT_FOLDER="C:\\s\\home\\Marshell"; pnpm tauri dev',
       ),
     ));
   test("Bash: 8.3 short name of the home folder is the real home", { skip: NO_SHORT }, () =>
     denied(
       shell(
-        `MARSHELL_HOME=${fwd(SHORT_HOME)}/.marshell CLAUDE_CONFIG_DIR=/c/s/cc MARSHELL_CLAUDE_SETTINGS=/c/s/p/settings.local.json pnpm tauri dev`,
+        `MARSHELL_HOME=${fwd(SHORT_HOME)}/.marshell CLAUDE_CONFIG_DIR=/c/s/cc MARSHELL_CLAUDE_SETTINGS=/c/s/p/settings.local.json MARSHELL_DEFAULT_FOLDER=/c/s/home/Marshell pnpm tauri dev`,
       ),
       R.S6,
     ));

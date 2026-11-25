@@ -47,7 +47,7 @@ A tag `v0.1.0-alpha.N` starts the release workflow (`.github/workflows/release.y
 - Before calling a change done, run the checks that cover it and report the command and what it printed: the crate's `cargo test` for Rust, `pnpm test <file>` for the frontend, `pnpm check:generated` after a protocol change.
 - Before a pull request, run what CI runs. Run `cargo fmt --all` before every Rust commit.
 - Don't start `pnpm tauri dev`, a release build, or the accessibility matrix unless the task calls for it (a live check or a release).
-- A live check gives Marshell and every CLI it starts a scratch home, so it never touches the real ones: `MARSHELL_HOME`, `MARSHELL_CLAUDE_SETTINGS`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME`, and `USERPROFILE` for Antigravity's `~/.gemini` and Qwen Code's `~/.qwen`. Stop only what it started, by PID.
+- A live check gives Marshell and every CLI it starts a scratch home, so it never touches the real ones: `MARSHELL_HOME`, `MARSHELL_DEFAULT_FOLDER`, `MARSHELL_CLAUDE_SETTINGS`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME`, and `USERPROFILE` for Antigravity's `~/.gemini` and Qwen Code's `~/.qwen`. Stop only what it started, by PID.
 
 ## Working rules
 

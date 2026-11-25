@@ -122,6 +122,9 @@ pub struct CoreConfig {
     /// Whether the Doctor runs its checks once at startup. false in tests: then nothing reads the real CLI folders at
     /// startup, and no CLI is asked for its `--version`.
     pub doctor_on_start: bool,
+    /// Marshell's own default folder (`paths::builtin_default_folder()`). None in tests: then this core has none,
+    /// makes none, and a start with no folder falls back to the home folder.
+    pub default_folder: Option<PathBuf>,
 }
 
 /// The view with a hidden window counted as unfocused: the shell's visibility wins over the webview's last report.
@@ -305,6 +308,8 @@ struct Inner {
     claude_compact_paths: Option<(PathBuf, Vec<PathBuf>)>,
     /// Where the app's own programs sit, so setting up hooks can put a missing bridge back. None in tests.
     programs_dir: Option<PathBuf>,
+    /// Marshell's own default folder, used when `settings.json` names none. None in tests that don't name one.
+    default_folder: Option<PathBuf>,
     /// How many times the Doctor's instruction-file read ran, so a test can tell that only a run reads them.
     #[cfg(test)]
     instr_reads: std::sync::atomic::AtomicUsize,
@@ -362,6 +367,25 @@ pub const DEFAULT_PERMISSION_HOLD: Duration = Duration::from_secs(120);
 
 /// How long a Working agent can go without a hook event before it reads Stuck, when `MARSHELL_STUCK_QUIET_SECS` is not set.
 pub const DEFAULT_STUCK_QUIET: Duration = Duration::from_secs(600);
+
+/// How long a look at the default folder may take before it reads as not there.
+const DEFAULT_FOLDER_WAIT: Duration = Duration::from_secs(2);
+
+/// Test hook: a test can make the look at one folder slow, as a dead mapped drive is.
+#[cfg(test)]
+static DEFAULT_FOLDER_LAG: std::sync::Mutex<Option<(PathBuf, Duration)>> = std::sync::Mutex::new(None);
+
+fn before_default_folder_check(_dir: &Path) {
+    #[cfg(test)]
+    {
+        let lag = DEFAULT_FOLDER_LAG.lock().unwrap().clone();
+        if let Some((slow, lag)) = lag
+            && slow == _dir
+        {
+            std::thread::sleep(lag);
+        }
+    }
+}
 
 /// How long to wait for Claude to resume after its last background subagent stops.
 pub const DEFAULT_SUBAGENT_WAIT: Duration = Duration::from_secs(30);
@@ -456,6 +480,7 @@ impl AppState {
             skill_home: None,
             claude_compact_paths: None,
             programs_dir: None,
+            default_folder: None,
             #[cfg(test)]
             instr_reads: std::sync::atomic::AtomicUsize::new(0),
             versions: Mutex::new(HashMap::new()),
@@ -631,6 +656,32 @@ impl AppState {
             .expect("with_programs_dir runs before the state is shared")
             .programs_dir = Some(dir);
         self
+    }
+    /// Names Marshell's own default folder, the one used when Settings names none. Call it before the state is
+    /// cloned.
+    pub fn with_default_folder(mut self, dir: PathBuf) -> Self {
+        Arc::get_mut(&mut self.0)
+            .expect("with_default_folder runs before the state is shared")
+            .default_folder = Some(dir);
+        self
+    }
+    /// The folder Settings names, else Marshell's own. Doesn't look at the disk.
+    pub(crate) fn default_folder_path(&self) -> Option<PathBuf> {
+        let chosen = self.0.settings.lock().unwrap().default_folder.clone();
+        chosen.map(PathBuf::from).or_else(|| self.0.default_folder.clone())
+    }
+    /// The default folder when a folder is there now. Looked at off the async threads and for at most 2 seconds: a
+    /// folder on a dead mapped drive reads as not there.
+    pub(crate) async fn default_folder_now(&self) -> Option<String> {
+        let dir = self.default_folder_path()?;
+        let looked = tokio::task::spawn_blocking(move || {
+            before_default_folder_check(&dir);
+            dir.is_dir().then(|| dir.to_string_lossy().into_owned())
+        });
+        match tokio::time::timeout(DEFAULT_FOLDER_WAIT, looked).await {
+            Ok(Ok(found)) => found,
+            _ => None,
+        }
     }
     /// Pins the Claude Code version that the live status gate and the setup route see, so a test never runs a
     /// real `claude`. `None` is a version that cannot be read. Call it before the state is cloned.
@@ -1368,6 +1419,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/profiles/integration", post(profiles::integration))
         .route("/v1/profiles/{id}/agents", get(profiles::agents))
         .route("/v1/settings", get(settings::get).put(settings::put))
+        .route("/v1/default-folder", get(settings::default_folder))
         .route("/v1/notify/paused", get(get_notify_paused).put(put_notify_paused))
         .route("/v1/layout", get(layout::get))
         .route(
@@ -1727,6 +1779,24 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
     if let Some(dir) = cfg.programs_dir {
         state = state.with_programs_dir(dir);
     }
+    if let Some(dir) = cfg.default_folder {
+        // Marshell's own folder is made here, before the endpoint is advertised, so the first shell the window asks
+        // for already finds it. Only when Settings names no folder: a chosen folder lies where the person put it,
+        // possibly on a drive that isn't there now, and is never made.
+        let makes = state.0.settings.lock().unwrap().default_folder.is_none();
+        let made = if makes {
+            let own = dir.clone();
+            Some(tokio::task::spawn_blocking(move || std::fs::create_dir_all(own)).await)
+        } else {
+            None
+        };
+        match made {
+            Some(Ok(Err(e))) => tracing::warn!("could not make the default folder: {e}"),
+            Some(Err(e)) => tracing::warn!("could not make the default folder: {e}"),
+            _ => {}
+        }
+        state = state.with_default_folder(dir);
+    }
     if let Some(sink) = cfg.focus {
         state = state.with_focus(sink);
     }
@@ -1778,6 +1848,28 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A folder on a dead mapped drive can hang the look at it: it reads as not there after 2 seconds, and the look
+    /// is off the async threads, so the runtime keeps answering meanwhile.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_slow_folder_reads_as_not_there() {
+        let home = tempfile::tempdir().unwrap();
+        let folder = home.path().join("Marshell");
+        std::fs::create_dir_all(&folder).unwrap();
+        let st = AppState::new("t".into(), 1, Vec::new(), home.path().to_path_buf(), Vec::new())
+            .with_default_folder(folder.clone());
+        assert!(st.default_folder_now().await.is_some());
+
+        *DEFAULT_FOLDER_LAG.lock().unwrap() = Some((folder.clone(), Duration::from_secs(4)));
+        let began = std::time::Instant::now();
+        let found = st.default_folder_now().await;
+        *DEFAULT_FOLDER_LAG.lock().unwrap() = None;
+        // The folder is there, so only the wait running out reads it as not there. No upper bound on the time: a
+        // busy machine may be late, and `None` already shows the look wasn't waited for.
+        assert_eq!(found, None);
+        let took = began.elapsed();
+        assert!(took >= Duration::from_secs(2), "{took:?}");
+    }
 
     #[test]
     fn stuck_quiet_env_is_clamped() {

@@ -32,7 +32,7 @@ export type ProfilesHandlers = {
 const field = (key: string, label: string, help: string): SettingField => ({ category: "profiles", key, label, help, kind: "text", scope: "marshell", applies: "new-sessions" });
 const NAME = field("name", "Name", "How the profile is listed when you start a session.");
 const COMMAND = field("command", "Command", "The program and its arguments. Put quotes around a path that has spaces.");
-const FOLDER = field("cwd", "Folder", "Where sessions start. Empty means your home folder.");
+const FOLDER = field("cwd", "Folder", "Where sessions start. Empty means the default folder.");
 
 /**
  * The command is typed as one line; the profile keeps the argv. What the person typed is shown while it still reads as the

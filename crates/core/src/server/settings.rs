@@ -2,10 +2,19 @@ use super::AppState;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use marshell_protocol::api::{FoundFile, Settings};
+use marshell_protocol::api::{DefaultFolder, FoundFile, Settings};
 
 pub async fn get(State(st): State<AppState>) -> Json<Settings> {
     Json(st.0.settings.lock().unwrap().clone())
+}
+
+/// The folder new sessions start in when nothing names one: where it is, whether a folder is there now, and whether
+/// Settings chose it (else it is Marshell's own).
+pub async fn default_folder(State(st): State<AppState>) -> Json<DefaultFolder> {
+    let chosen = st.0.settings.lock().unwrap().default_folder.is_some();
+    let path = st.default_folder_path().map(|p| p.to_string_lossy().into_owned());
+    let exists = st.default_folder_now().await.is_some();
+    Json(DefaultFolder { path, exists, chosen })
 }
 
 /// Test hook: a test can park the folder check of one folder, to look at what else can run meanwhile.
@@ -44,7 +53,11 @@ pub async fn put(
         // A folder that is already the backup folder isn't asked again here: an unplugged drive must not stop
         // the theme from saving. Every copy checks the folder anyway. The check reads the disk and can hang on a
         // network drive, so it runs before the settings lock is taken, which other requests wait for.
-        let saved_dir = state.0.settings.lock().unwrap().history_backup_dir.clone();
+        // The default folder is looked at the same way: only a changed one, and never under the lock.
+        let (saved_dir, saved_default) = {
+            let saved = state.0.settings.lock().unwrap();
+            (saved.history_backup_dir.clone(), saved.default_folder.clone())
+        };
         if let Some(dir) = &to_save.history_backup_dir
             && saved_dir.as_ref() != Some(dir)
         {
@@ -52,9 +65,17 @@ pub async fn put(
             if let Err(refusal) =
                 crate::history::storage::backup::check_folder(&state.0.home, std::path::Path::new(dir))
             {
-                return anyhow::Ok(Some(refusal));
+                return anyhow::Ok(Some(refusal.message().to_owned()));
             }
         }
+        // A new default folder must be there already: nothing is made for a path that arrives in a request.
+        if let Some(dir) = &to_save.default_folder
+            && saved_default.as_ref() != Some(dir)
+            && !std::path::Path::new(dir).is_dir()
+        {
+            return anyhow::Ok(Some(crate::settings::FOLDER_MISSING.to_owned()));
+        }
+        let back_to_builtin = saved_default.is_some() && to_save.default_folder.is_none();
         let mut current = state.0.settings.lock().unwrap();
         let backup_changed = current.history_backup_dir != to_save.history_backup_dir;
         crate::settings::save(&state.0.home, &to_save)?;
@@ -73,13 +94,23 @@ pub async fn put(
                 storage.nudge(crate::history::storage::Nudge::Tick);
             }
         }
+        // No lock is held for the disk work below.
+        drop(current);
+        // Back to Marshell's own folder: make it, if the core has one. The path comes from the core's config, never
+        // from the request, and a failure is only logged: the save stands and a start falls back to the home folder.
+        if back_to_builtin
+            && let Some(own) = &state.0.default_folder
+            && let Err(e) = std::fs::create_dir_all(own)
+        {
+            tracing::warn!("could not make the default folder: {e}");
+        }
         anyhow::Ok(None)
     })
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;
-    if let Some(refusal) = refused {
-        return Err((StatusCode::BAD_REQUEST, refusal.message().to_owned()));
+    if let Some(message) = refused {
+        return Err((StatusCode::BAD_REQUEST, message));
     }
     Ok(Json(settings))
 }
@@ -166,5 +197,28 @@ mod tests {
             Some(dir.as_str())
         );
         assert!(crate::paths::settings_file(home.path()).exists());
+    }
+
+    /// A theme change must save while the default folder's drive is unplugged: a folder that is already the saved one
+    /// is never looked at again.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn put_does_not_look_at_an_unchanged_default_folder() {
+        let home = tempfile::tempdir().unwrap();
+        let gone = home.path().join("gone");
+        let dir = gone.to_string_lossy().into_owned();
+        let st = AppState::new("t".into(), 1, Vec::new(), home.path().to_path_buf(), Vec::new());
+        st.0.settings.lock().unwrap().default_folder = Some(dir.clone());
+        let mut settings = Settings {
+            default_folder: Some(dir.clone()),
+            ..Settings::default()
+        };
+        settings.appearance.accent = "teal".into();
+
+        let Json(answer) = put(State(st.clone()), Json(settings)).await.unwrap();
+        assert_eq!(answer.appearance.accent, "teal");
+        let saved = st.0.settings.lock().unwrap().clone();
+        assert_eq!(saved.appearance.accent, "teal");
+        assert_eq!(saved.default_folder.as_deref(), Some(dir.as_str()));
+        assert!(!gone.exists());
     }
 }

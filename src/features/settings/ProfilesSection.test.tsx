@@ -288,6 +288,14 @@ describe("ProfilesSection: terminal theme", () => {
     expect(select).toMatch(/<option value="wt:nord" selected="">Nord<\/option>/);
     expect(h).toContain("Terminal theme");
   });
+  it("the folder field's help says an empty folder means the default folder", async () => {
+    const { store } = setup();
+    await store.load();
+    const h = html(store);
+    expect(h).toContain("Where sessions start. Empty means the default folder.");
+    expect(h).not.toContain("Empty means your home folder.");
+  });
+
   it("a terminal theme change counts as an unsaved change", async () => {
     const { store } = setup();
     await store.load();

@@ -23,6 +23,19 @@ fn downloads_dir_from(over: Option<std::ffi::OsString>) -> Option<PathBuf> {
     }
 }
 
+/// Marshell's own default folder: `$MARSHELL_DEFAULT_FOLDER` when set and not empty (live checks), else
+/// `<home>/Marshell` in the person's home folder. None when the system names no home folder.
+pub fn builtin_default_folder() -> Option<PathBuf> {
+    builtin_default_folder_from(std::env::var_os(brand::env_var("DEFAULT_FOLDER")), dirs::home_dir())
+}
+
+fn builtin_default_folder_from(over: Option<std::ffi::OsString>, home: Option<PathBuf>) -> Option<PathBuf> {
+    match over {
+        Some(dir) if !dir.is_empty() => Some(PathBuf::from(dir)),
+        _ => home.map(|home| home.join(brand::APP_NAME)),
+    }
+}
+
 /// `<home>/run/endpoint.json`: port + token for the bridge and CLI.
 pub fn endpoint_file(home: &Path) -> PathBuf {
     home.join("run").join("endpoint.json")
@@ -175,6 +188,22 @@ mod tests {
         // Empty or unset: the system's folder, whatever it is.
         assert_eq!(downloads_dir_from(Some("".into())), dirs::download_dir());
         assert_eq!(downloads_dir_from(None), dirs::download_dir());
+    }
+
+    #[test]
+    fn the_builtin_default_folder_is_the_override_else_home_marshell() {
+        let home = PathBuf::from("home-dir");
+        assert_eq!(
+            builtin_default_folder_from(Some("D:/x".into()), Some(home.clone())),
+            Some(PathBuf::from("D:/x"))
+        );
+        let marshell = home.join("Marshell");
+        assert_eq!(
+            builtin_default_folder_from(Some("".into()), Some(home.clone())),
+            Some(marshell.clone())
+        );
+        assert_eq!(builtin_default_folder_from(None, Some(home)), Some(marshell));
+        assert_eq!(builtin_default_folder_from(None, None), None);
     }
 
     #[test]

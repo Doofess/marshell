@@ -11,6 +11,8 @@ import type { ResumeCommand } from "../../generated/ResumeCommand";
 import type { ResumeError } from "../../generated/ResumeError";
 import type { SessionMode } from "../../generated/SessionMode";
 import type { SessionsSnapshot } from "../../generated/SessionsSnapshot";
+import type { ShellPanelRequest } from "../../generated/ShellPanelRequest";
+import type { ShellPanelResponse } from "../../generated/ShellPanelResponse";
 import { ApiError, api } from "./client";
 
 const tab = (tabId: string) => `/v1/sessions/${encodeURIComponent(tabId)}`;
@@ -76,11 +78,18 @@ export const sessions = {
       tabId === undefined ? undefined : ({ tab_id: tabId } satisfies ReopenRequest),
     ),
   /**
-   * The sidebar shell panel's own pty: started in `cwd` on the first call, the same one after that
-   * while it runs. It is not a tab. Returns the id to attach a terminal to.
+   * The sidebar shell panel's own pty: started in `cwd` on the first call (null: the profile's folder, else the default
+   * folder), the same one after that while it runs. It is not a tab. Returns the id to attach a terminal to and the
+   * folder the shell started in.
    */
-  shellPanel: async (ep: Endpoint, cwd: string, size: { cols: number; rows: number }): Promise<string> =>
-    (await api<{ tab_id: string }>(ep, "POST", "/v1/shell-panel", { cwd, ...size })).tab_id,
+  shellPanel: async (
+    ep: Endpoint,
+    cwd: string | null,
+    size: { cols: number; rows: number },
+  ): Promise<{ tabId: string; cwd: string }> => {
+    const res = await api<ShellPanelResponse>(ep, "POST", "/v1/shell-panel", { cwd, ...size } satisfies ShellPanelRequest);
+    return { tabId: res.tab_id, cwd: res.cwd };
+  },
   /** Turns the panel shell into a tab ("Open as a session"). Rejects with a 404 ApiError when there is none. */
   adoptShellPanel: async (ep: Endpoint): Promise<string> =>
     (await api<{ tab_id: string }>(ep, "POST", "/v1/shell-panel/adopt")).tab_id,

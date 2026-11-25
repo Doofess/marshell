@@ -10,7 +10,7 @@ export type Profile = { id: string, name: string,
  */
 command: Array<string>, family: ShellFamily, 
 /**
- * Folder the shell starts in. None means the user's home directory.
+ * Folder the shell starts in. None means the default folder.
  */
 cwd: string | null, 
 /**

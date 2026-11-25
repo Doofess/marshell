@@ -20,7 +20,9 @@ Nothing here deletes a folder. With -CodexAuth, start copies ~/.codex/auth.json 
        file dialogs open there), and starts the app with USERPROFILE=<Scratch>\home, so agy and
        the core's reads and writes of agy's settings.json use the scratch home; CARGO_HOME and RUSTUP_HOME are pinned
        to the real ones first. start and restart also set MARSHELL_DOWNLOADS to <Scratch>\home\Downloads, where
-       "Save screenshot" then writes (the core's Downloads folder doesn't follow USERPROFILE). With -AgyAuth, it also copies ~/.gemini/oauth_creds.json and google_accounts.json into
+       "Save screenshot" then writes (the core's Downloads folder doesn't follow USERPROFILE), and
+       MARSHELL_DEFAULT_FOLDER to <Scratch>\home\Marshell, the default folder the app then makes and starts
+       shells in (the home folder Windows reports doesn't follow USERPROFILE either). With -AgyAuth, it also copies ~/.gemini/oauth_creds.json and google_accounts.json into
        <Scratch>\home\.gemini (nothing else), and stop deletes those two copies.
        With -QwenFake, start also runs fake-openai.mjs (a scripted OpenAI-compatible model on 127.0.0.1:-QwenPort,
        logging every request to <Scratch>\qwen-fake.jsonl), points OPENAI_BASE_URL, OPENAI_API_KEY and OPENAI_MODEL
@@ -210,6 +212,10 @@ function Start-DevApp([string]$RepoPath, $Homes, [string]$LogName) {
     # land in the person's real Downloads. start made this folder; restart finds it there.
     $env:MARSHELL_DOWNLOADS = Join-Path $Homes.agyHome 'Downloads'
     Write-Host "MARSHELL_DOWNLOADS=$($env:MARSHELL_DOWNLOADS)"
+    # The core's default folder is <home>\Marshell, and it asks the system for the home folder, which doesn't follow
+    # USERPROFILE: the app would make Marshell in the person's real profile. The app makes this folder itself.
+    $env:MARSHELL_DEFAULT_FOLDER = Join-Path $Homes.agyHome 'Marshell'
+    Write-Host "MARSHELL_DEFAULT_FOLDER=$($env:MARSHELL_DEFAULT_FOLDER)"
     $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$Port"
     # NO_COLOR here is the calling tool's own environment, not the person's: tabs would inherit it and CLIs would
     # drop colour (Qwen's /theme refuses to change). The app never sets it, so a real user's NO_COLOR still

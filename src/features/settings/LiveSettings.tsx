@@ -21,6 +21,7 @@ import { AdvancedSection } from "../diagnostics/AdvancedSection";
 import { HistorySection } from "../history/HistorySection";
 import { NotificationsSection } from "../notifications/NotificationsSection";
 import { firstRefusing, focusSettingsHeading, mountedWith, settingsFocusFallback, settingsTabTarget, visibleControls } from "./settingsRouting";
+import { DefaultFolderRow } from "./DefaultFolderRow";
 import { ProfilesSection } from "./ProfilesSection";
 import { ProjectsSection } from "./ProjectsSection";
 import { SettingsShell, settingsKey } from "./SettingsShell";
@@ -157,6 +158,7 @@ export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, 
         return (
           endpoint && (
             <>
+              <DefaultFolderRow endpoint={endpoint} sync={sync} announce={announce} />
               <ProfilesSection
                 endpoint={endpoint}
                 announce={announce}

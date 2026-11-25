@@ -15,25 +15,35 @@ const PORT: u16 = 5555;
 const ORIGIN: &str = "http://tauri.localhost";
 
 fn state_in(home: &Path) -> AppState {
+    state_with(home, None, None)
+}
+
+/// A state whose profile starts in `profile_cwd` and whose core has `default_folder` (None: no default folder).
+/// Tests name scratch folders only; none reads or makes the real `~/Marshell`.
+fn state_with(home: &Path, profile_cwd: Option<&Path>, default_folder: Option<&Path>) -> AppState {
     common::tie_children_to_test();
     let profile = Profile {
         id: "sleeper".into(),
         name: "Sleeper".into(),
         command: vec![env!("CARGO_BIN_EXE_fake-agent").into(), "sleep".into()],
         family: ShellFamily::Posix,
-        cwd: None,
+        cwd: profile_cwd.map(|p| p.to_string_lossy().into_owned()),
         env: Vec::new(),
         shell_integration: true,
         terminal_theme: None,
         detected: true,
     };
-    AppState::new(
+    let state = AppState::new(
         TOKEN.into(),
         PORT,
         vec![ORIGIN.into()],
         home.to_path_buf(),
         vec![profile],
-    )
+    );
+    match default_folder {
+        Some(dir) => state.with_default_folder(dir.to_path_buf()),
+        None => state,
+    }
 }
 
 fn api(method: &str, path: &str, body: Option<serde_json::Value>) -> Request<Body> {
@@ -61,16 +71,40 @@ async fn sessions(app: &axum::Router) -> serde_json::Value {
     json_of(res).await
 }
 
-/// POST /v1/shell-panel in `cwd`; returns the tab id.
-async fn open_panel(app: &axum::Router, cwd: &Path) -> String {
-    let body = serde_json::json!({ "cwd": cwd.to_string_lossy(), "cols": 80, "rows": 24 });
+/// POST /v1/shell-panel in `cwd` (none: the request names no folder); returns the tab id and the folder it answers.
+async fn open_panel_as(app: &axum::Router, cwd: Option<&Path>) -> (String, String) {
+    let mut body = serde_json::json!({ "cols": 80, "rows": 24 });
+    if let Some(cwd) = cwd {
+        body["cwd"] = cwd.to_string_lossy().into_owned().into();
+    }
     let res = app
         .clone()
         .oneshot(api("POST", "/v1/shell-panel", Some(body)))
         .await
         .unwrap();
     assert_eq!(res.status(), StatusCode::OK);
-    json_of(res).await["tab_id"].as_str().unwrap().to_string()
+    let answer = json_of(res).await;
+    (
+        answer["tab_id"].as_str().unwrap().to_string(),
+        answer["cwd"].as_str().unwrap().to_string(),
+    )
+}
+
+/// POST /v1/shell-panel in `cwd`; returns the tab id.
+async fn open_panel(app: &axum::Router, cwd: &Path) -> String {
+    open_panel_as(app, Some(cwd)).await.0
+}
+
+/// The paths GET /v1/projects lists.
+async fn project_paths(app: &axum::Router) -> Vec<String> {
+    let res = app.clone().oneshot(api("GET", "/v1/projects", None)).await.unwrap();
+    json_of(res)
+        .await
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["path"].as_str().unwrap().to_string())
+        .collect()
 }
 
 async fn adopt(app: &axum::Router) -> axum::response::Response {
@@ -133,11 +167,12 @@ async fn two_panel_requests_at_once_share_one_shell() {
     for _ in 0..2 {
         let app = app.clone();
         let cwd = home.path().to_path_buf();
-        tasks.push(tokio::spawn(async move { open_panel(&app, &cwd).await }));
+        tasks.push(tokio::spawn(async move { open_panel_as(&app, Some(&cwd)).await }));
     }
-    let first = tasks.remove(0).await.unwrap();
-    let second = tasks.remove(0).await.unwrap();
+    let (first, first_cwd) = tasks.remove(0).await.unwrap();
+    let (second, second_cwd) = tasks.remove(0).await.unwrap();
     assert_eq!(first, second);
+    assert_eq!(first_cwd, second_cwd);
     // The loser's extra pty is gone from the map.
     assert_eq!(state.live_session_count(), 1);
     state.session(&first).unwrap().force_kill();
@@ -310,4 +345,99 @@ async fn the_duplicate_loser_panel_recording_goes() {
     .await;
     assert_eq!(casts_of(home.path(), &first).len(), 1);
     state.session(&first).unwrap().force_kill();
+}
+
+#[tokio::test]
+async fn a_panel_with_no_folder_starts_in_the_default_folder() {
+    let home = tempfile::tempdir().unwrap();
+    let default = tempfile::tempdir().unwrap();
+    let state = state_with(home.path(), None, Some(default.path()));
+    let app = router(state.clone());
+    let (panel, cwd) = open_panel_as(&app, None).await;
+    assert_eq!(Path::new(&cwd), default.path());
+    state.session(&panel).unwrap().force_kill();
+}
+
+#[tokio::test]
+async fn the_profile_folder_wins_for_the_panel() {
+    let home = tempfile::tempdir().unwrap();
+    let default = tempfile::tempdir().unwrap();
+    let profile_folder = tempfile::tempdir().unwrap();
+    let state = state_with(home.path(), Some(profile_folder.path()), Some(default.path()));
+    let app = router(state.clone());
+    let (panel, cwd) = open_panel_as(&app, None).await;
+    assert_eq!(Path::new(&cwd), profile_folder.path());
+    state.session(&panel).unwrap().force_kill();
+}
+
+#[tokio::test]
+async fn a_panel_with_a_folder_starts_there() {
+    let home = tempfile::tempdir().unwrap();
+    let default = tempfile::tempdir().unwrap();
+    let named = tempfile::tempdir().unwrap();
+    let state = state_with(home.path(), None, Some(default.path()));
+    let app = router(state.clone());
+    let (panel, cwd) = open_panel_as(&app, Some(named.path())).await;
+    assert_eq!(Path::new(&cwd), named.path());
+    state.session(&panel).unwrap().force_kill();
+}
+
+#[tokio::test]
+async fn a_running_panel_answers_its_own_folder() {
+    let home = tempfile::tempdir().unwrap();
+    let default = tempfile::tempdir().unwrap();
+    let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let state = state_with(home.path(), None, Some(default.path()));
+    let app = router(state.clone());
+    let (first, first_cwd) = open_panel_as(&app, Some(a.path())).await;
+    let (second, second_cwd) = open_panel_as(&app, Some(b.path())).await;
+    assert_eq!(first, second);
+    assert_eq!(Path::new(&first_cwd), a.path());
+    assert_eq!(Path::new(&second_cwd), a.path());
+    state.session(&first).unwrap().force_kill();
+}
+
+#[tokio::test]
+async fn a_panel_in_the_default_folder_records_no_project() {
+    let home = tempfile::tempdir().unwrap();
+    let default = tempfile::tempdir().unwrap();
+    let state = state_with(home.path(), None, Some(default.path()));
+    let app = router(state.clone());
+    let (panel, _) = open_panel_as(&app, None).await;
+    assert_eq!(project_paths(&app).await, Vec::<String>::new());
+    state.session(&panel).unwrap().force_kill();
+}
+
+#[tokio::test]
+async fn a_panel_asked_for_an_empty_folder_records_no_project() {
+    let home = tempfile::tempdir().unwrap();
+    let default = tempfile::tempdir().unwrap();
+    let state = state_with(home.path(), None, Some(default.path()));
+    let app = router(state.clone());
+    let body = serde_json::json!({ "cwd": "", "cols": 80, "rows": 24 });
+    let res = app
+        .clone()
+        .oneshot(api("POST", "/v1/shell-panel", Some(body)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let answer = json_of(res).await;
+    assert_eq!(Path::new(answer["cwd"].as_str().unwrap()), default.path());
+    assert_eq!(project_paths(&app).await, Vec::<String>::new());
+    state.session(answer["tab_id"].as_str().unwrap()).unwrap().force_kill();
+}
+
+#[tokio::test]
+async fn a_panel_in_a_named_folder_records_it() {
+    let home = tempfile::tempdir().unwrap();
+    let default = tempfile::tempdir().unwrap();
+    let named = tempfile::tempdir().unwrap();
+    let state = state_with(home.path(), None, Some(default.path()));
+    let app = router(state.clone());
+    let (panel, _) = open_panel_as(&app, Some(named.path())).await;
+    assert_eq!(
+        project_paths(&app).await,
+        vec![named.path().to_string_lossy().into_owned()]
+    );
+    state.session(&panel).unwrap().force_kill();
 }

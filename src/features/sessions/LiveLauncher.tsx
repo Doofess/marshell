@@ -14,7 +14,9 @@ import type { FolderInfo } from "../../generated/FolderInfo";
 import type { LayoutDoc } from "../../generated/LayoutDoc";
 import type { ProfilesDoc } from "../../generated/ProfilesDoc";
 import type { ShellAgents } from "../../generated/ShellAgents";
+import type { DefaultFolder } from "../../generated/DefaultFolder";
 import { catalogApi } from "../../lib/api/catalog";
+import { getDefaultFolder } from "../../lib/api/defaultFolder";
 import { ApiError } from "../../lib/api/client";
 import { folders as foldersApi } from "../../lib/api/folders";
 import { layout as layoutApi } from "../../lib/api/layout";
@@ -30,6 +32,7 @@ import type { Project } from "../launcher/filter";
 import { Launcher, type TaskConfirm } from "../launcher/Launcher";
 import { typedPath, type PathCheck } from "../launcher/folderRows";
 import { openFolder, openList, type OpenLists } from "../launcher/launcherKeys";
+import { browseStart, startFolderName } from "../launcher/startFolder";
 import { effectiveAgent, firstAgent, offerFor } from "../launcher/shellAgents";
 import { offeredMode } from "../modes/sessionModes";
 import { taskNameFor } from "../tasks/taskName";
@@ -144,6 +147,18 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
     };
   }, [endpoint]);
 
+  // The default folder, read once per endpoint; a failure leaves null and the launcher then says "your home folder".
+  const [defaultFolder, setDefaultFolder] = useState<DefaultFolder | null>(null);
+  useEffect(() => {
+    if (!endpoint) return;
+    let current = true;
+    setDefaultFolder(null);
+    getDefaultFolder(endpoint).then((f) => current && setDefaultFolder(f), () => {});
+    return () => {
+      current = false;
+    };
+  }, [endpoint]);
+
   // A folder typed or browsed to that is not among the recent ones: listed first, and used like any other.
   const [extra, setExtra] = useState<Project | null>(null);
   // What the core said about the path typed in the folder field; null when the text is not a path.
@@ -252,11 +267,11 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
     setLists((l) => openFolder(l, null));
   };
 
-  /** The native folder dialog, starting in the typed folder or else the chosen one. Cancelling leaves the field as it was. */
+  /** The native folder dialog, starting in the typed folder, else the chosen one, else the default folder. Cancelling leaves the field as it was. */
   const browse = async () => {
     if (!endpoint || browsing.current) return;
     browsing.current = true;
-    const start = shownCheck?.state === "found" ? shownCheck.folder.path : (projects.find((p) => p.id === projectId)?.path ?? null);
+    const start = browseStart(shownCheck?.state === "found" ? shownCheck.folder.path : null, projects.find((p) => p.id === projectId)?.path ?? null, defaultFolder);
     try {
       await browseFolder({
         start,
@@ -398,7 +413,7 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
       made = true;
       setPhase("starting");
       const request = withColorScheme(launchRequest(shown, prompt, programs, loaded.doc, projects, size(), task.path, elevated, sessionNameFor(sessionName, taskName)), loaded.doc.profiles, appearance, appScheme());
-      const folder = projects.find((p) => p.id === shown.projectId)?.name ?? "your home folder";
+      const folder = startFolderName(projects.find((p) => p.id === shown.projectId)?.name, loaded.doc.profiles.find((x) => x.id === shown.shell)?.cwd, defaultFolder);
       const text = startText(folder);
       if (!setupWanted) return await startAgent(request, text);
       // The confirm view read the main checkout's file; the new worktree holds its own committed copy.
@@ -461,7 +476,7 @@ export function LiveLauncher({ detections, detectionFailed, endpoint, initialEle
       const request = launchRequest(shown, prompt, programs, loaded.doc, projects, size(), undefined, elevated, sessionName);
       const sent = withColorScheme(request, loaded.doc.profiles, appearance, appScheme());
       const created = await createSession(sent, () => sessionsApi.create(endpoint, sent));
-      const folder = projects.find((p) => p.id === shown.projectId)?.name ?? "your home folder";
+      const folder = startFolderName(projects.find((p) => p.id === shown.projectId)?.name, loaded.doc.profiles.find((x) => x.id === shown.shell)?.cwd, defaultFolder);
       onStarted(created, startText(folder));
     } catch (e) {
       setError(startFailure(e));

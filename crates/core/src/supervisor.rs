@@ -197,6 +197,7 @@ mod tests {
             window_hidden: Default::default(),
             import: None,
             doctor_on_start: false,
+            default_folder: None,
         };
         let events: Events = Arc::default();
         let sink = events.clone();

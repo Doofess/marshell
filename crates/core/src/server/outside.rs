@@ -305,7 +305,7 @@ async fn open(st: &AppState, plan: Plan) -> Response {
     if let Err((_, message)) = check_agent_installed(st, &run, Some(&plan.agent)) {
         return cannot_resume(message);
     }
-    let folder = start_folder(&run, Some(plan.cwd.clone()));
+    let folder = start_folder(&run, Some(plan.cwd.clone()), None);
     // Taken before anything starts and held until the console is in the map, so a second open of the conversation
     // is refused while this one is starting. No lock is held across the spawn.
     let reservation = match console_key(Some(&plan.agent), &plan.resume, &folder) {

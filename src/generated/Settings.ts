@@ -46,6 +46,10 @@ history_limit_days: number | null,
  */
 history_backup_dir: string | null, 
 /**
+ * Where the shell panel and new sessions start when nothing else names a folder. None is Marshell's own folder.
+ */
+default_folder: string | null, 
+/**
  * The Browser panel's settings.
  */
 browser: BrowserSettings, 

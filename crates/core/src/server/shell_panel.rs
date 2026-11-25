@@ -2,14 +2,15 @@
 //! (it has no registry row) until "Open in a pane" adopts it as a tab.
 
 use super::AppState;
-use super::sessions::{resolve, spawn_into_map, start_folder};
+use super::sessions::{folder_for, resolve, spawn_into_map};
 use crate::auth;
 use crate::pty::Session;
 use crate::registry::{Registry, Relaunch};
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use serde::{Deserialize, Serialize};
+use marshell_protocol::api::{ShellPanelRequest, ShellPanelResponse};
+use serde::Serialize;
 use std::sync::Arc;
 
 type ApiError = (StatusCode, String);
@@ -27,13 +28,7 @@ pub(super) struct PanelShell {
     cwd: String,
 }
 
-#[derive(Deserialize)]
-pub struct PanelRequest {
-    cwd: String,
-    cols: u16,
-    rows: u16,
-}
-
+/// What adopting answers: only the tab's id. Only `open` answers with the folder too.
 #[derive(Serialize)]
 pub struct PanelResponse {
     tab_id: String,
@@ -44,12 +39,12 @@ fn is_alive(st: &AppState, tab_id: &str) -> bool {
     st.session(tab_id).is_some_and(|s| !s.has_exited())
 }
 
-/// The id of the panel shell if it is alive. A stored shell that has exited is forgotten.
-fn alive_panel(st: &AppState) -> Option<String> {
+/// The id and the folder of the panel shell if it is alive. A stored shell that has exited is forgotten.
+fn alive_panel(st: &AppState) -> Option<(String, String)> {
     let mut panel = st.0.shell_panel.lock().unwrap();
-    let tab_id = panel.as_ref()?.tab_id.clone();
+    let (tab_id, cwd) = panel.as_ref().map(|p| (p.tab_id.clone(), p.cwd.clone()))?;
     if is_alive(st, &tab_id) {
-        return Some(tab_id);
+        return Some((tab_id, cwd));
     }
     *panel = None;
     // The finished process is no use to anyone; drop it from the map too.
@@ -105,14 +100,21 @@ impl AppState {
     }
 }
 
-/// Starts the default shell in the folder, or returns the one that is already running.
-/// It never changes folder later: a second call with another folder returns the same shell.
-pub async fn open(State(st): State<AppState>, Json(req): Json<PanelRequest>) -> Result<Json<PanelResponse>, ApiError> {
-    if let Some(tab_id) = alive_panel(&st) {
-        return Ok(Json(PanelResponse { tab_id }));
+/// Starts the default shell in the folder the request names, else the profile's, else the default folder, else home;
+/// or returns the one that is already running, with the folder it started in.
+/// It never changes folder later: a second call with another folder returns the same shell and its folder.
+/// Only a request that names a folder puts it among the recent projects.
+pub async fn open(
+    State(st): State<AppState>,
+    Json(req): Json<ShellPanelRequest>,
+) -> Result<Json<ShellPanelResponse>, ApiError> {
+    if let Some((tab_id, cwd)) = alive_panel(&st) {
+        return Ok(Json(ShellPanelResponse { tab_id, cwd }));
     }
     let run = resolve(&st, None, None, None, None, None, None).await?;
-    let cwd = start_folder(&run, Some(req.cwd));
+    // An empty folder is no folder, as it is for the start folder below.
+    let named = req.cwd.as_deref().is_some_and(|c| !c.is_empty());
+    let cwd = folder_for(&st, &run, req.cwd).await;
     let tab_id = auth::new_id("t");
     let shell = PanelShell {
         tab_id: tab_id.clone(),
@@ -120,6 +122,7 @@ pub async fn open(State(st): State<AppState>, Json(req): Json<PanelRequest>) -> 
         name: run.profile_name.clone(),
         cwd: cwd.clone(),
     };
+    let started_in = cwd.clone();
     // The panel has no number: it only gets one when it is adopted.
     spawn_into_map(
         &st,
@@ -133,24 +136,31 @@ pub async fn open(State(st): State<AppState>, Json(req): Json<PanelRequest>) -> 
         None,
         true,
         false,
+        named,
     )
     .await?;
     // Two requests can both start a shell; the first to store its id wins.
     let mut panel = st.0.shell_panel.lock().unwrap();
-    if let Some(other) = panel.as_ref().map(|p| p.tab_id.clone()) {
+    if let Some((other, other_cwd)) = panel.as_ref().map(|p| (p.tab_id.clone(), p.cwd.clone())) {
         if is_alive(&st, &other) {
             drop(panel);
             if let Some(extra) = st.remove_session(&tab_id) {
                 discard_recording(&st, Some(extra.clone()));
                 extra.kill();
             }
-            return Ok(Json(PanelResponse { tab_id: other }));
+            return Ok(Json(ShellPanelResponse {
+                tab_id: other,
+                cwd: other_cwd,
+            }));
         }
         // The stored one has exited: ours replaces it, and the finished process leaves the map.
         discard_recording(&st, st.remove_session(&other));
     }
     *panel = Some(shell);
-    Ok(Json(PanelResponse { tab_id }))
+    Ok(Json(ShellPanelResponse {
+        tab_id,
+        cwd: started_in,
+    }))
 }
 
 /// Turns the panel shell into a tab at the end of the list, still running. The panel is free again.

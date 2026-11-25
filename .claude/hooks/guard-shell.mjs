@@ -14,7 +14,7 @@ const S3D =
 const S4 = "Credential files and the real Marshell token are off limits (SCOPE.md). A live check reads its scratch home's token.";
 const S5 = "Don't name a test binary like a real CLI. Use a name like codex-marshell-test.exe.";
 const S6 =
-  "A live check runs with MARSHELL_HOME, CLAUDE_CONFIG_DIR and MARSHELL_CLAUDE_SETTINGS set to scratch folders. See the marshell-live-check skill.";
+  "A live check runs with MARSHELL_HOME, CLAUDE_CONFIG_DIR, MARSHELL_CLAUDE_SETTINGS and MARSHELL_DEFAULT_FOLDER set to scratch folders. See the marshell-live-check skill.";
 const S7 = "This can't be undone. Confirm with the user first.";
 const S8 = "Run cargo fmt --all before a Rust commit.";
 
@@ -273,6 +273,9 @@ function envSetting(command, name) {
     if (value.trim()) set = true;
     const v = key(canon(toAbs(value)));
     if (v === `${home}/.claude.json`) real = true;
+    // The app's own default folder, Marshell in the real home folder, and anything in it: the app makes the whole path.
+    const own = key(`${home}/Marshell`);
+    if (v === own || v.startsWith(`${own}/`)) real = true;
     for (const dir of [".marshell", ".claude"]) {
       const base = `${home}/${dir}`;
       if (v === base || v.startsWith(`${base}/`)) real = true;
@@ -353,7 +356,9 @@ function evaluate(command, cwd) {
       const home = envSetting(body, "MARSHELL_HOME");
       const config = envSetting(body, "CLAUDE_CONFIG_DIR");
       const settings = envSetting(body, "MARSHELL_CLAUDE_SETTINGS");
-      const all = [home, config, settings];
+      // The app makes its default folder at start, so without a scratch one it makes Marshell in the real home folder.
+      const folder = envSetting(body, "MARSHELL_DEFAULT_FOLDER");
+      const all = [home, config, settings, folder];
       if (all.some((e) => !e.set || e.real)) found(deny(S6));
     }
 

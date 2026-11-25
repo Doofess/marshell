@@ -176,6 +176,7 @@ import { pruneClosed, without, type StartingTexts } from "./startingTexts";
 import { SHELL_FAILED } from "../window/ShellPanel";
 import { handedOff } from "./handOff";
 import { focusShellTerminal, shellAutoFolded, shellTerminalFocused } from "./shellPanelFocus";
+import { shellPanelAsk } from "./shellPanelAsk";
 import { ENDED_PHRASE, lastSegment, nameAgents, planRing } from "./toRow";
 import { useSessions } from "./useSessions";
 
@@ -1472,30 +1473,33 @@ export function LiveApp() {
   );
 
   // The shell panel in the sidebar. Its shell is a pty the core keeps out of the tab list. It is asked for the first time the panel is
-  // shown, in the folder of the session in focus then, and is never moved after that. Hiding the panel only folds it: the shell keeps
-  // running and the same terminal comes back, with no second request. "Open as a session" turns the shell into a tab; the panel then has
-  // no shell, and asks for a fresh one (in whatever folder is focused by then) while it is shown.
+  // shown, in the folder of the session in focus then (with no session open, in the profile's folder or the default folder, which the
+  // core picks), and is never moved after that. Hiding the panel only folds it: the shell keeps running and the same terminal comes
+  // back, with no second request. "Open as a session" turns the shell into a tab; the panel then has no shell, and asks for a fresh
+  // one (in whatever folder is focused by then) while it is shown.
   const [panel, setPanel] = useState<{ endpoint: Endpoint; tabId: string; folder: string } | null>(null);
   // The shell the core has turned into a tab, waiting to be listed so the window can show it.
   const [adopted, setAdopted] = useState<{ endpoint: Endpoint; tabId: string } | null>(null);
   const shellShown = settled && loaded && sidebarExpanded && !view.shell_hidden;
   const focusedCwd = infos.find((i) => i.tab_id === focusedId)?.cwd;
-  const focusedCwdRef = useRef(focusedCwd);
-  focusedCwdRef.current = focusedCwd;
-  const hasFocusedCwd = focusedCwd !== undefined;
+  // What the panel asks for now: a session's folder, the default folder (no session open), or nothing yet.
+  const shellAsk = shellPanelAsk({ shown: shellShown, sessions: infos.length, focusedCwd });
+  const shellAskRef = useRef(shellAsk);
+  shellAskRef.current = shellAsk;
+  const shellAskKind: "wait" | "default" | "session" = shellAsk === null ? "wait" : shellAsk.cwd === null ? "default" : "session";
   const asking = useRef<Endpoint | null>(null);
   // The endpoint whose shell could not be started: the panel says so, with a Try again button. `attempt` is that button.
   const [failedFor, setFailedFor] = useState<Endpoint | null>(null);
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
-    const cwd = focusedCwdRef.current;
-    if (!endpoint || !shellShown || cwd === undefined || panel?.endpoint === endpoint || asking.current === endpoint) return;
+    const ask = shellAskRef.current;
+    if (!endpoint || ask === null || panel?.endpoint === endpoint || asking.current === endpoint) return;
     const ep = endpoint;
     asking.current = ep;
     setFailedFor(null);
     sessions
-      .shellPanel(ep, cwd, size.current)
-      .then((tabId) => setPanel({ endpoint: ep, tabId, folder: lastSegment(cwd) }))
+      .shellPanel(ep, ask.cwd, size.current)
+      .then((res) => setPanel({ endpoint: ep, tabId: res.tabId, folder: lastSegment(res.cwd) }))
       .catch((e: unknown) => {
         // Said once, here: the failure stands until the person asks again (Try again, or hiding and showing the panel).
         console.warn("Could not start the shell panel", e);
@@ -1505,7 +1509,7 @@ export function LiveApp() {
       .finally(() => {
         if (asking.current === ep) asking.current = null;
       });
-  }, [endpoint, shellShown, hasFocusedCwd, panel, attempt, announce]);
+  }, [endpoint, shellAskKind, panel, attempt, announce]);
   const panelTab = panel && panel.endpoint === endpoint ? panel : null;
   panelIdRef.current = panelTab?.tabId;
   const shellFailed = failedFor !== null && failedFor === endpoint && !panelTab;

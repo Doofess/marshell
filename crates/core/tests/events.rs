@@ -22,6 +22,7 @@ async fn core() -> (RunningCore, tempfile::TempDir) {
         window_hidden: Default::default(),
         import: None,
         doctor_on_start: false,
+        default_folder: None,
     })
     .await
     .unwrap();
