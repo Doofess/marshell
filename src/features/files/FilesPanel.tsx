@@ -165,10 +165,10 @@ export function FilesPanel(p: FilesPanelProps) {
     setOverlay(true);
   };
   useLayoutEffect(() => {
-    if (!overlay || !filterWants.current) return;
+    if (!shown || !filterWants.current) return;
     filterWants.current = false;
     filterBox.current?.focus();
-  }, [overlay]);
+  }, [shown]);
   // The last file closing leaves nothing to show: the narrow tree takes the panel back.
   const lastPath = useRef(activePath);
   useEffect(() => {
@@ -180,7 +180,7 @@ export function FilesPanel(p: FilesPanelProps) {
     if (narrow) {
       const next = treeView.hidden ? true : !overlay;
       if (treeView.hidden) p.onTreeView({ hidden: false });
-      if (next && !overlay) openNarrowTree();
+      if (next && !shown) openNarrowTree();
       else setOverlay(next);
       return next;
     }
@@ -262,7 +262,7 @@ export function FilesPanel(p: FilesPanelProps) {
 
   const revealFolder = (folder: string) => {
     if (treeView.hidden) p.onTreeView({ hidden: false });
-    if (narrow && !overlay) openNarrowTree();
+    if (narrow && !shown) openNarrowTree();
     if (folder !== "") {
       tree.reveal(folder);
       setFocusedPath(folder);
