@@ -136,6 +136,7 @@ pub fn items(facts: &[AgentFacts], stopped: &[String], banners_on: bool) -> Vec<
             unchecked: false,
             action: None,
             loads: Vec::new(),
+            opens: Vec::new(),
         });
     }
     out
@@ -161,6 +162,7 @@ fn cli_items(f: &AgentFacts, banners_on: bool, out: &mut Vec<DoctorItem>) {
         unchecked: false,
         action: None,
         loads: Vec::new(),
+        opens: Vec::new(),
     };
 
     if let Some(err) = &f.error {

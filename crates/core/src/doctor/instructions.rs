@@ -1229,6 +1229,7 @@ pub fn items(loads: &[CliLoad], projects: &[PathBuf]) -> Vec<DoctorItem> {
         unchecked: false,
         action: None,
         loads,
+        opens: Vec::new(),
     };
 
     let mut out = Vec::new();

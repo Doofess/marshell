@@ -143,6 +143,7 @@ pub(crate) fn items(inv: &Inventory, measured: Option<&Measurements>, out: &mut 
         unchecked: false,
         action: None,
         loads: Vec::new(),
+        opens: Vec::new(),
     };
 
     if let Some(distro) = &inv.distro {
