@@ -106,6 +106,8 @@ pub struct LoadedFile {
     pub chars: usize,
     pub notes: Vec<String>,
     pub depth: u32,
+    /// The import as written, on an import row; None on every other row.
+    pub raw: Option<String>,
 }
 
 /// Text a CLI cuts or skips for good: one Broken, report-only item.
@@ -132,6 +134,16 @@ pub struct CliLoad {
     /// Whole sentences, shown under the CLI's heading.
     pub notes: Vec<String>,
     pub cuts: Vec<Cut>,
+    /// How this CLI writes imports; None: it reads none.
+    pub imports: Option<ImportStyle>,
+}
+
+/// How one CLI writes imports, and whether it reads one inside an HTML comment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ImportStyle {
+    pub syntax: ImportSyntax,
+    /// True exactly when the CLI's `ImportRules.clean` leaves comments in.
+    pub in_comments: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -525,7 +537,7 @@ fn normalize(path: &Path) -> PathBuf {
     out
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ImportSyntax {
     /// `@path`
     At,
@@ -578,7 +590,9 @@ pub fn expand(
             chars: cleaned.chars().count(),
             notes: Vec::new(),
             depth: 0,
+            raw: None,
         }],
+        dead: HashSet::new(),
     };
     let key = run.cx.canonical(file).unwrap_or_else(|| file.to_path_buf());
     run.seen.insert(key);
@@ -592,6 +606,15 @@ struct Expander<'a> {
     when: &'a When,
     seen: HashSet<PathBuf>,
     out: Vec<LoadedFile>,
+    /// The importing file and the `raw` of each missing import that already got its row.
+    dead: HashSet<(PathBuf, String)>,
+}
+
+/// Where one import was written: the file, how deep it is, and its text as written.
+struct Site<'a> {
+    by: &'a Path,
+    depth: u32,
+    raw: &'a str,
 }
 
 enum Target {
@@ -600,46 +623,58 @@ enum Target {
 }
 
 impl Expander<'_> {
-    fn row(&mut self, path: PathBuf, by: &Path, depth: u32, when: When, chars: usize, notes: Vec<String>) {
+    fn row(&mut self, path: PathBuf, at: &Site, when: When, chars: usize, notes: Vec<String>) {
         self.out.push(LoadedFile {
             path,
-            role: Role::Import { by: by.to_path_buf() },
+            role: Role::Import {
+                by: at.by.to_path_buf(),
+            },
             when,
             chars,
             notes,
-            depth,
+            depth: at.depth,
+            raw: Some(at.raw.to_string()),
         });
     }
 
     fn imports_of(&mut self, file: &Path, cleaned: &str, depth: u32) {
         for raw in imports_in(cleaned, self.rules.syntax) {
             let depth = depth + 1;
+            let at = Site {
+                by: file,
+                depth,
+                raw: &raw,
+            };
             let path = match resolve(&raw, file, self.rules) {
                 Target::Outside(path) => {
                     let reason = self.rules.outside_reason.to_string();
-                    self.row(path, file, depth, When::NotLoaded(reason), 0, Vec::new());
+                    self.row(path, &at, When::NotLoaded(reason), 0, Vec::new());
                     continue;
                 }
                 Target::Path(path) => path,
             };
             if depth > self.rules.depth {
                 let when = When::NotLoaded("past the import limit".into());
-                self.row(path, file, depth, when, 0, Vec::new());
+                self.row(path, &at, when, 0, Vec::new());
                 continue;
             }
             let (chars, notes, inner) = match self.cx.read(&path) {
                 Text::Refused => {
                     let when = When::NotLoaded("Marshell doesn't read network paths".into());
-                    self.row(path, file, depth, when, 0, Vec::new());
+                    self.row(path, &at, when, 0, Vec::new());
                     continue;
                 }
                 Text::Missing => {
-                    self.row(path, file, depth, When::NotLoaded("not found".into()), 0, Vec::new());
+                    // 7d2 decision 3: an `@word` that names no file and isn't written like a path is prose, and
+                    // one dead import written twice in a file is one row.
+                    if looks_like_path(&raw) && self.dead.insert((file.to_path_buf(), raw.clone())) {
+                        self.row(path, &at, When::NotLoaded("not found".into()), 0, Vec::new());
+                    }
                     continue;
                 }
                 Text::Unreadable => {
                     let when = When::NotLoaded("Marshell can't read it".into());
-                    self.row(path, file, depth, when, 0, Vec::new());
+                    self.row(path, &at, when, 0, Vec::new());
                     continue;
                 }
                 Text::TooLarge { bytes } => (
@@ -654,17 +689,10 @@ impl Expander<'_> {
             };
             let key = self.cx.canonical(&path).unwrap_or_else(|| path.clone());
             if !self.seen.insert(key) {
-                self.row(
-                    path,
-                    file,
-                    depth,
-                    When::NotLoaded("already loaded".into()),
-                    0,
-                    Vec::new(),
-                );
+                self.row(path, &at, When::NotLoaded("already loaded".into()), 0, Vec::new());
                 continue;
             }
-            self.row(path.clone(), file, depth, self.when.clone(), chars, notes);
+            self.row(path.clone(), &at, self.when.clone(), chars, notes);
             if let Some(cleaned) = inner {
                 self.imports_of(&path, &cleaned, depth);
             }
@@ -700,13 +728,13 @@ fn resolve(raw: &str, file: &Path, rules: &ImportRules) -> Target {
 }
 
 /// A line that opens or closes a fenced code block.
-fn is_fence(line: &str) -> bool {
+pub(crate) fn is_fence(line: &str) -> bool {
     let line = line.trim_start();
     line.starts_with("```") || line.starts_with("~~~")
 }
 
 /// Which characters of a line sit inside an inline code span.
-fn code_mask(chars: &[char]) -> Vec<bool> {
+pub(crate) fn code_mask(chars: &[char]) -> Vec<bool> {
     let mut mask = vec![false; chars.len()];
     let mut i = 0;
     while i < chars.len() {
@@ -740,11 +768,27 @@ fn code_mask(chars: &[char]) -> Vec<bool> {
     mask
 }
 
+/// One import in a text: as written (`raw`, escapes undone), on a 1-based line, and where it sits in that line, as
+/// byte offsets covering all of what was written (`@docs/a.md`, `@[label](path)`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportAt {
+    pub raw: String,
+    pub line: usize,
+    pub start: usize,
+    pub end: usize,
+}
+
 /// The paths a text imports, in order. Nothing in a fenced block or an inline code span counts.
 fn imports_in(text: &str, syntax: ImportSyntax) -> Vec<String> {
+    imports_at(text, syntax).into_iter().map(|i| i.raw).collect()
+}
+
+/// The imports of a text, in order, with where each is written. Nothing in a fenced block or an inline code span counts.
+pub fn imports_at(text: &str, syntax: ImportSyntax) -> Vec<ImportAt> {
     let mut found = Vec::new();
     let mut in_fence = false;
-    for line in text.lines() {
+    for (number, line) in text.lines().enumerate() {
+        let number = number + 1;
         if is_fence(line) {
             in_fence = !in_fence;
             continue;
@@ -753,6 +797,12 @@ fn imports_in(text: &str, syntax: ImportSyntax) -> Vec<String> {
             continue;
         }
         let chars: Vec<char> = line.chars().collect();
+        // The byte offset of each character, and of the line's end.
+        let offsets: Vec<usize> = line
+            .char_indices()
+            .map(|(at, _)| at)
+            .chain(std::iter::once(line.len()))
+            .collect();
         let code = code_mask(&chars);
         let mut i = 0;
         while i < chars.len() {
@@ -781,7 +831,12 @@ fn imports_in(text: &str, syntax: ImportSyntax) -> Vec<String> {
                             j += 1;
                         }
                     }
-                    found.push(path);
+                    found.push(ImportAt {
+                        raw: path,
+                        line: number,
+                        start: offsets[i],
+                        end: offsets[j],
+                    });
                     i = j;
                 }
                 ImportSyntax::AgyLink => {
@@ -797,7 +852,12 @@ fn imports_in(text: &str, syntax: ImportSyntax) -> Vec<String> {
                         Some((start, end)) => {
                             let path: String = chars[start..end].iter().collect();
                             if !path.trim().is_empty() {
-                                found.push(path.trim().to_string());
+                                found.push(ImportAt {
+                                    raw: path.trim().to_string(),
+                                    line: number,
+                                    start: offsets[i],
+                                    end: offsets[end + 1],
+                                });
                             }
                             i = end + 1;
                         }
@@ -833,6 +893,70 @@ pub fn strip_html_comments(text: &str) -> String {
         i = end;
     }
     out
+}
+
+/// What `strip_html_comments` strips, as one ASCII space for each byte, with every `\n` and `\r` kept: the text keeps
+/// its byte length and its lines, so an offset or a line number in it is one in the original.
+pub fn mask_html_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_fence = false;
+    let mut i = 0;
+    while i < text.len() {
+        let end = text[i..].find('\n').map_or(text.len(), |n| i + n + 1);
+        let line = &text[i..end];
+        if is_fence(line) {
+            in_fence = !in_fence;
+        } else if !in_fence
+            && let Some(at) = line.find("<!--")
+            && let Some(close) = text[i + at + 4..].find("-->")
+        {
+            out.push_str(&line[..at]);
+            let stop = i + at + 4 + close + 3;
+            out.extend(
+                text[i + at..stop]
+                    .bytes()
+                    .map(|b| if b == b'\n' || b == b'\r' { b as char } else { ' ' }),
+            );
+            i = stop;
+            continue;
+        }
+        out.push_str(line);
+        i = end;
+    }
+    out
+}
+
+/// Whether an `@word` that names no file is written like a path (7d2 decision 3): a prefix that only a path has, a
+/// folder and a file name with an extension, or a bare name with an extension people give files.
+pub fn looks_like_path(raw: &str) -> bool {
+    const KNOWN: [&str; 27] = [
+        "md", "markdown", "mdc", "mdx", "txt", "json", "jsonc", "yaml", "yml", "toml", "xml", "ini", "cfg", "conf",
+        "js", "jsx", "ts", "tsx", "py", "rs", "go", "sh", "ps1", "css", "html", "sql", "lock",
+    ];
+    let raw = raw.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '}', '\'', '"']);
+    if ["./", "../", ".\\", "..\\", "/", "~/", "~\\"]
+        .iter()
+        .any(|p| raw.starts_with(p))
+    {
+        return true;
+    }
+    let bytes = raw.as_bytes();
+    if bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && matches!(bytes[2], b'/' | b'\\') {
+        return true;
+    }
+    if let Some(slash) = raw.rfind(['/', '\\']) {
+        let name = &raw[slash + 1..];
+        return name.rfind('.').is_some_and(|dot| {
+            let ext = &name[dot + 1..];
+            (1..=10).contains(&ext.len())
+                && ext.bytes().all(|b| b.is_ascii_alphanumeric())
+                && ext.bytes().any(|b| b.is_ascii_alphabetic())
+        });
+    }
+    raw.rfind('.').is_some_and(|dot| {
+        let ext = raw[dot + 1..].to_ascii_lowercase();
+        KNOWN.contains(&ext.as_str())
+    })
 }
 
 /// A key's value in the file's frontmatter: `Some("")` for a key with a list under it, None for no frontmatter or
@@ -892,7 +1016,7 @@ pub fn hash_part(path: &Path) -> String {
     hash
 }
 
-fn cli_rank(agent: &str) -> usize {
+pub(crate) fn cli_rank(agent: &str) -> usize {
     ORDER.iter().position(|a| *a == agent).unwrap_or(ORDER.len())
 }
 
@@ -978,6 +1102,13 @@ fn advice(agent: &str) -> Option<&'static str> {
     })
 }
 
+/// The ids' tail: `<project_id>` or `user`, then `@<distro>`.
+pub(crate) fn id_tail(project: Option<&Path>, distro: Option<&str>) -> (String, String) {
+    let place = project.map_or_else(|| "user".to_string(), project_id);
+    let suffix = distro.map(|d| format!("@{d}")).unwrap_or_default();
+    (place, suffix)
+}
+
 /// The loads of one place: one project, "outside a project", or one distro's user level.
 struct Line<'a> {
     project: Option<&'a Path>,
@@ -988,9 +1119,7 @@ struct Line<'a> {
 impl Line<'_> {
     /// The ids' tail: `<project_id>` or `user`, then `@<distro>`.
     fn id_tail(&self) -> (String, String) {
-        let place = self.project.map_or_else(|| "user".to_string(), project_id);
-        let suffix = self.distro.map(|d| format!("@{d}")).unwrap_or_default();
-        (place, suffix)
+        id_tail(self.project, self.distro)
     }
 
     fn title(&self) -> String {
@@ -1040,7 +1169,7 @@ impl Line<'_> {
     }
 }
 
-fn folder_name(project: &Path) -> String {
+pub(crate) fn folder_name(project: &Path) -> String {
     project.file_name().map_or_else(
         || project.display().to_string(),
         |name| name.to_string_lossy().into_owned(),
@@ -1445,6 +1574,114 @@ mod tests {
     }
 
     #[test]
+    fn imports_at_gives_the_line_and_the_byte_span() {
+        let text = "intro\n- @docs/a.md\nsee @b/c.md, and `@code.md`\ncafé @d/e.md\n";
+        let got = imports_at(text, ImportSyntax::At);
+        assert_eq!(got.len(), 3);
+        assert_eq!(
+            (got[0].raw.as_str(), got[0].line, got[0].start, got[0].end),
+            ("docs/a.md", 2, 2, 12)
+        );
+        assert_eq!((got[1].raw.as_str(), got[1].line), ("b/c.md,", 3));
+        assert_eq!((got[2].line, got[2].start, got[2].end), (4, 6, 13)); // "café " is 6 bytes
+    }
+
+    #[test]
+    fn an_agy_link_spans_the_whole_link() {
+        let got = imports_at("x @[label](sub/inc.md) y", ImportSyntax::AgyLink);
+        assert_eq!((got[0].raw.as_str(), got[0].start, got[0].end), ("sub/inc.md", 2, 22));
+    }
+
+    #[test]
+    fn masking_keeps_every_byte_and_line_where_it_was() {
+        let text = "a\n<!-- café @x.md\n@y.md -->\r\n@z.md\n";
+        let masked = mask_html_comments(text);
+        assert_eq!(masked.len(), text.len());
+        assert_eq!(masked.lines().count(), text.lines().count());
+        assert_eq!(
+            imports_at(&masked, ImportSyntax::At)
+                .iter()
+                .map(|i| i.line)
+                .collect::<Vec<_>>(),
+            vec![4]
+        );
+    }
+
+    #[test]
+    fn what_looks_like_a_path() {
+        for yes in [
+            "./a",
+            "../a/b",
+            "/etc/x",
+            "~/notes.md",
+            "C:/x/y.md",
+            "AGENTS.md",
+            "docs/setup.md",
+            "a/b.rs",
+            "b/c.md,",
+            "notes.md).",
+            "Cargo.lock",
+            "a/b.weird1",
+        ] {
+            assert!(looks_like_path(yes), "{yes}");
+        }
+        for no in [
+            "someone",
+            "types/node",
+            "v2",
+            "1.2",
+            "team.",
+            "org/repo",
+            "john.doe",
+            "example.com",
+            "a/1.2",
+        ] {
+            assert!(!looks_like_path(no), "{no}");
+        }
+    }
+
+    #[test]
+    fn a_prose_at_word_that_isnt_a_file_gets_no_row() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("CLAUDE.md");
+        write(
+            &file,
+            "@someone asked, see @types/node and @john.doe and @gone.md and @gone.md again",
+        );
+        let rows = expand_file(&mut Reader::windows(), &file, &rules());
+        assert_eq!(names(&rows), ["CLAUDE.md", "gone.md"]);
+        assert_eq!(rows[1].when, When::NotLoaded("not found".into()));
+        assert_eq!(rows[1].raw.as_deref(), Some("gone.md"));
+        assert_eq!(rows[0].raw, None);
+    }
+
+    #[test]
+    fn an_at_word_whose_file_exists_is_still_an_import() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(&tmp.path().join("notes"), "abc");
+        let file = tmp.path().join("CLAUDE.md");
+        write(&file, "@notes");
+        let rows = expand_file(&mut Reader::windows(), &file, &rules());
+        assert_eq!(names(&rows), ["CLAUDE.md", "notes"]);
+        assert_eq!(rows[1].when, When::Start);
+        assert_eq!(rows[1].raw.as_deref(), Some("notes"));
+    }
+
+    #[test]
+    fn two_spellings_of_one_dead_import_are_two_rows() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("a.md");
+        write(&file, "@gone.md\n@./gone.md\n");
+        let rows = expand_file(&mut Reader::windows(), &file, &rules());
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[1].path, rows[2].path);
+        assert_eq!(rows[1].when, When::NotLoaded("not found".into()));
+        assert_eq!(rows[2].when, When::NotLoaded("not found".into()));
+        assert_eq!(rows[1].raw.as_deref(), Some("gone.md"));
+        assert_eq!(rows[2].raw.as_deref(), Some("./gone.md"));
+    }
+
+    #[test]
     fn a_credential_file_is_never_read() {
         let tmp = tempfile::tempdir().unwrap();
         let mut cx = Reader::windows();
@@ -1654,6 +1891,7 @@ mod tests {
             reason: None,
             notes: Vec::new(),
             cuts: Vec::new(),
+            imports: None,
         }
     }
 
@@ -1665,6 +1903,7 @@ mod tests {
             chars,
             notes: Vec::new(),
             depth: 0,
+            raw: None,
         }
     }
 

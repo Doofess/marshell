@@ -153,6 +153,7 @@ pub(super) fn windows_loads(
                     reason: Some(OUT_OF_TIME.to_string()),
                     notes: Vec::new(),
                     cuts: Vec::new(),
+                    imports: None,
                 });
             }
         } else if cx.is_dir(project) {

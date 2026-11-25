@@ -11,8 +11,8 @@ use serde_json::Value;
 use crate::config::jsonc::read_value;
 use crate::doctor::instructions::display as shown;
 use crate::doctor::instructions::{
-    CliLoad, Cut, ImportBase, ImportRules, ImportSyntax, LoadedFile, Place, Reader, Role, Text, When, expand,
-    frontmatter_value, hash_part, strip_html_comments,
+    CliLoad, Cut, ImportBase, ImportRules, ImportStyle, ImportSyntax, LoadedFile, Place, Reader, Role, Text, When,
+    expand, frontmatter_value, hash_part, strip_html_comments,
 };
 use crate::projects;
 
@@ -138,6 +138,7 @@ fn row(path: &Path, role: Role, when: When) -> LoadedFile {
         chars: 0,
         notes: Vec::new(),
         depth: 0,
+        raw: None,
     }
 }
 
@@ -311,6 +312,7 @@ impl Run<'_> {
             chars,
             notes,
             depth: 0,
+            raw: None,
         });
     }
 }
@@ -338,6 +340,10 @@ pub fn load(place: &Place, cx: &mut Reader) -> CliLoad {
         reason: None,
         notes: Vec::new(),
         cuts: Vec::new(),
+        imports: Some(ImportStyle {
+            syntax: ImportSyntax::At,
+            in_comments: false,
+        }),
     };
 
     // Settings: managed, then the project's local and shared files, then the user's.
@@ -573,6 +579,19 @@ mod tests {
         format!(
             r#"{{"pluginConfigs":{{"cc-plugin-agents-md@builtin":{{"options":{{"instructionFiles":"{mode}"}}}}}}}}"#
         )
+    }
+
+    #[test]
+    fn the_load_says_how_this_cli_writes_imports() {
+        let s = Setup::new();
+        let got = s.load(None);
+        assert_eq!(
+            got.imports,
+            Some(ImportStyle {
+                syntax: ImportSyntax::At,
+                in_comments: false
+            })
+        );
     }
 
     #[test]

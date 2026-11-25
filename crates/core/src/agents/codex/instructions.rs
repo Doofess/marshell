@@ -135,6 +135,7 @@ fn shadowed(found: &Found) -> impl Iterator<Item = LoadedFile> + '_ {
         chars: 0,
         notes: Vec::new(),
         depth: 0,
+        raw: None,
     })
 }
 
@@ -146,6 +147,7 @@ fn row(path: &Path, when: When, chars: usize, notes: Vec<String>) -> LoadedFile 
         chars,
         notes,
         depth: 0,
+        raw: None,
     }
 }
 
@@ -186,6 +188,7 @@ pub fn load(place: &Place, cx: &mut Reader) -> CliLoad {
         reason: None,
         notes: Vec::new(),
         cuts: Vec::new(),
+        imports: None,
     };
     let mut unreadable: Vec<PathBuf> = Vec::new();
     let ignore_case = place.distro.is_none();
@@ -424,6 +427,12 @@ mod tests {
 
     fn not_loaded(reason: &str) -> When {
         When::NotLoaded(reason.into())
+    }
+
+    #[test]
+    fn the_load_says_how_this_cli_writes_imports() {
+        let s = Setup::new();
+        assert_eq!(s.load(None).imports, None);
     }
 
     #[test]
