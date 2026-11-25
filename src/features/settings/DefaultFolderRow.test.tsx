@@ -41,6 +41,9 @@ describe("DefaultFolderRowView", () => {
     expect(h.match(/<button[^>]*disabled/g)).toHaveLength(2);
     expect(html({ folder: mine }).match(/<button[^>]*disabled/g)).toBeNull();
   });
+  it("sits in its own block, so it is set apart from the profiles below", () => {
+    expect(html()).toMatch(/^<div class="default-folder">.*<\/div>$/s);
+  });
   it("the group is labelled by Default folder", () => {
     const h = html();
     const id = /role="group" aria-labelledby="([^"]+)"/.exec(h)?.[1];

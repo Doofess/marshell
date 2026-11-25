@@ -1,0 +1,6 @@
+/* The default folder row sits above the profiles list: its lines keep the rhythm of a settings field, and the block is set apart from the list. */
+.default-folder {
+  display: grid;
+  gap: var(--space-1);
+  margin-block-end: var(--space-6);
+}

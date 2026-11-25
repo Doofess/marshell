@@ -9,6 +9,7 @@ import { lastSegment } from "../launcher/startFolder";
 import "./Settings.css";
 import "../notifications/NotificationsSection.css";
 import "../history/StorageSection.css";
+import "./DefaultFolderRow.css";
 
 const DASH = "–";
 const LABEL_ID = "default-folder-label";
@@ -30,7 +31,7 @@ export type DefaultFolderRowViewProps = {
 export function DefaultFolderRowView({ folder, error, busy, chooseRef, onChoose, onReset }: DefaultFolderRowViewProps) {
   const path = folder === null ? DASH : (folder.path ?? "Your home folder");
   return (
-    <>
+    <div className="default-folder">
       <div className="storage__field" role="group" aria-labelledby={LABEL_ID}>
         <span className="field__label" id={LABEL_ID}>
           Default folder
@@ -50,7 +51,7 @@ export function DefaultFolderRowView({ folder, error, busy, chooseRef, onChoose,
       <p className="field__help">{DEFAULT_FOLDER_HELP}</p>
       {folder?.path && !folder.exists && <p className="notifications-dialog__line">{MISSING_LINE}</p>}
       {error && <p className="notifications-dialog__error">{error}</p>}
-    </>
+    </div>
   );
 }
 
