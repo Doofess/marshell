@@ -249,10 +249,19 @@ fn cost_of(name: &str, entry: &Value, cx: &Cx) -> CostRule {
     }
 }
 
+/// Whether the user's settings turn folder trust on (`security.folderTrust.enabled`).
+pub(crate) fn folder_trust_on(user: Option<&Value>) -> bool {
+    user.and_then(|u| u.get("security"))
+        .and_then(|v| v.get("folderTrust"))
+        .and_then(|v| v.get("enabled"))
+        .and_then(Value::as_bool)
+        == Some(true)
+}
+
 /// Whether `project` is trusted by `trustedFolders.json` (`{ "<folder>": "TRUST_FOLDER" | "TRUST_PARENT" |
 /// "DO_NOT_TRUST" }`): the deepest rule whose folder holds the project wins, and on a tie a distrust wins. A project
 /// no rule names isn't trusted.
-fn folder_trusted(rules: &Option<Value>, project: &Path) -> bool {
+pub(crate) fn folder_trusted(rules: &Option<Value>, project: &Path) -> bool {
     let norm = |p: &str| p.replace('\\', "/").trim_end_matches('/').to_lowercase();
     let here = norm(&project.to_string_lossy());
     let mut best: Option<(usize, bool)> = None;
@@ -438,7 +447,7 @@ pub fn inventory(roots: &ExtRoots, projects: &[PathBuf], command: &dyn Fn(&str) 
     );
     let setting = |path: &[&str]| path.iter().try_fold(user.as_ref()?, |v, k| v.get(*k));
     let approvals = files.json(&roots.qwen_dir.join("mcpApprovals.json"));
-    let folder_trust = setting(&["security", "folderTrust", "enabled"]).and_then(Value::as_bool) == Some(true);
+    let folder_trust = folder_trust_on(user.as_ref());
     let trusted_folders = if folder_trust {
         files.json(&roots.qwen_dir.join("trustedFolders.json"))
     } else {

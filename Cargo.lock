@@ -2451,6 +2451,7 @@ dependencies = [
  "dirs",
  "futures-util",
  "getrandom 0.4.3",
+ "globset",
  "hex",
  "ignore",
  "jsonc-parser",

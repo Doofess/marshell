@@ -3,6 +3,7 @@
 pub mod exe;
 pub mod extensions;
 pub mod hooks;
+pub mod instructions;
 pub mod kept;
 pub mod notify;
 pub mod status;

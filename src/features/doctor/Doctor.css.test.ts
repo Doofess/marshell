@@ -25,4 +25,16 @@ describe("Doctor.css", () => {
     expect([...css.matchAll(/overflow(-x|-y)?:\s*(auto|scroll)/g)]).toHaveLength(1);
     expect(css).toMatch(/\.fix-sheet__body\s*\{[^}]*overflow-y:\s*auto/);
   });
+  it("keeps the files disclosure's own marker, rings its summary on focus and names it in forced colours", () => {
+    expect(css).toMatch(/\.doctor__loads summary:focus-visible[^{]*\{[^}]*outline:\s*2px/);
+    for (const m of css.matchAll(/\.doctor__loads summary[^{]*\{([^}]*)\}/g)) expect(m[1], m[0]).not.toMatch(/list-style|display/);
+    expect(css).toMatch(/\.doctor__loads summary\s*\{[^}]*min-block-size:\s*24px/);
+    const forced = css.slice(css.indexOf("@media (forced-colors: active)"));
+    expect(forced).toMatch(/\.doctor__loads summary\s*\{[^}]*color:\s*CanvasText/);
+    expect(forced).toMatch(/\.doctor__loads summary:focus-visible\s*\{[^}]*outline:\s*2px solid Highlight/);
+  });
+  it("mutes a file that loads later or not at all, and indents an import by its depth", () => {
+    expect(css).toMatch(/\.doctor__load-files li\[data-when="whenUsed"\],\s*\.doctor__load-files li\[data-when="notLoaded"\]\s*\{[^}]*color:\s*var\(--text-2\)/);
+    expect(css).toMatch(/\.doctor__load-files li\s*\{[^}]*padding-inline-start:\s*calc\(var\(--depth\) \* 1\.25em\)/);
+  });
 });

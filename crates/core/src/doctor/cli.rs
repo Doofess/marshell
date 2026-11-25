@@ -53,6 +53,7 @@ fn item(
         open_agents: false,
         unchecked: false,
         action: None,
+        loads: Vec::new(),
     }
 }
 

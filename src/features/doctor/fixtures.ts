@@ -102,6 +102,42 @@ export const DOCTOR_MEASURED: DoctorReport = {
   ],
 };
 
+/** One project's instruction line with the files two CLIs load, and a row with none, in the core's copy. */
+export const DOCTOR_LOADS: DoctorReport = {
+  checked_at_ms: NOW - 12_000,
+  duration_ms: 1_200,
+  items: [
+    {
+      id: "instr.3f2a9c1e",
+      group: "info",
+      title: "Airport: at start, Claude Code loads about 2.4k tokens of instructions, Codex 600.",
+      detail: "Estimates: characters divided by 4. Files that load later aren't counted.",
+      fixable: false,
+      open_agents: false,
+      loads: [
+        {
+          agent: "claude",
+          heading: "Claude Code: about 2.4k tokens at start",
+          files: [
+            { path: "CLAUDE.md", when: "start", note: "about 1.8k tokens", depth: 0 },
+            { path: "AGENTS.md", when: "start", note: "about 600 tokens, imported by CLAUDE.md", depth: 1 },
+            { path: "docs/CLAUDE.md", when: "whenUsed", note: "about 300 tokens, loads when used", depth: 0 },
+          ],
+        },
+        {
+          agent: "codex",
+          heading: "Codex: about 600 tokens at start",
+          notes: ["Marshell stopped looking for files in subfolders after 10,000 entries."],
+          files: [
+            { path: "AGENTS.override.md", when: "start", note: "about 600 tokens", depth: 0 },
+            { path: "AGENTS.md", when: "notLoaded", note: "not loaded: AGENTS.override.md is here", depth: 0 },
+          ],
+        },
+      ],
+    },
+    { id: "cli.qwen", agent: "qwen", group: "info", title: "Qwen Code has no doctor command.", detail: "Marshell's own checks still cover its hooks and settings.", fixable: false, open_agents: false },
+  ],
+};
 export const DOCTOR_CLEAR: DoctorReport = { checked_at_ms: NOW - 4_000, duration_ms: 900, items: [] };
 
 export const UNDO_FIXED: DoctorLastFix = { snapshot_id: "snap-1", fixed_at_ms: NOW, item_ids: ["hooks.claude", "hooks.codex@Ubuntu", "retention.claude"], count: 3, restart: ["tab-1", "tab-2"], files_match: true };

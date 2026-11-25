@@ -1,9 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { FOCUSABLE } from "../../lib/dialogFocus";
+import { focusOrder } from "../../lib/focusOrder";
 import { nameContainsLabel } from "../../lib/labelInName";
 import { DoctorPage } from "./DoctorPage";
 import { showProgress } from "./doctorUi";
-import { DOCTOR_CLEAR, DOCTOR_CLI, DOCTOR_KEEP, DOCTOR_PROBLEMS, DOCTOR_REPORT, UNDO_FIXED } from "./fixtures";
+import { DOCTOR_CLEAR, DOCTOR_CLI, DOCTOR_KEEP, DOCTOR_LOADS, DOCTOR_PROBLEMS, DOCTOR_REPORT, UNDO_FIXED } from "./fixtures";
 import { initialSelection } from "./report";
 import type { DoctorReport } from "./types";
 
@@ -209,6 +211,37 @@ describe("DoctorPage", () => {
     it("a failed press shows the server's message in the page's error line", () => {
       const h = page(DOCTOR_KEEP, "ready", { onKeep: noop, keepError: "This item can't be fixed any more. Run the check again." });
       expect(h).toMatch(/<p class="doctor__failed"[^>]*>[^<]*Run the check again\./);
+    });
+  });
+  describe("instruction files", () => {
+    const rows = (h: string) => h.split('<li class="doctor__row"').slice(1);
+    it("a row with loads has a closed disclosure", () => {
+      const row = rows(page(DOCTOR_LOADS, "ready"))[0]!;
+      expect(row).toMatch(/<details class="doctor__loads"><summary[^>]*>Show the files<\/summary>/);
+      expect(row).not.toMatch(/<details[^>]*\sopen/);
+      expect(row).toContain('<p class="doctor__load-cli">Claude Code: about 2.4k tokens at start</p>');
+      expect(row).toContain('<p class="doctor__load-cli">Codex: about 600 tokens at start</p>');
+      expect(row).toContain('<li data-when="notLoaded" style="--depth:0"><code dir="ltr">AGENTS.md</code> <span>not loaded: AGENTS.override.md is here</span></li>');
+      expect(row).toContain('<li data-when="start" style="--depth:1"><code dir="ltr">AGENTS.md</code> <span>about 600 tokens, imported by CLAUDE.md</span></li>');
+    });
+    it("the page's focus trap walks the disclosure, so Tab reaches it", () => {
+      expect(focusOrder(page(DOCTOR_LOADS, "ready"))).toContain("Show the files");
+      // The trap's query and the helper that mirrors it name the same element.
+      expect(FOCUSABLE.split(", ")).toContain("summary");
+    });
+    it("a row without loads has no disclosure", () => {
+      expect(rows(page(DOCTOR_LOADS, "ready"))[1]).not.toContain("<details");
+      expect(page(DOCTOR_REPORT, "ready")).not.toContain("<details");
+    });
+    it("the summary is described by its row's title", () => {
+      const row = rows(page(DOCTOR_LOADS, "ready"))[0]!;
+      const titleId = /<p class="doctor__title" id="([^"]+)"/.exec(row)?.[1];
+      expect(titleId).toBeTruthy();
+      expect(/<summary aria-describedby="([^"]+)"/.exec(row)?.[1]).toBe(titleId);
+    });
+    it("a load's notes show under its heading", () => {
+      const row = rows(page(DOCTOR_LOADS, "ready"))[0]!;
+      expect(row).toContain('Codex: about 600 tokens at start</p><p class="doctor__load-note">Marshell stopped looking for files in subfolders after 10,000 entries.</p><ul class="doctor__load-files">');
     });
   });
 });

@@ -8,6 +8,7 @@ mod config;
 mod diagnostics;
 pub(crate) mod doctor;
 mod doctor_ext;
+mod doctor_instr;
 mod doctor_measure;
 mod doctor_usage;
 mod drafts;
@@ -304,6 +305,9 @@ struct Inner {
     claude_compact_paths: Option<(PathBuf, Vec<PathBuf>)>,
     /// Where the app's own programs sit, so setting up hooks can put a missing bridge back. None in tests.
     programs_dir: Option<PathBuf>,
+    /// How many times the Doctor's instruction-file read ran, so a test can tell that only a run reads them.
+    #[cfg(test)]
+    instr_reads: std::sync::atomic::AtomicUsize,
     /// `--version` of each agent executable with the stamp it was read at (the file's modified time, and its
     /// package folder's for Qwen Code). A different stamp asks again, and a version that could not be read is
     /// not kept.
@@ -452,6 +456,8 @@ impl AppState {
             skill_home: None,
             claude_compact_paths: None,
             programs_dir: None,
+            #[cfg(test)]
+            instr_reads: std::sync::atomic::AtomicUsize::new(0),
             versions: Mutex::new(HashMap::new()),
             claude_version: None,
             codex_version: None,

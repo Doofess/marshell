@@ -39,6 +39,26 @@ pub struct ExtRoots {
     pub copilot_offline: bool,
 }
 
+impl ExtRoots {
+    /// Every CLI folder at its default under `home`, with no environment read.
+    pub fn under(home: &Path) -> ExtRoots {
+        ExtRoots {
+            home: home.to_path_buf(),
+            claude_dir: home.join(".claude"),
+            claude_json: home.join(".claude.json"),
+            claude_settings: home.join(".claude").join("settings.json"),
+            codex_home: home.join(".codex"),
+            qwen_dir: home.join(".qwen"),
+            claude_tool_search: None,
+            qwen_runtime: home.join(".qwen"),
+            gemini_dir: home.join(".gemini"),
+            copilot_dir: home.join(".copilot"),
+            copilot_home_set: false,
+            copilot_offline: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Origin {
     User,
@@ -509,6 +529,7 @@ fn inventory_items(inv: &Inventory, out: &mut Vec<(DoctorItem, Option<Switch>)>)
         open_agents: false,
         unchecked: false,
         action: None,
+        loads: Vec::new(),
     };
 
     // 1. Files that don't parse.

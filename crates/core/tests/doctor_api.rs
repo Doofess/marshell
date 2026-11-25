@@ -1367,3 +1367,18 @@ async fn a_kept_hooks_file_in_a_distro_is_kept_and_turned_off_entry_by_entry() {
     assert!(item(&r, "hooks.copilot@Ubuntu").is_none(), "{:?}", ids(&r));
     assert!(item(&r, "hooksfile.copilot@Ubuntu").is_none(), "{:?}", ids(&r));
 }
+
+#[tokio::test]
+async fn the_instruction_line_rides_in_the_report() {
+    let e = env();
+    std::fs::write(e.root.join("project").join("CLAUDE.md"), "Be brief.\n").unwrap();
+    let r = report(&e).await;
+    let line = r["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["id"].as_str().unwrap().starts_with("instr."))
+        .unwrap_or_else(|| panic!("{:?}", ids(&r)));
+    assert_eq!(line["group"], "info");
+    assert_eq!(line["loads"][0]["files"][0]["path"], "CLAUDE.md");
+}

@@ -2387,6 +2387,40 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      19. **The servers' token cost is one Info line per CLI**, like the skills' line (decision 10). It names the costliest servers and says how many weren't measured.
      20. **Measuring is Windows only.** A distro's servers get "Not measured: in <distro>." Measuring through `wsl.exe` waits for a later slice.
      21. **Measurements stay in memory until the app restarts**, as the CLI doctors' findings do (7b). This was the lead's default, which the user didn't change.
+   - **Slice 7d decisions (2026-11-24).** Instruction files, and the tokens injected by project references. The facts are in `docs/research/2026-11-24-instruction-files.md`, checked on this PC and in each CLI's docs or source (claude 2.1.331, codex-cli 0.171.0, agy 1.5.14, qwen 0.26.5, copilot 1.0.106). Three of them correct earlier notes:
+     - Claude Code reads `AGENTS.md` since 2.1.277, by default only when no `CLAUDE.md`, `.claude/CLAUDE.md` or `CLAUDE.local.md` is in the folder or above it. The mode is `pluginConfigs["cc-plugin-agents-md@builtin"].options.instructionFiles`.
+     - Codex cuts the file that crosses `project_doc_max_bytes` and skips the files after it, with a warning for each; it doesn't refuse them.
+     - Copilot CLI expands `@path` only in `copilot-instructions.md`, `AGENTS.md` and `CLAUDE.md`, and only for targets inside the repo.
+
+     The decisions:
+     1. **7d is two slices** (amends 7a decision 1):
+        - **7d1:** which files each CLI loads, per project, with their sizes, token estimates and each CLI's limits. It fixes nothing (decision 9).
+        - **7d2:** missing imports and stale paths (decision 3), duplicates and clashes (decision 2), the suggested edits, and the tokens the reference notes inject (BRIEF §5.11). It asks its own questions when it starts.
+     2. **Contradictions (7d2)** are duplicates plus a short fixed list of clear clashes, all report-only Info items that quote both lines with `file:line`:
+        - the same text reaching one CLI twice, for example Copilot reading both `CLAUDE.md` and the `AGENTS.md` it imports;
+        - npm, pnpm, yarn or bun named as the package manager; tabs against spaces; two indent widths.
+
+        A real contradiction needs a model, which the Doctor doesn't run; phase 8's opt-in "Improve this file" is that.
+     3. **Stale paths (7d2):** an `@import` that doesn't resolve is Broken, because the CLI loads less than the file says (Claude Code skips it without a word, Qwen Code leaves the literal `@path` in the text). A backticked relative path that doesn't exist in the project is Info and report-only. Plain words that only look like paths are never checked.
+     4. **Size:**
+        - Text a CLI cuts or skips is Broken and report-only. The item says which part never reaches the agent: Codex past 32 KiB of project files, an Antigravity rule over 24,000 bytes or past its 20,000-token budget, a Claude Code file over 4 MiB, and any limit the live check finds (decision 10).
+        - More than 4k tokens loaded at every session start, for one CLI in one project, is Waste and report-only.
+        - Every token figure is characters divided by 4 and says that it is an estimate.
+     5. **One Info line per project** gives each installed CLI's start-up estimate, for example "Airport: at start, Claude Code loads about 2.4k tokens of instructions, Codex 1.9k, Copilot 4.1k." Expanding it lists each CLI's files in load order with their estimates, imports included. Files that load later are marked "loads when used" and aren't counted.
+     6. **Which folders are checked:** user level, plus each project in `projects.json` as if a session started at its root (7c decision 7), including the folders above the root that a CLI walks up to. Nested files below the root (an `AGENTS.md` or `CLAUDE.md` in a subfolder, path-scoped rules) are listed as "loads when used" with their size. In a running WSL distro, user level only (7a decision 7).
+     7. **The settings that change what loads are followed, and the detail says why a file is in or out.** These are Codex's `project_doc_fallback_filenames` and `project_doc_max_bytes`, Qwen Code's `context.fileName` (which replaces the default list), Claude Code's `claudeMdExcludes` and its AGENTS.md mode, and folder trust: Codex and Qwen Code load no project files in an untrusted folder. Examples: "AGENTS.md: not loaded, CLAUDE.md is here." and "Not loaded: Codex doesn't trust this folder." Nothing is changed.
+     8. **Auto memory counts,** marked "auto memory" and only up to what the CLI loads: Claude Code's `MEMORY.md` loads its first 200 lines or 25 KB, and any other CLI's memory file the plan finds is treated the same way. Memory gets no size items, because the CLI writes it itself.
+     9. **7d1 fixes nothing.** A Codex item past 32 KiB says what gets cut, and that `project_doc_max_bytes` in `~/.codex/config.toml` raises the limit or a shorter file helps. Raising it was the other option; it makes every Codex session there cost more.
+     10. **Facts not yet settled are checked in the 7d1 live check,** with real sessions in a scratch home (a few short prompts): when Antigravity loads rules and what its `@[label](path)` import resolves from, Copilot CLI's size limit, and the numbers behind Claude Code's warning at about 200 lines. Until a fact is settled the item says what is unknown, and one that stays unknown reads "<CLI> documents no limit."
+     11. **The 4k Waste item suggests that CLI's own way to load text only when needed,** and names the largest files:
+         - Claude Code: `.claude/rules/` with `paths:`, or a skill.
+         - Copilot CLI: `.github/instructions/` with `applyTo`.
+         - Antigravity: a rule with `trigger: model_decision`.
+         - Qwen Code: `.qwen/rules/` with `paths:`.
+         - Codex: a nested `AGENTS.md` in the folder it is about.
+     12. **`globset` becomes a direct dependency of `marshell-core`** (the user's OK, 2026-11-24). It matches Claude Code's `claudeMdExcludes` globs against absolute paths. It already ships inside the app through `ignore`, and its line in `THIRD_PARTY_NOTICES.md` now names the Doctor too. A hand-written matcher was the other option.
+     13. **Claude Code's open facts are settled in a scratch `CLAUDE_CONFIG_DIR` that the user signs in to themselves** (2026-11-24). No credential file is copied. Codex and Antigravity use the live check's own sign-in flags, and Qwen Code and Copilot CLI run on its fake models, whose request logs show the exact text each CLI sends.
+     14. **A project's folder trust is read the way each CLI reads it** (from the plan's review, 2026-11-24). Codex leaves a project's files out only for a folder marked `untrusted`; 7c's stricter rule, which asks for `trusted`, stays for project configs. What Codex and Qwen Code do with a folder that has no entry is checked in the 7d1 live check (decision 10).
 8. **Editors + instruction library** (wired per CLI with a content hash and drift check; settings raw mode validated against the SchemaStore schema), smart and native recaps, diff drawer, step timeline, saved prompts, broadcast, and Extensions (moved from phase 6 by slice 6a decision 2).
    - Diff drawer comments (added 2026-10-15, after the Codex app's review pane): a **+** on a diff line adds a comment. "Send comments" puts them all in the prompt line as one message, with `file:line` before each. Like phase 2.5, it fills the prompt line and never sends on its own.
    - Instruction library items: frontmatter form, "what loads here" view, token estimate with a 4k warning, templates and one-click project profiles, per-project toggles, agent filter, globs, and "Improve this file" (headless, opt-in).

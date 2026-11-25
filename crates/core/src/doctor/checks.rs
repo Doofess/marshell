@@ -11,7 +11,7 @@ pub const RETENTION_OTHERS: &str =
 
 pub(crate) const READ_ONLY: &str = "The file is read-only.";
 const CANNOT_TRUST: &str = "Marshell can't trust hooks for you. Open /hooks in Codex and trust them.";
-const ORDER: [&str; 5] = ["claude", "codex", "antigravity", "qwen", "copilot"];
+pub(crate) const ORDER: [&str; 5] = ["claude", "codex", "antigravity", "qwen", "copilot"];
 
 /// The state of the file a CLI's hooks live in.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,6 +135,7 @@ pub fn items(facts: &[AgentFacts], stopped: &[String], banners_on: bool) -> Vec<
             open_agents: false,
             unchecked: false,
             action: None,
+            loads: Vec::new(),
         });
     }
     out
@@ -159,6 +160,7 @@ fn cli_items(f: &AgentFacts, banners_on: bool, out: &mut Vec<DoctorItem>) {
         open_agents: false,
         unchecked: false,
         action: None,
+        loads: Vec::new(),
     };
 
     if let Some(err) = &f.error {
