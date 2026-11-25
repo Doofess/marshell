@@ -409,6 +409,25 @@ async fn a_panel_in_the_default_folder_records_no_project() {
 }
 
 #[tokio::test]
+async fn a_panel_asked_for_an_empty_folder_records_no_project() {
+    let home = tempfile::tempdir().unwrap();
+    let default = tempfile::tempdir().unwrap();
+    let state = state_with(home.path(), None, Some(default.path()));
+    let app = router(state.clone());
+    let body = serde_json::json!({ "cwd": "", "cols": 80, "rows": 24 });
+    let res = app
+        .clone()
+        .oneshot(api("POST", "/v1/shell-panel", Some(body)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let answer = json_of(res).await;
+    assert_eq!(Path::new(answer["cwd"].as_str().unwrap()), default.path());
+    assert_eq!(project_paths(&app).await, Vec::<String>::new());
+    state.session(answer["tab_id"].as_str().unwrap()).unwrap().force_kill();
+}
+
+#[tokio::test]
 async fn a_panel_in_a_named_folder_records_it() {
     let home = tempfile::tempdir().unwrap();
     let default = tempfile::tempdir().unwrap();

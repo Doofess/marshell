@@ -112,7 +112,8 @@ pub async fn open(
         return Ok(Json(ShellPanelResponse { tab_id, cwd }));
     }
     let run = resolve(&st, None, None, None, None, None, None).await?;
-    let named = req.cwd.is_some();
+    // An empty folder is no folder, as it is for the start folder below.
+    let named = req.cwd.as_deref().is_some_and(|c| !c.is_empty());
     let cwd = folder_for(&st, &run, req.cwd).await;
     let tab_id = auth::new_id("t");
     let shell = PanelShell {

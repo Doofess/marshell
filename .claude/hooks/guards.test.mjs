@@ -376,6 +376,9 @@ describe("S6: tauri dev outside a scratch environment", () => {
     "MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc MARSHELL_CLAUDE_SETTINGS=/tmp/p/settings.local.json MARSHELL_DEFAULT_FOLDER= pnpm tauri dev",
     "MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc MARSHELL_CLAUDE_SETTINGS=/tmp/p/settings.local.json MARSHELL_DEFAULT_FOLDER=~/Marshell pnpm tauri dev",
     "MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc MARSHELL_CLAUDE_SETTINGS=/tmp/p/settings.local.json MARSHELL_DEFAULT_FOLDER=$HOME/marshell pnpm tauri dev",
+    // A folder inside it: the app would make Marshell in the real home folder on the way.
+    "MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc MARSHELL_CLAUDE_SETTINGS=/tmp/p/settings.local.json MARSHELL_DEFAULT_FOLDER=~/Marshell/lc pnpm tauri dev",
+    "MARSHELL_HOME=/tmp/mh CLAUDE_CONFIG_DIR=/tmp/cc MARSHELL_CLAUDE_SETTINGS=/tmp/p/settings.local.json MARSHELL_DEFAULT_FOLDER=$HOME/Marshell/a/b pnpm tauri dev",
   ];
   for (const c of bad) test(`Bash: ${c}`, () => denied(shell(c), R.S6));
   const badPs = [

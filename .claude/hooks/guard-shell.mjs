@@ -273,8 +273,9 @@ function envSetting(command, name) {
     if (value.trim()) set = true;
     const v = key(canon(toAbs(value)));
     if (v === `${home}/.claude.json`) real = true;
-    // The app's own default folder: Marshell in the real home folder.
-    if (v === key(`${home}/Marshell`)) real = true;
+    // The app's own default folder, Marshell in the real home folder, and anything in it: the app makes the whole path.
+    const own = key(`${home}/Marshell`);
+    if (v === own || v.startsWith(`${own}/`)) real = true;
     for (const dir of [".marshell", ".claude"]) {
       const base = `${home}/${dir}`;
       if (v === base || v.startsWith(`${base}/`)) real = true;

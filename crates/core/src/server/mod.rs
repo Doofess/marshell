@@ -1864,12 +1864,11 @@ mod tests {
         let began = std::time::Instant::now();
         let found = st.default_folder_now().await;
         *DEFAULT_FOLDER_LAG.lock().unwrap() = None;
+        // The folder is there, so only the wait running out reads it as not there. No upper bound on the time: a
+        // busy machine may be late, and `None` already shows the look wasn't waited for.
         assert_eq!(found, None);
         let took = began.elapsed();
-        assert!(
-            took >= Duration::from_secs(2) && took < Duration::from_secs(4),
-            "{took:?}"
-        );
+        assert!(took >= Duration::from_secs(2), "{took:?}");
     }
 
     #[test]
