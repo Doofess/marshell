@@ -112,7 +112,7 @@ pub async fn open(State(st): State<AppState>, Json(req): Json<PanelRequest>) -> 
         return Ok(Json(PanelResponse { tab_id }));
     }
     let run = resolve(&st, None, None, None, None, None, None).await?;
-    let cwd = start_folder(&run, Some(req.cwd));
+    let cwd = start_folder(&run, Some(req.cwd), None);
     let tab_id = auth::new_id("t");
     let shell = PanelShell {
         tab_id: tab_id.clone(),

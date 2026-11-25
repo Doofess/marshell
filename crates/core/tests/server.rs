@@ -347,6 +347,7 @@ async fn start_writes_endpoint_file_and_serves() {
         window_hidden: Default::default(),
         import: None,
         doctor_on_start: false,
+        default_folder: None,
     })
     .await
     .unwrap();
@@ -379,6 +380,7 @@ async fn start_core(home: &std::path::Path) -> marshell_core::server::RunningCor
         window_hidden: Default::default(),
         import: None,
         doctor_on_start: false,
+        default_folder: None,
     })
     .await
     .unwrap()

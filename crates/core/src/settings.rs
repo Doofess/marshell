@@ -207,6 +207,8 @@ pub fn check_limits(limit_gb: Option<u32>, limit_days: Option<u32>) -> Result<()
 
 pub const FOLDER_NOT_FULL: &str = "Choose a full folder path.";
 pub const FOLDER_NOT_LOCAL: &str = "Choose a folder on this PC.";
+/// What a save of a new default folder says when no folder is there. The core never makes a chosen folder.
+pub const FOLDER_MISSING: &str = "That folder isn't there.";
 
 /// Whether `dir` may be the default folder, without looking at the disk: a full path, and not a network share.
 pub fn check_default_folder(dir: &str) -> Result<(), String> {

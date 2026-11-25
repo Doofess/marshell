@@ -282,6 +282,7 @@ mod tests {
                 window_hidden: Default::default(),
                 import: None,
                 doctor_on_start: false,
+                default_folder: None,
             };
             *core.borrow_mut() = Some(rt.block_on(start(config)).unwrap());
             Ok(())

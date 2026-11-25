@@ -447,6 +447,7 @@ fn main() {
                 window_hidden: Default::default(),
                 import: marshell_core::history::import::system_roots(),
                 doctor_on_start: true,
+                default_folder: marshell_core::paths::builtin_default_folder(),
             };
             let handle = app.handle().clone();
             let supervisor =

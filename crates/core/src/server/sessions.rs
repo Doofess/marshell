@@ -486,14 +486,26 @@ pub(super) fn check_agent_installed(st: &AppState, run: &Resolved, agent: Option
     Ok(())
 }
 
-/// The folder a session starts in: the requested one, else the profile's, else the home folder.
-pub(super) fn start_folder(run: &Resolved, requested: Option<String>) -> String {
+/// The folder a session starts in: the requested one, else the profile's, else `fallback`, else the home folder.
+/// A blank profile folder counts as none, so the core and the launcher's "started in" line agree.
+pub(super) fn start_folder(run: &Resolved, requested: Option<String>, fallback: Option<String>) -> String {
     let home = dirs::home_dir().map(|p| p.to_string_lossy().into_owned());
     requested
         .filter(|c| !c.is_empty())
-        .or(run.cwd.clone())
+        .or(run.cwd.clone().filter(|c| !c.trim().is_empty()))
+        .or(fallback.filter(|c| !c.is_empty()))
         .or(home)
         .unwrap_or_default()
+}
+
+/// `start_folder` with the default folder as the fallback. The disk is only looked at when neither a request nor the
+/// profile names a folder. Only a new session from the create route asks this; a restart, a resume and the rest keep
+/// the folder they have.
+pub(super) async fn folder_for(st: &AppState, run: &Resolved, requested: Option<String>) -> String {
+    let named =
+        requested.as_deref().is_some_and(|c| !c.is_empty()) || run.cwd.as_deref().is_some_and(|c| !c.trim().is_empty());
+    let fallback = if named { None } else { st.default_folder_now().await };
+    start_folder(run, requested, fallback)
 }
 
 /// Reserves a number, starts the process and records it. A failed spawn gives the number back.
@@ -573,7 +585,7 @@ async fn start_session_as(
     elevated: bool,
 ) -> Result<CreateSessionResponse, ApiError> {
     check_agent_installed(st, &run, agent.as_deref())?;
-    let cwd = start_folder(&run, cwd);
+    let cwd = start_folder(&run, cwd, None);
     // The base name: the requested one, else the agent, else the profile.
     // A requested name follows the rename rules, whoever asks: control characters dropped, trimmed, 120 characters.
     let name = name
@@ -898,12 +910,14 @@ pub(super) async fn create_as(
         .clone()
         .filter(|c| !c.is_empty() && run.profile_id != CUSTOM_PROFILE);
     let choice = folder.map(|folder| (folder, run.profile_id.clone(), agent.clone()));
+    // Only here does a start with no folder fall back to the default folder; it is not remembered as a choice.
+    let start_in = folder_for(st, &run, req.cwd.clone()).await;
     let created = start_session_as(
         st,
         run,
         agent,
         req.name,
-        req.cwd,
+        Some(start_in),
         size,
         req.color_scheme,
         mode,
@@ -1365,7 +1379,7 @@ pub(super) async fn resume_as(
     .await?;
     check_agent_installed(st, &run, info.agent.as_deref()).map_err(|(_, message)| Refusal::reason(message))?;
     // A console Marshell opened for the conversation still runs: two CLIs must not write one conversation.
-    let folder = start_folder(&run, Some(info.cwd.clone()));
+    let folder = start_folder(&run, Some(info.cwd.clone()), None);
     if super::outside::in_console(st, info.agent.as_deref(), &session, &folder) {
         return Err(Refusal::reason(super::outside::OPEN_IN_TERMINAL));
     }
@@ -1497,7 +1511,7 @@ pub(super) async fn restart_as(
     )
     .await?;
     check_agent_installed(st, &run, info.agent.as_deref()).map_err(|(_, message)| Refusal::reason(message))?;
-    let folder = start_folder(&run, Some(info.cwd.clone()));
+    let folder = start_folder(&run, Some(info.cwd.clone()), None);
     if super::outside::in_console(st, info.agent.as_deref(), &session, &folder) {
         return Err(Refusal::reason(super::outside::OPEN_IN_TERMINAL));
     }
@@ -1560,6 +1574,25 @@ pub async fn focus(State(st): State<AppState>, Path(tab): Path<String>) -> Respo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn start_folder_order() {
+        let some = |t: &str| Some(t.to_string());
+        let mut run = custom(vec!["x".into()]);
+        run.cwd = some("P");
+        assert_eq!(start_folder(&run, some("R"), some("F")), "R");
+        assert_eq!(start_folder(&run, None, some("F")), "P");
+        assert_eq!(start_folder(&run, some(""), some("F")), "P");
+        // A blank profile folder is none.
+        run.cwd = some("  ");
+        assert_eq!(start_folder(&run, None, some("F")), "F");
+        run.cwd = None;
+        assert_eq!(start_folder(&run, None, some("F")), "F");
+        assert_eq!(
+            start_folder(&run, None, None),
+            dirs::home_dir().unwrap().to_string_lossy()
+        );
+    }
 
     #[test]
     fn create_elevated_agent_starts_in_manual() {
