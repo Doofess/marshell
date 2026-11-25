@@ -78,3 +78,14 @@ export function draggedWidth(i: { room: number; terminalMin: number; fromEnd: nu
   const from = Number.isFinite(i.fromEnd) ? i.fromEnd : PANE.min;
   return clamp(Math.round(from), PANE.min, max);
 }
+
+/**
+ * What the terminal's slot holds with no session. The empty state shows with no pane drawn. A filling pane that moves (opening or
+ * hiding) still has three tracks, so the slot is held by an empty element and the pane slides in its own track; without it the pane
+ * would drop into the divider's 1 px track for the whole motion. Under History, or with the pane settled, the slot holds nothing.
+ */
+export function emptySlot(i: { viewing: boolean; paneDrawn: boolean; threeTracks: boolean }): "empty" | "hold" | "nothing" {
+  if (i.viewing) return "nothing";
+  if (!i.paneDrawn) return "empty";
+  return i.threeTracks ? "hold" : "nothing";
+}

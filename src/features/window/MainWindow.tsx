@@ -37,7 +37,7 @@ import { windowTitle } from "./windowTitle";
 import { Sidebar, type SidebarFooter } from "./Sidebar";
 import { shellNameFor } from "./ShellPanel";
 import { LayoutContext, mainRoom, type Layout } from "./paneColumn";
-import { PANE, dividerLeft, dividerState, draggedWidth, paneGeometry, paneMotionKey } from "./paneLayout";
+import { PANE, dividerLeft, dividerState, draggedWidth, emptySlot, paneGeometry, paneMotionKey } from "./paneLayout";
 import { useLayoutMotion } from "./motion";
 import { usePaneHold } from "./paneHold";
 import { FitHoldContext } from "../terminal/fitHold";
@@ -533,11 +533,15 @@ export function MainWindow({
           style={paneColumns ? { gridTemplateColumns: paneColumns } : undefined}
         >
           {empty ? (
-            viewing || paneDrawn ? null : (
-              <div className="window__empty">
-                No sessions yet. Start one with {shortcutLabel(commandById("launcher").binding!, os)}.
-              </div>
-            )
+            {
+              empty: (
+                <div className="window__empty">
+                  No sessions yet. Start one with {shortcutLabel(commandById("launcher").binding!, os)}.
+                </div>
+              ),
+              hold: <div className="window__hold" aria-hidden="true" />,
+              nothing: null,
+            }[emptySlot({ viewing, paneDrawn, threeTracks })]
           ) : renderTerminal ? (
             // Under a main view every terminal stays mounted and none is on screen.
             <KeptTerminals rows={rows} selectedId={selected.id} render={renderTerminal} suspended={(paneCovers && !paneMotion.moving) || viewing} />
