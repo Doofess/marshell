@@ -20,6 +20,11 @@ const rule = (sel: string) => {
 };
 
 describe("FilesBody.css", () => {
+  it("an empty tools place takes no room, and a full one never shrinks", () => {
+    expect(rule(".path-bar__tools")).toContain("flex: none");
+    // The "Updated" note is always drawn, so `:empty` would never match (review 4).
+    expect(rule(".path-bar__tools:not(:has(> :not(.preview__updated)))")).toContain("display: none");
+  });
   it("the file's cell is a grid, so the tab panel inside fills it (live check 6r-2: a block let the preview's body collapse to 0 px)", () => {
     const rule = css.slice(css.indexOf(".files-body__content {"), css.indexOf("}", css.indexOf(".files-body__content {")));
     expect(rule).toContain("display: grid");

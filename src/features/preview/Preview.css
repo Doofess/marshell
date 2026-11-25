@@ -368,6 +368,13 @@
 .preview:has(.web-link) {
   grid-template-rows: 28px auto minmax(0, 1fr);
 }
+/* In the Files panel the path bar holds the tools and the pane draws no header: the body takes the whole height. */
+.preview:not(:has(> .preview__header)) {
+  grid-template-rows: minmax(0, 1fr);
+}
+.preview:not(:has(> .preview__header)):has(.web-link) {
+  grid-template-rows: auto minmax(0, 1fr);
+}
 .web-link {
   display: flex;
   flex-wrap: wrap;

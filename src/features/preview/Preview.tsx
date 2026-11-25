@@ -1,4 +1,4 @@
-import { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type Ref } from "react";
+import { useContext, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type Ref } from "react";
 import { createPortal } from "react-dom";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -14,6 +14,7 @@ import type { Os } from "../../lib/keymap";
 import { revealLabel } from "../files/reveal";
 import { ViewportChip } from "../browser/ViewportChip";
 import { viewportWidth, type ViewportId } from "../browser/viewport";
+import { HeaderSlot, headerPlace, insidePane, slotState } from "./headerSlot";
 import { ImageView } from "./ImageView";
 import { kindOf, splitPath } from "./kinds";
 import type { LinkTarget } from "./links";
@@ -566,6 +567,61 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
   const showUpdated = updated && shown.phase !== "text";
 
   const alt = os === "mac" ? "⌥" : "Alt+";
+  const slot = useContext(HeaderSlot);
+  const place = headerPlace({ pathShown, active, slot: slotState(slot) });
+  // Back and Forward are the history's buttons; the Files panel has none (Alt+Left and Alt+Right still work), and the name and folder are the path bar's there.
+  const lead = (
+    <>
+      {!pathShown && (
+        <button type="button" className="preview__button" aria-label="Back" title={`Back (${alt}${os === "mac" ? "←" : "Left"})`} disabled={!canBack} onClick={goBack}>
+          {arrow("M7.5 2.5 4 6l3.5 3.5")}
+        </button>
+      )}
+      {!pathShown && (
+        <button type="button" className="preview__button" aria-label="Forward" title={`Forward (${alt}${os === "mac" ? "→" : "Right"})`} disabled={!canForward} onClick={goForward}>
+          {arrow("M4.5 2.5 8 6 4.5 9.5")}
+        </button>
+      )}
+      {!pathShown && <span className="preview__name">{name}</span>}
+      {!pathShown && folder && (
+        <span className="preview__folder" title={folder}>
+          {folder}
+        </span>
+      )}
+    </>
+  );
+  const notes = (
+    <>
+      {dims && <span className="preview__meta">{dims}</span>}
+      <span className="preview__updated" data-show={showUpdated ? "true" : undefined} aria-live={inside ? "polite" : "off"}>
+        {showUpdated ? "Updated" : ""}
+      </span>
+    </>
+  );
+  const controls = (
+    <>
+      {toggle && (
+        <div className="preview__views" role="group" aria-label="View">
+          {(["rendered", "source"] as const).map((v) => {
+            const label = v === "rendered" ? "Rendered" : "Source";
+            return (
+              <button key={v} type="button" className="preview__view" aria-label={label} title={label} aria-pressed={entry.view === v} onClick={() => views.current?.person(v)}>
+                {VIEW_ICONS[v]}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {toggle && kind === "html" && viewport !== null && onViewport && <ViewportChip id={viewport} slot={frameWidth} onOpen={onViewport} />}
+      {canMark && (
+        <button type="button" className="preview__button" aria-label="Select region" aria-pressed={select !== null} title="Select region (R)" onClick={() => (select ? endSelect() : startSelect())}>
+          <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.25" strokeDasharray="2 1.5">
+            <rect x="1.5" y="2.5" width="9" height="7" />
+          </svg>
+        </button>
+      )}
+    </>
+  );
   return (
     <section
       className="preview"
@@ -573,48 +629,19 @@ export function PreviewPane({ entry, file, updated, os, canBack, canForward, onB
       onKeyDown={keys}
       onFocus={() => setInside(true)}
       onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setInside(false);
+        if (!insidePane(e.currentTarget, slot ?? null, e.relatedTarget as Node | null)) setInside(false);
       }}
     >
-      <header className="preview__header">
-        <button type="button" className="preview__button" aria-label="Back" title={`Back (${alt}${os === "mac" ? "←" : "Left"})`} disabled={!canBack} onClick={goBack}>
-          {arrow("M7.5 2.5 4 6l3.5 3.5")}
-        </button>
-        <button type="button" className="preview__button" aria-label="Forward" title={`Forward (${alt}${os === "mac" ? "→" : "Right"})`} disabled={!canForward} onClick={goForward}>
-          {arrow("M4.5 2.5 8 6 4.5 9.5")}
-        </button>
-        {!pathShown && <span className="preview__name">{name}</span>}
-        {!pathShown && folder && (
-          <span className="preview__folder" title={folder}>
-            {folder}
-          </span>
-        )}
-        {dims && <span className="preview__meta">{dims}</span>}
-        <span className="preview__updated" data-show={showUpdated ? "true" : undefined} aria-live={inside ? "polite" : "off"}>
-          {showUpdated ? "Updated" : ""}
-        </span>
-        <span className="preview__spacer" />
-        {toggle && (
-          <div className="preview__views" role="group" aria-label="View">
-            {(["rendered", "source"] as const).map((v) => {
-              const label = v === "rendered" ? "Rendered" : "Source";
-              return (
-                <button key={v} type="button" className="preview__view" aria-label={label} title={label} aria-pressed={entry.view === v} onClick={() => views.current?.person(v)}>
-                  {VIEW_ICONS[v]}
-                </button>
-              );
-            })}
-          </div>
-        )}
-        {toggle && kind === "html" && viewport !== null && onViewport && <ViewportChip id={viewport} slot={frameWidth} onOpen={onViewport} />}
-        {canMark && (
-          <button type="button" className="preview__button" aria-label="Select region" aria-pressed={select !== null} title="Select region (R)" onClick={() => (select ? endSelect() : startSelect())}>
-            <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.25" strokeDasharray="2 1.5">
-              <rect x="1.5" y="2.5" width="9" height="7" />
-            </svg>
-          </button>
-        )}
-      </header>
+      {place === "header" && (
+        <header className="preview__header">
+          {lead}
+          {notes}
+          <span className="preview__spacer" />
+          {controls}
+        </header>
+      )}
+      {/* A portal's events bubble through the React tree, so this section's onKeyDown and onFocus still hear the tools. */}
+      {place === "slot" && slot && createPortal(<>{notes}{controls}</>, slot)}
       {web && <WebLinkBar url={web} onOpen={() => answer(true)} onCancel={() => answer(false)} />}
       <div ref={body} className="preview__body" tabIndex={0} role="group" aria-label={`${name}, contents`} data-view={rendered ? kind : undefined} data-selecting={select ? "true" : undefined}>
         {gone && (

@@ -23,6 +23,18 @@
 .path-bar__path::-webkit-scrollbar {
   display: none;
 }
+/* The open file's tools (Rendered and Source, Select region, an image's size), drawn here by its tab. Empty for a plain text file. */
+.path-bar__tools {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-12);
+}
+/* The "Updated" note is always drawn and is empty for a text file: with nothing else in it, the place takes no room. */
+.path-bar__tools:not(:has(> :not(.preview__updated))) {
+  display: none;
+}
 .path-bar__sep {
   padding-inline: 2px;
   color: var(--text-3);

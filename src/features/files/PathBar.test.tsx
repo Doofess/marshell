@@ -24,6 +24,11 @@ describe("PathBar", () => {
     expect(render()).toContain('<span aria-hidden="true" class="path-bar__sep">\\</span>');
     expect(render({ windows: false })).toContain('<span aria-hidden="true" class="path-bar__sep">/</span>');
   });
+  it("has a place for the file's tools between the path and its own buttons", () => {
+    const html = render();
+    expect(html.indexOf("</nav>")).toBeLessThan(html.indexOf("path-bar__tools"));
+    expect(html.indexOf("path-bar__tools")).toBeLessThan(html.indexOf('aria-label="Collapse all folders"'));
+  });
   it("has the two buttons, the toggle pressed while the tree shows", () => {
     const shown = render();
     expect(shown).toContain('aria-label="Collapse all folders"');

@@ -7,6 +7,7 @@ import type { TreeView } from "../../generated/TreeView";
 import type { Os } from "../../lib/keymap";
 import { focusPane } from "../pane/focusPane";
 import { panelOfPath } from "../pane/panels";
+import { HeaderSlot } from "../preview/headerSlot";
 import { cachedFileListNow, fileListFor, folderName } from "../preview/quickFiles";
 import { listTree, searchFiles } from "./filesApi";
 import { afterOpen, COLLAPSED, filterTakesKeyboard, followTarget, keyboardToFile, openHow, rowOpens, treeBack } from "./filesActions";
@@ -88,6 +89,7 @@ export function FilesPanel(p: FilesPanelProps) {
   const [focusedPath, setFocusedPath] = useState<string | null>(null);
   const [filterOpen, setFilterOpen] = useState<ReadonlySet<string>>(new Set());
   const [rowMenu, setRowMenu] = useState<{ row: TreeRow; anchor: Anchor; opener: HTMLElement } | null>(null);
+  const [tools, setTools] = useState<HTMLElement | null>(null);
   const [barMenu, setBarMenu] = useState<{ anchor: Anchor; opener: HTMLElement } | null>(null);
 
   useLayoutEffect(() => {
@@ -383,10 +385,12 @@ export function FilesPanel(p: FilesPanelProps) {
       onCollapseAll={collapseAll}
       onToggleTree={toggleTree}
       onMenu={(anchor, opener) => setBarMenu({ anchor, opener })}
+      toolsRef={setTools}
     />
   );
   const position: TreePosition = p.position;
   return (
+    <HeaderSlot value={tools}>
     <div ref={box} className="files-panel" style={{ display: "grid", blockSize: "100%", minInlineSize: 0, minBlockSize: 0 }}>
       <FilesBody
         tree={treeNode}
@@ -433,5 +437,6 @@ export function FilesPanel(p: FilesPanelProps) {
         />
       )}
     </div>
+    </HeaderSlot>
   );
 }
