@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dividerLeft, dividerState, draggedWidth, paneGeometry, paneMotionKey } from "./paneLayout";
+import { dividerLeft, dividerState, draggedWidth, emptySlot, paneGeometry, paneMotionKey } from "./paneLayout";
 
 describe("paneGeometry", () => {
   it("a hidden pane leaves the room to the terminal", () => {
@@ -80,5 +80,42 @@ describe("dividerLeft", () => {
     expect(dividerLeft({ was: true, live: true, focused: true, covers: false })).toEqual({ focused: true, handOn: false });
     expect(dividerLeft({ was: false, live: false, focused: false, covers: true })).toEqual({ focused: false, handOn: false });
     expect(dividerLeft({ was: false, live: true, focused: true, covers: false })).toEqual({ focused: true, handOn: false });
+  });
+});
+
+describe("a pane with no session", () => {
+  const alone = { room: 1000, shown: true, saved: 400, terminalMin: 700, alone: true };
+  it("alone, the pane fills the room", () => {
+    const g = paneGeometry(alone);
+    expect(g.mode).toBe("fill");
+    expect(g.terminal).toBe(0);
+    expect(g.pane).toBe(1000);
+  });
+  it("alone in a narrow window still fills", () => {
+    expect(paneGeometry({ ...alone, room: 500 }).mode).toBe("fill");
+  });
+  it("alone and closed is hidden", () => {
+    expect(paneGeometry({ ...alone, shown: false }).mode).toBe("hidden");
+  });
+  it("a filling pane has no divider", () => {
+    expect(dividerState("fill", false)).toEqual({ live: false, still: true });
+  });
+  it("the fill moves as one key", () => {
+    expect(paneMotionKey("fill", "expanded")).toBe("fill");
+  });
+});
+
+describe("emptySlot", () => {
+  it("with no pane the empty state shows", () => {
+    expect(emptySlot({ viewing: false, paneDrawn: false, threeTracks: false })).toBe("empty");
+  });
+  it("a settled filling pane is alone in the room", () => {
+    expect(emptySlot({ viewing: false, paneDrawn: true, threeTracks: false })).toBe("nothing");
+  });
+  it("a filling pane that moves keeps the terminal's track held, so it slides in its own", () => {
+    expect(emptySlot({ viewing: false, paneDrawn: true, threeTracks: true })).toBe("hold");
+  });
+  it("under History nothing shows", () => {
+    expect(emptySlot({ viewing: true, paneDrawn: false, threeTracks: false })).toBe("nothing");
   });
 });

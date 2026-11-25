@@ -3,6 +3,7 @@ import type { PaneView } from "../../generated/PaneView";
 import type { Os } from "../../lib/keymap";
 import { isPageUrl, pageTitle, shellRefuses } from "../browser/address";
 import { isUnsaved } from "../editor/drafts";
+import { SHELL_OWNER } from "./paneOwner";
 import { panelHasNews } from "./paneNews";
 import { PANE_LIMITS, activeTab, openRefused, tabsOf } from "./paneState";
 import { PANELS, PANEL_LABEL, onScreen, panelOfPath, panelTabs, stackOf, type PanelId } from "./panels";
@@ -16,15 +17,18 @@ export const noTabsText = (panel: PanelId) => `No tabs open in ${PANEL_LABEL[pan
  * What a tab command (next, previous, close) says when it has no tab to act on: the panel that is empty, or that no tabs are open.
  * While a view replaces the terminal no panel is on screen though the session may hold tabs, so it says where the pane shows instead.
  */
-export const noTabText = (panel: PanelId | null, replaced: boolean): string => (replaced ? PANE_BESIDE_SESSION : panel ? noTabsText(panel) : NO_TABS_OPEN);
+export const noTabText = (panel: PanelId | null, replaced: boolean): string => (replaced ? PANE_NOT_WITH_HISTORY : panel ? noTabsText(panel) : NO_TABS_OPEN);
 export const panelHiddenText = (panel: PanelId) => `${PANEL_LABEL[panel]} is hidden.`;
-export const PANE_BESIDE_SESSION = "The side pane shows beside a session.";
+export const PANE_NOT_WITH_HISTORY = "Close History to show the side pane.";
 
-/** The title-bar button and the cursor: toggle the pane when a session is on screen and no main view replaces it, else say where it shows. */
-export function paneToggleOutcome(session: string | null | undefined, viewing: boolean): "toggle" | "blocked" {
-  return session == null || viewing ? "blocked" : "toggle";
+/** The title-bar button and the cursor: toggle the pane unless a main view (History) replaces the terminal, else say why not. */
+export function paneToggleOutcome(viewing: boolean): "toggle" | "blocked" {
+  return viewing ? "blocked" : "toggle";
 }
 export const TAB_LIMIT = `This session has ${PANE_LIMITS.tabs} tabs. Close one to open another.`;
+export const SHELL_TAB_LIMIT = `The shell panel has ${PANE_LIMITS.tabs} tabs. Close one to open another.`;
+/** The limit line for the pane's owner: SHELL_OWNER gives the shell panel's, any other key the session's. */
+export const tabLimitText = (key: string): string => (key === SHELL_OWNER ? SHELL_TAB_LIMIT : TAB_LIMIT);
 export const FOLDER_REFUSED = "A folder can't be shown in the side pane.";
 export const openedText = (name: string, panel: PanelId) => `Opened ${name} in ${PANEL_LABEL[panel]}.`;
 /** The announcement for a tab an agent opened with `marshell open`; `who` is the agent's name. */
@@ -133,10 +137,11 @@ export function paneTabFocus(s: { outcome: "none" | "show" | "step"; from: "pane
 /**
  * What leaving a pane tab for the terminal does (Esc, or Ctrl+Shift+Tab, in a tab). Beside the terminal, the keyboard just moves
  * there. In a window so narrow that the pane covers the terminal, the pane is hidden as well, so the keys never go to a program
- * out of sight.
+ * out of sight. A filling pane hides only when the shell panel isn't on screen (decision 16).
  */
-export function leavePaneOutcome(covers: boolean): "hide" | "focus" {
-  return covers ? "hide" : "focus";
+export function leavePaneOutcome(s: { covers: boolean; alone: boolean; shellShown: boolean }): "hide" | "focus" {
+  if (s.covers) return "hide";
+  return s.alone && !s.shellShown ? "hide" : "focus";
 }
 /** Said when leaving a tab hid the pane: the key that did it doesn't name the pane, so the line does, with the keys that bring it back. */
 export const paneHiddenText = (keys: string) => `The side pane is hidden. ${keys} shows it.`;

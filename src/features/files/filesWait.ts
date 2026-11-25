@@ -6,7 +6,7 @@ export const SEARCHING = "Searching…";
 export const RING_DELAY_MS = 150;
 
 /** The palette's words (`Palette.tsx`), with its fallback when there is no folder. */
-export const listFailed = (folder: string | null): string => (folder ? `Can't list the files in ${folder}.` : "Can't list files for this session.");
+export const listFailed = (folder: string | null): string => (folder ? `Can't list the files in ${folder}.` : "Can't list the files.");
 
 /** What Files waits for, as the ring's line, or null. */
 export function filesWait(o: { mode: FilterMode; names: "loading" | "error" | "ready"; searchBusy: boolean }): string | null {

@@ -9,9 +9,9 @@ import { panelOfPath, type PanelId } from "./panels";
 
 /** What the window knows when a frame of requests arrives. */
 export type OpensContext = {
-  /** The sessions the window lists, with their project (the recent-file list is kept by project). */
-  sessions: ReadonlyMap<string, { project: string }>;
-  /** The session on screen. */
+  /** The pane owner a core tab id belongs to (its key and project; the recent-file list is kept by project), or null for none. */
+  owner(tabId: string): { key: string; project: string } | null;
+  /** The owner key on screen. */
   shown: string | null;
   /** The panels in front of the person, for the session `shown`. */
   onScreen: readonly PanelId[];
@@ -50,7 +50,7 @@ export function takeOpens(view: PaneView, opens: readonly PaneOpen[], seen: Read
 
   for (const open of opens) {
     if (seen.has(open.id)) continue;
-    const session = ctx.sessions.get(open.tab_id);
+    const session = ctx.owner(open.tab_id);
     if (!session) {
       answer(open.id, "session");
       continue;
@@ -73,21 +73,21 @@ export function takeOpens(view: PaneView, opens: readonly PaneOpen[], seen: Read
       answer(open.id, "address");
       continue;
     }
-    if (openRefused(now, open.tab_id, target)) {
+    if (openRefused(now, session.key, target)) {
       answer(open.id, "limit");
-      if (open.auto && !full.includes(open.tab_id)) full.push(open.tab_id);
+      if (open.auto && !full.includes(session.key)) full.push(session.key);
       continue;
     }
     const panel = panelOfPath(target);
-    const onScreen = ctx.shown === open.tab_id && ctx.onScreen.includes(panel);
-    const action: PaneAction = { type: "openBackground", session: open.tab_id, kind: open.kind, target, by: open.by, project: session.project, onScreen };
+    const onScreen = ctx.shown === session.key && ctx.onScreen.includes(panel);
+    const action: PaneAction = { type: "openBackground", session: session.key, kind: open.kind, target, by: open.by, project: session.project, onScreen };
     const next = paneReducer(now, action);
     answer(open.id, null);
     if (next === now) continue;
     actions.push(action);
     now = next;
     said.push(open.by === "shell" ? openedText(title, panel) : openedByText(agentLabel(open.by), title, panel));
-    if (!onScreen && !news.some((n) => n.session === open.tab_id && n.panel === panel)) news.push({ session: open.tab_id, panel });
+    if (!onScreen && !news.some((n) => n.session === session.key && n.panel === panel)) news.push({ session: session.key, panel });
   }
   return { view: now, actions, done, said, news, full };
 }

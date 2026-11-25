@@ -10,7 +10,7 @@ import { EmptyBrowser } from "../pane/EmptyBrowser";
 import { EmptyFiles } from "../pane/EmptyFiles";
 import { PanelStack } from "../pane/PanelStack";
 import { PANEL_LABEL, activeIn, panelTabs, stackOf, stackPanels, type PanelId } from "../pane/panels";
-import { PANE_BESIDE_SESSION, paneBody, paneToggleOutcome } from "../pane/paneCommands";
+import { PANE_NOT_WITH_HISTORY, paneBody, paneToggleOutcome } from "../pane/paneCommands";
 import { SidePane } from "../pane/SidePane";
 import { paneReducer, recentFor } from "../pane/paneState";
 import { FIXTURES } from "../sidebar/fixtures";
@@ -729,11 +729,10 @@ describe("LiveApp: the side pane", () => {
         {paneBody(pane, session) === "empty" ? <EmptyFiles recent={recentFor(pane, "C:\\dev\\my-app", session)} onOpenFile={() => {}} onBrowse={() => {}} onRecent={() => {}} /> : null}
       </SidePane>,
     );
-  it("the title-bar button toggles beside a session, and otherwise says where the pane shows", () => {
-    expect(paneToggleOutcome("t1", false)).toBe("toggle");
-    expect(paneToggleOutcome(undefined, false)).toBe("blocked");
-    expect(paneToggleOutcome("t1", true)).toBe("blocked");
-    expect(PANE_BESIDE_SESSION).toBe("The side pane shows beside a session.");
+  it("the title-bar button toggles, and under History says why not", () => {
+    expect(paneToggleOutcome(false)).toBe("toggle");
+    expect(paneToggleOutcome(true)).toBe("blocked");
+    expect(PANE_NOT_WITH_HISTORY).toBe("Close History to show the side pane.");
   });
   it("Ctrl+Shift+Q with no tabs shows the empty pane", () => {
     const next = paneReducer(closedPane, { type: "toggle", session: "t1" });
@@ -813,9 +812,9 @@ describe("LiveApp: the stack of panels", () => {
   });
   it("an empty Browser panel lists the session's ports", () => {
     const h = renderToStaticMarkup(<EmptyBrowser available ports={[{ port: 3000, url: "http://localhost:3000/" }]} onNewTab={() => {}} onOpenHtml={() => {}} onPort={() => {}} />);
-    expect(h).toContain("Running in this session");
+    expect(h).toContain("Local servers");
     expect(h).toContain("localhost:3000");
-    expect(renderToStaticMarkup(<EmptyBrowser available ports={[]} onNewTab={() => {}} onOpenHtml={() => {}} onPort={() => {}} />)).not.toContain("Running in this session");
+    expect(renderToStaticMarkup(<EmptyBrowser available ports={[]} onNewTab={() => {}} onOpenHtml={() => {}} onPort={() => {}} />)).not.toContain("Local servers");
   });
 });
 
@@ -825,7 +824,7 @@ describe("LiveApp: the Files panel's wiring", () => {
     expect(source).toContain("<FilesPanel");
     expect(source).not.toMatch(/paneTabs\.tabs\.length > 0 \? resolveTerminalTheme/);
     // The Files panel is drawn for the session, not only when a tab is selected.
-    expect(source).toMatch(/panel === "files" && paneSession !== undefined \? \(\s*<FilesPanel/);
+    expect(source).toMatch(/panel === "files" && owner\.tabId !== null \? \(\s*<FilesPanel/);
   });
   it("the strip's Files menu opens the Files menu, and a tab's double-click keeps it", () => {
     expect(source).toContain('label: panel === "browser" ? "Browser menu" : "Files menu"');
@@ -854,7 +853,7 @@ describe("LiveApp: the Files panel's wiring", () => {
     expect(source).toContain('Pick<PreviewHandle, "text" | "saving" | "autoSave">');
   });
   it("keeps a preview tab on an edit and before a preview open that would replace unsaved text", () => {
-    expect(source).toMatch(/if \(dirty && tab\.preview === true && paneSession !== undefined\) paneDispatch\(\{ type: "keep"/);
+    expect(source).toMatch(/if \(dirty && tab\.preview === true\) paneDispatch\(\{ type: "keep"/);
     expect(source).toContain("keepFirst(current,");
   });
   it("gives the Preview the Files settings in the Files panel only", () => {
@@ -863,7 +862,7 @@ describe("LiveApp: the Files panel's wiring", () => {
   });
   it("pastes a tree's path the way a drop on a terminal does", () => {
     expect(source).toContain("return pasteInto(target.tabId, paths);");
-    expect(source).toContain("onPaste={(path) => void pasteInto(paneSession, [path])}");
+    expect(source).toContain("onPaste={(path) => void pasteInto(owner.tabId!, [path])}");
     // The path bar starts a file under the home folder at `~` (6r-2 decision 7).
     expect(source).toContain("home={home}");
   });
@@ -885,5 +884,32 @@ describe("LiveApp: tree opens and saves", () => {
   });
   it("a tree save from a session that has closed is dropped", () => {
     expect(source).toContain("stateRef.current.infos.some((i) => i.tab_id === session)");
+  });
+});
+
+describe("LiveApp: the shell panel owns the pane", () => {
+  const source = readFileSync(join(__dirname, "LiveApp.tsx"), "utf8");
+  // A top-level arrow function's text, from its `const` to the `};` that closes it at the component's indent.
+  const body = (name: string) => {
+    const start = source.indexOf(`  const ${name} = `);
+    expect(start).toBeGreaterThan(-1);
+    return source.slice(start, source.indexOf("\n  };", start));
+  };
+  it("lists the pane owner's folder in the palette's file list, so it works with no session", () => {
+    expect(source).toMatch(/<LivePalette [^\n]*tab=\{owner\.tabId\}/);
+    expect(source).not.toContain("tab={focusedId ?? null}");
+  });
+  it("opens a panel folded for lack of room before its terminal takes the keyboard back", () => {
+    expect(body("toOwnerTerminal")).toMatch(/if \(shellAutoFolded\(document\)\) setShellForced\(true\);\s*return focusShellTerminal\(document\);/);
+  });
+  it("asks for no shell while the panel shows that the shell didn't start", () => {
+    expect(source).toMatch(/\|\| failedFor === endpoint\) return;/);
+  });
+  it("gives the keyboard back to the owner's terminal, never the session's, from the pane, its commands, a region's add and a typed delivery", () => {
+    for (const name of ["toTerminalFromPane", "togglePanel", "paneRun", "addRegion"]) {
+      expect(body(name)).toMatch(/toOwnerTerminal/);
+      expect(body(name)).not.toContain("actions.focusTerminal()");
+    }
+    expect(source).toContain("onTyped={() => (owner.shell ? toOwnerTerminal() : focusDelivered(");
   });
 });

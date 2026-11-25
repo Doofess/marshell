@@ -252,7 +252,7 @@ describe("ChangesEmpty", () => {
     expect(refused).toContain("network share");
     expect(refused).not.toContain("<button");
     const noFolder = empty(null, true);
-    expect(noFolder).toContain("This session has no folder the tree can show.");
+    expect(noFolder).toContain("There is no folder the tree can show.");
     expect(noFolder).not.toContain("<button");
     expect(noFolder).toContain('data-icon="panel-changes"');
   });

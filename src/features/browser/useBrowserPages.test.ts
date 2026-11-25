@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
+import type { PaneTab } from "../../generated/PaneTab";
 import type { PaneView } from "../../generated/PaneView";
 import { paneReducer, tabsOf } from "../pane/paneState";
 import { canLoad, pageReducer, setLoadable, subscribePages, type PageEvent, type PageState } from "./pageStore";
-import { PAGE_REFUSED, TAB_LIMIT } from "../pane/paneCommands";
+import { PAGE_REFUSED, SHELL_TAB_LIMIT, TAB_LIMIT } from "../pane/paneCommands";
 import { openKeys, owners, pageAction, popupActions, popupNews, popupFold, popupOutcome, reloadPlan, unload } from "./useBrowserPages";
 import { nextLive } from "./pages";
 import { slotStep } from "./usePageSlot";
@@ -18,28 +19,70 @@ describe("openKeys", () => {
     s = page(s, "b", "http://localhost:3000/");
     s = page(s, "b", "about:blank");
     s = file(s, "b", "C:\\x\\b.md");
-    expect(openKeys(s, new Set(["a", "b"]))).toEqual(new Set(["a/t2", "b/t1", "b/t2"]));
+    expect(openKeys(s, new Set(["a", "b"]), null)).toEqual(new Set(["a/t2", "b/t1", "b/t2"]));
   });
   it("is empty with no tabs", () => {
-    expect(openKeys(empty, new Set(["a"])).size).toBe(0);
+    expect(openKeys(empty, new Set(["a"]), null).size).toBe(0);
   });
   // Found in review: the pane keeps a closed session's tabs (a reopened session gets them back), and its pages stayed loaded
   // with no way to them: a video kept playing.
   it("leaves out the tabs of a session that is closed, so its pages unload", () => {
     const s = page(page(empty, "a", "https://example.com/"), "b", "http://localhost:3000/");
-    expect(openKeys(s, new Set(["a"]))).toEqual(new Set(["a/t1"]));
-    expect(nextLive(["b/t1", "a/t1"], "a/t1", openKeys(s, new Set(["a"])))).toEqual({ live: ["a/t1"], close: ["b/t1"] });
+    expect(openKeys(s, new Set(["a"]), null)).toEqual(new Set(["a/t1"]));
+    expect(nextLive(["b/t1", "a/t1"], "a/t1", openKeys(s, new Set(["a"]), null))).toEqual({ live: ["a/t1"], close: ["b/t1"] });
   });
   it("counts every session while the session list isn't known, so a core that is starting again unloads nothing", () => {
     const s = page(page(empty, "a", "https://example.com/"), "b", "http://localhost:3000/");
-    expect(openKeys(s, null)).toEqual(new Set(["a/t1", "b/t1"]));
+    expect(openKeys(s, null, null)).toEqual(new Set(["a/t1", "b/t1"]));
+  });
+});
+
+// The shell panel's tabs are the pane's "shell" set. Their pages are keyed by the panel shell's tab id, so that a handover (the
+// panel's shell becoming a session) renames the set and keeps every page.
+describe("the shell's browser tabs", () => {
+  const tab = (id: string, kind: "file" | "browser", path: string): PaneTab => ({ id, kind, history: [{ path, line: null, col: null, view: "rendered" }], index: 0, title: null, opened_by: null, unseen: false });
+  const pane: PaneView = {
+    open: true,
+    width: null,
+    sessions: { shell: { tabs: [tab("p1", "browser", "https://shell.example/"), tab("p2", "file", "/x.md")], active: "p1", active_browser: "p1" } },
+    recent: [],
+  };
+  it("the shell's tabs are keyed by the panel's tab id", () => {
+    const o = owners(pane, new Set(["s1"]), "t9");
+    expect([...o.keys()]).toEqual(["t9/p1"]);
+    expect(o.get("t9/p1")).toEqual({ session: "shell", paneTab: "p1" });
+  });
+  it("with no panel shell the shell's pages can't load", () => {
+    const o = owners(pane, new Set(["s1"]), null);
+    expect([...o.keys()].filter((k) => k.endsWith("/p1"))).toEqual([]);
+  });
+  it("a handover keeps every key", () => {
+    const before = openKeys(pane, new Set(["s1"]), "t9");
+    const after = openKeys(paneReducer(pane, { type: "handOver", from: "shell", to: "t9" }), new Set(["s1", "t9"]), null);
+    expect(before.size).toBe(1);
+    expect(after).toEqual(before);
+  });
+  it("a page report of a shell page moves the shell's tab", () => {
+    const owner = owners(pane, new Set(["s1"]), "t9").get("t9/p1");
+    expect(pageAction(owner, { url: "https://shell.example/next", title: "N", loading: false })).toEqual({ type: "page", session: "shell", paneTab: "p1", url: "https://shell.example/next", title: "N" });
+  });
+  it("a popup in a shell page opens in the shell's set", () => {
+    expect(popupOutcome(pane, "shell", "https://example.com/", true, []).actions[0]).toMatchObject({ type: "openPage", session: "shell" });
+  });
+  it("a popup in a full shell set says the shell's limit", () => {
+    let full = empty;
+    for (let i = 0; i < 32; i++) full = page(full, "shell", `https://example.com/${i}`);
+    expect(popupOutcome(full, "shell", "https://example.com/", true, [])).toEqual({ actions: [], say: SHELL_TAB_LIMIT });
+  });
+  it("reloadPlan finds a shell page", () => {
+    expect(reloadPlan(pane, ["t9/p1"], "t9")).toEqual([{ key: "t9/p1", url: "https://shell.example/" }]);
   });
 });
 
 describe("reloadPlan", () => {
   it("loads every loaded page again, each at its tab's address, and counts them", () => {
     const s = page(page(empty, "s1", "https://a.example/"), "s2", "https://b.example/x");
-    expect(reloadPlan(s, ["s1/t1", "s2/t1", "s3/t1"])).toEqual([
+    expect(reloadPlan(s, ["s1/t1", "s2/t1", "s3/t1"], null)).toEqual([
       { key: "s1/t1", url: "https://a.example/" },
       { key: "s2/t1", url: "https://b.example/x" },
       { key: "s3/t1", url: null },
@@ -50,8 +93,8 @@ describe("reloadPlan", () => {
 describe("owners", () => {
   it("names the session and the pane tab of each key", () => {
     const s = page(page(empty, "a", "https://example.com/"), "b", "https://example.org/");
-    expect(owners(s, new Set(["a", "b"])).get("b/t1")).toEqual({ session: "b", paneTab: "t1" });
-    expect(owners(s, new Set(["a"])).has("b/t1")).toBe(false);
+    expect(owners(s, new Set(["a", "b"]), null).get("b/t1")).toEqual({ session: "b", paneTab: "t1" });
+    expect(owners(s, new Set(["a"]), null).has("b/t1")).toBe(false);
   });
 });
 
@@ -62,7 +105,7 @@ describe("canLoad", () => {
   afterEach(() => setLoadable(null));
   it("a tab whose session is closed opens no page, however active its last drawing was", () => {
     const s = page(page(empty, "a", "https://example.com/"), "b", "http://localhost:3000/");
-    setLoadable(openKeys(s, new Set(["a"])));
+    setLoadable(openKeys(s, new Set(["a"]), null));
     expect(canLoad("b/t1")).toBe(false);
     expect(slotStep(undefined, true, false, canLoad("b/t1"))).toBe("none");
     expect(canLoad("a/t1")).toBe(true);

@@ -7,6 +7,7 @@ import type { ChangesReply } from "../../generated/ChangesReply";
 import { NO_FOLDER_LINE } from "../files/FileTree";
 import { absoluteOf } from "../files/treeModel";
 import { ChangesIcon, EmptyPanel } from "../pane/EmptyPanel";
+import { ShellNote } from "./ShellNote";
 import { paneFocusTarget } from "../pane/focusPane";
 import { type ItemRange, DiffList, type ListResult, reach } from "./DiffList";
 import { remembered, safeCommentHtml } from "../preview/markdown";
@@ -74,6 +75,8 @@ export type ChangesPanelProps = {
   sessionName?: string;
   /** A request was typed into the session's prompt: the keyboard goes there. */
   onTyped?(): void;
+  /** A line drawn first in the strip: why something is off (the shell panel runs no agent). */
+  note?: string;
 };
 
 export { listKey } from "./DiffList";
@@ -359,7 +362,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
     if (next.state.id === null) {
       const away = elsewhere(now, listed.folder) ?? unkept(next.state.anchor.path);
       if (away !== null) return p.announce(away);
-      if ((now?.comments.length ?? 0) >= MAX_COMMENTS) return p.announce(`A session holds at most ${MAX_COMMENTS} comments.`);
+      if ((now?.comments.length ?? 0) >= MAX_COMMENTS) return p.announce(`Changes keeps at most ${MAX_COMMENTS} comments.`);
     }
     // A box on the same lines as the one that gave way is the same element, which mounts nothing: it is focused here instead.
     if (open !== null && anchorKey(open.state.anchor) === anchorKey(next.state.anchor)) box.current?.querySelector<HTMLTextAreaElement>(".changes__box-text")?.focus();
@@ -889,7 +892,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
   if (!listed || !hasList(listed, sections, githubItems)) {
     const empty = <ChangesEmpty reply={reply} noFolder={noFolder} onRetry={refresh} />;
     const around = emptyNotices(listed, drafts);
-    if (around === null && bar === null && note === null && readLine === null) {
+    if (around === null && bar === null && note === null && readLine === null && p.note === undefined) {
       return (
         <>
           {empty}
@@ -900,11 +903,16 @@ export function ChangesPanel(p: ChangesPanelProps) {
     return (
       <div className="changes" ref={box}>
         <ChangesHead
-          strip={[...(around ?? []), ...(note === null ? [] : [note]), ...(readLine === null ? [] : [readLine])].map((t) => (
-            <p key={t} className="changes__notice">
-              {t}
-            </p>
-          ))}
+          strip={
+            <>
+              {p.note !== undefined && <ShellNote text={p.note} />}
+              {[...(around ?? []), ...(note === null ? [] : [note]), ...(readLine === null ? [] : [readLine])].map((t) => (
+                <p key={t} className="changes__notice">
+                  {t}
+                </p>
+              ))}
+            </>
+          }
           bar={bar}
         />
         {empty}
@@ -953,6 +961,7 @@ export function ChangesPanel(p: ChangesPanelProps) {
       <ChangesHead
         strip={
           <>
+            {p.note !== undefined && <ShellNote text={p.note} />}
             {line !== "" && <p className="changes__line">{line}</p>}
             {notices.map((t) => (
               <p key={t} className="changes__notice">

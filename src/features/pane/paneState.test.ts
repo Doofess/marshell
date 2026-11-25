@@ -1208,3 +1208,29 @@ describe("preview tabs and the tree", () => {
     expect(tabsOf(tree("a".repeat(4096)), "s").tree).toEqual({ root: "a".repeat(4096), expanded: [] });
   });
 });
+
+describe("handOver", () => {
+  const T = (id: string): PaneTab => ({ id, kind: "file", history: [{ path: `/${id}` }], index: 0 }) as unknown as PaneTab;
+  const view = (sessions: Record<string, SessionTabs>): PaneView => ({ open: true, width: null, sessions, recent: [] });
+  const shellSet = (): SessionTabs => ({ tabs: [T("a"), T("b")], active: "a", tree: { root: "/r", expanded: [] } });
+  it("handOver moves the shell's set to the new session", () => {
+    const set = shellSet();
+    const r = paneReducer(view({ shell: set }), { type: "handOver", from: "shell", to: "t9" });
+    expect(r.sessions.t9).toEqual(set);
+    expect(r.sessions.shell).toBeUndefined();
+  });
+  it("handOver into a set with only a tree keeps that tree", () => {
+    const t2 = { root: "/two", expanded: [] };
+    const r = paneReducer(view({ shell: shellSet(), t9: { tabs: [], active: null, tree: t2 } }), { type: "handOver", from: "shell", to: "t9" });
+    expect(r.sessions.t9!.tabs).toEqual(shellSet().tabs);
+    expect(r.sessions.t9!.tree).toEqual(t2);
+  });
+  it("handOver into a set with tabs does nothing", () => {
+    const v = view({ shell: shellSet(), t9: { tabs: [T("c")], active: "c" } });
+    expect(paneReducer(v, { type: "handOver", from: "shell", to: "t9" })).toBe(v);
+  });
+  it("handOver with no shell set does nothing", () => {
+    const v = view({});
+    expect(paneReducer(v, { type: "handOver", from: "shell", to: "t9" })).toBe(v);
+  });
+});

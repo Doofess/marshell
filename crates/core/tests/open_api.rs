@@ -540,3 +540,103 @@ async fn done_for_an_unknown_id_is_harmless() {
     assert_eq!(done(&app, serde_json::json!([])).await, StatusCode::NO_CONTENT);
     assert_eq!(waiting(&st).len(), 1);
 }
+
+/// POST /v1/shell-panel in `dir`, a temp folder the test made (the state has no default folder); the panel shell's id.
+async fn open_panel(app: &axum::Router, dir: &Path) -> String {
+    let body = serde_json::json!({ "cols": 80, "rows": 24, "cwd": dir.to_string_lossy() });
+    let res = app
+        .clone()
+        .oneshot(api("POST", "/v1/shell-panel", true, Some(body)))
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let json: serde_json::Value = serde_json::from_str(&body_of(res).await).unwrap();
+    json["tab_id"].as_str().unwrap().to_string()
+}
+
+/// POST /v1/shell-panel/adopt.
+async fn adopt(app: &axum::Router) -> StatusCode {
+    app.clone()
+        .oneshot(api("POST", "/v1/shell-panel/adopt", true, None))
+        .await
+        .unwrap()
+        .status()
+}
+
+#[tokio::test]
+async fn an_open_for_the_panel_shell_is_queued() {
+    let tmp = tempfile::tempdir().unwrap();
+    let st = state(&tmp.path().join("home"));
+    let app = router(st.clone());
+    let panel = open_panel(&app, tmp.path()).await;
+    let seen = fake_app(&st, &app, None);
+    let file = a_file(tmp.path(), "a.md");
+    assert_eq!(open(&app, &panel, &file, None).await.0, StatusCode::NO_CONTENT);
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(
+        (seen[0].tab_id.as_str(), seen[0].kind.as_str()),
+        (panel.as_str(), "file")
+    );
+}
+
+#[tokio::test]
+async fn an_open_from_the_panel_is_by_the_shell() {
+    let tmp = tempfile::tempdir().unwrap();
+    let st = state(&tmp.path().join("home"));
+    let app = router(st.clone());
+    let panel = open_panel(&app, tmp.path()).await;
+    let seen = fake_app(&st, &app, None);
+    let file = a_file(tmp.path(), "a.md");
+    assert_eq!(open(&app, &panel, &file, Some(&panel)).await.0, StatusCode::NO_CONTENT);
+    assert_eq!(seen.lock().unwrap()[0].by, "shell");
+}
+
+#[tokio::test]
+async fn an_open_for_the_panel_at_its_limit_names_the_panel() {
+    let tmp = tempfile::tempdir().unwrap();
+    let st = state(&tmp.path().join("home"));
+    let app = router(st.clone());
+    let panel = open_panel(&app, tmp.path()).await;
+    fake_app(&st, &app, Some("limit"));
+    let file = a_file(tmp.path(), "a.md");
+    let (status, text) = open(&app, &panel, &file, None).await;
+    assert_eq!(
+        (status, text.as_str()),
+        (
+            StatusCode::CONFLICT,
+            "The shell panel already has 32 tabs in its side pane."
+        )
+    );
+}
+
+#[tokio::test]
+async fn an_open_for_a_closed_panel_shell_names_the_panel() {
+    let tmp = tempfile::tempdir().unwrap();
+    let st = state(&tmp.path().join("home"));
+    let app = router(st.clone());
+    let panel = open_panel(&app, tmp.path()).await;
+    fake_app(&st, &app, Some("session"));
+    let file = a_file(tmp.path(), "a.md");
+    let (status, text) = open(&app, &panel, &file, None).await;
+    assert_eq!(
+        (status, text.as_str()),
+        (StatusCode::CONFLICT, "The shell panel's shell has closed.")
+    );
+}
+
+#[tokio::test]
+async fn an_open_for_an_adopted_panel_names_its_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    let st = state(&tmp.path().join("home"));
+    let app = router(st.clone());
+    let panel = open_panel(&app, tmp.path()).await;
+    assert_eq!(adopt(&app).await, StatusCode::OK);
+    fake_app(&st, &app, Some("limit"));
+    let file = a_file(tmp.path(), "a.md");
+    let (status, text) = open(&app, &panel, &file, None).await;
+    assert_eq!(
+        (status, text.as_str()),
+        (StatusCode::CONFLICT, "Session 1 already has 32 tabs in its side pane.")
+    );
+}

@@ -441,3 +441,116 @@ async fn a_panel_in_a_named_folder_records_it() {
     );
     state.session(&panel).unwrap().force_kill();
 }
+
+/// A default folder with `a.txt` in it, as the panel's routes read it.
+fn default_with_a_file() -> tempfile::TempDir {
+    let default = tempfile::tempdir().unwrap();
+    std::fs::write(default.path().join("a.txt"), "hello").unwrap();
+    default
+}
+
+async fn call(
+    app: &axum::Router,
+    method: &str,
+    path: &str,
+    body: Option<serde_json::Value>,
+) -> axum::response::Response {
+    app.clone().oneshot(api(method, path, body)).await.unwrap()
+}
+
+#[tokio::test]
+async fn the_panel_shell_lists_its_folders_files() {
+    let home = tempfile::tempdir().unwrap();
+    let default = default_with_a_file();
+    let state = state_with(home.path(), None, Some(default.path()));
+    let app = router(state.clone());
+    let (tab, _) = open_panel_as(&app, None).await;
+    let res = call(&app, "GET", &format!("/v1/sessions/{tab}/files"), None).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let answer = json_of(res).await;
+    // The core answers the long form of a folder the temp dir names in its short 8.3 form.
+    let root = std::fs::canonicalize(answer["root"].as_str().unwrap()).unwrap();
+    assert_eq!(root, std::fs::canonicalize(default.path()).unwrap());
+    assert!(answer["files"].to_string().contains("a.txt"), "{answer}");
+    state.session(&tab).unwrap().force_kill();
+}
+
+#[tokio::test]
+async fn the_panel_shell_has_a_tree() {
+    let home = tempfile::tempdir().unwrap();
+    let default = default_with_a_file();
+    let state = state_with(home.path(), None, Some(default.path()));
+    let app = router(state.clone());
+    let (tab, _) = open_panel_as(&app, None).await;
+    let body = serde_json::json!({ "dirs": [{ "dir": "", "stamp": null }] });
+    let res = call(&app, "POST", &format!("/v1/sessions/{tab}/tree"), Some(body)).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    state.session(&tab).unwrap().force_kill();
+}
+
+#[tokio::test]
+async fn the_panel_shell_has_changes() {
+    let home = tempfile::tempdir().unwrap();
+    let default = default_with_a_file();
+    let state = state_with(home.path(), None, Some(default.path()));
+    let app = router(state.clone());
+    let (tab, _) = open_panel_as(&app, None).await;
+    let body = serde_json::json!({ "stamp": null, "hide_whitespace": false });
+    let res = call(&app, "POST", &format!("/v1/sessions/{tab}/changes"), Some(body)).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(json_of(res).await["kind"], "no_repo");
+    state.session(&tab).unwrap().force_kill();
+}
+
+#[tokio::test]
+async fn the_panel_shell_takes_no_review() {
+    let home = tempfile::tempdir().unwrap();
+    let default = default_with_a_file();
+    let state = state_with(home.path(), None, Some(default.path()));
+    let app = router(state.clone());
+    let (tab, _) = open_panel_as(&app, None).await;
+    let body = serde_json::json!({ "base": null });
+    let res = call(&app, "POST", &format!("/v1/sessions/{tab}/review"), Some(body)).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert_eq!(json_of(res).await["reason"], "no_agent");
+    state.session(&tab).unwrap().force_kill();
+}
+
+#[tokio::test]
+async fn the_panel_shell_takes_no_comments() {
+    let home = tempfile::tempdir().unwrap();
+    let default = default_with_a_file();
+    let state = state_with(home.path(), None, Some(default.path()));
+    let app = router(state.clone());
+    let (tab, _) = open_panel_as(&app, None).await;
+    let body = serde_json::json!({ "text": "x" });
+    let res = call(&app, "POST", &format!("/v1/sessions/{tab}/comments"), Some(body)).await;
+    assert_eq!(res.status(), StatusCode::CONFLICT);
+    assert_eq!(json_of(res).await["reason"], "no_agent");
+    state.session(&tab).unwrap().force_kill();
+}
+
+#[tokio::test]
+async fn an_adopted_panel_resolves_as_its_row() {
+    let home = tempfile::tempdir().unwrap();
+    let default = default_with_a_file();
+    let state = state_with(home.path(), None, Some(default.path()));
+    let app = router(state.clone());
+    let (tab, _) = open_panel_as(&app, None).await;
+    assert_eq!(adopt(&app).await.status(), StatusCode::OK);
+    let res = call(&app, "GET", &format!("/v1/sessions/{tab}/files"), None).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let listed = listed(&sessions(&app).await, &tab).expect("the adopted tab is listed");
+    assert!(listed["number"].as_u64().unwrap() >= 1, "{listed}");
+    state.session(&tab).unwrap().force_kill();
+}
+
+#[tokio::test]
+async fn a_tab_that_is_neither_is_not_found() {
+    let home = tempfile::tempdir().unwrap();
+    let default = default_with_a_file();
+    let state = state_with(home.path(), None, Some(default.path()));
+    let app = router(state);
+    let res = call(&app, "GET", "/v1/sessions/tnope/files", None).await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}

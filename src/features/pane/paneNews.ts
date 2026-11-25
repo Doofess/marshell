@@ -6,7 +6,9 @@ export type NewsAction =
   /** The panel is on screen for the session. */
   | { type: "seen"; session: string; panel: PanelId }
   /** The sessions still in the list: a pair of any other session is forgotten, since nobody can look at its panel any more. */
-  | { type: "only"; sessions: ReadonlySet<string> };
+  | { type: "only"; sessions: ReadonlySet<string> }
+  /** The shell's pairs follow it to its new session: every `panel:from` becomes `panel:to`. */
+  | { type: "rename"; from: string; to: string };
 
 /** A key of the set: the panel id never holds ":", so the session is what follows the first one. */
 const keyOf = (panel: PanelId, session: string) => `${panel}:${session}`;
@@ -24,6 +26,16 @@ export function newsReducer(news: ReadonlySet<string>, a: NewsAction): ReadonlyS
       if (!news.has(k)) return news;
       const next = new Set(news);
       next.delete(k);
+      return next;
+    }
+    case "rename": {
+      const moving = [...news].filter((k) => k.slice(k.indexOf(":") + 1) === a.from);
+      if (moving.length === 0) return news;
+      const next = new Set(news);
+      for (const k of moving) {
+        next.delete(k);
+        next.add(`${k.slice(0, k.indexOf(":"))}:${a.to}`);
+      }
       return next;
     }
     case "only": {

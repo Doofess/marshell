@@ -21,7 +21,7 @@ describe("PushSheet", () => {
     expect(h).toContain("Add a thing");
     expect(h).toContain("And 3 more.");
     expect(h).toContain("2 files aren&#x27;t committed and stay out.");
-    expect(h).toContain("This isn&#x27;t the folder the session started in.");
+    expect(h).toContain("This isn&#x27;t the folder the terminal started in.");
     expect(buttons(h)).toEqual(["Cancel", "Push 2 commits"]);
     expect(view(state({ kind: "confirm", plan: plan({ to_push: 1 }) }))).toContain("1 commit will be pushed to origin.");
   });

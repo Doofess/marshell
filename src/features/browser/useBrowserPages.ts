@@ -3,7 +3,8 @@ import type { PaneView } from "../../generated/PaneView";
 import { appScheme } from "../terminal/terminalTheme";
 import type { CookieRule } from "../../generated/CookieRule";
 import { currentEntry, isBrowserTab, openRefused, paneReducer, tabsOf, type PaneAction } from "../pane/paneState";
-import { PAGE_REFUSED, TAB_LIMIT } from "../pane/paneCommands";
+import { PAGE_REFUSED, tabLimitText } from "../pane/paneCommands";
+import { SHELL_OWNER } from "../pane/paneOwner";
 import { passingBlank, shellRefuses } from "./address";
 import { browser, onBrowser, pageKey } from "./browserApi";
 import { nextLive } from "./pages";
@@ -20,18 +21,22 @@ export type Owner = { session: string; paneTab: string };
  * Every browser tab of every open session, by its page's key: the pages that may be loaded. File tabs are not counted. The pane
  * keeps a closed session's tabs, so that reopening it brings them back; `sessions` (the ids in the session list) leaves those
  * out, and their pages unload. Null while the list isn't known: every session counts, and nothing unloads.
+ * The shell panel's tabs (the pane's `"shell"` set) are never filtered by `sessions`: their pages are keyed by `shellTabId`, the
+ * panel shell's id, so a handover (the set renamed to that id) keeps every key. While `shellTabId` is null they have no pages.
  */
-export function owners(pane: PaneView, sessions: ReadonlySet<string> | null): Map<string, Owner> {
+export function owners(pane: PaneView, sessions: ReadonlySet<string> | null, shellTabId: string | null): Map<string, Owner> {
   const out = new Map<string, Owner>();
   for (const session of Object.keys(pane.sessions)) {
-    if (sessions !== null && !sessions.has(session)) continue;
-    for (const t of tabsOf(pane, session).tabs) if (isBrowserTab(t)) out.set(pageKey(session, t.id), { session, paneTab: t.id });
+    const shell = session === SHELL_OWNER;
+    if (shell ? shellTabId === null : sessions !== null && !sessions.has(session)) continue;
+    const base = shell ? shellTabId! : session;
+    for (const t of tabsOf(pane, session).tabs) if (isBrowserTab(t)) out.set(pageKey(base, t.id), { session, paneTab: t.id });
   }
   return out;
 }
 
-/** The keys of every browser tab of every open session. */
-export const openKeys = (pane: PaneView, sessions: ReadonlySet<string> | null): Set<string> => new Set(owners(pane, sessions).keys());
+/** The keys of every browser tab of every open session, and of the shell panel's. */
+export const openKeys = (pane: PaneView, sessions: ReadonlySet<string> | null, shellTabId: string | null): Set<string> => new Set(owners(pane, sessions, shellTabId).keys());
 
 /**
  * What a page's popup does to the pane: a new browser tab in the popup's own session, selected when that session's Browser panel is on screen, and
@@ -50,7 +55,7 @@ export function popupActions(pane: PaneView, session: string, url: string, onScr
 export function popupOutcome(pane: PaneView, session: string, url: string, onScreen: boolean, own: readonly (readonly [string, number])[]): { actions: PaneAction[]; say: string | null } {
   const actions = popupActions(pane, session, url, onScreen, own);
   if (actions.length === 0) return { actions, say: PAGE_REFUSED };
-  if (openRefused(pane, session, url)) return { actions: [], say: TAB_LIMIT };
+  if (openRefused(pane, session, url)) return { actions: [], say: tabLimitText(session) };
   return { actions, say: null };
 }
 
@@ -94,8 +99,8 @@ export async function unload(keys: readonly string[], close: (key: string) => Pr
 }
 
 /** What loading every loaded page again does: each key's tab address, or null for a key whose tab is gone (closed, not opened again). */
-export function reloadPlan(pane: PaneView, keys: readonly string[]): { key: string; url: string | null }[] {
-  const owned = owners(pane, null);
+export function reloadPlan(pane: PaneView, keys: readonly string[], shellTabId: string | null): { key: string; url: string | null }[] {
+  const owned = owners(pane, null, shellTabId);
   return keys.map((key) => {
     const o = owned.get(key);
     const tab = o ? tabsOf(pane, o.session).tabs.find((t) => t.id === o.paneTab) : undefined;
@@ -135,6 +140,8 @@ type Options = {
   own(): readonly (readonly [string, number])[];
   /** Says something to the person. */
   announce(text: string): void;
+  /** The panel shell's tab id, or null while it isn't there: the shell's browser tabs are keyed by it. */
+  shellTabId: string | null;
 };
 
 /**
@@ -142,9 +149,9 @@ type Options = {
  * drops and the store forgets them; the shell's `browser://` events reach the store, and a page's address and title reach its tab; a popup opens a tab; the
  * pages follow the app's theme. Nothing is closed on unmount: the shell closes the pages at quit.
  */
-export function useBrowserPages(pane: PaneView, shownKey: string | null, { sessions, dispatch, browserSession, news, own, announce }: Options): { reloadPrivate(): number } {
+export function useBrowserPages(pane: PaneView, shownKey: string | null, { sessions, dispatch, browserSession, news, own, announce, shellTabId }: Options): { reloadPrivate(): number } {
   const live = useRef<string[]>([]);
-  const owned = owners(pane, sessions === null ? null : new Set(sessions));
+  const owned = owners(pane, sessions === null ? null : new Set(sessions), shellTabId);
   const open = new Set(owned.keys());
   useEffect(() => {
     // Before the unloading: a tab still drawn must know it may not open the page again.
@@ -158,6 +165,8 @@ export function useBrowserPages(pane: PaneView, shownKey: string | null, { sessi
   ownersRef.current = owned;
   const paneRef = useRef(pane);
   paneRef.current = pane;
+  const shellRef = useRef(shellTabId);
+  shellRef.current = shellTabId;
   const send = useEffectEvent((action: PaneAction) => dispatch(action));
   const onScreen = useEffectEvent(() => browserSession());
   const tell = useEffectEvent((session: string) => news(session));
@@ -188,7 +197,7 @@ export function useBrowserPages(pane: PaneView, shownKey: string | null, { sessi
   // The cookie rule: told before any page is made (the shell's queue holds every call until then), and told again on a change. A
   // change to or from "never" makes the loaded pages again, since a page's privacy is decided when it is made.
   // Reads refs only, so it is safe in an effect and in an event handler alike.
-  const reloadLoaded = useCallback((): number => reloadPages(reloadPlan(paneRef.current, live.current)), []);
+  const reloadLoaded = useCallback((): number => reloadPages(reloadPlan(paneRef.current, live.current, shellRef.current)), []);
   const { settings, failed } = useBrowserSettings();
   const rule = ruleToTell(settings, failed);
   const told = useRef<CookieRule | null>(null);

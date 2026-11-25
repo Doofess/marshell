@@ -10,7 +10,7 @@ const sessions = new Map([
   ["s1", { project: "p1" }],
   ["s2", { project: "p2" }],
 ]);
-const ctx = (o: Partial<Parameters<typeof takeOpens>[3]> = {}): Parameters<typeof takeOpens>[3] => ({ sessions, shown: "s1", onScreen: [], refuses: () => false, ...o });
+const ctx = (o: Partial<Parameters<typeof takeOpens>[3]> = {}): Parameters<typeof takeOpens>[3] => ({ owner: (id) => (sessions.has(id) ? { key: id, project: sessions.get(id)!.project } : null), shown: "s1", onScreen: [], refuses: () => false, ...o });
 const req = (id: number, target: string, o: Partial<PaneOpen> = {}): PaneOpen => ({ id, tab_id: "s1", kind: "file", target, by: "claude", auto: false, ...o });
 const none = new Set<number>();
 const open = (path: string): PaneAction => ({ type: "open", session: "s1", project: "p1", target: { path } });
@@ -242,5 +242,22 @@ describe("dropPlan", () => {
   it("a folder alone opens nothing", () => {
     const plan = dropPlan(EMPTY, "s1", "p1", [{ path: "/folder", ok: false }]);
     expect(plan).toEqual({ actions: [], last: null, refused: false });
+  });
+});
+
+describe("the shell panel's tabs", () => {
+  const shellCtx = (o: Partial<Parameters<typeof takeOpens>[3]> = {}) => ctx({ owner: (id) => (id === "t9" ? { key: "shell", project: "C:/M" } : null), shown: "shell", ...o });
+  it("an open for the panel's shell goes into the shell's set", () => {
+    const r = takeOpens(EMPTY, [req(1, "/a.md", { tab_id: "t9" })], none, shellCtx());
+    expect(r.actions[0]).toMatchObject({ session: "shell" });
+    expect(r.done).toEqual([{ id: 1, refused: null }]);
+    expect(titles(r.view, "shell")).toEqual(["/a.md"]);
+  });
+  it("the shell's set meets its own limit", () => {
+    let view = EMPTY;
+    for (let i = 0; i < 32; i++) view = paneReducer(view, { type: "open", session: "shell", project: "C:/M", target: { path: `/f${i}` } });
+    const r = takeOpens(view, [req(1, "/c.html", { tab_id: "t9", auto: true })], none, shellCtx());
+    expect(r.done).toEqual([{ id: 1, refused: "limit" }]);
+    expect(r.full).toEqual(["shell"]);
   });
 });

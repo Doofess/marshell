@@ -597,8 +597,25 @@ describe("MainWindow: the panel buttons", () => {
   it("are aria-disabled while a main view replaces the terminal", () => {
     for (const t of buttons(withProps({ mainView: <section />, pane: stand, paneShown: true }))) {
       expect(t).toContain('aria-disabled="true"');
-      expect(t).toContain('title="The side pane shows beside a session"');
+      expect(t).toContain('title="Close History to show the side pane');
     }
+  });
+  it("with no session an open pane fills the area", () => {
+    const h = withProps({ rows: [], selectedId: undefined, pane: <p>the pane</p>, paneShown: true, paneAlone: true });
+    expect(h).toContain('data-pane="fill"');
+    expect(h).toContain("the pane");
+    expect(h).not.toContain("No sessions yet.");
+  });
+  it("with no session a closed pane shows the empty state", () => {
+    expect(withProps({ rows: [], selectedId: undefined, pane: <p>the pane</p>, paneShown: false, paneAlone: true })).toContain("No sessions yet.");
+  });
+  it("the panel buttons work with no session", () => {
+    const bs = buttons(withProps({ rows: [], selectedId: undefined, pane: stand, paneShown: true, paneAlone: true }));
+    expect(bs.length).toBeGreaterThan(0);
+    for (const t of bs) expect(t).not.toContain("aria-disabled");
+  });
+  it("under History the buttons say why", () => {
+    for (const t of buttons(withProps({ mainView: <section />, pane: stand, paneShown: true, paneAlone: true }))) expect(t).toMatch(/title="Close History to show the side pane/);
   });
 });
 
