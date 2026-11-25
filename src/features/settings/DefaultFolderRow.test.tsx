@@ -16,6 +16,16 @@ describe("DefaultFolderRowView", () => {
     expect(h).toContain("Where the shell panel and new sessions start when no folder is chosen and the shell profile sets none. Marshell makes it when it&#x27;s missing.");
     expect(h).toContain("Choose folder…");
   });
+  it("says Marshell makes the folder only for its own", () => {
+    const makes = "Marshell makes it when it&#x27;s missing.";
+    const where = "Where the shell panel and new sessions start when no folder is chosen and the shell profile sets none.";
+    for (const folder of [mine, { ...mine, exists: false }, { path: null, exists: false, chosen: false }, null]) {
+      const h = html({ folder });
+      expect(h).toContain(where);
+      expect(h).not.toContain(makes);
+    }
+    expect(html({ folder: { ...own, exists: false } })).toContain(makes);
+  });
   it("shows the reset button only for a chosen folder", () => {
     expect(html()).not.toContain("Use Marshell&#x27;s folder");
     expect(html({ folder: mine })).toContain("Use Marshell&#x27;s folder");

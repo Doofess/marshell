@@ -13,7 +13,9 @@ import "./DefaultFolderRow.css";
 
 const DASH = "–";
 const LABEL_ID = "default-folder-label";
-export const DEFAULT_FOLDER_HELP = "Where the shell panel and new sessions start when no folder is chosen and the shell profile sets none. Marshell makes it when it's missing.";
+export const DEFAULT_FOLDER_HELP = "Where the shell panel and new sessions start when no folder is chosen and the shell profile sets none.";
+/** Said only for Marshell's own folder: a folder the person chose is never made. */
+export const MAKES_IT = "Marshell makes it when it's missing.";
 export const MISSING_LINE = "This folder isn't there now, so shells and sessions start in your home folder.";
 export const UNREADABLE = "Couldn't read the default folder. Try again in a moment.";
 
@@ -48,7 +50,7 @@ export function DefaultFolderRowView({ folder, error, busy, chooseRef, onChoose,
           )}
         </div>
       </div>
-      <p className="field__help">{DEFAULT_FOLDER_HELP}</p>
+      <p className="field__help">{folder && !folder.chosen && folder.path ? `${DEFAULT_FOLDER_HELP} ${MAKES_IT}` : DEFAULT_FOLDER_HELP}</p>
       {folder?.path && !folder.exists && <p className="notifications-dialog__line">{MISSING_LINE}</p>}
       {error && <p className="notifications-dialog__error">{error}</p>}
     </div>

@@ -1,7 +1,7 @@
 # Default folder and the shell panel with no session live check (slice 6v-1)
 
 - Date: 2026-11-25, 18:28 to 18:42 local time.
-- Build: `phase-6v` at `ac28d558` under `pnpm tauri dev` on Windows 11 Pro (10.0.26300). Finding 1's fix (`ced45a0f`) arrived through hot reload while the app ran and was judged from a second screenshot.
+- Build: `phase-6v` at `ac28d558` under `pnpm tauri dev` on Windows 11 Pro (10.0.26300). Finding 1's fix (`ced45a0f`) arrived through hot reload while the app ran and was judged from a second screenshot. The final review's two fixes came after the app was stopped and have only their tests: the help line's last sentence ("Marshell makes it when it's missing.") now shows only for Marshell's own folder, and the dev-app guard asks for a scratch `MARSHELL_DEFAULT_FOLDER`.
 - Home: scratch `MARSHELL_HOME`, `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME`, `MARSHELL_CLAUDE_SETTINGS` and `USERPROFILE` under `%TEMP%\lc-6v1-1` (`<Scratch>` below), with CDP on port 9333. `MARSHELL_DEFAULT_FOLDER` was `<Scratch>\home\Marshell`, set by the live-check script. Onboarding was skipped ("Skip: use limited status"); nothing was set up for any CLI.
 - Before the check, `Marshell` did not exist in the real profile folder (`[Environment]::GetFolderPath('UserProfile')`), and the real `~/.claude/settings.json` was last written 2026-11-24T18:49:50Z.
 - Data: two empty scratch folders made by hand, `<Scratch>\df` (a chosen default folder) and `<Scratch>\pf` (a profile's folder); `<Scratch>\proj` from the script. Between two restarts the scratch `mh\projects.json` and its `.bak` were deleted, so the launcher opened with no folder chosen.
