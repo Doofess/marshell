@@ -262,7 +262,15 @@ pub fn record_note(home: &Path, root: &Path, note: &ReferenceNote, now_ms: u64) 
     let path = notes_file(home, root);
     // The lock covers the read and the write and is never held across an `.await`: this runs on a blocking thread.
     let _guard = NOTES_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    // A file that can't be read is started again; `store::write` still refuses to replace one a newer Marshell wrote.
+    // A file that is missing, doesn't parse or belongs to another root is started again; `store::write` still refuses
+    // to replace one a newer Marshell wrote. Any other read error (a sharing violation while an indexer or antivirus
+    // holds the file) is returned and this note goes uncounted: starting again would write over 30 days of counts.
+    // `store::read` can't tell that error from a parse failure, so the bytes are tried first.
+    match std::fs::read(&path) {
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err.into()),
+    }
     let mut doc = store::read::<NoteDoc>(&path)
         .unwrap_or(None)
         .filter(|doc| projects::same_path(&doc.root, &text))
@@ -838,6 +846,46 @@ mod tests {
         let totals = note_totals(home.path(), &root, 3 * DAY).unwrap();
         assert_eq!((totals.notes, totals.chars), (200, 800));
         assert_eq!(totals.top_alias, Some(("app".into(), 200)));
+    }
+
+    /// A passing sharing violation (an indexer or antivirus holding the file) is no reason to start the counter again.
+    #[cfg(windows)]
+    #[test]
+    fn a_counter_that_cant_be_read_for_now_keeps_its_counts() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let (_dir, root) = checkout();
+        let home = tempfile::tempdir().unwrap();
+        record_note(home.path(), &root, &note(&["app"], "abcd"), DAY).unwrap();
+        record_note(home.path(), &root, &note(&["app"], "abcd"), DAY).unwrap();
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(notes_file(home.path(), &root))
+            .unwrap();
+        assert!(record_note(home.path(), &root, &note(&["app"], "abcd"), DAY).is_err());
+        drop(held);
+        let totals = note_totals(home.path(), &root, DAY).unwrap();
+        assert_eq!(totals.notes, 2);
+    }
+
+    /// The same hold, but one that still lets the file be replaced: the counter used to be written over.
+    #[cfg(windows)]
+    #[test]
+    fn a_counter_held_open_but_replaceable_is_not_written_over() {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_SHARE_DELETE: u32 = 4;
+        let (_dir, root) = checkout();
+        let home = tempfile::tempdir().unwrap();
+        record_note(home.path(), &root, &note(&["app"], "abcd"), DAY).unwrap();
+        record_note(home.path(), &root, &note(&["app"], "abcd"), DAY).unwrap();
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_DELETE)
+            .open(notes_file(home.path(), &root))
+            .unwrap();
+        assert!(record_note(home.path(), &root, &note(&["app"], "abcd"), DAY).is_err());
+        drop(held);
+        assert_eq!(note_totals(home.path(), &root, DAY).unwrap().notes, 2);
     }
 
     #[test]

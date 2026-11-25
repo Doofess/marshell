@@ -246,12 +246,38 @@ fn words(chars: &[char]) -> Vec<(usize, usize, String)> {
 
 const NEGATIONS: [&str; 6] = ["not", "don't", "don’t", "never", "avoid", "no"];
 
-/// Whether word number `at` comes after a negation on its line: "not", "don't", "never", "avoid", "no" or
-/// "instead of".
-fn negated(list: &[(usize, usize, String)], at: usize) -> bool {
-    let before = &list[..at];
-    before.iter().any(|(_, _, w)| NEGATIONS.contains(&w.as_str()))
-        || before.windows(2).any(|w| w[0].2 == "instead" && w[1].2 == "of")
+/// The number of the first word of a line that negates what comes after it: "not", "don't", "never", "avoid", "no",
+/// or the "of" of "instead of". Worked out once for a line, so that asking about each of its words stays linear.
+fn first_negation(list: &[(usize, usize, String)]) -> Option<usize> {
+    list.iter().enumerate().position(|(k, (_, _, w))| {
+        NEGATIONS.contains(&w.as_str()) || (k > 0 && w == "of" && list[k - 1].2 == "instead")
+    })
+}
+
+/// Whether word number `at` comes after a negation on its line (`first_negation`).
+fn negated(first: Option<usize>, at: usize) -> bool {
+    first.is_some_and(|negation| negation < at)
+}
+
+/// Where the last `-g` or `--global` of a line starts, as an index in its characters. Worked out once for a line.
+fn last_global_flag(chars: &[char]) -> Option<usize> {
+    let mut last = None;
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i].is_whitespace() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && !chars[i].is_whitespace() {
+            i += 1;
+        }
+        let token = &chars[start..i];
+        if matches!(token, ['-', 'g']) || token.iter().copied().eq("--global".chars()) {
+            last = Some(start);
+        }
+    }
+    last
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -328,19 +354,19 @@ pub fn package_managers(text: &str) -> Vec<Said<Manager>> {
         }
         let lowered: String = chars.iter().collect();
         let package_manager = lowered.contains("package manager");
+        // What depends on the whole line is worked out once, not for each manager word: a line of many of them
+        // (a minified file, a generated list) would otherwise be read in quadratic time.
+        let negation = first_negation(&list);
+        let global_flag = last_global_flag(&chars);
         let mut named: Vec<Manager> = Vec::new();
         for (at, (_, end, word)) in list.iter().enumerate() {
             let Some(manager) = MANAGERS.iter().copied().find(|m| m.name() == word) else {
                 continue;
             };
-            if named.contains(&manager) || !stands_alone(&list, at, &chars) || negated(&list, at) {
+            if named.contains(&manager) || !stands_alone(&list, at, &chars) || negated(negation, at) {
                 continue;
             }
-            let global = chars[*end..]
-                .iter()
-                .collect::<String>()
-                .split_whitespace()
-                .any(|t| t == "-g" || t == "--global");
+            let global = global_flag.is_some_and(|start| start >= *end);
             let verb = !global
                 && list.get(at + 1).is_some_and(|(next, _, w)| {
                     VERBS.contains(&w.as_str()) && *next > *end && chars[*end..*next].iter().all(|c| c.is_whitespace())
@@ -387,11 +413,12 @@ fn indent_of_line(line: &str) -> Option<Indent> {
     let is_space = |w: &str| matches!(w, "space" | "spaces");
     let mut tabs = false;
     let mut spaces = false;
+    let negation = first_negation(&list);
     for (at, (_, _, w)) in list.iter().enumerate() {
-        if matches!(w.as_str(), "tab" | "tabs") && !negated(&list, at) {
+        if matches!(w.as_str(), "tab" | "tabs") && !negated(negation, at) {
             tabs = true;
         }
-        if is_space(w) && !negated(&list, at) {
+        if is_space(w) && !negated(negation, at) {
             spaces = true;
         }
     }
@@ -503,7 +530,12 @@ pub fn remove_imports(text: &str, raws: &[String], syntax: ImportSyntax, in_comm
             from = *end;
         }
         rest.push_str(&line[from..]);
-        if matches!(rest.trim(), "" | "-" | "*" | "+") {
+        // A BOM is no content: the first line may hold only it besides the import, and it stays.
+        let bom = number == 1 && line.starts_with('\u{feff}');
+        if matches!(rest.trim_start_matches('\u{feff}').trim(), "" | "-" | "*" | "+") {
+            if bom {
+                out.push('\u{feff}');
+            }
             pos = line_end;
             continue;
         }
@@ -606,6 +638,48 @@ mod tests {
         assert_eq!(Manager::Pnpm.name(), "pnpm");
     }
 
+    /// How long `work` takes, and what it returned.
+    fn timed<T>(work: impl FnOnce() -> T) -> (T, std::time::Duration) {
+        let start = std::time::Instant::now();
+        let out = work();
+        (out, start.elapsed())
+    }
+
+    #[test]
+    fn one_long_line_of_manager_words_is_read_in_linear_time() {
+        // 300,000 words that name nothing for use, then one that does: every word before it was once checked
+        // against all the words before it and the rest of the line.
+        let line = format!("{}install", "npm ".repeat(300_000));
+        let (said, took) = timed(|| package_managers(&line));
+        eprintln!("package_managers over one long line took {took:?}");
+        assert_eq!(said.len(), 1);
+        assert_eq!(said[0].what, Manager::Npm);
+        assert!(took < std::time::Duration::from_secs(5), "took {took:?}");
+        let words = "npm ".repeat(300_000);
+        let (said, took) = timed(|| package_managers(&words));
+        assert!(said.is_empty());
+        assert!(took < std::time::Duration::from_secs(5), "took {took:?}");
+    }
+
+    #[test]
+    fn one_long_line_of_indent_words_is_read_in_linear_time() {
+        let line = format!("Indent with {}", "tabs ".repeat(300_000));
+        let (said, took) = timed(|| indents(&line));
+        eprintln!("indents over one long line took {took:?}");
+        assert_eq!(said.len(), 1);
+        assert!(took < std::time::Duration::from_secs(5), "took {took:?}");
+    }
+
+    #[test]
+    fn one_line_of_backtick_runs_of_every_length_is_read_in_linear_time() {
+        // Runs of 1, 2, 3, … backticks that never close: each opener once scanned to the line's end.
+        let line: String = (1..=2_000).map(|n| format!("{} ", "`".repeat(n))).collect();
+        let (paths, took) = timed(|| backticked_paths(&line));
+        eprintln!("backticked_paths over one long line took {took:?}");
+        assert!(paths.is_empty());
+        assert!(took < std::time::Duration::from_secs(5), "took {took:?}");
+    }
+
     fn indent_of(text: &str) -> Vec<(Option<IndentKind>, Option<u8>)> {
         indents(text).into_iter().map(|s| (s.what.kind, s.what.width)).collect()
     }
@@ -662,6 +736,10 @@ mod tests {
         let commented = "<!-- @gone.md -->\n@gone.md\nx\n";
         assert_eq!(removed(commented, &gone, At, false), some("<!-- @gone.md -->\nx\n"));
         assert_eq!(removed(commented, &gone, At, true), some("<!-- -->\nx\n"));
+        assert_eq!(
+            removed("\u{feff}@gone.md\nrest\n", &gone, At, false),
+            some("\u{feff}rest\n")
+        );
         assert_eq!(removed("@other.md\n", &gone, At, false), None);
         assert_eq!(removed("see `@gone.md` here\n", &gone, At, true), None);
         assert_eq!(removed("```\n@gone.md\n```\n", &gone, At, true), None);

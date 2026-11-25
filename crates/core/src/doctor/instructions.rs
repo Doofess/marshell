@@ -744,40 +744,42 @@ fn resolve(raw: &str, file: &Path, rules: &ImportRules) -> Target {
 
 /// A line that opens or closes a fenced code block.
 pub(crate) fn is_fence(line: &str) -> bool {
-    let line = line.trim_start();
+    // A UTF-8 BOM opens a file saved with one: it is a boundary, not text.
+    let line = line.strip_prefix('\u{feff}').unwrap_or(line).trim_start();
     line.starts_with("```") || line.starts_with("~~~")
 }
 
 /// Which characters of a line sit inside an inline code span.
 pub(crate) fn code_mask(chars: &[char]) -> Vec<bool> {
     let mut mask = vec![false; chars.len()];
+    // The runs of backticks as (start, length), and for each the next run of the same length: a run opens a span that
+    // the next run of its length closes. Looking that run up, rather than scanning for it, keeps a line of runs that
+    // never close linear.
+    let mut runs: Vec<(usize, usize)> = Vec::new();
     let mut i = 0;
     while i < chars.len() {
-        if chars[i] != '`' {
+        if chars[i] == '`' {
+            let len = chars[i..].iter().take_while(|c| **c == '`').count();
+            runs.push((i, len));
+            i += len;
+        } else {
             i += 1;
-            continue;
         }
-        let run = chars[i..].iter().take_while(|c| **c == '`').count();
-        let mut j = i + run;
-        let mut close = None;
-        while j < chars.len() {
-            if chars[j] == '`' {
-                let len = chars[j..].iter().take_while(|c| **c == '`').count();
-                if len == run {
-                    close = Some(j + len);
-                    break;
-                }
-                j += len;
-            } else {
-                j += 1;
+    }
+    let mut next_same: Vec<Option<usize>> = vec![None; runs.len()];
+    let mut latest: HashMap<usize, usize> = HashMap::new();
+    for (at, (_, len)) in runs.iter().enumerate().rev() {
+        next_same[at] = latest.insert(*len, at);
+    }
+    let mut at = 0;
+    while at < runs.len() {
+        match next_same[at] {
+            Some(close) => {
+                let end = runs[close].0 + runs[close].1;
+                mask[runs[at].0..end].iter_mut().for_each(|m| *m = true);
+                at = close + 1;
             }
-        }
-        match close {
-            Some(end) => {
-                mask[i..end].iter_mut().for_each(|m| *m = true);
-                i = end;
-            }
-            None => i += run,
+            None => at += 1,
         }
     }
     mask
@@ -827,7 +829,9 @@ pub fn imports_at(text: &str, syntax: ImportSyntax) -> Vec<ImportAt> {
             }
             match syntax {
                 ImportSyntax::At => {
-                    let boundary = i == 0 || chars[i - 1].is_whitespace();
+                    // A BOM at the start of the text (line 1) is a boundary too.
+                    let boundary =
+                        i == 0 || chars[i - 1].is_whitespace() || (number == 1 && i == 1 && chars[0] == '\u{feff}');
                     let starts = chars
                         .get(i + 1)
                         .is_some_and(|c| matches!(c, '.' | '/' | '~') || c.is_alphabetic());
@@ -1621,6 +1625,22 @@ mod tests {
         );
         assert_eq!((got[1].raw.as_str(), got[1].line), ("b/c.md,", 3));
         assert_eq!((got[2].line, got[2].start, got[2].end), (4, 6, 13)); // "café " is 6 bytes
+    }
+
+    #[test]
+    fn a_bom_is_a_boundary_for_an_import_and_a_fence() {
+        let got = imports_at("\u{feff}@AGENTS.md\n", ImportSyntax::At);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(
+            (got[0].raw.as_str(), got[0].line, got[0].start, got[0].end),
+            ("AGENTS.md", 1, 3, 13)
+        );
+        assert!(is_fence("\u{feff}```rust"));
+        // A BOM before an opening fence doesn't turn the fence inside out: the import in it is code, the one after
+        // it is not.
+        let text = "\u{feff}```\n@in.md\n```\n@out.md\n";
+        let got = imports_at(text, ImportSyntax::At);
+        assert_eq!(got.iter().map(|i| i.raw.as_str()).collect::<Vec<_>>(), ["out.md"]);
     }
 
     #[test]

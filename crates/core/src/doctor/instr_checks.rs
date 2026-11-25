@@ -44,6 +44,10 @@ pub enum Finding {
         raws: Vec<String>,
         /// Some CLI that reads the file reads HTML comments.
         in_comments: bool,
+        /// The file has bytes that aren't UTF-8, so the fix would refuse it. The reader decodes lossily and puts
+        /// U+FFFD where such bytes were, so the text it already returned tells; no second read is needed (a file
+        /// that really holds U+FFFD is counted too, and just isn't offered the fix).
+        lossy: bool,
         agents: Vec<&'static str>,
     },
     StalePaths {
@@ -145,9 +149,56 @@ fn looked_at(load: &CliLoad) -> Vec<bool> {
         .collect()
 }
 
-fn seat_of(load: &CliLoad, file: &Path) -> Seat {
+/// Whether a file outside the project sits above it: CLIs walk up past the project, so a parent folder's
+/// `CLAUDE.md` is loaded for it and belongs to it, as does a rules file under a dot-folder of a parent (`.claude`,
+/// `.github`) that is not the home's own. Only the user's own files (`~/.claude/CLAUDE.md`, a Codex home's
+/// `AGENTS.md`) are user-level.
+fn above_the_project(path: &Path, project: &Path, home: &Path) -> bool {
+    if path.parent().is_some_and(|parent| is_within(project, parent)) {
+        return true;
+    }
+    // Anything under the home is the user's own, whatever folders lie between it and the file (a scratch or CI home
+    // can itself sit under a dot-folder of a parent of the project).
+    if is_within(path, home) {
+        return false;
+    }
+    let file = path_key(path);
+    project.ancestors().skip(1).any(|ancestor| {
+        let base = path_key(ancestor);
+        let Some(rest) = file.strip_prefix(&base).and_then(|rest| rest.strip_prefix('/')) else {
+            return false;
+        };
+        // A dot-folder with the file somewhere below it.
+        rest.split_once('/')
+            .is_some_and(|(folder, _)| folder.starts_with('.') && folder != "." && folder != "..")
+    })
+}
+
+/// For each row of a load, whether its file is a user-level one. A file inside the load's project is the project's;
+/// an import is its root file's (the nearest earlier row that isn't an import, as in `looked_at`); a root file
+/// outside the project is the project's when it is above it, user-level when not. With no project, all are
+/// user-level.
+fn user_level_rows(load: &CliLoad) -> Vec<bool> {
+    let Some(project) = &load.project else {
+        return vec![true; load.files.len()];
+    };
+    let mut root_user = true;
+    load.files
+        .iter()
+        .map(|file| {
+            let inside = is_within(&file.path, project);
+            if !matches!(file.role, Role::Import { .. }) {
+                root_user = !inside && !above_the_project(&file.path, project, &load.home);
+            }
+            !inside && root_user
+        })
+        .collect()
+}
+
+/// The seat of a file: the project's, or None for a user-level one.
+fn seat_of(load: &CliLoad, user: bool) -> Seat {
     Seat {
-        project: load.project.clone().filter(|p| is_within(file, p)),
+        project: load.project.clone().filter(|_| !user),
         distro: load.distro.clone(),
         home: load.home.clone(),
     }
@@ -174,6 +225,7 @@ fn dead_imports(loads: &[CliLoad], cx: &mut Reader) -> Vec<Finding> {
         let looked = looked_at(load);
         // The files' keys, worked out once and only for a load that has a dead import.
         let mut keys: Option<Vec<String>> = None;
+        let users = user_level_rows(load);
         for (i, row) in load.files.iter().enumerate() {
             let (Role::Import { by }, When::NotLoaded(why), Some(raw)) = (&row.role, &row.when, &row.raw) else {
                 continue;
@@ -183,9 +235,9 @@ fn dead_imports(loads: &[CliLoad], cx: &mut Reader) -> Vec<Finding> {
             }
             let keys = keys.get_or_insert_with(|| load.files.iter().map(|f| key_of(cx, &f.path)).collect());
             let by_key = key_of(cx, by);
-            if !(0..i).any(|j| looked[j] && keys[j] == by_key) {
+            let Some(by_row) = (0..i).find(|&j| looked[j] && keys[j] == by_key) else {
                 continue;
-            }
+            };
             let key = (
                 load.distro.clone(),
                 by_key,
@@ -196,7 +248,7 @@ fn dead_imports(loads: &[CliLoad], cx: &mut Reader) -> Vec<Finding> {
                 Some(at) => at,
                 None => {
                     groups.push(DeadGroup {
-                        seat: seat_of(load, by),
+                        seat: seat_of(load, users[by_row]),
                         file: by.clone(),
                         target: row.path.clone(),
                         syntax: style.syntax,
@@ -249,6 +301,7 @@ fn dead_imports(loads: &[CliLoad], cx: &mut Reader) -> Vec<Finding> {
             written,
             raws: group.raws,
             in_comments: group.in_comments,
+            lossy: text.contains('\u{FFFD}'),
             agents: group.agents,
         });
     }
@@ -361,7 +414,7 @@ fn stale_paths(loads: &[CliLoad], cx: &mut Reader) -> Vec<Finding> {
             }
             if !paths.is_empty() {
                 out.push(Finding::StalePaths {
-                    seat: seat_of(load, &row.path),
+                    seat: seat_of(load, false),
                     file: row.path.clone(),
                     paths,
                 });
@@ -374,13 +427,15 @@ fn stale_paths(loads: &[CliLoad], cx: &mut Reader) -> Vec<Finding> {
 // ---------------------------------------------------------------------------------------------------------------
 // Duplicates and clashes (decisions 5 and 7)
 
-/// The rows these checks look at: loaded at start, looked at (decision 15), and not empty.
-fn start_rows(load: &CliLoad) -> Vec<&LoadedFile> {
+/// The rows these checks look at: loaded at start, looked at (decision 15), and not empty; each with whether its
+/// file is a user-level one.
+fn start_rows(load: &CliLoad) -> Vec<(&LoadedFile, bool)> {
     looked_at(load)
         .into_iter()
+        .zip(user_level_rows(load))
         .zip(&load.files)
-        .filter(|(ok, file)| *ok && matches!(file.when, When::Start) && file.chars > 0)
-        .map(|(_, file)| file)
+        .filter(|((ok, _), file)| *ok && matches!(file.when, When::Start) && file.chars > 0)
+        .map(|((_, user), file)| (file, user))
         .collect()
 }
 
@@ -388,17 +443,20 @@ fn start_rows(load: &CliLoad) -> Vec<&LoadedFile> {
 struct Held {
     path: PathBuf,
     key: String,
+    /// The file is a user-level one (not the project's and not above it).
+    user: bool,
 }
 
 fn held(load: &CliLoad, cx: &mut Reader) -> Vec<Held> {
     let mut out: Vec<Held> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
-    for row in start_rows(load) {
+    for (row, user) in start_rows(load) {
         let key = key_of(cx, &row.path);
         if seen.insert(key.clone()) {
             out.push(Held {
                 path: row.path.clone(),
                 key,
+                user,
             });
         }
     }
@@ -454,7 +512,7 @@ fn loaded_twice(loads: &[CliLoad], cx: &mut Reader) -> Vec<Finding> {
     let mut done: Vec<(&'static str, Seat, String)> = Vec::new();
     for load in loads {
         let rows = start_rows(load);
-        let keys: Vec<String> = rows.iter().map(|row| key_of(cx, &row.path)).collect();
+        let keys: Vec<String> = rows.iter().map(|(row, _)| key_of(cx, &row.path)).collect();
         // The file's first two rows: a third one adds nothing.
         let mut places: HashMap<&str, (usize, usize)> = HashMap::new();
         let mut pairs: Vec<(usize, usize)> = Vec::new();
@@ -466,23 +524,23 @@ fn loaded_twice(loads: &[CliLoad], cx: &mut Reader) -> Vec<Finding> {
             }
         }
         for (i, j) in pairs {
-            let seat = seat_of(load, &rows[i].path);
+            let seat = seat_of(load, rows[i].1);
             let id = (load.agent, seat.clone(), keys[j].clone());
             if done.contains(&id) {
                 continue;
             }
             done.push(id);
-            let by = |row: &LoadedFile| match &row.role {
+            let by = |(row, _): (&LoadedFile, bool)| match &row.role {
                 Role::Import { by } => Some(by.clone()),
                 _ => None,
             };
             out.push(Finding::LoadedTwice {
                 seat,
                 agent: load.agent,
-                file: rows[i].path.clone(),
+                file: rows[i].0.path.clone(),
                 first: by(rows[i]),
                 second: by(rows[j]),
-                chars: rows[j].chars,
+                chars: rows[j].0.chars,
             });
         }
     }
@@ -585,14 +643,7 @@ fn repeats(loads: &[CliLoad], cx: &mut Reader, texts: &mut Texts) -> Vec<Finding
                     shared_between(bx, by)
                 };
                 let Some(shared) = shared else { continue };
-                let seat = Seat {
-                    project: load
-                        .project
-                        .clone()
-                        .filter(|p| is_within(&fx.path, p) || is_within(&fy.path, p)),
-                    distro: load.distro.clone(),
-                    home: load.home.clone(),
-                };
+                let seat = seat_of(load, fx.user && fy.user);
                 let keys = if fx.key <= fy.key {
                     (fx.key.clone(), fy.key.clone())
                 } else {
@@ -704,7 +755,7 @@ fn clashes(loads: &[CliLoad], cx: &mut Reader, texts: &mut Texts) -> Vec<Finding
             continue;
         }
         let files = &helds[n];
-        let outside = |file: &Held| load.project.as_ref().is_none_or(|p| !is_within(&file.path, p));
+        let outside = |file: &Held| file.user;
         for kind in CLASH_KINDS {
             let all = sides(kind, files, texts);
             // The first pair for the project's item, then for the user-level one: by the later line's place in the
@@ -725,11 +776,7 @@ fn clashes(loads: &[CliLoad], cx: &mut Reader, texts: &mut Texts) -> Vec<Finding
             }
             for (user, pair) in best.into_iter().enumerate() {
                 let Some((i, j)) = pair else { continue };
-                let seat = Seat {
-                    project: if user == 0 { load.project.clone() } else { None },
-                    distro: load.distro.clone(),
-                    home: load.home.clone(),
-                };
+                let seat = seat_of(load, user == 1);
                 if done.contains(&(kind, seat.clone())) {
                     continue;
                 }
@@ -884,6 +931,7 @@ fn item_of(f: &Finding, editable: &dyn Fn(&Path) -> bool) -> DoctorItem {
             line,
             written,
             agents,
+            lossy,
             ..
         } => {
             let (drops, keeps): (Vec<&'static str>, Vec<&'static str>) =
@@ -903,7 +951,7 @@ fn item_of(f: &Finding, editable: &dyn Fn(&Path) -> bool) -> DoctorItem {
             item.detail = detail;
             match &seat.distro {
                 Some(distro) => item.cannot_fix = Some(format!("Edit the file in {distro}.")),
-                None if editable(file) => {
+                None if editable(file) && !*lossy => {
                     item.fixable = true;
                     item.unchecked = true;
                 }
@@ -1866,6 +1914,137 @@ mod tests {
         assert!(clashes[0].id.ends_with("@Ubuntu"), "{}", clashes[0].id);
         assert_eq!(clashes[0].distro.as_deref(), Some("Ubuntu"));
         assert!(clashes[0].opens.is_empty());
+    }
+
+    #[test]
+    fn a_dead_import_in_a_file_that_is_not_utf8_is_not_offered_a_fix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = proj(tmp.path());
+        let file = p.join("CLAUDE.md");
+        fs::write(&file, b"Caf\xE9\n@docs/old.md\n").unwrap();
+        let target = p.join("docs").join("old.md");
+        let loads = vec![load(
+            "claude",
+            &p,
+            vec![file_row(&file), dead_row(&file, &target, "docs/old.md")],
+        )];
+        let mut cx = Reader::windows();
+        let shown = items(&findings(&loads, &mut cx), std::slice::from_ref(&p), &yes);
+        assert_eq!(shown.len(), 1, "{shown:?}");
+        assert!(!shown[0].fixable);
+        assert_eq!(
+            shown[0].cannot_fix.as_deref(),
+            Some("Marshell doesn't change this file.")
+        );
+    }
+
+    #[test]
+    fn a_file_above_the_project_is_the_projects_and_not_marked_user_level() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = proj(tmp.path());
+        let above = tmp.path().join("CLAUDE.md");
+        let agents = p.join("AGENTS.md");
+        write(&above, "Always run npm install first.\n");
+        write(&agents, "Use pnpm for the frontend.\n");
+        let loads = vec![load("claude", &p, vec![file_row(&above), file_row(&agents)])];
+        let mut cx = Reader::windows();
+        let shown = items(&findings(&loads, &mut cx), std::slice::from_ref(&p), &yes);
+        let clashes = of_kind(&shown, "instrclash.");
+        assert_eq!(clashes.len(), 1, "{shown:?}");
+        assert_eq!(clashes[0].title, "Two package managers are named in proj");
+        assert!(!clashes[0].detail.contains("(user level)"), "{}", clashes[0].detail);
+    }
+
+    #[test]
+    fn two_files_above_the_project_that_clash_are_the_projects_item() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = proj(tmp.path());
+        // A parent folder's file, and one under a dot-folder of that parent (a worktree's `.claude` rules).
+        let (a, b) = (
+            tmp.path().join("CLAUDE.md"),
+            tmp.path().join(".claude").join("rules").join("style.md"),
+        );
+        write(&a, "Always run npm install first.\n");
+        write(&b, "Use pnpm for the frontend.\n");
+        let loads = vec![load("claude", &p, vec![file_row(&a), file_row(&b)])];
+        let mut cx = Reader::windows();
+        let shown = items(&findings(&loads, &mut cx), std::slice::from_ref(&p), &yes);
+        let clashes = of_kind(&shown, "instrclash.");
+        assert_eq!(clashes.len(), 1, "{shown:?}");
+        assert_eq!(clashes[0].title, "Two package managers are named in proj");
+        assert!(!clashes[0].detail.contains("(user level)"), "{}", clashes[0].detail);
+    }
+
+    #[test]
+    fn a_user_file_under_a_home_that_holds_the_project_is_still_user_level() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let p = home.join("proj");
+        fs::create_dir_all(&p).unwrap();
+        let user = home.join(".claude").join("CLAUDE.md");
+        let agents = p.join("AGENTS.md");
+        write(&user, "Always run npm install first.\n");
+        write(&agents, "Use pnpm for the frontend.\n");
+        let mut l = load("claude", &p, vec![file_row(&user), file_row(&agents)]);
+        l.home = home;
+        let mut cx = Reader::windows();
+        let shown = items(&findings(&[l], &mut cx), std::slice::from_ref(&p), &yes);
+        let clashes = of_kind(&shown, "instrclash.");
+        assert_eq!(clashes.len(), 1, "{shown:?}");
+        assert_eq!(clashes[0].title, "Two package managers are named in proj");
+        assert!(clashes[0].detail.contains("(user level)"), "{}", clashes[0].detail);
+    }
+
+    #[test]
+    fn a_dead_import_in_a_file_above_the_project_sits_with_the_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = proj(tmp.path());
+        let above = tmp.path().join("CLAUDE.md");
+        write(&above, "@gone.md\n");
+        let target = tmp.path().join("gone.md");
+        let loads = vec![load(
+            "claude",
+            &p,
+            vec![file_row(&above), dead_row(&above, &target, "gone.md")],
+        )];
+        let mut cx = Reader::windows();
+        let found = findings(&loads, &mut cx);
+        assert_eq!(found.len(), 1, "{found:?}");
+        let Finding::DeadImport { seat, .. } = &found[0] else {
+            panic!("not a dead import: {found:?}");
+        };
+        assert_eq!(seat.project.as_deref(), Some(p.as_path()));
+    }
+
+    #[test]
+    fn an_import_follows_its_root_files_place_and_repeats_and_twice_use_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = proj(tmp.path());
+        let (a, b) = (tmp.path().join("CLAUDE.md"), tmp.path().join("AGENTS.md"));
+        let text = para(220, "gamma");
+        write(&a, &format!("@AGENTS.md\n\n{text}\n"));
+        write(&b, &format!("{text}\n"));
+        let loads = vec![load(
+            "copilot",
+            &p,
+            vec![
+                file_row(&a),
+                file_chars(&b, Role::Import { by: a.clone() }, Some("AGENTS.md"), 1000),
+                file_chars(&b, Role::File, None, 1000),
+            ],
+        )];
+        let mut cx = Reader::windows();
+        let found = findings(&loads, &mut cx);
+        let seats: Vec<&Seat> = found
+            .iter()
+            .filter(|f| matches!(f, Finding::Repeats { .. } | Finding::LoadedTwice { .. }))
+            .map(Finding::seat)
+            .collect();
+        assert_eq!(seats.len(), 2, "{found:?}");
+        assert!(
+            seats.iter().all(|s| s.project.as_deref() == Some(p.as_path())),
+            "{seats:?}"
+        );
     }
 
     #[test]
