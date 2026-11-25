@@ -4,6 +4,7 @@ pub mod checks;
 pub mod cli;
 pub mod ext;
 pub mod frontmatter;
+pub mod instr_text;
 pub mod instructions;
 pub mod measure;
 pub mod probe;
