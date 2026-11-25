@@ -177,21 +177,30 @@ impl Run<'_> {
         }
     }
 
-    fn cut(&mut self, path: &Path) {
+    /// A file of the user's own (`scope` is User) is one cut for every project, so its title names no project.
+    fn cut(&mut self, path: &Path, scope: Scope) {
         let id_part = hash_part(path);
         if self.cuts.iter().any(|c| c.id_part == id_part) {
             return;
         }
-        self.cuts.push(Cut {
-            id_part,
-            path: Some(path.to_path_buf()),
-            title: format!(
+        let user_level = scope == Scope::User;
+        let title = if user_level {
+            format!("Claude Code skips {}", shown(path, None, self.home))
+        } else {
+            format!(
                 "Claude Code skips {} in {}",
                 shown(path, self.project, self.home),
                 self.place_name()
-            ),
+            )
+        };
+        self.cuts.push(Cut {
+            id_part,
+            path: Some(path.to_path_buf()),
+            title,
             detail: "It is over 4 MiB, so Claude Code loads none of it.".to_string(),
             cannot_fix: "Shorten it, or split it into files that load when used.".to_string(),
+            user_level,
+            raise: None,
         });
     }
 
@@ -226,7 +235,7 @@ impl Run<'_> {
             _ => {
                 // Over 4 MiB: Claude Code loads none of it.
                 self.files.push(row(path, role, When::NotLoaded(SKIPPED.into())));
-                self.cut(path);
+                self.cut(path, scope);
                 return;
             }
         };
@@ -267,7 +276,7 @@ impl Run<'_> {
             file.when = When::NotLoaded(SKIPPED.into());
             file.chars = 0;
             file.notes.clear();
-            self.cut(&file.path);
+            self.cut(&file.path, scope);
             return;
         }
         if matches!(file.when, When::NotLoaded(_)) {
@@ -1118,6 +1127,30 @@ mod tests {
             cut.cannot_fix,
             "Shorten it, or split it into files that load when used."
         );
+    }
+
+    #[test]
+    fn a_user_level_file_over_the_limit_names_no_project() {
+        let s = Setup::new();
+        let user = s.write("home/.claude/CLAUDE.md", &"a".repeat(4 * 1024 * 1024 + 1));
+        let mine = s.write("proj/CLAUDE.md", &"a".repeat(4 * 1024 * 1024 + 1));
+        let got = s.load(Some(&s.at("proj")));
+        assert_eq!(got.cuts.len(), 2);
+        let cut = got
+            .cuts
+            .iter()
+            .find(|c| c.path.as_deref() == Some(user.as_path()))
+            .unwrap();
+        assert!(cut.user_level);
+        assert_eq!(cut.title, "Claude Code skips ~/.claude/CLAUDE.md");
+        assert!(cut.raise.is_none());
+        let cut = got
+            .cuts
+            .iter()
+            .find(|c| c.path.as_deref() == Some(mine.as_path()))
+            .unwrap();
+        assert!(!cut.user_level);
+        assert_eq!(cut.title, "Claude Code skips CLAUDE.md in proj");
     }
 
     #[test]

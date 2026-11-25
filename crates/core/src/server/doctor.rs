@@ -258,7 +258,9 @@ async fn run_once(st: &AppState, read: ReadFacts) -> Option<(u32, u64)> {
                 measured: measured.as_ref(),
             };
             items.extend(ext::items(&facts.ext, &signals));
-            items.extend(instructions::items(&loads, &facts.projects));
+            items.extend(instructions::items(&loads, &facts.projects, &|p| {
+                st.0.config.editable(p)
+            }));
             // The CLI doctors' last findings ride along in every report. The lock is released at once.
             let (cli_items, cli_checked_at_ms) = {
                 let cli = doctor.cli.lock().unwrap_or_else(|e| e.into_inner());

@@ -7,8 +7,9 @@ use std::sync::Arc;
 use toml_edit::{DocumentMut, Item};
 
 use super::extensions::trust_key;
+use crate::doctor::ext::tokens;
 use crate::doctor::instructions::display as shown;
-use crate::doctor::instructions::{CliLoad, Cut, LoadedFile, Place, Reader, Role, Text, When};
+use crate::doctor::instructions::{CliLoad, Cut, LoadedFile, Place, Raise, Reader, Role, Text, When, tokens_text};
 
 /// Codex's default `project_doc_max_bytes`.
 const DEFAULT_BUDGET: u64 = 32_768;
@@ -172,7 +173,34 @@ fn chars_in_first_bytes(text: &str, n: u64) -> usize {
 
 enum Over {
     Cut(u64),
-    Skipped,
+    /// A file past the limit, with its bytes.
+    Skipped(u64),
+}
+
+/// The smallest step of the limit a fix sets.
+pub const RAISE_STEP: u64 = 8_192;
+/// The largest limit a fix sets (1 MiB). A project that needs more is left to shorten its files.
+pub const RAISE_MAX: u64 = 1_048_576;
+
+/// What raising `project_doc_max_bytes` would take for the project: `needed` bytes rounded up to a multiple of
+/// `RAISE_STEP`. None for a limit of 0 (Codex loads nothing by choice) or past `RAISE_MAX`. `not_loaded` is the bytes
+/// the limit leaves out today, which the sentence turns into tokens.
+fn raise_for(needed: u64, not_loaded: u64, budget: u64, place: &Place) -> Option<Raise> {
+    if budget == 0 || needed == 0 {
+        return None;
+    }
+    let bytes = needed.div_ceil(RAISE_STEP) * RAISE_STEP;
+    if bytes > RAISE_MAX {
+        return None;
+    }
+    let more = tokens_text(tokens(usize::try_from(not_loaded).unwrap_or(usize::MAX)));
+    Some(Raise {
+        config: place.roots.codex_home.join("config.toml"),
+        bytes,
+        says: format!(
+            "The fix sets project_doc_max_bytes to {bytes}, for every project. Codex then loads about {more} more tokens at each start here."
+        ),
+    })
 }
 
 pub fn load(place: &Place, cx: &mut Reader) -> CliLoad {
@@ -266,11 +294,16 @@ fn project_files(
 
     let mut left = settings.budget;
     let mut over: Vec<(PathBuf, Over)> = Vec::new();
+    // The bytes of every file the budget counts here: loaded, cut and skipped.
+    let mut needed: u64 = 0;
     for dir in &chain[start..] {
         let Some(found) = pick(cx, dir, names, unreadable) else {
             continue;
         };
         let winner = &found.winner;
+        if blocker.is_none() {
+            needed = needed.saturating_add(winner.bytes);
+        }
         if let Some(reason) = blocker {
             out.files
                 .push(row(&winner.path, When::NotLoaded(reason.into()), 0, Vec::new()));
@@ -296,7 +329,7 @@ fn project_files(
         } else {
             let when = When::NotLoaded("past project_doc_max_bytes".into());
             out.files.push(row(&winner.path, when, 0, Vec::new()));
-            over.push((winner.path.clone(), Over::Skipped));
+            over.push((winner.path.clone(), Over::Skipped(winner.bytes)));
         }
         out.files.extend(shadowed(&found));
     }
@@ -308,10 +341,18 @@ fn project_files(
                 let path = shown(path, Some(project), &place.roots.home);
                 match what {
                     Over::Cut(lost) => format!("{path} ({lost} bytes cut)"),
-                    Over::Skipped => format!("{path} (not loaded)"),
+                    Over::Skipped(_) => format!("{path} (not loaded)"),
                 }
             })
             .collect();
+        let not_loaded: u64 = over
+            .iter()
+            .map(|(_, what)| match what {
+                Over::Cut(lost) => *lost,
+                Over::Skipped(bytes) => *bytes,
+            })
+            .sum();
+        let raise = raise_for(needed, not_loaded, settings.budget, place);
         let folder = project
             .file_name()
             .map_or_else(|| project.display().to_string(), |n| n.to_string_lossy().into_owned());
@@ -328,6 +369,8 @@ fn project_files(
                 "Set project_doc_max_bytes in {} to raise the limit, or shorten the files.",
                 shown(&place.roots.codex_home.join("config.toml"), None, &place.roots.home)
             ),
+            user_level: false,
+            raise,
         });
     }
 
@@ -696,6 +739,89 @@ mod tests {
             got.cuts[0]
                 .detail
                 .starts_with("It loads 10 bytes of project instructions")
+        );
+    }
+
+    #[test]
+    fn a_cut_knows_what_raising_the_limit_takes() {
+        let s = Setup::new();
+        fs::create_dir_all(s.at("work/.git")).unwrap();
+        s.write("work/AGENTS.md", &"a".repeat(40_000));
+        let got = s.load(Some(&s.at("work")));
+        let raise = got.cuts[0].raise.as_ref().unwrap();
+        assert_eq!(raise.bytes, 40_960);
+        assert_eq!(raise.config, s.roots.codex_home.join("config.toml"));
+        assert_eq!(
+            raise.says,
+            "The fix sets project_doc_max_bytes to 40960, for every project. Codex then loads about 1.8k more tokens at each start here."
+        );
+        assert!(!got.cuts[0].user_level);
+    }
+
+    #[test]
+    fn the_raise_counts_every_file_loaded_cut_or_skipped() {
+        let s = Setup::new();
+        fs::create_dir_all(s.at("work/.git")).unwrap();
+        s.write("work/AGENTS.md", &"a".repeat(30_000));
+        s.write("work/sub/AGENTS.md", &"b".repeat(5_000));
+        s.write("work/sub/leaf/AGENTS.md", "later");
+        // 35,005 bytes: 2,232 cut and 5 skipped, about 560 tokens.
+        let got = s.load(Some(&s.at("work/sub/leaf")));
+        let raise = got.cuts[0].raise.as_ref().unwrap();
+        assert_eq!(raise.bytes, 40_960);
+        assert!(
+            raise
+                .says
+                .ends_with("Codex then loads about 560 more tokens at each start here.")
+        );
+    }
+
+    #[test]
+    fn a_configured_limit_is_raised_from_what_the_files_need() {
+        let s = Setup::new();
+        s.config("project_doc_max_bytes = 10\n");
+        s.write("work/AGENTS.md", "0123456789abcdef");
+        let got = s.load(Some(&s.at("work")));
+        let raise = got.cuts[0].raise.as_ref().unwrap();
+        assert_eq!(raise.bytes, RAISE_STEP);
+    }
+
+    #[test]
+    fn a_project_past_one_mebibyte_is_not_raised() {
+        let s = Setup::new();
+        fs::create_dir_all(s.at("work/.git")).unwrap();
+        s.write("work/AGENTS.md", &"a".repeat(1_100_000));
+        let got = s.load(Some(&s.at("work")));
+        assert_eq!(got.cuts.len(), 1);
+        assert_eq!(got.cuts[0].raise, None);
+        // Exactly 1 MiB still fits.
+        s.write("work/AGENTS.md", &"a".repeat(1_048_576));
+        let got = s.load(Some(&s.at("work")));
+        assert_eq!(got.cuts[0].raise.as_ref().map(|r| r.bytes), Some(RAISE_MAX));
+    }
+
+    #[test]
+    fn a_budget_of_zero_is_not_raised() {
+        let s = Setup::new();
+        s.config("project_doc_max_bytes = 0\n");
+        s.write("work/AGENTS.md", "project");
+        let got = s.load(Some(&s.at("work")));
+        assert!(got.cuts.iter().all(|c| c.raise.is_none()));
+        assert_eq!(
+            raise_for(
+                7,
+                7,
+                0,
+                &Place {
+                    roots: &s.roots,
+                    project: None,
+                    ceiling: None,
+                    claude_managed: None,
+                    qwen_system_settings: None,
+                    distro: None,
+                }
+            ),
+            None
         );
     }
 

@@ -118,6 +118,21 @@ pub struct Cut {
     pub title: String,
     pub detail: String,
     pub cannot_fix: String,
+    /// The cut is about a file of the user's own: one item however many projects' loads carry it.
+    pub user_level: bool,
+    /// The one edit that would end the cut, when the CLI has one.
+    pub raise: Option<Raise>,
+}
+
+/// A setting a fix would raise so a cut file loads whole. Computed here; nothing is written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Raise {
+    /// The CLI's config file the setting is in.
+    pub config: PathBuf,
+    /// The value the fix would set.
+    pub bytes: u64,
+    /// A sentence for the item's detail, in the CLI's own words.
+    pub says: String,
 }
 
 /// What one CLI loads in one place.
@@ -1176,9 +1191,17 @@ pub(crate) fn folder_name(project: &Path) -> String {
     )
 }
 
+/// A cut's item id: `instrcut.<agent>.<place>.<id_part><suffix>`. The place is `user` for a user-level cut, however
+/// many projects' loads carry it.
+pub fn cut_id(load: &CliLoad, cut: &Cut) -> String {
+    let project = if cut.user_level { None } else { load.project.as_deref() };
+    let (place, suffix) = id_tail(project, load.distro.as_deref());
+    format!("instrcut.{}.{place}.{}{suffix}", load.agent, cut.id_part)
+}
+
 /// Every instruction item: one Info line per place, then a Waste item per CLI over 4,000 tokens at start, then the
 /// cuts. Project lines come in `projects` order. No loads give no item.
-pub fn items(loads: &[CliLoad], projects: &[PathBuf]) -> Vec<DoctorItem> {
+pub fn items(loads: &[CliLoad], projects: &[PathBuf], editable: &dyn Fn(&Path) -> bool) -> Vec<DoctorItem> {
     let mut lines: Vec<Line> = Vec::new();
     for load in loads {
         let project = load.project.as_deref();
@@ -1292,19 +1315,32 @@ pub fn items(loads: &[CliLoad], projects: &[PathBuf]) -> Vec<DoctorItem> {
                 ));
             }
             for cut in &load.cuts {
-                cuts.push(mk(
-                    format!("instrcut.{}.{place}.{}{suffix}", load.agent, cut.id_part),
+                let id = cut_id(load, cut);
+                // A user-level cut is in every project's load: the first one makes the item.
+                if cut.user_level && cuts.iter().any(|c: &DoctorItem| c.id == id) {
+                    continue;
+                }
+                let shown_in = if cut.user_level { None } else { load.project.as_deref() };
+                let path = cut.path.as_deref().map(|p| display(p, shown_in, &load.home));
+                let raise = cut.raise.as_ref().filter(|r| editable(&r.config));
+                let mut item = mk(
+                    id,
                     Some(load.agent),
                     line.distro,
                     DoctorGroup::Broken,
                     cut.title.clone(),
                     cut.detail.clone(),
                     Some(cut.cannot_fix.clone()),
-                    cut.path
-                        .as_deref()
-                        .map(|p| display(p, load.project.as_deref(), &load.home)),
+                    path,
                     Vec::new(),
-                ));
+                );
+                if let Some(raise) = raise {
+                    item.fixable = true;
+                    item.unchecked = true;
+                    item.cannot_fix = None;
+                    item.detail = format!("{} {}", cut.detail, raise.says);
+                }
+                cuts.push(item);
             }
         }
     }
@@ -1939,7 +1975,7 @@ mod tests {
     #[test]
     fn no_loads_give_no_items() {
         let tmp = tempfile::tempdir().unwrap();
-        assert!(items(&[], &[project_in(tmp.path())]).is_empty());
+        assert!(items(&[], &[project_in(tmp.path())], &|_| true).is_empty());
     }
 
     #[test]
@@ -1957,7 +1993,7 @@ mod tests {
                 vec![start(project.join("CLAUDE.md"), 12)],
             ),
         ];
-        let got = items(&loads, std::slice::from_ref(&project));
+        let got = items(&loads, std::slice::from_ref(&project), &|_| true);
         assert_eq!(got.len(), 1);
         let item = &got[0];
         assert_eq!(item.id, format!("instr.{}", project_id(&project)));
@@ -1988,7 +2024,7 @@ mod tests {
             load("claude", Some(&a), &home, Vec::new()),
             load("claude", Some(&b), &home, Vec::new()),
         ];
-        let got = items(&loads, &[b.clone(), a.clone()]);
+        let got = items(&loads, &[b.clone(), a.clone()], &|_| true);
         assert!(got[0].title.starts_with("b:"));
         assert!(got[1].title.starts_with("a:"));
     }
@@ -2007,7 +2043,7 @@ mod tests {
                 vec![start(project.join("AGENTS.md"), 45)],
             ),
         ];
-        let got = items(&loads, std::slice::from_ref(&project));
+        let got = items(&loads, std::slice::from_ref(&project), &|_| true);
         assert_eq!(
             got[0].title,
             "proj: at start, Claude Code loads no instructions, Codex 12."
@@ -2027,7 +2063,7 @@ mod tests {
         );
         codex.reason = Some("Codex doesn't trust this folder".into());
         let loads = [load("claude", Some(&project), &home, Vec::new()), codex];
-        let got = items(&loads, std::slice::from_ref(&project));
+        let got = items(&loads, std::slice::from_ref(&project), &|_| true);
         assert_eq!(
             got[0].title,
             "proj: at start, Claude Code loads no instructions, Codex 12 (Codex doesn't trust this folder)."
@@ -2047,7 +2083,7 @@ mod tests {
             start(project.join("d.md"), 1_004),
         ];
         let loads = [load("claude", Some(&project), &home, files)];
-        let got = items(&loads, std::slice::from_ref(&project));
+        let got = items(&loads, std::slice::from_ref(&project), &|_| true);
         assert_eq!(got.len(), 2);
         let waste = &got[1];
         assert_eq!(waste.id, format!("instrsize.claude.{}", project_id(&project)));
@@ -2079,13 +2115,13 @@ mod tests {
         // The CLI writes its memory itself: 5k tokens of it are in the line's total and raise no Waste item.
         let files = vec![start(project.join("CLAUDE.md"), 400), memory(20_000)];
         let loads = [load("claude", Some(&project), &home, files)];
-        let got = items(&loads, std::slice::from_ref(&project));
+        let got = items(&loads, std::slice::from_ref(&project), &|_| true);
         assert_eq!(got.len(), 1, "{got:?}");
         assert!(got[0].title.contains("about 5.1k tokens"), "{}", got[0].title);
         // Past 4k without it, the item counts and names the other files only.
         let files = vec![start(project.join("CLAUDE.md"), 17_000), memory(20_000)];
         let loads = [load("claude", Some(&project), &home, files)];
-        let got = items(&loads, std::slice::from_ref(&project));
+        let got = items(&loads, std::slice::from_ref(&project), &|_| true);
         assert_eq!(got.len(), 2, "{got:?}");
         assert_eq!(
             got[1].title,
@@ -2104,7 +2140,7 @@ mod tests {
             tmp.path(),
             vec![start(project.join("CLAUDE.md"), 16_000)],
         )];
-        assert_eq!(items(&loads, std::slice::from_ref(&project)).len(), 1);
+        assert_eq!(items(&loads, std::slice::from_ref(&project), &|_| true).len(), 1);
     }
 
     #[test]
@@ -2114,7 +2150,7 @@ mod tests {
         let mut later = start(project.join("later.md"), 40_000);
         later.when = When::WhenUsed;
         let loads = [load("claude", Some(&project), tmp.path(), vec![later])];
-        let got = items(&loads, std::slice::from_ref(&project));
+        let got = items(&loads, std::slice::from_ref(&project), &|_| true);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].loads[0].files[0].note, "about 10.0k tokens, loads when used");
     }
@@ -2130,8 +2166,10 @@ mod tests {
             title: "Codex cuts text".into(),
             detail: "It stops reading.".into(),
             cannot_fix: "Shorten the files.".into(),
+            user_level: false,
+            raise: None,
         });
-        let got = items(&[codex], std::slice::from_ref(&project));
+        let got = items(&[codex], std::slice::from_ref(&project), &|_| true);
         let cut = got.iter().find(|i| i.group == DoctorGroup::Broken).unwrap();
         assert_eq!(cut.id, format!("instrcut.codex.{}.budget", project_id(&project)));
         assert!(!cut.fixable);
@@ -2142,13 +2180,95 @@ mod tests {
         assert_eq!(got.last().unwrap().id, cut.id, "cuts come last");
     }
 
+    fn user_cut(agent_path: &Path) -> Cut {
+        Cut {
+            id_part: hash_part(agent_path),
+            path: Some(agent_path.to_path_buf()),
+            title: "Antigravity cuts ~/.gemini/GEMINI.md".into(),
+            detail: "It loads the first 24,000 bytes.".into(),
+            cannot_fix: "Shorten it.".into(),
+            user_level: true,
+            raise: None,
+        }
+    }
+
+    #[test]
+    fn a_user_level_cut_is_one_item_for_two_projects() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (a, b) = (tmp.path().join("a"), tmp.path().join("b"));
+        fs::create_dir_all(&a).unwrap();
+        fs::create_dir_all(&b).unwrap();
+        let home = tmp.path().join("home");
+        let file = home.join(".gemini").join("GEMINI.md");
+        let mut one = load("antigravity", Some(&a), &home, Vec::new());
+        let mut two = load("antigravity", Some(&b), &home, Vec::new());
+        one.cuts.push(user_cut(&file));
+        two.cuts.push(user_cut(&file));
+        let got = items(&[one, two], &[a, b], &|_| true);
+        let cuts: Vec<_> = got.iter().filter(|i| i.group == DoctorGroup::Broken).collect();
+        assert_eq!(cuts.len(), 1);
+        assert_eq!(cuts[0].id, format!("instrcut.antigravity.user.{}", hash_part(&file)));
+        assert_eq!(cuts[0].title, "Antigravity cuts ~/.gemini/GEMINI.md");
+        assert_eq!(cuts[0].path.as_deref(), Some("~/.gemini/GEMINI.md"));
+    }
+
+    fn raising(project: &Path, home: &Path) -> CliLoad {
+        let mut codex = load("codex", Some(project), home, Vec::new());
+        codex.cuts.push(Cut {
+            id_part: "budget".into(),
+            path: None,
+            title: "Codex cuts its project instructions in proj".into(),
+            detail: "It loads 32768 bytes of project instructions.".into(),
+            cannot_fix: "Set project_doc_max_bytes to raise the limit.".into(),
+            user_level: false,
+            raise: Some(Raise {
+                config: home.join(".codex").join("config.toml"),
+                bytes: 40_960,
+                says: "The fix sets it to 40960.".into(),
+            }),
+        });
+        codex
+    }
+
+    #[test]
+    fn a_cut_codex_can_raise_is_fixable_and_unticked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = project_in(tmp.path());
+        let codex = raising(&project, &tmp.path().join("home"));
+        let got = items(&[codex], std::slice::from_ref(&project), &|_| true);
+        let cut = got.iter().find(|i| i.group == DoctorGroup::Broken).unwrap();
+        assert!(cut.fixable);
+        assert!(cut.unchecked);
+        assert_eq!(cut.cannot_fix, None);
+        assert_eq!(
+            cut.detail,
+            "It loads 32768 bytes of project instructions. The fix sets it to 40960."
+        );
+    }
+
+    #[test]
+    fn a_raise_marshell_may_not_write_stays_report_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = project_in(tmp.path());
+        let codex = raising(&project, &tmp.path().join("home"));
+        let got = items(&[codex], std::slice::from_ref(&project), &|_| false);
+        let cut = got.iter().find(|i| i.group == DoctorGroup::Broken).unwrap();
+        assert!(!cut.fixable);
+        assert!(!cut.unchecked);
+        assert_eq!(
+            cut.cannot_fix.as_deref(),
+            Some("Set project_doc_max_bytes to raise the limit.")
+        );
+        assert_eq!(cut.detail, "It loads 32768 bytes of project instructions.");
+    }
+
     #[test]
     fn no_projects_gives_the_outside_line() {
         let tmp = tempfile::tempdir().unwrap();
         let home = tmp.path().join("home");
         let files = vec![start(home.join(".claude").join("CLAUDE.md"), 20_000)];
         let loads = [load("claude", None, &home, files)];
-        let got = items(&loads, &[]);
+        let got = items(&loads, &[], &|_| true);
         assert_eq!(got[0].id, "instr.user");
         assert_eq!(
             got[0].title,
@@ -2175,7 +2295,7 @@ mod tests {
         claude.distro = Some("Ubuntu".into());
         let mut codex = load("codex", None, &home, Vec::new());
         codex.distro = Some("Ubuntu".into());
-        let got = items(&[claude, codex], &[]);
+        let got = items(&[claude, codex], &[], &|_| true);
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].id, "instr.user@Ubuntu");
         assert_eq!(got[0].distro.as_deref(), Some("Ubuntu"));
@@ -2199,8 +2319,10 @@ mod tests {
             title: "t".into(),
             detail: "d".into(),
             cannot_fix: "c".into(),
+            user_level: false,
+            raise: None,
         });
-        let got = items(&[claude], &[]);
+        let got = items(&[claude], &[], &|_| true);
         assert_eq!(got[1].id, "instrsize.claude.user@Ubuntu");
         assert!(got[1].title.ends_with("in Ubuntu"));
         assert_eq!(got[2].id, "instrcut.claude.user.abcd1234@Ubuntu");
@@ -2213,7 +2335,7 @@ mod tests {
         let project = project_in(tmp.path());
         let mut copilot = load("copilot", Some(&project), tmp.path(), Vec::new());
         copilot.notes = vec!["Copilot CLI documents no limit.".into()];
-        let got = items(&[copilot], std::slice::from_ref(&project));
+        let got = items(&[copilot], std::slice::from_ref(&project), &|_| true);
         assert_eq!(got[0].loads[0].notes, ["Copilot CLI documents no limit."]);
     }
 
@@ -2241,7 +2363,7 @@ mod tests {
             &home,
             vec![import, memory, off, managed],
         )];
-        let got = items(&loads, std::slice::from_ref(&project));
+        let got = items(&loads, std::slice::from_ref(&project), &|_| true);
         let notes: Vec<&str> = got[0].loads[0].files.iter().map(|f| f.note.as_str()).collect();
         assert_eq!(
             notes,
