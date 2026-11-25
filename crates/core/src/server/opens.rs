@@ -212,9 +212,39 @@ fn closed(number: u32) -> Response {
     text(StatusCode::CONFLICT, format!("Session {number} has closed."))
 }
 
+fn gone(owner: &OpenOwner) -> Response {
+    match owner {
+        OpenOwner::Session(number) => closed(*number),
+        OpenOwner::Panel => text(StatusCode::CONFLICT, PANEL_CLOSED),
+    }
+}
+
+/// Whose tabs an open is for: a session (its number, for the refusals) or the shell panel.
+enum OpenOwner {
+    Session(u32),
+    Panel,
+}
+
+/// The panel first, then the registry (the order `files::row_of` uses), each lock taken and dropped on its own.
+fn owner_of(st: &AppState, tab: &str) -> Option<OpenOwner> {
+    if st.panel_row(tab).is_some() {
+        return Some(OpenOwner::Panel);
+    }
+    st.registry().row(tab).map(|row| OpenOwner::Session(row.number))
+}
+
+const PANEL_CLOSED: &str = "The shell panel's shell has closed.";
+
+fn panel_full() -> String {
+    format!(
+        "The shell panel already has {} tabs in its side pane.",
+        crate::layout::MAX_PANE_TABS
+    )
+}
+
 /// POST /v1/sessions/{tab}/open
 pub async fn open(State(st): State<AppState>, Path(tab): Path<String>, Json(req): Json<OpenRequest>) -> Response {
-    let Some(row) = st.registry().row(&tab) else {
+    let Some(owner) = owner_of(&st, &tab) else {
         return text(StatusCode::NOT_FOUND, "No such session.");
     };
     let kind = match classify(&req.target, cfg!(windows)) {
@@ -233,24 +263,26 @@ pub async fn open(State(st): State<AppState>, Path(tab): Path<String>, Json(req)
     let Ok((_, answer)) = st.opens().push(&tab, kind, req.target, by, false) else {
         return text(StatusCode::SERVICE_UNAVAILABLE, FULL);
     };
-    // The session may have closed while the file was checked, after its requests were dropped.
-    if st.registry().row(&tab).is_none() {
+    // The session (or the panel's shell) may have closed while the file was checked, after its requests were dropped.
+    if owner_of(&st, &tab).is_none() {
         st.opens().drop_session(&tab);
     }
     match tokio::time::timeout(st.open_wait(), answer).await {
         Ok(Ok(Outcome::Opened)) => StatusCode::NO_CONTENT.into_response(),
         Ok(Ok(Outcome::Refused(why))) if why == "limit" => text(
             StatusCode::CONFLICT,
-            format!(
-                "Session {} already has {} tabs in its side pane.",
-                row.number,
-                crate::layout::MAX_PANE_TABS
-            ),
+            match owner {
+                OpenOwner::Session(number) => format!(
+                    "Session {number} already has {} tabs in its side pane.",
+                    crate::layout::MAX_PANE_TABS
+                ),
+                OpenOwner::Panel => panel_full(),
+            },
         ),
-        Ok(Ok(Outcome::Refused(why))) if why == "session" => closed(row.number),
+        Ok(Ok(Outcome::Refused(why))) if why == "session" => gone(&owner),
         Ok(Ok(Outcome::Refused(_))) => text(StatusCode::CONFLICT, BAD_ADDRESS),
         // Err: the queue went with the core. The session is as gone as a closed one.
-        Ok(Ok(Outcome::Closed) | Err(_)) => closed(row.number),
+        Ok(Ok(Outcome::Closed) | Err(_)) => gone(&owner),
         // The request stays in the queue: the tab opens when the app next looks.
         Err(_) => text(StatusCode::ACCEPTED, LATE),
     }

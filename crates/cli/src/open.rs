@@ -113,7 +113,8 @@ pub fn run(
     err: &mut dyn Write,
 ) -> i32 {
     let own = env("MARSHELL_TAB_ID").filter(|v| !v.is_empty());
-    let Some(session) = session.map(str::to_string).or_else(|| own.clone()) else {
+    let typed = session;
+    let Some(session) = typed.map(str::to_string).or_else(|| own.clone()) else {
         let _ = writeln!(err, "Outside a Marshell session, open needs --session <session>.");
         return 1;
     };
@@ -132,9 +133,15 @@ pub fn run(
             return 1;
         }
     };
-    let Some(row) = resolve(&snapshot, &session) else {
-        let _ = writeln!(err, "No session {session}.");
-        return 1;
+    // A session named with --session must be one the app lists. The caller's own id may be the shell panel's shell,
+    // which no snapshot lists: it goes as it is, and the core decides (its 404 reads "No session" below).
+    let tab_id = match resolve(&snapshot, &session) {
+        Some(row) => row.tab_id.clone(),
+        None if typed.is_none() => session.clone(),
+        None => {
+            let _ = writeln!(err, "No session {session}.");
+            return 1;
+        }
     };
     let mut code = 0;
     for text in targets {
@@ -150,7 +157,7 @@ pub fn run(
             target,
             from: own.clone(),
         };
-        match client.open(&row.tab_id, &req) {
+        match client.open(&tab_id, &req) {
             Opened::Done => {}
             Opened::Late(line) => {
                 let _ = writeln!(err, "{line}");
@@ -325,6 +332,47 @@ mod tests {
         let fake = Fake::new(vec![Opened::Refused("No such session.".into())]);
         let (_, err) = go(&[], &["http://a"], Some("2"), Some(&fake));
         assert_eq!(err, "No session 2.\n");
+    }
+
+    #[test]
+    fn open_in_the_panel_shell_posts_to_its_own_tab() {
+        let fake = Fake::new(vec![Opened::Done]);
+        let (code, err) = go(
+            &[("MARSHELL_TAB_ID", "t-panel")],
+            &["https://x.dev/"],
+            None,
+            Some(&fake),
+        );
+        assert_eq!((code, err.as_str()), (0, ""));
+        let asked = fake.asked.borrow();
+        assert_eq!(asked.len(), 1);
+        assert_eq!(asked[0].0, "t-panel");
+        assert_eq!(asked[0].1.from.as_deref(), Some("t-panel"));
+    }
+
+    #[test]
+    fn a_typed_session_that_isnt_listed_is_still_refused() {
+        let fake = Fake::new(vec![]);
+        let (code, err) = go(
+            &[("MARSHELL_TAB_ID", "tab-b")],
+            &["https://x.dev/"],
+            Some("t-panel"),
+            Some(&fake),
+        );
+        assert_eq!((code, err.as_str()), (1, "No session t-panel.\n"));
+        assert!(fake.asked.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_panel_shell_that_is_gone_reads_no_session() {
+        let fake = Fake::new(vec![Opened::Refused("No such session.".into())]);
+        let (code, err) = go(
+            &[("MARSHELL_TAB_ID", "t-panel")],
+            &["https://x.dev/"],
+            None,
+            Some(&fake),
+        );
+        assert_eq!((code, err.as_str()), (1, "No session t-panel.\n"));
     }
 
     #[test]
