@@ -1,5 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { FOCUSABLE } from "../../lib/dialogFocus";
+import { focusOrder } from "../../lib/focusOrder";
 import { nameContainsLabel } from "../../lib/labelInName";
 import { DoctorPage } from "./DoctorPage";
 import { showProgress } from "./doctorUi";
@@ -221,6 +223,11 @@ describe("DoctorPage", () => {
       expect(row).toContain('<p class="doctor__load-cli">Codex: about 600 tokens at start</p>');
       expect(row).toContain('<li data-when="notLoaded" style="--depth:0"><code dir="ltr">AGENTS.md</code> <span>not loaded: AGENTS.override.md is here</span></li>');
       expect(row).toContain('<li data-when="start" style="--depth:1"><code dir="ltr">AGENTS.md</code> <span>about 600 tokens, imported by CLAUDE.md</span></li>');
+    });
+    it("the page's focus trap walks the disclosure, so Tab reaches it", () => {
+      expect(focusOrder(page(DOCTOR_LOADS, "ready"))).toContain("Show the files");
+      // The trap's query and the helper that mirrors it name the same element.
+      expect(FOCUSABLE.split(", ")).toContain("summary");
     });
     it("a row without loads has no disclosure", () => {
       expect(rows(page(DOCTOR_LOADS, "ready"))[1]).not.toContain("<details");

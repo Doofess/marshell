@@ -1,7 +1,7 @@
 import { trapKey } from "./focusTrap";
 
-/** What a dialog's focus trap walks: links, enabled controls, and anything made focusable (a scrolling body with tabindex 0). */
-export const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+/** What a dialog's focus trap walks: links, enabled controls, a disclosure's summary, and anything made focusable (a scrolling body with tabindex 0). */
+export const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
 
 export type Focusable = { focus(): void };
 
