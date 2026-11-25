@@ -138,6 +138,93 @@ export const DOCTOR_LOADS: DoctorReport = {
     { id: "cli.qwen", agent: "qwen", group: "info", title: "Qwen Code has no doctor command.", detail: "Marshell's own checks still cover its hooks and settings.", fixable: false, open_agents: false },
   ],
 };
+/** One finding of each kind the instruction checks make, in the core's copy: a row names the files it can open. */
+export const DOCTOR_FINDINGS: DoctorReport = {
+  checked_at_ms: NOW - 12_000,
+  duration_ms: 1_400,
+  items: [
+    {
+      id: "instrimport.3f2a9c1e.0a1b2c3d.4e5f6a7b.at",
+      group: "broken",
+      title: "CLAUDE.md in Airport imports a file that doesn't exist",
+      detail: "Line 12: @docs/setup.md. Claude Code loads nothing for it. Copilot CLI leaves it in as text.",
+      fixable: true,
+      unchecked: true,
+      open_agents: false,
+      opens: [{ path: "C:\\dev\\Airport\\CLAUDE.md", line: 12, label: "Open CLAUDE.md" }],
+    },
+    {
+      id: "instrcut.codex.3f2a9c1e.budget",
+      agent: "codex",
+      group: "broken",
+      title: "Codex cuts its project instructions in Airport",
+      detail: "It loads 32768 bytes of project instructions, and these are over: AGENTS.md. The fix sets project_doc_max_bytes to 40960, for every project. Codex then loads about 1.8k more tokens at each start here.",
+      fixable: true,
+      unchecked: true,
+      open_agents: false,
+    },
+    {
+      id: "refnotes.long.3f2a9c1e",
+      group: "waste",
+      title: "Reference notes in Airport average about 210 tokens",
+      detail: "A note this long names several aliases at once.",
+      fixable: false,
+      cannot_fix: "Shorten or remove aliases in Settings, Projects.",
+      open_agents: false,
+    },
+    {
+      id: "instrstale.3f2a9c1e.9c8d7e6f",
+      group: "info",
+      title: "AGENTS.md in Airport names 2 paths that don't exist",
+      detail: "Line 14: src/old/api.ts. Line 30: docs/setup.md.",
+      fixable: false,
+      open_agents: false,
+      opens: [{ path: "C:\\dev\\Airport\\AGENTS.md", line: 14, label: "Open AGENTS.md" }],
+    },
+    {
+      id: "instrtwice.copilot.3f2a9c1e.9c8d7e6f",
+      agent: "copilot",
+      group: "info",
+      title: "Copilot CLI loads AGENTS.md twice in Airport",
+      detail: "Once by its own name and once as an import of CLAUDE.md. About 250 tokens are sent twice.",
+      fixable: false,
+      open_agents: false,
+      opens: [{ path: "C:\\dev\\Airport\\AGENTS.md", label: "Open AGENTS.md" }],
+    },
+    {
+      id: "instrrepeat.3f2a9c1e.0a1b2c3d.9c8d7e6f",
+      group: "info",
+      title: "CLAUDE.md and AGENTS.md in Airport repeat 3 paragraphs",
+      detail: "Claude Code and Copilot CLI load both. The first is at CLAUDE.md:12 and AGENTS.md:30: “Use pnpm for the frontend and Cargo for Rust; both versions are pinned.”. About 420 tokens are sent twice.",
+      fixable: false,
+      open_agents: false,
+      opens: [
+        { path: "C:\\dev\\Airport\\CLAUDE.md", line: 12, label: "Open CLAUDE.md" },
+        { path: "C:\\dev\\Airport\\AGENTS.md", line: 30, label: "Open AGENTS.md" },
+      ],
+    },
+    {
+      id: "instrclash.3f2a9c1e.manager",
+      group: "info",
+      title: "Two package managers are named in Airport",
+      detail: "~/.claude/CLAUDE.md:4 (user level) says npm: “Always run npm install before a commit.”. AGENTS.md:12 says pnpm: “Use pnpm for the frontend.”. Claude Code loads both.",
+      fixable: false,
+      open_agents: false,
+      opens: [
+        { path: "C:\\Users\\dev\\.claude\\CLAUDE.md", line: 4, label: "Open CLAUDE.md" },
+        { path: "C:\\dev\\Airport\\AGENTS.md", line: 12, label: "Open AGENTS.md" },
+      ],
+    },
+    {
+      id: "refnotes.3f2a9c1e",
+      group: "info",
+      title: "Airport: 14 reference notes in the last 30 days, about 1.1k tokens",
+      detail: "About 80 tokens a note. Marshell adds a note to a prompt that names an alias.",
+      fixable: false,
+      open_agents: false,
+    },
+  ],
+};
 export const DOCTOR_CLEAR: DoctorReport = { checked_at_ms: NOW - 4_000, duration_ms: 900, items: [] };
 
 export const UNDO_FIXED: DoctorLastFix = { snapshot_id: "snap-1", fixed_at_ms: NOW, item_ids: ["hooks.claude", "hooks.codex@Ubuntu", "retention.claude"], count: 3, restart: ["tab-1", "tab-2"], files_match: true };

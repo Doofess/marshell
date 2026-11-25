@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::doctor::instructions::display as shown;
 use crate::doctor::instructions::{
-    CliLoad, ImportBase, ImportRules, ImportSyntax, LoadedFile, Place, Reader, Role, Text, When, expand,
+    CliLoad, ImportBase, ImportRules, ImportStyle, ImportSyntax, LoadedFile, Place, Reader, Role, Text, When, expand,
     frontmatter_value,
 };
 
@@ -30,6 +30,7 @@ fn row(path: &Path, role: Role, when: When, chars: usize, notes: Vec<String>) ->
         chars,
         notes,
         depth: 0,
+        raw: None,
     }
 }
 
@@ -95,6 +96,10 @@ pub fn load(place: &Place, cx: &mut Reader) -> CliLoad {
         reason: None,
         notes: vec!["Copilot CLI documents no limit; none was seen up to 256 KB.".to_string()],
         cuts: Vec::new(),
+        imports: Some(ImportStyle {
+            syntax: ImportSyntax::At,
+            in_comments: true,
+        }),
     };
     let mut run = Run {
         project: place.project.map(Path::to_path_buf),
@@ -273,6 +278,19 @@ mod tests {
 
     fn not_loaded(reason: &str) -> When {
         When::NotLoaded(reason.into())
+    }
+
+    #[test]
+    fn the_load_says_how_this_cli_writes_imports() {
+        let s = Setup::new();
+        let got = s.load(None);
+        assert_eq!(
+            got.imports,
+            Some(ImportStyle {
+                syntax: ImportSyntax::At,
+                in_comments: true
+            })
+        );
     }
 
     #[test]

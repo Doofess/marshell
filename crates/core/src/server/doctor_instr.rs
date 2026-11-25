@@ -8,6 +8,7 @@ use super::doctor_ext::windows_roots;
 use crate::agents::{antigravity, claude, codex, copilot, qwen};
 use crate::doctor::AgentFacts;
 use crate::doctor::ext::ExtRoots;
+use crate::doctor::instr_checks::{self, Finding};
 use crate::doctor::instructions::{CliLoad, Place, Reader, display};
 use std::path::{Component, Path, PathBuf, Prefix};
 
@@ -31,6 +32,14 @@ fn load_of(agent: &str, place: &Place, cx: &mut Reader) -> Option<CliLoad> {
     })
 }
 
+/// What one read of the instruction files found: what each CLI loads, and what is wrong inside those files. The
+/// findings are worked out for each reader before it is dropped, so no file is read twice.
+#[derive(Default)]
+pub(crate) struct InstrRead {
+    pub loads: Vec<CliLoad>,
+    pub findings: Vec<Finding>,
+}
+
 /// Every installed CLI's instruction files, on Windows once per project (once with no project when there are none) and
 /// in each running managed distro at user level. A CLI whose facts have an error, or that isn't found, is left out.
 /// Reads files: callers are already off the async threads.
@@ -39,11 +48,12 @@ pub(crate) fn loads(
     facts: &[AgentFacts],
     distro_homes: &[(String, PathBuf)],
     projects: &[PathBuf],
-) -> Vec<CliLoad> {
+) -> InstrRead {
     #[cfg(test)]
     st.0.instr_reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
 
     let mut out = Vec::new();
+    let mut findings = Vec::new();
     let installed = |f: &&AgentFacts| f.found && f.error.is_none();
     if let Some(roots) = windows_roots(st) {
         let agents: Vec<&'static str> = facts
@@ -56,6 +66,7 @@ pub(crate) fn loads(
             // One reader for every project and CLI, so a file is read once and the time budget covers the whole run.
             let mut cx = Reader::windows();
             windows_loads(st, &roots, &agents, projects, &mut cx, &mut out);
+            findings.extend(instr_checks::findings(&out, &mut cx));
         }
     }
     for (distro, home) in distro_homes {
@@ -81,11 +92,13 @@ pub(crate) fn loads(
             distro: Some(distro),
         };
         let mut cx = Reader::distro(unc_root);
+        let from = out.len();
         for agent in &agents {
             out.extend(load_of(agent, &place, &mut cx));
         }
+        findings.extend(instr_checks::findings(&out[from..], &mut cx));
     }
-    out
+    InstrRead { loads: out, findings }
 }
 
 pub(super) fn windows_loads(
@@ -153,6 +166,7 @@ pub(super) fn windows_loads(
                     reason: Some(OUT_OF_TIME.to_string()),
                     notes: Vec::new(),
                     cuts: Vec::new(),
+                    imports: None,
                 });
             }
         } else if cx.is_dir(project) {

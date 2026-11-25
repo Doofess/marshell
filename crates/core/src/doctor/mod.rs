@@ -4,9 +4,12 @@ pub mod checks;
 pub mod cli;
 pub mod ext;
 pub mod frontmatter;
+pub mod instr_checks;
+pub mod instr_text;
 pub mod instructions;
 pub mod measure;
 pub mod probe;
+pub mod refnotes;
 pub mod state;
 pub mod usage;
 

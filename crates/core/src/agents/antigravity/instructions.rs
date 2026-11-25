@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use crate::doctor::ext::tokens;
 use crate::doctor::instructions::display as shown;
 use crate::doctor::instructions::{
-    CliLoad, Cut, ImportBase, ImportRules, ImportSyntax, LoadedFile, Place, Reader, Role, Text, When, expand,
-    frontmatter_value, hash_part,
+    CliLoad, Cut, ImportBase, ImportRules, ImportStyle, ImportSyntax, LoadedFile, Place, Reader, Role, Text, When,
+    expand, frontmatter_value, hash_part,
 };
 
 /// Antigravity cuts a rule at this many bytes, includes expanded.
@@ -49,6 +49,7 @@ fn row(path: &Path, role: Role, when: When, chars: usize, notes: Vec<String>) ->
         chars,
         notes,
         depth: 0,
+        raw: None,
     }
 }
 
@@ -219,19 +220,28 @@ impl Run<'_, '_> {
             .notes
             .push(format!("cut: Antigravity loads {kept} of {total} bytes"));
         let path = rows[0].path.clone();
-        self.cuts.push(Cut {
-            id_part: hash_part(&path),
-            title: format!(
+        // The user's own file is one cut for every project, so its title names none.
+        let user_level = self.is_user(&path);
+        let title = if user_level {
+            format!("Antigravity cuts {}", shown(&path, None, &self.place.roots.home))
+        } else {
+            format!(
                 "Antigravity cuts {} in {}",
                 shown(&path, self.project(), &self.place.roots.home),
                 self.where_text()
-            ),
+            )
+        };
+        self.cuts.push(Cut {
+            id_part: hash_part(&path),
+            title,
             path: Some(path),
             detail: format!(
                 "It loads the first 24,000 bytes of each rule, so {} bytes of it never reach the agent.",
                 total - kept
             ),
             cannot_fix: "Shorten it, or split it into rules.".to_string(),
+            user_level,
+            raise: None,
         });
     }
 
@@ -253,6 +263,10 @@ pub fn load(place: &Place, cx: &mut Reader) -> CliLoad {
         reason: None,
         notes: vec![UNKNOWN.to_string()],
         cuts: Vec::new(),
+        imports: Some(ImportStyle {
+            syntax: ImportSyntax::AgyLink,
+            in_comments: true,
+        }),
     };
     let rules = ImportRules {
         syntax: ImportSyntax::AgyLink,
@@ -338,6 +352,8 @@ pub fn load(place: &Place, cx: &mut Reader) -> CliLoad {
                 paths.join(", ")
             ),
             cannot_fix: "Give the rules it needs only sometimes trigger: model_decision or glob.".to_string(),
+            user_level: false,
+            raise: None,
         });
     }
 
@@ -435,6 +451,41 @@ mod tests {
 
     fn not_loaded(reason: &str) -> When {
         When::NotLoaded(reason.into())
+    }
+
+    #[test]
+    fn the_load_says_how_this_cli_writes_imports() {
+        let s = Setup::new();
+        let got = s.load(None);
+        assert_eq!(
+            got.imports,
+            Some(ImportStyle {
+                syntax: ImportSyntax::AgyLink,
+                in_comments: true
+            })
+        );
+    }
+
+    #[test]
+    fn a_user_level_file_over_the_limit_names_no_project() {
+        let s = Setup::new();
+        let user = s.write("home/.gemini/GEMINI.md", &"a".repeat(25_000));
+        let mine = s.write("proj/GEMINI.md", &"b".repeat(25_000));
+        let got = s.load(Some(&s.at("proj")));
+        let cut = got
+            .cuts
+            .iter()
+            .find(|c| c.path.as_deref() == Some(user.as_path()))
+            .unwrap();
+        assert!(cut.user_level);
+        assert_eq!(cut.title, "Antigravity cuts ~/.gemini/GEMINI.md");
+        let cut = got
+            .cuts
+            .iter()
+            .find(|c| c.path.as_deref() == Some(mine.as_path()))
+            .unwrap();
+        assert!(!cut.user_level);
+        assert_eq!(cut.title, "Antigravity cuts GEMINI.md in proj");
     }
 
     #[test]

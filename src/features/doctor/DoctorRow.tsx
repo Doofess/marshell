@@ -1,7 +1,7 @@
 import { type CSSProperties, Fragment, useId } from "react";
 import { AuxGlyph, StatusGlyph } from "../../components/StatusGlyph/StatusGlyph";
 import { keepFocusKey, keepLabel, keepName } from "./keep";
-import type { DoctorGroup, DoctorItem } from "./types";
+import type { DoctorGroup, DoctorItem, DoctorOpen } from "./types";
 import "./Doctor.css";
 
 function Mark({ group, done }: { group: DoctorGroup; done: boolean }) {
@@ -15,15 +15,15 @@ function Mark({ group, done }: { group: DoctorGroup; done: boolean }) {
   );
 }
 
-type Props = { item: DoctorItem; fixed?: boolean; checked?: boolean; disabled?: boolean; fixing?: boolean; keeping?: boolean; onToggle?: (id: string) => void; onOpenAgents?: () => void; onKeep?: (item: DoctorItem) => void };
+type Props = { item: DoctorItem; fixed?: boolean; checked?: boolean; disabled?: boolean; fixing?: boolean; keeping?: boolean; onToggle?: (id: string) => void; onOpenAgents?: () => void; onOpenFile?: (open: DoctorOpen) => void; onKeep?: (item: DoctorItem) => void };
 
 /**
  * One finding: a glyph, the title (with a checkbox when Marshell can fix it), what it means, the file, and why it cannot be
  * fixed when it cannot. The group heading above the row says Broken, Waste or Info; a fixed row says Fixed in words.
  * An instruction line also opens to the files each CLI loads. The summary is described by the row's title, so a screen
- * reader tells thirty "Show the files" apart.
+ * reader tells thirty "Show the files" apart. A finding about files has a button for each, which opens it in the side pane.
  */
-export function DoctorRow({ item, fixed = false, checked = false, disabled = false, fixing = false, keeping = false, onToggle, onOpenAgents, onKeep }: Props) {
+export function DoctorRow({ item, fixed = false, checked = false, disabled = false, fixing = false, keeping = false, onToggle, onOpenAgents, onOpenFile, onKeep }: Props) {
   const titleId = useId();
   const title = (
     <>
@@ -77,6 +77,15 @@ export function DoctorRow({ item, fixed = false, checked = false, disabled = fal
               </Fragment>
             ))}
           </details>
+        )}
+        {item.opens && item.opens.length > 0 && (
+          <div className="doctor__opens">
+            {item.opens.map((open, i) => (
+              <button type="button" className="doctor__btn" key={i} aria-describedby={titleId} onClick={() => onOpenFile?.(open)}>
+                {open.label}
+              </button>
+            ))}
+          </div>
         )}
         {item.open_agents && (
           <div>

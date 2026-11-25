@@ -104,6 +104,11 @@ pub fn display_name(agent: &str) -> &'static str {
     }
 }
 
+/// Whether the CLI loads nothing for an import whose file doesn't exist; the others leave the `@word` in as text.
+pub fn dead_import_drops(agent: &str) -> bool {
+    agent == "claude"
+}
+
 /// Broken and Waste items.
 pub fn issues(items: &[DoctorItem]) -> u32 {
     items.iter().filter(|i| i.group != DoctorGroup::Info).count() as u32
@@ -136,6 +141,7 @@ pub fn items(facts: &[AgentFacts], stopped: &[String], banners_on: bool) -> Vec<
             unchecked: false,
             action: None,
             loads: Vec::new(),
+            opens: Vec::new(),
         });
     }
     out
@@ -161,6 +167,7 @@ fn cli_items(f: &AgentFacts, banners_on: bool, out: &mut Vec<DoctorItem>) {
         unchecked: false,
         action: None,
         loads: Vec::new(),
+        opens: Vec::new(),
     };
 
     if let Some(err) = &f.error {

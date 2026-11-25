@@ -68,6 +68,24 @@ pub struct DoctorItem {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[ts(optional, as = "Option<Vec<DoctorLoad>>")]
     pub loads: Vec<DoctorLoad>,
+    /// Files the row can open in the side pane, one button each.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[ts(optional, as = "Option<Vec<DoctorOpen>>")]
+    pub opens: Vec<DoctorOpen>,
+}
+
+/// A file a row can open in the side pane.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DoctorOpen {
+    /// Absolute.
+    pub path: String,
+    /// The line to put the caret on, counted from 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub line: Option<u32>,
+    /// The button's words, such as "Open CLAUDE.md".
+    pub label: String,
 }
 
 /// When a CLI loads an instruction file.
@@ -212,6 +230,7 @@ mod tests {
             unchecked: false,
             action: None,
             loads: Vec::new(),
+            opens: Vec::new(),
         }
     }
 
@@ -246,6 +265,30 @@ mod tests {
         let mut with = item();
         with.action = Some(DoctorAction::StopKeeping);
         assert_eq!(serde_json::to_value(&with).unwrap()["action"], "stopKeeping");
+    }
+
+    #[test]
+    fn an_item_with_nothing_to_open_has_no_opens_key() {
+        let json = serde_json::to_value(item()).unwrap();
+        assert!(!json.as_object().unwrap().contains_key("opens"));
+
+        let mut with = item();
+        with.opens = vec![DoctorOpen {
+            path: "C:/p/CLAUDE.md".into(),
+            line: Some(4),
+            label: "Open CLAUDE.md".into(),
+        }];
+        let json = serde_json::to_value(&with).unwrap();
+        assert_eq!(
+            json["opens"],
+            serde_json::json!([{ "path": "C:/p/CLAUDE.md", "line": 4, "label": "Open CLAUDE.md" }])
+        );
+        with.opens[0].line = None;
+        let json = serde_json::to_value(&with).unwrap();
+        assert!(!json["opens"][0].as_object().unwrap().contains_key("line"));
+
+        let back: DoctorItem = serde_json::from_value(serde_json::to_value(item()).unwrap()).unwrap();
+        assert!(back.opens.is_empty());
     }
 
     #[test]

@@ -8,7 +8,7 @@ import { DoctorRow } from "./DoctorRow";
 import { UndoToast } from "./UndoToast";
 import { showProgress } from "./doctorUi";
 import { counts, fixHeadline, groups, selectedFixable } from "./report";
-import type { DoctorItem, DoctorLastFix, DoctorReport } from "./types";
+import type { DoctorItem, DoctorLastFix, DoctorOpen, DoctorReport } from "./types";
 import { undoOffer, undoState } from "./undo";
 import "./Doctor.css";
 
@@ -35,6 +35,8 @@ export type DoctorPageProps = {
   onUndo: () => void;
   onShowDifferences: () => void;
   onOpenAgents: () => void;
+  /** A finding's "Open <file>": the file opens in the side pane, at the finding's line. */
+  onOpenFile?: (open: DoctorOpen) => void;
   /** The toast's "Restart them"; the brief's prop list leaves it out, but the toast needs it. */
   onRestart?: () => void;
   /** A row's Keep my file or Stop keeping: it writes nothing of the CLI's and checks no row. */
@@ -50,7 +52,7 @@ export type DoctorPageProps = {
  * 150 ms of a check; a failure says why and offers Run again; after a fix each fixed row says Fixed in words, the receipt toast
  * floats for 10 seconds and then Undo last fix stays in the header. Info (managed settings) is listed and never has a control.
  */
-export function DoctorPage({ report, phase, selected, undo, nowMs, elapsedMs = 0, failure, onToggle, onFix, onRunAgain, cliRunning, onRunCliDoctors, measuring, onMeasure, onUndo, onShowDifferences, onOpenAgents, onRestart, onKeep, keeping, keepError }: DoctorPageProps) {
+export function DoctorPage({ report, phase, selected, undo, nowMs, elapsedMs = 0, failure, onToggle, onFix, onRunAgain, cliRunning, onRunCliDoctors, measuring, onMeasure, onUndo, onShowDifferences, onOpenAgents, onOpenFile, onRestart, onKeep, keeping, keepError }: DoctorPageProps) {
   const uid = useId();
   const c = report ? counts(report) : { issues: 0, fixable: 0, unfixable: 0, offered: 0 };
   const chosen = report ? selectedFixable(report, selected).length : 0;
@@ -133,7 +135,7 @@ export function DoctorPage({ report, phase, selected, undo, nowMs, elapsedMs = 0
                 </h2>
                 <ul className="doctor__list">
                   {g.items.map((i) => (
-                    <DoctorRow key={i.id} item={i} fixed={fixedIds.has(i.id)} checked={selected.has(i.id)} disabled={phase !== "ready"} fixing={phase === "fixing"} keeping={keeping === i.id} onToggle={onToggle} onOpenAgents={onOpenAgents} onKeep={onKeep} />
+                    <DoctorRow key={i.id} item={i} fixed={fixedIds.has(i.id)} checked={selected.has(i.id)} disabled={phase !== "ready"} fixing={phase === "fixing"} keeping={keeping === i.id} onToggle={onToggle} onOpenAgents={onOpenAgents} onOpenFile={onOpenFile} onKeep={onKeep} />
                   ))}
                 </ul>
               </section>

@@ -9,7 +9,7 @@ use super::extensions::{folder_trust_on, folder_trusted};
 use crate::config::jsonc::read_value;
 use crate::doctor::instructions::display as shown;
 use crate::doctor::instructions::{
-    CliLoad, ImportBase, ImportRules, ImportSyntax, LoadedFile, Place, Reader, Role, Text, When, expand,
+    CliLoad, ImportBase, ImportRules, ImportStyle, ImportSyntax, LoadedFile, Place, Reader, Role, Text, When, expand,
     frontmatter_value, strip_html_comments,
 };
 
@@ -75,6 +75,7 @@ fn row(path: &Path, role: Role, when: When, chars: usize, notes: Vec<String>) ->
         chars,
         notes,
         depth: 0,
+        raw: None,
     }
 }
 
@@ -164,6 +165,10 @@ pub fn load(place: &Place, cx: &mut Reader) -> CliLoad {
         reason: None,
         notes: vec!["Qwen Code documents no limit.".to_string()],
         cuts: Vec::new(),
+        imports: Some(ImportStyle {
+            syntax: ImportSyntax::At,
+            in_comments: false,
+        }),
     };
     let mut run = Run {
         files: Vec::new(),
@@ -353,6 +358,19 @@ mod tests {
     }
 
     const TRUST_ON: &str = r#"{"security":{"folderTrust":{"enabled":true}}}"#;
+
+    #[test]
+    fn the_load_says_how_this_cli_writes_imports() {
+        let s = Setup::new();
+        let got = s.load(None);
+        assert_eq!(
+            got.imports,
+            Some(ImportStyle {
+                syntax: ImportSyntax::At,
+                in_comments: false
+            })
+        );
+    }
 
     #[test]
     fn default_names_load_root_to_project() {

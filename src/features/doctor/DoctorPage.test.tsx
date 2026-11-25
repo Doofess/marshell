@@ -5,7 +5,7 @@ import { focusOrder } from "../../lib/focusOrder";
 import { nameContainsLabel } from "../../lib/labelInName";
 import { DoctorPage } from "./DoctorPage";
 import { showProgress } from "./doctorUi";
-import { DOCTOR_CLEAR, DOCTOR_CLI, DOCTOR_KEEP, DOCTOR_LOADS, DOCTOR_PROBLEMS, DOCTOR_REPORT, UNDO_FIXED } from "./fixtures";
+import { DOCTOR_CLEAR, DOCTOR_CLI, DOCTOR_FINDINGS, DOCTOR_KEEP, DOCTOR_LOADS, DOCTOR_PROBLEMS, DOCTOR_REPORT, UNDO_FIXED } from "./fixtures";
 import { initialSelection } from "./report";
 import type { DoctorReport } from "./types";
 
@@ -242,6 +242,42 @@ describe("DoctorPage", () => {
     it("a load's notes show under its heading", () => {
       const row = rows(page(DOCTOR_LOADS, "ready"))[0]!;
       expect(row).toContain('Codex: about 600 tokens at start</p><p class="doctor__load-note">Marshell stopped looking for files in subfolders after 10,000 entries.</p><ul class="doctor__load-files">');
+    });
+  });
+  describe("instruction findings", () => {
+    const rowOf = (h: string, id: string) => {
+      const title = DOCTOR_FINDINGS.items.find((i) => i.id.startsWith(id))!.title.replace(/'/g, "&#x27;");
+      return h.split('<li class="doctor__row"').find((r) => r.includes(title))!;
+    };
+    const h = page(DOCTOR_FINDINGS, "ready");
+    it("a finding's row has a button for each file it names, in the finding's order", () => {
+      const row = rowOf(h, "instrrepeat.");
+      expect(row).toMatch(/<button type="button" class="doctor__btn"[^>]*>Open CLAUDE\.md<\/button><button type="button" class="doctor__btn"[^>]*>Open AGENTS\.md<\/button>/);
+    });
+    it("each Open button is described by its row's title, so two of the same name tell apart", () => {
+      const row = rowOf(h, "instrrepeat.");
+      const titleId = /<p class="doctor__title" id="([^"]+)"/.exec(row)?.[1];
+      expect(titleId).toBeTruthy();
+      const buttons = [...row.matchAll(/<button type="button" class="doctor__btn"([^>]*)>Open [^<]*<\/button>/g)];
+      expect(buttons.length).toBeGreaterThan(0);
+      for (const [, attrs] of buttons) expect(attrs).toBe(` aria-describedby="${titleId}"`);
+    });
+    it("a row with no file to open has no such button", () => {
+      expect(rowOf(h, "refnotes.3f2a9c1e")).not.toContain(">Open ");
+      expect(page(DOCTOR_LOADS, "ready")).not.toContain(">Open CLAUDE.md<");
+    });
+    it("the buttons come after the row's words, and Tab reaches them", () => {
+      const row = rowOf(h, "instrimport.");
+      expect(row.indexOf(">Open CLAUDE.md<")).toBeGreaterThan(row.indexOf('class="doctor__detail"'));
+      const order = focusOrder(h);
+      expect(order.filter((n) => n === "Open CLAUDE.md")).toHaveLength(3);
+      expect(order.filter((n) => n === "Open AGENTS.md")).toHaveLength(4);
+    });
+    it("a finding Marshell can fix starts unticked, and a report-only one has no checkbox", () => {
+      expect(rowOf(h, "instrimport.")).toMatch(/<input type="checkbox"(?! checked)/);
+      expect(rowOf(h, "instrcut.codex.")).toMatch(/<input type="checkbox"(?! checked)/);
+      expect(rowOf(h, "instrstale.")).not.toContain("<input");
+      expect(h).toContain("Shorten or remove aliases in Settings, Projects.");
     });
   });
 });

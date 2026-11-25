@@ -54,6 +54,7 @@ fn item(
         unchecked: false,
         action: None,
         loads: Vec::new(),
+        opens: Vec::new(),
     }
 }
 

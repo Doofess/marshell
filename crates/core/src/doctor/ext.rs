@@ -530,6 +530,7 @@ fn inventory_items(inv: &Inventory, out: &mut Vec<(DoctorItem, Option<Switch>)>)
         unchecked: false,
         action: None,
         loads: Vec::new(),
+        opens: Vec::new(),
     };
 
     // 1. Files that don't parse.

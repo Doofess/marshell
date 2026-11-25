@@ -2,6 +2,7 @@
 import type { DoctorAction } from "./DoctorAction";
 import type { DoctorGroup } from "./DoctorGroup";
 import type { DoctorLoad } from "./DoctorLoad";
+import type { DoctorOpen } from "./DoctorOpen";
 
 /**
  * One finding of the Doctor's checks.
@@ -46,4 +47,8 @@ action?: DoctorAction,
 /**
  * The instruction files each CLI loads, for a row that lists them.
  */
-loads?: Array<DoctorLoad>, };
+loads?: Array<DoctorLoad>, 
+/**
+ * Files the row can open in the side pane, one button each.
+ */
+opens?: Array<DoctorOpen>, };

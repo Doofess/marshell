@@ -2962,6 +2962,11 @@ export function LiveApp() {
           actions={actions}
           announce={announce}
           onOpenAgents={() => openSettings("agents")}
+          // The file opens beside the session on screen and takes the keyboard, so the Doctor closes without sending it to the
+          // terminal. With no session the open says so, and the Doctor stays.
+          onOpenFile={(open) => {
+            if (openInPaneRef.current(open.line == null ? { path: open.path } : { path: open.path, line: open.line })) setOverlay(null);
+          }}
           onClose={() => {
             setOverlay(null);
             setTimeout(() => actions.focusTerminal(), 0);
