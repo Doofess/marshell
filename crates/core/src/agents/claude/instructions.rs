@@ -35,6 +35,9 @@ const SKIPPED: &str = "over 4 MiB";
 const TOO_LARGE_ESTIMATE: &str = "over 4 MiB, size estimated from its bytes";
 const ASKS_ONCE: &str = "Claude Code asks once before loading it";
 const MEMORY_NOTE: &str = "first 200 lines or 25 KB";
+/// Said until a signed-in Claude Code has shown the three values (7d decision 10).
+const UNCONFIRMED: &str = "Not yet confirmed: how deep Claude Code follows imports, where it cuts auto memory, and when \
+                           it warns about a long file.";
 const WALK_STOPPED: &str = "Marshell stopped looking for files in subfolders after 10,000 entries.";
 
 /// The folder name Claude Code keeps a repository's auto memory under: its root's path with every character that
@@ -396,14 +399,23 @@ pub fn load(place: &Place, cx: &mut Reader) -> CliLoad {
 
     if let Some(project) = place.project {
         let chain = place.ancestors();
+        // The walk up passes the home folder for a project under it. The user's own file there was read above: it
+        // isn't a project file, and it doesn't keep AGENTS.md out.
+        let users_own = roots.claude_dir.join("CLAUDE.md");
         // A CLAUDE.md-type file in any of these folders keeps the default mode from reading AGENTS.md.
-        let claude_here = chain
-            .iter()
-            .any(|dir| CLAUDE_NAMES.iter().any(|name| cx.exists(&dir.join(name))));
+        let claude_here = chain.iter().any(|dir| {
+            CLAUDE_NAMES.iter().any(|name| {
+                let file = dir.join(name);
+                cx.exists(&file) && !cx.same_file(&file, &users_own)
+            })
+        });
         let chain_agents = agents_block(mode, claude_here);
         for dir in &chain {
             for name in ["CLAUDE.md", ".claude/CLAUDE.md", "CLAUDE.local.md"] {
                 let path = name.split('/').fold(dir.clone(), |p, part| p.join(part));
+                if cx.same_file(&path, &users_own) {
+                    continue;
+                }
                 run.add(cx, &path, Role::File, Scope::Project, user_block, false);
             }
             for name in ["AGENTS.md", ".claude/AGENTS.md"] {
@@ -485,6 +497,7 @@ pub fn load(place: &Place, cx: &mut Reader) -> CliLoad {
         }
     }
     notes.append(&mut out.notes);
+    notes.push(UNCONFIRMED.to_string());
     out.notes = notes;
     out
 }
@@ -843,6 +856,33 @@ mod tests {
     }
 
     #[test]
+    fn the_users_own_file_is_not_a_project_file_above_the_project() {
+        let s = Setup::new();
+        // The project is under the home folder, so the walk up passes `<home>/.claude/CLAUDE.md`.
+        let user = s.write("home/.claude/CLAUDE.md", "mine");
+        let agents = s.write("home/work/proj/AGENTS.md", "agents");
+        let got = s.load(Some(&s.at("home/work/proj")));
+        let paths: Vec<&Path> = got.files.iter().map(|f| f.path.as_path()).collect();
+        assert_eq!(paths, vec![user.as_path(), agents.as_path()]);
+        assert_eq!(row(&got, &agents).when, When::Start);
+    }
+
+    #[test]
+    fn the_limits_not_yet_confirmed_are_said() {
+        let s = Setup::new();
+        s.write("proj/CLAUDE.md", "rules");
+        let got = s.load(Some(&s.at("proj")));
+        assert_eq!(
+            got.notes,
+            vec![
+                "Not yet confirmed: how deep Claude Code follows imports, where it cuts auto memory, and when it warns \
+                 about a long file."
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
     fn a_file_two_files_import_counts_once() {
         let s = Setup::new();
         let shared = s.write("proj/docs/shared.md", "shared words");
@@ -1073,8 +1113,8 @@ mod tests {
         };
         let got = load(&place, &mut Reader::with_walk_cap(2));
         assert_eq!(
-            got.notes,
-            vec!["Marshell stopped looking for files in subfolders after 10,000 entries.".to_string()]
+            got.notes[0],
+            "Marshell stopped looking for files in subfolders after 10,000 entries."
         );
     }
 

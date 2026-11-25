@@ -46,7 +46,11 @@ fn file_names(settings: Option<&Value>) -> Option<Vec<String>> {
         Value::Array(items) => items.iter().filter_map(|v| v.as_str().map(str::to_string)).collect(),
         _ => return None,
     };
-    let names: Vec<String> = names.into_iter().filter(|n| !n.trim().is_empty()).collect();
+    // A name is a file's name in each folder Qwen Code looks in, so one that holds a folder is left out.
+    let names: Vec<String> = names
+        .into_iter()
+        .filter(|n| !n.trim().is_empty() && !n.contains(['/', '\\']))
+        .collect();
     (!names.is_empty()).then_some(names)
 }
 
@@ -375,6 +379,21 @@ mod tests {
         assert_eq!(got.agent, "qwen");
         assert_eq!(got.reason, None);
         assert!(got.cuts.is_empty());
+    }
+
+    #[test]
+    fn a_file_name_with_a_folder_in_it_is_left_out() {
+        let s = Setup::new();
+        fs::create_dir_all(s.at("repo/.git")).unwrap();
+        s.write(
+            "repo/.qwen/settings.json",
+            r#"{"context":{"fileName":["QWEN.md","../outside/notes.md","sub\\deep.md"]}}"#,
+        );
+        let qwen = s.write("repo/QWEN.md", "qwen");
+        s.write("outside/notes.md", "not an instruction file");
+        s.write("repo/sub/deep.md", "nor this");
+        let got = s.load(Some(&s.at("repo")));
+        assert_eq!(paths(&got), vec![qwen.as_path()]);
     }
 
     #[test]

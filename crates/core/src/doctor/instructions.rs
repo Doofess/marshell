@@ -161,6 +161,9 @@ pub struct Reader {
     nested: HashMap<PathBuf, Nested>,
     walk_cap: usize,
     deadline: Instant,
+    /// In a test, how many more times `out_of_time` answers no before the budget counts as spent.
+    #[cfg(test)]
+    checks_left: Option<std::cell::Cell<usize>>,
 }
 
 impl Reader {
@@ -172,6 +175,8 @@ impl Reader {
             nested: HashMap::new(),
             walk_cap: WALK_CAP,
             deadline: Instant::now() + READ_BUDGET,
+            #[cfg(test)]
+            checks_left: None,
         }
     }
 
@@ -200,7 +205,21 @@ impl Reader {
         reader
     }
 
+    /// A reader whose time budget is spent after `checks` looks at the clock.
+    #[cfg(test)]
+    pub fn expiring_after(checks: usize) -> Reader {
+        let mut reader = Reader::windows();
+        reader.checks_left = Some(std::cell::Cell::new(checks));
+        reader
+    }
+
     pub fn out_of_time(&self) -> bool {
+        #[cfg(test)]
+        if let Some(left) = &self.checks_left {
+            let now = left.get();
+            left.set(now.saturating_sub(1));
+            return now == 0;
+        }
         Instant::now() >= self.deadline
     }
 
@@ -257,6 +276,9 @@ impl Reader {
         }
         let result = match self.canon(path) {
             Err(text) => text,
+            // A file that holds a sign-in or a token is never opened, whatever names it as an instruction file or
+            // imports it, and whatever links to it.
+            Ok(canonical) if holds_secrets(path) || holds_secrets(&canonical) => Text::Unreadable,
             Ok(canonical) => match self.by_canon.get(&canonical) {
                 Some(text) => text.clone(),
                 None => {
@@ -421,6 +443,17 @@ fn ends_with(name: &str, suffix: &str, ignore_case: bool) -> bool {
 }
 
 /// Lexically under `root`, with no `..` on the way.
+/// Whether a file's name is one the CLIs and Marshell keep a sign-in or a token under (`SCOPE.md`).
+fn holds_secrets(path: &Path) -> bool {
+    let Some(name) = path.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()) else {
+        return false;
+    };
+    matches!(
+        name.as_str(),
+        ".credentials.json" | "auth.json" | "oauth_creds.json" | "endpoint.json" | ".env"
+    ) || name.starts_with(".env.")
+}
+
 fn under_root(path: &Path, root: &Path) -> bool {
     path.starts_with(root) && !path.components().any(|c| matches!(c, Component::ParentDir))
 }
@@ -1091,9 +1124,14 @@ pub fn items(loads: &[CliLoad], projects: &[PathBuf]) -> Vec<DoctorItem> {
         ));
 
         for load in &line.loads {
-            let total = tokens(start_chars(load));
+            // Auto memory is in the line's total and gets no size item: the CLI writes it itself (7d decision 8).
+            let mut start: Vec<&LoadedFile> = load
+                .files
+                .iter()
+                .filter(|f| matches!(f.when, When::Start) && f.role != Role::Memory)
+                .collect();
+            let total = tokens(start.iter().map(|f| f.chars).sum());
             if total > WASTE_TOKENS {
-                let mut start: Vec<&LoadedFile> = load.files.iter().filter(|f| matches!(f.when, When::Start)).collect();
                 start.sort_by_key(|f| std::cmp::Reverse(f.chars));
                 let largest: Vec<String> = start
                     .iter()
@@ -1404,6 +1442,38 @@ mod tests {
         write(&file, "@gone.md");
         let rows = expand_file(&mut Reader::windows(), &file, &rules());
         assert_eq!(rows[1].when, When::NotLoaded("not found".into()));
+    }
+
+    #[test]
+    fn a_credential_file_is_never_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cx = Reader::windows();
+        for name in [
+            ".credentials.json",
+            "auth.json",
+            "oauth_creds.json",
+            "endpoint.json",
+            ".env",
+            ".env.local",
+            "AUTH.JSON",
+        ] {
+            let file = tmp.path().join(name);
+            write(&file, "secret words");
+            assert_eq!(cx.read(&file), Text::Unreadable, "{name}");
+        }
+        // A name that only looks alike is an ordinary file.
+        let plain = tmp.path().join("env.md");
+        write(&plain, "plain");
+        assert!(matches!(cx.read(&plain), Text::Text(_)));
+
+        let file = tmp.path().join("a.md");
+        write(&file, "@.env and @auth.json");
+        let rows = expand_file(&mut cx, &file, &rules());
+        assert_eq!(rows.len(), 3);
+        for row in &rows[1..] {
+            assert_eq!(row.when, When::NotLoaded("Marshell can't read it".into()));
+            assert_eq!(row.chars, 0);
+        }
     }
 
     #[test]
@@ -1755,6 +1825,33 @@ mod tests {
             waste.cannot_fix.as_deref(),
             Some("Move the parts it needs only sometimes into .claude/rules/ files with paths:, or into a skill.")
         );
+    }
+
+    #[test]
+    fn auto_memory_gets_no_size_item() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = project_in(tmp.path());
+        let home = tmp.path().join("home");
+        let memory = |chars| LoadedFile {
+            role: Role::Memory,
+            ..start(home.join(".claude").join("MEMORY.md"), chars)
+        };
+        // The CLI writes its memory itself: 5k tokens of it are in the line's total and raise no Waste item.
+        let files = vec![start(project.join("CLAUDE.md"), 400), memory(20_000)];
+        let loads = [load("claude", Some(&project), &home, files)];
+        let got = items(&loads, std::slice::from_ref(&project));
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!(got[0].title.contains("about 5.1k tokens"), "{}", got[0].title);
+        // Past 4k without it, the item counts and names the other files only.
+        let files = vec![start(project.join("CLAUDE.md"), 17_000), memory(20_000)];
+        let loads = [load("claude", Some(&project), &home, files)];
+        let got = items(&loads, std::slice::from_ref(&project));
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert_eq!(
+            got[1].title,
+            "Claude Code loads about 4.3k tokens of instructions at every start in proj"
+        );
+        assert_eq!(got[1].detail, "The largest: CLAUDE.md (4.3k).");
     }
 
     #[test]

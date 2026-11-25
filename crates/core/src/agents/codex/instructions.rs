@@ -332,7 +332,7 @@ fn project_files(
     let nested_names: Vec<&str> = names
         .iter()
         .map(String::as_str)
-        .filter(|n| n.len() >= 3 && n[n.len() - 3..].eq_ignore_ascii_case(".md"))
+        .filter(|n| n.to_ascii_lowercase().ends_with(".md"))
         .collect();
     let nested = cx.nested(project).clone();
     if nested.stopped {
@@ -503,6 +503,15 @@ mod tests {
         let s = Setup::new();
         s.config("project_doc_fallback_filenames = [\"NOTES\"]\n");
         let notes = s.write("work/NOTES", "notes!");
+        let got = s.load(Some(&s.at("work")));
+        assert_eq!(rows(&got), vec![(p(&notes), When::Start, 6)]);
+    }
+
+    #[test]
+    fn a_fallback_name_ending_in_a_wide_character_is_read() {
+        let s = Setup::new();
+        s.config("project_doc_fallback_filenames = [\"notes😀\", \"é\"]\n");
+        let notes = s.write("work/notes😀", "notes!");
         let got = s.load(Some(&s.at("work")));
         assert_eq!(rows(&got), vec![(p(&notes), When::Start, 6)]);
     }

@@ -226,6 +226,9 @@ fn request_run_with(st: &AppState, read: ReadFacts) {
 /// the report.
 async fn run_once(st: &AppState, read: ReadFacts) -> Option<(u32, u64)> {
     let started = Instant::now();
+    // The report's time is when its read starts, not when the run ends: a run that read its files before a fix landed
+    // must not look newer than a request made after the fix.
+    let now = now_ms();
     let reader = st.clone();
     let facts = tokio::task::spawn_blocking(move || read(&reader)).await;
     let doctor = st.doctor();
@@ -263,7 +266,6 @@ async fn run_once(st: &AppState, read: ReadFacts) -> Option<(u32, u64)> {
             };
             items.extend(cli_items);
             let issues = checks::issues(&items);
-            let now = now_ms();
             *doctor.report.lock().unwrap_or_else(|e| e.into_inner()) = Some(DoctorReport {
                 items,
                 checked_at_ms: now,
@@ -1731,6 +1733,26 @@ pub(in crate::server) mod tests {
         let failed = report.items.iter().find(|i| i.id == "error.claude").unwrap();
         assert_eq!(failed.detail, "read 2");
         assert!(!st.doctor().summary.borrow().running);
+    }
+
+    #[tokio::test]
+    async fn a_report_is_stamped_when_its_read_starts() {
+        // A run that read its files before a fix landed must not look newer than a request made after the fix, however
+        // long the rest of the run takes.
+        let dir = tempfile::tempdir().unwrap();
+        let st = state(dir.path());
+        let read_ended = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let ended = read_ended.clone();
+        let read: ReadFacts = Arc::new(move |st| {
+            let facts = facts_of(st);
+            std::thread::sleep(std::time::Duration::from_millis(40));
+            ended.store(now_ms(), std::sync::atomic::Ordering::SeqCst);
+            facts
+        });
+        let (_, at) = run_once(&st, read).await.expect("a run");
+        let read_ended = read_ended.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(at < read_ended, "stamped {at}, its read ended {read_ended}");
+        assert_eq!(last_report(&st).checked_at_ms, at);
     }
 
     #[test]
@@ -4034,5 +4056,35 @@ pub(in crate::server) mod tests {
         assert_eq!(out.len(), 1, "{out:?}");
         assert_eq!(out[0].reason, None);
         assert_eq!(out[0].files.len(), 1, "{:?}", out[0].files);
+        assert!(
+            !out[0].notes.iter().any(|n| n.contains("ran out of time")),
+            "{:?}",
+            out[0].notes
+        );
+    }
+
+    #[tokio::test]
+    async fn a_project_the_time_ran_out_in_says_files_may_be_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, _ext) = ext_state(dir.path());
+        let project = crate::projects::canonical(dir.path()).join("project");
+        write(&project.join("CLAUDE.md"), "rules");
+        let roots = doctor_ext::windows_roots(&st).expect("the pinned home");
+
+        // In time when the project is reached, out of time from then on.
+        let mut out = Vec::new();
+        let mut cx = instructions::Reader::expiring_after(1);
+        doctor_instr::windows_loads(&st, &roots, &["claude", "codex"], &[project], &mut cx, &mut out);
+        assert_eq!(out.len(), 2, "{out:?}");
+        for load in &out {
+            assert_eq!(load.reason, None);
+            assert!(
+                load.notes.contains(
+                    &"Marshell ran out of time while reading this folder, so files may be missing.".to_string()
+                ),
+                "{:?}",
+                load.notes
+            );
+        }
     }
 }

@@ -16,6 +16,9 @@ const UNREADABLE: &str = "Marshell can't read this folder";
 /// The reason for a project the 10-second budget didn't reach.
 const OUT_OF_TIME: &str = "not checked: the check ran out of time";
 
+/// The note on a project the budget ran out in, after some of its files were read.
+const PARTIAL: &str = "Marshell ran out of time while reading this folder, so files may be missing.";
+
 /// One CLI's `CliLoad` in one place, or none for an agent this doesn't know.
 fn load_of(agent: &str, place: &Place, cx: &mut Reader) -> Option<CliLoad> {
     Some(match agent {
@@ -153,7 +156,14 @@ pub(super) fn windows_loads(
                 });
             }
         } else if cx.is_dir(project) {
-            out.extend(read(Some(project), cx));
+            let mut read = read(Some(project), cx);
+            // The budget ran out inside this project: its walk and its lists stopped early, so the line says so.
+            if cx.out_of_time() {
+                for load in &mut read {
+                    load.notes.push(PARTIAL.to_string());
+                }
+            }
+            out.extend(read);
         } else {
             // The user-level files still count; the project's own can't be read.
             let note = format!("Marshell can't read {}.", display(project, None, &roots.home));
