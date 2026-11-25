@@ -322,8 +322,8 @@ fn project_files(
                 list.join(", ")
             ),
             cannot_fix: format!(
-                "Set project_doc_max_bytes in {}/config.toml to raise the limit, or shorten the files.",
-                shown(&place.roots.codex_home, None, &place.roots.home)
+                "Set project_doc_max_bytes in {} to raise the limit, or shorten the files.",
+                shown(&place.roots.codex_home.join("config.toml"), None, &place.roots.home)
             ),
         });
     }
@@ -613,6 +613,24 @@ mod tests {
         };
         let got = load(&place, &mut Reader::windows());
         assert_eq!(rows(&got), vec![(p(&inside), When::Start, 6)]);
+    }
+
+    #[test]
+    fn a_codex_home_outside_the_home_folder_names_its_config_file_in_one_form() {
+        let mut s = Setup::new();
+        s.roots.codex_home = s.at("elsewhere/cx");
+        fs::create_dir_all(&s.roots.codex_home).unwrap();
+        fs::create_dir_all(s.at("work/.git")).unwrap();
+        s.write("work/AGENTS.md", &"a".repeat(40_000));
+        let got = s.load(Some(&s.at("work")));
+        let config = s.roots.codex_home.join("config.toml");
+        assert_eq!(
+            got.cuts[0].cannot_fix,
+            format!(
+                "Set project_doc_max_bytes in {} to raise the limit, or shorten the files.",
+                config.display()
+            )
+        );
     }
 
     #[test]
