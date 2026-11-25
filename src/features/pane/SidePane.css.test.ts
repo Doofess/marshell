@@ -73,4 +73,15 @@ describe("SidePane.css", () => {
     expect(rule(".side-pane__tab-wrap")).toContain("200px");
     expect(rule(".side-pane__title")).toContain("text-overflow: ellipsis");
   });
+  it("draws a tab as a 24 px rounded shape inside the 28 px strip", () => {
+    expect(rule(".side-pane")).toContain("grid-template-rows: 28px minmax(0, 1fr)");
+    expect(rule(".side-pane__tab")).toContain("block-size: 24px");
+    expect(rule(".side-pane__tab")).toContain("border-radius: var(--radius)");
+    expect(rule(".side-pane__tabs")).toContain("align-items: center");
+    expect(rule(".side-pane__tabs")).toContain("gap: 2px");
+  });
+  it("tells the selected tab by its fill, with no line around it", () => {
+    expect(rule('.side-pane__tab[aria-selected="true"]')).toContain("background: var(--fill-strong)");
+    expect(rule('.side-pane__tab[aria-selected="true"]')).not.toContain("border");
+  });
 });
