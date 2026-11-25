@@ -22,8 +22,10 @@ use crate::config::managed::{self, ManagedEntry};
 use crate::config::service::ApplyError;
 use crate::doctor::cli::{CLI_DOCTOR_TIMEOUT_SECS, Ran, claude_items, codex_items, no_doctor_item};
 use crate::doctor::ext::{self, Inventory, Switch};
+use crate::doctor::instr_text::remove_imports;
 use crate::doctor::instructions;
 use crate::doctor::{AgentFacts, FileState, PendingFix, checks};
+use crate::doctor::{instr_checks, refnotes};
 use crate::paths;
 use crate::profiles::detect::{agent_command, run_wsl_capture};
 use crate::store::{self, Versioned};
@@ -234,18 +236,19 @@ async fn run_once(st: &AppState, read: ReadFacts) -> Option<(u32, u64)> {
     let doctor = st.doctor();
     match facts {
         Ok(facts) => {
-            // The instruction files are read here and nowhere else, in a second blocking read after the facts. If it
-            // fails the report still comes, without them.
+            // The instruction files are read here and nowhere else, in a second blocking read after the facts, with the
+            // reference notes' counters beside them. If it fails the report still comes, without them.
             let facts = Arc::new(facts);
             let read_by = (st.clone(), facts.clone());
-            let loads = tokio::task::spawn_blocking(move || {
+            let (instr, notes) = tokio::task::spawn_blocking(move || {
                 let (st, facts) = read_by;
-                doctor_instr::loads(&st, &facts.facts, &facts.distro_homes, &facts.projects)
+                let read = doctor_instr::loads(&st, &facts.facts, &facts.distro_homes, &facts.projects);
+                (read, note_totals_of(&st, &facts.projects, now))
             })
             .await
             .unwrap_or_else(|e| {
                 tracing::warn!("the doctor could not read the instruction files: {e}");
-                Vec::new()
+                (doctor_instr::InstrRead::default(), Vec::new())
             });
             let mut items = checks::items(&facts.facts, &facts.stopped, banners_on(st));
             // The last measurement is cloned under the lock, which is released at once.
@@ -258,9 +261,10 @@ async fn run_once(st: &AppState, read: ReadFacts) -> Option<(u32, u64)> {
                 measured: measured.as_ref(),
             };
             items.extend(ext::items(&facts.ext, &signals));
-            items.extend(instructions::items(&loads, &facts.projects, &|p| {
-                st.0.config.editable(p)
-            }));
+            let editable = |p: &Path| st.0.config.editable(p);
+            items.extend(instructions::items(&instr.loads, &facts.projects, &editable));
+            items.extend(instr_checks::items(&instr.findings, &facts.projects, &editable));
+            items.extend(refnotes::items(&notes));
             // The CLI doctors' last findings ride along in every report. The lock is released at once.
             let (cli_items, cli_checked_at_ms) = {
                 let cli = doctor.cli.lock().unwrap_or_else(|e| e.into_inner());
@@ -282,6 +286,15 @@ async fn run_once(st: &AppState, read: ReadFacts) -> Option<(u32, u64)> {
             None
         }
     }
+}
+
+/// What each project's reference-notes counter holds for the last 30 days: the projects that have a note, in the run's
+/// order. Reads one small file for each project; it holds alias names and numbers, never a prompt.
+fn note_totals_of(st: &AppState, projects: &[PathBuf], now_ms: u64) -> Vec<(PathBuf, crate::references::NoteTotals)> {
+    projects
+        .iter()
+        .filter_map(|root| Some((root.clone(), crate::references::note_totals(&st.0.home, root, now_ms)?)))
+        .collect()
 }
 
 /// Marshell's banners are on for at least one of needs-you, done and error.
@@ -1039,8 +1052,16 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
     now.extend(ext::items(&gathered.ext, &signals));
     let entries = managed_entries(st);
 
+    // The two instruction fixes are split off here: their ids are read again from the files, not from the facts.
+    let (instr_ids, ids_of_facts): (Vec<&String>, Vec<&String>) = ids.iter().partition(|id| is_instr_id(id));
+    for id in &instr_ids {
+        if !reported.items.iter().any(|i| i.id == **id && i.fixable) {
+            return Err(cant_fix());
+        }
+    }
+
     let mut picked: Vec<(DoctorItem, &AgentFacts)> = Vec::new();
-    for id in &ids {
+    for id in ids_of_facts {
         let fixable = |items: &[DoctorItem]| items.iter().find(|i| i.id == *id && i.fixable).cloned();
         let (Some(_), Some(item)) = (fixable(&reported.items), fixable(&now)) else {
             return Err(cant_fix());
@@ -1102,11 +1123,15 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
     // One edit per list and one per Codex file, whatever the number of items. They are the person's own settings.
     let ext_edits = doctor_ext::edits(&switches, &gathered.ext_homes)?;
     edits.extend(ext_edits.iter().cloned());
+    // The instruction files are read only when one of these two fixes is ticked (decision 11), once for all of them.
+    if !instr_ids.is_empty() {
+        edits.extend(instruction_edits(st, &gathered, &instr_ids)?);
+    }
     if edits.is_empty() {
         return Err(cant_fix());
     }
 
-    let count = picked.len();
+    let count = ids.len();
     let cs = ChangeSet {
         title: if count == 1 {
             "Fix 1 issue".to_string()
@@ -1137,6 +1162,140 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
         restart,
     })
 }
+
+/// An id of one of slice 7d2's two instruction fixes.
+fn is_instr_id(id: &str) -> bool {
+    id.starts_with("instrimport.") || id.starts_with("instrcut.")
+}
+
+/// The edits for the ticked instruction items, from a fresh read of the files. An id is trusted only when that read
+/// produces a finding (or a cut that has a raise) with exactly that id, on Windows, whose file the config service may
+/// write: anything else is a 422 for the whole request. No path is built from an id.
+///
+/// - Dead imports: the ids are grouped by file. Each file's bytes are read once and must be UTF-8; the edit's content
+///   is those bytes with the imports removed, and its `expected_hash` is the hash of those same bytes.
+/// - A raised limit: one `TomlSet` for each Codex config file, with the largest value among the ticked cuts.
+fn instruction_edits(st: &AppState, gathered: &Gathered, ids: &[&String]) -> Result<Vec<FileEdit>, Fail> {
+    // A distro's files are never fixed from here, so none is read.
+    let read = doctor_instr::loads(st, &gathered.facts, &[], &gathered.projects);
+    let editable = |p: &Path| st.0.config.editable(p);
+
+    // (file, its scope, the dead imports to remove from it)
+    let mut files: Vec<(PathBuf, ConfigScope, Vec<&instr_checks::Finding>)> = Vec::new();
+    // (config file, the largest value to set)
+    let mut limits: Vec<(PathBuf, u64)> = Vec::new();
+    for id in ids {
+        if id.starts_with("instrimport.") {
+            let finding = read
+                .findings
+                .iter()
+                .find(|f| {
+                    matches!(f, instr_checks::Finding::DeadImport { seat, file, .. }
+                        if seat.distro.is_none() && editable(file))
+                        && instr_checks::id_of(f) == **id
+                })
+                .ok_or_else(cant_fix)?;
+            let instr_checks::Finding::DeadImport { seat, file, .. } = finding else {
+                return Err(cant_fix());
+            };
+            match files.iter_mut().find(|(path, ..)| comparable(path) == comparable(file)) {
+                Some((.., found)) => found.push(finding),
+                None => {
+                    let scope = if seat.project.is_some() {
+                        ConfigScope::Project
+                    } else {
+                        ConfigScope::User
+                    };
+                    files.push((file.clone(), scope, vec![finding]));
+                }
+            }
+        } else {
+            let raise = read
+                .loads
+                .iter()
+                .filter(|load| load.distro.is_none())
+                .find_map(|load| {
+                    load.cuts
+                        .iter()
+                        .find(|cut| instructions::cut_id(load, cut) == **id)
+                        .and_then(|cut| cut.raise.as_ref())
+                })
+                .filter(|raise| editable(&raise.config))
+                .ok_or_else(cant_fix)?;
+            match limits
+                .iter_mut()
+                .find(|(path, _)| comparable(path) == comparable(&raise.config))
+            {
+                Some((_, bytes)) => *bytes = (*bytes).max(raise.bytes),
+                None => limits.push((raise.config.clone(), raise.bytes)),
+            }
+        }
+    }
+
+    let mut edits = Vec::new();
+    for (file, scope, findings) in files {
+        // The bytes are read once: the hash and the new text both come from them.
+        let read_bytes = std::fs::read(&file).map_err(|_| cant_fix())?;
+        let mut text = String::from_utf8(read_bytes.clone()).map_err(|_| cant_fix())?;
+        for finding in findings {
+            let instr_checks::Finding::DeadImport {
+                raws,
+                syntax,
+                in_comments,
+                ..
+            } = finding
+            else {
+                return Err(cant_fix());
+            };
+            text = remove_imports(&text, raws, *syntax, *in_comments).ok_or_else(cant_fix)?;
+        }
+        edits.push(FileEdit {
+            path: file.to_string_lossy().into_owned(),
+            scope,
+            op: EditOp::ReplaceText { content: text },
+            expected_hash: Some(hash_bytes(&read_bytes)),
+            applies: Applies::NewSessions,
+        });
+    }
+    for (config, bytes) in limits {
+        // A missing file has no hash: the edit creates it, and nothing records it as Marshell's. A limit the file
+        // already holds at this value or higher is never lowered: that id is stale.
+        let (text, hash) = match std::fs::read(&config) {
+            Ok(found) => {
+                let text = String::from_utf8(found.clone()).map_err(|_| cant_fix())?;
+                (text, Some(hash_bytes(&found)))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (String::new(), None),
+            Err(_) => return Err(cant_fix()),
+        };
+        if limit_reaches(&text, bytes) {
+            return Err(cant_fix());
+        }
+        edits.push(FileEdit {
+            path: config.to_string_lossy().into_owned(),
+            scope: ConfigScope::User,
+            op: EditOp::TomlSet {
+                key: vec![LIMIT_KEY.to_string()],
+                value: bytes.to_string(),
+            },
+            expected_hash: hash,
+            applies: Applies::NewSessions,
+        });
+    }
+    Ok(edits)
+}
+
+/// Whether this `config.toml` text already holds a `project_doc_max_bytes` of at least `value`. A fix never lowers a
+/// limit the person has set, so it sets the key only when this is false.
+fn limit_reaches(text: &str, value: u64) -> bool {
+    text.parse::<toml_edit::DocumentMut>()
+        .ok()
+        .and_then(|doc| doc.get(LIMIT_KEY).and_then(toml_edit::Item::as_integer))
+        .is_some_and(|now| u64::try_from(now).is_ok_and(|now| now >= value))
+}
+
+/// Codex's setting for how many bytes of project instructions it loads.
+const LIMIT_KEY: &str = "project_doc_max_bytes";
 
 const RETENTION_POINTER: &str = "/cleanupPeriodDays";
 
@@ -4088,5 +4247,323 @@ pub(in crate::server) mod tests {
                 load.notes
             );
         }
+    }
+
+    // What is wrong inside the instruction files (slice 7d2): the run's findings and their two fixes. Every file and
+    // home is under the tempdir.
+
+    fn ids_of(report: &DoctorReport, prefix: &str) -> Vec<String> {
+        report
+            .items
+            .iter()
+            .filter(|i| i.id.starts_with(prefix))
+            .map(|i| i.id.clone())
+            .collect()
+    }
+
+    fn project_of(dir: &Path) -> PathBuf {
+        crate::projects::canonical(dir).join("project")
+    }
+
+    /// The preview's one file, with the hash its edit would leave.
+    fn after_hash(plan: &DoctorFixPlan) -> String {
+        assert_eq!(plan.preview.files.len(), 1, "{:?}", plan.preview.files);
+        plan.preview.files[0].after_hash.clone().expect("a file that changes")
+    }
+
+    async fn run_and_report(st: &AppState) -> DoctorReport {
+        run_once(st, Arc::new(facts_of)).await.expect("a run");
+        last_report(st)
+    }
+
+    #[tokio::test]
+    async fn a_run_reports_a_dead_import_and_a_fix_preview_removes_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, _ext) = ext_state(dir.path());
+        let file = project_of(dir.path()).join("CLAUDE.md");
+        write(&file, "# A\r\n@gone.md\r\nrest\r\n");
+
+        let report = run_and_report(&st).await;
+        let ids = ids_of(&report, "instrimport.");
+        assert_eq!(ids.len(), 1, "{:?}", report.items);
+        let item = report.items.iter().find(|i| i.id == ids[0]).unwrap();
+        assert!(item.fixable && item.unchecked, "{item:?}");
+
+        let plan = fix_of(&st, ids).expect("a plan");
+        assert!(plan.preview.can_apply, "{:?}", plan.preview);
+        assert_eq!(after_hash(&plan), hash_bytes(b"# A\r\nrest\r\n"));
+        assert!(plan.preview.files[0].path.ends_with("CLAUDE.md"));
+        assert_eq!(plan.preview.files[0].scope, ConfigScope::Project);
+        assert_eq!(
+            plan.preview.files[0].before_hash.as_deref(),
+            Some(hash_bytes(b"# A\r\n@gone.md\r\nrest\r\n").as_str())
+        );
+        // Nothing is written until the person applies.
+        assert_eq!(bytes(&file).unwrap(), b"# A\r\n@gone.md\r\nrest\r\n");
+    }
+
+    #[tokio::test]
+    async fn the_import_fix_applies_and_undoes_byte_for_byte() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, _ext) = ext_state(dir.path());
+        let file = project_of(dir.path()).join("CLAUDE.md");
+        let first = "# A\r\n@gone.md\r\nrest\r\n";
+        write(&file, first);
+        let managed_before = managed_pairs(&st);
+
+        let report = run_and_report(&st).await;
+        let plan = fix_of(&st, ids_of(&report, "instrimport.")).expect("a plan");
+        apply_fix_plan(&st, &plan).await;
+        assert_eq!(bytes(&file).unwrap(), b"# A\r\nrest\r\n");
+        assert_eq!(managed_pairs(&st), managed_before);
+        assert!(ids_of(&last_report(&st), "instrimport.").is_empty());
+
+        let undone = undo(State(st.clone())).await;
+        assert_eq!(undone.status(), StatusCode::OK);
+        wait_idle(&st).await;
+        assert_eq!(bytes(&file).unwrap(), first.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn a_bom_non_ascii_text_crlf_and_a_missing_final_newline_stay_as_they_were() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, _ext) = ext_state(dir.path());
+        let file = project_of(dir.path()).join("CLAUDE.md");
+        let first = "\u{feff}# Ä é\r\n- @gone.md\r\nrest ü";
+        write(&file, first);
+
+        let report = run_and_report(&st).await;
+        let plan = fix_of(&st, ids_of(&report, "instrimport.")).expect("a plan");
+        apply_fix_plan(&st, &plan).await;
+        assert_eq!(bytes(&file).unwrap(), "\u{feff}# Ä é\r\nrest ü".as_bytes());
+        let undone = undo(State(st.clone())).await;
+        assert_eq!(undone.status(), StatusCode::OK);
+        assert_eq!(bytes(&file).unwrap(), first.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn two_dead_imports_in_one_file_are_one_edit() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, _ext) = ext_state(dir.path());
+        let file = project_of(dir.path()).join("CLAUDE.md");
+        write(&file, "# A\n@gone.md\n@other.md\nrest\n");
+
+        let report = run_and_report(&st).await;
+        let ids = ids_of(&report, "instrimport.");
+        assert_eq!(ids.len(), 2, "{:?}", report.items);
+        let plan = fix_of(&st, ids).expect("a plan");
+        assert_eq!(after_hash(&plan), hash_bytes(b"# A\nrest\n"));
+        apply_fix_plan(&st, &plan).await;
+        assert_eq!(bytes(&file).unwrap(), b"# A\nrest\n");
+    }
+
+    #[tokio::test]
+    async fn one_of_two_ticked_imports_gone_refuses_the_whole_fix() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, _ext) = ext_state(dir.path());
+        let file = project_of(dir.path()).join("CLAUDE.md");
+        write(&file, "# A\n@gone.md\n@other.md\nrest\n");
+        let report = run_and_report(&st).await;
+        let ids = ids_of(&report, "instrimport.");
+        assert_eq!(ids.len(), 2);
+
+        // One of the two is taken out by hand after the report.
+        let rewritten = "# A\n@other.md\nrest\n";
+        write(&file, rewritten);
+        let (status, _) = fix_of(&st, ids).expect_err("a refusal");
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(bytes(&file).unwrap(), rewritten.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn an_id_the_fresh_read_does_not_produce_is_refused_and_nothing_is_built_from_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, _ext) = ext_state(dir.path());
+        let file = project_of(dir.path()).join("CLAUDE.md");
+        write(&file, "# A\n@gone.md\nrest\n");
+        let report = run_and_report(&st).await;
+        let real = ids_of(&report, "instrimport.");
+        for id in [
+            "instrimport.nothing.here.at".to_string(),
+            "instrimport.".to_string(),
+            "instrcut.codex.nowhere.budget".to_string(),
+            format!("{}x", real[0]),
+        ] {
+            let (status, _) = fix_of(&st, vec![id.clone()]).expect_err(&id);
+            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{id}");
+        }
+        // One good id beside a foreign one is still a refusal for the whole request.
+        let (status, _) = fix_of(&st, vec![real[0].clone(), "instrcut.x".into()]).expect_err("a refusal");
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(bytes(&file).unwrap(), b"# A\n@gone.md\nrest\n");
+    }
+
+    #[tokio::test]
+    async fn a_dead_import_in_a_comment_is_fixed_for_a_cli_that_reads_comments() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, _ext) = ext_state(dir.path());
+        let file = project_of(dir.path()).join(".github").join("copilot-instructions.md");
+        write(&file, "<!-- @gone.md -->\nx\n");
+
+        let report = run_and_report(&st).await;
+        let ids = ids_of(&report, "instrimport.");
+        assert_eq!(ids.len(), 1, "{:?}", report.items);
+        let plan = fix_of(&st, ids).expect("a plan");
+        apply_fix_plan(&st, &plan).await;
+        assert!(!bytes(&file).unwrap().windows(5).any(|w| w == b"@gone"));
+        assert!(ids_of(&last_report(&st), "instrimport.").is_empty());
+    }
+
+    fn big(bytes: usize) -> String {
+        "a".repeat(bytes - 1) + "\n"
+    }
+
+    fn codex_config(ext: &Path) -> PathBuf {
+        ext.join(".codex").join("config.toml")
+    }
+
+    #[tokio::test]
+    async fn raising_codexs_limit_sets_the_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, ext) = ext_state(dir.path());
+        write(&project_of(dir.path()).join("AGENTS.md"), &big(40_000));
+        let config = codex_config(&ext);
+        let first = "model = \"x\"\n";
+        write(&config, first);
+
+        let report = run_and_report(&st).await;
+        let ids = ids_of(&report, "instrcut.codex.");
+        assert_eq!(ids.len(), 1, "{:?}", report.items);
+        let item = report.items.iter().find(|i| i.id == ids[0]).unwrap();
+        assert!(item.fixable && item.unchecked, "{item:?}");
+        let plan = fix_of(&st, ids).expect("a plan");
+        assert!(plan.preview.can_apply, "{:?}", plan.preview);
+        assert_eq!(plan.preview.files[0].scope, ConfigScope::User);
+        apply_fix_plan(&st, &plan).await;
+        let after = std::fs::read_to_string(&config).unwrap();
+        let doc: toml::Table = after.parse().unwrap();
+        assert_eq!(doc["model"].as_str(), Some("x"));
+        assert_eq!(doc["project_doc_max_bytes"].as_integer(), Some(40_960));
+        assert!(ids_of(&last_report(&st), "instrcut.codex.").is_empty());
+
+        let undone = undo(State(st.clone())).await;
+        assert_eq!(undone.status(), StatusCode::OK);
+        assert_eq!(bytes(&config).unwrap(), first.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn raising_codexs_limit_creates_a_missing_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, ext) = ext_state(dir.path());
+        write(&project_of(dir.path()).join("AGENTS.md"), &big(40_000));
+        let config = codex_config(&ext);
+        assert!(!config.exists());
+        let managed_before = managed_pairs(&st);
+
+        let report = run_and_report(&st).await;
+        let plan = fix_of(&st, ids_of(&report, "instrcut.codex.")).expect("a plan");
+        assert!(plan.preview.can_apply, "{:?}", plan.preview);
+        apply_fix_plan(&st, &plan).await;
+        assert_eq!(bytes(&config).unwrap(), b"project_doc_max_bytes = 40960\n");
+        // Nothing records the file as Marshell's.
+        assert_eq!(managed_pairs(&st), managed_before);
+
+        let undone = undo(State(st.clone())).await;
+        assert_eq!(undone.status(), StatusCode::OK);
+        assert!(!config.exists());
+        assert_eq!(managed_pairs(&st), managed_before);
+    }
+
+    #[tokio::test]
+    async fn two_projects_over_the_limit_set_the_larger_value_once() {
+        let dir = tempfile::tempdir().unwrap();
+        // The guard reads the project list once, when the state is made.
+        let root = crate::projects::canonical(dir.path());
+        let second = root.join("second");
+        std::fs::create_dir_all(&second).unwrap();
+        crate::projects::record(&root.join("home"), &second, 2).unwrap();
+        let (st, ext) = ext_state(dir.path());
+        write(&project_of(dir.path()).join("AGENTS.md"), &big(40_000));
+        write(&second.join("AGENTS.md"), &big(49_000));
+        let config = codex_config(&ext);
+
+        let report = run_and_report(&st).await;
+        let ids = ids_of(&report, "instrcut.codex.");
+        assert_eq!(ids.len(), 2, "{:?}", report.items);
+        let plan = fix_of(&st, ids).expect("a plan");
+        assert_eq!(plan.preview.files.len(), 1, "{:?}", plan.preview.files);
+        apply_fix_plan(&st, &plan).await;
+        assert_eq!(bytes(&config).unwrap(), b"project_doc_max_bytes = 49152\n");
+    }
+
+    #[test]
+    fn a_limit_already_at_the_value_is_not_set_again() {
+        assert!(limit_reaches("project_doc_max_bytes = 40960\n", 40_960));
+        assert!(limit_reaches("project_doc_max_bytes = 65536\n", 40_960));
+        assert!(!limit_reaches("project_doc_max_bytes = 32768\n", 40_960));
+        assert!(!limit_reaches("model = \"x\"\n", 40_960));
+        assert!(!limit_reaches("", 40_960));
+    }
+
+    #[tokio::test]
+    async fn an_instruction_fix_preview_reads_them_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, _ext) = ext_state(dir.path());
+        let file = project_of(dir.path()).join("CLAUDE.md");
+        write(&file, "# A\n@gone.md\n@other.md\nrest\n");
+        let report = run_and_report(&st).await;
+        let ids = ids_of(&report, "instrimport.");
+        assert_eq!(ids.len(), 2);
+        st.0.instr_reads.store(0, std::sync::atomic::Ordering::SeqCst);
+        fix_of(&st, ids).expect("a plan");
+        assert_eq!(reads(&st), 1);
+    }
+
+    #[tokio::test]
+    async fn a_run_reports_reference_notes() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, _ext) = ext_state(dir.path());
+        let project = project_of(dir.path());
+        let note = marshell_protocol::api::ReferenceNote {
+            names: vec!["app".into()],
+            note: "References: 'app' = /p/src/a.rs.".into(),
+        };
+        crate::references::record_note(&st.0.home, &project, &note, now_ms()).unwrap();
+
+        let report = run_and_report(&st).await;
+        let ids = ids_of(&report, "refnotes.");
+        assert_eq!(ids.len(), 1, "{:?}", report.items);
+        let item = report.items.iter().find(|i| i.id == ids[0]).unwrap();
+        assert_eq!(item.group, DoctorGroup::Info);
+        assert!(item.title.starts_with("project: 1 reference note "), "{}", item.title);
+        // A project with no note has none.
+        let other = tempfile::tempdir().unwrap();
+        let (quiet, _ext) = ext_state(other.path());
+        assert!(ids_of(&run_and_report(&quiet).await, "refnotes.").is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_instruction_findings_come_after_the_file_lists() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, _ext) = ext_state(dir.path());
+        let project = project_of(dir.path());
+        write(&project.join("CLAUDE.md"), "# A\n@gone.md\n");
+        let note = marshell_protocol::api::ReferenceNote {
+            names: vec!["app".into()],
+            note: "References: 'app' = /p/src/a.rs.".into(),
+        };
+        crate::references::record_note(&st.0.home, &project, &note, now_ms()).unwrap();
+
+        let report = run_and_report(&st).await;
+        let at = |prefix: &str| {
+            report
+                .items
+                .iter()
+                .rposition(|i| i.id.starts_with(prefix))
+                .unwrap_or_else(|| panic!("no {prefix}: {:?}", report.items))
+        };
+        let first_of = |prefix: &str| report.items.iter().position(|i| i.id.starts_with(prefix)).unwrap();
+        assert!(at("instr.") < first_of("instrimport."), "{:?}", report.items);
+        assert!(at("instrimport.") < first_of("refnotes."), "{:?}", report.items);
     }
 }
