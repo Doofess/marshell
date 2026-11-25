@@ -32,3 +32,11 @@ export function pathSegments(root: string | null, path: string | null, o: { wind
   if (o.windows) return p.map((label) => ({ label, folder: null }));
   return [{ label: "/", folder: null }, ...p.map((label) => ({ label, folder: null }))];
 }
+
+/**
+ * Whether the path bar's path is scrolled to its end (a path that fits is). The scroll is negative in a right-to-left layout, and
+ * a fraction of a pixel short of the end still counts.
+ */
+export function pathAtEnd(el: { scrollLeft: number; clientWidth: number; scrollWidth: number }): boolean {
+  return Math.abs(el.scrollLeft) + el.clientWidth >= el.scrollWidth - 1;
+}

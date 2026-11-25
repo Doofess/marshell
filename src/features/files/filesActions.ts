@@ -68,10 +68,19 @@ export function afterOpen(
  * is nothing else to show. A file opened from anywhere (the tree, Go to file, a terminal link, another tab) takes the tree's place:
  * it is what was asked for. A panel that has just become narrow shows its file, and the tree only when it has none: a tree left up
  * from before would cover a file that may hold the keyboard. Otherwise it is as it was.
+ *
+ * A tree that is up and holds the keyboard stays up through both: a file an agent opened in the background, or a window made
+ * narrower, must not take the tree away from under the keyboard. An open the person asked for moves the keyboard first (a tab, the
+ * palette, the terminal), and the tree's own open has already taken the tree down.
  */
-export function treeAfter(up: boolean, was: { path: string | null; narrow: boolean }, now: { path: string | null; narrow: boolean }): boolean {
-  if (now.path !== was.path) return now.path === null;
-  if (now.narrow && !was.narrow) return now.path === null;
+export function treeAfter(
+  up: boolean,
+  was: { path: string | null; narrow: boolean },
+  now: { path: string | null; narrow: boolean },
+  keyboardInTree = false,
+): boolean {
+  if (now.path !== was.path) return now.path === null || (up && keyboardInTree);
+  if (now.narrow && !was.narrow) return now.path === null || (up && keyboardInTree);
   return up;
 }
 

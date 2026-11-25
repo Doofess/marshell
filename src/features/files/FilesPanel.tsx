@@ -7,7 +7,7 @@ import type { TreeView } from "../../generated/TreeView";
 import type { Os } from "../../lib/keymap";
 import { focusPane } from "../pane/focusPane";
 import { panelOfPath } from "../pane/panels";
-import { HeaderSlot } from "../preview/headerSlot";
+import { HeaderSlot, toolsSlot } from "../preview/headerSlot";
 import { cachedFileListNow, fileListFor, folderName } from "../preview/quickFiles";
 import { listTree, searchFiles } from "./filesApi";
 import { afterOpen, COLLAPSED, filterTakesKeyboard, followTarget, keyboardToFile, openHow, rowOpens, treeAfter } from "./filesActions";
@@ -112,7 +112,9 @@ export function FilesPanel(p: FilesPanelProps) {
   if (seen.path !== activePath || seen.narrow !== narrow) {
     const now = { path: activePath, narrow };
     setSeen(now);
-    setOverlay(treeAfter(overlay, seen, now));
+    // Read while rendering: an open the person asked for has moved the keyboard out of the tree by now, a background one hasn't.
+    const keyboardInTree = box.current?.querySelector(".files-body__tree")?.contains(document.activeElement) ?? false;
+    setOverlay(treeAfter(overlay, seen, now, keyboardInTree));
   }
   const shown = !treeView.hidden && (!narrow || overlay);
 
@@ -170,7 +172,9 @@ export function FilesPanel(p: FilesPanelProps) {
   // The narrow tree makes the file inert, which drops the keyboard to the page when it was in the file: the filter box takes it instead.
   const filterWants = useRef(false);
   const openNarrowTree = () => {
-    const focusInFile = box.current?.querySelector(".files-body__file")?.contains(document.activeElement) ?? false;
+    // A tool in the path bar counts as the file: the tools go with the file when the tree covers it.
+    const at = document.activeElement;
+    const focusInFile = (box.current?.querySelector(".files-body__file")?.contains(at) ?? false) || (tools?.contains(at) ?? false);
     filterWants.current = filterTakesKeyboard({ narrow, opening: true, focusInFile });
     setOverlay(true);
   };
@@ -392,7 +396,7 @@ export function FilesPanel(p: FilesPanelProps) {
   );
   const position: TreePosition = p.position;
   return (
-    <HeaderSlot value={tools}>
+    <HeaderSlot value={toolsSlot(tools, narrow && shown)}>
     <div ref={box} className="files-panel" style={{ display: "grid", blockSize: "100%", minInlineSize: 0, minBlockSize: 0 }}>
       <FilesBody
         tree={treeNode}

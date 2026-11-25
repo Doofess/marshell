@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pathSegments } from "./pathSegments";
+import { pathAtEnd, pathSegments } from "./pathSegments";
 
 const win = { windows: true, home: "C:\\Users\\Home Office" };
 
@@ -36,5 +36,21 @@ describe("pathSegments", () => {
   it("with no file the bar shows the root alone", () => {
     expect(pathSegments("C:\\dev\\Airport", null, win)).toEqual([{ label: "Airport", folder: "" }]);
     expect(pathSegments(null, null, win)).toEqual([]);
+  });
+});
+
+describe("pathAtEnd", () => {
+  it("tells a path at its end from one the person scrolled back (pre-merge review 6w: a resize threw the scrolled place away)", () => {
+    expect(pathAtEnd({ scrollLeft: 321, clientWidth: 182, scrollWidth: 503 })).toBe(true);
+    expect(pathAtEnd({ scrollLeft: 120, clientWidth: 182, scrollWidth: 503 })).toBe(false);
+    expect(pathAtEnd({ scrollLeft: 0, clientWidth: 182, scrollWidth: 503 })).toBe(false);
+  });
+  it("counts a path that fits as at its end, and allows a fraction of a pixel", () => {
+    expect(pathAtEnd({ scrollLeft: 0, clientWidth: 300, scrollWidth: 300 })).toBe(true);
+    expect(pathAtEnd({ scrollLeft: 320.4, clientWidth: 182, scrollWidth: 503 })).toBe(true);
+  });
+  it("reads a right-to-left path, whose end is a negative scroll", () => {
+    expect(pathAtEnd({ scrollLeft: -321, clientWidth: 182, scrollWidth: 503 })).toBe(true);
+    expect(pathAtEnd({ scrollLeft: -100, clientWidth: 182, scrollWidth: 503 })).toBe(false);
   });
 });

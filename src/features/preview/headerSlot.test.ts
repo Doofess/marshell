@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { headerPlace, insidePane, slotState } from "./headerSlot";
+import { headerPlace, insidePane, slotState, toolsSlot } from "./headerSlot";
 
 describe("headerPlace", () => {
   it("draws the pane's own header outside the Files panel", () => {
@@ -32,5 +32,16 @@ describe("insidePane", () => {
     expect(insidePane(node([a]), node([b]), c)).toBe(false);
     expect(insidePane(node([a]), null, b)).toBe(false);
     expect(insidePane(node([a]), node([b]), null)).toBe(false);
+  });
+});
+
+describe("toolsSlot", () => {
+  const bar = {} as HTMLElement;
+  it("is the path bar's place, and none while the narrow tree covers the file: a file nobody sees has no tools to press (pre-merge review 6w)", () => {
+    expect(toolsSlot(bar, false)).toBe(bar);
+    expect(toolsSlot(bar, true)).toBeNull();
+    expect(toolsSlot(null, false)).toBeNull();
+    // The tab on screen then draws its tools nowhere, not in a header of its own.
+    expect(headerPlace({ pathShown: true, active: true, slot: slotState(toolsSlot(bar, true)) })).toBe("none");
   });
 });

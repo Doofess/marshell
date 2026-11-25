@@ -156,6 +156,13 @@ describe("treeAfter", () => {
     expect(treeAfter(true, at("C:\\p\\a.ts", false), at("C:\\p\\a.ts", true))).toBe(false);
     expect(treeAfter(false, at(null, false), at(null, true))).toBe(true);
   });
+  it("stays up while the keyboard is in it (pre-merge review 6w: a file an agent opened in the background took the tree and the keyboard away)", () => {
+    expect(treeAfter(true, at(null), at("C:\\p\\a.ts"), true)).toBe(true);
+    expect(treeAfter(true, at("C:\\p\\a.ts", false), at("C:\\p\\a.ts", true), true)).toBe(true);
+    // The tree's own open has already taken it down, and the last file closing still brings it back.
+    expect(treeAfter(false, at("C:\\p\\a.ts"), at("C:\\p\\b.ts"), true)).toBe(false);
+    expect(treeAfter(false, at("C:\\p\\a.ts"), at(null), true)).toBe(true);
+  });
   it("is as it was when neither the file nor the layout changed, and when the panel widens", () => {
     expect(treeAfter(true, at("C:\\p\\a.ts"), at("C:\\p\\a.ts"))).toBe(true);
     expect(treeAfter(false, at(null), at(null))).toBe(false);

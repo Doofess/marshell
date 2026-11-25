@@ -13,6 +13,14 @@ export function slotState(slot: HTMLElement | null | undefined): SlotState {
   return slot === undefined ? "absent" : slot === null ? "waiting" : "ready";
 }
 
+/**
+ * The slot a Files panel hands its tabs: the path bar's place for tools, and none while the narrow tree covers the file. A file
+ * nobody sees has no tools to press; its tab waits, as it does before the bar is mounted.
+ */
+export function toolsSlot(bar: HTMLElement | null, covered: boolean): HTMLElement | null {
+  return covered ? null : bar;
+}
+
 /** Where a tab draws its tools: its own header, the path bar's slot (only the tab on screen), or nowhere. */
 export function headerPlace(o: { pathShown: boolean; active: boolean; slot: SlotState }): "header" | "slot" | "none" {
   if (!o.pathShown || o.slot === "absent") return "header";

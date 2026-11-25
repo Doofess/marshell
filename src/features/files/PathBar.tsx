@@ -1,5 +1,5 @@
 import { Fragment, type KeyboardEvent, type MouseEvent, useLayoutEffect, useRef } from "react";
-import type { Segment } from "./pathSegments";
+import { pathAtEnd, type Segment } from "./pathSegments";
 import "./FilesBody.css";
 
 export type PathBarProps = {
@@ -29,11 +29,19 @@ export function PathBar({ segments, windows, treeShown, onReveal, onCollapseAll,
       el.scrollLeft = getComputedStyle(el).direction === "rtl" ? -el.scrollWidth : el.scrollWidth;
     };
     pin();
-    // The file's tools arrive in a later commit and narrow the path: it is pinned to its end again.
-    if (typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(pin);
-    ro.observe(el);
-    return () => ro.disconnect();
+    // The file's tools arrive in a later commit and narrow the path: it is pinned to its end again, unless the person has scrolled
+    // it back to read a folder. A resize moves no scroll, so the place is the one the last scroll left.
+    let atEnd = true;
+    const onScroll = () => {
+      atEnd = pathAtEnd(el);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => atEnd && pin());
+    ro?.observe(el);
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      ro?.disconnect();
+    };
   }, [shown]);
   const onContextMenu = (e: MouseEvent<HTMLElement>) => {
     e.preventDefault();

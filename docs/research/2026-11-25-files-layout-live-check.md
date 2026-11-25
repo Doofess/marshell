@@ -55,3 +55,15 @@ The whole-branch review found three faults of the narrow layout that this check 
 | The rest of item 4 again | Pass. "Show file tree" from the palette put the keyboard in "Filter files"; Space on `note02.txt` showed the file with the keyboard on "Show file tree"; closing the last tab brought the tree back. |
 
 The pre-merge review then found that the tools' place, hidden with `display: none` while it held only the empty "Updated" note, would not be read out when the note arrived alone. It now leaves the row's flow instead (`position: absolute`). Seen after one more `restart` (01:15 to 01:17, `marshell-app` 72184, all 27 recorded processes gone at the stop): with `main.ts` open the place is 0 px wide, still holds the note with `aria-live="polite"`, and the path ends 4 px before "Collapse all folders", one gap as before; with `README.md` and `picture.png` it is in the row with their tools. The note itself was still not seen shown.
+
+Its second round found three more, each fixed with a failing test first and seen after two more `restart`s at 900 px of window (01:21 to 01:23, `marshell-app` 59440, all 29 recorded processes gone at the stop; 01:24 to 01:27, `marshell-app` 73608, all 21 gone). The check started one session of its own, a PowerShell that waited 14 seconds and ran `marshell open note03.txt`; no agent CLI ran.
+
+| Check | Result |
+| --- | --- |
+| A file opened behind the narrow tree while the keyboard is in it | Pass. With "note" typed in "Filter files" of a session with no file open, `marshell open note03.txt` added the tab "note03.txt"; the tree stayed up, the keyboard stayed in the filter box and the next key was typed into it ("note0"). Before the fix the tree gave way and the keyboard fell to the page. |
+| An open the person asks for still takes the tree's place | Pass. From a row of the tree, Go to file… (`main.ts`) showed the file with the keyboard in "main.ts, contents"; with the keyboard in the filter box, a click on another tab showed that tab's file. |
+| The panel narrows while the keyboard is in the tree | Pass. Window 1900 px and back to 900 px with the keyboard in "Filter files": the tree is still up and holds the keyboard. |
+| A covered file's tools | Pass. With `README.md` open and the keyboard on Source, "Show file tree" from the palette brought the tree up: the path bar holds no tools, and the keyboard is in "Filter files". With the tree down the tools are back. |
+| A path the person scrolled back | Pass. `installation-notes.md` opens at its end (321 of 321). After a 40 px change of the window's width it is still at its end. Scrolled back to 40, it stays at 40 through the same change and through the tools leaving and returning with the tree; left at its end, it follows them (255 of 255, then 321 of 321). `OTHER.md` after it opens at its end. |
+
+The scroll in the last row was set by script (`scrollLeft = 40`), not with a wheel.
