@@ -250,9 +250,11 @@ fn notes_file(home: &Path, root: &Path) -> PathBuf {
     home.join("projects").join(project_id(root)).join(NOTES_FILE)
 }
 
-/// Whether `day` is inside the window that ends on `today`.
+/// Whether `day` is inside the window that ends on `today`: not after it, and at most `NOTE_DAYS` before it. The
+/// window is 31 calendar days, so a note exactly 30 days old still counts. A day after today (a count recorded while
+/// the clock was set ahead) is outside.
 fn in_window(day: u64, today: u64) -> bool {
-    today.saturating_sub(day) <= NOTE_DAYS
+    day <= today && today - day <= NOTE_DAYS
 }
 
 /// Counts one sent note for the project. Holds alias names and numbers, never the prompt or the note.
@@ -785,6 +787,27 @@ mod tests {
         // Thirty days back is still inside the window.
         assert_eq!(note_totals(home.path(), &root, 61 * DAY).unwrap().notes, 1);
         assert_eq!(note_totals(home.path(), &root, 62 * DAY), None);
+    }
+
+    #[test]
+    fn a_day_after_today_is_outside_the_window() {
+        let (_dir, root) = checkout();
+        let home = tempfile::tempdir().unwrap();
+        // Recorded while the clock was set ahead.
+        record_note(home.path(), &root, &note(&["ahead"], "ahead note"), 100 * DAY + 10).unwrap();
+        assert_eq!(note_totals(home.path(), &root, 10 * DAY), None);
+        // Pruning uses the same window, so the next note drops the day from the file.
+        record_note(home.path(), &root, &note(&["now"], "now note"), 10 * DAY).unwrap();
+        let text = std::fs::read_to_string(notes_file(home.path(), &root)).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let days: Vec<u64> = value["days"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| d["day"].as_u64().unwrap())
+            .collect();
+        assert_eq!(days, [10], "{text}");
+        assert_eq!(note_totals(home.path(), &root, 10 * DAY).unwrap().notes, 1);
     }
 
     #[test]

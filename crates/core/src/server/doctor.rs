@@ -1138,9 +1138,23 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
         } else {
             format!("Fix {count} issues")
         },
-        reason: picked
+        // One line for each ticked item, in the order the ids were given: an instruction item's title is the stored
+        // report's, the others' the fresh read's.
+        reason: ids
             .iter()
-            .map(|(item, _)| item.title.as_str())
+            .filter_map(|id| {
+                picked
+                    .iter()
+                    .find(|(item, _)| item.id == *id)
+                    .map(|(item, _)| item.title.as_str())
+                    .or_else(|| {
+                        reported
+                            .items
+                            .iter()
+                            .find(|item| item.id == *id && is_instr_id(id))
+                            .map(|item| item.title.as_str())
+                    })
+            })
             .collect::<Vec<_>>()
             .join("\n"),
         edits,
@@ -4289,8 +4303,11 @@ pub(in crate::server) mod tests {
         let item = report.items.iter().find(|i| i.id == ids[0]).unwrap();
         assert!(item.fixable && item.unchecked, "{item:?}");
 
+        let title = item.title.clone();
         let plan = fix_of(&st, ids).expect("a plan");
         assert!(plan.preview.can_apply, "{:?}", plan.preview);
+        // The reason holds the title of each ticked item, the instruction ones too.
+        assert_eq!(plan.preview.reason, title);
         assert_eq!(after_hash(&plan), hash_bytes(b"# A\r\nrest\r\n"));
         assert!(plan.preview.files[0].path.ends_with("CLAUDE.md"));
         assert_eq!(plan.preview.files[0].scope, ConfigScope::Project);

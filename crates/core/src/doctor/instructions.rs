@@ -907,6 +907,8 @@ pub fn imports_at(text: &str, syntax: ImportSyntax) -> Vec<ImportAt> {
 pub fn strip_html_comments(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut in_fence = false;
+    // Once a search for `-->` has failed, no later one can succeed: it would search a suffix.
+    let mut no_close = false;
     let mut i = 0;
     while i < text.len() {
         let end = text[i..].find('\n').map_or(text.len(), |n| i + n + 1);
@@ -914,12 +916,17 @@ pub fn strip_html_comments(text: &str) -> String {
         if is_fence(line) {
             in_fence = !in_fence;
         } else if !in_fence
+            && !no_close
             && let Some(at) = line.find("<!--")
-            && let Some(close) = text[i + at + 4..].find("-->")
         {
-            out.push_str(&line[..at]);
-            i += at + 4 + close + 3;
-            continue;
+            match text[i + at + 4..].find("-->") {
+                Some(close) => {
+                    out.push_str(&line[..at]);
+                    i += at + 4 + close + 3;
+                    continue;
+                }
+                None => no_close = true,
+            }
         }
         out.push_str(line);
         i = end;
@@ -932,6 +939,8 @@ pub fn strip_html_comments(text: &str) -> String {
 pub fn mask_html_comments(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut in_fence = false;
+    // Once a search for `-->` has failed, no later one can succeed: it would search a suffix.
+    let mut no_close = false;
     let mut i = 0;
     while i < text.len() {
         let end = text[i..].find('\n').map_or(text.len(), |n| i + n + 1);
@@ -939,18 +948,23 @@ pub fn mask_html_comments(text: &str) -> String {
         if is_fence(line) {
             in_fence = !in_fence;
         } else if !in_fence
+            && !no_close
             && let Some(at) = line.find("<!--")
-            && let Some(close) = text[i + at + 4..].find("-->")
         {
-            out.push_str(&line[..at]);
-            let stop = i + at + 4 + close + 3;
-            out.extend(
-                text[i + at..stop]
-                    .bytes()
-                    .map(|b| if b == b'\n' || b == b'\r' { b as char } else { ' ' }),
-            );
-            i = stop;
-            continue;
+            match text[i + at + 4..].find("-->") {
+                Some(close) => {
+                    out.push_str(&line[..at]);
+                    let stop = i + at + 4 + close + 3;
+                    out.extend(
+                        text[i + at..stop]
+                            .bytes()
+                            .map(|b| if b == b'\n' || b == b'\r' { b as char } else { ' ' }),
+                    );
+                    i = stop;
+                    continue;
+                }
+                None => no_close = true,
+            }
         }
         out.push_str(line);
         i = end;
@@ -1654,6 +1668,17 @@ mod tests {
         // A real link on the same kind of line is still found.
         let found = imports_at("@[ @[a](docs/a.md) ]", ImportSyntax::AgyLink);
         assert_eq!(found.iter().map(|i| i.raw.as_str()).collect::<Vec<_>>(), ["docs/a.md"]);
+    }
+
+    #[test]
+    fn unclosed_html_comments_are_scanned_in_linear_time() {
+        // Every line holding `<!--` once searched on to the end of the text for a `-->` that was not there.
+        let text = "<!--\n".repeat(300_000);
+        let started = std::time::Instant::now();
+        assert_eq!(strip_html_comments(&text), text);
+        assert_eq!(mask_html_comments(&text), text);
+        let took = started.elapsed();
+        assert!(took < std::time::Duration::from_secs(5), "took {took:?}");
     }
 
     #[test]

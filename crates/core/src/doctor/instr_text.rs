@@ -483,6 +483,23 @@ pub fn indents(text: &str) -> Vec<Said<Indent>> {
 /// The text without every import written as one of `raws` (decision 2). With `in_comments`, the ones inside HTML
 /// comments go too (decision 17). None when nothing was removed.
 ///
+/// Whether what is left of a line (trimmed) is nothing or only markers: quote marks `>`, then a bullet (`-`, `*`, `+`)
+/// with or without a task box (`[ ]`, `[x]`, `[X]`), or a number with `.` or `)`.
+fn only_a_marker(rest: &str) -> bool {
+    let mut s = rest;
+    while let Some(after) = s.strip_prefix('>') {
+        s = after.trim_start();
+    }
+    if s.is_empty() {
+        return true;
+    }
+    if let Some(after) = s.strip_prefix(['-', '*', '+']) {
+        return matches!(after.trim(), "" | "[ ]" | "[x]" | "[X]");
+    }
+    let digits = s.bytes().take_while(u8::is_ascii_digit).count();
+    digits > 0 && matches!(&s[digits..], "." | ")")
+}
+
 /// A line that holds only the import (a list marker aside) goes with its line end; otherwise the import goes with one
 /// space after it, or, at a line's end, with one space before it. Every other byte stays as it was: the line ends, a
 /// BOM, non-ASCII text, a missing final newline.
@@ -532,7 +549,7 @@ pub fn remove_imports(text: &str, raws: &[String], syntax: ImportSyntax, in_comm
         rest.push_str(&line[from..]);
         // A BOM is no content: the first line may hold only it besides the import, and it stays.
         let bom = number == 1 && line.starts_with('\u{feff}');
-        if matches!(rest.trim_start_matches('\u{feff}').trim(), "" | "-" | "*" | "+") {
+        if only_a_marker(rest.trim_start_matches('\u{feff}').trim()) {
             if bom {
                 out.push('\u{feff}');
             }
@@ -707,6 +724,38 @@ mod tests {
     fn removed(text: &str, raws: &[&str], syntax: ImportSyntax, in_comments: bool) -> Option<String> {
         let raws: Vec<String> = raws.iter().map(|r| r.to_string()).collect();
         remove_imports(text, &raws, syntax, in_comments)
+    }
+
+    #[test]
+    fn an_import_with_only_a_marker_goes_with_its_line() {
+        use ImportSyntax::At;
+        let gone = ["gone.md"];
+        let some = |s: &str| Some(s.to_string());
+        for line in [
+            "1. @gone.md",
+            "2) @gone.md",
+            "> @gone.md",
+            "- [ ] @gone.md",
+            "- [x] @gone.md",
+            "* [X] @gone.md",
+            "+ [ ] @gone.md",
+            "> - @gone.md",
+        ] {
+            assert_eq!(
+                removed(&format!("{line}\nrest\n"), &gone, At, false),
+                some("rest\n"),
+                "{line}"
+            );
+        }
+        // With other text on the line, the existing rule applies: the import goes with the space before it.
+        assert_eq!(
+            removed("1. see @gone.md\nrest\n", &gone, At, false),
+            some("1. see\nrest\n")
+        );
+        assert_eq!(
+            removed("- [ ] see @gone.md\nrest\n", &gone, At, false),
+            some("- [ ] see\nrest\n")
+        );
     }
 
     #[test]

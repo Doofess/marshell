@@ -315,6 +315,8 @@ fn dead_imports(loads: &[CliLoad], cx: &mut Reader) -> Vec<Finding> {
 #[derive(Default)]
 struct Ignores {
     by_dir: HashMap<PathBuf, Option<Gitignore>>,
+    /// The top of the walk for each project.
+    tops: HashMap<PathBuf, PathBuf>,
 }
 
 impl Ignores {
@@ -335,13 +337,35 @@ impl Ignores {
             .as_ref()
     }
 
-    /// Whether a `.gitignore` between the path's folder and the project's root covers `path`; the deepest one that
-    /// has an answer decides. `.git/info/exclude` and the global excludes file are not read.
+    /// The top of the walk for a project: the nearest folder, from the project upward and the project included, that
+    /// holds `.git` (a folder, or a file in a worktree). A project is the folder the person opened and can be a
+    /// subfolder of the repository, whose `.gitignore` is above it. With no `.git` the project is the top.
+    fn top(&mut self, cx: &mut Reader, project: &Path) -> PathBuf {
+        if let Some(top) = self.tops.get(project) {
+            return top.clone();
+        }
+        let mut top = project.to_path_buf();
+        let mut dir = Some(project);
+        while let Some(d) = dir {
+            if cx.exists(&d.join(".git")) {
+                top = d.to_path_buf();
+                break;
+            }
+            dir = d.parent();
+        }
+        self.tops.insert(project.to_path_buf(), top.clone());
+        top
+    }
+
+    /// Whether a `.gitignore` between the path's folder and the repository's root (the project's root when no folder
+    /// above holds `.git`) covers `path`; the deepest one that has an answer decides. `.git/info/exclude` and the
+    /// global excludes file are not read.
     fn covers(&mut self, cx: &mut Reader, project: &Path, path: &Path) -> bool {
-        let depth = project.components().count();
+        let top = self.top(cx, project);
+        let depth = top.components().count();
         let mut dir = path.parent();
         while let Some(d) = dir {
-            if d.components().count() < depth || !d.starts_with(project) {
+            if d.components().count() < depth || !d.starts_with(&top) {
                 break;
             }
             if let Some(matcher) = self.matcher(cx, d) {
@@ -1429,6 +1453,44 @@ mod tests {
         assert_eq!(shown[0].opens.len(), 1);
         assert_eq!(shown[0].opens[0].line, Some(3));
         assert_eq!(shown[0].opens[0].label, "Open AGENTS.md");
+    }
+
+    fn stale_in_subfolder_project(tmp: &Path, git: bool) -> Vec<(usize, String)> {
+        let repo = tmp.join("repo");
+        let p = repo.join("apps").join("web");
+        if git {
+            fs::create_dir_all(repo.join(".git")).unwrap();
+        }
+        write(&repo.join(".gitignore"), "dist/\n");
+        write(&p.join("src").join("a.ts"), "x");
+        let file = p.join("AGENTS.md");
+        write(&file, "`dist/app.js` is built.\n`src/gone.ts` is gone.\n");
+        let loads = vec![load("codex", &p, vec![file_row(&file)])];
+        let mut cx = Reader::windows();
+        let found = findings(&loads, &mut cx);
+        match found.as_slice() {
+            [Finding::StalePaths { paths, .. }] => paths.clone(),
+            [] => Vec::new(),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_gitignore_above_the_project_in_the_same_repository_covers_a_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(
+            stale_in_subfolder_project(tmp.path(), true),
+            vec![(2, "src/gone.ts".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_gitignore_above_the_project_is_not_read_when_no_folder_holds_git() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(
+            stale_in_subfolder_project(tmp.path(), false),
+            vec![(1, "dist/app.js".to_string()), (2, "src/gone.ts".to_string())]
+        );
     }
 
     #[test]
