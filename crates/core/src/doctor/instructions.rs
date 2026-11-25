@@ -493,7 +493,7 @@ fn read_capped_text(path: &Path) -> Text {
 }
 
 /// A path as one comparable text: forward slashes, no trailing slash, ASCII-lowercased on Windows.
-fn path_key(path: &Path) -> String {
+pub(crate) fn path_key(path: &Path) -> String {
     let text = path.to_string_lossy().replace('\\', "/");
     let text = text.trim_end_matches('/');
     if cfg!(windows) {
@@ -503,7 +503,7 @@ fn path_key(path: &Path) -> String {
     }
 }
 
-fn is_within(path: &Path, base: &Path) -> bool {
+pub(crate) fn is_within(path: &Path, base: &Path) -> bool {
     let (path, base) = (path_key(path), path_key(base));
     path == base || path.strip_prefix(&base).is_some_and(|rest| rest.starts_with('/'))
 }
@@ -521,7 +521,7 @@ fn relative_to(path: &Path, base: &Path) -> Option<String> {
 }
 
 /// `.` and `..` resolved by the text alone.
-fn normalize(path: &Path) -> PathBuf {
+pub(crate) fn normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for part in path.components() {
         match part {
