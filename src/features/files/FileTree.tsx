@@ -6,8 +6,8 @@ import { MARK_LETTER, MARK_WORD } from "./treeMarks";
 import { type TreeMove, type TreeRow, typeAhead, treeKey } from "./treeModel";
 import "./FileTree.css";
 
-/** What the tree and the Changes panel say for a session with no folder. */
-export const NO_FOLDER_LINE = "This session has no folder the tree can show.";
+/** What the tree and the Changes panel say when there is no folder to show. */
+export const NO_FOLDER_LINE = "There is no folder the tree can show.";
 
 /** A row is 24 px tall; FileTree.css says the same. */
 const ROW = 24;

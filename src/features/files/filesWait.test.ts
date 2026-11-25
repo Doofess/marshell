@@ -24,7 +24,7 @@ describe("filesWait", () => {
   });
   it("says a failed list with the folder, or for the session when there is none", () => {
     expect(listFailed("src")).toBe("Can't list the files in src.");
-    expect(listFailed(null)).toBe("Can't list files for this session.");
+    expect(listFailed(null)).toBe("Can't list the files.");
   });
 });
 

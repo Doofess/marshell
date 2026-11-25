@@ -14,12 +14,12 @@ export function EmptyBrowser({ available, ports, onNewTab, onOpenHtml, onPort }:
   const line = !available
     ? "Open an HTML file. Web pages aren't available on this system yet."
     : listed.length > 0
-      ? "Open an address, an HTML file or a server this session runs."
+      ? "Open an address, an HTML file or a local server."
       : "Open an address or an HTML file.";
   return (
     <EmptyPanel icon={GlobeIcon} title="No pages open" line={line} actions={available ? [newTab, openHtml] : [openHtml, newTab]}>
       {listed.length > 0 && (
-        <EmptyList heading="Running in this session">
+        <EmptyList heading="Local servers">
           {listed.map((p) => (
             <li key={p.port}>
               <button type="button" className="empty-panel__row" title={p.url} onClick={() => onPort(p.url)}>

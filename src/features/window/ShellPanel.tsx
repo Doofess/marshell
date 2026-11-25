@@ -15,6 +15,8 @@ const icon = (d: string) => (
 );
 /** Also what the window announces when the shell panel's shell could not be started. */
 export const SHELL_FAILED = "The shell didn't start.";
+/** What the pane's Changes says while the panel's shell has no tab id yet. */
+export const SHELL_STARTING = "The shell is still starting.";
 const PROMPT = "M2 3.5L5 6L2 8.5M6.5 9h3.5";
 /** An arrow leaving a box: the shell moves out into a session of its own. */
 const POP_OUT = "M5.5 2.5h-3v7h7v-3M7.5 2.5h2v2M9.5 2.5L6 6";

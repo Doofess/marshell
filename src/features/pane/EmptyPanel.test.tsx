@@ -19,7 +19,7 @@ describe("EmptyBrowser", () => {
   it("the Browser block says there are no pages and offers New tab and Open HTML file…", () => {
     const out = browser(true, PORTS);
     expect(out).toContain('<h2 class="empty-panel__title">No pages open</h2>');
-    expect(out).toContain("Open an address, an HTML file or a server this session runs.");
+    expect(out).toContain("Open an address, an HTML file or a local server.");
     const [first, second] = buttons(out);
     expect(first).toContain("New tab");
     expect(first).toContain("empty-panel__button--primary");
@@ -29,7 +29,7 @@ describe("EmptyBrowser", () => {
   });
   it("lists the session's ports as buttons, in order", () => {
     const out = browser(true, PORTS);
-    expect(out).toContain('<h3 class="empty-panel__heading">Running in this session</h3>');
+    expect(out).toContain('<h3 class="empty-panel__heading">Local servers</h3>');
     const rows = buttons(out).filter((b) => b.includes("empty-panel__row"));
     expect(rows).toHaveLength(2);
     expect(rows[0]).toContain("localhost:5173");
@@ -37,10 +37,10 @@ describe("EmptyBrowser", () => {
   });
   it("leaves the ports row out and changes its line when the session listens on nothing", () => {
     const out = browser(true, []);
-    expect(out).not.toContain("Running in this session");
+    expect(out).not.toContain("Local servers");
     expect(out).not.toContain("empty-panel__row");
     expect(out).toContain("Open an address or an HTML file.");
-    expect(out).not.toContain("a server this session runs");
+    expect(out).not.toContain("a local server");
   });
   it("where pages aren't available Open HTML file… leads, New tab is aria-disabled with its reason, and no port is listed", () => {
     const out = browser(false, PORTS);
@@ -52,7 +52,7 @@ describe("EmptyBrowser", () => {
     expect(second).toContain('aria-disabled="true"');
     expect(second).toContain('title="Not available on this system yet"');
     expect(second).not.toContain(" disabled");
-    expect(out).not.toContain("Running in this session");
+    expect(out).not.toContain("Local servers");
     expect(out).not.toContain("localhost");
   });
 });

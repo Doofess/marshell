@@ -812,9 +812,9 @@ describe("LiveApp: the stack of panels", () => {
   });
   it("an empty Browser panel lists the session's ports", () => {
     const h = renderToStaticMarkup(<EmptyBrowser available ports={[{ port: 3000, url: "http://localhost:3000/" }]} onNewTab={() => {}} onOpenHtml={() => {}} onPort={() => {}} />);
-    expect(h).toContain("Running in this session");
+    expect(h).toContain("Local servers");
     expect(h).toContain("localhost:3000");
-    expect(renderToStaticMarkup(<EmptyBrowser available ports={[]} onNewTab={() => {}} onOpenHtml={() => {}} onPort={() => {}} />)).not.toContain("Running in this session");
+    expect(renderToStaticMarkup(<EmptyBrowser available ports={[]} onNewTab={() => {}} onOpenHtml={() => {}} onPort={() => {}} />)).not.toContain("Local servers");
   });
 });
 
@@ -824,7 +824,7 @@ describe("LiveApp: the Files panel's wiring", () => {
     expect(source).toContain("<FilesPanel");
     expect(source).not.toMatch(/paneTabs\.tabs\.length > 0 \? resolveTerminalTheme/);
     // The Files panel is drawn for the session, not only when a tab is selected.
-    expect(source).toMatch(/panel === "files" && paneSession !== undefined \? \(\s*<FilesPanel/);
+    expect(source).toMatch(/panel === "files" && owner\.tabId !== null \? \(\s*<FilesPanel/);
   });
   it("the strip's Files menu opens the Files menu, and a tab's double-click keeps it", () => {
     expect(source).toContain('label: panel === "browser" ? "Browser menu" : "Files menu"');
@@ -853,7 +853,7 @@ describe("LiveApp: the Files panel's wiring", () => {
     expect(source).toContain('Pick<PreviewHandle, "text" | "saving" | "autoSave">');
   });
   it("keeps a preview tab on an edit and before a preview open that would replace unsaved text", () => {
-    expect(source).toMatch(/if \(dirty && tab\.preview === true && paneSession !== undefined\) paneDispatch\(\{ type: "keep"/);
+    expect(source).toMatch(/if \(dirty && tab\.preview === true\) paneDispatch\(\{ type: "keep"/);
     expect(source).toContain("keepFirst(current,");
   });
   it("gives the Preview the Files settings in the Files panel only", () => {
@@ -862,7 +862,7 @@ describe("LiveApp: the Files panel's wiring", () => {
   });
   it("pastes a tree's path the way a drop on a terminal does", () => {
     expect(source).toContain("return pasteInto(target.tabId, paths);");
-    expect(source).toContain("onPaste={(path) => void pasteInto(paneSession, [path])}");
+    expect(source).toContain("onPaste={(path) => void pasteInto(owner.tabId!, [path])}");
     // The path bar starts a file under the home folder at `~` (6r-2 decision 7).
     expect(source).toContain("home={home}");
   });

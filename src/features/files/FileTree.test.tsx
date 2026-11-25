@@ -93,9 +93,9 @@ describe("FileTree", () => {
     expect(out).toContain('aria-disabled="true"');
   });
 
-  it("no folder reads This session has no folder the tree can show.", () => {
+  it("no folder reads There is no folder the tree can show.", () => {
     const out = render([], { noFolder: true });
-    expect(out).toContain("This session has no folder the tree can show.");
+    expect(out).toContain("There is no folder the tree can show.");
     expect(out).not.toContain('role="tree"');
   });
 

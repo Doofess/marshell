@@ -47,7 +47,7 @@ describe("FilesPanel", () => {
     expect(out).toContain("No files open");
   });
   it("the tree says when the session has no folder it can show only after the core said so", () => {
-    expect(render()).not.toContain("This session has no folder the tree can show.");
+    expect(render()).not.toContain("There is no folder the tree can show.");
   });
   it("a file under the home folder and outside the project starts the path bar at ~ (decision 7)", () => {
     const out = render({ activePath: "/home/me/notes/todo.md", home: "/home/me" });

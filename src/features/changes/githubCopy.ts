@@ -116,7 +116,7 @@ export const githubCopy = {
   willPush: (v: number) => `${commitCount(v)} will be pushed to origin.`,
   andMoreCommits: (v: number) => `And ${n(v)} more.`,
   uncommitted: (v: number) => (v === 1 ? "1 file isn't committed and stays out." : `${n(v)} files aren't committed and stay out.`),
-  moved: "This isn't the folder the session started in. A push runs this repository's hooks and settings.",
+  moved: "This isn't the folder the terminal started in. A push runs this repository's hooks and settings.",
   titleField: "Title",
   bodyField: "Description",
   baseField: "Base branch",
