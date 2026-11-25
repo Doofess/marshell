@@ -366,11 +366,13 @@ pub fn package_managers(text: &str) -> Vec<Said<Manager>> {
             if named.contains(&manager) || !stands_alone(&list, at, &chars) || negated(negation, at) {
                 continue;
             }
-            let global = global_flag.is_some_and(|start| start >= *end);
-            let verb = !global
-                && list.get(at + 1).is_some_and(|(next, _, w)| {
-                    VERBS.contains(&w.as_str()) && *next > *end && chars[*end..*next].iter().all(|c| c.is_whitespace())
-                });
+            // A global install, `npm i -g pnpm`, names nothing: the manager before the flag never counts.
+            if global_flag.is_some_and(|start| start >= *end) {
+                continue;
+            }
+            let verb = list.get(at + 1).is_some_and(|(next, _, w)| {
+                VERBS.contains(&w.as_str()) && *next > *end && chars[*end..*next].iter().all(|c| c.is_whitespace())
+            });
             if verb || used(&list, at, &chars) || package_manager {
                 named.push(manager);
             }
@@ -653,6 +655,19 @@ mod tests {
         assert_eq!(said[0].line, 2);
         assert_eq!(said[0].quote, "Use pnpm for the frontend.");
         assert_eq!(Manager::Pnpm.name(), "pnpm");
+    }
+
+    #[test]
+    fn a_global_install_names_no_manager() {
+        for line in [
+            "Use `npm i -g pnpm` to install pnpm.
+",
+            "Use npm --global add foo
+",
+        ] {
+            assert!(package_managers(line).is_empty(), "{line}");
+        }
+        assert_eq!(managers("Use pnpm for the frontend."), vec![Manager::Pnpm]);
     }
 
     /// How long `work` takes, and what it returned.

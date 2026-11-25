@@ -680,9 +680,10 @@ impl Expander<'_> {
                     continue;
                 }
                 Text::Missing => {
-                    // 7d2 decision 3: an `@word` that names no file and isn't written like a path is prose, and
-                    // one dead import written twice in a file is one row.
-                    if looks_like_path(&raw) && self.dead.insert((file.to_path_buf(), raw.clone())) {
+                    // 7d2 decision 3: an `@word` that names no file and isn't written like a path is prose (an
+                    // Antigravity link never is), and one dead import written twice in a file is one row.
+                    let written_as_path = self.rules.syntax != ImportSyntax::At || looks_like_path(&raw);
+                    if written_as_path && self.dead.insert((file.to_path_buf(), raw.clone())) {
                         self.row(path, &at, When::NotLoaded("not found".into()), 0, Vec::new());
                     }
                     continue;
@@ -1868,6 +1869,33 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[1].path, tmp.path().join("rules").join("sub").join("a.md"));
         assert_eq!(rows[1].chars, 3);
+    }
+
+    #[test]
+    fn a_dead_agy_link_without_an_extension_is_one_row() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("r.md");
+        write(
+            &file,
+            "See @[Guide](docs/guide) and @[Guide](docs/guide) again.
+",
+        );
+        let agy = ImportRules {
+            syntax: ImportSyntax::AgyLink,
+            ..rules()
+        };
+        let rows = expand_file(&mut Reader::windows(), &file, &agy);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1].when, When::NotLoaded("not found".into()));
+        assert_eq!(rows[1].raw.as_deref(), Some("docs/guide"));
+        // The same text as a loose `@word` is still prose.
+        write(
+            &file,
+            "See @docs/guide for it.
+",
+        );
+        let rows = expand_file(&mut Reader::windows(), &file, &rules());
+        assert_eq!(rows.len(), 1);
     }
 
     #[test]

@@ -252,7 +252,15 @@ describe("DoctorPage", () => {
     const h = page(DOCTOR_FINDINGS, "ready");
     it("a finding's row has a button for each file it names, in the finding's order", () => {
       const row = rowOf(h, "instrrepeat.");
-      expect(row).toMatch(/<button type="button" class="doctor__btn">Open CLAUDE\.md<\/button><button type="button" class="doctor__btn">Open AGENTS\.md<\/button>/);
+      expect(row).toMatch(/<button type="button" class="doctor__btn"[^>]*>Open CLAUDE\.md<\/button><button type="button" class="doctor__btn"[^>]*>Open AGENTS\.md<\/button>/);
+    });
+    it("each Open button is described by its row's title, so two of the same name tell apart", () => {
+      const row = rowOf(h, "instrrepeat.");
+      const titleId = /<p class="doctor__title" id="([^"]+)"/.exec(row)?.[1];
+      expect(titleId).toBeTruthy();
+      const buttons = [...row.matchAll(/<button type="button" class="doctor__btn"([^>]*)>Open [^<]*<\/button>/g)];
+      expect(buttons.length).toBeGreaterThan(0);
+      for (const [, attrs] of buttons) expect(attrs).toBe(` aria-describedby="${titleId}"`);
     });
     it("a row with no file to open has no such button", () => {
       expect(rowOf(h, "refnotes.3f2a9c1e")).not.toContain(">Open ");

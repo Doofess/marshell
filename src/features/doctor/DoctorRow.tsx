@@ -81,7 +81,7 @@ export function DoctorRow({ item, fixed = false, checked = false, disabled = fal
         {item.opens && item.opens.length > 0 && (
           <div className="doctor__opens">
             {item.opens.map((open, i) => (
-              <button type="button" className="doctor__btn" key={i} onClick={() => onOpenFile?.(open)}>
+              <button type="button" className="doctor__btn" key={i} aria-describedby={titleId} onClick={() => onOpenFile?.(open)}>
                 {open.label}
               </button>
             ))}

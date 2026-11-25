@@ -369,10 +369,14 @@ impl Ignores {
                 break;
             }
             if let Some(matcher) = self.matcher(cx, d) {
-                match matcher.matched_path_or_any_parents(path, false) {
-                    Match::Ignore(_) => return true,
-                    Match::Whitelist(_) => return false,
-                    Match::None => {}
+                // The path doesn't exist, so it may name a folder as well as a file: a rule for folders only
+                // (`build/`) covers it as a folder.
+                for is_dir in [false, true] {
+                    match matcher.matched_path_or_any_parents(path, is_dir) {
+                        Match::Ignore(_) => return true,
+                        Match::Whitelist(_) => return false,
+                        Match::None => {}
+                    }
                 }
             }
             dir = d.parent();
@@ -1482,6 +1486,32 @@ mod tests {
             stale_in_subfolder_project(tmp.path(), true),
             vec![(2, "src/gone.ts".to_string())]
         );
+    }
+
+    #[test]
+    fn a_folder_a_directory_only_gitignore_rule_covers_is_not_reported() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = proj(tmp.path());
+        write(
+            &p.join(".gitignore"),
+            "build/output/
+",
+        );
+        write(&p.join("build").join("a.ts"), "x");
+        let file = p.join("AGENTS.md");
+        write(
+            &file,
+            "`build/output/` and `build/output` are built.
+`build/gone.ts` is gone.
+",
+        );
+        let loads = vec![load("codex", &p, vec![file_row(&file)])];
+        let mut cx = Reader::windows();
+        let found = findings(&loads, &mut cx);
+        match found.as_slice() {
+            [Finding::StalePaths { paths, .. }] => assert_eq!(paths, &vec![(2, "build/gone.ts".to_string())]),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
