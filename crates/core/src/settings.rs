@@ -38,6 +38,9 @@ struct FileDoc {
     /// None is no backup. The folder is checked when it is saved and again at every copy.
     #[serde(default)]
     history_backup_dir: Option<String>,
+    /// None is Marshell's own folder. A value that is not text, is blank, relative or a share reads as none.
+    #[serde(default, deserialize_with = "lenient_default_folder")]
+    default_folder: Option<String>,
     /// Each value that does not read falls back on its own default.
     #[serde(default, deserialize_with = "lenient_browser")]
     browser: BrowserSettings,
@@ -149,6 +152,18 @@ fn lenient_changes<'de, D: serde::Deserializer<'de>>(d: D) -> Result<ChangesSett
     Ok(out)
 }
 
+/// A text value, or none when the value is anything else (a number, an object, `null`). Only the field's name is logged.
+fn lenient_default_folder<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    match serde_json::Value::deserialize(d)? {
+        serde_json::Value::String(s) => Ok(Some(s)),
+        serde_json::Value::Null => Ok(None),
+        _ => {
+            tracing::warn!("settings file has an invalid default_folder, using Marshell's own folder");
+            Ok(None)
+        }
+    }
+}
+
 /// The notifications block, or the defaults when it is not one (a wrong type or `null` where a value goes).
 fn lenient_notifications<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<NotifySettings>, D::Error> {
     let value = serde_json::Value::deserialize(d)?;
@@ -190,6 +205,37 @@ pub fn check_limits(limit_gb: Option<u32>, limit_days: Option<u32>) -> Result<()
     Ok(())
 }
 
+pub const FOLDER_NOT_FULL: &str = "Choose a full folder path.";
+pub const FOLDER_NOT_LOCAL: &str = "Choose a folder on this PC.";
+
+/// Whether `dir` may be the default folder, without looking at the disk: a full path, and not a network share.
+pub fn check_default_folder(dir: &str) -> Result<(), String> {
+    if dir.trim().is_empty() {
+        return Err(FOLDER_NOT_FULL.into());
+    }
+    let is_slash = |c: char| c == '\\' || c == '/';
+    let mut chars = dir.chars();
+    let starts_with_two_slashes = chars.next().is_some_and(is_slash) && chars.next().is_some_and(is_slash);
+    // The verbatim form of a drive path (`\\?\C:\x`) is local; every other `\\` start is a share or a device.
+    let verbatim_rest = dir
+        .strip_prefix("\\\\?\\")
+        .or_else(|| dir.strip_prefix("//?/"))
+        .or_else(|| dir.strip_prefix("\\\\?/"))
+        .or_else(|| dir.strip_prefix("//?\\"));
+    let verbatim_drive = verbatim_rest.is_some_and(|rest| {
+        let b = rest.as_bytes();
+        b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':'
+    });
+    if starts_with_two_slashes && !verbatim_drive {
+        return Err(FOLDER_NOT_LOCAL.into());
+    }
+    let plain = verbatim_rest.unwrap_or(dir);
+    if !Path::new(plain).is_absolute() {
+        return Err(FOLDER_NOT_FULL.into());
+    }
+    Ok(())
+}
+
 /// A missing, broken or newer-version file means the defaults. The file itself is not touched.
 pub fn load(home: &Path) -> Settings {
     let doc = store::read::<FileDoc>(&crate::paths::settings_file(home)).unwrap_or_else(|err| {
@@ -221,6 +267,14 @@ pub fn load(home: &Path) -> Settings {
         doc.history_limit_gb.filter(|gb| LIMIT_GB_CHOICES.contains(gb)),
         doc.history_limit_days.filter(|days| LIMIT_DAY_CHOICES.contains(days)),
     );
+    // A hand-edited folder that is blank, relative or a share would make every later save fail, so it reads as none.
+    let default_folder = doc.default_folder.filter(|dir| {
+        let ok = !dir.trim().is_empty() && check_default_folder(dir).is_ok();
+        if !ok {
+            tracing::warn!("settings file has an invalid default_folder, using Marshell's own folder");
+        }
+        ok
+    });
     Settings {
         appearance,
         pause_warned,
@@ -232,6 +286,7 @@ pub fn load(home: &Path) -> Settings {
         history_limit_gb,
         history_limit_days,
         history_backup_dir: doc.history_backup_dir.filter(|dir| !dir.trim().is_empty()),
+        default_folder,
         browser: doc.browser,
         files: doc.files,
         changes: doc.changes,
@@ -282,6 +337,7 @@ pub fn save(home: &Path, s: &Settings) -> anyhow::Result<()> {
             history_limit_gb: s.history_limit_gb,
             history_limit_days: s.history_limit_days,
             history_backup_dir: s.history_backup_dir.clone(),
+            default_folder: s.default_folder.clone(),
             browser: s.browser.clone(),
             files: s.files.clone(),
             changes: s.changes.clone(),
@@ -368,6 +424,9 @@ pub fn validate(s: &Settings) -> Result<(), String> {
     check_imported_themes(a)?;
     check_terminal_theme(a)?;
     check_limits(s.history_limit_gb, s.history_limit_days)?;
+    if let Some(dir) = &s.default_folder {
+        check_default_folder(dir)?;
+    }
     if !matches!(s.files.tab_size, 2 | 4 | 8) {
         return Err("files.tab_size must be 2, 4 or 8".into());
     }
@@ -682,6 +741,70 @@ mod tests {
         let file = crate::paths::settings_file(home.path());
         std::fs::write(&file, r#"{"version":1,"history_backup_dir":"  "}"#).unwrap();
         assert_eq!(load(home.path()).history_backup_dir, None);
+    }
+
+    #[test]
+    fn default_folder_round_trips() {
+        let home = tempfile::tempdir().unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().to_string_lossy().into_owned();
+        let s = Settings {
+            default_folder: Some(path.clone()),
+            ..Settings::default()
+        };
+        save(home.path(), &s).unwrap();
+        assert_eq!(load(home.path()).default_folder.as_deref(), Some(path.as_str()));
+        save(home.path(), &Settings::default()).unwrap();
+        assert_eq!(load(home.path()).default_folder, None);
+    }
+
+    #[test]
+    fn a_default_folder_that_does_not_read_is_dropped_alone() {
+        let home = tempfile::tempdir().unwrap();
+        let file = crate::paths::settings_file(home.path());
+        for bad in ["7", r#""  ""#, r#""relative/path""#, r#""\\\\server\\share\\x""#] {
+            std::fs::write(
+                &file,
+                format!(r#"{{"version":1,"default_folder":{bad},"onboarded":true}}"#),
+            )
+            .unwrap();
+            let back = load(home.path());
+            assert_eq!(back.default_folder, None, "{bad}");
+            assert!(back.onboarded, "{bad}");
+        }
+    }
+
+    #[test]
+    fn check_default_folder_wants_a_full_local_path() {
+        for text in ["", "  ", "work", "..\\x"] {
+            assert_eq!(check_default_folder(text), Err(FOLDER_NOT_FULL.to_string()), "{text:?}");
+        }
+        for text in [
+            "\\\\server\\share",
+            "//server/share",
+            "\\\\?\\UNC\\server\\share",
+            "\\\\wsl.localhost\\Ubuntu\\home\\u",
+        ] {
+            assert_eq!(
+                check_default_folder(text),
+                Err(FOLDER_NOT_LOCAL.to_string()),
+                "{text:?}"
+            );
+        }
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(check_default_folder(&dir.path().to_string_lossy()), Ok(()));
+        #[cfg(windows)]
+        assert_eq!(check_default_folder("\\\\?\\C:\\Users\\x"), Ok(()));
+    }
+
+    #[test]
+    fn validate_refuses_a_default_folder_that_is_not_full() {
+        let bad = Settings {
+            default_folder: Some("work".into()),
+            ..Settings::default()
+        };
+        assert_eq!(validate(&bad), Err(FOLDER_NOT_FULL.to_string()));
+        assert!(validate(&Settings::default()).is_ok());
     }
 
     #[test]

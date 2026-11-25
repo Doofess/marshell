@@ -1869,7 +1869,7 @@ pub struct Profile {
     /// Full argv.
     pub command: Vec<String>,
     pub family: ShellFamily,
-    /// Folder the shell starts in. None means the user's home directory.
+    /// Folder the shell starts in. None means the default folder.
     pub cwd: Option<String>,
     /// Extra environment variables as (name, value) pairs.
     pub env: Vec<(String, String)>,
@@ -2077,6 +2077,8 @@ pub struct Settings {
     pub history_limit_days: Option<u32>,
     /// A folder that holds an exact copy of the history, in a "Marshell history" folder of its own. None is no backup.
     pub history_backup_dir: Option<String>,
+    /// Where the shell panel and new sessions start when nothing else names a folder. None is Marshell's own folder.
+    pub default_folder: Option<String>,
     /// The Browser panel's settings.
     pub browser: BrowserSettings,
     /// The Files panel's settings.
@@ -2158,11 +2160,44 @@ impl Default for Settings {
             history_limit_gb: None,
             history_limit_days: None,
             history_backup_dir: None,
+            default_folder: None,
             browser: BrowserSettings::default(),
             files: FilesSettings::default(),
             changes: ChangesSettings::default(),
         }
     }
+}
+
+/// GET /v1/default-folder: the default folder as it is now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DefaultFolder {
+    /// The folder's full path. None when this core has none (then starts use the home folder).
+    pub path: Option<String>,
+    /// Whether a folder is there now.
+    pub exists: bool,
+    /// Whether the person chose it in Settings. False for Marshell's own folder.
+    pub chosen: bool,
+}
+
+/// POST /v1/shell-panel body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ShellPanelRequest {
+    /// The focused session's folder. None with no session: the profile's folder, else the default folder.
+    #[serde(default)]
+    pub cwd: Option<String>,
+    pub cols: u16,
+    pub rows: u16,
+}
+
+/// POST /v1/shell-panel answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ShellPanelResponse {
+    pub tab_id: String,
+    /// The folder the panel's shell started in.
+    pub cwd: String,
 }
 
 /// Where the file tree sits beside the open file.
@@ -2453,6 +2488,19 @@ pub struct ReferenceNote {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_default_has_no_default_folder() {
+        assert_eq!(Settings::default().default_folder, None);
+    }
+
+    #[test]
+    fn a_shell_panel_request_without_a_folder_reads() {
+        let none: ShellPanelRequest = serde_json::from_str(r#"{"cols":80,"rows":24}"#).unwrap();
+        assert_eq!(none.cwd, None);
+        let some: ShellPanelRequest = serde_json::from_str(r#"{"cwd":"C:/x","cols":80,"rows":24}"#).unwrap();
+        assert_eq!(some.cwd.as_deref(), Some("C:/x"));
+    }
 
     #[test]
     fn ask_request_reads_its_kind_tag() {
