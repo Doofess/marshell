@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PaneView } from "../../generated/PaneView";
-import { closeAsk, closeNothingText, closeTabOutcome, commandPanel, firstWith, hideFocus, noTabsText, openedByText, panelButtonsFor, panelHiddenText, panelOrder, panelToggleOutcome, leavePaneOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneBody, paneHiddenText, paneTabFocus, receiptWithPaneHidden, paneTabOutcome, projectKeyOf, shouldPin, noTabText, PAGE_REFUSED, TAB_LIMIT, SHELL_TAB_LIMIT, tabLimitText } from "./paneCommands";
+import { closeAsk, closeNothingText, closeTabOutcome, commandPanel, firstWith, hideFocus, noTabsText, openedByText, panelButtonsFor, panelHiddenText, panelOrder, panelToggleOutcome, leavePaneOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneBody, paneHiddenText, paneTabFocus, receiptWithPaneHidden, paneTabOutcome, projectKeyOf, shouldPin, noTabText, paneToggleOutcome, PAGE_REFUSED, TAB_LIMIT, SHELL_TAB_LIMIT, tabLimitText } from "./paneCommands";
 import { paneReducer, recentFor } from "./paneState";
 import type { PanelId } from "./panels";
 import { landingPanel, unseenPanels } from "./paneCommands";
@@ -243,7 +243,7 @@ describe("closeNothingText", () => {
   it("says what a tab command says in a pane that is shown, or behind a view that replaces the terminal", () => {
     const shown = withTabs("s1", ["/a/x.md"]);
     expect(closeNothingText(shown, "s1", "browser", false, "Ctrl+Shift+Q")).toBe("No tabs open in Browser.");
-    expect(closeNothingText(withTabs("s1", ["/a/x.md"], false), "s1", null, true, "Ctrl+Shift+Q")).toBe("The side pane shows beside a session.");
+    expect(closeNothingText(withTabs("s1", ["/a/x.md"], false), "s1", null, true, "Ctrl+Shift+Q")).toBe("Close History to show the side pane.");
   });
 });
 
@@ -362,8 +362,14 @@ describe("noTabText", () => {
     expect(noTabText(null, false)).toBe("No tabs open.");
   });
   it("says where the pane shows while a view replaces the terminal: the session may have tabs", () => {
-    expect(noTabText(null, true)).toBe("The side pane shows beside a session.");
-    expect(noTabText("files", true)).toBe("The side pane shows beside a session.");
+    expect(noTabText(null, true)).toBe("Close History to show the side pane.");
+    expect(noTabText("files", true)).toBe("Close History to show the side pane.");
+  });
+  it("the pane toggles with no session", () => {
+    expect(paneToggleOutcome(false)).toBe("toggle");
+  });
+  it("History blocks the pane", () => {
+    expect(paneToggleOutcome(true)).toBe("blocked");
   });
 });
 describe("leavePaneOutcome", () => {

@@ -17,13 +17,13 @@ export const noTabsText = (panel: PanelId) => `No tabs open in ${PANEL_LABEL[pan
  * What a tab command (next, previous, close) says when it has no tab to act on: the panel that is empty, or that no tabs are open.
  * While a view replaces the terminal no panel is on screen though the session may hold tabs, so it says where the pane shows instead.
  */
-export const noTabText = (panel: PanelId | null, replaced: boolean): string => (replaced ? PANE_BESIDE_SESSION : panel ? noTabsText(panel) : NO_TABS_OPEN);
+export const noTabText = (panel: PanelId | null, replaced: boolean): string => (replaced ? PANE_NOT_WITH_HISTORY : panel ? noTabsText(panel) : NO_TABS_OPEN);
 export const panelHiddenText = (panel: PanelId) => `${PANEL_LABEL[panel]} is hidden.`;
-export const PANE_BESIDE_SESSION = "The side pane shows beside a session.";
+export const PANE_NOT_WITH_HISTORY = "Close History to show the side pane.";
 
-/** The title-bar button and the cursor: toggle the pane when a session is on screen and no main view replaces it, else say where it shows. */
-export function paneToggleOutcome(session: string | null | undefined, viewing: boolean): "toggle" | "blocked" {
-  return session == null || viewing ? "blocked" : "toggle";
+/** The title-bar button and the cursor: toggle the pane unless a main view (History) replaces the terminal, else say why not. */
+export function paneToggleOutcome(viewing: boolean): "toggle" | "blocked" {
+  return viewing ? "blocked" : "toggle";
 }
 export const TAB_LIMIT = `This session has ${PANE_LIMITS.tabs} tabs. Close one to open another.`;
 export const SHELL_TAB_LIMIT = `The shell panel has ${PANE_LIMITS.tabs} tabs. Close one to open another.`;

@@ -176,6 +176,8 @@ export type MainWindowProps = {
   /** The side pane's content. Shown (`paneShown`), it sits beside the session, or over it in a narrow window, and the terminals stay mounted. */
   pane?: ReactNode;
   paneShown?: boolean;
+  /** With no session an open pane fills the area right of the sidebar. Left out, the pane needs a session, as before. */
+  paneAlone?: boolean;
   /** The saved width in pixels, or null for half the room. The window holds no width of its own. */
   paneWidth?: number | null;
   onPaneWidth?: (width: number | null) => void;
@@ -274,6 +276,7 @@ export function MainWindow({
   navCursor = null,
   pane,
   paneShown = false,
+  paneAlone = false,
   paneWidth = null,
   onPaneWidth,
   onDividerGone,
@@ -353,9 +356,9 @@ export function MainWindow({
   useEffect(() => (os === "windows" && controlsRef.current ? watchWindowStrip(controlsRef.current) : undefined), [os]);
   const viewing = mainView !== undefined && mainView !== null && mainView !== false;
   // What the pane is asked to be (the toggle answers to this at once), and whether a hide holds it shown while its page freezes.
-  const paneWanted = paneShown && !viewing && !empty;
+  const paneWanted = paneShown && !viewing && (!empty || paneAlone);
   const paneHeld = usePaneHold(paneWanted);
-  const geometry = paneGeometry({ room: spaceW, shown: paneWanted || paneHeld, saved: paneWidth, terminalMin: terminalMinWidth });
+  const geometry = paneGeometry({ room: spaceW, shown: paneWanted || paneHeld, saved: paneWidth, terminalMin: terminalMinWidth, alone: empty && paneAlone });
   const paneOn = geometry.mode !== "hidden";
   const paneCovers = geometry.mode === "cover";
   // The pane moves for 200 ms when its mode changes, and with the sidebar when that switches beside it (paneMotionKey). A drag
@@ -368,10 +371,10 @@ export function MainWindow({
   useEffect(() => {
     if (mainRef.current) setRtl(getComputedStyle(mainRef.current).direction === "rtl");
   });
-  const paneBlocked = viewing || empty;
+  const paneBlocked = viewing || (empty && !paneAlone);
   const layoutValue = useMemo<Layout>(
-    () => ({ inputs: { pref, sidebarWidth, drawer, shown: paneWanted || paneHeld, saved: paneWidth, terminalMin: terminalMinWidth, rtl }, moving: layoutMoving }),
-    [pref, sidebarWidth, drawer, paneWanted, paneHeld, paneWidth, terminalMinWidth, rtl, layoutMoving],
+    () => ({ inputs: { pref, sidebarWidth, drawer, shown: paneWanted || paneHeld, saved: paneWidth, terminalMin: terminalMinWidth, rtl, alone: empty && paneAlone }, moving: layoutMoving }),
+    [pref, sidebarWidth, drawer, paneWanted, paneHeld, paneWidth, terminalMinWidth, rtl, layoutMoving, empty, paneAlone],
   );
   const roomNow = Math.max(0, width - sideAnim - pushed);
   const paneP = Math.max(0, Math.min(Math.round(paneMotion.value), roomNow));
@@ -398,11 +401,11 @@ export function MainWindow({
   const dividerGone = useRef(onDividerGone);
   dividerGone.current = onDividerGone;
   useLayoutEffect(() => {
-    const left = dividerLeft({ was: dividerWasLive.current, live: divider.live, focused: dividerFocused.current, covers: paneCovers });
+    const left = dividerLeft({ was: dividerWasLive.current, live: divider.live, focused: dividerFocused.current, covers: paneCovers || geometry.mode === "fill" });
     dividerWasLive.current = divider.live;
     dividerFocused.current = left.focused;
     if (left.handOn) dividerGone.current?.();
-  }, [divider.live, paneCovers]);
+  }, [divider.live, paneCovers, geometry.mode]);
   const dividerWidth = paneMotion.moving ? (paneP > 0 && paneP < roomNow ? 1 : 0) : 1;
   // Settled, the terminal's track is the pixel width it has always had; while anything moves it takes what the others leave.
   const paneColumns = threeTracks ? `${layoutMoving ? "minmax(0, 1fr)" : `${geometry.terminal}px`} ${dividerWidth}px ${paneP}px` : undefined;
@@ -463,7 +466,7 @@ export function MainWindow({
           {/* Always in the bar, on every OS and in every sidebar mode; aria-disabled, like the sidebar's, so it says why it does nothing. */}
           {panelButtons.map((b) => {
             const expanded = b.shown && paneWanted;
-            const title = (paneBlocked ? "The side pane shows beside a session" : `${expanded ? "Hide" : "Show"} ${b.label} (${b.keys})`) + (b.news ? " · A new tab is waiting" : "");
+            const title = (paneBlocked ? (viewing ? "Close History to show the side pane" : "The side pane shows beside a session") : `${expanded ? "Hide" : "Show"} ${b.label} (${b.keys})`) + (b.news ? " · A new tab is waiting" : "");
             return (
               <button key={b.id} type="button" className="window__pane-toggle" data-nav-top={`panel-${b.id}`} aria-label={b.label} aria-expanded={expanded} aria-disabled={paneBlocked || undefined} data-news={b.news ? "" : undefined} title={title} onClick={paneBlocked ? undefined : () => onTogglePanel?.(b.id)}>
                 <PanelIcon panel={b.id} open={expanded} />
@@ -530,7 +533,7 @@ export function MainWindow({
           style={paneColumns ? { gridTemplateColumns: paneColumns } : undefined}
         >
           {empty ? (
-            viewing ? null : (
+            viewing || paneDrawn ? null : (
               <div className="window__empty">
                 No sessions yet. Start one with {shortcutLabel(commandById("launcher").binding!, os)}.
               </div>

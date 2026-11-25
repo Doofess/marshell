@@ -1,7 +1,7 @@
 /** The side pane's numbers: its narrowest and widest saved width, the divider's keyboard step, and the room under which it covers the terminal. */
 export const PANE = { min: 320, max: 4096, step: 16, coverBelow: 720 } as const;
 
-export type PaneMode = "hidden" | "beside" | "cover";
+export type PaneMode = "hidden" | "beside" | "cover" | "fill";
 
 export type PaneGeometry = {
   mode: PaneMode;
@@ -29,11 +29,12 @@ function widest(room: number, terminalMin: number): number {
  * in "beside". Under 720 px the pane covers the terminal. Beside, the pane keeps its saved width (half the room when nothing is
  * saved) held between 320 px and the 80-column stop; only at 320 px can the terminal go under 80 columns.
  */
-export function paneGeometry(i: { room: number; shown: boolean; saved: number | null; terminalMin: number }): PaneGeometry {
+export function paneGeometry(i: { room: number; shown: boolean; saved: number | null; terminalMin: number; alone?: boolean }): PaneGeometry {
   const room = whole(i.room);
   const max = widest(room, i.terminalMin);
   if (room === 0) return { mode: "hidden", terminal: 0, pane: 0, max };
   if (!i.shown) return { mode: "hidden", terminal: room, pane: 0, max };
+  if (i.alone) return { mode: "fill", terminal: 0, pane: room, max };
   if (room < PANE.coverBelow) return { mode: "cover", terminal: 0, pane: room, max };
   const wanted = i.saved !== null && Number.isFinite(i.saved) ? Math.round(i.saved) : Math.round((room - 1) / 2);
   const pane = clamp(wanted, PANE.min, max);

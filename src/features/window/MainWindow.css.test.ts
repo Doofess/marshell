@@ -8,6 +8,9 @@ const rule = (s: string) => {
 };
 
 describe("MainWindow.css", () => {
+  it("a filling pane has one column", () => {
+    expect(rule('.window__main[data-pane="fill"]')).toContain("grid-template-columns: minmax(0, 1fr)");
+  });
   it("makes the top bar one 40 px row", () => {
     expect(rule(".window__bar")).toContain("block-size: 40px");
   });

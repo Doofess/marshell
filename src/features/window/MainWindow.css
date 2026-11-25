@@ -284,7 +284,8 @@
 .window__main[data-pane] {
   grid-template-rows: minmax(0, 1fr);
 }
-.window__main[data-pane="cover"] {
+.window__main[data-pane="cover"],
+.window__main[data-pane="fill"] {
   grid-template-columns: minmax(0, 1fr);
 }
 /*

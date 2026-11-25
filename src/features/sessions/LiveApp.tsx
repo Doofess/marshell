@@ -100,7 +100,7 @@ import { browser, pageKey } from "../browser/browserApi";
 import type { UrlBarHandle } from "../browser/UrlBar";
 import { useBrowserPages } from "../browser/useBrowserPages";
 import { askedFrom, focusPane, panelOfElement } from "../pane/focusPane";
-import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, PANE_BESIDE_SESSION, closeNothingText, noTabText, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, commandPanel, firstWith, hideFocus, landingPanel, panelButtonsFor, panelOrder, unseenPanels, panelHiddenText, panelToggleOutcome, shouldPin, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, receiptWithPaneHidden, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf } from "../pane/paneCommands";
+import { closeAsk as tabCloseAsk, FOLDER_REFUSED, NO_SESSION_TO_OPEN, PANE_NOT_WITH_HISTORY, closeNothingText, noTabText, PAGE_REFUSED, paneToggleOutcome, TAB_LIMIT, closeTabOutcome, commandPanel, firstWith, hideFocus, landingPanel, panelButtonsFor, panelOrder, unseenPanels, panelHiddenText, panelToggleOutcome, shouldPin, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, receiptWithPaneHidden, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf } from "../pane/paneCommands";
 import { isPanelId, onScreen, PANEL_COMMAND, PANEL_LABEL, panelOf, panelOfPath, panelTabs, activeIn, stackOf, stackPanels, type PanelId } from "../pane/panels";
 import { viewportOf, viewportRows, viewportChoice, viewportSaid, type ViewportId } from "../browser/viewport";
 import { activeTab, currentEntry, isBrowserTab, paneReducer, previewTab, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
@@ -1172,7 +1172,7 @@ export function LiveApp() {
   // (the keyboard goes into it) or hides (the keyboard goes where `hideFocus` says, never to the page body).
   const togglePanel = (panel: PanelId) => {
     const session = stateRef.current.focusedId;
-    if (paneToggleOutcome(session, mainViewRef.current !== "sessions") === "blocked") return announce(PANE_BESIDE_SESSION);
+    if (paneToggleOutcome(mainViewRef.current !== "sessions") === "blocked") return announce(PANE_NOT_WITH_HISTORY);
     const pane = viewRef.current.pane;
     const { shows } = panelToggleOutcome(pane, session ?? null, panel);
     const covers = document.querySelector('[data-pane="cover"]') !== null;

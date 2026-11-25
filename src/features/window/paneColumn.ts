@@ -10,6 +10,8 @@ export type ColumnInputs = {
   saved: number | null;
   terminalMin: number;
   rtl: boolean;
+  /** No session: an open pane fills the room (passed to paneGeometry). */
+  alone?: boolean;
 };
 
 /** The main area in a window `width` wide: what MainWindow computes as mode, sideW, pushed and spaceW. */
@@ -31,7 +33,7 @@ export function mainRoom(
  */
 export function paneColumn(width: number, i: ColumnInputs): { x: number; width: number } {
   const { side, pushed, room } = mainRoom(width, i);
-  const g = paneGeometry({ room, shown: i.shown, saved: i.saved, terminalMin: i.terminalMin });
+  const g = paneGeometry({ room, shown: i.shown, saved: i.saved, terminalMin: i.terminalMin, alone: i.alone });
   let pane = g.pane;
   if (g.mode === "beside" && (i.saved === null || !Number.isFinite(i.saved))) {
     pane = Math.min(g.max, Math.max(PANE.min, (room - 1) / 2));

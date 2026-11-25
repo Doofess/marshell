@@ -47,4 +47,11 @@ describe("paneColumn", () => {
   it("has no width when hidden", () => {
     expect(paneColumn(1400, { ...base, shown: false }).width).toBe(0);
   });
+  it("a filling pane is the whole room", () => {
+    const i = { pref: "expanded" as const, sidebarWidth: 280, drawer: false, shown: true, saved: 400, terminalMin: 700, rtl: false, alone: true };
+    const { room } = mainRoom(1400, i);
+    const c = paneColumn(1400, i);
+    expect(c.width).toBe(room);
+    expect(c.x).toBe(1400 - c.width);
+  });
 });

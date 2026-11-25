@@ -10,7 +10,7 @@ import { EmptyBrowser } from "../pane/EmptyBrowser";
 import { EmptyFiles } from "../pane/EmptyFiles";
 import { PanelStack } from "../pane/PanelStack";
 import { PANEL_LABEL, activeIn, panelTabs, stackOf, stackPanels, type PanelId } from "../pane/panels";
-import { PANE_BESIDE_SESSION, paneBody, paneToggleOutcome } from "../pane/paneCommands";
+import { PANE_NOT_WITH_HISTORY, paneBody, paneToggleOutcome } from "../pane/paneCommands";
 import { SidePane } from "../pane/SidePane";
 import { paneReducer, recentFor } from "../pane/paneState";
 import { FIXTURES } from "../sidebar/fixtures";
@@ -729,11 +729,10 @@ describe("LiveApp: the side pane", () => {
         {paneBody(pane, session) === "empty" ? <EmptyFiles recent={recentFor(pane, "C:\\dev\\my-app", session)} onOpenFile={() => {}} onBrowse={() => {}} onRecent={() => {}} /> : null}
       </SidePane>,
     );
-  it("the title-bar button toggles beside a session, and otherwise says where the pane shows", () => {
-    expect(paneToggleOutcome("t1", false)).toBe("toggle");
-    expect(paneToggleOutcome(undefined, false)).toBe("blocked");
-    expect(paneToggleOutcome("t1", true)).toBe("blocked");
-    expect(PANE_BESIDE_SESSION).toBe("The side pane shows beside a session.");
+  it("the title-bar button toggles, and under History says why not", () => {
+    expect(paneToggleOutcome(false)).toBe("toggle");
+    expect(paneToggleOutcome(true)).toBe("blocked");
+    expect(PANE_NOT_WITH_HISTORY).toBe("Close History to show the side pane.");
   });
   it("Ctrl+Shift+Q with no tabs shows the empty pane", () => {
     const next = paneReducer(closedPane, { type: "toggle", session: "t1" });
