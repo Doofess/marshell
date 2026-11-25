@@ -821,6 +821,19 @@ pub fn imports_at(text: &str, syntax: ImportSyntax) -> Vec<ImportAt> {
             .chain(std::iter::once(line.len()))
             .collect();
         let code = code_mask(&chars);
+        // Where the next `]` and the next `)` are from each position, worked out once: a line of links that never
+        // close is read once, not once for each link.
+        let next_of = |want: char| -> Vec<Option<usize>> {
+            let mut next = vec![None; chars.len() + 1];
+            for at in (0..chars.len()).rev() {
+                next[at] = if chars[at] == want { Some(at) } else { next[at + 1] };
+            }
+            next
+        };
+        let (next_bracket, next_paren) = match syntax {
+            ImportSyntax::AgyLink if line.contains("@[") => (next_of(']'), next_of(')')),
+            _ => (Vec::new(), Vec::new()),
+        };
         let mut i = 0;
         while i < chars.len() {
             if chars[i] != '@' || code[i] {
@@ -860,11 +873,11 @@ pub fn imports_at(text: &str, syntax: ImportSyntax) -> Vec<ImportAt> {
                 }
                 ImportSyntax::AgyLink => {
                     let link = (chars.get(i + 1) == Some(&'['))
-                        .then(|| chars[i + 2..].iter().position(|c| *c == ']').map(|p| i + 2 + p))
+                        .then(|| next_bracket.get(i + 2).copied().flatten())
                         .flatten()
                         .filter(|close| chars.get(close + 1) == Some(&'('))
                         .and_then(|close| {
-                            let end = chars[close + 2..].iter().position(|c| *c == ')')? + close + 2;
+                            let end = next_paren.get(close + 2).copied().flatten()?;
                             Some((close + 2, end))
                         });
                     match link {
@@ -1625,6 +1638,22 @@ mod tests {
         );
         assert_eq!((got[1].raw.as_str(), got[1].line), ("b/c.md,", 3));
         assert_eq!((got[2].line, got[2].start, got[2].end), (4, 6, 13)); // "café " is 6 bytes
+    }
+
+    #[test]
+    fn one_line_of_unclosed_links_is_read_in_linear_time() {
+        // Every `@[` once looked for its `]` up to the line's end: a crafted line held a Doctor run.
+        let mut line = "@[".repeat(60_000);
+        line.push(']');
+        let started = std::time::Instant::now();
+        assert!(imports_at(&line, ImportSyntax::AgyLink).is_empty());
+        let unclosed = "@[x](".repeat(60_000);
+        assert!(imports_at(&unclosed, ImportSyntax::AgyLink).is_empty());
+        let took = started.elapsed();
+        assert!(took < std::time::Duration::from_secs(5), "took {took:?}");
+        // A real link on the same kind of line is still found.
+        let found = imports_at("@[ @[a](docs/a.md) ]", ImportSyntax::AgyLink);
+        assert_eq!(found.iter().map(|i| i.raw.as_str()).collect::<Vec<_>>(), ["docs/a.md"]);
     }
 
     #[test]
