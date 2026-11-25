@@ -354,7 +354,12 @@ fn bases_of(row: Option<&SessionInfo>, reported: Option<PathBuf>) -> Vec<PathBuf
     bases
 }
 
+/// The session's row, or the shell panel's while `tab` is its shell. The panel is read first: `take_and_adopt`
+/// adds the row while it holds the panel, so a reader that finds the panel empty finds the row.
 pub(super) fn row_of(st: &AppState, tab: &str) -> Option<SessionInfo> {
+    if let Some(row) = st.panel_row(tab) {
+        return Some(row);
+    }
     st.registry().snapshot().sessions.into_iter().find(|s| s.tab_id == tab)
 }
 

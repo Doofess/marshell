@@ -244,6 +244,9 @@ impl Versioned for FileDoc {
 
 const SIDEBAR_MODES: [&str; 3] = ["expanded", "rail", "focus"];
 const SIDEBAR_WIDTH: std::ops::RangeInclusive<u32> = 200..=400;
+/// The pane's key for the shell panel's tab set. Never a tab id: those are `t` and 12 hex digits.
+pub const SHELL_OWNER: &str = "shell";
+
 const PANE_WIDTH: std::ops::RangeInclusive<u32> = 320..=4096;
 pub(crate) const MAX_PANE_TABS: usize = 32;
 const MAX_PANE_HISTORY: usize = 50;
@@ -527,7 +530,8 @@ fn repair_pane(pane: &mut PaneView, tabs: &[SavedTab]) {
         pane.width = None;
     }
     repair_panels(&mut pane.panels);
-    pane.sessions.retain(|id, _| tabs.iter().any(|t| &t.tab_id == id));
+    pane.sessions
+        .retain(|id, _| id == SHELL_OWNER || tabs.iter().any(|t| &t.tab_id == id));
     for st in pane.sessions.values_mut() {
         let mut seen = BTreeSet::new();
         let mut kept: Vec<PaneTab> = Vec::new();
@@ -1286,6 +1290,39 @@ mod tests {
             .insert("gone".into(), session(vec![file_tab("t1", &["C:/a.md"])]));
         let pane = repair(doc).view.pane;
         assert_eq!(pane.sessions.keys().collect::<Vec<_>>(), ["a"]);
+    }
+
+    #[test]
+    fn repair_keeps_the_shell_panels_tab_set() {
+        let mut doc = doc_with("ta");
+        for key in ["ta", "shell", "gone"] {
+            doc.view
+                .pane
+                .sessions
+                .insert(key.into(), session(vec![file_tab("t1", &["C:/a.md"])]));
+        }
+        let pane = repair(doc).view.pane;
+        assert_eq!(pane.sessions.keys().collect::<Vec<_>>(), ["shell", "ta"]);
+        let ids: Vec<_> = pane.sessions["shell"].tabs.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["t1"]);
+    }
+
+    #[test]
+    fn repair_cleans_the_shell_set_like_any_other() {
+        let mut weird = file_tab("t2", &["C:/b.md"]);
+        weird.kind = "weird".into();
+        let tabs = vec![file_tab("t1", &["C:/a.md"]), weird, file_tab("t1", &["C:/c.md"])];
+        let mut doc = doc_with("ta");
+        doc.view.pane = pane_with(SHELL_OWNER, session(tabs));
+        let pane = repair(doc).view.pane;
+        let ids: Vec<_> = pane.sessions[SHELL_OWNER].tabs.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["t1"]);
+    }
+
+    #[test]
+    fn validate_takes_the_shell_key() {
+        let pane = pane_with(SHELL_OWNER, session(vec![file_tab("t1", &["C:/a.md"])]));
+        assert_eq!(validate_pane(&pane), Ok(()));
     }
 
     #[test]

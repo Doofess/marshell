@@ -9,7 +9,7 @@ use crate::registry::{Registry, Relaunch};
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
-use marshell_protocol::api::{ShellPanelRequest, ShellPanelResponse};
+use marshell_protocol::api::{CommandState, SessionInfo, SessionState, ShellPanelRequest, ShellPanelResponse};
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -26,6 +26,8 @@ pub(super) struct PanelShell {
     /// The profile's name, which becomes the tab's name.
     name: String,
     cwd: String,
+    /// The project of `cwd`, worked out once when the shell starts.
+    project: String,
 }
 
 /// What adopting answers: only the tab's id. Only `open` answers with the folder too.
@@ -77,6 +79,43 @@ impl AppState {
         self.0.shell_panel.lock().unwrap().as_ref().map(|p| p.tab_id.clone())
     }
 
+    /// A row for the panel's shell while `tab` is its id: no number, no agent, Running, the folder it started in.
+    /// Locks the panel only to clone the record; builds the row after the lock is dropped.
+    pub(super) fn panel_row(&self, tab: &str) -> Option<SessionInfo> {
+        let shell = {
+            let panel = self.0.shell_panel.lock().unwrap();
+            let p = panel.as_ref().filter(|p| p.tab_id == tab)?;
+            (p.name.clone(), p.profile_id.clone(), p.cwd.clone(), p.project.clone())
+        };
+        let (name, profile_id, cwd, project) = shell;
+        Some(SessionInfo {
+            tab_id: tab.to_string(),
+            number: 0,
+            name,
+            agent: None,
+            profile_id,
+            cwd,
+            project,
+            mode: None,
+            preset: None,
+            state: SessionState::Running,
+            command: CommandState::Unknown,
+            paused: false,
+            foreground: None,
+            live: None,
+            activity: None,
+            status_note: None,
+            muted: false,
+            elevated: false,
+            attention: None,
+            stuck: None,
+            ports: Vec::new(),
+            script: None,
+            setup: None,
+            references: None,
+        })
+    }
+
     /// Whether the panel shell is running in a folder `in_folder` accepts.
     pub(crate) fn panel_running_where(&self, in_folder: impl Fn(&str) -> bool) -> bool {
         let panel = self.0.shell_panel.lock().unwrap();
@@ -116,11 +155,18 @@ pub async fn open(
     let named = req.cwd.as_deref().is_some_and(|c| !c.is_empty());
     let cwd = folder_for(&st, &run, req.cwd).await;
     let tab_id = auth::new_id("t");
+    let project = {
+        let folder = cwd.clone();
+        tokio::task::spawn_blocking(move || crate::projects::project_of(&folder))
+            .await
+            .unwrap_or_else(|_| cwd.clone())
+    };
     let shell = PanelShell {
         tab_id: tab_id.clone(),
         profile_id: run.profile_id.clone(),
         name: run.profile_name.clone(),
         cwd: cwd.clone(),
+        project,
     };
     let started_in = cwd.clone();
     // The panel has no number: it only gets one when it is adopted.
