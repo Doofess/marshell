@@ -23,7 +23,11 @@ describe("FilesBody.css", () => {
   it("an empty tools place takes no room, and a full one never shrinks", () => {
     expect(rule(".path-bar__tools")).toContain("flex: none");
     // The "Updated" note is always drawn, so `:empty` would never match (review 4).
-    expect(rule(".path-bar__tools:not(:has(> :not(.preview__updated)))")).toContain("display: none");
+    // A shown note counts as something: alone in the place it is still seen (review 6w: "Updated" was hidden for a file with no other tools).
+    expect(rule(".path-bar__tools:not(:has(> :not(.preview__updated), > .preview__updated[data-show]))")).toContain("display: none");
+  });
+  it("the file under the narrow tree is its own stacking context, so nothing in it paints over the tree (review 6w: a PDF's toolbar and the editor's find bar did)", () => {
+    expect(rule(".files-body[data-narrow] .files-body__file")).toContain("isolation: isolate");
   });
   it("a path longer than the bar scrolls: its parts never shrink into each other (live check 6w: the names overlapped at 320 px)", () => {
     // The app's reset gives every flex item a zero minimum, so without this the folders shrink and their text runs over the next one.

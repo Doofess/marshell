@@ -35,8 +35,8 @@
   gap: var(--space-1);
   font-size: var(--text-12);
 }
-/* The "Updated" note is always drawn and is empty for a text file: with nothing else in it, the place takes no room. */
-.path-bar__tools:not(:has(> :not(.preview__updated))) {
+/* The "Updated" note is always drawn and is empty until it is shown: with nothing else in it, the place takes no room. */
+.path-bar__tools:not(:has(> :not(.preview__updated), > .preview__updated[data-show])) {
   display: none;
 }
 .path-bar__sep {
@@ -168,6 +168,11 @@
 }
 .files-body[data-narrow] .files-body__tree {
   z-index: 1;
+}
+/* The file is its own stacking context: a bar inside it with a higher z-index (a PDF's toolbar, the editor's find bar, a region's
+ * box) stays under the tree. */
+.files-body[data-narrow] .files-body__file {
+  isolation: isolate;
 }
 
 /* The divider: a 1 px hairline whose 8 px hit area overhangs both sides. */

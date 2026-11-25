@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { PaneTab } from "../../generated/PaneTab";
 import { EDITOR_DEFAULTS } from "../editor/editorPrefs";
 import { FILES_DEFAULTS } from "./filesSettings";
-import { afterOpen, editorPrefsOf, filesCommandSteps, filterTakesKeyboard, treeBack, followTarget, previewExtras, keepFirst, keyboardToFile, leavingSession, openHow, rowOpens, treeOpen } from "./filesActions";
+import { afterOpen, editorPrefsOf, filesCommandSteps, filterTakesKeyboard, treeAfter, followTarget, previewExtras, keepFirst, keyboardToFile, leavingSession, openHow, rowOpens, treeOpen } from "./filesActions";
 
 const tab = (path: string, preview = true): PaneTab => ({ id: "t1", kind: "file", history: [{ path, title: null }], index: 0, ...(preview ? { preview: true } : {}) }) as unknown as PaneTab;
 
@@ -141,11 +141,24 @@ describe("filterTakesKeyboard", () => {
     expect(filterTakesKeyboard({ narrow: false, opening: true, focusInFile: true })).toBe(false);
   });
 });
-describe("treeBack", () => {
-  it("is true only when the last file closes", () => {
-    expect(treeBack("C:\p\a.ts", null)).toBe(true);
-    expect(treeBack(null, null)).toBe(false);
-    expect(treeBack(null, "C:\p\a.ts")).toBe(false);
-    expect(treeBack("C:\p\a.ts", "C:\p\b.ts")).toBe(false);
+describe("treeAfter", () => {
+  const at = (path: string | null, narrow = true) => ({ path, narrow });
+  it("the last file closing brings the narrow tree back", () => {
+    expect(treeAfter(false, at("C:\p\a.ts"), at(null))).toBe(true);
+  });
+  it("a file opened from outside the tree takes the tree's place (review 6w: Go to file left it hidden under the tree)", () => {
+    expect(treeAfter(true, at(null), at("C:\p\a.ts"))).toBe(false);
+    expect(treeAfter(true, at("C:\p\a.ts"), at("C:\p\b.ts"))).toBe(false);
+    // Also in the wide layout, so the tree isn't left up for when the panel narrows.
+    expect(treeAfter(true, at(null, false), at("C:\p\a.ts", false))).toBe(false);
+  });
+  it("a panel that narrows shows its file, and the tree only when there is no file (review 6w: a leftover tree covered the file and dropped the keyboard)", () => {
+    expect(treeAfter(true, at("C:\p\a.ts", false), at("C:\p\a.ts", true))).toBe(false);
+    expect(treeAfter(false, at(null, false), at(null, true))).toBe(true);
+  });
+  it("is as it was when neither the file nor the layout changed, and when the panel widens", () => {
+    expect(treeAfter(true, at("C:\p\a.ts"), at("C:\p\a.ts"))).toBe(true);
+    expect(treeAfter(false, at(null), at(null))).toBe(false);
+    expect(treeAfter(true, at("C:\p\a.ts", true), at("C:\p\a.ts", false))).toBe(true);
   });
 });

@@ -2357,7 +2357,11 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
            - **A file under the narrow tree can't take the keyboard.** It stays mounted and is inert, so Tab never lands on something that can't be seen.
            - **Settled while it was built** (the ledger's rulings, and the live check in `docs/research/2026-11-25-files-layout-live-check.md`):
              - **The selected tab keeps the selected mark's end bar, cut to the rounded shape.** The picture shows a plain filled tab; the bar stays as the shape cue the accessibility safety net asks for beside a fill (live-check finding 1).
-             - **The filter box takes the keyboard whenever the narrow tree is drawn over a file that held it,** also when the tree was hidden from the menu and is shown again, and when "Show file tree" is run from the palette (live-check finding 3).
+             - **The filter box takes the keyboard when the narrow tree is opened over a file that held it:** from the tree button, a folder in the path bar, the Files menu, and "Show file tree" in the palette (live-check finding 3).
+             - **In the narrow layout a file opened from anywhere takes the tree's place:** Go to file, a recent file, a terminal link or another tab, as an open from the tree does (decision 1). Closing a tab that leaves another one selected shows that one.
+             - **A panel that becomes narrow shows its file,** and the tree only when it has none. A tree left up from an earlier narrow layout doesn't come back over the file.
+             - **Nothing of the file is drawn over the narrow tree:** a PDF's toolbar, the editor's find bar and a region's box stay under it.
+             - **"Updated" shows in the path bar also when it is the file's only tool.**
              - **In the path bar the notes come first, then the buttons:** an image's size and "Updated", then Rendered and Source, the viewport chip and Select region.
              - **A Files tab drawn with no Files panel around it keeps its own header row** for the tools, without Back, Forward, the name or the folder.
              - **A path longer than its bar scrolls and opens at its end.** The folders' names keep their width (live-check finding 2).

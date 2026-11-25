@@ -63,9 +63,16 @@ export function afterOpen(
   return { close: true, focus: how === "space" ? "tree-button" : "files" };
 }
 
-/** Whether the last file has just closed (the narrow tree then takes the panel back, as there is nothing else to show). */
-export function treeBack(before: string | null, now: string | null): boolean {
-  return before !== null && now === null;
+/**
+ * Whether the narrow tree is up, once the open file or the layout has changed. The last file closing brings the tree back, as there
+ * is nothing else to show. A file opened from anywhere (the tree, Go to file, a terminal link, another tab) takes the tree's place:
+ * it is what was asked for. A panel that has just become narrow shows its file, and the tree only when it has none: a tree left up
+ * from before would cover a file that may hold the keyboard. Otherwise it is as it was.
+ */
+export function treeAfter(up: boolean, was: { path: string | null; narrow: boolean }, now: { path: string | null; narrow: boolean }): boolean {
+  if (now.path !== was.path) return now.path === null;
+  if (now.narrow && !was.narrow) return now.path === null;
+  return up;
 }
 
 /** Whether the keyboard moves to the filter box as the tree opens: only the narrow tree opening over a file that holds it, as the file goes inert and would drop it to the page. */

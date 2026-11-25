@@ -42,3 +42,14 @@ Seen and left as it was:
 - **In a right-to-left document a file's name is drawn tail first** ("ts.main") in the tabs and the tree. The app has no right-to-left language yet.
 - **The Changes panel shows a scrollbar's thumb** when its list is longer than the panel. Outside this slice.
 - The webview's console held two errors: the dev server's missing `favicon.ico`, and a 422 from a session the check asked for without `cols` and `rows`.
+
+## After the review
+
+The whole-branch review found three faults of the narrow layout that this check had not met. Each was fixed with a failing test first, and the app was started again on the same scratch homes (`restart`, 00:58 to 01:00, `marshell-app` 62900, all 27 recorded processes gone at the stop; no session was started) to see the fixes at 900 px of window:
+
+| Check | Result |
+| --- | --- |
+| A file opened from outside the tree, with the narrow tree up and no file open | Pass. Go to file… (`main.ts`) showed the file: the tree was gone, the file was not inert and the keyboard was in "main.ts, contents". Before the fix the file opened under the tree. |
+| Nothing of the file is drawn over the narrow tree | Pass. With the editor's find bar open (`z-index: 300`) and the tree brought up, the tree covers it whole (`12-narrow-tree-over-find-bar`). The file column is its own stacking context (`isolation: isolate`). A PDF's toolbar and a region's box were not exercised; they sit in the same column. |
+| The panel narrows with a file open and a tree left up from before | Pass. The tree had been opened at 900 px, the window widened to 1900 px and the keyboard put in the editor; narrowed again, the file shows, the tree is hidden and the keyboard is still in "main.ts, editor". |
+| The rest of item 4 again | Pass. "Show file tree" from the palette put the keyboard in "Filter files"; Space on `note02.txt` showed the file with the keyboard on "Show file tree"; closing the last tab brought the tree back. |

@@ -10,7 +10,7 @@ import { panelOfPath } from "../pane/panels";
 import { HeaderSlot } from "../preview/headerSlot";
 import { cachedFileListNow, fileListFor, folderName } from "../preview/quickFiles";
 import { listTree, searchFiles } from "./filesApi";
-import { afterOpen, COLLAPSED, filterTakesKeyboard, followTarget, keyboardToFile, openHow, rowOpens, treeBack } from "./filesActions";
+import { afterOpen, COLLAPSED, filterTakesKeyboard, followTarget, keyboardToFile, openHow, rowOpens, treeAfter } from "./filesActions";
 import { FileTree } from "./FileTree";
 import { FilesBusy } from "./FilesBusy";
 import { filesWait, focusToFilter, listFailed, useShownAfter } from "./filesWait";
@@ -106,6 +106,14 @@ export function FilesPanel(p: FilesPanelProps) {
     return () => ro.disconnect();
   }, []);
   const narrow = size.width < TREE.narrow;
+  // The narrow tree follows the open file and the layout (`treeAfter`). Settled while rendering, not in an effect, so no frame is
+  // drawn with a new file inert under the tree: what moves the keyboard to the file next finds it usable.
+  const [seen, setSeen] = useState({ path: activePath, narrow });
+  if (seen.path !== activePath || seen.narrow !== narrow) {
+    const now = { path: activePath, narrow };
+    setSeen(now);
+    setOverlay(treeAfter(overlay, seen, now));
+  }
   const shown = !treeView.hidden && (!narrow || overlay);
 
   const source = useMemo<TreeSource>(() => ({ list: (asks) => listTree(session, asks) }), [session]);
@@ -171,12 +179,6 @@ export function FilesPanel(p: FilesPanelProps) {
     filterWants.current = false;
     filterBox.current?.focus();
   }, [shown]);
-  // The last file closing leaves nothing to show: the narrow tree takes the panel back.
-  const lastPath = useRef(activePath);
-  useEffect(() => {
-    if (treeBack(lastPath.current, activePath)) setOverlay(true);
-    lastPath.current = activePath;
-  }, [activePath]);
 
   const toggleTree = (): boolean => {
     if (narrow) {
