@@ -291,9 +291,13 @@ pub async fn post(
     };
     let ((), found) = tokio::join!(fold, lookup);
     if let Some(tab) = note_tab {
+        let (root, found) = found.unzip();
         let found = note_in_budget(found, started.elapsed(), st.context_budget());
         st.registry().set_references(tab, found.clone());
         if let Some(found) = found {
+            if let Some(root) = root {
+                count_note(&st, root, found.clone());
+            }
             let output = match agent.as_str() {
                 "codex" => codex::context_output(&found.note),
                 "antigravity" => antigravity::context_output(&found.note),
@@ -416,7 +420,7 @@ async fn references_for(
     st: &AppState,
     tab: &str,
     prompt: Option<String>,
-) -> Option<marshell_protocol::api::ReferenceNote> {
+) -> Option<(std::path::PathBuf, marshell_protocol::api::ReferenceNote)> {
     let prompt = prompt?;
     let reported = st
         .session(tab)
@@ -440,13 +444,32 @@ async fn references_for(
         let checkout =
             crate::scripts::checkout_root(std::path::Path::new(&cwd)).unwrap_or_else(|| std::path::PathBuf::from(&cwd));
         let doc = crate::references::load(&home, &root).ok()?;
-        match distro {
+        let note = match distro {
             Some(distro) => crate::references::resolve(&doc, &checkout, &prompt, &|p| crate::wsl::to_linux(&distro, p)),
             None => crate::references::resolve(&doc, &checkout, &prompt, &|p| Some(p.display().to_string())),
-        }
+        }?;
+        Some((root, note))
     })
     .await
     .unwrap_or(None)
+}
+
+/// Counts a note that goes out, for the Doctor's reference-notes items. It runs on its own blocking thread and the
+/// answer never waits for it, so a slow or failing counter changes neither the note nor its time. A failure is one
+/// warning with the error's kind: the logs are exported, so no prompt, note text or path is in it.
+fn count_note(st: &AppState, root: std::path::PathBuf, note: marshell_protocol::api::ReferenceNote) {
+    let home = st.home().to_path_buf();
+    let at_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    // The handle is dropped on purpose: the task is not awaited.
+    drop(tokio::task::spawn_blocking(move || {
+        if let Err(err) = crate::references::record_note(&home, &root, &note, at_ms) {
+            let kind = err.downcast_ref::<std::io::Error>().map(std::io::Error::kind);
+            tracing::warn!(?kind, "a reference note could not be counted");
+        }
+    }));
 }
 
 /// Notes the event in the history. The index update is short, so it is awaited; the copy it may ask for
@@ -833,5 +856,144 @@ mod tests {
                 since_ms: 600_100
             })
         );
+    }
+
+    /// A Marshell home with one project (a `.git` folder and `src/login.rs`) whose references are on, and a state
+    /// with an open Claude Code tab "a" in it.
+    struct Counted {
+        _dir: tempfile::TempDir,
+        st: AppState,
+        root: std::path::PathBuf,
+        file: std::path::PathBuf,
+    }
+
+    fn counted(budget: Duration) -> Counted {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = crate::projects::canonical(dir.path()).join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::write(repo.join("src").join("login.rs"), "fn login() {}").unwrap();
+        let home = dir.path().join("home");
+        let st = AppState::new("test-token".into(), 5555, vec![], home, vec![])
+            .with_claude_version(Some("2.1.302".into()))
+            .with_claude_compact_paths(dir.path().join("user"), vec![])
+            .with_context_budget(budget);
+        crate::references::save(
+            st.home(),
+            &marshell_protocol::api::ReferencesUpdate {
+                root: repo.to_string_lossy().into_owned(),
+                enabled: true,
+                aliases: vec![marshell_protocol::api::Alias {
+                    name: "login button".into(),
+                    path: "src/login.rs".into(),
+                }],
+            },
+        )
+        .unwrap();
+        st.registry().reserve(
+            "a",
+            crate::registry::Relaunch {
+                elevated: false,
+                profile_id: "test".into(),
+                agent: Some("claude".into()),
+                cwd: repo.to_string_lossy().into_owned(),
+                mode: None,
+                name: "A".into(),
+                preset: None,
+            },
+        );
+        let root = std::path::PathBuf::from(crate::projects::project_of(&repo.to_string_lossy()));
+        let file = repo.join("src").join("login.rs");
+        Counted {
+            _dir: dir,
+            st,
+            root,
+            file,
+        }
+    }
+
+    /// Posts a prompt of tab "a" and returns the answer's status and body text.
+    async fn prompt(st: &AppState, text: &str) -> (StatusCode, String) {
+        use tower::ServiceExt;
+        let body = json!({"hook_event_name": "UserPromptSubmit", "prompt": text});
+        let request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/v1/hook")
+            .header(axum::http::header::HOST, "127.0.0.1:5555")
+            .header(axum::http::header::AUTHORIZATION, "Bearer test-token")
+            .header("x-marshell-role", "event")
+            .header("x-marshell-agent", "claude")
+            .header("x-marshell-tab", "a")
+            .header("x-marshell-version", "0.0.0")
+            .body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+        let res = crate::server::router(st.clone()).oneshot(request).await.unwrap();
+        let code = res.status();
+        let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+        (code, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    fn now_ms() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+    }
+
+    fn expected_answer(file: &std::path::Path) -> serde_json::Value {
+        let note = format!("References: 'login button' = {}.", file.display());
+        json!({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": note}})
+    }
+
+    #[tokio::test]
+    async fn a_sent_note_is_counted_and_its_text_is_unchanged() {
+        let c = counted(Duration::from_secs(30));
+        let (code, text) = prompt(&c.st, "fix the login button").await;
+        assert_eq!(code, StatusCode::OK, "{text}");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&text).unwrap(),
+            expected_answer(&c.file)
+        );
+        // The count is made off the answer's path: wait for it.
+        let mut seen = None;
+        for _ in 0..40 {
+            seen = crate::references::note_totals(c.st.home(), &c.root, now_ms());
+            if seen.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let seen = seen.expect("the note is counted within 2 s");
+        assert_eq!(seen.notes, 1);
+        assert_eq!(seen.top_alias, Some(("login button".to_string(), 1)));
+    }
+
+    #[tokio::test]
+    async fn a_note_dropped_for_time_is_not_counted() {
+        let c = counted(Duration::ZERO);
+        let (code, text) = prompt(&c.st, "fix the login button").await;
+        assert_eq!(code, StatusCode::NO_CONTENT, "{text}");
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert_eq!(crate::references::note_totals(c.st.home(), &c.root, now_ms()), None);
+    }
+
+    #[tokio::test]
+    async fn a_counter_that_cant_be_written_still_sends_the_note() {
+        let c = counted(Duration::from_secs(30));
+        // A folder where the counter's file belongs: it can be neither read nor replaced.
+        let file =
+            c.st.home()
+                .join("projects")
+                .join(crate::references::project_id(&c.root))
+                .join("reference-notes.json");
+        std::fs::create_dir_all(&file).unwrap();
+        let (code, text) = prompt(&c.st, "fix the login button").await;
+        assert_eq!(code, StatusCode::OK, "{text}");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&text).unwrap(),
+            expected_answer(&c.file)
+        );
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert_eq!(crate::references::note_totals(c.st.home(), &c.root, now_ms()), None);
     }
 }

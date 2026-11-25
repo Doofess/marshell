@@ -8,7 +8,9 @@ use crate::projects;
 use crate::store::{self, Versioned};
 use marshell_protocol::api::{Alias, AliasInfo, ProjectReferences, ReferenceNote, ReferencesUpdate};
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 pub const FILE_NAME: &str = "references.json";
 /// The most aliases a project has, and the most a note names.
@@ -214,6 +216,128 @@ pub fn resolve(
         names: found[..count].iter().map(|(alias, _)| alias.name.clone()).collect(),
         note: build(count),
     })
+}
+
+/// How many days back the counter keeps and reports.
+pub const NOTE_DAYS: u64 = 30;
+const DAY_MS: u64 = 86_400_000;
+const NOTES_FILE: &str = "reference-notes.json";
+
+/// One day's count: how many notes were added, their size in characters, and how many notes each alias was in.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct NoteDay {
+    day: u64,
+    notes: u32,
+    chars: u64,
+    aliases: BTreeMap<String, u32>,
+}
+
+/// `reference-notes.json`'s content: alias names and numbers, never a prompt or a note.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct NoteDoc {
+    root: String,
+    days: Vec<NoteDay>,
+}
+
+impl Versioned for NoteDoc {
+    const VERSION: u32 = 1;
+}
+
+/// One counter file is read, changed and written at a time in this process, so two notes sent together lose no count.
+static NOTES_LOCK: Mutex<()> = Mutex::new(());
+
+fn notes_file(home: &Path, root: &Path) -> PathBuf {
+    home.join("projects").join(project_id(root)).join(NOTES_FILE)
+}
+
+/// Whether `day` is inside the window that ends on `today`.
+fn in_window(day: u64, today: u64) -> bool {
+    today.saturating_sub(day) <= NOTE_DAYS
+}
+
+/// Counts one sent note for the project. Holds alias names and numbers, never the prompt or the note.
+pub fn record_note(home: &Path, root: &Path, note: &ReferenceNote, now_ms: u64) -> anyhow::Result<()> {
+    let today = now_ms / DAY_MS;
+    let text = root_text(root);
+    let path = notes_file(home, root);
+    // The lock covers the read and the write and is never held across an `.await`: this runs on a blocking thread.
+    let _guard = NOTES_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // A file that can't be read is started again; `store::write` still refuses to replace one a newer Marshell wrote.
+    let mut doc = store::read::<NoteDoc>(&path)
+        .unwrap_or(None)
+        .filter(|doc| projects::same_path(&doc.root, &text))
+        .unwrap_or_else(|| NoteDoc {
+            root: text,
+            days: Vec::new(),
+        });
+    doc.days.retain(|d| in_window(d.day, today));
+    let index = match doc.days.iter().position(|d| d.day == today) {
+        Some(index) => index,
+        None => {
+            doc.days.push(NoteDay {
+                day: today,
+                ..NoteDay::default()
+            });
+            doc.days.len() - 1
+        }
+    };
+    let day = &mut doc.days[index];
+    day.notes = day.notes.saturating_add(1);
+    day.chars = day.chars.saturating_add(note.note.chars().count() as u64);
+    let names: BTreeSet<&str> = note.names.iter().map(String::as_str).collect();
+    for name in names {
+        let count = day.aliases.entry(name.to_string()).or_insert(0);
+        *count = count.saturating_add(1);
+    }
+    store::write(&path, &doc)
+}
+
+/// What the counter holds for a project over the last 30 days.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteTotals {
+    pub notes: u32,
+    pub chars: u64,
+    /// The alias that was in the most notes, and in how many. A tie goes to the first by name.
+    pub top_alias: Option<(String, u32)>,
+}
+
+/// The last 30 days' totals, or None with no note in them (or no readable counter).
+pub fn note_totals(home: &Path, root: &Path, now_ms: u64) -> Option<NoteTotals> {
+    let text = root_text(root);
+    let doc = store::read::<NoteDoc>(&notes_file(home, root))
+        .ok()??
+        .filter_root(&text)?;
+    let today = now_ms / DAY_MS;
+    let (mut notes, mut chars) = (0u32, 0u64);
+    let mut aliases: BTreeMap<&str, u32> = BTreeMap::new();
+    for day in doc.days.iter().filter(|d| in_window(d.day, today)) {
+        notes = notes.saturating_add(day.notes);
+        chars = chars.saturating_add(day.chars);
+        for (name, count) in &day.aliases {
+            let total = aliases.entry(name).or_insert(0);
+            *total = total.saturating_add(*count);
+        }
+    }
+    if notes == 0 {
+        return None;
+    }
+    let mut top: Option<(&str, u32)> = None;
+    for (name, count) in aliases {
+        if top.is_none_or(|(_, best)| count > best) {
+            top = Some((name, count));
+        }
+    }
+    Some(NoteTotals {
+        notes,
+        chars,
+        top_alias: top.map(|(name, count)| (name.to_string(), count)),
+    })
+}
+
+impl NoteDoc {
+    fn filter_root(self, root: &str) -> Option<Self> {
+        projects::same_path(&self.root, root).then_some(self)
+    }
 }
 
 #[cfg(test)]
@@ -589,5 +713,140 @@ mod tests {
         crate::store::write(&path, &stranger).unwrap();
         let got = load(home.path(), &root).unwrap();
         assert!(!got.enabled && got.aliases.is_empty());
+    }
+
+    const DAY: u64 = 86_400_000;
+
+    fn note(names: &[&str], text: &str) -> ReferenceNote {
+        ReferenceNote {
+            names: names.iter().map(|n| n.to_string()).collect(),
+            note: text.into(),
+        }
+    }
+
+    fn notes_file(home: &Path, root: &Path) -> PathBuf {
+        home.join("projects")
+            .join(project_id(root))
+            .join("reference-notes.json")
+    }
+
+    #[test]
+    fn a_note_is_counted_with_its_aliases() {
+        let (_dir, root) = checkout();
+        let home = tempfile::tempdir().unwrap();
+        let first = note(
+            &["app", "login"],
+            "References: 'app' = /p/src/a.rs; 'login' = /p/src/b.rs.",
+        );
+        let second = note(&["app"], "References: 'app' = /p/src/a.rs.");
+        record_note(home.path(), &root, &first, 5 * DAY + 10).unwrap();
+        record_note(home.path(), &root, &second, 5 * DAY + 20).unwrap();
+        let totals = note_totals(home.path(), &root, 5 * DAY + 30).unwrap();
+        assert_eq!(
+            totals,
+            NoteTotals {
+                notes: 2,
+                chars: (first.note.chars().count() + second.note.chars().count()) as u64,
+                top_alias: Some(("app".into(), 2)),
+            }
+        );
+        assert!(notes_file(home.path(), &root).is_file());
+    }
+
+    #[test]
+    fn the_first_alias_by_name_wins_a_tie() {
+        let (_dir, root) = checkout();
+        let home = tempfile::tempdir().unwrap();
+        record_note(home.path(), &root, &note(&["zed", "app"], "n"), DAY).unwrap();
+        let totals = note_totals(home.path(), &root, DAY).unwrap();
+        assert_eq!(totals.top_alias, Some(("app".into(), 1)));
+    }
+
+    #[test]
+    fn a_day_older_than_thirty_is_dropped() {
+        let (_dir, root) = checkout();
+        let home = tempfile::tempdir().unwrap();
+        record_note(home.path(), &root, &note(&["old"], "old note"), 10).unwrap();
+        record_note(home.path(), &root, &note(&["new"], "new note"), 31 * DAY + 10).unwrap();
+        let totals = note_totals(home.path(), &root, 31 * DAY + 20).unwrap();
+        assert_eq!(totals.notes, 1);
+        assert_eq!(totals.top_alias, Some(("new".into(), 1)));
+        let text = std::fs::read_to_string(notes_file(home.path(), &root)).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["days"].as_array().unwrap().len(), 1, "{text}");
+        // Thirty days back is still inside the window.
+        assert_eq!(note_totals(home.path(), &root, 61 * DAY).unwrap().notes, 1);
+        assert_eq!(note_totals(home.path(), &root, 62 * DAY), None);
+    }
+
+    #[test]
+    fn no_note_is_none() {
+        let (_dir, root) = checkout();
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(note_totals(home.path(), &root, DAY), None);
+    }
+
+    #[test]
+    fn the_file_holds_no_note_text() {
+        let (_dir, root) = checkout();
+        let home = tempfile::tempdir().unwrap();
+        let path = root.join("src").join("a.rs");
+        let text = format!("References: 'app' = {}.", path.display());
+        record_note(home.path(), &root, &note(&["app"], &text), DAY).unwrap();
+        let kept = std::fs::read_to_string(notes_file(home.path(), &root)).unwrap();
+        assert!(!kept.contains("References:"), "{kept}");
+        assert!(!kept.contains("a.rs"), "{kept}");
+    }
+
+    #[test]
+    fn a_file_kept_for_another_root_is_started_again() {
+        let (_dir, root) = checkout();
+        let home = tempfile::tempdir().unwrap();
+        let stranger = NoteDoc {
+            root: "/somewhere/else".into(),
+            days: vec![NoteDay {
+                day: 1,
+                notes: 9,
+                chars: 9,
+                aliases: [("x".to_string(), 9)].into(),
+            }],
+        };
+        crate::store::write(&notes_file(home.path(), &root), &stranger).unwrap();
+        assert_eq!(note_totals(home.path(), &root, DAY), None);
+        record_note(home.path(), &root, &note(&["app"], "abcd"), DAY).unwrap();
+        let totals = note_totals(home.path(), &root, DAY).unwrap();
+        assert_eq!((totals.notes, totals.chars), (1, 4));
+    }
+
+    #[test]
+    fn two_threads_lose_no_count() {
+        let (_dir, root) = checkout();
+        let home = tempfile::tempdir().unwrap();
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let (home, root) = (home.path().to_path_buf(), root.clone());
+                std::thread::spawn(move || {
+                    for _ in 0..25 {
+                        record_note(&home, &root, &note(&["app"], "abcd"), 3 * DAY).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        let totals = note_totals(home.path(), &root, 3 * DAY).unwrap();
+        assert_eq!((totals.notes, totals.chars), (200, 800));
+        assert_eq!(totals.top_alias, Some(("app".into(), 200)));
+    }
+
+    #[test]
+    fn a_counter_that_cant_be_written_is_an_error() {
+        let (_dir, root) = checkout();
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join("projects")).unwrap();
+        std::fs::write(home.path().join("projects").join(project_id(&root)), "a file").unwrap();
+        assert!(record_note(home.path(), &root, &note(&["app"], "abcd"), DAY).is_err());
+        assert_eq!(note_totals(home.path(), &root, DAY), None);
     }
 }
