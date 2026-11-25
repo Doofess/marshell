@@ -29,7 +29,20 @@ describe("paneFocusTarget", () => {
     const seen: string[] = [];
     paneFocusTarget({ querySelector: (s: string) => (seen.push(s), null) } as unknown as ParentNode, "files");
     // Only the editor on screen: not one in a hidden panel, and not one behind the Rendered view.
-    expect(seen[0]).toBe('[data-nav-side="files"] [role="tabpanel"]:not([hidden]) [data-pane="editor"]:not([hidden]) .cm-content');
+    expect(seen[0]).toBe('[data-nav-side="files"] [role="tabpanel"]:not([hidden]) [data-pane="editor"]:not([hidden]) .cm-content:not([inert] *)');
+  });
+  it("skips what is inert: an editor or a body under the narrow tree never takes the keyboard", () => {
+    const seen: string[] = [];
+    paneFocusTarget({ querySelector: (s: string) => (seen.push(s), null) } as unknown as ParentNode, "files");
+    expect(seen.find((s) => s.includes("cm-content"))).toContain(":not([inert] *)");
+    expect(seen.find((s) => s.includes("preview__body"))).toContain(":not([inert] *)");
+    // With no file and no rows, the empty state's button is under the tree too (review 8).
+    expect(seen.find((s) => s.includes("empty-panel__button"))).toContain(":not([inert] *)");
+  });
+  it("skips an inert title in Changes too", () => {
+    const seen: string[] = [];
+    paneFocusTarget({ querySelector: (s: string) => (seen.push(s), null) } as unknown as ParentNode, "changes");
+    expect(seen.find((s) => s.includes("empty-panel__title"))).toContain(":not([inert] *)");
   });
   it("is a browser tab's slot, which enters the page, when the selected tab has no body", () => {
     expect(paneFocusTarget(root({ slot: true, empty: true, plus: true }), "files")).toBe("slot");
@@ -84,7 +97,7 @@ describe("paneFocusTarget", () => {
   it("the empty panel's first usable button takes the keyboard", () => {
     const seen: string[] = [];
     paneFocusTarget({ querySelector: (s: string) => (seen.push(s), null) } as unknown as ParentNode, "browser");
-    expect(seen).toContain('[data-nav-side="browser"] .empty-panel__button:not([aria-disabled="true"])');
+    expect(seen).toContain('[data-nav-side="browser"] .empty-panel__button:not([aria-disabled="true"]):not([inert] *)');
     expect(paneFocusTarget(root({ empty: true, plus: true }), "browser")).toBe("empty");
   });
   it("is Changes' list, else its empty state's button, else the title of an empty state that has no button", () => {
@@ -93,7 +106,7 @@ describe("paneFocusTarget", () => {
     expect(paneFocusTarget(root({ title: true }), "changes")).toBe("title");
     const seen: string[] = [];
     paneFocusTarget({ querySelector: (s: string) => (seen.push(s), null) } as unknown as ParentNode, "changes");
-    expect(seen).toContain('[data-nav-side="changes"] .empty-panel__title[tabindex="-1"]');
+    expect(seen).toContain('[data-nav-side="changes"] .empty-panel__title[tabindex="-1"]:not([inert] *)');
   });
   it("a closing tab is looked for in its own panel", () => {
     const seen: string[] = [];
@@ -103,7 +116,7 @@ describe("paneFocusTarget", () => {
   it("looks for the body of the panel that isn't hidden, inside the side pane", () => {
     const seen: string[] = [];
     paneFocusTarget({ querySelector: (s: string) => (seen.push(s), null) } as unknown as ParentNode, "files");
-    expect(seen[1]).toBe('[data-nav-side="files"] [role="tabpanel"]:not([hidden]) .preview__body');
+    expect(seen[1]).toBe('[data-nav-side="files"] [role="tabpanel"]:not([hidden]) .preview__body:not([inert] *)');
   });
 });
 

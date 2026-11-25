@@ -4,7 +4,6 @@ import { EDITOR_DEFAULTS, type EditorPrefs } from "../editor/editorPrefs";
 import type { PanelId } from "../pane/panels";
 import { currentEntry } from "../pane/paneState";
 import type { ViewAction } from "../window/viewState";
-import { narrowAfterOpen } from "./treeLayout";
 import { relativeTo, type TreeRow } from "./treeModel";
 
 /** What the announcer says after Collapse all folders. */
@@ -49,14 +48,29 @@ export function keyboardToFile(how: "click" | "enter" | "double" | "space"): boo
 }
 
 /**
- * After an open from the tree: whether the narrow tree over the file closes, and which panel takes the keyboard (null: it stays in
- * the tree). A file opened in Browser (an HTML file) takes the keyboard there on Enter and leaves the Files panel's tree as it is.
+ * After an open from the tree: whether the narrow tree, which takes the file's place, closes, and where the keyboard goes (null: it
+ * stays in the tree). In the narrow layout every open shows the file (decision 1); Space leaves the keyboard on the path bar's tree
+ * button rather than in the editor (decision 7). In the wide layout the tree stays, and Enter or a double-click moves the keyboard to
+ * the file. A file opened in Browser (an HTML file) takes the keyboard there on Enter and leaves the Files panel's tree as it is.
  */
-export function afterOpen(how: "click" | "enter" | "double" | "space", o: { narrow: boolean; panel: PanelId }): { close: boolean; focus: PanelId | null } {
+export function afterOpen(
+  how: "click" | "enter" | "double" | "space",
+  o: { narrow: boolean; panel: PanelId },
+): { close: boolean; focus: PanelId | "tree-button" | null } {
   const keep = keyboardToFile(how);
   if (o.panel !== "files") return { close: false, focus: keep ? o.panel : null };
-  const close = o.narrow && !narrowAfterOpen(how);
-  return { close, focus: keep || close ? "files" : null };
+  if (!o.narrow) return { close: false, focus: keep ? "files" : null };
+  return { close: true, focus: how === "space" ? "tree-button" : "files" };
+}
+
+/** Whether the last file has just closed (the narrow tree then takes the panel back, as there is nothing else to show). */
+export function treeBack(before: string | null, now: string | null): boolean {
+  return before !== null && now === null;
+}
+
+/** Whether the keyboard moves to the filter box as the tree opens: only the narrow tree opening over a file that holds it, as the file goes inert and would drop it to the page. */
+export function filterTakesKeyboard(o: { narrow: boolean; opening: boolean; focusInFile: boolean }): boolean {
+  return o.narrow && o.opening && o.focusInFile;
 }
 
 /**

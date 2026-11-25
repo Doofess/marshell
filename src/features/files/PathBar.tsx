@@ -66,6 +66,7 @@ export function PathBar({ segments, windows, treeShown, onReveal, onCollapseAll,
         type="button"
         className="path-bar__button"
         aria-label="Show file tree"
+        data-tree-button=""
         aria-pressed={treeShown}
         title={treeShown ? "Hide file tree" : "Show file tree"}
         onClick={onToggleTree}

@@ -9,7 +9,7 @@ import { focusPane } from "../pane/focusPane";
 import { panelOfPath } from "../pane/panels";
 import { cachedFileListNow, fileListFor, folderName } from "../preview/quickFiles";
 import { listTree, searchFiles } from "./filesApi";
-import { afterOpen, COLLAPSED, followTarget, keyboardToFile, openHow, rowOpens } from "./filesActions";
+import { afterOpen, COLLAPSED, filterTakesKeyboard, followTarget, keyboardToFile, openHow, rowOpens, treeBack } from "./filesActions";
 import { FileTree } from "./FileTree";
 import { FilesBusy } from "./FilesBusy";
 import { filesWait, focusToFilter, listFailed, useShownAfter } from "./filesWait";
@@ -29,7 +29,7 @@ import { useTree, type TreeSource } from "./useTree";
 
 /** What the window can ask of the panel. The panel is mounted while Files is on screen. */
 export type FilesPanelHandle = {
-  /** Shows or hides the tree (in the narrow layout, the tree over the file). Returns whether it shows now. */
+  /** Shows or hides the tree (in the narrow layout, the tree that takes the file's place). Returns whether it shows now. */
   toggleTree(): boolean;
   collapseAll(): void;
 };
@@ -157,11 +157,31 @@ export function FilesPanel(p: FilesPanelProps) {
   const abs = (rel: string) => (base === null ? rel : absoluteOf(base, rel, windows));
   const sepOf = (rel: string) => (windows ? rel.replace(/\//g, "\\") : rel);
 
+  // The narrow tree makes the file inert, which drops the keyboard to the page when it was in the file: the filter box takes it instead.
+  const filterWants = useRef(false);
+  const openNarrowTree = () => {
+    const focusInFile = box.current?.querySelector(".files-body__file")?.contains(document.activeElement) ?? false;
+    filterWants.current = filterTakesKeyboard({ narrow, opening: true, focusInFile });
+    setOverlay(true);
+  };
+  useLayoutEffect(() => {
+    if (!overlay || !filterWants.current) return;
+    filterWants.current = false;
+    filterBox.current?.focus();
+  }, [overlay]);
+  // The last file closing leaves nothing to show: the narrow tree takes the panel back.
+  const lastPath = useRef(activePath);
+  useEffect(() => {
+    if (treeBack(lastPath.current, activePath)) setOverlay(true);
+    lastPath.current = activePath;
+  }, [activePath]);
+
   const toggleTree = (): boolean => {
     if (narrow) {
       const next = treeView.hidden ? true : !overlay;
       if (treeView.hidden) p.onTreeView({ hidden: false });
-      setOverlay(next);
+      if (next && !overlay) openNarrowTree();
+      else setOverlay(next);
       return next;
     }
     p.onTreeView({ hidden: !treeView.hidden });
@@ -176,10 +196,12 @@ export function FilesPanel(p: FilesPanelProps) {
   /** Opens the file at `path`, from a tree row, a menu or a search result. */
   const openAt = (path: string, how: "click" | "enter" | "double" | "space", line?: number) => {
     p.onOpen({ path, keep: keyboardToFile(how), ...(line === undefined ? {} : { line }) });
-    // An HTML file opens in Browser: the keyboard goes there on Enter, and the tree over the file stays.
+    // In the narrow layout the tree gives way to the file; Space leaves the keyboard on the path bar's tree button, not in the editor.
+    // An HTML file opens in Browser: the keyboard goes there on Enter, and the tree stays.
     const after = afterOpen(how, { narrow, panel: panelOfPath(path) });
     if (after.close) setOverlay(false);
-    if (after.focus !== null) focusPane(after.focus);
+    if (after.focus === "tree-button") box.current?.querySelector<HTMLElement>("[data-tree-button]")?.focus();
+    else if (after.focus !== null) focusPane(after.focus);
   };
   const openFile = (rel: string, how: "click" | "enter" | "double" | "space") => openAt(abs(rel), how);
   /** Opens a row of the tree. Only a file row opens: a link row is never opened, whichever way the open came. */
@@ -240,7 +262,7 @@ export function FilesPanel(p: FilesPanelProps) {
 
   const revealFolder = (folder: string) => {
     if (treeView.hidden) p.onTreeView({ hidden: false });
-    if (narrow) setOverlay(true);
+    if (narrow && !overlay) openNarrowTree();
     if (folder !== "") {
       tree.reveal(folder);
       setFocusedPath(folder);

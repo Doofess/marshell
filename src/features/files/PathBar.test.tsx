@@ -29,6 +29,7 @@ describe("PathBar", () => {
     expect(shown).toContain('aria-label="Collapse all folders"');
     expect(shown).toMatch(/aria-label="Show file tree"[^>]*aria-pressed="true"|aria-pressed="true"[^>]*aria-label="Show file tree"/);
     expect(shown).toContain('title="Hide file tree"');
+    expect(shown).toMatch(/<button[^>]*aria-label="Show file tree"[^>]*data-tree-button=""|<button[^>]*data-tree-button=""[^>]*aria-label="Show file tree"/);
     const hidden = render({ treeShown: false });
     expect(hidden).toContain('aria-pressed="false"');
     expect(hidden).toContain('title="Show file tree"');

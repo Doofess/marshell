@@ -25,6 +25,14 @@ describe("FilesBody.css", () => {
     expect(rule).toContain("display: grid");
     expect(rule).toContain("grid-template-rows: minmax(0, 1fr)");
   });
+  it("lays the narrow tree over the file in one cell, with no absolute placement", () => {
+    expect(rule(".files-body[data-narrow] .files-body__main")).toContain("display: grid");
+    expect(rule(".files-body[data-narrow] .files-body__main > *")).toContain("grid-area: 1 / 1");
+    // The file holds positioned boxes (`.preview__body`, CodeMirror's `.cm-editor` and `.cm-scroller`), which would paint over a tree with no z-index (review 1).
+    expect(rule(".files-body[data-narrow] .files-body__tree")).toContain("z-index: 1");
+    expect(rule(".files-body[data-narrow] .files-body__tree")).not.toContain("position");
+    expect(rule(".files-body")).not.toContain("position: relative");
+  });
   it("has no hex colour", () => {
     expect(css).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
   });

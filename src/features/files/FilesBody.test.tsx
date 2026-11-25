@@ -55,17 +55,20 @@ describe("FilesBody", () => {
     expect(render({ panelWidth: 800, shown: false })).not.toContain("data-tree");
     expect(render({ panelWidth: 800, shown: false })).toContain('class="path-bar"');
   });
-  it("under 480 px the tree is drawn over the file", () => {
-    const open = render({ panelWidth: 400, overlayOpen: true });
-    expect(open).toContain("data-narrow");
-    expect(open).toContain("TREE");
-    expect(open).not.toContain('role="separator"');
-    const closed = render({ panelWidth: 400, overlayOpen: false });
-    expect(closed).toContain("data-narrow");
-    expect(closed).not.toContain("TREE");
-    expect(closed).toContain("FILE");
+  it("under 480 px the tree takes the file's place: full width, the file inert under it, no divider", () => {
+    const html = render({ panelWidth: 400, overlayOpen: true });
+    expect(html).toContain('data-narrow=""');
+    expect(html).not.toContain("files-body__divider");
+    expect(html).toMatch(/class="files-body__file" inert=""/);
+    expect(html).toMatch(/class="files-body__tree"(?! style)/);
+    expect(html.indexOf("files-body__file")).toBeLessThan(html.indexOf("files-body__tree"));
   });
-  it("the narrow tree is capped 40 px short of the panel", () => {
-    expect(render({ panelWidth: 400, overlayOpen: true, width: 900 })).toContain("inline-size:360px");
+  it("under 480 px with the tree closed the file is alone and can be used", () => {
+    const html = render({ panelWidth: 400, overlayOpen: false });
+    expect(html).not.toContain("files-body__tree");
+    expect(html).not.toContain("inert");
+  });
+  it("a wide panel never makes the file inert", () => {
+    expect(render({ panelWidth: 800 })).not.toContain("inert");
   });
 });

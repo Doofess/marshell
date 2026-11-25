@@ -3,10 +3,13 @@ import { browser } from "../browser/browserApi";
 import { entryReason, quietly } from "../browser/pageFocus";
 
 const nav = (panel: PanelId) => `[data-nav-side="${panel}"]`;
-/** A text tab's editor, when it is the one on screen: not behind the Rendered view, and not in a hidden tab panel. */
-const editor = (panel: PanelId) => `${nav(panel)} [role="tabpanel"]:not([hidden]) [data-pane="editor"]:not([hidden]) .cm-content`;
-/** The selected tab's scrolling body. */
-const body = (panel: PanelId) => `${nav(panel)} [role="tabpanel"]:not([hidden]) .preview__body`;
+/**
+ * A text tab's editor, when it is the one on screen: not behind the Rendered view, and not in a hidden tab panel. Not one that is
+ * inert: the Files panel's narrow tree covers the file and makes it inert, and an inert element can't take focus.
+ */
+const editor = (panel: PanelId) => `${nav(panel)} [role="tabpanel"]:not([hidden]) [data-pane="editor"]:not([hidden]) .cm-content:not([inert] *)`;
+/** The selected tab's scrolling body, unless it is inert (under the Files panel's narrow tree). */
+const body = (panel: PanelId) => `${nav(panel)} [role="tabpanel"]:not([hidden]) .preview__body:not([inert] *)`;
 /** A browser tab's slot: the tab has no body to scroll. Focusing the slot enters the page (BrowserTab). */
 const slot = (panel: PanelId) => `${nav(panel)} [role="tabpanel"]:not([hidden]) .browser-tab__slot`;
 /** The Files panel's tree (or the search results in its place): the one row that is a tab stop. With no tab open the keyboard goes there. */
@@ -15,13 +18,13 @@ const treeRow = (panel: PanelId) => `${nav(panel)} [role="tree"] [role="treeitem
 const tree = (panel: PanelId) => `${nav(panel)} [role="tree"]`;
 /** How many frames focus waits for the tree's rows before the empty state takes it: about half a second. */
 const TREE_FRAMES = 30;
-/** The empty panel's first usable button, and the strip's + button: where focus goes when there is no body. */
-const emptyFirst = (panel: PanelId) => `${nav(panel)} .empty-panel__button:not([aria-disabled="true"])`;
+/** The empty panel's first usable button, and the strip's + button: where focus goes when there is no body. The button is skipped when it is inert (the empty state under the Files panel's narrow tree). */
+const emptyFirst = (panel: PanelId) => `${nav(panel)} .empty-panel__button:not([aria-disabled="true"]):not([inert] *)`;
 const plusOf = (panel: PanelId) => `${nav(panel)} button[data-pane-plus]`;
 /** The Changes panel's list: the one item that is a tab stop. */
 const changesItem = (panel: PanelId) => `${nav(panel)} [data-changes-item][tabindex="0"]`;
-/** The title of an empty state that has no button (most of Changes'), which takes the focus in its place. */
-const emptyTitle = (panel: PanelId) => `${nav(panel)} .empty-panel__title[tabindex="-1"]`;
+/** The title of an empty state that has no button (most of Changes'), which takes the focus in its place. Skipped when inert, as the button is. */
+const emptyTitle = (panel: PanelId) => `${nav(panel)} .empty-panel__title[tabindex="-1"]:not([inert] *)`;
 /** Changes before its first reply, which can take the check's 2 s budget. */
 const changesBlank = (panel: PanelId) => `${nav(panel)} [data-changes-blank]`;
 /** About 3 s of frames: how long a blank Changes panel is waited for. */

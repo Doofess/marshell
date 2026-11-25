@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { PaneTab } from "../../generated/PaneTab";
 import { EDITOR_DEFAULTS } from "../editor/editorPrefs";
 import { FILES_DEFAULTS } from "./filesSettings";
-import { afterOpen, editorPrefsOf, filesCommandSteps, followTarget, previewExtras, keepFirst, keyboardToFile, leavingSession, openHow, rowOpens, treeOpen } from "./filesActions";
+import { afterOpen, editorPrefsOf, filesCommandSteps, filterTakesKeyboard, treeBack, followTarget, previewExtras, keepFirst, keyboardToFile, leavingSession, openHow, rowOpens, treeOpen } from "./filesActions";
 
 const tab = (path: string, preview = true): PaneTab => ({ id: "t1", kind: "file", history: [{ path, title: null }], index: 0, ...(preview ? { preview: true } : {}) }) as unknown as PaneTab;
 
@@ -97,10 +97,14 @@ describe("afterOpen", () => {
     expect(afterOpen("click", { narrow: false, panel: "files" })).toEqual({ close: false, focus: null });
     expect(afterOpen("space", { narrow: false, panel: "files" })).toEqual({ close: false, focus: null });
   });
-  it("in the narrow layout every open but Space closes the tree over the file, and the keyboard goes to the file", () => {
+  it("in the narrow layout every open shows the file; Space leaves the keyboard on the tree button, out of the editor", () => {
     expect(afterOpen("click", { narrow: true, panel: "files" })).toEqual({ close: true, focus: "files" });
     expect(afterOpen("enter", { narrow: true, panel: "files" })).toEqual({ close: true, focus: "files" });
-    expect(afterOpen("space", { narrow: true, panel: "files" })).toEqual({ close: false, focus: null });
+    expect(afterOpen("double", { narrow: true, panel: "files" })).toEqual({ close: true, focus: "files" });
+    expect(afterOpen("space", { narrow: true, panel: "files" })).toEqual({ close: true, focus: "tree-button" });
+  });
+  it("in the wide layout Space still leaves the tree and the keyboard as they are", () => {
+    expect(afterOpen("space", { narrow: false, panel: "files" })).toEqual({ close: false, focus: null });
   });
   it("an HTML file opens in Browser: Enter moves the keyboard there and the narrow tree stays", () => {
     expect(afterOpen("enter", { narrow: true, panel: "browser" })).toEqual({ close: false, focus: "browser" });
@@ -126,5 +130,22 @@ describe("filesCommandSteps", () => {
   it("never hides a panel on screen that has no panel mounted", () => {
     expect(filesCommandSteps("tree", { mounted: false, shown: true })).toEqual({ via: "saved", showPanel: false });
     expect(filesCommandSteps("collapse", { mounted: false, shown: true })).toEqual({ via: "saved", showPanel: false });
+  });
+});
+
+describe("filterTakesKeyboard", () => {
+  it("moves the keyboard to the filter box only when the narrow tree opens over a file that holds it (review 6)", () => {
+    expect(filterTakesKeyboard({ narrow: true, opening: true, focusInFile: true })).toBe(true);
+    expect(filterTakesKeyboard({ narrow: true, opening: true, focusInFile: false })).toBe(false);
+    expect(filterTakesKeyboard({ narrow: true, opening: false, focusInFile: true })).toBe(false);
+    expect(filterTakesKeyboard({ narrow: false, opening: true, focusInFile: true })).toBe(false);
+  });
+});
+describe("treeBack", () => {
+  it("is true only when the last file closes", () => {
+    expect(treeBack("C:\p\a.ts", null)).toBe(true);
+    expect(treeBack(null, null)).toBe(false);
+    expect(treeBack(null, "C:\p\a.ts")).toBe(false);
+    expect(treeBack("C:\p\a.ts", "C:\p\b.ts")).toBe(false);
   });
 });

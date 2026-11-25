@@ -98,7 +98,6 @@
 
 /* The Files panel's body: the tree, a divider and the file in a row. In a right-to-left layout the row is reversed, so the first child (the tree, when it is on the left) stays at the left. */
 .files-body {
-  position: relative;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   box-sizing: border-box;
@@ -143,19 +142,16 @@
   min-block-size: 0;
 }
 
-/* Under 480 px the tree covers the file, on its own edge, with a hairline toward the file. */
+/* Under 480 px the tree takes the file's place: both sit in one cell and the tree covers the file whole. A grid item takes a
+ * z-index with no position; without one the file's positioned boxes (the preview's body, the editor) would paint over the tree. */
+.files-body[data-narrow] .files-body__main {
+  display: grid;
+}
+.files-body[data-narrow] .files-body__main > * {
+  grid-area: 1 / 1;
+}
 .files-body[data-narrow] .files-body__tree {
-  position: absolute;
-  inset-block: 0;
-  z-index: 2;
-}
-.files-body[data-narrow][data-edge="start"] .files-body__tree {
-  inset-inline-start: 0;
-  border-inline-end: 1px solid var(--hairline);
-}
-.files-body[data-narrow][data-edge="end"] .files-body__tree {
-  inset-inline-end: 0;
-  border-inline-start: 1px solid var(--hairline);
+  z-index: 1;
 }
 
 /* The divider: a 1 px hairline whose 8 px hit area overhangs both sides. */

@@ -25,8 +25,3 @@ export function dividerKey(key: string, width: number, panelWidth: number, side:
   if (key === "End") return treeWidth(TREE.max, panelWidth);
   return null;
 }
-
-/** Whether the tree stays over the file after an open: only Space, which leaves the keyboard in the tree. */
-export function narrowAfterOpen(how: "click" | "enter" | "double" | "space"): boolean {
-  return how === "space";
-}
