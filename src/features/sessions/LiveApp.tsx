@@ -177,6 +177,7 @@ import { SHELL_FAILED } from "../window/ShellPanel";
 import { handedOff } from "./handOff";
 import { focusShellTerminal, shellAutoFolded, shellTerminalFocused } from "./shellPanelFocus";
 import { shellPanelAsk } from "./shellPanelAsk";
+import { shellRespawn } from "./shellRespawn";
 import { ENDED_PHRASE, lastSegment, nameAgents, planRing } from "./toRow";
 import { useSessions } from "./useSessions";
 
@@ -1475,18 +1476,18 @@ export function LiveApp() {
     [announce],
   );
 
-  // The shell panel in the sidebar. Its shell is a pty the core keeps out of the tab list. It is asked for the first time the panel is
-  // shown, in the folder of the session in focus then (with no session open, in the profile's folder or the default folder, which the
-  // core picks), and is never moved after that. Hiding the panel only folds it: the shell keeps running and the same terminal comes
-  // back, with no second request. "Open as a session" turns the shell into a tab; the panel then has no shell, and asks for a fresh
-  // one (in whatever folder is focused by then) while it is shown.
-  const [panel, setPanel] = useState<{ endpoint: Endpoint; tabId: string; folder: string } | null>(null);
+  // The shell panel in the sidebar. Its shell is a pty the core keeps out of the tab list. It is asked for as soon as the window is ready
+  // (settled and loaded, shown or not), in the folder of the session in focus then (with no session open, in the profile's folder or the
+  // default folder, which the core picks), and is never moved after that. It is asked for again when it ends. Hiding and showing the
+  // panel is no longer a retry: the shell keeps running and the same terminal comes back. "Open as a session" turns the shell into a
+  // tab; the panel then has no shell, and asks for a fresh one (in whatever folder is focused by then). `cwd` is the full folder the core
+  // chose; `folder` is its last segment, for the panel's header.
+  const [panel, setPanel] = useState<{ endpoint: Endpoint; tabId: string; folder: string; cwd: string } | null>(null);
   // The shell the core has turned into a tab, waiting to be listed so the window can show it.
   const [adopted, setAdopted] = useState<{ endpoint: Endpoint; tabId: string } | null>(null);
-  const shellShown = settled && loaded && sidebarExpanded && !view.shell_hidden;
   const focusedCwd = infos.find((i) => i.tab_id === focusedId)?.cwd;
   // What the panel asks for now: a session's folder, the default folder (no session open), or nothing yet.
-  const shellAsk = shellPanelAsk({ shown: shellShown, sessions: infos.length, focusedCwd });
+  const shellAsk = shellPanelAsk({ ready: settled && loaded, sessions: infos.length, focusedCwd });
   const shellAskRef = useRef(shellAsk);
   shellAskRef.current = shellAsk;
   const shellAskKind: "wait" | "default" | "session" = shellAsk === null ? "wait" : shellAsk.cwd === null ? "default" : "session";
@@ -1494,17 +1495,19 @@ export function LiveApp() {
   // The endpoint whose shell could not be started: the panel says so, with a Try again button. `attempt` is that button.
   const [failedFor, setFailedFor] = useState<Endpoint | null>(null);
   const [attempt, setAttempt] = useState(0);
+  // When the panel's shell ended lately, so a shell that dies at once is not started again for ever (see shellRespawn).
+  const exitsRef = useRef<number[]>([]);
   useEffect(() => {
     const ask = shellAskRef.current;
-    if (!endpoint || ask === null || panel?.endpoint === endpoint || asking.current === endpoint) return;
+    if (!endpoint || ask === null || panel?.endpoint === endpoint || asking.current === endpoint || failedFor === endpoint) return;
     const ep = endpoint;
     asking.current = ep;
     setFailedFor(null);
     sessions
       .shellPanel(ep, ask.cwd, size.current)
-      .then((res) => setPanel({ endpoint: ep, tabId: res.tabId, folder: lastSegment(res.cwd) }))
+      .then((res) => setPanel({ endpoint: ep, tabId: res.tabId, folder: lastSegment(res.cwd), cwd: res.cwd }))
       .catch((e: unknown) => {
-        // Said once, here: the failure stands until the person asks again (Try again, or hiding and showing the panel).
+        // Said once, here: the failure stands until the person asks again (Try again).
         console.warn("Could not start the shell panel", e);
         setFailedFor(ep);
         announce(SHELL_FAILED);
@@ -1512,11 +1515,12 @@ export function LiveApp() {
       .finally(() => {
         if (asking.current === ep) asking.current = null;
       });
-  }, [endpoint, shellAskKind, panel, attempt, announce]);
+  }, [endpoint, shellAskKind, panel, attempt, failedFor, announce]);
   const panelTab = panel && panel.endpoint === endpoint ? panel : null;
   panelIdRef.current = panelTab?.tabId;
   const shellFailed = failedFor !== null && failedFor === endpoint && !panelTab;
   const retryShell = useCallback(() => {
+    exitsRef.current = [];
     setFailedFor(null);
     setAttempt((n) => n + 1);
   }, []);
@@ -1563,9 +1567,24 @@ export function LiveApp() {
   useEffect(() => {
     if (handed && endpoint) setAdopted({ endpoint, tabId: handed });
   }, [handed, endpoint]);
+  // The panel's shell ended: the core replaces it on the next ask, so drop it and the effect above asks again, unless it keeps ending at
+  // once, which stops with the panel's "could not start" state. An exit from a terminal that is no longer the panel's is ignored.
+  const shellExited = useCallback(
+    (tabId: string) => {
+      if (panelIdRef.current !== tabId || !endpoint) return;
+      const next = shellRespawn(exitsRef.current, Date.now());
+      exitsRef.current = next.exits;
+      setPanel(null);
+      if (!next.again) {
+        setFailedFor(endpoint);
+        announce(SHELL_FAILED);
+      }
+    },
+    [endpoint, announce],
+  );
   const shellTerminal = useMemo(
-    () => (panelTab && endpoint ? <TerminalView key={panelTab.tabId} endpoint={endpoint} tabId={panelTab.tabId} autoFocus={false} theme={themeFor(undefined)} font={terminalFont} onImagePaste={(image) => void addImage(panelTab.tabId, image)} /> : null),
-    [endpoint, panelTab, themeFor, terminalFont],
+    () => (panelTab && endpoint ? <TerminalView key={panelTab.tabId} endpoint={endpoint} tabId={panelTab.tabId} autoFocus={false} theme={themeFor(undefined)} font={terminalFont} onImagePaste={(image) => void addImage(panelTab.tabId, image)} onExited={() => shellExited(panelTab.tabId)} /> : null),
+    [endpoint, panelTab, themeFor, terminalFont, shellExited],
   );
 
   // The app's shortcuts work from anywhere, the terminal included; the terminal lets these keys through (TerminalView).

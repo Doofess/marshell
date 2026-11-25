@@ -77,6 +77,8 @@ type Props = {
   font?: { family: string; size: number; wtFamily?: string };
   /** Hears an image-only paste (Ctrl+Shift+V with an image on the clipboard). Any other paste goes to the terminal as before. */
   onImagePaste?: (image: Blob) => void;
+  /** The process behind this terminal ended (the core's exit frame), after the line saying so is written. Read through a ref. */
+  onExited?: (code: number) => void;
 };
 
 const BUNDLED = { family: BUNDLED_FONT, size: 13 };
@@ -96,7 +98,7 @@ function loadFont(family: string, size: number, wtFamily?: string): Promise<void
 }
 
 /** One session's terminal. */
-export function TerminalView({ endpoint, tabId, elevated = false, placeholder, onOutput, onSize, autoFocus = true, focusBlocked = false, focusToken = 0, visible = true, paused = false, onBlockedInput, promptJump, onPromptJump, theme = FOLLOW_APP, font = BUNDLED, onImagePaste }: Props) {
+export function TerminalView({ endpoint, tabId, elevated = false, placeholder, onOutput, onSize, autoFocus = true, focusBlocked = false, focusToken = 0, visible = true, paused = false, onBlockedInput, promptJump, onPromptJump, theme = FOLLOW_APP, font = BUNDLED, onImagePaste, onExited }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const meter = useMemo(() => new LatencyMeter(), []);
   const [renderer, setRenderer] = useState<RendererKind>("dom");
@@ -115,6 +117,8 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
   pausedRef.current = paused;
   const imagePasteRef = useRef(onImagePaste);
   imagePasteRef.current = onImagePaste;
+  const exitedRef = useRef(onExited);
+  exitedRef.current = onExited;
   const blockedRef = useRef(onBlockedInput);
   blockedRef.current = onBlockedInput;
   const termRef = useRef<Terminal | null>(null);
