@@ -168,7 +168,7 @@ const isCmd = (shells: { id: string; family: string }[], id: string) => shells.f
 
 /**
  * The request for what the launcher shows. An agent runs inside the chosen shell and may take a first prompt, except in Command
- * Prompt; with no agent it is that shell alone. No folder means the core's default (the home folder).
+ * Prompt; with no agent it is that shell alone. No folder means the core's default (the default folder).
  */
 export function launchRequest(
   choice: LauncherChoice,

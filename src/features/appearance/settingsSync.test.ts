@@ -138,6 +138,24 @@ describe("SettingsSync", () => {
     expect(sync.historyBackupDir).toBeNull();
   });
 
+  it("setDefaultFolder saves the folder and keeps the other settings", async () => {
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: 2, history_limit_days: null, history_backup_dir: "D:/B", default_folder: null, browser: BR, files: FI, changes: CH }));
+    await sync.load();
+    expect(sync.defaultFolder).toBeNull();
+    await sync.setDefaultFolder("D:/Work");
+    expect(api.put).toHaveBeenLastCalledWith(ep, expect.objectContaining({ default_folder: "D:/Work", history_limit_gb: 2, history_backup_dir: "D:/B" }));
+    expect(sync.defaultFolder).toBe("D:/Work");
+  });
+
+  it("setDefaultFolder(null) clears it", async () => {
+    const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, default_folder: "D:/Work", browser: BR, files: FI, changes: CH }));
+    await sync.load();
+    expect(sync.defaultFolder).toBe("D:/Work");
+    await sync.setDefaultFolder(null);
+    expect(api.put).toHaveBeenLastCalledWith(ep, expect.objectContaining({ default_folder: null }));
+    expect(sync.defaultFolder).toBeNull();
+  });
+
   it("a refused history save rejects with the core's error and keeps the values it had", async () => {
     const { api, sync } = setup(async () => ({ appearance: teal, pause_warned: false, onboarded: false, close_to_tray: null, status_off: [], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, default_folder: null, browser: BR, files: FI, changes: CH }));
     await sync.load();
