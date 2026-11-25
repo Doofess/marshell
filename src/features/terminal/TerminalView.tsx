@@ -16,7 +16,8 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useOpenInPane, useOpenPageInPane } from "../pane/PaneContext";
 import { PerfOverlay } from "../perf/PerfOverlay";
 import { isPerfToggle } from "../perf/perfToggle";
-import { ENDED_LINE, FAILED_LINE, SESSION_ENDED } from "./coreRestart";
+import { ENDED_LINE, FAILED_LINE } from "./coreRestart";
+import { processExited } from "./processExit";
 import { jumpFrom, promptTarget, trackPrompts, type Prompt } from "./promptMarks";
 import "./PromptMarks.css";
 import { pathLinkProvider } from "./pathLinks";
@@ -285,7 +286,7 @@ export function TerminalView({ endpoint, tabId, elevated = false, placeholder, o
           socket.processed(seq);
         });
       },
-      onExit: (code) => term.write(`\r\n\x1b[2mProcess exited with code ${code}. ${SESSION_ENDED}\x1b[0m\r\n`),
+      onExit: (code) => processExited((text, done) => term.write(text, done), code, exitedRef.current),
       // The core's own sentence for a refused keystroke or size, written once per distinct message.
       onInputError: (message) => {
         if (message === lastInputError) return;
