@@ -108,6 +108,8 @@ const AFTER_PALETTE: ReadonlySet<SessionShortcut["kind"]> = new Set<SessionShort
   "panePages",
   "paneNotes",
   "paneWordWrap",
+  // In the narrow layout the tree's filter box takes the keyboard when it was in the file, which is known only once the palette has given it back.
+  "filesTree",
 ]);
 
 /**
