@@ -207,12 +207,16 @@ impl Run<'_> {
         let blocked = blocked
             .filter(|_| scope != Scope::Managed)
             .or_else(|| (scope != Scope::Managed && self.excluded(path)).then_some(EXCLUDED));
+        let canonical = cx.canonical(path);
+        let already = canonical.as_ref().is_some_and(|c| self.loaded.contains(c));
         if let Some(reason) = blocked {
-            self.files.push(row(path, role, When::NotLoaded(reason.into())));
+            // A file an earlier file imported is listed there, as loaded; a second row saying it isn't would mislead.
+            if !already {
+                self.files.push(row(path, role, When::NotLoaded(reason.into())));
+            }
             return;
         }
-        let canonical = cx.canonical(path);
-        if canonical.as_ref().is_some_and(|c| self.loaded.contains(c)) {
+        if already {
             self.files.push(row(path, role, When::NotLoaded(ALREADY.into())));
             return;
         }
@@ -374,7 +378,7 @@ pub fn load(place: &Place, cx: &mut Reader) -> CliLoad {
         unreadable: Vec::new(),
         cuts: Vec::new(),
         loaded: HashSet::new(),
-        excludes: excludes(&[&user, &shared, &local], ignore_case),
+        excludes: excludes(&[&managed_settings, &user, &shared, &local], ignore_case),
         project: place.project,
         home: &roots.home,
         rules: import_rules,
@@ -793,6 +797,34 @@ mod tests {
         assert_eq!(row(&got, &scoped).when, When::WhenUsed);
         assert_eq!(row(&got, &scoped).role, Role::Rule);
         assert_eq!(row(&got, &plain).when, When::Start);
+    }
+
+    #[test]
+    fn the_managed_settings_can_leave_a_file_out_too() {
+        let s = Setup::new();
+        s.write(
+            "managed/managed-settings.json",
+            r#"{"claudeMdExcludes":["**/vendor/**/CLAUDE.md"]}"#,
+        );
+        s.write("managed/CLAUDE.md", "org");
+        s.write("proj/CLAUDE.md", "kept");
+        let vendor = s.write("proj/vendor/x/CLAUDE.md", "vendor");
+        let got = s.load(Some(&s.at("proj")));
+        assert_eq!(row(&got, &vendor).when, not_loaded("claudeMdExcludes leaves it out"));
+        // The managed file itself still loads.
+        assert_eq!(row(&got, &s.at("managed/CLAUDE.md")).when, When::Start);
+    }
+
+    #[test]
+    fn an_agents_md_that_claude_md_imports_is_listed_once_as_loaded() {
+        let s = Setup::new();
+        let claude = s.write("proj/CLAUDE.md", "claude\n@AGENTS.md\n");
+        let agents = s.write("proj/AGENTS.md", "agents");
+        let got = s.load(Some(&s.at("proj")));
+        let rows: Vec<_> = got.files.iter().filter(|f| f.path == agents).collect();
+        assert_eq!(rows.len(), 1, "{rows:?}");
+        assert_eq!(rows[0].when, When::Start);
+        assert_eq!(rows[0].role, Role::Import { by: claude });
     }
 
     #[test]

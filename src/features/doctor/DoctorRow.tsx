@@ -61,8 +61,8 @@ export function DoctorRow({ item, fixed = false, checked = false, disabled = fal
             {item.loads.map((load) => (
               <Fragment key={load.agent}>
                 <p className="doctor__load-cli">{load.heading}</p>
-                {load.notes?.map((note) => (
-                  <p className="doctor__load-note" key={note}>
+                {load.notes?.map((note, i) => (
+                  <p className="doctor__load-note" key={i}>
                     {note}
                   </p>
                 ))}

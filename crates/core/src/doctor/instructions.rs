@@ -442,7 +442,6 @@ fn ends_with(name: &str, suffix: &str, ignore_case: bool) -> bool {
     }
 }
 
-/// Lexically under `root`, with no `..` on the way.
 /// Whether a file's name is one the CLIs and Marshell keep a sign-in or a token under (`SCOPE.md`).
 fn holds_secrets(path: &Path) -> bool {
     let Some(name) = path.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()) else {
@@ -454,6 +453,7 @@ fn holds_secrets(path: &Path) -> bool {
     ) || name.starts_with(".env.")
 }
 
+/// Lexically under `root`, with no `..` on the way.
 fn under_root(path: &Path, root: &Path) -> bool {
     path.starts_with(root) && !path.components().any(|c| matches!(c, Component::ParentDir))
 }
