@@ -25,6 +25,10 @@ describe("FilesBody.css", () => {
     // The "Updated" note is always drawn, so `:empty` would never match (review 4).
     expect(rule(".path-bar__tools:not(:has(> :not(.preview__updated)))")).toContain("display: none");
   });
+  it("a path longer than the bar scrolls: its parts never shrink into each other (live check 6w: the names overlapped at 320 px)", () => {
+    // The app's reset gives every flex item a zero minimum, so without this the folders shrink and their text runs over the next one.
+    expect(rule(".path-bar__path > *")).toContain("flex: none");
+  });
   it("the file's cell is a grid, so the tab panel inside fills it (live check 6r-2: a block let the preview's body collapse to 0 px)", () => {
     const rule = css.slice(css.indexOf(".files-body__content {"), css.indexOf("}", css.indexOf(".files-body__content {")));
     expect(rule).toContain("display: grid");

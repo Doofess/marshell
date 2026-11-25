@@ -23,6 +23,10 @@
 .path-bar__path::-webkit-scrollbar {
   display: none;
 }
+/* The reset gives a flex item a zero minimum: left to shrink, the folders' names would run over each other. They keep their width and the path scrolls. */
+.path-bar__path > * {
+  flex: none;
+}
 /* The open file's tools (Rendered and Source, Select region, an image's size), drawn here by its tab. Empty for a plain text file. */
 .path-bar__tools {
   display: flex;
