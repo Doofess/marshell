@@ -35,9 +35,10 @@
   gap: var(--space-1);
   font-size: var(--text-12);
 }
-/* The "Updated" note is always drawn and is empty until it is shown: with nothing else in it, the place takes no room. */
+/* The "Updated" note is always drawn and is empty until it is shown: with nothing else in it, the place leaves the row's flow, so
+ * it takes no room and no gap. It is not hidden: the note is a live region, and it must be there before its text arrives to be read out. */
 .path-bar__tools:not(:has(> :not(.preview__updated), > .preview__updated[data-show])) {
-  display: none;
+  position: absolute;
 }
 .path-bar__sep {
   padding-inline: 2px;

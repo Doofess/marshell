@@ -25,7 +25,7 @@ const rule = (selector: string) => {
   const i = css.indexOf(`${selector} {`);
   return i < 0 ? "" : css.slice(i, css.indexOf("}", i));
 };
-const without =(parts: string[]) => parts.reduce((text, part) => text.replace(part, ""), css);
+const without = (parts: string[]) => parts.reduce((text, part) => text.replace(part, ""), css);
 const SYSTEM = ["Canvas", "CanvasText", "ButtonFace", "ButtonText", "Highlight", "HighlightText", "GrayText", "none", "transparent"];
 
 describe("EmptyPanel.css", () => {

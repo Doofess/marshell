@@ -24,7 +24,11 @@ describe("FilesBody.css", () => {
     expect(rule(".path-bar__tools")).toContain("flex: none");
     // The "Updated" note is always drawn, so `:empty` would never match (review 4).
     // A shown note counts as something: alone in the place it is still seen (review 6w: "Updated" was hidden for a file with no other tools).
-    expect(rule(".path-bar__tools:not(:has(> :not(.preview__updated), > .preview__updated[data-show]))")).toContain("display: none");
+    const empty = rule(".path-bar__tools:not(:has(> :not(.preview__updated), > .preview__updated[data-show]))");
+    // Out of the row's flow, so it takes no room and no gap. Not `display: none`: the note is a live region, and one that is
+    // displayed in the same frame its text arrives isn't read out (pre-merge review 6w).
+    expect(empty).toContain("position: absolute");
+    expect(empty).not.toContain("display: none");
   });
   it("the file under the narrow tree is its own stacking context, so nothing in it paints over the tree (review 6w: a PDF's toolbar and the editor's find bar did)", () => {
     expect(rule(".files-body[data-narrow] .files-body__file")).toContain("isolation: isolate");

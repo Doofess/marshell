@@ -144,21 +144,21 @@ describe("filterTakesKeyboard", () => {
 describe("treeAfter", () => {
   const at = (path: string | null, narrow = true) => ({ path, narrow });
   it("the last file closing brings the narrow tree back", () => {
-    expect(treeAfter(false, at("C:\p\a.ts"), at(null))).toBe(true);
+    expect(treeAfter(false, at("C:\\p\\a.ts"), at(null))).toBe(true);
   });
   it("a file opened from outside the tree takes the tree's place (review 6w: Go to file left it hidden under the tree)", () => {
-    expect(treeAfter(true, at(null), at("C:\p\a.ts"))).toBe(false);
-    expect(treeAfter(true, at("C:\p\a.ts"), at("C:\p\b.ts"))).toBe(false);
+    expect(treeAfter(true, at(null), at("C:\\p\\a.ts"))).toBe(false);
+    expect(treeAfter(true, at("C:\\p\\a.ts"), at("C:\\p\\b.ts"))).toBe(false);
     // Also in the wide layout, so the tree isn't left up for when the panel narrows.
-    expect(treeAfter(true, at(null, false), at("C:\p\a.ts", false))).toBe(false);
+    expect(treeAfter(true, at(null, false), at("C:\\p\\a.ts", false))).toBe(false);
   });
   it("a panel that narrows shows its file, and the tree only when there is no file (review 6w: a leftover tree covered the file and dropped the keyboard)", () => {
-    expect(treeAfter(true, at("C:\p\a.ts", false), at("C:\p\a.ts", true))).toBe(false);
+    expect(treeAfter(true, at("C:\\p\\a.ts", false), at("C:\\p\\a.ts", true))).toBe(false);
     expect(treeAfter(false, at(null, false), at(null, true))).toBe(true);
   });
   it("is as it was when neither the file nor the layout changed, and when the panel widens", () => {
-    expect(treeAfter(true, at("C:\p\a.ts"), at("C:\p\a.ts"))).toBe(true);
+    expect(treeAfter(true, at("C:\\p\\a.ts"), at("C:\\p\\a.ts"))).toBe(true);
     expect(treeAfter(false, at(null), at(null))).toBe(false);
-    expect(treeAfter(true, at("C:\p\a.ts", true), at("C:\p\a.ts", false))).toBe(true);
+    expect(treeAfter(true, at("C:\\p\\a.ts", true), at("C:\\p\\a.ts", false))).toBe(true);
   });
 });
