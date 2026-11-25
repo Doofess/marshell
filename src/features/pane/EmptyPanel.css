@@ -1,13 +1,17 @@
 /* A panel with no tabs: its mark, what is missing, what to do and two buttons, centred; then a list that reads from the start edge.
- * The panel can be as short as 160 px, so the block is a size container: a short one drops the mark and scrolls what is left. */
+ * The panel can be as short as 160 px: a short one gives up its mark and help line, then its list, and so never scrolls. */
 .empty-panel {
-  container-type: size;
   display: grid;
   min-inline-size: 0;
   min-block-size: 0;
   overflow-x: clip;
+  /* The last resort for a panel too short even for level 2; it shows no scrollbar. */
   overflow-y: auto;
+  scrollbar-width: none;
   font-size: var(--text-13);
+}
+.empty-panel::-webkit-scrollbar {
+  display: none;
 }
 
 /* Auto margins centre the column and fall to nothing when it is taller than the panel, so its top is never out of reach. */
@@ -174,14 +178,19 @@
   }
 }
 
-/* A short panel keeps its words and its buttons and gives up the mark. */
-@container (height < 280px) {
-  .empty-panel__icon {
-    display: none;
-  }
-  .empty-panel__column {
-    padding-block: var(--space-3);
-  }
+/* What a short panel gives up, by the level EmptyPanel measured (emptyFit.ts): the mark and the help line, then the whole list. */
+.empty-panel[data-level="1"] .empty-panel__icon,
+.empty-panel[data-level="2"] .empty-panel__icon,
+.empty-panel[data-level="1"] .empty-panel__line,
+.empty-panel[data-level="2"] .empty-panel__line {
+  display: none;
+}
+.empty-panel[data-level="1"] .empty-panel__column,
+.empty-panel[data-level="2"] .empty-panel__column {
+  padding-block: var(--space-3);
+}
+.empty-panel[data-level="2"] .empty-panel__group {
+  display: none;
 }
 
 /* Forced colours: the filled button is the system's selection pair and the plain one its button pair. A fill may match the

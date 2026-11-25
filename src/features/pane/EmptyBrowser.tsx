@@ -17,7 +17,7 @@ export function EmptyBrowser({ available, ports, onNewTab, onOpenHtml, onPort }:
       ? "Open an address, an HTML file or a local server."
       : "Open an address or an HTML file.";
   return (
-    <EmptyPanel icon={GlobeIcon} title="No pages open" line={line} actions={available ? [newTab, openHtml] : [openHtml, newTab]}>
+    <EmptyPanel icon={GlobeIcon} title="No pages open" line={line} actions={available ? [newTab, openHtml] : [openHtml, newTab]} fitKey={listed.length}>
       {listed.length > 0 && (
         <EmptyList heading="Local servers">
           {listed.map((p) => (

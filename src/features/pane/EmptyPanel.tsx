@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { fitEmpty } from "./emptyFit";
 import "./EmptyPanel.css";
 
 /** One of an empty panel's buttons (0 to 2). A button that can't be used stays reachable and says why. */
@@ -47,10 +48,26 @@ export const ChangesIcon = large(<rect x="5" y="5" width="30" height="30" rx="5"
  * takes focus when the panel does (`focusPane`); with no button the title does, so the panel's key still moves the keyboard into it and a
  * screen reader reads what is missing. Whatever follows the buttons (a list of ports or recent files) is `children`.
  */
-export function EmptyPanel({ icon, title, line, actions, children }: { icon: ReactNode; title: string; line: string; actions: readonly EmptyAction[]; children?: ReactNode }) {
+export function EmptyPanel({ icon, title, line, actions, children, fitKey }: { icon: ReactNode; title: string; line: string; actions: readonly EmptyAction[]; children?: ReactNode; fitKey?: string | number }) {
+  const panel = useRef<HTMLDivElement>(null);
+  const column = useRef<HTMLDivElement>(null);
+  // `fitKey` is what the content's height depends on beyond its words (a list's length). LiveApp builds a new empty state on each of its
+  // renders, so the effect lists what changes the height instead of running every time.
+  useLayoutEffect(() => {
+    if (panel.current && column.current) fitEmpty(panel.current, column.current);
+  }, [title, line, actions.length, fitKey]);
+  useLayoutEffect(() => {
+    const p = panel.current;
+    if (!p || typeof ResizeObserver === "undefined") return;
+    const watch = new ResizeObserver(() => {
+      if (column.current) fitEmpty(p, column.current);
+    });
+    watch.observe(p);
+    return () => watch.disconnect();
+  }, []);
   return (
-    <div className="empty-panel">
-      <div className="empty-panel__column">
+    <div className="empty-panel" ref={panel}>
+      <div className="empty-panel__column" ref={column}>
         {icon}
         <h2 className="empty-panel__title" tabIndex={actions.length === 0 ? -1 : undefined}>
           {title}
