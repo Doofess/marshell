@@ -5,7 +5,7 @@
 //! The module names no CLI's files. What differs between CLIs (import syntax, whether HTML comments are read, what a
 //! CLI does with a dead import) comes from each load's `imports` and from `dead_import_drops`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use ignore::Match;
@@ -392,9 +392,10 @@ struct Held {
 
 fn held(load: &CliLoad, cx: &mut Reader) -> Vec<Held> {
     let mut out: Vec<Held> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
     for row in start_rows(load) {
         let key = key_of(cx, &row.path);
-        if !out.iter().any(|h| h.key == key) {
+        if seen.insert(key.clone()) {
             out.push(Held {
                 path: row.path.clone(),
                 key,
@@ -454,14 +455,17 @@ fn loaded_twice(loads: &[CliLoad], cx: &mut Reader) -> Vec<Finding> {
     for load in loads {
         let rows = start_rows(load);
         let keys: Vec<String> = rows.iter().map(|row| key_of(cx, &row.path)).collect();
-        for j in 1..rows.len() {
-            // The file's first two rows: a third one adds nothing.
-            let Some(i) = (0..j).find(|&i| keys[i] == keys[j]) else {
-                continue;
-            };
-            if (i + 1..j).any(|k| keys[k] == keys[j]) {
-                continue;
+        // The file's first two rows: a third one adds nothing.
+        let mut places: HashMap<&str, (usize, usize)> = HashMap::new();
+        let mut pairs: Vec<(usize, usize)> = Vec::new();
+        for (j, key) in keys.iter().enumerate() {
+            let entry = places.entry(key.as_str()).or_insert((0, j));
+            entry.0 += 1;
+            if entry.0 == 2 {
+                pairs.push((entry.1, j));
             }
+        }
+        for (i, j) in pairs {
             let seat = seat_of(load, &rows[i].path);
             let id = (load.agent, seat.clone(), keys[j].clone());
             if done.contains(&id) {
@@ -512,34 +516,44 @@ fn tally(out: &mut Option<Shared>, block: &Block, other_line: usize) {
 
 /// The distinct blocks of `a` that `b` has too, in `a`'s order.
 fn shared_between(a: &[Block], b: &[Block]) -> Option<Shared> {
-    let mut seen: Vec<&str> = Vec::new();
+    // Each text's first line in `b`, looked up rather than searched: a long file has thousands of blocks.
+    let mut first_in_b: HashMap<&str, usize> = HashMap::new();
+    for block in b {
+        first_in_b.entry(block.folded.as_str()).or_insert(block.line);
+    }
+    let mut seen: HashSet<&str> = HashSet::new();
     let mut out = None;
     for block in a {
-        if seen.contains(&block.folded.as_str()) {
-            continue;
-        }
-        let Some(other) = b.iter().find(|o| o.folded == block.folded) else {
+        let Some(other_line) = first_in_b.get(block.folded.as_str()) else {
             continue;
         };
-        seen.push(&block.folded);
-        tally(&mut out, block, other.line);
+        if seen.insert(block.folded.as_str()) {
+            tally(&mut out, block, *other_line);
+        }
     }
     out
 }
 
 /// The distinct blocks a file has in two places, at the first of them.
 fn shared_within(blocks: &[Block]) -> Option<Shared> {
-    let mut seen: Vec<&str> = Vec::new();
-    let mut out = None;
-    for (k, block) in blocks.iter().enumerate() {
-        if seen.contains(&block.folded.as_str()) {
-            continue;
+    // The line of each text's second copy.
+    let mut copies: HashMap<&str, (usize, Option<usize>)> = HashMap::new();
+    for block in blocks {
+        let entry = copies.entry(block.folded.as_str()).or_insert((0, None));
+        entry.0 += 1;
+        if entry.0 == 2 {
+            entry.1 = Some(block.line);
         }
-        let Some(later) = blocks[k + 1..].iter().find(|o| o.folded == block.folded) else {
+    }
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut out = None;
+    for block in blocks {
+        let Some((_, Some(second))) = copies.get(block.folded.as_str()) else {
             continue;
         };
-        seen.push(&block.folded);
-        tally(&mut out, block, later.line);
+        if seen.insert(block.folded.as_str()) {
+            tally(&mut out, block, *second);
+        }
     }
     out
 }
@@ -664,6 +678,14 @@ fn sides(kind: ClashKind, files: &[Held], texts: &Texts) -> Vec<Side> {
             ),
         }
     }
+    // Two lines for each thing a file says are enough to find every first pair (the second is for a line that says
+    // two things, which can't clash with itself), and they keep the scan small however long a file is.
+    let mut kept: HashMap<(usize, String), usize> = HashMap::new();
+    out.retain(|side| {
+        let lines = kept.entry((side.file, side.says.clone())).or_default();
+        *lines += 1;
+        *lines <= 2
+    });
     out
 }
 
@@ -1625,6 +1647,59 @@ mod tests {
         assert_eq!(item.opens[0].line, Some(1));
         assert_eq!(item.opens[1].line, Some(2));
         assert!(item.id.ends_with(".manager"), "{}", item.id);
+    }
+
+    #[test]
+    fn a_long_file_keeps_only_the_lines_that_can_clash() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = proj(tmp.path());
+        let agents = p.join("AGENTS.md");
+        let mut text = "Use pnpm for the frontend.\n".repeat(5_000);
+        text.push_str("Run npm install first.\n");
+        write(&agents, &text);
+        let loads = vec![load("claude", &p, vec![file_row(&agents)])];
+        let mut cx = Reader::windows();
+        let files = held(&loads[0], &mut cx);
+        let mut texts = Texts::default();
+        assert!(texts.load(&mut cx, &files));
+        // Two lines for each thing a file says are enough to find every first pair, however long the file is.
+        assert_eq!(sides(ClashKind::Manager, &files, &texts).len(), 3);
+        let clash = findings(&loads, &mut cx).into_iter().find_map(|f| match f {
+            Finding::Clash { a, b, .. } => Some((a.line, b.line)),
+            _ => None,
+        });
+        assert_eq!(clash, Some((1, 5_001)));
+    }
+
+    #[test]
+    fn a_line_that_names_two_managers_clashes_with_a_later_line_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = proj(tmp.path());
+        let agents = p.join("AGENTS.md");
+        write(&agents, "Run npm install or pnpm install.\n\nRun npm install first.\n");
+        let loads = vec![load("claude", &p, vec![file_row(&agents)])];
+        let mut cx = Reader::windows();
+        let clash = findings(&loads, &mut cx).into_iter().find_map(|f| match f {
+            Finding::Clash { a, b, .. } => Some((a.says, a.line, b.says, b.line)),
+            _ => None,
+        });
+        assert_eq!(clash, Some(("pnpm".to_string(), 1, "npm".to_string(), 3)));
+    }
+
+    #[test]
+    fn many_copies_of_one_paragraph_are_one_repeat() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = proj(tmp.path());
+        let agents = p.join("AGENTS.md");
+        let one = format!("{}\n\n", para(240, "same"));
+        write(&agents, &one.repeat(300));
+        let loads = vec![load("claude", &p, vec![file_row(&agents)])];
+        let mut cx = Reader::windows();
+        let repeat = findings(&loads, &mut cx).into_iter().find_map(|f| match f {
+            Finding::Repeats { count, lines, .. } => Some((count, lines)),
+            _ => None,
+        });
+        assert_eq!(repeat, Some((1, (1, 3))));
     }
 
     #[test]
