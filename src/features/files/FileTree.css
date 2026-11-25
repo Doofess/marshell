@@ -196,10 +196,26 @@
 }
 
 /* The filter box above the tree, and the content search's results that take the tree's place. */
+/* The filter box, set in from the column's edges; its mark is stacked in the same cell, over the box's start. */
+.file-tree-filter-box {
+  display: grid;
+  padding: var(--space-2);
+}
+.file-tree-filter-box > * {
+  grid-area: 1 / 1;
+}
+.file-tree-filter__mark {
+  place-self: center start;
+  margin-inline-start: var(--space-2);
+  color: var(--text-3);
+  pointer-events: none;
+}
 .file-tree-filter {
   box-sizing: border-box;
   inline-size: 100%;
-  padding: var(--space-1) var(--space-2);
+  block-size: 28px;
+  padding-block: 0;
+  padding-inline: calc(var(--space-2) * 2 + 14px) var(--space-2);
   border: 0;
   border-radius: var(--radius);
   background: var(--fill);
@@ -252,5 +268,8 @@
   }
   .file-tree-filter:focus-visible {
     outline: 2px solid Highlight;
+  }
+  .file-tree-filter__mark {
+    color: CanvasText;
   }
 }

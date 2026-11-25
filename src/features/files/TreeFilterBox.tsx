@@ -25,17 +25,23 @@ export function TreeFilter(p: {
     else p.onDown();
   };
   return (
-    <input
-      ref={p.inputRef}
-      className="file-tree-filter"
-      type="text"
-      value={p.value}
-      aria-label="Filter files"
-      placeholder="Filter, or ? to search in files"
-      autoComplete="off"
-      spellCheck={false}
-      onChange={(e) => p.onChange(e.target.value)}
-      onKeyDown={onKeyDown}
-    />
+    <div className="file-tree-filter-box">
+      <input
+        ref={p.inputRef}
+        className="file-tree-filter"
+        type="text"
+        value={p.value}
+        aria-label="Filter files"
+        placeholder="Filter, or ? to search in files"
+        autoComplete="off"
+        spellCheck={false}
+        onChange={(e) => p.onChange(e.target.value)}
+        onKeyDown={onKeyDown}
+      />
+      <svg className="file-tree-filter__mark" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <circle cx="6" cy="6" r="3.75" />
+        <path d="m8.75 8.75 3.25 3.25" />
+      </svg>
+    </div>
   );
 }

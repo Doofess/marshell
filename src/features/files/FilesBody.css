@@ -7,6 +7,7 @@
   min-inline-size: 0;
   padding-inline: var(--space-2);
   padding-block: var(--space-1);
+  border-block-end: 1px solid var(--hairline);
   color: var(--text-2);
   font-size: var(--text-13);
 }
@@ -98,12 +99,18 @@
 /* The Files panel's body: the tree, a divider and the file in a row. In a right-to-left layout the row is reversed, so the first child (the tree, when it is on the left) stays at the left. */
 .files-body {
   position: relative;
-  display: flex;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   box-sizing: border-box;
   block-size: 100%;
   min-inline-size: 0;
   min-block-size: 0;
   overflow: clip;
+}
+.files-body__main {
+  display: flex;
+  min-inline-size: 0;
+  min-block-size: 0;
 }
 .files-body__file {
   display: flex;
@@ -181,6 +188,10 @@
   .files-body__divider:hover {
     background: var(--accent);
   }
+}
+/* A gutter between the code and a tree that follows it, so a long line stops short of the divider. */
+.files-body[data-edge="end"][data-tree]:not([data-narrow]) .files-body__content .cm-scroller {
+  margin-inline-end: var(--space-2);
 }
 /* Forced colours replace the accent with Canvas, which would hide the divider while it is hovered or dragged: use system colours. */
 @media (forced-colors: active) {

@@ -14,6 +14,11 @@ const forced = () => {
   return "";
 };
 
+const rule = (sel: string) => {
+  const i = css.indexOf(`${sel} {`);
+  return i < 0 ? "" : css.slice(i, css.indexOf("}", i));
+};
+
 describe("FilesBody.css", () => {
   it("the file's cell is a grid, so the tab panel inside fills it (live check 6r-2: a block let the preview's body collapse to 0 px)", () => {
     const rule = css.slice(css.indexOf(".files-body__content {"), css.indexOf("}", css.indexOf(".files-body__content {")));
@@ -41,5 +46,21 @@ describe("FilesBody.css", () => {
     // The row already runs right to left there, and the DOM is in reading order: a reversed row would read backwards.
     expect(css).not.toContain("row-reverse");
     expect(css).not.toMatch(/\b(left|right|top|bottom)\s*:/);
+  });
+  it("is two rows: the path bar, then the tree and the file", () => {
+    expect(rule(".files-body")).toContain("grid-template-rows: auto minmax(0, 1fr)");
+    expect(rule(".files-body__main")).toContain("display: flex");
+  });
+  it("draws one line under the path bar, across the panel", () => {
+    expect(rule(".path-bar")).toContain("border-block-end: 1px solid var(--hairline)");
+  });
+  it("never shrinks the path bar's buttons: the path gives way and scrolls", () => {
+    // The first `.path-bar__button` block is shared with `.path-bar__folder`; the button's own block follows it (review 5).
+    expect(css).toMatch(/\n\.path-bar__button \{[^}]*flex: none;/);
+    expect(rule(".path-bar__path")).toContain("min-inline-size: 0");
+  });
+  it("leaves a gutter between the code and a tree that follows it", () => {
+    expect(css).toContain('.files-body[data-edge="end"][data-tree]:not([data-narrow]) .files-body__content .cm-scroller');
+    expect(css).toMatch(/\.cm-scroller \{\s*margin-inline-end: var\(--space-2\);/);
   });
 });

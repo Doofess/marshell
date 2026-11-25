@@ -20,7 +20,7 @@ export type FilesBodyProps = {
 
 /**
  * The Files panel's body: the tree beside the open file with a divider between them, or, under 480 px of panel, over the file.
- * The DOM order is the reading order: the tree first when it is on the start edge (the left in a left-to-right layout, the right in
+ * The path bar runs across the panel, above the tree and the file. Under it the DOM order is the reading order: the tree first when it is on the start edge (the left in a left-to-right layout, the right in
  * the other), so Tab moves the way the eye reads. The row follows the writing direction as it is.
  */
 export function FilesBody({ tree, filter, file, pathBar, shown, position, width, panelWidth, rtl, overlayOpen, onWidth, onOverlay }: FilesBodyProps) {
@@ -85,7 +85,6 @@ export function FilesBody({ tree, filter, file, pathBar, shown, position, width,
   );
   const fileColumn = (
     <div key="file" className="files-body__file">
-      {pathBar}
       <div className="files-body__content">{file}</div>
     </div>
   );
@@ -96,8 +95,9 @@ export function FilesBody({ tree, filter, file, pathBar, shown, position, width,
   // Keys keep the file's frame mounted while the tree comes and goes. In the narrow layout the tree is absolutely placed over the file.
   const parts = showTree ? (narrow ? [fileColumn, treeColumn] : edge === "start" ? [treeColumn, divider, fileColumn] : [fileColumn, divider, treeColumn]) : [fileColumn];
   return (
-    <div className="files-body" data-side={side} data-edge={edge} data-narrow={narrow ? "" : undefined} data-rtl={rtl ? "" : undefined}>
-      {parts}
+    <div className="files-body" data-side={side} data-edge={edge} data-narrow={narrow ? "" : undefined} data-tree={showTree ? "" : undefined} data-rtl={rtl ? "" : undefined}>
+      {pathBar}
+      <div className="files-body__main">{parts}</div>
     </div>
   );
 }
