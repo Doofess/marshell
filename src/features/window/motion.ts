@@ -66,26 +66,50 @@ function reducedMotion(): boolean {
 
 const clock = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
 
+/** What the hook keeps between renders: the key and motion of the last render, and the value it drew. */
+export type MotionState = { key: string; motion: Motion; drawn: number };
+
+/**
+ * One render of `useLayoutMotion`; `state` is updated in place. `frame` is the time of the last animation frame. `clock` and
+ * `reduced` are called only when `key` differs from `state.key`, so a render repeated with the same state draws what the last one
+ * drew. A frame older than the motion's start (the one in hand when the key changes) draws the start.
+ */
+export function motionRender(state: MotionState, key: string, target: number, frame: number, clock: () => number, reduced: () => boolean): { value: number; moving: boolean } {
+  if (state.key !== key) {
+    state.motion = nextMotion(state, key, clock(), reduced());
+    state.key = key;
+  }
+  const { value, done } = motionValue(state.motion, target, frame);
+  if (done) state.motion = null;
+  state.drawn = value;
+  return { value, moving: !done };
+}
+
+/** The next frame's time: the clock's, and never the last one's again (an equal value would skip the render and stop the motion). */
+export function nextFrame(last: number, now: number): number {
+  return now > last ? now : last + 1;
+}
+
 /**
  * The animated number for a layout value. `key` names the discrete state; only a change of key moves, so a drag, which changes
  * only `target`, is followed at once. The first render never moves. While a motion runs the component renders on every frame.
+ *
+ * The time a render draws at is state (the last frame's), never the clock read while rendering. React can render a component
+ * again without a change of state and throw that render away, while keeping what its effects' dependencies were compared with. A
+ * render that read the clock could then be the first to see the motion ended, and an effect that depends on `moving` (a page's
+ * cover in MainWindow) would never run its cleanup: the cover stayed, and the browser page stayed blank.
  */
 export function useLayoutMotion(key: string, target: number): { value: number; moving: boolean } {
-  const state = useRef<{ key: string; motion: Motion; drawn: number }>({ key, motion: null, drawn: target });
-  const [, frame] = useState(0);
-  const now = clock();
-  const s = state.current;
-  if (s.key !== key) {
-    s.motion = nextMotion(s, key, now, reducedMotion());
-    s.key = key;
-  }
-  const { value, done } = motionValue(s.motion, target, now);
-  if (done) s.motion = null;
-  s.drawn = value;
-  const moving = !done;
+  const state = useRef<MotionState>({ key, motion: null, drawn: target });
+  const [frame, setFrame] = useState(0);
+  const { value, moving } = motionRender(state.current, key, target, frame, clock, reducedMotion);
   useEffect(() => {
     if (!moving) return;
-    const id = requestAnimationFrame(() => frame((n) => n + 1));
+    const id = requestAnimationFrame(() => {
+      // Read here, not in the updater: React may run an updater again while it renders.
+      const t = clock();
+      setFrame((f) => nextFrame(f, t));
+    });
     return () => cancelAnimationFrame(id);
   });
   return { value, moving };
