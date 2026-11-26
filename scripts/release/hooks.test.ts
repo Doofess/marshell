@@ -32,6 +32,21 @@ function macroBody(name: string): string[] {
   return m[1].split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith(";"));
 }
 
+const WAIT = "!insertmacro MARSHELL_REMOVE_HELD_PROGRAMS";
+
+/** Whether a macro's lines end with the wait, with nothing before it that could skip it. */
+function runsLastAndAlways(body: string[]): boolean {
+  if (body.length === 0 || body[body.length - 1] !== WAIT) return false;
+  let depth = 0;
+  for (const line of body.slice(0, -1)) {
+    // A jump or a compile-time condition before it could pass it by.
+    if (/^(Goto|Return|Abort|Quit)\b|^!(if|ifdef|ifndef|else|endif)\b/i.test(line)) return false;
+    if (/^\$\{(If|IfNot|Unless|Do|DoWhile|DoUntil|For|ForEach|While|Select|Switch)\}/.test(line)) depth++;
+    else if (/^\$\{(EndIf|EndUnless|Loop|LoopWhile|LoopUntil|Next|EndWhile|EndSelect|EndSwitch)\}/.test(line)) depth--;
+  }
+  return depth === 0;
+}
+
 describe("the uninstaller's wait for programs that are still ending (issue #212)", () => {
   it("tries again for every program the installer puts in the install folder", () => {
     const named = macroBody("MARSHELL_REMOVE_HELD_PROGRAMS")
@@ -56,13 +71,19 @@ describe("the uninstaller's wait for programs that are still ending (issue #212)
   });
 
   it("runs in the uninstaller's last hook whatever started the uninstall, an update included", () => {
-    let depth = 0;
-    let found = false;
-    for (const line of macroBody("NSIS_HOOK_POSTUNINSTALL")) {
-      if (/^\$\{If\}/.test(line)) depth++;
-      else if (/^\$\{EndIf\}/.test(line)) depth--;
-      else if (line === "!insertmacro MARSHELL_REMOVE_HELD_PROGRAMS") found = depth === 0;
-    }
-    expect(found).toBe(true);
+    expect(runsLastAndAlways(macroBody("NSIS_HOOK_POSTUNINSTALL"))).toBe(true);
+  });
+
+  it("would notice the wait put under a condition, or no longer last", () => {
+    expect(runsLastAndAlways(["${If} $UpdateMode <> 1", "DeleteRegKey HKCU x", "${EndIf}", WAIT])).toBe(true);
+    expect(runsLastAndAlways(["${If} $UpdateMode <> 1", WAIT, "${EndIf}"])).toBe(false);
+    expect(runsLastAndAlways(["${IfNot} ${Silent}", WAIT, "${EndIf}"])).toBe(false);
+    expect(runsLastAndAlways(["${Unless} $UpdateMode = 1", WAIT, "${EndUnless}"])).toBe(false);
+    expect(runsLastAndAlways([`\${IfThen} $UpdateMode <> 1 \${|} ${WAIT} \${|}`])).toBe(false);
+    expect(runsLastAndAlways(["!if 1", WAIT, "!endif"])).toBe(false);
+    expect(runsLastAndAlways(["Goto done", WAIT])).toBe(false);
+    expect(runsLastAndAlways(["Return", WAIT])).toBe(false);
+    expect(runsLastAndAlways([WAIT, "DetailPrint x"])).toBe(false);
+    expect(runsLastAndAlways([])).toBe(false);
   });
 });

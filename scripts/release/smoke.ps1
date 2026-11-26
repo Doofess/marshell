@@ -543,7 +543,9 @@ function Invoke-CycleA {
     }
     $instDir = $script:Inst
     $appId = $app.Id
-    # The app is open here, so this names it and what it started; "nothing" would mean the note can't see them.
+    # The app is open here, so this names at least the app. "nothing" would mean the note can't see what runs
+    # from the folder, and then the note after the uninstall says nothing either. The programs the app starts
+    # show up here only when they are already running.
     Write-Host "NOTE A6 before the uninstall, running from the install folder: $(Get-RunningFrom $instDir)"
     $res = Uninstall-Marshell
     Test-Uninstalled 'A7' $instDir $res $appId
