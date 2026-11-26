@@ -17,7 +17,7 @@ const switchOf = (html: string, label: string): string => {
 const radios = (html: string): string[] => html.match(/<input[^>]*type="radio"[^>]*>/g) ?? [];
 
 beforeEach(() => {
-  state.settings = { preview_tabs: true, auto_save: false, tab_indents: true, word_wrap: false, indent_guides: true, whitespace: false, scroll_past_end: false, tab_size: 4, tree_position: "automatic" };
+  state.settings = { preview_tabs: true, auto_save: false, tab_indents: true, word_wrap: true, indent_guides: true, whitespace: false, scroll_past_end: false, tab_size: 4, tree_position: "automatic" };
   state.failed = false;
   state.set = () => Promise.resolve();
 });
@@ -33,7 +33,7 @@ describe("FilesSection", () => {
       "Tab key indents",
       "When off, Tab moves to the next control. Esc, then Tab, always leaves the editor.",
       "Word wrap",
-      "When off, Markdown and plain text wrap and code doesn&#x27;t. When on, every file wraps. Alt+Z changes the tab in front.",
+      "When on, every file wraps. When off, Markdown and plain text wrap and code doesn&#x27;t. Alt+Z changes the tab in front.",
       "Indent guides",
       "Draws a line at each indent level.",
       "Show whitespace",

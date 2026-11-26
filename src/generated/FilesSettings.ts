@@ -4,7 +4,11 @@ import type { TreePosition } from "./TreePosition";
 /**
  * The Files panel's settings, in `settings.json` under `files`.
  */
-export type FilesSettings = { preview_tabs: boolean, auto_save: boolean, tab_indents: boolean, word_wrap: boolean, indent_guides: boolean, whitespace: boolean, scroll_past_end: boolean, 
+export type FilesSettings = { preview_tabs: boolean, auto_save: boolean, tab_indents: boolean, 
+/**
+ * On by default: every file wraps. When off, Markdown and plain text still wrap and code does not.
+ */
+word_wrap: boolean, indent_guides: boolean, whitespace: boolean, scroll_past_end: boolean, 
 /**
  * 2, 4 or 8.
  */

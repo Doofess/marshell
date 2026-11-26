@@ -8,7 +8,7 @@ const ep: Endpoint = { port: 1, token: "t", platform: "windows" };
 const teal = { ...DEFAULT_APPEARANCE, accent: "teal" };
 const N = { needs_you: { banner: true, sound: true }, done: { banner: true, sound: true }, error: { banner: true, sound: true }, subagent_sound: false, quiet_hours: { enabled: false, start: "22:00", end: "08:00" }, terminal_alerts: true };
 const BR = { terminal_links: true, open_agent_html: true, cookies: "always" as const };
-const FI = { preview_tabs: true, auto_save: false, tab_indents: true, word_wrap: false, indent_guides: true, whitespace: false, scroll_past_end: false, tab_size: 4, tree_position: "automatic" as const };
+const FI = { preview_tabs: true, auto_save: false, tab_indents: true, word_wrap: true, indent_guides: true, whitespace: false, scroll_past_end: false, tab_size: 4, tree_position: "automatic" as const };
 const CH = { hide_whitespace: false, wrap: false, pull_requests: true, resolved_comments: false };
 const N_OFF = { ...N, needs_you: { banner: true, sound: false } };
 
@@ -350,7 +350,7 @@ describe("SettingsSync: browser", () => {
 });
 
 describe("SettingsSync: files", () => {
-  const stored = { ...FI, word_wrap: true, tab_size: 2 };
+  const stored = { ...FI, word_wrap: false, tab_size: 2 };
   const read = async () => ({ appearance: teal, pause_warned: true, onboarded: true, close_to_tray: null, status_off: ["codex"], notifications: N, history_import: true, history_limit_gb: null, history_limit_days: null, history_backup_dir: null, default_folder: null, browser: BR, files: stored, changes: CH });
   it("is null before the first read, then what the core holds", async () => {
     const { sync } = setup(read);

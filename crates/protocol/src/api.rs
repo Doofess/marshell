@@ -2220,6 +2220,7 @@ pub struct FilesSettings {
     pub preview_tabs: bool,
     pub auto_save: bool,
     pub tab_indents: bool,
+    /// On by default: every file wraps. When off, Markdown and plain text still wrap and code does not.
     pub word_wrap: bool,
     pub indent_guides: bool,
     pub whitespace: bool,
@@ -2235,7 +2236,7 @@ impl Default for FilesSettings {
             preview_tabs: true,
             auto_save: false,
             tab_indents: true,
-            word_wrap: false,
+            word_wrap: true,
             indent_guides: true,
             whitespace: false,
             scroll_past_end: false,

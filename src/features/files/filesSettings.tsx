@@ -2,7 +2,7 @@ import { useCallback, useSyncExternalStore } from "react";
 import type { FilesSettings } from "../../generated/FilesSettings";
 import { useAppearance } from "../appearance/AppearanceProvider";
 
-export const FILES_DEFAULTS: FilesSettings = { preview_tabs: true, auto_save: false, tab_indents: true, word_wrap: false, indent_guides: true, whitespace: false, scroll_past_end: false, tab_size: 4, tree_position: "automatic" };
+export const FILES_DEFAULTS: FilesSettings = { preview_tabs: true, auto_save: false, tab_indents: true, word_wrap: true, indent_guides: true, whitespace: false, scroll_past_end: false, tab_size: 4, tree_position: "automatic" };
 
 const never = () => () => {};
 
