@@ -121,16 +121,16 @@ describe("commandPanel", () => {
 });
 
 describe("panelToggleOutcome", () => {
-  const two = (open = true): PaneView => ({ ...EMPTY, open, panels: { shown: ["browser", "files"], weights: {}, filled: null } });
+  const two = (open = true): PaneView => ({ ...EMPTY, open, panels: { shown: ["browser", "files"], weights: {} } });
   it("shows a panel that is not on screen", () => {
-    const s: PaneView = { ...EMPTY, open: true, panels: { shown: ["files"], weights: {}, filled: null } };
+    const s: PaneView = { ...EMPTY, open: true, panels: { shown: ["files"], weights: {} } };
     expect(panelToggleOutcome(s, "s1", "browser")).toEqual({ shows: true, paneHides: false });
   });
   it("hides one of two and keeps the pane", () => {
     expect(panelToggleOutcome(two(), "s1", "browser")).toEqual({ shows: false, paneHides: false });
   });
   it("hides the last one and the pane", () => {
-    const s: PaneView = { ...EMPTY, open: true, panels: { shown: ["files"], weights: {}, filled: null } };
+    const s: PaneView = { ...EMPTY, open: true, panels: { shown: ["files"], weights: {} } };
     expect(panelToggleOutcome(s, "s1", "files")).toEqual({ shows: false, paneHides: true });
   });
   it("shows a panel of a hidden pane", () => {
@@ -325,7 +325,7 @@ describe("shouldPin", () => {
     expect(shouldPin(open, "t1", false)).toBe(false);
   });
   it("a saved stack is never pinned again", () => {
-    expect(shouldPin({ ...open, panels: { shown: ["files"], weights: {}, filled: null } }, "t1", true)).toBe(false);
+    expect(shouldPin({ ...open, panels: { shown: ["files"], weights: {} } }, "t1", true)).toBe(false);
   });
   it("a hidden pane is not pinned", () => {
     expect(shouldPin(EMPTY, "t1", true)).toBe(false);

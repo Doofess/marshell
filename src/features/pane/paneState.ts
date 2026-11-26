@@ -72,8 +72,8 @@ export type PaneAction =
   | { type: "toggle"; session: string | null }
   /** A panel's own toggle: its key, its button or its x. */
   | { type: "panel"; panel: PanelId; session: string | null }
-  /** The panel's fill button: it fills the pane, or stops filling it. */
-  | { type: "fill"; panel: PanelId; session: string | null }
+  /** The panel's expand button: the session's panel expands over the pane and the terminal, or stops. Nothing while the pane is hidden. */
+  | { type: "expand"; panel: PanelId; session: string | null }
   /** The divider moved: whole weights, 1 to 100000, merged into the stack's. `session` is the one the drawn stack was derived from. */
   | { type: "weights"; session?: string | null; weights: Weights }
   /** Writes the stack down when none is saved. */
@@ -245,18 +245,51 @@ function setTabs(s: PaneView, session: string, next: SessionTabs): PaneView {
   return { ...s, sessions: { ...s.sessions, [session]: settle(next) } };
 }
 
-/** A stack as the layout holds it. */
-const panelsOf = (stack: Stack): Panels => ({ shown: [...stack.shown], weights: { ...stack.weights }, filled: stack.filled });
+/** A stack as the layout holds it: the shown panels and the weights, for the window. A session's expansion is its own entry's. */
+const panelsOf = (stack: Stack): Panels => ({ shown: [...stack.shown], weights: { ...stack.weights } });
 
 /**
- * The pane is open with this panel on screen. A hidden pane shows the panel alone, keeping the weights. An open one adds the panel
- * to what it shows (in the stack's order), ends another panel's fill and keeps this panel's own. The stack is written down.
+ * Takes away the expansions `keep` refuses, in every session. An entry left with no tabs, tree, drafts or expansion goes. The same
+ * object when nothing changes.
+ */
+function pruneExpansions(s: PaneView, keep: (session: string, panel: string) => boolean): PaneView {
+  let sessions = s.sessions;
+  for (const [id, st] of Object.entries(s.sessions)) {
+    if (st.expanded_panel === undefined || keep(id, st.expanded_panel)) continue;
+    const { expanded_panel: _gone, ...rest } = st;
+    if (rest.tabs.length === 0 && !rest.tree && !rest.changes) {
+      const { [id]: _entry, ...others } = sessions;
+      sessions = others;
+    } else {
+      sessions = { ...sessions, [id]: rest };
+    }
+  }
+  return sessions === s.sessions ? s : { ...s, sessions };
+}
+
+/**
+ * The pane is open with this panel on screen. A hidden pane shows the panel alone, keeping the weights, and no session keeps an
+ * expansion of another panel. An open one adds the panel to what it shows (in the stack's order) and ends the session's expansion
+ * unless it is of this panel; other sessions keep theirs. The stack is written down.
  */
 function reveal(s: PaneView, session: string, panel: PanelId): PaneView {
   const stack = stackOf(s, session);
-  if (!s.open) return { ...s, open: true, panels: panelsOf({ shown: [panel], weights: stack.weights, filled: null }) };
+  if (!s.open) return pruneExpansions({ ...s, open: true, panels: panelsOf({ shown: [panel], weights: stack.weights, expanded: null }) }, (_id, p) => p === panel);
   const shown = stack.shown.includes(panel) ? stack.shown : PANELS.filter((p) => p === panel || stack.shown.includes(p));
-  return { ...s, panels: panelsOf({ shown, weights: stack.weights, filled: stack.filled === panel ? panel : null }) };
+  return pruneExpansions({ ...s, panels: panelsOf({ shown, weights: stack.weights, expanded: null }) }, (id, p) => id !== session || p === panel);
+}
+
+/**
+ * `reveal`, then the session's entry set to `next`, which was built from the entry as it was before. The entry keeps an expansion
+ * only of this panel, as `reveal` leaves it.
+ */
+function revealTabs(s: PaneView, session: string, panel: PanelId, next: SessionTabs): PaneView {
+  let entry = next;
+  if (entry.expanded_panel !== undefined && entry.expanded_panel !== panel) {
+    const { expanded_panel: _ended, ...rest } = entry;
+    entry = rest;
+  }
+  return setTabs(reveal(s, session, panel), session, entry);
 }
 
 /** The tabs with this one no longer marked new (the same object when it isn't). */
@@ -320,13 +353,13 @@ function openPage(s: PaneView, session: string, url: string, background: boolean
     if (background) return s;
     const seen = seenTab(cur, existing.id);
     if (seen === cur && onScreen(s, session).includes("browser") && activeIn(cur, "browser") === existing.id) return s;
-    return setTabs(reveal(s, session, "browser"), session, pick(seen, "browser", existing.id));
+    return revealTabs(s, session, "browser", pick(seen, "browser", existing.id));
   }
   if (cur.tabs.length >= PANE_LIMITS.tabs) return s;
   const tab: PaneTab = { id: nextId(cur.tabs), kind: "browser", history: [entryOf({ path: url })], index: 0, title: null, opened_by: null, unseen: false };
   const added = { ...cur, tabs: [...cur.tabs, tab] };
   // A background tab is selected only when Browser had none; `settle` does that.
-  return background ? setTabs(s, session, added) : setTabs(reveal(s, session, "browser"), session, pick(added, "browser", tab.id));
+  return background ? setTabs(s, session, added) : revealTabs(s, session, "browser", pick(added, "browser", tab.id));
 }
 
 function pageMoved(s: PaneView, session: string, paneTab: string, url: string, title: string | null): PaneView {
@@ -360,7 +393,7 @@ function open(s: PaneView, session: string, project: string, target: OpenTarget,
       next = s;
     } else {
       const tabs = tab === existing ? cur.tabs : cur.tabs.map((t) => (t === existing ? tab : t));
-      next = setTabs(reveal(s, session, panel), session, pick({ ...cur, tabs }, panel, existing.id));
+      next = revealTabs(s, session, panel, pick({ ...cur, tabs }, panel, existing.id));
     }
   } else {
     const made: PaneTab = { id: nextId(cur.tabs), kind: "file", history: [entryOf(target)], index: 0, title: null, opened_by: null, unseen: false };
@@ -370,7 +403,7 @@ function open(s: PaneView, session: string, project: string, target: OpenTarget,
     if (!old && cur.tabs.length >= PANE_LIMITS.tabs) return s;
     const tab = preview ? { ...made, preview: true } : made;
     const tabs = old ? cur.tabs.map((t) => (t === old ? tab : t)) : [...cur.tabs, tab];
-    next = setTabs(reveal(s, session, panel), session, pick({ ...cur, tabs }, panel, tab.id));
+    next = revealTabs(s, session, panel, pick({ ...cur, tabs }, panel, tab.id));
   }
   return withRecent(next, project, target.path);
 }
@@ -419,7 +452,7 @@ function goThrough(s: PaneView, session: string, paneTab: string, by: 1 | -1): P
   const panel = panelOf(tab);
   const tabs = cur.tabs.map((t) => (t === old ? tab : t));
   if (panel === panelOf(old)) return setTabs(s, session, { ...settle(cur), tabs });
-  return setTabs(reveal(s, session, panel), session, pick(seenTab({ ...settle(cur), tabs }, paneTab), panel, paneTab));
+  return revealTabs(s, session, panel, pick(seenTab({ ...settle(cur), tabs }, paneTab), panel, paneTab));
 }
 
 function close(s: PaneView, session: string, paneTab: string): PaneView {
@@ -430,8 +463,14 @@ function close(s: PaneView, session: string, paneTab: string): PaneView {
   const panel = panelOf(cur.tabs[at]!);
   const tabs = cur.tabs.filter((_, i) => i !== at);
   if (tabs.length === 0) {
-    // A session with a tree or Changes drafts keeps them, with no tabs.
-    if (cur.tree || cur.changes) return { ...s, sessions: { ...s.sessions, [session]: { tabs: [], active: null, ...(cur.tree ? { tree: cur.tree } : {}), ...(cur.changes ? { changes: cur.changes } : {}) } } };
+    // A session with a tree, Changes drafts or an expanded panel keeps them, with no tabs.
+    if (cur.tree || cur.changes || cur.expanded_panel !== undefined) {
+      const kept: SessionTabs = { tabs: [], active: null };
+      if (cur.tree) kept.tree = cur.tree;
+      if (cur.changes) kept.changes = cur.changes;
+      if (cur.expanded_panel !== undefined) kept.expanded_panel = cur.expanded_panel;
+      return { ...s, sessions: { ...s.sessions, [session]: kept } };
+    }
     const { [session]: _gone, ...sessions } = s.sessions;
     return { ...s, sessions };
   }
@@ -471,7 +510,7 @@ function setDrafts(s: PaneView, session: string, drafts: ChangesDrafts | null): 
   if (!drafts || (comments.length === 0 && keys.length === 0 && picked.length === 0 && sent.length === 0)) {
     if (!cur || !cur.changes) return s;
     const { changes: _gone, ...rest } = cur;
-    if (rest.tabs.length === 0 && !rest.tree) {
+    if (rest.tabs.length === 0 && !rest.tree && rest.expanded_panel === undefined) {
       const { [session]: _s, ...sessions } = s.sessions;
       return { ...s, sessions };
     }
@@ -508,20 +547,26 @@ function shownWith(s: PaneView, session: string | null): PaneView {
 
 function panelToggle(s: PaneView, panel: PanelId, session: string | null): PaneView {
   const stack = stackOf(s, session);
-  if (!s.open) return { ...s, open: true, panels: panelsOf({ shown: [panel], weights: stack.weights, filled: null }) };
+  // From a hidden pane the panel is shown alone: no session keeps an expansion of another panel.
+  if (!s.open) return pruneExpansions({ ...s, open: true, panels: panelsOf({ shown: [panel], weights: stack.weights, expanded: null }) }, (_id, p) => p === panel);
   if (stackPanels(stack).includes(panel)) {
-    // The only panel shown: the pane hides and the panel stays shown.
-    if (stack.shown.length === 1) return { ...s, open: false, panels: panelsOf({ ...stack, filled: null }) };
-    return { ...s, panels: panelsOf({ shown: stack.shown.filter((p) => p !== panel), weights: stack.weights, filled: null }) };
+    // Hiding a panel ends its expansion in every session. The only panel shown: the pane hides and the panel stays shown.
+    const next = stack.shown.length === 1 ? { ...s, open: false, panels: panelsOf(stack) } : { ...s, panels: panelsOf({ shown: stack.shown.filter((p) => p !== panel), weights: stack.weights, expanded: null }) };
+    return pruneExpansions(next, (_id, p) => p !== panel);
   }
-  return { ...s, panels: panelsOf({ shown: PANELS.filter((p) => p === panel || stack.shown.includes(p)), weights: stack.weights, filled: null }) };
+  // Showing a panel ends the session's own expansion; other sessions keep theirs.
+  const shown = PANELS.filter((p) => p === panel || stack.shown.includes(p));
+  return pruneExpansions({ ...s, panels: panelsOf({ shown, weights: stack.weights, expanded: null }) }, (id, p) => id !== session || p === panel);
 }
 
-function fill(s: PaneView, panel: PanelId, session: string | null): PaneView {
-  if (!s.open) return s;
+/** The session's panel expands over the pane and the terminal, or stops. It works with one panel shown. */
+function expand(s: PaneView, panel: PanelId, session: string | null): PaneView {
+  if (!s.open || session === null) return s;
   const stack = stackOf(s, session);
-  if (stack.shown.length < 2 || !stack.shown.includes(panel)) return s;
-  return { ...s, panels: panelsOf({ ...stack, filled: stack.filled === panel ? null : panel }) };
+  if (!stack.shown.includes(panel)) return s;
+  const cur = s.sessions[session];
+  if (stack.expanded === panel) return pruneExpansions({ ...s, panels: panelsOf(stack) }, (id) => id !== session);
+  return setTabs({ ...s, panels: panelsOf(stack) }, session, { ...(cur ?? NO_TABS), expanded_panel: panel });
 }
 
 /** The 1 to 100000 whole weight of a number, or null for one that is not a finite number. */
@@ -645,6 +690,8 @@ export function paneReducer(s: PaneView, a: PaneAction): PaneView {
       if (tree !== undefined) next.tree = tree;
       const changes = to?.changes ?? from.changes;
       if (changes !== undefined) next.changes = changes;
+      const expanded = to?.expanded_panel ?? from.expanded_panel;
+      if (expanded !== undefined) next.expanded_panel = expanded;
       return { ...s, sessions: { ...rest, [a.to]: next } };
     }
     case "show":
@@ -655,8 +702,8 @@ export function paneReducer(s: PaneView, a: PaneAction): PaneView {
       return s.open ? { ...s, open: false } : shownWith(s, a.session);
     case "panel":
       return panelToggle(s, a.panel, a.session);
-    case "fill":
-      return fill(s, a.panel, a.session);
+    case "expand":
+      return expand(s, a.panel, a.session);
     case "weights":
       return mergeWeights(s, a.weights, a.session ?? null);
     case "pin":

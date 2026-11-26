@@ -27,7 +27,8 @@ export function panelOf(tab: PaneTab): PanelId {
   return tab.kind === "browser" ? "browser" : panelOfPath(tab.history[tab.index]?.path ?? "");
 }
 
-export type Stack = { shown: PanelId[]; weights: Weights; filled: PanelId | null };
+/** The stack one session sees: the window's shown panels and weights, and the panel this session has expanded, if any. */
+export type Stack = { shown: PanelId[]; weights: Weights; expanded: PanelId | null };
 
 /** The panels that hold at least one tab of the session, in the stack's order. */
 export function panelsWithTabs(st: SessionTabs): PanelId[] {
@@ -45,17 +46,19 @@ export function stackOf(pane: PaneView, session: string | null | undefined): Sta
       const w = saved.weights?.[p];
       if (typeof w === "number") weights[p] = w;
     }
-    const filled = typeof saved.filled === "string" && isPanelId(saved.filled) && shown.length >= 2 && shown.includes(saved.filled) ? saved.filled : null;
-    return { shown: shown.length > 0 ? [...shown] : ["files"], weights, filled };
+    const kept: PanelId[] = shown.length > 0 ? [...shown] : ["files"];
+    const mine = session != null ? pane.sessions[session]?.expanded_panel : undefined;
+    const expanded = typeof mine === "string" && isPanelId(mine) && kept.includes(mine) ? mine : null;
+    return { shown: kept, weights, expanded };
   }
   const st = session != null ? pane.sessions[session] : undefined;
   const held = st ? panelsWithTabs(st) : [];
-  return { shown: held.length > 0 ? held : ["files"], weights: {}, filled: null };
+  return { shown: held.length > 0 ? held : ["files"], weights: {}, expanded: null };
 }
 
-/** What the stack draws, whether or not the pane is open: the filled panel alone, else the shown ones. */
+/** What the stack draws, whether or not the pane is open: the expanded panel alone, else the shown ones. */
 export function stackPanels(stack: Stack): PanelId[] {
-  return stack.filled ? [stack.filled] : stack.shown;
+  return stack.expanded ? [stack.expanded] : stack.shown;
 }
 
 /** What is in front of the person: nothing while the pane is hidden, else `stackPanels`. */

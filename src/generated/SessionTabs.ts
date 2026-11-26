@@ -18,4 +18,8 @@ tree?: TreeState,
 /**
  * The Changes panel's comments and folds for this session.
  */
-changes?: ChangesDrafts, };
+changes?: ChangesDrafts, 
+/**
+ * The panel expanded over the pane and the terminal for this session: one of the shown panels.
+ */
+expanded_panel?: string, };

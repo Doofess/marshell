@@ -58,28 +58,26 @@ describe("panels", () => {
       docs: { tabs: [file("t1"), file("t2", "/a.html")], active: "t1" },
       none: { tabs: [], active: null },
     });
-    expect(stackOf(p, "both")).toEqual({ shown: ["browser", "files"], weights: {}, filled: null });
-    expect(stackOf(p, "web")).toEqual({ shown: ["browser"], weights: {}, filled: null });
-    expect(stackOf(p, "docs")).toEqual({ shown: ["browser", "files"], weights: {}, filled: null });
+    expect(stackOf(p, "both")).toEqual({ shown: ["browser", "files"], weights: {}, expanded: null });
+    expect(stackOf(p, "web")).toEqual({ shown: ["browser"], weights: {}, expanded: null });
+    expect(stackOf(p, "docs")).toEqual({ shown: ["browser", "files"], weights: {}, expanded: null });
     expect(stackOf(p, "none").shown).toEqual(["files"]);
     expect(stackOf(p, "missing").shown).toEqual(["files"]);
-    expect(stackOf(p, null)).toEqual({ shown: ["files"], weights: {}, filled: null });
+    expect(stackOf(p, null)).toEqual({ shown: ["files"], weights: {}, expanded: null });
     expect(panelsWithTabs({ tabs: [page("a")], active: "a" })).toEqual(["browser"]);
     // A saved stack is returned cleaned, whatever the session holds.
-    const saved = pane({ web: { tabs: [page("t1")], active: "t1" } }, { panels: { shown: ["files", "changes", "browser", "files"], weights: { files: 5, nope: 3 }, filled: "files" } });
-    expect(stackOf(saved, "web")).toEqual({ shown: ["browser", "files", "changes"], weights: { files: 5 }, filled: "files" });
-    const lone = pane({}, { panels: { shown: ["files"], weights: {}, filled: "files" } });
-    expect(stackOf(lone, "x").filled).toBeNull();
+    const saved = pane({ web: { tabs: [page("t1")], active: "t1" } }, { panels: { shown: ["files", "changes", "browser", "files"], weights: { files: 5, nope: 3 } } });
+    expect(stackOf(saved, "web")).toEqual({ shown: ["browser", "files", "changes"], weights: { files: 5 }, expanded: null });
   });
 
   it("the stack is the window's: another session shows the same panels", () => {
-    const p = pane({ a: { tabs: [page("t1")], active: "t1" }, b: { tabs: [file("t1")], active: "t1" } }, { panels: { shown: ["browser", "files"], weights: { browser: 7000 }, filled: null } });
+    const p = pane({ a: { tabs: [page("t1")], active: "t1" }, b: { tabs: [file("t1")], active: "t1" } }, { panels: { shown: ["browser", "files"], weights: { browser: 7000 } } });
     expect(stackOf(p, "a")).toEqual(stackOf(p, "b"));
     expect(stackOf(p, "b").shown).toEqual(["browser", "files"]);
   });
 
-  it("onScreen is the filled panel alone, nothing while the pane is hidden", () => {
-    const p = pane({}, { panels: { shown: ["browser", "files"], weights: {}, filled: "browser" } });
+  it("onScreen is the session's expanded panel alone, nothing while the pane is hidden", () => {
+    const p = pane({ s: { tabs: [], active: null, expanded_panel: "browser" } }, { panels: { shown: ["browser", "files"], weights: {} } });
     expect(onScreen(p, "s")).toEqual(["browser"]);
     expect(stackPanels(stackOf(p, "s"))).toEqual(["browser"]);
     expect(onScreen({ ...p, open: false }, "s")).toEqual([]);
@@ -87,17 +85,36 @@ describe("panels", () => {
   });
 
   it("stacks Browser, Files, Changes in that order", () => {
-    const p = pane({}, { panels: { shown: ["changes", "browser", "files"], weights: {}, filled: null } });
+    const p = pane({}, { panels: { shown: ["changes", "browser", "files"], weights: {} } });
     expect(stackPanels(stackOf(p, "s"))).toEqual(["browser", "files", "changes"]);
   });
-  it("keeps Fill with three panels shown", () => {
-    const p = pane({}, { panels: { shown: ["browser", "files", "changes"], weights: {}, filled: "changes" } });
-    expect(stackOf(p, "s").filled).toBe("changes");
+  it("keeps an expansion with three panels shown", () => {
+    const p = pane({ s: { tabs: [], active: null, expanded_panel: "changes" } }, { panels: { shown: ["browser", "files", "changes"], weights: {} } });
+    expect(stackOf(p, "s").expanded).toBe("changes");
     expect(stackPanels(stackOf(p, "s"))).toEqual(["changes"]);
   });
-  it("drops Fill under two shown panels", () => {
-    const p = pane({}, { panels: { shown: ["changes"], weights: {}, filled: "changes" } });
-    expect(stackOf(p, "s").filled).toBeNull();
+  it("keeps an expansion with one panel shown", () => {
+    const p = pane({ s: { tabs: [], active: null, expanded_panel: "changes" } }, { panels: { shown: ["changes"], weights: {} } });
+    expect(stackOf(p, "s").expanded).toBe("changes");
+  });
+  it("the expansion is the session's: another session sees every shown panel", () => {
+    const p = pane({ a: { tabs: [], active: null, expanded_panel: "files" } }, { panels: { shown: ["browser", "files"], weights: {} } });
+    expect(stackOf(p, "a").expanded).toBe("files");
+    expect(stackOf(p, "b").expanded).toBeNull();
+    expect(stackOf(p, null).expanded).toBeNull();
+    expect(stackPanels(stackOf(p, "a"))).toEqual(["files"]);
+    expect(stackPanels(stackOf(p, "b"))).toEqual(["browser", "files"]);
+  });
+  it("an expansion that names a panel not shown, an unknown panel, or comes with no saved stack is ignored", () => {
+    const panels = { shown: ["files"], weights: {} };
+    for (const expanded_panel of ["browser", "nope"]) {
+      expect(stackOf(pane({ s: { tabs: [], active: null, expanded_panel } }, { panels }), "s").expanded).toBeNull();
+    }
+    expect(stackOf(pane({ s: { tabs: [file("t1")], active: "t1", expanded_panel: "files" } }), "s").expanded).toBeNull();
+  });
+  it("an older layout's window-wide fill is ignored", () => {
+    const p = pane({}, { panels: { shown: ["browser", "files"], weights: {}, filled: "files" } as PaneView["panels"] });
+    expect(stackOf(p, "s")).toEqual({ shown: ["browser", "files"], weights: {}, expanded: null });
   });
   it("Changes holds no tabs and has no selected tab", () => {
     const st = { tabs: [file("f1"), page("b1")], active: "f1" };

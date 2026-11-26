@@ -2478,9 +2478,9 @@ export function LiveApp() {
           onMenu={(anchor, opener) => setChangesMenu({ anchor, opener })}
           tabs={[]}
           activeId={null}
-          fill={{ on: stack.filled === panel, disabled: stack.shown.length < 2 ? "No other panel is shown" : undefined }}
+          fill={{ on: stack.expanded === panel, disabled: stack.shown.length < 2 ? "No other panel is shown" : undefined }}
           hideKeys={keysOf(panel)}
-          onFill={() => paneDispatch({ type: "fill", panel, session: owner.key })}
+          onFill={() => paneDispatch({ type: "expand", panel, session: owner.key })}
           onSelect={() => {}}
           onClose={() => {}}
           onMove={() => {}}
@@ -2606,9 +2606,9 @@ export function LiveApp() {
         panel={panel}
         plus={panel === "browser" ? { label: "New tab", menu: false, disabled: browserTabs(os) ? undefined : PAGES_UNAVAILABLE } : { label: "Open a file", menu: true }}
         menu={{ label: panel === "browser" ? "Browser menu" : "Files menu" }}
-        fill={{ on: stack.filled === panel, disabled: stack.shown.length < 2 ? "No other panel is shown" : undefined }}
+        fill={{ on: stack.expanded === panel, disabled: stack.shown.length < 2 ? "No other panel is shown" : undefined }}
         hideKeys={keysOf(panel)}
-        onFill={() => paneDispatch({ type: "fill", panel, session: owner.key })}
+        onFill={() => paneDispatch({ type: "expand", panel, session: owner.key })}
         onMenu={(anchor, opener) => (panel === "browser" ? setBrowserMenu : setFilesMenu)({ anchor, opener })}
         onKeep={(id) => paneDispatch({ type: "keep", session: owner.key, paneTab: id })}
         tabs={tabsHere.map((t) => ({ id: t.id, title: paneTitles.get(t.id) ?? "", path: currentEntry(t).path, kind: tabKind(isBrowserTab(t), currentEntry(t).path), openedBy: t.opened_by, unseen: t.unseen, unsaved: !isBrowserTab(t) && isUnsaved(unsaved, currentEntry(t).path, osName), preview: t.preview === true }))}

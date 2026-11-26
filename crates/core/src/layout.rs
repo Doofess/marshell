@@ -107,7 +107,7 @@ fn lenient_pane(doc: &mut serde_json::Value) {
     }
 }
 
-/// Drops from the saved stack the weights and the fill that can't be read, one by one. False when the stack itself is
+/// Drops from the saved stack the weights that can't be read, one by one. False when the stack itself is
 /// unreadable, which is when its `shown` isn't a list of strings.
 fn lenient_panels(panels: &mut serde_json::Value) -> bool {
     use serde_json::Value;
@@ -130,9 +130,6 @@ fn lenient_panels(panels: &mut serde_json::Value) -> bool {
             fields.remove("weights");
         }
         None => {}
-    }
-    if fields.get("filled").is_some_and(|f| !f.is_string()) {
-        fields.remove("filled");
     }
     true
 }
@@ -164,6 +161,9 @@ fn lenient_session(session: &mut serde_json::Value) -> bool {
     }
     if fields.get("active_browser").is_some_and(|a| !a.is_string()) {
         fields.remove("active_browser");
+    }
+    if fields.get("expanded_panel").is_some_and(|e| !e.is_string()) {
+        fields.remove("expanded_panel");
     }
     if let Some(tree) = fields.get_mut("tree")
         && !lenient_tree_state(tree)
@@ -502,7 +502,7 @@ fn is_page_address(s: &str) -> bool {
     s.chars().count() <= MAX_PATH_CHARS && (s == "about:blank" || s.starts_with("http://") || s.starts_with("https://"))
 }
 
-/// Pulls the stack of panels back into range: known panels in order, good weights, a fill that can be.
+/// Pulls the stack of panels back into range: known panels in order, good weights.
 fn repair_panels(panels: &mut Option<Panels>) {
     let Some(p) = panels else {
         return;
@@ -518,9 +518,6 @@ fn repair_panels(panels: &mut Option<Panels>) {
     }
     p.weights
         .retain(|k, v| PANEL_IDS.contains(&k.as_str()) && PANEL_WEIGHT.contains(v));
-    if !(shown.len() >= 2 && p.filled.as_ref().is_some_and(|f| shown.contains(f))) {
-        p.filled = None;
-    }
     p.shown = shown;
 }
 
@@ -530,6 +527,15 @@ fn repair_pane(pane: &mut PaneView, tabs: &[SavedTab]) {
         pane.width = None;
     }
     repair_panels(&mut pane.panels);
+    for st in pane.sessions.values_mut() {
+        let shown = pane
+            .panels
+            .as_ref()
+            .is_some_and(|p| st.expanded_panel.as_ref().is_some_and(|e| p.shown.contains(e)));
+        if !shown {
+            st.expanded_panel = None;
+        }
+    }
     pane.sessions
         .retain(|id, _| id == SHELL_OWNER || tabs.iter().any(|t| &t.tab_id == id));
     for st in pane.sessions.values_mut() {
@@ -645,8 +651,9 @@ fn repair_pane(pane: &mut PaneView, tabs: &[SavedTab]) {
             }
         }
     }
-    pane.sessions
-        .retain(|_, st| !st.tabs.is_empty() || st.tree.is_some() || st.changes.is_some());
+    pane.sessions.retain(|_, st| {
+        !st.tabs.is_empty() || st.tree.is_some() || st.changes.is_some() || st.expanded_panel.is_some()
+    });
     if let Some(tree) = &mut pane.tree
         && tree.width.is_some_and(|w| !TREE_WIDTH.contains(&w))
     {
@@ -710,7 +717,7 @@ pub fn validate_view(v: &ViewLayout) -> Result<(), String> {
     validate_pane(&v.pane)
 }
 
-/// The pane's stack of panels: the shown ones in the fixed order, their weights, and the filled one. A bad value is an error naming the field.
+/// The pane's stack of panels: the shown ones in the fixed order, and their weights. A bad value is an error naming the field.
 fn validate_panels(p: &Panels) -> Result<(), String> {
     let ordered: Vec<&str> = PANEL_IDS
         .iter()
@@ -734,13 +741,6 @@ fn validate_panels(p: &Panels) -> Result<(), String> {
                 PANEL_WEIGHT.end()
             ));
         }
-    }
-    if let Some(f) = &p.filled
-        && (p.shown.len() < 2 || !p.shown.contains(f))
-    {
-        return Err(format!(
-            "pane.panels.filled must name a shown panel, and only while two or more are shown, not {f:?}"
-        ));
     }
     Ok(())
 }
@@ -770,6 +770,13 @@ pub fn validate_pane(p: &PaneView) -> Result<(), String> {
         ));
     }
     for (session, st) in &p.sessions {
+        if let Some(e) = &st.expanded_panel
+            && !p.panels.as_ref().is_some_and(|panels| panels.shown.contains(e))
+        {
+            return Err(format!(
+                "pane.sessions.{session}.expanded_panel must name a shown panel, not {e:?}"
+            ));
+        }
         if let Some(tree) = &st.tree {
             if tree.root.chars().count() > MAX_PATH_CHARS {
                 return Err(format!(
@@ -1265,6 +1272,7 @@ mod tests {
             active_browser: None,
             tree: None,
             changes: None,
+            expanded_panel: None,
         }
     }
 
@@ -1851,11 +1859,10 @@ mod tests {
         assert_eq!(doc, LayoutDoc::default());
     }
 
-    fn stack(shown: &[&str], weights: &[(&str, u32)], filled: Option<&str>) -> marshell_protocol::api::Panels {
+    fn stack(shown: &[&str], weights: &[(&str, u32)]) -> marshell_protocol::api::Panels {
         marshell_protocol::api::Panels {
             shown: shown.iter().map(|s| s.to_string()).collect(),
             weights: weights.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
-            filled: filled.map(String::from),
         }
     }
 
@@ -1897,15 +1904,14 @@ mod tests {
     }
 
     #[test]
-    fn a_bad_weight_or_fill_loses_only_itself() {
+    fn a_bad_weight_loses_only_itself() {
         for (bad, weights) in [
             (
                 serde_json::json!({"shown": ["files"], "weights": {"files": 1.5}}),
                 vec![],
             ),
-            (serde_json::json!({"shown": ["files"], "filled": 3}), vec![]),
             (
-                serde_json::json!({"shown": ["browser", "files"], "weights": {"files": -5, "browser": 3}, "filled": 7}),
+                serde_json::json!({"shown": ["browser", "files"], "weights": {"files": -5, "browser": 3}}),
                 vec![("browser", 3)],
             ),
         ] {
@@ -1918,7 +1924,6 @@ mod tests {
             let want: std::collections::BTreeMap<String, u32> =
                 weights.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
             assert_eq!(panels.weights, want);
-            assert_eq!(panels.filled, None);
         }
     }
 
@@ -1932,25 +1937,21 @@ mod tests {
 
     #[test]
     fn repair_keeps_a_good_stack() {
-        let good = stack(
-            &["browser", "files"],
-            &[("browser", 6000), ("files", 14000)],
-            Some("files"),
-        );
+        let good = stack(&["browser", "files"], &[("browser", 6000), ("files", 14000)]);
         assert_eq!(repaired_stack(good.clone()), Some(good));
     }
 
     #[test]
     fn repair_orders_and_dedupes_shown() {
-        let got = repaired_stack(stack(&["files", "browser", "files"], &[], None)).unwrap();
+        let got = repaired_stack(stack(&["files", "browser", "files"], &[])).unwrap();
         assert_eq!(got.shown, vec!["browser", "files"]);
     }
 
     #[test]
     fn repair_drops_an_unknown_panel() {
-        let got = repaired_stack(stack(&["tree", "files"], &[], None)).unwrap();
+        let got = repaired_stack(stack(&["tree", "files"], &[])).unwrap();
         assert_eq!(got.shown, vec!["files"]);
-        assert_eq!(repaired_stack(stack(&["tree"], &[], None)), None);
+        assert_eq!(repaired_stack(stack(&["tree"], &[])), None);
     }
 
     #[test]
@@ -1958,14 +1959,12 @@ mod tests {
         let got = repaired_stack(stack(
             &["browser", "files"],
             &[("tree", 5), ("browser", 0), ("files", 100_001)],
-            None,
         ))
         .unwrap();
         assert!(got.weights.is_empty());
         let got = repaired_stack(stack(
             &["browser", "files"],
             &[("tree", 5), ("browser", 0), ("files", 7)],
-            None,
         ))
         .unwrap();
         assert_eq!(got.weights.len(), 1);
@@ -1973,39 +1972,20 @@ mod tests {
     }
 
     #[test]
-    fn repair_clears_a_fill_that_cannot_be() {
-        assert_eq!(
-            repaired_stack(stack(&["files"], &[], Some("browser"))).unwrap().filled,
-            None
-        );
-        assert_eq!(
-            repaired_stack(stack(&["files"], &[], Some("files"))).unwrap().filled,
-            None
-        );
-    }
-
-    #[test]
-    fn changes_is_a_panel_and_fill_holds_with_three() {
-        let three = stack(&["browser", "files", "changes"], &[("changes", 9)], Some("changes"));
+    fn changes_is_a_panel() {
+        let three = stack(&["browser", "files", "changes"], &[("changes", 9)]);
         let got = repaired_stack(three.clone()).unwrap();
         assert_eq!(got.shown, ["browser", "files", "changes"]);
         assert_eq!(got.weights["changes"], 9);
-        assert_eq!(got.filled.as_deref(), Some("changes"));
         let pane = PaneView {
             panels: Some(three),
             ..PaneView::default()
         };
         assert!(validate_pane(&pane).is_ok());
-        let out_of_order = stack(&["changes", "browser", "files"], &[], None);
+        let out_of_order = stack(&["changes", "browser", "files"], &[]);
         assert_eq!(
             repaired_stack(out_of_order).unwrap().shown,
             ["browser", "files", "changes"]
-        );
-        assert_eq!(
-            repaired_stack(stack(&["changes"], &[], Some("changes")))
-                .unwrap()
-                .filled,
-            None
         );
     }
 
@@ -2029,23 +2009,18 @@ mod tests {
             let err = validate_pane(&pane).unwrap_err();
             assert!(err.starts_with(starts), "{err}");
         };
-        check(stack(&["files", "browser"], &[], None), "pane.panels.shown");
-        check(stack(&["files", "files"], &[], None), "pane.panels.shown");
-        check(stack(&[], &[], None), "pane.panels.shown");
-        check(stack(&["tree"], &[], None), "pane.panels.shown");
-        check(stack(&["files"], &[("tree", 5)], None), "pane.panels.weights.tree");
-        check(stack(&["files"], &[("files", 0)], None), "pane.panels.weights.files");
-        check(
-            stack(&["files"], &[("files", 100_001)], None),
-            "pane.panels.weights.files",
-        );
-        check(stack(&["files"], &[], Some("files")), "pane.panels.filled");
-        check(stack(&["browser", "files"], &[], Some("tree")), "pane.panels.filled");
+        check(stack(&["files", "browser"], &[]), "pane.panels.shown");
+        check(stack(&["files", "files"], &[]), "pane.panels.shown");
+        check(stack(&[], &[]), "pane.panels.shown");
+        check(stack(&["tree"], &[]), "pane.panels.shown");
+        check(stack(&["files"], &[("tree", 5)]), "pane.panels.weights.tree");
+        check(stack(&["files"], &[("files", 0)]), "pane.panels.weights.files");
+        check(stack(&["files"], &[("files", 100_001)]), "pane.panels.weights.files");
         let mut st = session(vec![browser_tab("t1", "https://example.com/")]);
         st.active_browser = Some("gone".into());
         let err = validate_pane(&pane_with("a", st)).unwrap_err();
         assert!(err.starts_with("pane.sessions.a.active_browser"), "{err}");
-        let good = stack(&["browser", "files"], &[("browser", 1)], Some("browser"));
+        let good = stack(&["browser", "files"], &[("browser", 1)]);
         assert!(
             validate_pane(&PaneView {
                 panels: Some(good),
@@ -2053,6 +2028,105 @@ mod tests {
             })
             .is_ok()
         );
+    }
+
+    fn pane_expanding(shown: Option<&[&str]>, panel: &str) -> PaneView {
+        let mut st = session(vec![]);
+        st.expanded_panel = Some(panel.into());
+        let mut pane = pane_with("a", st);
+        pane.panels = shown.map(|s| stack(s, &[]));
+        pane
+    }
+
+    #[test]
+    fn validate_refuses_an_expanded_panel_that_is_not_shown() {
+        let err = validate_pane(&pane_expanding(Some(&["files"]), "changes")).unwrap_err();
+        assert_eq!(
+            err,
+            "pane.sessions.a.expanded_panel must name a shown panel, not \"changes\""
+        );
+        let err = validate_pane(&pane_expanding(None, "files")).unwrap_err();
+        assert_eq!(
+            err,
+            "pane.sessions.a.expanded_panel must name a shown panel, not \"files\""
+        );
+        assert!(validate_pane(&pane_expanding(Some(&["files"]), "files")).is_ok());
+    }
+
+    #[test]
+    fn an_old_fill_is_dropped_and_the_rest_of_the_stack_is_kept() {
+        let home = tempfile::tempdir().unwrap();
+        let file = serde_json::json!({
+            "version": 1,
+            "tabs": [{"tab_id": "ta", "number": 1, "name": "A", "agent": null, "profile_id": "cmd", "cwd": "C:/w"}],
+            "view": {
+                "panes": ["ta"], "active": 0, "sidebar": "rail", "sidebar_width": 304,
+                "shell_hidden": false, "grouped": false,
+                "pane": {"open": true, "width": 480, "recent": [], "sessions": {},
+                    "panels": {"shown": ["browser", "files"], "weights": {"files": 20000}, "filled": "files"}}
+            },
+            "launcher": {}
+        });
+        std::fs::write(home.path().join("layout.json"), file.to_string()).unwrap();
+        let doc = load(home.path());
+        let panels = doc.view.pane.panels.clone().expect("the stack is kept");
+        assert_eq!(panels.shown, ["browser", "files"]);
+        assert_eq!(panels.weights["files"], 20000);
+        save(home.path(), &doc).unwrap();
+        let text = std::fs::read_to_string(home.path().join("layout.json")).unwrap();
+        assert!(!text.contains("filled"), "{text}");
+    }
+
+    #[test]
+    fn a_sessions_expanded_panel_round_trips() {
+        let home = tempfile::tempdir().unwrap();
+        let mut doc = doc_with("a");
+        doc.view.pane = pane_expanding(Some(&["files"]), "files");
+        save(home.path(), &doc).unwrap();
+        let loaded = load(home.path());
+        assert_eq!(loaded.view.pane.sessions["a"].expanded_panel.as_deref(), Some("files"));
+        assert_eq!(repair(loaded.clone()), loaded);
+    }
+
+    #[test]
+    fn repair_drops_an_expanded_panel_that_is_not_shown() {
+        for (shown, panel) in [
+            (Some(&["files"][..]), "changes"),
+            (Some(&["files"][..]), "nope"),
+            (None, "files"),
+        ] {
+            let mut st = session(vec![file_tab("t1", &["C:/a.md"])]);
+            st.expanded_panel = Some(panel.into());
+            let mut doc = doc_with("a");
+            doc.view.pane = pane_with("a", st);
+            doc.view.pane.panels = shown.map(|s| stack(s, &[]));
+            let pane = repair(doc).view.pane;
+            assert_eq!(pane.sessions["a"].expanded_panel, None, "{shown:?} {panel}");
+            assert_eq!(pane.sessions["a"].tabs.len(), 1);
+        }
+    }
+
+    #[test]
+    fn a_session_with_only_an_expanded_panel_is_kept() {
+        let mut doc = doc_with("a");
+        doc.view.pane = pane_expanding(Some(&["browser", "files"]), "files");
+        let pane = repair(doc).view.pane;
+        assert_eq!(pane.sessions["a"].expanded_panel.as_deref(), Some("files"));
+        assert!(pane.sessions["a"].tabs.is_empty());
+    }
+
+    #[test]
+    fn an_expanded_panel_of_the_wrong_type_loses_only_itself() {
+        let pane = serde_json::json!({
+            "open": true, "width": 480, "recent": [],
+            "panels": {"shown": ["files"]},
+            "sessions": {"ta": {"tabs": [good_file_tab("t1")], "active": "t1", "expanded_panel": 3}}
+        });
+        let doc = load_with_pane(pane, 304.into());
+        assert_tabs_and_sidebar_kept(&doc);
+        let st = &doc.view.pane.sessions["ta"];
+        assert_eq!(st.tabs.len(), 1);
+        assert_eq!(st.expanded_panel, None);
     }
 
     fn pane_json_with_session(session: serde_json::Value) -> serde_json::Value {

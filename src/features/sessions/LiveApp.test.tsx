@@ -779,7 +779,7 @@ describe("LiveApp: the stack of panels", () => {
               activeId={activeIn(st, panel)}
               plus={panel === "browser" ? { label: "New tab", menu: false } : { label: "Open a file", menu: true }}
               menu={panel === "browser" ? { label: "Browser menu" } : undefined}
-              fill={{ on: stack.filled === panel, disabled: stack.shown.length < 2 ? "No other panel is shown" : undefined }}
+              fill={{ on: stack.expanded === panel, disabled: stack.shown.length < 2 ? "No other panel is shown" : undefined }}
               hideKeys="Ctrl+Shift+A"
               onFill={() => {}}
               onSelect={() => {}}
@@ -804,8 +804,8 @@ describe("LiveApp: the stack of panels", () => {
     expect(h).toContain("Open a file");
     expect(h).toContain(PANEL_LABEL.browser);
   });
-  it("a filled panel is drawn alone", () => {
-    const pane = paneReducer(withBoth(), { type: "fill", panel: "files", session: "t1" });
+  it("an expanded panel is drawn alone", () => {
+    const pane = paneReducer(withBoth(), { type: "expand", panel: "files", session: "t1" });
     const h = stackHtml(pane, "t1");
     expect(h).toContain(`data-panel="files"`);
     expect(h).not.toContain(`data-panel="browser"`);

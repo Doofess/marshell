@@ -63,7 +63,8 @@ export function draftBase(base: string): string {
  * A test helper: what the core accepts of a pane, in TypeScript. Returns the name of the first field that breaks a rule, or null.
  * While a session has tabs its `active` names one of them (a Files tab when Files has any, else a Browser tab); `active_browser` is
  * a property present only while Browser has a tab, and names one of them; `panels` has `shown` non-empty in the stack's order,
- * `filled` null or one of two shown, and weights that are whole numbers from 1 to 100000 under panel ids.
+ * and weights that are whole numbers from 1 to 100000 under panel ids. A session's `expanded_panel`, when it has one, is a string that
+ * `panels.shown` holds.
  */
 export function paneProblem(pane: PaneView): string | null {
   if (pane.tree?.width != null && (pane.tree.width < 160 || pane.tree.width > 2048)) return "tree.width";
@@ -88,13 +89,13 @@ export function paneProblem(pane: PaneView): string | null {
     } else if (!browser.some((t) => t.id === st.active_browser)) {
       return "active_browser";
     }
+    if (st.expanded_panel !== undefined && (typeof st.expanded_panel !== "string" || !pane.panels?.shown.includes(st.expanded_panel))) return "expanded_panel";
   }
   const p = pane.panels;
   if (p !== undefined) {
     if (!Array.isArray(p.shown) || p.shown.length === 0) return "panels.shown";
     const order = PANELS.filter((id) => p.shown.includes(id));
     if (order.length !== p.shown.length || order.some((id, i) => p.shown[i] !== id)) return "panels.shown";
-    if (p.filled !== null && (typeof p.filled !== "string" || !p.shown.includes(p.filled) || p.shown.length < 2)) return "panels.filled";
     for (const [key, value] of Object.entries(p.weights)) {
       if (!isPanelId(key)) return "panels.weights";
       if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 100_000) return "panels.weights";
