@@ -124,12 +124,22 @@ pub(crate) fn control(agent: &str, key: &str) -> Option<FieldControl> {
     })
 }
 
-/// Whether a key's value is a secret: the key holds `key`, `token`, `secret`, `password` or `auth`, in any case.
+/// Whether a key's value is a secret: the key holds `key`, `token`, `secret` or `password`, in any case, or holds
+/// `auth` anywhere but at the start of "author" (`includeCoAuthoredBy`, `authorName` and `certificateAuthority` are
+/// shown). `authoriz` and `authoris` still count, so `Authorization` is a secret. The match stays on letters and not
+/// on words: a key written as one run, such as `oauthtoken`, must stay hidden.
 pub fn is_secret_key(key: &str) -> bool {
     let key = key.to_lowercase();
-    ["key", "token", "secret", "password", "auth"]
+    if ["key", "token", "secret", "password"]
         .iter()
         .any(|word| key.contains(word))
+    {
+        return true;
+    }
+    key.match_indices("auth").any(|(at, _)| {
+        let rest = &key[at..];
+        !rest.starts_with("author") || rest.starts_with("authoriz") || rest.starts_with("authoris")
+    })
 }
 
 // ---- masking, once for JSON and once for TOML ----
@@ -1127,7 +1137,8 @@ mod tests {
         );
         let raw: Value = serde_json::from_str(v.raw.as_deref().unwrap()).unwrap();
         assert_eq!(raw.pointer("/security/auth"), Some(&json!("hidden")));
-        assert_eq!(raw.pointer("/general/gitCoAuthor"), Some(&json!("hidden")));
+        // "author" is not a secret (slice 6y): of these, only the `auth` of `security.auth` hides its value.
+        assert_eq!(raw.pointer("/general/gitCoAuthor/commit"), Some(&json!(true)));
         assert_eq!(raw["maxTokens"], "hidden");
     }
 
@@ -1604,10 +1615,28 @@ mod tests {
             "Authorization",
             "password",
             "client_secret",
+            "AUTH",
+            "oauth",
+            "authToken",
+            "auth_token",
+            "authorisationHeader",
+            "x-authorization",
+            // The second `auth` counts.
+            "authorAuth",
+            "awsAuthRefresh",
         ] {
             assert!(is_secret_key(k), "{k}");
         }
-        for k in ["model", "theme", "cleanupPeriodDays"] {
+        for k in [
+            "model",
+            "theme",
+            "cleanupPeriodDays",
+            "includeCoAuthoredBy",
+            "author",
+            "authors",
+            "authorName",
+            "certificateAuthority",
+        ] {
             assert!(!is_secret_key(k), "{k}");
         }
     }
