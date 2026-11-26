@@ -125,20 +125,33 @@ pub(crate) fn control(agent: &str, key: &str) -> Option<FieldControl> {
 }
 
 /// Whether a key's value is a secret: the key holds `key`, `token`, `secret` or `password`, in any case, or holds
-/// `auth` anywhere but at the start of "author" (`includeCoAuthoredBy`, `authorName` and `certificateAuthority` are
-/// shown). `authoriz` and `authoris` still count, so `Authorization` is a secret. The match stays on letters and not
-/// on words: a key written as one run, such as `oauthtoken`, must stay hidden.
+/// `auth` anywhere but at the start of the word "author" (`includeCoAuthoredBy`, `authorName` and
+/// `certificateAuthority` are shown). The `or` must be written in the case of the `h` before it, so `authOrg` and
+/// `oauthOrganization`, where `Or` begins another word, stay secret. `authoriz` and `authoris` still count, so
+/// `Authorization` is a secret. The match stays on letters and not on words: a key written as one run, such as
+/// `oauthtoken`, must stay hidden.
 pub fn is_secret_key(key: &str) -> bool {
-    let key = key.to_lowercase();
     if ["key", "token", "secret", "password"]
         .iter()
-        .any(|word| key.contains(word))
+        .any(|word| key.to_lowercase().contains(word))
     {
         return true;
     }
-    key.match_indices("auth").any(|(at, _)| {
-        let rest = &key[at..];
-        !rest.starts_with("author") || rest.starts_with("authoriz") || rest.starts_with("authoris")
+    // The original text, by bytes: only ASCII letters match `auth`, so a match always starts on a character boundary.
+    let bytes = key.as_bytes();
+    (0..bytes.len()).any(|at| {
+        let rest = &bytes[at..];
+        if !rest.get(..4).is_some_and(|word| word.eq_ignore_ascii_case(b"auth")) {
+            return false;
+        }
+        let upper = rest[3].is_ascii_uppercase();
+        let author = rest
+            .get(4..6)
+            .is_some_and(|or| or.eq_ignore_ascii_case(b"or") && or.iter().all(|b| b.is_ascii_uppercase() == upper));
+        let authoriz = rest
+            .get(..8)
+            .is_some_and(|word| word.eq_ignore_ascii_case(b"authoriz") || word.eq_ignore_ascii_case(b"authoris"));
+        !author || authoriz
     })
 }
 
@@ -1636,6 +1649,37 @@ mod tests {
             "authors",
             "authorName",
             "certificateAuthority",
+        ] {
+            assert!(!is_secret_key(k), "{k}");
+        }
+    }
+
+    #[test]
+    fn auth_before_another_word_that_starts_with_or_stays_secret() {
+        for k in [
+            "authOrg",
+            "authOrgId",
+            "authOrigin",
+            "oauthOrganization",
+            "AuthOrg",
+            "Authorization",
+            "authorisationHeader",
+            "AUTHORIZATION",
+            "oauth",
+            "AUTH",
+            "authToken",
+        ] {
+            assert!(is_secret_key(k), "{k}");
+        }
+        for k in [
+            "author",
+            "Author",
+            "AUTHOR",
+            "authors",
+            "includeCoAuthoredBy",
+            "authorName",
+            "certificateAuthority",
+            "gitCoAuthor",
         ] {
             assert!(!is_secret_key(k), "{k}");
         }

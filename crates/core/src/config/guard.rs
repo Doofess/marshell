@@ -67,9 +67,14 @@ impl Guard {
     /// the distro) and is matched by its text instead (`with_unread`).
     /// Denied: `denied_for_os()`. The project list is read once, here.
     pub fn for_home(home: &Path) -> Self {
+        Self::for_home_with(home, &crate::wsl::running_recent)
+    }
+
+    /// `for_home`, with the list of running WSL distros passed in, so a test can say which distros run.
+    pub fn for_home_with(home: &Path, running: &dyn Fn() -> Vec<String>) -> Self {
         let mut allowed: Vec<PathBuf> = dirs::home_dir().into_iter().collect();
         let mut unread = Vec::new();
-        for listed in crate::projects::entries(home, &crate::wsl::running_recent) {
+        for listed in crate::projects::entries(home, running) {
             let path = PathBuf::from(listed.info.path);
             if !listed.read {
                 unread.push(path);
@@ -555,6 +560,49 @@ mod tests {
                 .allowed
                 .iter()
                 .all(|a| crate::wsl::share_distro(&a.to_string_lossy()).is_none())
+        );
+    }
+
+    /// A home whose `projects.json` holds an ordinary folder and one in the distro `MarshellTestDistro`, which no PC
+    /// has.
+    fn home_with_a_project_in_a_distro() -> (tempfile::TempDir, tempfile::TempDir) {
+        let home = tempfile::tempdir().unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        let doc = serde_json::json!({
+            "version": 1,
+            "projects": [
+                { "path": r"\\wsl.localhost\MarshellTestDistro\home\me\app", "last_used_ms": 2 },
+                { "path": folder.path().to_string_lossy(), "last_used_ms": 1 },
+            ],
+        });
+        fs::write(home.path().join("projects.json"), doc.to_string()).unwrap();
+        (home, folder)
+    }
+
+    #[test]
+    fn for_home_keeps_a_project_in_a_stopped_distro_out_of_the_folders_it_resolves() {
+        let (home, folder) = home_with_a_project_in_a_distro();
+        let guard = Guard::for_home_with(home.path(), &|| vec![]);
+        assert!(guard.allowed.contains(&canonical(folder.path())));
+        assert!(
+            guard
+                .allowed
+                .iter()
+                .all(|a| crate::wsl::share_distro(&a.to_string_lossy()).is_none()),
+            "{:?}",
+            guard.allowed
+        );
+        assert_eq!(
+            guard.unread,
+            [("MarshellTestDistro".to_string(), "/home/me/app".to_string())]
+        );
+        let inside = Path::new(r"\\wsl.localhost\MarshellTestDistro\home\me\app\.claude\settings.json");
+        assert!(guard.check(inside).is_ok());
+        // Outside every allowed folder and the user profile: a file at the root of the temp folder's drive.
+        let drive_root = home.path().ancestors().last().unwrap();
+        assert_eq!(
+            guard.check(&drive_root.join("marshell-guard-probe.json")),
+            Err(Refusal::OutsideAllowed)
         );
     }
 

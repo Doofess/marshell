@@ -87,23 +87,25 @@ const RUNNING_MEMORY: Duration = Duration::from_secs(5);
 /// is too slow.
 pub fn running_recent() -> Vec<String> {
     static RECENT: Mutex<Option<(Instant, Vec<String>)>> = Mutex::new(None);
-    recent_or(&RECENT, Instant::now(), || list_running(LIST_TIMEOUT))
+    recent_or(&RECENT, &Instant::now, || list_running(LIST_TIMEOUT))
 }
 
-/// The list remembered in `cache` when it was stored less than `RUNNING_MEMORY` before `now`, else what `fetch` finds,
-/// which is remembered. The lock is held only to read or store, never while `fetch` runs `wsl.exe`.
+/// The list remembered in `cache` when it was stored less than `RUNNING_MEMORY` before `now()`, else what `fetch` finds,
+/// which is remembered. The list is stamped with the time after `fetch` returns, so an answer that took 5 seconds or
+/// more is still remembered for the full 5 seconds. The lock is held only to read or store, never while `fetch` runs
+/// `wsl.exe`.
 fn recent_or(
     cache: &Mutex<Option<(Instant, Vec<String>)>>,
-    now: Instant,
+    now: &dyn Fn() -> Instant,
     fetch: impl FnOnce() -> Vec<String>,
 ) -> Vec<String> {
     if let Some((at, list)) = cache.lock().unwrap_or_else(|e| e.into_inner()).as_ref()
-        && now.saturating_duration_since(*at) < RUNNING_MEMORY
+        && now().saturating_duration_since(*at) < RUNNING_MEMORY
     {
         return list.clone();
     }
     let list = fetch();
-    *cache.lock().unwrap_or_else(|e| e.into_inner()) = Some((now, list.clone()));
+    *cache.lock().unwrap_or_else(|e| e.into_inner()) = Some((now(), list.clone()));
     list
 }
 
@@ -444,12 +446,43 @@ mod tests {
             vec![name.to_string()]
         };
         let start = Instant::now();
-        assert_eq!(recent_or(&cache, start, || fetch("Ubuntu")), ["Ubuntu"]);
-        let soon = start + Duration::from_secs(4);
-        assert_eq!(recent_or(&cache, soon, || fetch("Debian")), ["Ubuntu"]);
+        let clock = std::cell::Cell::new(start);
+        let now = || clock.get();
+        assert_eq!(recent_or(&cache, &now, || fetch("Ubuntu")), ["Ubuntu"]);
+        clock.set(start + Duration::from_secs(4));
+        assert_eq!(recent_or(&cache, &now, || fetch("Debian")), ["Ubuntu"]);
         assert_eq!(calls.get(), 1);
-        let later = start + Duration::from_secs(6);
-        assert_eq!(recent_or(&cache, later, || fetch("Debian")), ["Debian"]);
+        clock.set(start + Duration::from_secs(6));
+        assert_eq!(recent_or(&cache, &now, || fetch("Debian")), ["Debian"]);
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn a_slow_answer_is_remembered_from_when_it_arrived() {
+        let cache = Mutex::new(None);
+        let calls = std::cell::Cell::new(0);
+        let t0 = Instant::now();
+        let clock = std::cell::Cell::new(t0);
+        let now = || clock.get();
+        // The first answer takes 6 seconds to arrive.
+        let slow = || {
+            calls.set(calls.get() + 1);
+            clock.set(t0 + Duration::from_secs(6));
+            vec!["Ubuntu".to_string()]
+        };
+        let quick = || {
+            calls.set(calls.get() + 1);
+            vec!["Debian".to_string()]
+        };
+        assert_eq!(recent_or(&cache, &now, slow), ["Ubuntu"]);
+        assert_eq!(calls.get(), 1);
+        // One second after it arrived it is remembered, though it was asked for 7 seconds ago.
+        clock.set(t0 + Duration::from_secs(7));
+        assert_eq!(recent_or(&cache, &now, quick), ["Ubuntu"]);
+        assert_eq!(calls.get(), 1);
+        // Six seconds after it arrived it is not.
+        clock.set(t0 + Duration::from_secs(12));
+        assert_eq!(recent_or(&cache, &now, quick), ["Debian"]);
         assert_eq!(calls.get(), 2);
     }
 

@@ -1176,7 +1176,8 @@ impl AppState {
     /// Takes a later detection as the detected shells and merges it with `profiles.json` again, so the shells it
     /// adds appear and the person's saved edits stay. The file is read before any lock is taken, and the two locks
     /// (the detected list, then the profiles document) are taken one after the other, never nested. A `PUT
-    /// /v1/profiles` that lands between the two is the accepted race: the document it saved wins until the next start.
+    /// /v1/profiles` that lands between the file read and the second lock is the accepted race: its document is on
+    /// disk, but the merge made from the older file is what the app shows until the next start.
     pub(crate) fn adopt_detected(&self, detected: Vec<Profile>) {
         let merged = crate::profiles::store::load(&self.0.home, detected.clone());
         *self.0.detected.write().unwrap_or_else(|e| e.into_inner()) = detected;

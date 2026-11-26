@@ -4,6 +4,7 @@
 
 use crate::auth::new_id;
 use crate::config::hash::hash_bytes;
+use crate::config::managed::ManagedEntry;
 use crate::projects::same_path;
 use crate::store::{self, Versioned};
 use anyhow::Context;
@@ -27,6 +28,8 @@ pub struct SnapshotInput {
     pub after_hash: Option<String>,
     pub scope: ConfigScope,
     pub applies: Applies,
+    /// What `managed.json` records for this file now, so a restore of this snapshot can put those records back.
+    pub managed: Vec<ManagedEntry>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -36,6 +39,9 @@ struct FileEntry {
     /// The blob number in the snapshot's folder; absent when the file did not exist before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     blob: Option<u32>,
+    /// The file's `managed.json` records before the change; absent in a snapshot taken before they were kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    managed: Option<Vec<ManagedEntry>>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -151,6 +157,7 @@ impl Snapshots {
                     applies: file.applies,
                 },
                 blob,
+                managed: Some(file.managed.clone()),
             });
         }
         let mut index = self.load()?;
@@ -264,6 +271,23 @@ impl Snapshots {
         }
     }
 
+    /// What `managed.json` recorded for `path` just before the snapshot's change. `None`: no such snapshot or file in
+    /// it, or a snapshot from before the records were kept.
+    pub fn managed_before(&self, id: &str, path: &Path) -> anyhow::Result<Option<Vec<ManagedEntry>>> {
+        if !valid_id(id) {
+            return Ok(None);
+        }
+        let _guard = Self::lock();
+        let index = self.load()?;
+        let want = path.to_string_lossy();
+        Ok(index
+            .snapshots
+            .iter()
+            .find(|e| e.id == id)
+            .and_then(|e| e.files.iter().find(|f| same_path(&f.info.path, &want)))
+            .and_then(|f| f.managed.clone()))
+    }
+
     /// Removes the snapshot and its blobs. An unknown id is not an error.
     pub fn discard(&self, id: &str) -> anyhow::Result<()> {
         if !valid_id(id) {
@@ -293,6 +317,7 @@ mod tests {
             after_hash: Some("after".into()),
             scope: ConfigScope::User,
             applies: Applies::NewSessions,
+            managed: Vec::new(),
         }
     }
 
