@@ -59,7 +59,7 @@ By the time the uninstaller had ended, `OpenConsole.exe` was no longer running, 
 
 ## The fix
 
-`MARSHELL_REMOVE_HELD_PROGRAMS` in `src-tauri/windows/hooks.nsh`, inserted last in `NSIS_HOOK_POSTUNINSTALL`: it tries each of Marshell's six program files again every 250 ms until none is left or 20 s have passed, then removes the folder if it is empty. It names the files, so nothing else in the folder is deleted or waited for, and it looks at files in the install folder only, so another program's `OpenConsole.exe` (Windows Terminal runs one per tab) doesn't matter.
+`MARSHELL_REMOVE_HELD_PROGRAMS` in `src-tauri/windows/hooks.nsh`, inserted in `NSIS_HOOK_POSTUNINSTALL`: it tries each of Marshell's six program files again every 250 ms until none is left or 20 s have passed, then removes the folder if it is empty. It names the files, so nothing else in the folder is deleted or waited for, and it looks at files in the install folder only, so another program's `OpenConsole.exe` (Windows Terminal runs one per tab) doesn't matter.
 
 `scripts/release/hooks-check.ps1` builds a program that runs that macro on a folder (with a 3 s limit) and holds stand-in files open itself:
 
@@ -78,6 +78,12 @@ NOTE A7 once the uninstaller has ended, running from the install folder: nothing
 PASS A7 uninstall: the install folder holds no file
 RESULT 57 passed, 0 failed, 0 skipped
 ```
+
+### Where in the hook it runs
+
+The wait was built as the hook's last step, after `marshell uninstall --yes` has taken the hooks out of the agent CLIs, and the run above had it there. The pre-merge review led to a fault in that order. Tauri's uninstaller removes the uninstall entry before the last hook starts, and taking the hooks out lasts seconds, or up to a couple of minutes when a WSL distro has to start. A person who waits until `winget list` no longer shows Marshell and then installs again, as the release notes advise, could have the fresh install's programs deleted by a try that late. Before this slice nothing touched the folder after the entry was gone.
+
+The wait now runs first in the hook, a moment after the uninstaller's own delete. What is left of that gap is the time the wait itself takes: nothing when no file was in use, and 20 s at most. The dry run on the commit that moved it is in pull request #213's checks; it is the evidence that the helpers end within the limit without the extra time the unhook used to give them.
 
 ## Not fixed here
 
