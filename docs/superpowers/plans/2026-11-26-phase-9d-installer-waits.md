@@ -29,7 +29,7 @@
 All of these ran on stand-ins in `%TEMP%\9d-facts`, with the NSIS that Tauri downloads (`%LOCALAPPDATA%\tauri\NSIS`), or were read in the sources named:
 
 - `NSIS_HOOK_PREINSTALL` runs before `CheckIfAppIsRunning` in `Section Install` (`target/release/nsis/x64/installer.nsi`, Tauri CLI 2.12.1), and the first `File` after it is the 34 MB main program, then `OpenConsole.exe`. `hooks.nsh` is included after `utils.nsh`. A template copy whose hook inserts `CheckIfAppIsRunning` compiled (exit 0): the template's labels use `${__LINE__}`, so the two copies don't clash. The review compiled the wait sketch below under NSIS 3.11 as written.
-- `CreateFileW(GENERIC_WRITE, share 7, OPEN_EXISTING)` gives these errors: a running exe 32, a file held with `FileShare.Read` 32, a read-only file 5, a missing file 2, a free file opens. `File` opens with `FILE_SHARE_READ` and `CREATE_ALWAYS`, which is stricter, so a 32 from the probe means `File` would fail too.
+- `CreateFileW(GENERIC_WRITE, share 7, OPEN_EXISTING)` gives these errors: a running exe 32, a file held with `FileShare.Read` 32, a read-only file 5, a missing file 2, a free file opens. `File` opens with `FILE_SHARE_READ` and `CREATE_ALWAYS`, which is stricter, so a 32 from the probe means `File` would fail too. The final review found two gaps, and the probe was changed for both: a read-only file gives 5 even when it is held or loaded, so the probe clears the flag, tries again and puts it back; and a holder that writes and shares writing passes share 7 but not `File`, so the probe uses share 1, as `File` does.
 - `File` with `SetOverwrite on` overwrites a read-only file and clears the flag. NSIS `FileOpen … a` calls that file in use, which is why the probe reads the error code.
 - A silent `Abort` in a section exits 2, and `SetErrorLevel 7` before it makes the exit code 7.
 - A macro parameter can name another macro (`!insertmacro ${do} "a.txt"`).
@@ -42,7 +42,7 @@ All of these ran on stand-ins in `%TEMP%\9d-facts`, with the NSIS that Tauri dow
 
 ## Review Focus
 
-1. **A read-only program file** (a person set the flag): never counted as in use, so the update doesn't wait. `File` replaces it. Pinned by the `hooks-check.ps1` install case "a read-only program".
+1. **A read-only program file** (a person set the flag): not counted as in use when nothing holds it, so the update doesn't wait, and `File` replaces it. When it is held or loaded it is in use, and the flag is put back when the install stops. Pinned by the `hooks-check.ps1` install cases "a read-only program", "a read-only program that is held" and "a read-only loaded DLL" (the last two from the final review).
 2. **A first install, or a folder with only some programs:** no wait for a file that isn't there. Pinned by the install case "no programs yet".
 3. **Cancel on the template's own "Marshell is running" question** (windowed install): the template aborts inside the hook, as it did before, and nothing of ours runs after it. Read in review; the hook's body is pinned to exactly the two inserts.
 4. **Retry, then Cancel, and a passive install**: Retry starts a fresh 20 s wait and asks again; Cancel aborts with the stop's line and exit 32. With `/P` the abort leaves the progress page open until someone presses Close (the template's `SetAutoClose` is never reached). Nothing runs these (Global Constraints), so they are read in review and listed in the PR's Known limits.
@@ -91,7 +91,7 @@ All of these ran on stand-ins in `%TEMP%\9d-facts`, with the NSIS that Tauri dow
 **Interfaces:**
 - Produces, in `hooks.nsh`:
   - `!macro MARSHELL_EACH_PROGRAM do`: one `!insertmacro ${do} "<name>"` line for each of the six programs, in today's order.
-  - `!macro MARSHELL_PROBE_PROGRAM file`: when `$R9` is empty and the file exists, it calls `System::Call 'kernel32::CreateFileW(w "$INSTDIR\${file}", i 0x40000000, i 7, p 0, i 3, i 0x80, p 0) p.R7 ?e'` and always pops the error into `$R6`. The handle decides: when `$R7 P<> -1` it calls `CloseHandle` and nothing else. Only when the handle is -1 is `$R6` read: 32 or 33 sets `$R9` to `${file}`, and any other error leaves `$R9` alone.
+  - `!macro MARSHELL_PROBE_PROGRAM file`: when `$R9` is empty and the file exists, it calls `System::Call 'kernel32::CreateFileW(w "$INSTDIR\${file}", i 0x40000000, i 7, p 0, i 3, i 0x80, p 0) p.R7 ?e'` and always pops the error into `$R6`. The handle decides: when `$R7 P<> -1` it calls `CloseHandle` and nothing else. Only when the handle is -1 is `$R6` read: 32 or 33 sets `$R9` to `${file}`, and any other error leaves `$R9` alone. The final review changed two things, both pinned by new `hooks-check.ps1` cases (40 checks): the share mode is `i 1`, the one `File` uses. When the first try gives 5 on a read-only file, the probe clears only the read-only bit (`GetFileAttributesW`, `SetFileAttributesW`, in `$R4` and `$R5`), tries again, and puts the attributes back after `CloseHandle`.
   - `!macro MARSHELL_WAIT_FOR_HELD_PROGRAMS`: no parameters. It uses `$INSTDIR`, `${MAINBINARYNAME}` and `$PassiveMode`, and pushes and pops `$R4`–`$R9`.
   - `MARSHELL_HELD_WAIT_S`, and `!define MARSHELL_HELD_EXIT 32`.
   - `NSIS_HOOK_PREINSTALL` is exactly two lines: `!insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"`, then `!insertmacro MARSHELL_WAIT_FOR_HELD_PROGRAMS`.
