@@ -51,4 +51,64 @@
       DeleteRegKey HKCU "Software\Classes\marshell"
     ${EndIf}
   ${EndIf}
+  ; Last, and for every kind of uninstall: an install that follows one can't replace a file in use either.
+  !insertmacro MARSHELL_REMOVE_HELD_PROGRAMS
+!macroend
+
+; Deletes Marshell's programs that were still in use when the uninstaller first tried, once they are free
+; (issue #212; PLAN §9, slice 9b).
+;
+; The uninstaller closes a running Marshell and deletes the program files straight after. The programs
+; Marshell started (OpenConsole.exe for each terminal, marshell-host.exe, a hook) end a moment later than
+; the app itself, whether it was closed here, was killed or crashed, and a program that is running can't
+; have its file deleted: the uninstaller left it, and the install folder with it, without a word. Tauri's
+; installer has no hook between closing the app and deleting the files, so this runs in the last hook and
+; tries again every quarter of a second for up to MARSHELL_HELD_WAIT_MS. After that it gives up, and what
+; is still in use stays, as before: an administrator session's marshell-host.exe isn't closed by anything
+; here.
+;
+; It names every program the installer puts in the install folder, and nothing else in the folder is
+; touched or waited for (scripts/release/hooks.test.ts keeps the list in step with the bundle;
+; scripts/release/hooks-check.ps1 tries the wait and the limit).
+!ifndef MARSHELL_HELD_WAIT_MS
+  !define MARSHELL_HELD_WAIT_MS 20000
+!endif
+!define MARSHELL_HELD_STEP_MS 250
+
+; Deletes one program if it is there. Sets $R9 to 1 when it is still there afterwards.
+!macro MARSHELL_DELETE_PROGRAM file
+  ${If} ${FileExists} "$INSTDIR\${file}"
+    Delete "$INSTDIR\${file}"
+    ${If} ${FileExists} "$INSTDIR\${file}"
+      StrCpy $R9 1
+    ${EndIf}
+  ${EndIf}
+!macroend
+
+!macro MARSHELL_REMOVE_HELD_PROGRAMS
+  Push $R8
+  Push $R9
+  StrCpy $R8 0
+  ${Do}
+    StrCpy $R9 0
+    !insertmacro MARSHELL_DELETE_PROGRAM "${MAINBINARYNAME}.exe"
+    !insertmacro MARSHELL_DELETE_PROGRAM "marshell.exe"
+    !insertmacro MARSHELL_DELETE_PROGRAM "marshell-hook.exe"
+    !insertmacro MARSHELL_DELETE_PROGRAM "marshell-host.exe"
+    !insertmacro MARSHELL_DELETE_PROGRAM "OpenConsole.exe"
+    !insertmacro MARSHELL_DELETE_PROGRAM "conpty.dll"
+    ${If} $R9 = 0
+    ${OrIf} $R8 >= ${MARSHELL_HELD_WAIT_MS}
+      ${ExitDo}
+    ${EndIf}
+    ${If} $R8 = 0
+      DetailPrint "Waiting for Marshell's programs to end"
+    ${EndIf}
+    Sleep ${MARSHELL_HELD_STEP_MS}
+    IntOp $R8 $R8 + ${MARSHELL_HELD_STEP_MS}
+  ${Loop}
+  ; The folder went with the last file the first time round; this is for the files that went just now.
+  RMDir "$INSTDIR"
+  Pop $R9
+  Pop $R8
 !macroend
