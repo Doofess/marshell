@@ -1006,4 +1006,14 @@ describe("LiveApp: slice 6y's small faults", () => {
     expect(body).toContain("announce(OPEN_AS_SESSION_FAILED)");
     expect(body).toMatch(/404[^]*setPanel\(null\)/);
   });
+  it("an ended session's Resume bar gets the terminal's keyboard state", () => {
+    const at = source.indexOf("keyboard={hasTerminal ? undefined : {");
+    expect(at).toBeGreaterThan(0);
+    const body = source.slice(at, at + 300);
+    expect(body).toContain("selected: focus.autoFocus");
+    expect(body).toContain("blocked: focus.focusBlocked");
+    expect(body).toContain("token: focusToken");
+    expect(body).toContain("visible: shown");
+    expect(source).toContain("const focus = terminalFocusProps(");
+  });
 });

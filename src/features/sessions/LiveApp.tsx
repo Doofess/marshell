@@ -2462,6 +2462,7 @@ export function LiveApp() {
       const hasTerminal = bar === undefined || bar.phrase !== ENDED_PHRASE;
       const profile = profiles.find((p) => p.id === info?.profile_id);
       const profileGone = info && resumeBlockedReason(info.profile_id, profiles);
+      const focus = terminalFocusProps({ selected: row.id === focusedId, linkHeld, overlayUp: launcherOpen || reopening !== null || overlay !== null || review !== null });
       return (
         <div className="resume-pane">
           {hasTerminal && (
@@ -2475,7 +2476,7 @@ export function LiveApp() {
                 placeholder={startingTexts[row.id]}
                 onOutput={() => setStartingTexts((t) => without(t, row.id))}
                 onSize={onSize}
-                {...terminalFocusProps({ selected: row.id === focusedId, linkHeld, overlayUp: launcherOpen || reopening !== null || overlay !== null || review !== null })}
+                {...focus}
                 visible={shown}
                 paused={info?.paused === true}
                 onBlockedInput={() => actions.showPausedBar(row.id)}
@@ -2497,6 +2498,7 @@ export function LiveApp() {
               profileName={profile?.name ?? info.profile_id}
               disabledReason={profileGone}
               needsAck={actions.resumeNeedsAck(bar.id)}
+              keyboard={hasTerminal ? undefined : { selected: focus.autoFocus, blocked: focus.focusBlocked, visible: shown, token: focusToken }}
               onResume={(acknowledged) => startResume(bar, acknowledged)}
             />
           )}

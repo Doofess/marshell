@@ -1,7 +1,9 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { RowModel } from "../sidebar/types";
-import { ResumeBar } from "./ResumeBar";
+import { ResumeBar, resumeTakesKeyboard } from "./ResumeBar";
 
 const row = (patch: Partial<RowModel> = {}): RowModel => ({ id: "t1", number: 1, name: "Claude Code", project: "billing", projectKey: "billing", agent: "claude", status: "ended", phrase: "Ended last time", ...patch });
 const bar = (props: Partial<Parameters<typeof ResumeBar>[0]> = {}) =>
@@ -46,5 +48,27 @@ describe("ResumeBar: an administrator row", () => {
     expect(bar({ row: row({ elevated: true }) })).toMatch(/<button[^>]*>Reopen as administrator<\/button>/);
     expect(bar({ row: row({ elevated: true }) })).not.toMatch(/>Resume<\/button>/);
     expect(bar()).toMatch(/<button[^>]*>Resume<\/button>/);
+  });
+});
+
+describe("the Resume button takes the keyboard", () => {
+  const k = { selected: true, blocked: false, visible: true };
+  it("resumeTakesKeyboard follows the terminal's rule", () => {
+    expect(resumeTakesKeyboard(undefined)).toBe(false);
+    expect(resumeTakesKeyboard(k)).toBe(true);
+    expect(resumeTakesKeyboard({ ...k, visible: false })).toBe(false);
+    expect(resumeTakesKeyboard({ ...k, blocked: true })).toBe(false);
+    expect(resumeTakesKeyboard({ ...k, selected: false })).toBe(false);
+  });
+  const source = readFileSync(join(__dirname, "ResumeBar.tsx"), "utf8");
+  it("the first effect focuses the button when the keyboard is free", () => {
+    const at = source.indexOf("[keyboard?.selected, keyboard?.visible, keyboard?.token]");
+    expect(at).toBeGreaterThan(0);
+    expect(source.slice(Math.max(0, at - 400), at)).toMatch(/resumeTakesKeyboard\([^]*\.focus\(\)/);
+  });
+  it("the second effect gives it back when an overlay lifts", () => {
+    const at = source.indexOf("[keyboard?.blocked]");
+    expect(at).toBeGreaterThan(0);
+    expect(source.slice(Math.max(0, at - 600), at)).toContain("focusOnUnblock(");
   });
 });
