@@ -725,7 +725,7 @@ describe("LiveApp: the side pane", () => {
   const closedPane: PaneView = { open: false, width: null, sessions: {}, recent: [] };
   const paneNode = (pane: PaneView, session: string) =>
     renderToStaticMarkup(
-      <SidePane panel="files" tabs={[]} activeId={null} plus={{ label: "New tab", menu: true }} fill={{ on: false }} hideKeys="Ctrl+Shift+Q" onFill={() => {}} onSelect={() => {}} onClose={() => {}} onMove={() => {}} onHide={() => {}} onPlus={() => {}}>
+      <SidePane panel="files" tabs={[]} activeId={null} plus={{ label: "New tab", menu: true }} expand={{ on: false, others: true }} hideKeys="Ctrl+Shift+Q" onExpand={() => {}} onSelect={() => {}} onClose={() => {}} onMove={() => {}} onHide={() => {}} onPlus={() => {}}>
         {paneBody(pane, session) === "empty" ? <EmptyFiles recent={recentFor(pane, "C:\\dev\\my-app", session)} onOpenFile={() => {}} onBrowse={() => {}} onRecent={() => {}} /> : null}
       </SidePane>,
     );
@@ -779,9 +779,9 @@ describe("LiveApp: the stack of panels", () => {
               activeId={activeIn(st, panel)}
               plus={panel === "browser" ? { label: "New tab", menu: false } : { label: "Open a file", menu: true }}
               menu={panel === "browser" ? { label: "Browser menu" } : undefined}
-              fill={{ on: stack.expanded === panel, disabled: stack.shown.length < 2 ? "No other panel is shown" : undefined }}
+              expand={{ on: stack.expanded === panel, others: stack.shown.length >= 2 }}
               hideKeys="Ctrl+Shift+A"
-              onFill={() => {}}
+              onExpand={() => {}}
               onSelect={() => {}}
               onClose={() => {}}
               onMove={() => {}}
@@ -884,6 +884,53 @@ describe("LiveApp: tree opens and saves", () => {
   });
   it("a tree save from a session that has closed is dropped", () => {
     expect(source).toContain("stateRef.current.infos.some((i) => i.tab_id === session)");
+  });
+});
+
+describe("LiveApp: an expanded panel takes the terminal's place", () => {
+  const source = readFileSync(join(__dirname, "LiveApp.tsx"), "utf8");
+  const body = (name: string) => {
+    const start = source.indexOf(`  const ${name} = `);
+    expect(start).toBeGreaterThan(-1);
+    return source.slice(start, source.indexOf("\n  };", start));
+  };
+  it("tells the window and both panel frames", () => {
+    expect(source).toContain("paneExpanded={stack.expanded !== null}");
+    expect(source.split("expand={{ on: stack.expanded === panel, others: stack.shown.length >= 2 }}")).toHaveLength(3);
+    expect(source.split('onExpand={() => paneDispatch({ type: "expand", panel, session: owner.key })}')).toHaveLength(3);
+    expect(source).not.toContain("onFill=");
+  });
+  it("a switch that hides the panel under the keyboard ends the expansion, so only a narrow window still covers", () => {
+    expect(body("togglePanel")).toContain('[data-pane="cover"]:not([data-expanded])');
+  });
+  it("a key that leaves the pane for the terminal puts an expanded panel back, and says so", () => {
+    const b = body("toTerminalFromPane");
+    expect(b).toContain("[data-expanded]");
+    expect(b).toContain('"restore"');
+    expect(b).toContain('type: "expand"');
+    expect(b).toContain("besideAgainText(");
+    expect(b).toContain("setTimeout(toOwnerTerminal, 0)");
+  });
+  it("the cursor's release on the terminal asks [data-expanded] and carries the line in its receipt", () => {
+    const at = source.indexOf('case "select-pane"');
+    expect(at).toBeGreaterThan(-1);
+    const sel = source.slice(at, at + 1800);
+    expect(sel).toContain("[data-expanded]");
+    expect(sel).toContain("{ restored: panel }");
+    // The receipt that follows says it too, as it says a hide.
+    expect(source).toContain("`${effect.text}. ${besideAgainText(said.restored)}`");
+    expect(source).toContain("receiptWithPaneHidden(effect.text, paneKeys())");
+  });
+  it("a keyboard left on a covered terminal goes into the expanded panel, however the session was reached", () => {
+    // One effect, keyed by the owner and its expansion: no route to a session (its number, the cursor, the palette, the tray) has a rule of its own.
+    const at = source.indexOf("keyboardLost(document.activeElement, document.body)");
+    expect(at).toBeGreaterThan(-1);
+    const effect = source.slice(source.lastIndexOf("useEffect(", at), at + 400);
+    expect(effect).toContain("stack.expanded === null || !view.pane.open");
+    expect(effect).toContain(`[data-pane="cover"]`);
+    expect(effect).toContain("focusPane(stack.expanded)");
+    expect(effect).toContain("[owner.key, stack.expanded, view.pane.open]");
+    expect(source).not.toContain("enterSession");
   });
 });
 

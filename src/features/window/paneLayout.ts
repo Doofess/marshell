@@ -27,15 +27,16 @@ function widest(room: number, terminalMin: number): number {
 /**
  * The window's geometry as pixels. `room` is the main area's width and `terminalMin` the width of 80 columns; the divider is 1 px
  * in "beside". Under 720 px the pane covers the terminal. Beside, the pane keeps its saved width (half the room when nothing is
- * saved) held between 320 px and the 80-column stop; only at 320 px can the terminal go under 80 columns.
+ * saved) held between 320 px and the 80-column stop; only at 320 px can the terminal go under 80 columns. An expanded pane takes the
+ * terminal's place where it would sit beside: it is the same "cover", so everything a narrow window does applies to it.
  */
-export function paneGeometry(i: { room: number; shown: boolean; saved: number | null; terminalMin: number; alone?: boolean }): PaneGeometry {
+export function paneGeometry(i: { room: number; shown: boolean; saved: number | null; terminalMin: number; alone?: boolean; expanded?: boolean }): PaneGeometry {
   const room = whole(i.room);
   const max = widest(room, i.terminalMin);
   if (room === 0) return { mode: "hidden", terminal: 0, pane: 0, max };
   if (!i.shown) return { mode: "hidden", terminal: room, pane: 0, max };
   if (i.alone) return { mode: "fill", terminal: 0, pane: room, max };
-  if (room < PANE.coverBelow) return { mode: "cover", terminal: 0, pane: room, max };
+  if (room < PANE.coverBelow || i.expanded) return { mode: "cover", terminal: 0, pane: room, max };
   const wanted = i.saved !== null && Number.isFinite(i.saved) ? Math.round(i.saved) : Math.round((room - 1) / 2);
   const pane = clamp(wanted, PANE.min, max);
   return { mode: "beside", terminal: room - 1 - pane, pane, max };

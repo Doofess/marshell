@@ -56,7 +56,7 @@ describe("FilesPanel", () => {
   });
   it("the strip shows the Files menu button", () => {
     const out = renderToStaticMarkup(
-      <SidePane panel="files" tabs={[]} activeId={null} plus={{ label: "Open a file", menu: true }} menu={{ label: "Files menu" }} fill={{ on: false }} hideKeys="Ctrl+Shift+E" onFill={noop} onSelect={noop} onClose={noop} onMove={noop} onHide={noop} onPlus={noop}>
+      <SidePane panel="files" tabs={[]} activeId={null} plus={{ label: "Open a file", menu: true }} menu={{ label: "Files menu" }} expand={{ on: false, others: true }} hideKeys="Ctrl+Shift+E" onExpand={noop} onSelect={noop} onClose={noop} onMove={noop} onHide={noop} onPlus={noop}>
         <i />
       </SidePane>,
     );

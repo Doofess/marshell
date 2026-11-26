@@ -178,6 +178,8 @@ export type MainWindowProps = {
   paneShown?: boolean;
   /** With no session an open pane fills the area right of the sidebar. Left out, the pane needs a session, as before. */
   paneAlone?: boolean;
+  /** The session's panel is expanded: an open pane takes the terminal's place (the same cover as a narrow window's, marked `data-expanded`). */
+  paneExpanded?: boolean;
   /** The saved width in pixels, or null for half the room. The window holds no width of its own. */
   paneWidth?: number | null;
   onPaneWidth?: (width: number | null) => void;
@@ -277,6 +279,7 @@ export function MainWindow({
   pane,
   paneShown = false,
   paneAlone = false,
+  paneExpanded = false,
   paneWidth = null,
   onPaneWidth,
   onDividerGone,
@@ -358,7 +361,9 @@ export function MainWindow({
   // What the pane is asked to be (the toggle answers to this at once), and whether a hide holds it shown while its page freezes.
   const paneWanted = paneShown && !viewing && (!empty || paneAlone);
   const paneHeld = usePaneHold(paneWanted);
-  const geometry = paneGeometry({ room: spaceW, shown: paneWanted || paneHeld, saved: paneWidth, terminalMin: terminalMinWidth, alone: empty && paneAlone });
+  const geometry = paneGeometry({ room: spaceW, shown: paneWanted || paneHeld, saved: paneWidth, terminalMin: terminalMinWidth, alone: empty && paneAlone, expanded: paneExpanded });
+  // Whether a pane that isn't expanded would sit beside the terminal here (the Expand button's tooltip and disabled state read it).
+  const beside = paneGeometry({ room: spaceW, shown: true, saved: paneWidth, terminalMin: terminalMinWidth, alone: empty && paneAlone }).mode === "beside";
   const paneOn = geometry.mode !== "hidden";
   const paneCovers = geometry.mode === "cover";
   // The pane moves for 200 ms when its mode changes, and with the sidebar when that switches beside it (paneMotionKey). A drag
@@ -373,8 +378,8 @@ export function MainWindow({
   });
   const paneBlocked = viewing || (empty && !paneAlone);
   const layoutValue = useMemo<Layout>(
-    () => ({ inputs: { pref, sidebarWidth, drawer, shown: paneWanted || paneHeld, saved: paneWidth, terminalMin: terminalMinWidth, rtl, alone: empty && paneAlone }, moving: layoutMoving }),
-    [pref, sidebarWidth, drawer, paneWanted, paneHeld, paneWidth, terminalMinWidth, rtl, layoutMoving, empty, paneAlone],
+    () => ({ inputs: { pref, sidebarWidth, drawer, shown: paneWanted || paneHeld, saved: paneWidth, terminalMin: terminalMinWidth, rtl, alone: empty && paneAlone, expanded: paneExpanded }, moving: layoutMoving, beside }),
+    [pref, sidebarWidth, drawer, paneWanted, paneHeld, paneWidth, terminalMinWidth, rtl, layoutMoving, empty, paneAlone, paneExpanded, beside],
   );
   const roomNow = Math.max(0, width - sideAnim - pushed);
   const paneP = Math.max(0, Math.min(Math.round(paneMotion.value), roomNow));
@@ -530,6 +535,7 @@ export function MainWindow({
           data-placement={drawer && !paneDrawn ? placement : undefined}
           data-nav-pane={!viewing && !empty ? 0 : undefined}
           data-pane={paneOn ? geometry.mode : paneMotion.moving ? "hiding" : undefined}
+          data-expanded={paneCovers && paneExpanded && beside ? "" : undefined}
           style={paneColumns ? { gridTemplateColumns: paneColumns } : undefined}
         >
           {empty ? (

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PaneView } from "../../generated/PaneView";
-import { closeAsk, closeNothingText, closeTabOutcome, commandPanel, firstWith, hideFocus, noTabsText, openedByText, panelButtonsFor, panelHiddenText, panelOrder, panelToggleOutcome, leavePaneOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneBody, paneHiddenText, paneTabFocus, receiptWithPaneHidden, paneTabOutcome, projectKeyOf, shouldPin, noTabText, paneToggleOutcome, PAGE_REFUSED, TAB_LIMIT, SHELL_TAB_LIMIT, tabLimitText } from "./paneCommands";
+import { besideAgainText, keyboardLost, closeAsk, closeNothingText, closeTabOutcome, commandPanel, firstWith, hideFocus, noTabsText, openedByText, panelButtonsFor, panelHiddenText, panelOrder, panelToggleOutcome, leavePaneOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneBody, paneHiddenText, paneTabFocus, receiptWithPaneHidden, paneTabOutcome, projectKeyOf, shouldPin, noTabText, paneToggleOutcome, PAGE_REFUSED, TAB_LIMIT, SHELL_TAB_LIMIT, tabLimitText } from "./paneCommands";
 import { paneReducer, recentFor } from "./paneState";
 import type { PanelId } from "./panels";
 import { landingPanel, unseenPanels } from "./paneCommands";
@@ -374,10 +374,39 @@ describe("noTabText", () => {
 });
 describe("leavePaneOutcome", () => {
   it("hides a covering pane, and a filling one only when the shell panel is off screen", () => {
-    expect(leavePaneOutcome({ covers: true, alone: false, shellShown: true })).toBe("hide");
-    expect(leavePaneOutcome({ covers: false, alone: true, shellShown: true })).toBe("focus");
-    expect(leavePaneOutcome({ covers: false, alone: true, shellShown: false })).toBe("hide");
-    expect(leavePaneOutcome({ covers: false, alone: false, shellShown: false })).toBe("focus");
+    const x = { expanded: false };
+    expect(leavePaneOutcome({ ...x, covers: true, alone: false, shellShown: true })).toBe("hide");
+    expect(leavePaneOutcome({ ...x, covers: false, alone: true, shellShown: true })).toBe("focus");
+    expect(leavePaneOutcome({ ...x, covers: false, alone: true, shellShown: false })).toBe("hide");
+    expect(leavePaneOutcome({ ...x, covers: false, alone: false, shellShown: false })).toBe("focus");
+  });
+  it("puts an expanded panel back, whatever the rest", () => {
+    for (const covers of [false, true]) {
+      for (const alone of [false, true]) {
+        for (const shellShown of [false, true]) expect(leavePaneOutcome({ expanded: true, covers, alone, shellShown })).toBe("restore");
+      }
+    }
+  });
+});
+
+describe("keyboardLost", () => {
+  const body = { closest: () => null };
+  const inside = (hidden: boolean) => ({ closest: (sel: string) => (sel === "[hidden]" && hidden ? {} : null) }) as unknown as Element;
+  it("is lost on the page itself, on nothing, and inside a hidden part (a covered terminal)", () => {
+    expect(keyboardLost(null, body)).toBe(true);
+    expect(keyboardLost(body as unknown as Element, body)).toBe(true);
+    expect(keyboardLost(inside(true), body)).toBe(true);
+  });
+  it("is not lost on anything that is drawn: a sidebar row, a panel, a sheet", () => {
+    expect(keyboardLost(inside(false), body)).toBe(false);
+  });
+});
+
+describe("besideAgainText", () => {
+  it("names the panel, and joins the cursor's receipt in one line", () => {
+    expect(besideAgainText("files")).toBe("Files is beside the terminal again.");
+    expect(besideAgainText("changes")).toBe("Changes is beside the terminal again.");
+    expect(`${"Selected session 2, api"}. ${besideAgainText("files")}`).toBe("Selected session 2, api. Files is beside the terminal again.");
   });
 });
 

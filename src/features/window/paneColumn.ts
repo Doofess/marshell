@@ -12,6 +12,8 @@ export type ColumnInputs = {
   rtl: boolean;
   /** No session: an open pane fills the room (passed to paneGeometry). */
   alone?: boolean;
+  /** The session's panel is expanded: the pane takes the terminal's place (passed to paneGeometry). */
+  expanded?: boolean;
 };
 
 /** The main area in a window `width` wide: what MainWindow computes as mode, sideW, pushed and spaceW. */
@@ -33,7 +35,7 @@ export function mainRoom(
  */
 export function paneColumn(width: number, i: ColumnInputs): { x: number; width: number } {
   const { side, pushed, room } = mainRoom(width, i);
-  const g = paneGeometry({ room, shown: i.shown, saved: i.saved, terminalMin: i.terminalMin, alone: i.alone });
+  const g = paneGeometry({ room, shown: i.shown, saved: i.saved, terminalMin: i.terminalMin, alone: i.alone, expanded: i.expanded });
   let pane = g.pane;
   if (g.mode === "beside" && (i.saved === null || !Number.isFinite(i.saved))) {
     pane = Math.min(g.max, Math.max(PANE.min, (room - 1) / 2));
@@ -49,5 +51,7 @@ export type Layout = {
   moving: boolean;
   /** How many px the slot's distance from the window's foot grows per px of window height: the share of the stack below it. Absent: 0. */
   bottomPerPx?: number;
+  /** Whether a pane that isn't expanded sits beside the terminal here: false under 720 px of room and with no session. Absent: true. */
+  beside?: boolean;
 };
 export const LayoutContext = createContext<Layout | null>(null);

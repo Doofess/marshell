@@ -99,7 +99,7 @@ import { browser, pageKey } from "../browser/browserApi";
 import type { UrlBarHandle } from "../browser/UrlBar";
 import { useBrowserPages } from "../browser/useBrowserPages";
 import { askedFrom, focusPane, panelOfElement } from "../pane/focusPane";
-import { closeAsk as tabCloseAsk, tabLimitText, FOLDER_REFUSED, NO_SESSION_TO_OPEN, PANE_NOT_WITH_HISTORY, closeNothingText, noTabText, PAGE_REFUSED, paneToggleOutcome, closeTabOutcome, commandPanel, firstWith, hideFocus, landingPanel, panelButtonsFor, panelOrder, unseenPanels, panelHiddenText, panelToggleOutcome, shouldPin, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, receiptWithPaneHidden, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf } from "../pane/paneCommands";
+import { closeAsk as tabCloseAsk, tabLimitText, FOLDER_REFUSED, NO_SESSION_TO_OPEN, PANE_NOT_WITH_HISTORY, closeNothingText, noTabText, PAGE_REFUSED, paneToggleOutcome, closeTabOutcome, commandPanel, firstWith, hideFocus, landingPanel, panelButtonsFor, panelOrder, unseenPanels, panelHiddenText, panelToggleOutcome, shouldPin, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, besideAgainText, keyboardLost, receiptWithPaneHidden, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf } from "../pane/paneCommands";
 import { isPanelId, onScreen, PANEL_COMMAND, PANEL_LABEL, panelOf, panelOfPath, panelTabs, activeIn, stackOf, stackPanels, type PanelId } from "../pane/panels";
 import { viewportOf, viewportRows, viewportChoice, viewportSaid, type ViewportId } from "../browser/viewport";
 import { activeTab, currentEntry, isBrowserTab, paneReducer, previewTab, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
@@ -1199,6 +1199,15 @@ export function LiveApp() {
     if (shouldPin(view.pane, owner.key, settled && loaded)) paneDispatch({ type: "pin", session: owner.key });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `shouldPin` reads these and nothing else.
   }, [view.pane.open, view.pane.panels, owner.key, settled, loaded]);
+  // An expanded panel covers its owner's terminal, and a covered terminal can't take the keyboard. However the owner got here (a
+  // session's number, the cursor, the palette, the tray, a restart), a keyboard left on the covered terminal or on nothing goes into
+  // the panel. One that is somewhere drawn stays: a sidebar row that was clicked, a sheet, the panel itself.
+  useEffect(() => {
+    if (stack.expanded === null || !view.pane.open) return;
+    if (document.querySelector('[data-pane="cover"]') === null) return;
+    if (keyboardLost(document.activeElement, document.body)) focusPane(stack.expanded);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- it runs when the owner or its expansion changes, not on every focus.
+  }, [owner.key, stack.expanded, view.pane.open]);
   // Where the keyboard goes when the pane lets go of it: the owner's terminal. A session's terminal is the selected one; the shell
   // panel's is its own (or, with the panel not drawn, the main area, which holds no owner). Never `actions.focusTerminal()` on the
   // shell's path: that focus would flip the owner to the session.
@@ -1219,7 +1228,8 @@ export function LiveApp() {
     if (paneToggleOutcome(mainViewRef.current !== "sessions") === "blocked") return announce(PANE_NOT_WITH_HISTORY);
     const pane = viewRef.current.pane;
     const { shows } = panelToggleOutcome(pane, session, panel);
-    const covers = document.querySelector('[data-pane="cover"]') !== null;
+    // An expansion isn't a narrow window: a switch that hides the panel under the keyboard ends it, so only a narrow window covers after.
+    const covers = document.querySelector('[data-pane="cover"]:not([data-expanded])') !== null;
     const action: PaneAction = { type: "panel", panel, session };
     const staying = onScreen(paneReducer(pane, action), session);
     paneDispatch(action);
@@ -1285,16 +1295,28 @@ export function LiveApp() {
   };
   // Esc or Ctrl+Shift+Tab in a pane tab: to the terminal, and in a window where the pane covers the terminal the pane goes too.
   const paneKeys = () => shortcutLabel(commandById("preview").binding!, os ?? "windows");
-  // Returns whether it hid the pane. `say: false` is for a caller with a line of its own to say with the hide (the cursor's receipt).
-  const toTerminalFromPane = (say = true): boolean => {
+  // Returns what it did: hid the pane, put the owner's expanded panel back beside the terminal, or only moved the keyboard. `say: false`
+  // is for a caller with a line of its own to say with it (the cursor's receipt).
+  const toTerminalFromPane = (say = true): "hide" | "restore" | "focus" => {
     const covers = document.querySelector('[data-pane="cover"]') !== null;
-    if (leavePaneOutcome({ covers, alone, shellShown: shellShownRef.current }) === "focus" || !viewRef.current.pane.open) {
+    const expanded = document.querySelector("[data-expanded]") !== null;
+    const outcome = leavePaneOutcome({ covers, expanded, alone, shellShown: shellShownRef.current });
+    const session = ownerRef.current.key;
+    const panel = stackOf(viewRef.current.pane, session).expanded;
+    if (outcome === "restore" && panel !== null) {
+      paneDispatch({ type: "expand", panel, session });
+      // The terminal is suspended until the change is drawn, so the keyboard goes to it after.
+      setTimeout(toOwnerTerminal, 0);
+      if (say) announce(besideAgainText(panel));
+      return "restore";
+    }
+    if (outcome !== "hide" || !viewRef.current.pane.open) {
       toOwnerTerminal();
-      return false;
+      return "focus";
     }
     paneRun({ kind: "preview" });
     if (say) announce(paneHiddenText(paneKeys()));
-    return true;
+    return "hide";
   };
   const paneRunRef = useRef(paneRun);
   paneRunRef.current = paneRun;
@@ -1749,15 +1771,20 @@ export function LiveApp() {
   const navNames = useMemo(() => Object.fromEntries(rows.map((r) => [r.number, r.name])), [rows]);
   // Each panel of the side pane on screen is a stop of the Tab chord; which one has the keyboard is `panelFocus`, so the chord knows which
   // stop it is leaving.
-  // A "select-pane" that hid the covering pane: the receipt that follows it says so too (the announcer holds one notice).
-  const hidByNav = useRef(false);
+  // A "select-pane" that hid the covering pane, or put an expanded panel back: the receipt that follows it says so too (the announcer holds one notice).
+  const hidByNav = useRef<"hid" | { restored: PanelId } | null>(null);
   const applyNav = (effect: NavEffect) => {
     switch (effect.type) {
-      case "select-pane":
-        // The key was pressed inside the side pane: leaving it may hide it. A session picked in the sidebar goes straight to its terminal.
-        if (document.activeElement?.closest("[data-nav-side]") != null) hidByNav.current = toTerminalFromPane(false);
-        else actions.focusTerminal();
+      case "select-pane": {
+        // The key was pressed inside the side pane: leaving it may hide it. An expanded panel covers the terminal, so the key puts it
+        // back wherever the keyboard was. A session picked in the sidebar otherwise goes straight to its terminal.
+        if (document.activeElement?.closest("[data-nav-side]") != null || document.querySelector("[data-expanded]") !== null) {
+          const panel = stackOf(viewRef.current.pane, ownerRef.current.key).expanded;
+          const did = toTerminalFromPane(false);
+          hidByNav.current = did === "hide" ? "hid" : did === "restore" && panel !== null ? { restored: panel } : null;
+        } else actions.focusTerminal();
         return;
+      }
       case "select-side":
         if (isPanelId(effect.panel)) focusPane(effect.panel);
         return;
@@ -1792,9 +1819,9 @@ export function LiveApp() {
         return;
       case "announce": {
         // The cursor's receipt speaks for a switch it causes, so the focus-moved line is not said as well.
-        const hid = hidByNav.current;
-        hidByNav.current = false;
-        announce(hid ? receiptWithPaneHidden(effect.text, paneKeys()) : effect.text, true);
+        const said = hidByNav.current;
+        hidByNav.current = null;
+        announce(said === "hid" ? receiptWithPaneHidden(effect.text, paneKeys()) : said !== null ? `${effect.text}. ${besideAgainText(said.restored)}` : effect.text, true);
         return;
       }
     }
@@ -2478,9 +2505,9 @@ export function LiveApp() {
           onMenu={(anchor, opener) => setChangesMenu({ anchor, opener })}
           tabs={[]}
           activeId={null}
-          fill={{ on: stack.expanded === panel, disabled: stack.shown.length < 2 ? "No other panel is shown" : undefined }}
+          expand={{ on: stack.expanded === panel, others: stack.shown.length >= 2 }}
           hideKeys={keysOf(panel)}
-          onFill={() => paneDispatch({ type: "expand", panel, session: owner.key })}
+          onExpand={() => paneDispatch({ type: "expand", panel, session: owner.key })}
           onSelect={() => {}}
           onClose={() => {}}
           onMove={() => {}}
@@ -2606,9 +2633,9 @@ export function LiveApp() {
         panel={panel}
         plus={panel === "browser" ? { label: "New tab", menu: false, disabled: browserTabs(os) ? undefined : PAGES_UNAVAILABLE } : { label: "Open a file", menu: true }}
         menu={{ label: panel === "browser" ? "Browser menu" : "Files menu" }}
-        fill={{ on: stack.expanded === panel, disabled: stack.shown.length < 2 ? "No other panel is shown" : undefined }}
+        expand={{ on: stack.expanded === panel, others: stack.shown.length >= 2 }}
         hideKeys={keysOf(panel)}
-        onFill={() => paneDispatch({ type: "expand", panel, session: owner.key })}
+        onExpand={() => paneDispatch({ type: "expand", panel, session: owner.key })}
         onMenu={(anchor, opener) => (panel === "browser" ? setBrowserMenu : setFilesMenu)({ anchor, opener })}
         onKeep={(id) => paneDispatch({ type: "keep", session: owner.key, paneTab: id })}
         tabs={tabsHere.map((t) => ({ id: t.id, title: paneTitles.get(t.id) ?? "", path: currentEntry(t).path, kind: tabKind(isBrowserTab(t), currentEntry(t).path), openedBy: t.opened_by, unseen: t.unseen, unsaved: !isBrowserTab(t) && isUnsaved(unsaved, currentEntry(t).path, osName), preview: t.preview === true }))}
@@ -2696,6 +2723,7 @@ export function LiveApp() {
           pane={paneNode}
           paneShown={view.pane.open}
           paneAlone
+          paneExpanded={stack.expanded !== null}
           paneWidth={view.pane.width}
           onPaneWidth={(w) => paneDispatch({ type: "width", width: w })}
           onDividerGone={() => focusPane(currentPanel() ?? "files")}
