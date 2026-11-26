@@ -54,4 +54,17 @@ The new step's read-only calls ran on the development PC with the owner's own `g
 
 ## The check on GitHub
 
-(Filled in by slice 9c's Task 4.)
+Run 45880807826 is a manual `check` of the branch `phase-9c` (`3160c3c6`) with tag `v0.1.0-alpha.2`. It was started at 19:04:08 UTC, and a script polled its jobs every 3 seconds.
+
+| Job | Result | Started | Ended | Steps |
+| --- | --- | --- | --- | --- |
+| `build` | skipped | | | 0 |
+| `publish` | skipped | 19:04:10 | 19:04:10 | 0 |
+| `winget-check` | cancelled | 19:04:11 | 19:04:24 | 10 listed |
+| `winget-submit` | cancelled | 19:04:24 | 19:04:24 | 0 |
+
+- `winget-check` started with `publish` skipped, so `!cancelled()` still lets a manual check through.
+- The script saw the job `in_progress` at 19:04:18, in "Run actions/checkout@v4", and sent one cancel at 19:04:20. The job ended `cancelled` at 19:04:24, four seconds later. On `main`, with `always()`, the cancels sent for 100 seconds in run 45872192223 didn't stop the job.
+- `winget-submit` never ran a step. Its condition is false for a `check` anyway, so this run shows nothing about a cancel during a tag's `winget-submit`.
+
+The pull request's own release run (45880786179) is the dry run for the edited workflow file: it parsed, and it started `build`.
