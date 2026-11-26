@@ -82,6 +82,12 @@ jobs:
           "Building Marshell $version"
       - name: Build the installer
         run: pnpm tauri build --bundles nsis --config src-tauri/tauri.release.conf.json
+      # Tries both waits in src-tauri/windows/hooks.nsh on stand-in files, with the NSIS the build above downloaded.
+      # It installs nothing.
+      - name: Check the installer hooks' waits
+        timeout-minutes: 5
+        shell: pwsh
+        run: ./scripts/release/hooks-check.ps1
       - name: Build the smoke test's fixture
         run: cargo build --release -p marshell-cli --example smoke-fixture
       - name: Manifest, checksum and notes

@@ -33,7 +33,7 @@ winget upgrade Doofess.Marshell
 
 If you installed from this page (the manifest folder or the installer), winget doesn't know the package yet: install the new version from its release page the same way.
 
-The alpha doesn't update itself. An update keeps your settings, your history and the hooks Marshell set up in your agent CLIs. Updating and uninstalling close Marshell and the sessions running in it, so finish what your agents are doing first.
+The alpha doesn't update itself. An update keeps your settings, your history and the hooks Marshell set up in your agent CLIs. Updating and uninstalling close Marshell and the sessions running in it, so finish what your agents are doing first. If an update stops because one of Marshell's programs is still running, run it again; its message says whether the earlier version is still installed.
 
 ## Uninstall
 

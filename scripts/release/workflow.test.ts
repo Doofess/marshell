@@ -61,6 +61,17 @@ describe("the release workflow and the winget hold", () => {
     }
   });
 
+  it("the build job tries the hooks' waits before the smoke test", () => {
+    const check = step("build", "Check the installer hooks' waits");
+    expect(trimmed(check)).toContain("timeout-minutes: 5");
+    expect(trimmed(check)).toContain("shell: pwsh");
+    expect(trimmed(check)).toContain("run: ./scripts/release/hooks-check.ps1");
+    const labels = steps("build").map((s) => s.label);
+    const at = labels.indexOf("Check the installer hooks' waits");
+    expect(at).toBeGreaterThan(labels.indexOf("Build the installer"));
+    expect(at).toBeLessThan(labels.indexOf("Smoke test (install, start, update over it, uninstall)"));
+  });
+
   it("the hold reaches the decision", () => {
     const release = trimmed(step("winget-submit", "release"));
     expect(release).toContain("WINGET_HOLD: ${{ vars.WINGET_HOLD }}");
