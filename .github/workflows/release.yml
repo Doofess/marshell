@@ -2,13 +2,13 @@ name: release
 
 # An alpha release (PLAN §9, slice 9a; how to cut one: docs/RELEASING.md).
 #
-#   a tag v0.1.0-alpha.N   build -> publish -> winget-check -> winget-submit
+#   a tag v0.1.0-alpha.N   build -> publish -> winget-check -> winget-submit (held while the variable WINGET_HOLD is set)
 #   a pull request         build only, as a dry run, when it touches the installer or the release scripts
 #   run by hand            dry-run: build only. check: winget-check for a published tag.
-#                          submit: winget-submit for a published tag.
+#                          submit: winget-submit for a published tag, held or not.
 #
-# Only `publish` writes to the repo, and only `winget-submit` reads the WINGET_TOKEN secret. Neither runs
-# for a pull request.
+# Only `publish` writes to the repo, and only `winget-submit` reads the WINGET_TOKEN secret and the WINGET_HOLD
+# variable. Neither runs for a pull request.
 on:
   push:
     tags: ["v*"]
@@ -154,7 +154,7 @@ jobs:
   # it and uninstalls it with winget.
   winget-check:
     needs: publish
-    if: always() && (needs.publish.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.action == 'check'))
+    if: ${{ !cancelled() && (needs.publish.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.action == 'check')) }}
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
@@ -220,7 +220,7 @@ jobs:
   # is submitted later with `action: submit`.
   winget-submit:
     needs: [publish, winget-check]
-    if: always() && ((needs.publish.result == 'success' && needs.winget-check.result == 'success') || (github.event_name == 'workflow_dispatch' && inputs.action == 'submit'))
+    if: ${{ !cancelled() && ((needs.publish.result == 'success' && needs.winget-check.result == 'success') || (github.event_name == 'workflow_dispatch' && inputs.action == 'submit')) }}
     runs-on: windows-latest
     timeout-minutes: 15
     env:
@@ -234,23 +234,24 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: The release's tag and version
+      - name: The release's tag and version, and whether it is submitted
         id: release
         shell: pwsh
         env:
           TAG: ${{ inputs.tag || github.ref_name }}
           HAS_TOKEN: ${{ secrets.WINGET_TOKEN != '' }}
+          # docs/RELEASING.md, "Holding the submission". A manual submit ignores it.
+          WINGET_HOLD: ${{ vars.WINGET_HOLD }}
+          EVENT: ${{ github.event_name }}
         run: |
           $version = node --input-type=module -e "import { versionFromTag } from './scripts/release/version.mjs'; console.log(versionFromTag(process.argv[1]));" -- $env:TAG
           if ($LASTEXITCODE -ne 0) { exit 1 }
           "tag=$env:TAG" >> $env:GITHUB_OUTPUT
           "version=$version" >> $env:GITHUB_OUTPUT
-          "token=$env:HAS_TOKEN" >> $env:GITHUB_OUTPUT
-          if ($env:HAS_TOKEN -ne 'true') {
-            "::notice::No WINGET_TOKEN secret, so $env:TAG wasn't submitted to winget-pkgs. Add the secret (docs/RELEASING.md), then run this workflow with action 'submit' and tag '$env:TAG'."
-          }
+          node scripts/release/winget-hold.mjs
+          if ($LASTEXITCODE -ne 0) { exit 1 }
       - name: Download the release's manifest folder
-        if: steps.release.outputs.token == 'true'
+        if: steps.release.outputs.submit == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -261,7 +262,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
           Expand-Archive "fallback/winget-manifest-${env:VERSION}.zip" -DestinationPath fallback/manifest
       - name: Download wingetcreate
-        if: steps.release.outputs.token == 'true'
+        if: steps.release.outputs.submit == 'true'
         shell: pwsh
         run: |
           Invoke-WebRequest $env:WINGETCREATE_URL -OutFile wingetcreate.exe
@@ -275,7 +276,7 @@ jobs:
       # This step has the workflow's token, to read a public repository, and the next one has only the owner's.
       - name: The pull request's title
         id: title
-        if: steps.release.outputs.token == 'true'
+        if: steps.release.outputs.submit == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -291,8 +292,55 @@ jobs:
           "The pull request's title starts with '${kind}:'"
           # gh's own exit code is 1 for a 404, and the shell would end the step with it.
           exit 0
+      # wingetcreate pushes its branch to the token owner's fork, and stops when it can't bring the fork up to
+      # date by itself, as it did for v0.1.0-alpha.2 (issue #216). Asking GitHub here first stops such a run with
+      # what to do. A fork that doesn't exist yet is made by wingetcreate. One with commits of its own on master
+      # isn't synced, because a merge would carry them toward the pull request.
+      - name: Bring the fork up to date
+        if: steps.release.outputs.submit == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          $again = "Run this workflow with action 'submit' and tag '$env:TAG' again."
+          $owner = gh api user --jq .login
+          if ($LASTEXITCODE -ne 0 -or -not $owner) {
+            "::error::Couldn't read whose WINGET_TOKEN this is, so $env:TAG wasn't submitted. $again"
+            exit 1
+          }
+          $fork = "${owner}/winget-pkgs"
+          $first = gh api -i "repos/$fork" 2>$null | Select-Object -First 1
+          if ("$first" -match '^HTTP/\S+ 404\b') {
+            "There's no fork $fork yet. wingetcreate makes it."
+            exit 0
+          }
+          if ("$first" -notmatch '^HTTP/\S+ 200\b') {
+            "::error::Couldn't read the fork $fork, so $env:TAG wasn't submitted. The answer began: '$first'. $again"
+            exit 1
+          }
+          $ahead = gh api "repos/microsoft/winget-pkgs/compare/master...${owner}:winget-pkgs:master" --jq .ahead_by
+          if ($LASTEXITCODE -ne 0) {
+            "::error::Couldn't compare the fork $fork with microsoft/winget-pkgs, so $env:TAG wasn't submitted. $again"
+            exit 1
+          }
+          if ("$ahead" -ne '0') {
+            "::error::The fork $fork has commits of its own on master, so syncing it would merge them, and $env:TAG wasn't submitted. Put its master back to microsoft/winget-pkgs's, then run this workflow with action 'submit' and tag '$env:TAG' (docs/RELEASING.md)."
+            exit 1
+          }
+          $answer = gh api -X POST "repos/$fork/merge-upstream" -f branch=master 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            # GitHub's answer goes in the log as plain text, never read as a workflow command.
+            $stop = [guid]::NewGuid().ToString()
+            "::stop-commands::$stop"
+            "GitHub's answer: $answer"
+            "::${stop}::"
+            "::error::GitHub wouldn't bring the fork $fork up to date with microsoft/winget-pkgs, so $env:TAG wasn't submitted. Press Sync fork on https://github.com/$fork, then run this workflow with action 'submit' and tag '$env:TAG' (docs/RELEASING.md)."
+            exit 1
+          }
+          "The fork $fork is up to date."
       - name: Submit to microsoft/winget-pkgs
-        if: steps.release.outputs.token == 'true'
+        if: steps.release.outputs.submit == 'true'
         shell: pwsh
         env:
           # wingetcreate reads the token from here, so it never appears on a command line.
