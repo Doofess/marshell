@@ -120,7 +120,10 @@ describe("what Files waits for", () => {
   });
   it("announces Collapsed all folders. from the menu and the handle", () => {
     expect(panel).toContain("announce(COLLAPSED)");
-    expect(panel).toContain("collapseAll }));");
+    expect(panel).toContain("toggleTree, collapseAll, showFile }));");
     expect(panel).toContain("onCollapseAll={collapseAll}");
+  });
+  it("the handle puts the file in front of the narrow tree (issue #205)", () => {
+    expect(panel).toContain("const showFile = () => setOverlay(false);");
   });
 });

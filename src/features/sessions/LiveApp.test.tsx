@@ -885,6 +885,18 @@ describe("LiveApp: tree opens and saves", () => {
   it("a tree save from a session that has closed is dropped", () => {
     expect(source).toContain("stateRef.current.infos.some((i) => i.tab_id === session)");
   });
+  it("a file opened by Browse… or a drop is put in front of the narrow tree before the keyboard moves (issue #205)", () => {
+    // The keyboard is still in the tree when these open, so the tree would stay up over the file (`treeAfter`).
+    const open = source.slice(source.indexOf("const openInPane = "), source.indexOf("const openFromTree = "));
+    expect(open).toContain('if (panel === "files") filesPanel.current?.showFile();');
+    expect(open.indexOf("showFile()")).toBeLessThan(open.indexOf("focusPane(panel)"));
+    const drop = source.slice(source.indexOf("const dropPaths = "), source.indexOf("return pasteInto(target.tabId, paths)"));
+    expect(drop).toContain('if (panel === "files") filesPanel.current?.showFile();');
+    expect(drop.indexOf("showFile()")).toBeLessThan(drop.indexOf("focusPane(panel)"));
+    // The tree's own open has taken the tree down already.
+    const fromTree = source.slice(source.indexOf("const openFromTree = "), source.indexOf("const runFilesMenu = "));
+    expect(fromTree).not.toContain("showFile");
+  });
 });
 
 describe("LiveApp: an expanded panel takes the terminal's place", () => {

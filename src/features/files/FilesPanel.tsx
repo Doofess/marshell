@@ -33,6 +33,8 @@ export type FilesPanelHandle = {
   /** Shows or hides the tree (in the narrow layout, the tree that takes the file's place). Returns whether it shows now. */
   toggleTree(): boolean;
   collapseAll(): void;
+  /** In the narrow layout, puts the file in front of the tree: an open the person asked for, whose keyboard is still in the tree. */
+  showFile(): void;
 };
 
 export type FilesPanelProps = {
@@ -199,7 +201,9 @@ export function FilesPanel(p: FilesPanelProps) {
     tree.collapseAll();
     announce(COLLAPSED);
   };
-  useImperativeHandle(p.ref, () => ({ toggleTree, collapseAll }));
+  // Only the narrow layout reads this; the wide one draws the tree beside the file whatever it holds.
+  const showFile = () => setOverlay(false);
+  useImperativeHandle(p.ref, () => ({ toggleTree, collapseAll, showFile }));
 
   /** Opens the file at `path`, from a tree row, a menu or a search result. */
   const openAt = (path: string, how: "click" | "enter" | "double" | "space", line?: number) => {

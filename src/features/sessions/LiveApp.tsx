@@ -1074,6 +1074,8 @@ export function LiveApp() {
     const panel = panelOfPath(target.path);
     paneDispatch({ type: "open", session, project: paneProject(), target });
     announce(openedText(lastSegment(target.path), panel));
+    // The keyboard may still be in the narrow tree (Browse…, the palette): the file takes the tree's place, as an open from the tree does.
+    if (panel === "files") filesPanel.current?.showFile();
     focusPane(panel);
     return true;
   };
@@ -1364,6 +1366,7 @@ export function LiveApp() {
       if (plan.refused) announce(tabLimitText(session));
       else if (plan.last !== null && panel !== null) announce(openedText(lastSegment(plan.last), panel));
       else announce(FOLDER_REFUSED);
+      if (panel === "files") filesPanel.current?.showFile();
       if (panel !== null) focusPane(panel);
       return;
     }
