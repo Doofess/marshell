@@ -70,10 +70,17 @@ By the time the uninstaller had ended, `OpenConsole.exe` was no longer running, 
 | A file never freed | Fail: "took 31 ms" where the limit was expected | Pass: it gives up after 3 s, exits 0, and only that file is left. |
 | `uninstall.exe` held and `notes.txt`, neither Marshell's program | Pass | Pass: both stay, no wait. |
 
-The pull request's dry run with the fix is the acceptance check; its lines are in the pull request.
+The pull request's dry run with the fix (45855845988, at `4d3dceb3`) is the acceptance check. At that commit the release build job ran the check above, and it passed on the runner as well (`RESULT 11 passed, 0 failed`, with the NSIS Tauri had just downloaded). That step was taken out again afterwards: a change to CI is the user's to decide. The smoke test:
+
+```
+PASS A7 uninstall: the app has ended
+NOTE A7 once the uninstaller has ended, running from the install folder: nothing
+PASS A7 uninstall: the install folder holds no file
+RESULT 57 passed, 0 failed, 0 skipped
+```
 
 ## Not fixed here
 
-- **The installer.** A silent install over a running Marshell (`winget upgrade`, the smoke test's step A5) can skip `OpenConsole.exe` or `marshell-host.exe` in the same way and still exit 0. The template has no hook between closing the app and copying the files, and a hook can't copy a file again. The bundled ConPTY is the same in alpha.1 and alpha.2, so a kept file is the same file. Issue #214.
+- **The installer.** A silent install over a running Marshell (`winget upgrade`, the smoke test's step A5) can skip `OpenConsole.exe` or `marshell-host.exe` in the same way and still exit 0. The template has no hook between closing the app and copying the files; a later hook could only carry a second copy of each program and would need the same wait. The bundled ConPTY, `marshell-host.exe`'s code (`crates/host`) and its protocol (`crates/protocol/src/host.rs`) have no commit since `v0.1.0-alpha.1`, so a kept file does no harm in alpha.2. Issue #214.
 - **An administrator session's helper.** `marshell-host.exe` in an elevated session isn't closed by the installer or the uninstaller. The uninstaller now waits 20 s for it, gives up, and leaves its files, as before.
 - **The dry run that hung.** No log survived it. The smoke step's 15-minute limit didn't end it.

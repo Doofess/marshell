@@ -193,11 +193,13 @@ function Wait-AppGone([int]$ProcId, [int]$Seconds) {
 }
 
 # The programs whose file is in $Dir and that are running now, as "name (PID n, parent m)", or 'nothing'. A file
-# of a running program can't be deleted, so this says why an uninstall left one.
+# of a running program can't be deleted, so this says why an uninstall left one. It only informs: when the process
+# list can't be read it says so, and never throws.
 function Get-RunningFrom([string]$Dir) {
     if (-not $Dir) { return 'the folder is not known' }
     $prefix = $Dir.TrimEnd('\') + '\'
-    $found = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+    $all = try { @(Get-CimInstance Win32_Process -ErrorAction Stop) } catch { return "not known (the process list could not be read: $($_.Exception.Message))" }
+    $found = @($all | Where-Object {
             $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)
         } | ForEach-Object { "$($_.Name) (PID $($_.ProcessId), parent $($_.ParentProcessId))" })
     if ($found.Count -eq 0) { return 'nothing' }

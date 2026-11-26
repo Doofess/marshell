@@ -82,11 +82,6 @@ jobs:
           "Building Marshell $version"
       - name: Build the installer
         run: pnpm tauri build --bundles nsis --config src-tauri/tauri.release.conf.json
-      # With the NSIS the build just used. It installs nothing: stand-in files in the temp folder.
-      - name: Check the uninstaller's wait for files in use
-        timeout-minutes: 5
-        shell: pwsh
-        run: ./scripts/release/hooks-check.ps1
       - name: Build the smoke test's fixture
         run: cargo build --release -p marshell-cli --example smoke-fixture
       - name: Manifest, checksum and notes

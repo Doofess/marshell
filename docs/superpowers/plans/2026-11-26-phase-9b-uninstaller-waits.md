@@ -69,7 +69,7 @@ Expected: A7 fails as on `main` ("left OpenConsole.exe"), and the new text says 
 - Modify: `.github/workflows/release.yml` (a step after "Build the installer"), `docs/RELEASING.md`, `docs/PLAN.md` §9
 - Create: `docs/research/2026-11-26-uninstall-leaves-openconsole.md`
 
-- [x] **Step 1:** the build job runs `./scripts/release/hooks-check.ps1` after the installer is built (5 minutes at most).
+- [x] **Step 1:** ~~the build job runs `./scripts/release/hooks-check.ps1` after the installer is built (5 minutes at most).~~ Built, ran green on the pull request's dry run (45855845988), then taken out in the fix pass: the final review pointed at `SCOPE.md`, which asks for the user's word before a change to CI. The script stays, run by hand.
 - [x] **Step 2:** `docs/RELEASING.md`: the check, and the known limit rewritten (what the uninstaller now waits for, what it still leaves, and that the installer doesn't wait).
 - [x] **Step 3:** `docs/PLAN.md` §9 "Slice 9b decisions (2026-11-26)" and the research note with the runs' evidence.
 - [x] **Step 4:** `pnpm test`, commit, push.

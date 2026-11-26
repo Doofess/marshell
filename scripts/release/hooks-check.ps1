@@ -11,7 +11,7 @@ It needs the NSIS that Tauri downloads the first time an installer is built:
     pnpm tauri build --bundles nsis --config src-tauri/tauri.release.conf.json
     ./scripts/release/hooks-check.ps1
 
-The release workflow runs it after the installer is built.
+No workflow runs it: run it by hand after a change to the hooks file.
 #>
 [CmdletBinding()]
 param(
