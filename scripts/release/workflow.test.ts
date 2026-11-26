@@ -68,6 +68,7 @@ describe("the release workflow and the winget hold", () => {
     expect(trimmed(check)).toContain("run: ./scripts/release/hooks-check.ps1");
     const labels = steps("build").map((s) => s.label);
     const at = labels.indexOf("Check the installer hooks' waits");
+    expect(labels.indexOf("Build the installer")).toBeGreaterThan(-1);
     expect(at).toBeGreaterThan(labels.indexOf("Build the installer"));
     expect(at).toBeLessThan(labels.indexOf("Smoke test (install, start, update over it, uninstall)"));
   });

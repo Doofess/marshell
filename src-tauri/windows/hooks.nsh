@@ -85,10 +85,10 @@
 !define /math MARSHELL_HELD_WAIT_S ${MARSHELL_HELD_WAIT_MS} / 1000
 !define MARSHELL_HELD_EXIT 32
 
-; One line for each program the installer puts in the install folder, in the order it copies them. Both waits
-; go through this list, so a program can't be in one and missing from the other
-; (scripts/release/hooks.test.ts keeps it in step with the bundle). `do` is the name of a macro that takes
-; the file name.
+; One line for each program the installer puts in the install folder, in the order the uninstaller's list had.
+; The order decides which program a stop names when two are in use. Both waits go through this list, so a
+; program can't be in one and missing from the other (scripts/release/hooks.test.ts keeps it in step with the
+; bundle). `do` is the name of a macro that takes the file name.
 !macro MARSHELL_EACH_PROGRAM do
   !insertmacro ${do} "${MAINBINARYNAME}.exe"
   !insertmacro ${do} "marshell.exe"
@@ -148,22 +148,51 @@
 !macroend
 
 ; Sets $R9 to the program's name when it is there and still in use, unless $R9 already names one. "In use" is
-; what `File` would fail on: opening the file for writing, with every kind of sharing allowed, fails with a
-; sharing or lock violation (32 or 33), which is what a running program gives and what a file another program
-; holds gives. A file that is missing is not waited for (a first install, or a folder with only some of the
-; programs), and a file that is read-only gives 5, which `File` replaces by clearing the flag, so that isn't in
-; use either. The handle decides first: a handle that opened is closed and nothing else is read, and the error
-; is read only when there is none, because a successful call can leave an old error behind.
+; what `File` would fail on: opening the file for writing, with the sharing `File` uses (others may read), fails
+; with a sharing or lock violation (32 or 33), which is what a running program gives and what a file another
+; program holds gives. A file that is missing is not waited for (a first install, or a folder with only some of
+; the programs). A read-only file gives 5 before Windows looks at sharing or at a mapped image, so a read-only
+; program that is running would read as free, and `File` would clear the flag and then fail on it. When the
+; first try gives 5 the flag is cleared (only that bit) and the file is tried again; it is put back after the
+; handle is closed, so a stop changes nothing, and on the way through `File` clears it itself. If the flag can't
+; be cleared, the file isn't in use as far as this can tell. The handle decides first: a handle that opened is
+; closed and nothing else is read, and the error is read only when there is none, because a successful call can
+; leave an old error behind. It uses $R4 for the attributes to put back, and $R5 and $R6.
 !macro MARSHELL_PROBE_PROGRAM file
   ${If} $R9 == ""
   ${AndIf} ${FileExists} "$INSTDIR\${file}"
-    System::Call 'kernel32::CreateFileW(w "$INSTDIR\${file}", i 0x40000000, i 7, p 0, i 3, i 0x80, p 0) p.R7 ?e'
+    StrCpy $R4 ""
+    System::Call 'kernel32::CreateFileW(w "$INSTDIR\${file}", i 0x40000000, i 1, p 0, i 3, i 0x80, p 0) p.R7 ?e'
     Pop $R6
+    ${If} $R7 P= -1
+    ${AndIf} $R6 = 5
+      System::Call 'kernel32::GetFileAttributesW(w "$INSTDIR\${file}") i.R4'
+      ${If} $R4 <> -1
+        IntOp $R5 $R4 & 1
+        ${If} $R5 = 1
+          IntOp $R5 $R4 ^ 1
+          System::Call 'kernel32::SetFileAttributesW(w "$INSTDIR\${file}", i R5) i.R5'
+          ${If} $R5 <> 0
+            System::Call 'kernel32::CreateFileW(w "$INSTDIR\${file}", i 0x40000000, i 1, p 0, i 3, i 0x80, p 0) p.R7 ?e'
+            Pop $R6
+          ${Else}
+            StrCpy $R4 ""
+          ${EndIf}
+        ${Else}
+          StrCpy $R4 ""
+        ${EndIf}
+      ${Else}
+        StrCpy $R4 ""
+      ${EndIf}
+    ${EndIf}
     ${If} $R7 P<> -1
       System::Call 'kernel32::CloseHandle(p R7)'
     ${ElseIf} $R6 = 32
     ${OrIf} $R6 = 33
       StrCpy $R9 "${file}"
+    ${EndIf}
+    ${If} $R4 != ""
+      System::Call 'kernel32::SetFileAttributesW(w "$INSTDIR\${file}", i R4)'
     ${EndIf}
   ${EndIf}
 !macroend
@@ -179,7 +208,8 @@
 ; - one with the installer's window asks Retry or Cancel. Retry waits the same time again; Cancel stops as above.
 ; The words differ when the main program file is gone by then: a windowed upgrade has "uninstall before
 ; installing" checked, and that removed the earlier version first, so the person is told it is not installed.
-; It uses $R4 to $R9 and gives them back.
+; It uses $R4 to $R9 and gives them back. The probe uses $R4 and $R5 for its own work; the stop's texts are put
+; in them only at the limit, after the probe, so they don't meet.
 !macro MARSHELL_WAIT_FOR_HELD_PROGRAMS
   Push $R4
   Push $R5

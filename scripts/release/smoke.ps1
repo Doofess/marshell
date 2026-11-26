@@ -272,24 +272,31 @@ function Start-Hold([string]$Path, [System.Diagnostics.Process]$App) {
         return $null
     }
     $state = [hashtable]::Synchronized(@{ Stop = $false })
-    $job = Start-ThreadJob -ArgumentList $stream, $App, $state, $HoldAfterMs -ScriptBlock {
-        param($Stream, $App, $State, $AfterMs)
-        # An error here must not end the smoke test, so nothing in the job stops on one, and the stream is closed
-        # whatever happens. The job's only output is the time the file was let go.
-        $ErrorActionPreference = 'Continue'
-        $released = $null
-        try {
-            $sw = [System.Diagnostics.Stopwatch]::StartNew()
-            while (-not $State.Stop -and -not $App.HasExited -and $sw.Elapsed.TotalSeconds -lt 120) { Start-Sleep -Milliseconds 100 }
-            if (-not $State.Stop -and $App.HasExited) {
-                $after = [System.Diagnostics.Stopwatch]::StartNew()
-                while (-not $State.Stop -and $after.ElapsedMilliseconds -lt $AfterMs) { Start-Sleep -Milliseconds 100 }
-                if (-not $State.Stop) { $released = [datetime]::UtcNow }
+    # A job that can't start must not end the smoke test either: the file is let go and there is no hold.
+    try {
+        $job = Start-ThreadJob -ArgumentList $stream, $App, $state, $HoldAfterMs -ScriptBlock {
+            param($Stream, $App, $State, $AfterMs)
+            # An error here must not end the smoke test, so nothing in the job stops on one, and the stream is closed
+            # whatever happens. The job's only output is the time the file was let go.
+            $ErrorActionPreference = 'Continue'
+            $released = $null
+            try {
+                $sw = [System.Diagnostics.Stopwatch]::StartNew()
+                while (-not $State.Stop -and -not $App.HasExited -and $sw.Elapsed.TotalSeconds -lt 120) { Start-Sleep -Milliseconds 100 }
+                if (-not $State.Stop -and $App.HasExited) {
+                    $after = [System.Diagnostics.Stopwatch]::StartNew()
+                    while (-not $State.Stop -and $after.ElapsedMilliseconds -lt $AfterMs) { Start-Sleep -Milliseconds 100 }
+                    if (-not $State.Stop) { $released = [datetime]::UtcNow }
+                }
+            } finally {
+                $Stream.Dispose()
             }
-        } finally {
-            $Stream.Dispose()
+            $released
         }
-        $released
+    } catch {
+        $stream.Dispose()
+        Write-Host "NOTE could not hold $(Split-Path -Leaf $Path): $($_.Exception.Message)"
+        return $null
     }
     return [pscustomobject]@{ Stream = $stream; Job = $job; State = $state }
 }
@@ -301,7 +308,8 @@ function Stop-Hold($Hold, [switch]$Now) {
     if ($Now) { $Hold.State.Stop = $true }
     $got = @()
     try {
-        $got = @(Receive-Job -Job $Hold.Job -Wait -AutoRemoveJob -ErrorAction Stop)
+        # Not -ErrorAction Stop: a non-fatal error record from the job would throw away the time it let go.
+        $got = @(Receive-Job -Job $Hold.Job -Wait -AutoRemoveJob -ErrorAction SilentlyContinue)
     } catch {
         Write-Host "NOTE the hold's job failed: $($_.Exception.Message)"
         Remove-Job -Job $Hold.Job -Force -ErrorAction SilentlyContinue

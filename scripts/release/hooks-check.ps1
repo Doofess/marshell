@@ -242,7 +242,46 @@ Check 'install, a read-only program: it exits 0' { if ($r.Code -eq 0) { $true } 
 Check 'install, a read-only program: it does not wait' { if ($r.Ms -lt 2000) { $true } else { "took $($r.Ms) ms" } }
 Check 'install, a read-only program: every program reads replaced' { $n = Get-NotReplaced $dir; if (-not $n) { $true } else { "not replaced: $n" } }
 
-# 11: a first install: there is no program to wait for, and a file that isn't Marshell's is not waited for.
+# 11: a read-only program that is in use. Opening it for writing fails with 5 before Windows looks at sharing, so
+# the wait has to look past the flag, and has to put the flag back when it stops.
+$dir = New-Folder 'i-ro-held'
+(Get-Item -LiteralPath (Join-Path $dir 'conpty.dll')).IsReadOnly = $true
+$r = Invoke-Macro $InstallExe 'i-ro-held' $dir (Hold (Join-Path $dir 'conpty.dll'))
+Check 'install, a read-only program that is held: it exits 32' { if ($r.Code -eq 32) { $true } else { "exit code '$($r.Code)'" } }
+Check 'install, a read-only program that is held: no program was changed' { $c = Get-Changed $dir; if (-not $c) { $true } else { "changed: $c" } }
+Check 'install, a read-only program that is held: it says which program, and that nothing was changed' {
+    $want = "Marshell wasn't updated: conpty.dll was still running 3 seconds after Marshell closed. Nothing was changed. Run the update again."
+    if ($r.Out -ceq $want) { $true } else { "wrote '$($r.Out)'" }
+}
+Check 'install, a read-only program that is held: it is still read-only' {
+    if ((Get-Item -LiteralPath (Join-Path $dir 'conpty.dll')).IsReadOnly) { $true } else { 'the flag was lost' }
+}
+
+# 12: a read-only library loaded into a running program.
+$dir = New-Folder 'i-ro-loaded'
+Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\version.dll') -Destination (Join-Path $dir 'conpty.dll') -Force
+(Get-Item -LiteralPath (Join-Path $dir 'conpty.dll')).IsReadOnly = $true
+$lib = Hold-Library (Join-Path $dir 'conpty.dll')
+try {
+    $r = Invoke-Macro $InstallExe 'i-ro-loaded' $dir $lib
+} finally {
+    $lib.Close()
+}
+Check 'install, a read-only loaded DLL: it exits 32' { if ($r.Code -eq 32) { $true } else { "exit code '$($r.Code)'" } }
+Check 'install, a read-only loaded DLL: it names conpty.dll' { if ($r.Out -like '*conpty.dll*') { $true } else { "wrote '$($r.Out)'" } }
+Check 'install, a read-only loaded DLL: it is still read-only' {
+    if ((Get-Item -LiteralPath (Join-Path $dir 'conpty.dll')).IsReadOnly) { $true } else { 'the flag was lost' }
+}
+
+# 13: a program held for writing by something that shares writing. `File` opens with sharing for reading only,
+# so it fails on this file, and the wait has to see that.
+$dir = New-Folder 'i-share-write'
+$writer = [System.IO.File]::Open((Join-Path $dir 'OpenConsole.exe'), [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::ReadWrite)
+$r = Invoke-Macro $InstallExe 'i-share-write' $dir $writer
+Check 'install, a program held for writing that shares writing: it exits 32' { if ($r.Code -eq 32) { $true } else { "exit code '$($r.Code)'" } }
+Check 'install, a program held for writing that shares writing: it names OpenConsole.exe' { if ($r.Out -like '*OpenConsole.exe*') { $true } else { "wrote '$($r.Out)'" } }
+
+# 14: a first install: there is no program to wait for, and a file that isn't Marshell's is not waited for.
 $dir = New-Folder 'i-none' @('uninstall.exe', 'notes.txt') -NoPrograms
 $r = Invoke-Macro $InstallExe 'i-none' $dir (Hold (Join-Path $dir 'uninstall.exe'))
 Check 'install, no programs yet: it exits 0' { if ($r.Code -eq 0) { $true } else { "exit code '$($r.Code)'" } }
@@ -250,7 +289,7 @@ Check 'install, no programs yet: it does not wait' { if ($r.Ms -lt 2000) { $true
 Check 'install, no programs yet: the folder holds just those two' { $l = Get-Left $dir; if ($l -eq 'notes.txt, uninstall.exe') { $true } else { "left $l" } }
 
 # What this made, by name; a folder goes only when it is empty.
-foreach ($case in 'free', 'ending', 'stuck', 'others', 'i-free', 'i-ending', 'i-stuck', 'i-removed', 'i-loaded', 'i-readonly', 'i-none') {
+foreach ($case in 'free', 'ending', 'stuck', 'others', 'i-free', 'i-ending', 'i-stuck', 'i-removed', 'i-loaded', 'i-readonly', 'i-ro-held', 'i-ro-loaded', 'i-share-write', 'i-none') {
     $d = Join-Path $Scratch $case
     foreach ($f in $Programs + @('uninstall.exe', 'notes.txt')) { Remove-Item -LiteralPath (Join-Path $d $f) -Force -ErrorAction SilentlyContinue }
     if ((Test-Path -LiteralPath $d) -and -not (Get-ChildItem -LiteralPath $d -Force)) { [System.IO.Directory]::Delete($d, $false) }
