@@ -150,6 +150,14 @@ function Get-Changed([string]$Dir) {
     return ($changed -join ', ')
 }
 
+# Each program starts once on an empty folder before the timed cases. The first start of a program that was just
+# built can take seconds on a CI runner (once 7.7 s, more than the uninstall wait's whole 3 s limit), and that
+# time is not the wait's; the limits the cases check stay as they are.
+foreach ($w in @(@('warm-uninstall', $UninstallExe), @('warm-install', $InstallExe))) {
+    $r = Invoke-Macro $w[1] $w[0] (New-Folder $w[0] -NoPrograms)
+    Write-Host "NOTE the first start of $(Split-Path -Leaf $w[1]) took $($r.Ms) ms (exit code '$($r.Code)')"
+}
+
 # The uninstaller's wait (MARSHELL_REMOVE_HELD_PROGRAMS).
 
 # 1: nothing is in use.
@@ -289,7 +297,7 @@ Check 'install, no programs yet: it does not wait' { if ($r.Ms -lt 2000) { $true
 Check 'install, no programs yet: the folder holds just those two' { $l = Get-Left $dir; if ($l -eq 'notes.txt, uninstall.exe') { $true } else { "left $l" } }
 
 # What this made, by name; a folder goes only when it is empty.
-foreach ($case in 'free', 'ending', 'stuck', 'others', 'i-free', 'i-ending', 'i-stuck', 'i-removed', 'i-loaded', 'i-readonly', 'i-ro-held', 'i-ro-loaded', 'i-share-write', 'i-none') {
+foreach ($case in 'warm-uninstall', 'warm-install', 'free', 'ending', 'stuck', 'others', 'i-free', 'i-ending', 'i-stuck', 'i-removed', 'i-loaded', 'i-readonly', 'i-ro-held', 'i-ro-loaded', 'i-share-write', 'i-none') {
     $d = Join-Path $Scratch $case
     foreach ($f in $Programs + @('uninstall.exe', 'notes.txt')) { Remove-Item -LiteralPath (Join-Path $d $f) -Force -ErrorAction SilentlyContinue }
     if ((Test-Path -LiteralPath $d) -and -not (Get-ChildItem -LiteralPath $d -Force)) { [System.IO.Directory]::Delete($d, $false) }
