@@ -991,3 +991,19 @@ describe("LiveApp: the shell panel owns the pane", () => {
     expect(source).toContain("onTyped={() => (owner.shell ? toOwnerTerminal() : focusDelivered(");
   });
 });
+
+describe("LiveApp: slice 6y's small faults", () => {
+  const source = readFileSync(join(__dirname, "LiveApp.tsx"), "utf8");
+  it("a hooks change refreshes the Company pages through settingsRefresh, not companyRefresh", () => {
+    const handler = source.match(/onAgentsChanged=\{([^]*?)\}\n/)?.[1] ?? "";
+    expect(handler).toContain("refreshSetup()");
+    expect(handler).toContain("setSettingsRefresh(");
+    expect(handler).not.toContain("setCompanyRefresh(");
+    expect(source).toContain("settingsRefresh={settingsRefresh}");
+  });
+  it("a failed Open as a session is announced, and a 404 gives the panel a new shell", () => {
+    const body = source.slice(source.indexOf("const openAsSession"), source.indexOf("const openAsSession") + 1200);
+    expect(body).toContain("announce(OPEN_AS_SESSION_FAILED)");
+    expect(body).toMatch(/404[^]*setPanel\(null\)/);
+  });
+});

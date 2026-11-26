@@ -5,7 +5,8 @@ import type { FoundFile } from "../../generated/FoundFile";
 import type { ImportedTheme } from "../../generated/ImportedTheme";
 import { FontPicker } from "../terminal/FontPicker";
 import { fontChoiceOf, fontStack, resolveTerminalFont } from "../terminal/terminalFont";
-import { appScheme, resolveTerminalTheme, type Scheme } from "../terminal/terminalTheme";
+import { resolveTerminalTheme, type Scheme } from "../terminal/terminalTheme";
+import { useAppScheme } from "../terminal/useAppScheme";
 import { addImported, removeImported } from "./appearanceEdits";
 import { useAppearance } from "./AppearanceProvider";
 import { blurAccent, commitAccent, draftsOf, pickPreset, refill, type Draft, type Drafts, type Field } from "./drafts";
@@ -347,6 +348,7 @@ const sizeReason = "Enter a whole number from 8 to 32.";
 /** The state and handlers both sections share: the saved settings, the drafts being typed, and where a failed save shows. */
 function useAppearanceSection(announce: ((text: string) => void) | undefined, onClose?: () => void) {
   const { appearance, highContrast, save, error, wtFiles } = useAppearance();
+  const scheme = useAppScheme();
   // Which part this section last saved. A failed save shows (and is said) only in the section that made it.
   const [at, setAt] = useState<ErrorPlace | null>(null);
   const [drafts, setDrafts] = useState(() => draftsOf(appearance));
@@ -419,7 +421,7 @@ function useAppearanceSection(announce: ((text: string) => void) | undefined, on
     onClose,
   };
 
-  const state: AppearanceViewState = { appearance, app: appearance.theme === "follow-system" ? appScheme() : appearance.theme, highContrast, wtFiles, error: error && at ? { at, text: error } : null, accent, size, importError };
+  const state: AppearanceViewState = { appearance, app: appearance.theme === "follow-system" ? scheme : appearance.theme, highContrast, wtFiles, error: error && at ? { at, text: error } : null, accent, size, importError };
   return { state, handlers };
 }
 

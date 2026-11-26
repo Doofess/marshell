@@ -73,6 +73,8 @@ type Props = {
   accountsRefresh?: number;
   /** Bumped per CLI when its update tab exits, so its section reads the version again. */
   companyRefresh?: Record<CompanyAgent, number>;
+  /** Bumped when a hooks change rewrote a CLI's files, so a Company page with no edit in progress reads its file again. */
+  settingsRefresh?: number;
   /** Each CLI's hook state: the Browser section says which agents open their HTML files. */
   hooks?: Partial<Record<HookAgent, HookInstall>>;
   /** How many tabs are running each CLI. */
@@ -89,7 +91,7 @@ type Props = {
  * Focus moves to the shown section's heading on open and on a section change. Esc and "Back to sessions" close it, unless
  * something inside already handled that Esc or the shell profiles hold unsaved edits; focus then returns to what had it before.
  */
-export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, initialCwd, announce, onProfilesSaved, onAgentsChanged, onNotifications, found = NONE, accountsRefresh = 0, companyRefresh = ZERO, running = ZERO, hooks = NO_HOOKS, onSignIn = noop, onUpdate = noop, onClose }: Props) {
+export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, initialCwd, announce, onProfilesSaved, onAgentsChanged, onNotifications, found = NONE, accountsRefresh = 0, companyRefresh = ZERO, settingsRefresh = 0, running = ZERO, hooks = NO_HOOKS, onSignIn = noop, onUpdate = noop, onClose }: Props) {
   const root = useRef<HTMLDivElement>(null);
   useCoverPage();
   const opener = useRef<HTMLElement | null | undefined>(undefined);
@@ -201,7 +203,7 @@ export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, 
       case "antigravity":
       case "qwen":
       case "copilot":
-        return endpoint && <CompanySection endpoint={endpoint} agent={id} name={COMPANY_NAMES[id]} running={running[id]} onUpdate={onUpdate} refresh={companyRefresh[id]} announce={announce} />;
+        return endpoint && <CompanySection endpoint={endpoint} agent={id} name={COMPANY_NAMES[id]} running={running[id]} onUpdate={onUpdate} refresh={companyRefresh[id]} settingsRefresh={settingsRefresh} announce={announce} />;
       case "advanced":
         return endpoint && <AdvancedSection endpoint={endpoint} announce={announce} />;
     }

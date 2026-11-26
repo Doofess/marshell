@@ -26,6 +26,9 @@ export const afterEdit = (review: CompanyReview): CompanyReview => (review.kind 
 /** Planning, applying and undoing take no new request. */
 export const isBusy = (review: CompanyReview) => review.kind === "planning" || review.kind === "applying" || review.kind === "undoing";
 
+/** After a hooks change the page reads its file again only with no pending form edit, no Raw draft and nothing in flight. */
+export const rereadsAfterHooksChange = (s: { draftKeys: number; rawDraft: string | null; busy: boolean }): boolean => s.draftKeys === 0 && s.rawDraft === null && !s.busy;
+
 /** The whole text a Review sends: only for the raw file shown, when it is editable as text and differs from the file. */
 export const rawChange = (mode: CompanyMode, view: AgentSettingsView | null, rawDraft: string | null): string | null =>
   mode === "raw" && view !== null && view.editable && view.raw !== null && view.text !== null && view.raw_lock === null && rawDraft !== null && rawDraft !== view.text ? rawDraft : null;

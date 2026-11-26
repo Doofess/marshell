@@ -15,7 +15,7 @@ import { RawEditor } from "../settings/RawEditor";
 import { ScopeBadge } from "../settings/ScopeBadge";
 import type { CompanyAgent } from "../settings/settingsSections";
 import { choiceOptions, draftValue, editSummary, formEdits, switchOptions, type Draft } from "./companyEdit";
-import { afterApply, afterEdit, afterPlan, afterReload, afterUndo, announcement, fieldFocus, focusAfter, focusBack, focusIn, isBusy, rawChange, rawDroppedLine, undoneLine, type PlanResult, type UndoResult } from "./companyFlow";
+import { afterApply, afterEdit, afterPlan, afterReload, afterUndo, announcement, fieldFocus, focusAfter, focusBack, focusIn, isBusy, rawChange, rawDroppedLine, rereadsAfterHooksChange, undoneLine, type PlanResult, type UndoResult } from "./companyFlow";
 import { COMPANY_FIELDS, type CompanyField } from "./companyFields";
 import { fileLine, MANUAL_UPDATE, newerLine, rewriteNote, runningNote, versionLine } from "./companyText";
 import "../settings/Settings.css";
@@ -340,7 +340,7 @@ export function CompanyView({ agent, name, install, view, running, mode, onMode,
 }
 
 /** Fetches the CLI's install and settings view when it opens and again, with a fresh version read, whenever `refresh` changes. Owns the edit flow. */
-export function CompanySection({ endpoint, agent, name, running, onUpdate, refresh, announce }: { endpoint: Endpoint; agent: CompanyAgent; name: string; running: number; onUpdate: (agent: CompanyAgent) => void; refresh: number; announce: (text: string) => void }) {
+export function CompanySection({ endpoint, agent, name, running, onUpdate, refresh, settingsRefresh = 0, announce }: { endpoint: Endpoint; agent: CompanyAgent; name: string; running: number; onUpdate: (agent: CompanyAgent) => void; refresh: number; settingsRefresh?: number; announce: (text: string) => void }) {
   const [install, setInstall] = useState<AgentInstall | null>(null);
   const [view, setView] = useState<AgentSettingsView | null>(null);
   const [failed, setFailed] = useState(false);
@@ -405,6 +405,15 @@ export function CompanySection({ endpoint, agent, name, running, onUpdate, refre
       // The view stays as it was; Reload reads again.
     }
   };
+  // A hooks change (set up, or Hooks off) rewrote the file. With an edit in progress the page keeps its old view, so a save is still
+  // refused as changed: a draft written against the old file is never planned against the new one unseen.
+  const hooksSeen = useRef(settingsRefresh);
+  useEffect(() => {
+    if (hooksSeen.current === settingsRefresh) return;
+    hooksSeen.current = settingsRefresh;
+    if (rereadsAfterHooksChange({ draftKeys: Object.keys(draft).length, rawDraft, busy: isBusy(review) })) void reread();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only a new counter asks for a read
+  }, [settingsRefresh]);
   const onDraft = (key: string, input: string) => {
     if (isBusy(review)) return;
     lastEdited.current = fieldFocus(key);
