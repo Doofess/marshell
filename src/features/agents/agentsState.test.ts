@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentSetup } from "../../generated/AgentSetup";
-import { actions, consentProps, consentQueue, DEFAULT_WANT, hooksOffNotice, installRequest, liveStatusOn, rowSetupStart, setupLine, setupWant, startsOpen } from "./agentsState";
+import { actions, consentProps, consentQueue, DEFAULT_WANT, hooksOffNotice, hooksUndoFailed, hooksUndoLine, hooksUndone, hooksUndoRefused, installRequest, liveStatusOn, rowSetupStart, setupLine, setupWant, startsOpen } from "./agentsState";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { FilePreview } from "../../generated/FilePreview";
 import { AGY_SETUP, CODEX_SETUP, COPILOT_SETUP, PREVIEW, SETUP } from "./fixtures";
@@ -304,5 +304,29 @@ describe("Copilot CLI's setup line and actions", () => {
   });
   it("rowSetupStart opens Copilot's setup", () => {
     expect(rowSetupStart("copilot")).toEqual({ setup: "copilot" });
+  });
+});
+
+describe("the Hooks off undo copy", () => {
+  it("hooksUndoLine names where, and adds the status line sentence only when it was left", () => {
+    expect(hooksUndoLine("Codex", false)).toBe("Hooks off for Codex. Sessions started from now show limited status.");
+    expect(hooksUndoLine("Claude Code in Ubuntu", false)).toBe("Hooks off for Claude Code in Ubuntu. Sessions started from now show limited status.");
+    expect(hooksUndoLine("Claude Code", true)).toBe("Hooks off for Claude Code. Sessions started from now show limited status. Your status line was changed since setup, so it was left as it is.");
+    expect(hooksUndoLine("Claude Code in Ubuntu", true)).toBe(
+      "Hooks off for Claude Code in Ubuntu. Sessions started from now show limited status. Your status line was changed since setup, so it was left as it is.",
+    );
+  });
+  it("hooksUndone says the hooks are back", () => {
+    expect(hooksUndone("Codex")).toBe("Hooks are back for Codex, as they were before Hooks off.");
+    expect(hooksUndone("Claude Code in Ubuntu")).toBe("Hooks are back for Claude Code in Ubuntu, as they were before Hooks off.");
+  });
+  it("hooksUndoRefused names the files, and says a file when none is named", () => {
+    expect(hooksUndoRefused([])).toBe("Nothing was undone: a file changed since Hooks off, so undo would overwrite it.");
+    expect(hooksUndoRefused(["C:/h/.claude/settings.json"])).toBe("Nothing was undone: C:/h/.claude/settings.json changed since Hooks off, so undo would overwrite it.");
+    expect(hooksUndoRefused(["C:/a.json", "C:/b.json"])).toBe("Nothing was undone: C:/a.json and C:/b.json changed since Hooks off, so undo would overwrite them.");
+    expect(hooksUndoRefused(["C:/a.json", "C:/b.json", "C:/c.json"])).toBe("Nothing was undone: C:/a.json, C:/b.json and C:/c.json changed since Hooks off, so undo would overwrite them.");
+  });
+  it("hooksUndoFailed gives the message", () => {
+    expect(hooksUndoFailed("boom")).toBe("Couldn't undo Hooks off: boom");
   });
 });

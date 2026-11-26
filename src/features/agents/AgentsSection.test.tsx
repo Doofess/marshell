@@ -1,7 +1,9 @@
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { AgentSetup } from "../../generated/AgentSetup";
 import { AgentsSectionView, escapeLeavesPanel, SETUP_UNREADABLE, type Panel } from "./AgentsSection";
+import type { HooksUndo } from "./agentsState";
 import { AGY_SETUP, CODEX_SETUP, PREVIEW, COPILOT_SETUP, QWEN_SETUP, SETUP } from "./fixtures";
 import { nameContainsLabel } from "../../lib/labelInName";
 
@@ -484,5 +486,89 @@ describe("AgentsSectionView: Copilot CLI", () => {
   });
   it("the Hooks off panel is titled for Copilot CLI", () => {
     expect(withCopilot({ ...COPILOT_SETUP, hooks: "installed" }, { kind: "off", agent: "copilot", removal: null, busy: false })).toContain("Turn Copilot CLI hooks off");
+  });
+});
+
+describe("AgentsSectionView: the Hooks off undo offer", () => {
+  const offerView = (hooksUndo: HooksUndo | null, over: { codex?: AgentSetup; undoBusy?: boolean; distros?: string[] } = {}) =>
+    renderToStaticMarkup(
+      <AgentsSectionView setup={SETUP} codex={over.codex ?? CODEX_SETUP} antigravity={AGY_SETUP} qwen={QWEN_SETUP} copilot={COPILOT_SETUP} panel={{ kind: "list" }} liveStatus={true} wslDistros={over.distros ?? ["Ubuntu", "Debian"]} hooksUndo={hooksUndo} undoBusy={over.undoBusy} {...handlers} onUndo={none} />,
+    );
+  /** One CLI's card: from its section tag to the next one. */
+  const card = (h: string, agent: string) => {
+    const from = h.indexOf(`data-agent-card="${agent}"`);
+    const next = h.indexOf("data-agent-card=", from + 1);
+    return h.slice(from, next < 0 ? undefined : next);
+  };
+  const LINE = "Hooks off for Codex. Sessions started from now show limited status.";
+  const codexOffer: HooksUndo = { agent: "codex", snapshotId: "s1", statuslineLeft: false };
+  const undoButtons = (h: string) => h.match(/>Undo<\/button>/g)?.length ?? 0;
+
+  it("shows the line and an Undo button under Codex's row and under no other", () => {
+    const h = offerView(codexOffer);
+    expect(card(h, "codex")).toContain(LINE);
+    expect(card(h, "codex")).toMatch(/<button type="button"[^>]*>Undo<\/button>/);
+    for (const other of ["claude", "antigravity", "qwen", "copilot"]) {
+      expect(card(h, other)).not.toContain("Hooks off for");
+      expect(card(h, other)).not.toContain(">Undo<");
+    }
+    expect(undoButtons(h)).toBe(1);
+  });
+  it("puts the block after the CLI's own buttons and before its WSL group", () => {
+    const c = card(offerView(codexOffer), "codex");
+    expect(c.indexOf(">Hooks off<")).toBeLessThan(c.indexOf(LINE));
+    expect(c.indexOf(LINE)).toBeLessThan(c.indexOf("data-wsl-group"));
+  });
+  it("is a focusable block the keyboard can be sent to, with a real button and no live region", () => {
+    const h = offerView(codexOffer);
+    expect(h).toMatch(/<div[^>]*tabindex="-1"[^>]*data-focus="hooks-undo"[^>]*>/);
+    expect(h).not.toContain("aria-live");
+    expect(h).not.toContain('role="status"');
+    expect(h).not.toMatch(/<button[^>]*\sdisabled=""[^>]*>Undo</);
+  });
+  it("adds the status line sentence when the status line was left", () => {
+    expect(card(offerView({ ...codexOffer, statuslineLeft: true }), "codex")).toContain(`${LINE} Your status line was changed since setup, so it was left as it is.`);
+  });
+  it("shows a distro's offer under that distro's row only, named with the distro", () => {
+    const h = offerView({ agent: "claude", distro: "Ubuntu", snapshotId: "s2", statuslineLeft: false });
+    const claude = card(h, "claude");
+    const line = "Hooks off for Claude Code in Ubuntu. Sessions started from now show limited status.";
+    expect(claude).toContain(line);
+    expect(claude.indexOf('data-wsl-distro="Ubuntu"')).toBeLessThan(claude.indexOf(line));
+    expect(claude.indexOf(line)).toBeLessThan(claude.indexOf('data-wsl-distro="Debian"'));
+    expect(h).not.toContain("Hooks off for Codex");
+    expect(undoButtons(h)).toBe(1);
+  });
+  it("a Windows offer is shown under the Windows row, not under a distro's", () => {
+    const c = card(offerView({ agent: "claude", snapshotId: "s3", statuslineLeft: false }), "claude");
+    expect(c.indexOf("Hooks off for Claude Code.")).toBeGreaterThan(0);
+    expect(c.indexOf("Hooks off for Claude Code.")).toBeLessThan(c.indexOf("data-wsl-group"));
+  });
+  it("a refused offer shows that line and no Undo", () => {
+    const refused = "Nothing was undone: C:/h/.codex/hooks.json changed since Hooks off, so undo would overwrite it.";
+    const h = offerView({ ...codexOffer, refused });
+    expect(card(h, "codex")).toContain(refused);
+    expect(h).not.toContain(">Undo<");
+    expect(h).toContain('data-focus="hooks-undo"');
+  });
+  it("shows nothing without an offer", () => {
+    const h = offerView(null);
+    expect(h).not.toContain("hooks-undo");
+    expect(h).not.toContain(">Undo<");
+    expect(h).not.toContain("Hooks off for");
+  });
+  it("marks a busy Undo with aria-disabled, never disabled", () => {
+    const h = offerView(codexOffer, { undoBusy: true });
+    expect(h).toMatch(/<button type="button"[^>]*aria-disabled="true"[^>]*>Undo<\/button>/);
+    expect(h).not.toMatch(/<button[^>]*\sdisabled=""[^>]*>Undo</);
+  });
+  it("keeps the offer visible for a CLI whose section would otherwise be gone (not found, hooks removed, no distros)", () => {
+    const gone: AgentSetup = { ...CODEX_SETUP, found: false, hooks: "none" };
+    expect(offerView(null, { codex: gone, distros: [] })).not.toContain('data-agent-card="codex"');
+    expect(card(offerView(codexOffer, { codex: gone, distros: [] }), "codex")).toContain(LINE);
+  });
+  it("focuses the block when the list comes back from Hooks off", () => {
+    const src = readFileSync(new URL("./AgentsSection.tsx", import.meta.url), "utf8");
+    expect(src).toContain('[data-focus="hooks-undo"]');
   });
 });

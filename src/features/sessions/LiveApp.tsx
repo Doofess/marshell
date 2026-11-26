@@ -113,7 +113,7 @@ import { useTerminalFloor } from "../terminal/useTerminalFloor";
 import { modeMenuItems, sessionMenuItems } from "../sidebar/sessionMenu";
 import { nextSessionNumber } from "../sidebar/sessionNumber";
 import type { Mode, RowModel } from "../sidebar/types";
-import { rowSetupStart, type SetupStart } from "../agents/agentsState";
+import { rowSetupStart, type HooksUndo, type SetupStart } from "../agents/agentsState";
 import { LiveOnboarding } from "../onboarding/LiveOnboarding";
 import { getSetup, listAgents, type HookAgent } from "../../lib/api/agents";
 import type { HookInstall } from "../../generated/HookInstall";
@@ -401,6 +401,8 @@ export function LiveApp() {
   const [accountsRefresh, setAccountsRefresh] = useState(0);
   // Bumped by a hooks change, so mounted Company pages with no edit in progress read their file again (not a version probe).
   const [settingsRefresh, setSettingsRefresh] = useState(0);
+  // The Hooks off Settings → Agents can still undo. Held here, so it outlives closing Settings; it does not outlive the app.
+  const [hooksUndo, setHooksUndo] = useState<HooksUndo | null>(null);
   const [companyRefresh, setCompanyRefresh] = useState<Record<CompanyAgent, number>>({ claude: 0, codex: 0, antigravity: 0, qwen: 0, copilot: 0 });
   // First run: shown once, when the saved settings say the onboarding was not seen. Nothing shows until that read has answered;
   // a failed read shows none.
@@ -3121,6 +3123,8 @@ export function LiveApp() {
             refreshSetup();
             setSettingsRefresh((n) => n + 1);
           }}
+          hooksUndo={hooksUndo}
+          onHooksUndo={setHooksUndo}
           found={found}
           accountsRefresh={accountsRefresh}
           companyRefresh={companyRefresh}

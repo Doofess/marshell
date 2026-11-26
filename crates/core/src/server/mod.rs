@@ -1557,6 +1557,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/config/apply", post(config::apply))
         .route("/v1/snapshots", get(config::snapshots))
         .route("/v1/snapshots/{id}/restore", post(config::restore))
+        .route("/v1/snapshots/{id}/undo", post(config::undo))
         .route("/v1/agents", get(agents::found))
         .route("/v1/agents/wsl-distros", get(agents::wsl_distros))
         .route("/v1/agents/catalog", get(catalog::catalog))

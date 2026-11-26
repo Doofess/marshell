@@ -286,4 +286,9 @@ describe("LiveSettings: a hooks change", () => {
     const src = readFileSync(new URL("./LiveSettings.tsx", import.meta.url), "utf8");
     expect(src).toMatch(/<CompanySection[^>]*settingsRefresh=\{settingsRefresh\}/);
   });
+  it("gives AgentsSection the Hooks off undo offer and its setter", () => {
+    const src = readFileSync(new URL("./LiveSettings.tsx", import.meta.url), "utf8");
+    expect(src).toMatch(/<AgentsSection[^>]*hooksUndo=\{hooksUndo\}/);
+    expect(src).toMatch(/<AgentsSection[^>]*onHooksUndo=\{onHooksUndo\}/);
+  });
 });

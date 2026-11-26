@@ -5,9 +5,9 @@
 
 use super::AppState;
 use super::agents::{
-    Adapter, Refusal, adapter, agy_setup_of, changed_since, changes_of, codex_setup_of, copilot_hooks_file_is_kept,
-    copilot_install_over_changes, copilot_kept_record, copilot_setup_of, hook_install_changes, qwen_setup_of,
-    settings_file, setup_of,
+    Adapter, Refusal, adapter, agy_setup_of, codex_setup_of, copilot_hooks_file_is_kept, copilot_install_over_changes,
+    copilot_kept_record, copilot_setup_of, differs_from_fix, hook_install_changes, qwen_setup_of, settings_file,
+    setup_of, undo_snapshot,
 };
 use super::doctor_ext;
 use super::doctor_instr;
@@ -16,7 +16,7 @@ use crate::agents::common::Gate;
 use crate::agents::copilot::hooks::{FileProblem, file_problem};
 use crate::agents::copilot::kept::{self, Kept};
 use crate::config::guard::unverbatim;
-use crate::config::hash::{hash_bytes, hash_file};
+use crate::config::hash::hash_bytes;
 use crate::config::jsonc::{parse_problem, read_value};
 use crate::config::managed::{self, ManagedEntry};
 use crate::config::service::ApplyError;
@@ -36,8 +36,7 @@ use axum::response::{IntoResponse, Response};
 use marshell_protocol::agents::{AgentSetup, HookPlanRequest, SettingsState};
 use marshell_protocol::api::SessionState;
 use marshell_protocol::config::{
-    Applies, ApplyConflict, ApplyRequest, ApplyResult, ChangeSet, ConfigScope, EditOp, ExpectedHash, FileEdit,
-    SnapshotFileInfo,
+    Applies, ApplyConflict, ApplyRequest, ApplyResult, ChangeSet, ConfigScope, EditOp, FileEdit,
 };
 use marshell_protocol::doctor::{
     DoctorAction, DoctorFixPlan, DoctorFixRequest, DoctorItem, DoctorKeepRequest, DoctorLastFix, DoctorReport,
@@ -1604,14 +1603,6 @@ fn forget_record(st: &AppState) {
     }
 }
 
-/// The file isn't what the fix left: another hash, or present where the fix removed it.
-fn differs_from_fix(file: &SnapshotFileInfo) -> bool {
-    match hash_file(Path::new(&file.path)) {
-        Ok(now) => now != file.after_hash,
-        Err(_) => true,
-    }
-}
-
 /// `GET /v1/doctor/undo`: the last fix, or 204. `files_match` is read without starting a distro: a file in a managed
 /// distro that isn't running is left out of it.
 pub async fn last_fix(State(st): State<AppState>) -> Response {
@@ -1674,60 +1665,15 @@ fn undo_of(st: &AppState) -> Result<Option<ApplyResult>, Refusal> {
         }
         Err(e) => return Err(Refusal::Plain(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}"))),
     };
-    // After a restart the config guard knows no distro's folders until its home is looked up.
-    st.record_distros_of(info.files.iter().map(|f| Path::new(&f.path)));
-    let changed: Vec<String> = info
-        .files
-        .iter()
-        .filter(|f| differs_from_fix(f))
-        .map(|f| f.path.clone())
-        .collect();
-    if !changed.is_empty() {
-        return Err(changed_since(changed));
-    }
-    let cs = ChangeSet {
-        title: format!("Restore: {}", info.title),
-        reason: "Puts the files back as they were before this change.".to_string(),
-        edits: info
-            .files
-            .iter()
-            .map(|file| FileEdit {
-                path: file.path.clone(),
-                scope: file.scope,
-                op: EditOp::Restore {
-                    snapshot_id: info.id.clone(),
-                },
-                expected_hash: file.after_hash.clone(),
-                applies: file.applies,
-            })
-            .collect(),
-    };
-    let preview = changes_of(st.0.config.preview(cs))?;
-    let apply = ApplyRequest {
-        changeset_id: preview.changeset_id.clone(),
-        expected_hashes: preview
-            .files
-            .iter()
-            .map(|f| ExpectedHash {
-                path: f.path.clone(),
-                hash: f.before_hash.clone(),
-            })
-            .collect(),
-    };
-    match st.0.config.apply(&apply, now_ms()) {
-        Ok(result) => {
-            forget_record(st);
-            Ok(Some(result))
-        }
-        Err(ApplyError::Conflict { paths, .. }) => Err(changed_since(paths)),
-        Err(ApplyError::UnknownChangeSet) => Err(changed_since(vec![])),
-        Err(ApplyError::Failed(e)) => Err(Refusal::Plain(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}"))),
-    }
+    let result = undo_snapshot(st, &info)?;
+    forget_record(st);
+    Ok(Some(result))
 }
 
 #[cfg(test)]
 pub(in crate::server) mod tests {
     use super::*;
+    use marshell_protocol::config::ExpectedHash;
     use marshell_protocol::doctor::DoctorGroup;
 
     fn entry(path: &str, pointer: Option<&str>) -> ManagedEntry {

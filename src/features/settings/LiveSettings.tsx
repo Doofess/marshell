@@ -4,7 +4,7 @@ import type { Endpoint } from "../../generated/Endpoint";
 import { FOCUSABLE } from "../../lib/dialogFocus";
 import { usePopupFocus } from "../../lib/usePopupFocus";
 import { AgentsSection } from "../agents/AgentsSection";
-import type { SetupStart } from "../agents/agentsState";
+import type { HooksUndo, SetupStart } from "../agents/agentsState";
 import { AccountsSection } from "../accounts/AccountsSection";
 import { BrowserSection } from "../browser/BrowserSection";
 import { browserTabs } from "../browser/available";
@@ -65,6 +65,9 @@ type Props = {
   announce: (text: string) => void;
   onProfilesSaved?: () => void;
   onAgentsChanged?: () => void;
+  /** The Hooks off that can still be undone, held by the window so it outlives this page; `onHooksUndo` sets or withdraws (null) it. */
+  hooksUndo?: HooksUndo | null;
+  onHooksUndo?: (offer: HooksUndo | null) => void;
   /** "Notifications" inside Agents: the window moves to that section. */
   onNotifications: () => void;
   /** The company CLIs found on this machine: Accounts lists them and each has a section. */
@@ -91,7 +94,7 @@ type Props = {
  * Focus moves to the shown section's heading on open and on a section change. Esc and "Back to sessions" close it, unless
  * something inside already handled that Esc or the shell profiles hold unsaved edits; focus then returns to what had it before.
  */
-export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, initialCwd, announce, onProfilesSaved, onAgentsChanged, onNotifications, found = NONE, accountsRefresh = 0, companyRefresh = ZERO, settingsRefresh = 0, running = ZERO, hooks = NO_HOOKS, onSignIn = noop, onUpdate = noop, onClose }: Props) {
+export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, initialCwd, announce, onProfilesSaved, onAgentsChanged, hooksUndo, onHooksUndo, onNotifications, found = NONE, accountsRefresh = 0, companyRefresh = ZERO, settingsRefresh = 0, running = ZERO, hooks = NO_HOOKS, onSignIn = noop, onUpdate = noop, onClose }: Props) {
   const root = useRef<HTMLDivElement>(null);
   useCoverPage();
   const opener = useRef<HTMLElement | null | undefined>(undefined);
@@ -195,7 +198,7 @@ export function LiveSettings({ endpoint, sync, section, onSection, agentsStart, 
           )
         );
       case "agents":
-        return endpoint && <AgentsSection endpoint={endpoint} sync={sync} startWith={agentsStart} announce={announce} onChanged={onAgentsChanged} onNotifications={onNotifications} />;
+        return endpoint && <AgentsSection endpoint={endpoint} sync={sync} startWith={agentsStart} announce={announce} onChanged={onAgentsChanged} hooksUndo={hooksUndo} onHooksUndo={onHooksUndo} onNotifications={onNotifications} />;
       case "accounts":
         return endpoint && <AccountsSection endpoint={endpoint} found={found} onSignIn={onSignIn} refresh={accountsRefresh} announce={announce} />;
       case "claude":

@@ -1016,4 +1016,10 @@ describe("LiveApp: slice 6y's small faults", () => {
     expect(body).toContain("visible: shown");
     expect(source).toContain("const focus = terminalFocusProps(");
   });
+  it("holds the Hooks off undo offer and gives it to the settings page", () => {
+    expect(source).toContain("const [hooksUndo, setHooksUndo] = useState<HooksUndo | null>(null)");
+    const element = source.slice(source.indexOf("<LiveSettings"), source.indexOf("onClose={", source.indexOf("<LiveSettings")));
+    expect(element).toContain("hooksUndo={hooksUndo}");
+    expect(element).toContain("onHooksUndo={setHooksUndo}");
+  });
 });
