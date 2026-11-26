@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PaneView } from "../../generated/PaneView";
-import { besideAgainText, keyboardLost, closeAsk, closeNothingText, closeTabOutcome, commandPanel, firstWith, hideFocus, noTabsText, openedByText, panelButtonsFor, panelHiddenText, panelOrder, panelToggleOutcome, leavePaneOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneBody, paneHiddenText, paneTabFocus, receiptWithPaneHidden, paneTabOutcome, projectKeyOf, shouldPin, noTabText, paneToggleOutcome, PAGE_REFUSED, TAB_LIMIT, SHELL_TAB_LIMIT, tabLimitText } from "./paneCommands";
+import { besideAgainText, handsToSession, keyboardLost, releaseOutcome, closeAsk, closeNothingText, closeTabOutcome, commandPanel, firstWith, hideFocus, noTabsText, openedByText, panelButtonsFor, panelHiddenText, panelOrder, panelToggleOutcome, leavePaneOutcome, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, paneBody, paneHiddenText, paneTabFocus, receiptWithPaneHidden, paneTabOutcome, projectKeyOf, shouldPin, noTabText, paneToggleOutcome, PAGE_REFUSED, TAB_LIMIT, SHELL_TAB_LIMIT, tabLimitText } from "./paneCommands";
 import { paneReducer, recentFor } from "./paneState";
 import type { PanelId } from "./panels";
 import { landingPanel, unseenPanels } from "./paneCommands";
@@ -415,5 +415,42 @@ describe("tabLimitText", () => {
     expect(tabLimitText("shell")).toBe("The shell panel has 32 tabs. Close one to open another.");
     expect(SHELL_TAB_LIMIT).toBe(tabLimitText("shell"));
     expect(tabLimitText("s1")).toBe(TAB_LIMIT);
+  });
+});
+
+describe("releaseOutcome", () => {
+  const at = (s: Partial<Parameters<typeof releaseOutcome>[0]>) => releaseOutcome({ row: false, inPane: false, expanded: false, shellOwner: false, ...s });
+  it("keeps the session's expanded panel when the cursor is released on its own row: the keyboard goes into the panel", () => {
+    expect(at({ row: true, expanded: true })).toBe("panel");
+    expect(at({ row: true, expanded: true, inPane: true })).toBe("panel");
+  });
+  it("leaves the pane for a release on the terminal: an expanded panel is put back, a covering pane may hide", () => {
+    expect(at({ expanded: true })).toBe("leave");
+    expect(at({ expanded: true, inPane: true })).toBe("leave");
+    expect(at({ inPane: true })).toBe("leave");
+    expect(at({ row: true, inPane: true })).toBe("leave");
+  });
+  it("goes straight to the session's terminal from anywhere else", () => {
+    expect(at({})).toBe("terminal");
+    expect(at({ row: true })).toBe("terminal");
+  });
+  it("leaves the shell panel's expanded panel alone from outside the pane: it isn't the session's to end", () => {
+    expect(at({ expanded: true, shellOwner: true })).toBe("terminal");
+    expect(at({ row: true, expanded: true, shellOwner: true })).toBe("terminal");
+    // From inside the pane the key leaves it, as Esc does: the shell's panel is put back and its terminal takes the keyboard.
+    expect(at({ expanded: true, shellOwner: true, inPane: true })).toBe("leave");
+    expect(at({ row: true, expanded: true, shellOwner: true, inPane: true })).toBe("leave");
+  });
+});
+
+describe("handsToSession", () => {
+  const on = { shellOwner: true, expanded: true, hasSession: true };
+  it("hands the pane to the session when its terminal is asked for under the shell panel's expanded panel", () => {
+    expect(handsToSession(on)).toBe(true);
+  });
+  it("doesn't when the session owns the pane, nothing is expanded over the terminal, or there is no session", () => {
+    expect(handsToSession({ ...on, shellOwner: false })).toBe(false);
+    expect(handsToSession({ ...on, expanded: false })).toBe(false);
+    expect(handsToSession({ ...on, hasSession: false })).toBe(false);
   });
 });

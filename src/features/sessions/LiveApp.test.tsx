@@ -941,9 +941,26 @@ describe("LiveApp: an expanded panel takes the terminal's place", () => {
     // History takes the pane's place: there is no panel to go into.
     expect(helper).toContain('mainViewRef.current !== "sessions"');
     // `focusToken` is every "back to the terminal" (a launcher or a sheet that closed): under an expanded panel that is the panel.
-    expect(source).toContain("  }, [owner.key, stack.expanded, view.pane.open, focusToken]);");
+    expect(source).toContain("  }, [owner.key, stack.expanded, view.pane.open, focusToken, focusedId]);");
     // A terminal stays drawn, and takes the keyboard, until the layout's motion ends: the window says when it is covered (live check 6x).
     expect(source).toContain("onTerminalsCovered={keyboardIntoExpanded}");
+  });
+  it("the cursor's release keeps an expanded panel on the session's own row, and ends it on the terminal", () => {
+    const nav = source.slice(source.indexOf('case "select-pane": {'), source.indexOf('case "select-side":'));
+    expect(nav).toContain('releaseOutcome({ row: effect.from === "row", inPane, expanded, shellOwner: ownerRef.current.shell })');
+    const panel = nav.slice(nav.indexOf('case "panel":'), nav.indexOf('case "leave":'));
+    expect(panel).toContain("focusPane(panel)");
+    expect(panel).not.toContain("toTerminalFromPane");
+    expect(nav.slice(nav.indexOf('case "leave":'))).toContain("toTerminalFromPane(false)");
+  });
+  it("a session's terminal asked for under the shell panel's expanded panel gets the pane, before the keyboard is looked for", () => {
+    const at = source.indexOf("tokenSeen.current !== focusToken || sessionSeen.current !== focusedId");
+    expect(at).toBeGreaterThan(-1);
+    const effect = source.slice(at, source.indexOf("}, [owner.key, stack.expanded, view.pane.open, focusToken, focusedId]);", at));
+    expect(effect).toContain("handsToSession({ shellOwner: ownerRef.current.shell");
+    expect(effect).toContain(".blur()");
+    expect(effect).toContain('setOwnerPref("session")');
+    expect(effect.indexOf('setOwnerPref("session")')).toBeLessThan(effect.indexOf("keyboardIntoExpanded()"));
     expect(source).not.toContain("enterSession");
   });
 });

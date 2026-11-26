@@ -99,7 +99,7 @@ import { browser, pageKey } from "../browser/browserApi";
 import type { UrlBarHandle } from "../browser/UrlBar";
 import { useBrowserPages } from "../browser/useBrowserPages";
 import { askedFrom, focusPane, panelOfElement } from "../pane/focusPane";
-import { closeAsk as tabCloseAsk, tabLimitText, FOLDER_REFUSED, NO_SESSION_TO_OPEN, PANE_NOT_WITH_HISTORY, closeNothingText, noTabText, PAGE_REFUSED, paneToggleOutcome, closeTabOutcome, commandPanel, firstWith, hideFocus, landingPanel, panelButtonsFor, panelOrder, unseenPanels, panelHiddenText, panelToggleOutcome, shouldPin, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, besideAgainText, keyboardLost, receiptWithPaneHidden, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf } from "../pane/paneCommands";
+import { closeAsk as tabCloseAsk, tabLimitText, FOLDER_REFUSED, NO_SESSION_TO_OPEN, PANE_NOT_WITH_HISTORY, closeNothingText, noTabText, PAGE_REFUSED, paneToggleOutcome, closeTabOutcome, commandPanel, firstWith, hideFocus, landingPanel, panelButtonsFor, panelOrder, unseenPanels, panelHiddenText, panelToggleOutcome, shouldPin, closedText, coverText, movedText, openCheck, openedText, pageOpenCheck, pageOpenedText, leavePaneOutcome, besideAgainText, handsToSession, keyboardLost, releaseOutcome, receiptWithPaneHidden, paneHiddenText, paneTabFocus, paneTabOutcome, projectKeyOf } from "../pane/paneCommands";
 import { isPanelId, onScreen, PANEL_COMMAND, PANEL_LABEL, panelOf, panelOfPath, panelTabs, activeIn, stackOf, stackPanels, type PanelId } from "../pane/panels";
 import { viewportOf, viewportRows, viewportChoice, viewportSaid, type ViewportId } from "../browser/viewport";
 import { activeTab, currentEntry, isBrowserTab, paneReducer, previewTab, recentFor, tabTitles, tabsOf, type OpenTarget, type PaneAction } from "../pane/paneState";
@@ -1214,10 +1214,23 @@ export function LiveApp() {
     if (expanded === null || !pane.open || mainViewRef.current !== "sessions") return;
     if (keyboardLost(document.activeElement, document.body)) focusPane(expanded);
   };
+  // The session's terminal asked for (`focusToken`), or another session selected, under the shell panel's expanded panel: the pane
+  // goes to the session, as it did when that terminal could take the keyboard and the focus moved the owner. The keyboard is let go
+  // first, so the session's terminal, or its own expanded panel, takes it once the session's pane is drawn.
+  const tokenSeen = useRef(focusToken);
+  const sessionSeen = useRef(focusedId);
   useEffect(() => {
+    const asked = tokenSeen.current !== focusToken || sessionSeen.current !== focusedId;
+    tokenSeen.current = focusToken;
+    sessionSeen.current = focusedId;
+    if (asked && handsToSession({ shellOwner: ownerRef.current.shell, expanded: document.querySelector("[data-expanded]") !== null, hasSession: focusedId !== undefined })) {
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      setOwnerPref("session");
+      return;
+    }
     keyboardIntoExpanded();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- it runs when the owner or its expansion changes, not on every focus.
-  }, [owner.key, stack.expanded, view.pane.open, focusToken]);
+  }, [owner.key, stack.expanded, view.pane.open, focusToken, focusedId]);
   // Where the keyboard goes when the pane lets go of it: the owner's terminal. A session's terminal is the selected one; the shell
   // panel's is its own (or, with the panel not drawn, the main area, which holds no owner). Never `actions.focusTerminal()` on the
   // shell's path: that focus would flip the owner to the session.
@@ -1787,13 +1800,24 @@ export function LiveApp() {
   const applyNav = (effect: NavEffect) => {
     switch (effect.type) {
       case "select-pane": {
-        // The key was pressed inside the side pane: leaving it may hide it. An expanded panel covers the terminal, so the key puts it
-        // back wherever the keyboard was. A session picked in the sidebar otherwise goes straight to its terminal.
-        if (document.activeElement?.closest("[data-nav-side]") != null || document.querySelector("[data-expanded]") !== null) {
-          const panel = stackOf(viewRef.current.pane, ownerRef.current.key).expanded;
-          const did = toTerminalFromPane(false);
-          hidByNav.current = did === "hide" ? "hid" : did === "restore" && panel !== null ? { restored: panel } : null;
-        } else actions.focusTerminal();
+        // The key was pressed inside the side pane: leaving it may hide it. An expanded panel covers the terminal, so a release on
+        // the terminal puts it back wherever the keyboard was, and one on the session's own row keeps it and goes into it. A session
+        // picked in the sidebar otherwise goes straight to its terminal.
+        const inPane = document.activeElement?.closest("[data-nav-side]") != null;
+        const expanded = document.querySelector("[data-expanded]") !== null;
+        const panel = stackOf(viewRef.current.pane, ownerRef.current.key).expanded;
+        switch (releaseOutcome({ row: effect.from === "row", inPane, expanded, shellOwner: ownerRef.current.shell })) {
+          case "panel":
+            if (panel !== null && document.activeElement?.closest(`[data-nav-side="${panel}"]`) == null) focusPane(panel);
+            return;
+          case "leave": {
+            const did = toTerminalFromPane(false);
+            hidByNav.current = did === "hide" ? "hid" : did === "restore" && panel !== null ? { restored: panel } : null;
+            return;
+          }
+          default:
+            actions.focusTerminal();
+        }
         return;
       }
       case "select-side":

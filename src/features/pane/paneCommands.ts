@@ -149,6 +149,26 @@ export function leavePaneOutcome(s: { covers: boolean; expanded: boolean; alone:
 /** Said when a key to the terminal put an expanded panel back beside it. */
 export const besideAgainText = (panel: PanelId) => `${PANEL_LABEL[panel]} is beside the terminal again.`;
 /**
+ * Where the navigation cursor's release on a session goes. On the session's own row its expanded panel stays and takes the
+ * keyboard ("panel"): going to a session never ends its expansion. On its terminal, or from inside the pane, the pane is left
+ * ("leave": an expanded panel is put back, a covering pane may hide). Anything else goes to the session's terminal ("terminal"),
+ * and so does a release outside the pane while the shell panel's expanded panel is up: that one isn't the session's to end.
+ */
+export function releaseOutcome(s: { row: boolean; inPane: boolean; expanded: boolean; shellOwner: boolean }): "panel" | "leave" | "terminal" {
+  const own = s.expanded && !s.shellOwner;
+  if (own && s.row) return "panel";
+  return s.inPane || own ? "leave" : "terminal";
+}
+
+/**
+ * Whether asking for the session's terminal hands the pane to the session: the shell panel's expanded panel covers that terminal,
+ * so it can't take the keyboard and the pane would stay the shell's. The shell keeps its expansion for when it has the pane again.
+ */
+export function handsToSession(s: { shellOwner: boolean; expanded: boolean; hasSession: boolean }): boolean {
+  return s.shellOwner && s.expanded && s.hasSession;
+}
+
+/**
  * Whether the keyboard is on nothing a person can see: on the page itself, on nothing, or inside a hidden part (a terminal an
  * expanded panel covers is `hidden`). A sidebar row, a panel or a sheet that has it keeps it.
  */

@@ -158,6 +158,8 @@ describe("treeAfter", () => {
   });
   it("stays up while the keyboard is in it (pre-merge review 6w: a file an agent opened in the background took the tree and the keyboard away)", () => {
     expect(treeAfter(true, at(null), at("C:\\p\\a.ts"), true)).toBe(true);
+    // A tree the open itself took down stays down (issue #205: `showFile` runs before the path changes).
+    expect(treeAfter(false, at("C:\\p\\a.ts"), at("C:\\p\\b.ts"), true)).toBe(false);
     expect(treeAfter(true, at("C:\\p\\a.ts", false), at("C:\\p\\a.ts", true), true)).toBe(true);
     // The tree's own open has already taken it down, and the last file closing still brings it back.
     expect(treeAfter(false, at("C:\\p\\a.ts"), at("C:\\p\\b.ts"), true)).toBe(false);

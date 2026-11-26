@@ -77,7 +77,8 @@ describe("holding the modifier and pressing an arrow starts a cursor that can go
   });
   it("selects a session that is on screen by selecting its pane, on release", () => {
     const r = run(at(0), [DOWN, arrow("left"), arrow("down"), arrow("down"), UP], GRID_CONTEXT);
-    expect(without(r.effects)).toEqual([{ type: "select-pane", index: 2 }]);
+    // The cursor was on the session's sidebar row.
+    expect(without(r.effects)).toStrictEqual([{ type: "select-pane", index: 2, from: "row" }]);
     expect(r.state).toEqual({ selectedPane: 2, selectedSide: null, cursor: null, held: false, engaged: false });
     expect(announced(r.effects).at(-1)).toBe("Selected session 3, api-server");
   });
@@ -158,7 +159,9 @@ describe("the mouse", () => {
   });
   it("selects the pane of a session that is on screen when its sidebar row is clicked", () => {
     const r = run(at(0), [{ type: "choose", target: { kind: "row", number: 6 } }], GRID_CONTEXT);
-    expect(without(r.effects)).toEqual([{ type: "select-pane", index: 3 }]);
+    // The app keeps an expanded panel for a row and ends it for the terminal, so the effect says which it was.
+    expect(without(r.effects)).toStrictEqual([{ type: "select-pane", index: 3, from: "row" }]);
+    expect(without(run(at(0), [{ type: "choose", target: { kind: "pane", index: 3 } }], GRID_CONTEXT).effects)).toStrictEqual([{ type: "select-pane", index: 3 }]);
   });
   it("activates a top bar control when it is clicked", () => {
     const r = run(at(0), [{ type: "choose", target: { kind: "top", id: "palette" } }], GRID_CONTEXT);

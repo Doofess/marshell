@@ -51,10 +51,11 @@ function nextStop(from: Target | null, ctx: NavContext): Target | null {
 
 const rectOf = (ctx: NavContext, t: Target) => ctx.layout.find((l) => sameTarget(l.target, t))?.rect;
 
-function selectPane(state: NavState, index: number, ctx: NavContext): Result {
+function selectPane(state: NavState, index: number, ctx: NavContext, from?: "row"): Result {
   const n = sessionOf(ctx, index);
   const text = n === null ? `Selected empty slot ${index + 1}` : `Selected ${sessionText(ctx, n)}`;
-  return { state: { ...state, selectedPane: index, selectedSide: null, cursor: null }, effects: [{ type: "select-pane", index }, announce(text)] };
+  const effect: NavEffect = from ? { type: "select-pane", index, from } : { type: "select-pane", index };
+  return { state: { ...state, selectedPane: index, selectedSide: null, cursor: null }, effects: [effect, announce(text)] };
 }
 
 function selectSide(state: NavState, panel: string, ctx: NavContext): Result {
@@ -67,7 +68,7 @@ function commit(state: NavState, t: Target, ctx: NavContext): Result {
   if (t.kind === "side") return selectSide(state, t.panel, ctx);
   if (t.kind === "top") return { state: { ...state, cursor: null }, effects: [{ type: "activate", id: t.id }, announce(`Activated ${topName(t.id)}`)] };
   const shown = ctx.panes.indexOf(t.number);
-  if (shown >= 0) return selectPane(state, shown, ctx);
+  if (shown >= 0) return selectPane(state, shown, ctx, "row");
   const sel = selectedOf(state, ctx);
   const empty = ctx.panes.indexOf(null);
   const pane = sel ?? (empty >= 0 ? empty : 0);
