@@ -9,6 +9,7 @@ import type { RemovePreview } from "../../generated/RemovePreview";
 import type { WslDistros } from "../../generated/WslDistros";
 import type { ConfigState, Detection } from "../../features/onboarding/types";
 import { api, ApiError } from "./client";
+import type { UndoOutcome } from "./doctor";
 
 /** The agents whose hooks Marshell sets up through `/v1/agents/{agent}/...`. */
 export type HookAgent = "claude" | "codex" | "antigravity" | "qwen" | "copilot";
@@ -70,6 +71,25 @@ export async function applyPreview(ep: Endpoint, preview: ConfigPreview): Promis
       return { ok: false, conflict: false, message: paths.length > 0 ? `Marshell can't change ${paths.join(", ")}, so nothing was written.` : "Nothing was written: there is nothing Marshell can change here." };
     }
     throw e;
+  }
+}
+
+/**
+ * Puts the files of one earlier change back (Hooks off's Undo), while every one of them is still as that change left it. A 409 `changed`
+ * lists the files that differ and nothing was written; a 404 is a snapshot the core doesn't know.
+ */
+export async function undoSnapshot(ep: Endpoint, snapshotId: string): Promise<UndoOutcome> {
+  try {
+    await api<ApplyResult>(ep, "POST", `/v1/snapshots/${encodeURIComponent(snapshotId)}/undo`);
+    return { ok: true };
+  } catch (e) {
+    if (!(e instanceof ApiError)) throw e;
+    if (e.status === 404) return { ok: false, message: "There is nothing to undo." };
+    if (e.status === 409) {
+      const { reason, paths } = conflictBody(e.message);
+      if (reason === "changed") return { ok: false, changed: paths };
+    }
+    return { ok: false, message: e.message };
   }
 }
 

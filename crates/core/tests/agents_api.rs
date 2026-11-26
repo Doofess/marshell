@@ -258,6 +258,194 @@ async fn hooks_off_deletes_the_chain_and_undo_puts_back_both_files() {
     assert_eq!(std::fs::read(&chain).unwrap(), installed_chain);
 }
 
+/// A Claude Code env set up with Hooks, over a settings file that holds the person's own status line.
+/// Returns the env, the chain file's path, the setup body and the two files' bytes while set up.
+async fn claude_set_up() -> (Env, PathBuf, Value, Vec<u8>, Vec<u8>) {
+    let e = env();
+    let original = "{\r\n  // mine\r\n  \"statusLine\": {\"type\": \"command\", \"command\": \"my-line\"},\r\n}\r\n";
+    std::fs::write(&e.settings, original).unwrap();
+    let bridge = paths::bridge_exe(&e.home);
+    std::fs::create_dir_all(bridge.parent().unwrap()).unwrap();
+    std::fs::write(&bridge, "").unwrap();
+    let chain = paths::statusline_chain(&e.home, "claude");
+    let (_, preview) = post(&e.app, "/v1/agents/claude/hooks/plan", WANT()).await;
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&preview)).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    let (_, setup) = get(&e.app, "/v1/agents/claude/setup").await;
+    assert_eq!(setup["hooks"], "installed", "{setup}");
+    let settings = std::fs::read(&e.settings).unwrap();
+    let chain_bytes = std::fs::read(&chain).unwrap();
+    (e, chain, setup, settings, chain_bytes)
+}
+
+/// Hooks off for Claude Code: the snapshot's id.
+async fn claude_hooks_off(e: &Env) -> String {
+    let (_, removal) = post(&e.app, "/v1/agents/claude/hooks/remove-plan", json!({})).await;
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&removal["preview"])).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    applied["snapshot_id"].as_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn hooks_off_can_be_undone_through_the_snapshot_while_the_files_are_unchanged() {
+    let (e, chain, setup_before, settings_before, chain_before) = claude_set_up().await;
+    let snapshot = claude_hooks_off(&e).await;
+    assert!(!chain.exists(), "the chain file is still there");
+    let (_, off) = get(&e.app, "/v1/agents/claude/setup").await;
+    assert_eq!(off["hooks"], "none", "{off}");
+
+    let (status, undone) = post(&e.app, &format!("/v1/snapshots/{snapshot}/undo"), json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{undone}");
+    assert!(undone["snapshot_id"].is_string(), "{undone}");
+    assert_eq!(std::fs::read(&e.settings).unwrap(), settings_before);
+    assert_eq!(std::fs::read(&chain).unwrap(), chain_before);
+    let (_, setup_after) = get(&e.app, "/v1/agents/claude/setup").await;
+    assert_eq!(setup_after, setup_before);
+}
+
+/// What `managed.json` records as Marshell's, in a fixed order.
+fn records(e: &Env) -> Vec<marshell_core::config::managed::ManagedEntry> {
+    let mut entries = marshell_core::config::managed::list(&e.home).unwrap();
+    entries.sort_by(|a, b| (&a.path, &a.pointer).cmp(&(&b.path, &b.pointer)));
+    entries
+}
+
+#[tokio::test]
+async fn an_undo_of_hooks_off_puts_the_records_of_what_is_marshells_back() {
+    let (e, _, _, _, _) = claude_set_up().await;
+    let set_up = records(&e);
+    assert!(!set_up.is_empty(), "set-up recorded nothing");
+    let snapshot = claude_hooks_off(&e).await;
+    // Hooks off keeps one record: the person's own status line, which it put back.
+    let off = records(&e);
+    assert!(off.len() < set_up.len(), "Hooks off took no record out: {off:?}");
+
+    let (status, undone) = post(&e.app, &format!("/v1/snapshots/{snapshot}/undo"), json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{undone}");
+    assert_eq!(records(&e), set_up);
+
+    // And the undo of that undo: the files are as Hooks off left them, and so are the records.
+    let again = undone["snapshot_id"].as_str().unwrap();
+    let (status, body) = post(&e.app, &format!("/v1/snapshots/{again}/undo"), json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(records(&e), off);
+}
+
+#[tokio::test]
+async fn an_undo_after_the_file_was_deleted_is_refused_and_writes_nothing() {
+    let (e, chain, _, _, _) = claude_set_up().await;
+    let snapshot = claude_hooks_off(&e).await;
+    std::fs::remove_file(&e.settings).unwrap();
+
+    let uri = format!("/v1/snapshots/{snapshot}/undo");
+    for _ in 0..2 {
+        let (status, body) = post(&e.app, &uri, json!({})).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["reason"], "changed", "{body}");
+        let paths = body["paths"].as_array().unwrap();
+        assert_eq!(paths.len(), 1, "{body}");
+        assert_eq!(
+            canonical(std::path::Path::new(paths[0].as_str().unwrap()).parent().unwrap()),
+            canonical(e.settings.parent().unwrap()),
+            "{body}"
+        );
+        assert!(!e.settings.exists(), "the settings file came back");
+        assert!(!chain.exists(), "the chain file came back");
+    }
+}
+
+#[tokio::test]
+async fn codex_hooks_off_can_be_undone_through_the_snapshot() {
+    let (e, hooks) = codex_env();
+    let mine = json!({"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "my-stop"}]}]}});
+    std::fs::write(&hooks, serde_json::to_string_pretty(&mine).unwrap()).unwrap();
+    install_codex(&e).await;
+    let (_, setup_before) = get(&e.app, "/v1/agents/codex/setup").await;
+    assert_eq!(setup_before["hooks"], "installed", "{setup_before}");
+    let hooks_before = std::fs::read(&hooks).unwrap();
+    let records_before = records(&e);
+    assert!(!records_before.is_empty(), "set-up recorded nothing");
+
+    let (_, removal) = post(&e.app, "/v1/agents/codex/hooks/remove-plan", json!({})).await;
+    let (status, applied) = post(&e.app, "/v1/config/apply", shown(&removal["preview"])).await;
+    assert_eq!(status, StatusCode::OK, "{applied}");
+    assert_ne!(std::fs::read(&hooks).unwrap(), hooks_before);
+    let snapshot = applied["snapshot_id"].as_str().unwrap();
+    let (_, list) = get(&e.app, "/v1/snapshots").await;
+    let kept = list.as_array().unwrap().iter().find(|s| s["id"] == snapshot).unwrap();
+    let files = kept["files"].as_array().unwrap();
+    assert_eq!(files.len(), 1, "{kept}");
+    assert!(files[0]["path"].as_str().unwrap().ends_with("hooks.json"), "{kept}");
+
+    let (status, undone) = post(&e.app, &format!("/v1/snapshots/{snapshot}/undo"), json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{undone}");
+    assert_eq!(std::fs::read(&hooks).unwrap(), hooks_before);
+    let (_, setup_after) = get(&e.app, "/v1/agents/codex/setup").await;
+    assert_eq!(setup_after, setup_before);
+    assert_eq!(records(&e), records_before);
+}
+
+#[tokio::test]
+async fn an_undo_after_the_file_changed_is_refused_and_writes_nothing() {
+    let (e, chain, _, _, _) = claude_set_up().await;
+    let snapshot = claude_hooks_off(&e).await;
+    let edited = "{\"model\": \"opus\"}\n";
+    std::fs::write(&e.settings, edited).unwrap();
+
+    let (status, body) = post(&e.app, &format!("/v1/snapshots/{snapshot}/undo"), json!({})).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["reason"], "changed", "{body}");
+    let paths = body["paths"].as_array().unwrap();
+    assert_eq!(paths.len(), 1, "{body}");
+    assert_eq!(
+        canonical(std::path::Path::new(paths[0].as_str().unwrap())),
+        canonical(&e.settings),
+        "{body}"
+    );
+    assert_eq!(std::fs::read_to_string(&e.settings).unwrap(), edited);
+    assert!(!chain.exists(), "the chain file came back");
+}
+
+#[tokio::test]
+async fn an_undo_of_an_unknown_snapshot_is_not_found() {
+    let e = env();
+    for id in ["s000000000000", "nope", "s..%2F..%2Fx"] {
+        let (status, body) = post_raw(&e.app, &format!("/v1/snapshots/{id}/undo"), json!({})).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{id}");
+        assert_eq!(String::from_utf8(body).unwrap(), "no such snapshot", "{id}");
+    }
+}
+
+#[tokio::test]
+async fn a_second_undo_is_refused_as_changed() {
+    let (e, chain, _, settings_before, chain_before) = claude_set_up().await;
+    let snapshot = claude_hooks_off(&e).await;
+    let uri = format!("/v1/snapshots/{snapshot}/undo");
+    let (status, undone) = post(&e.app, &uri, json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{undone}");
+
+    let (status, body) = post(&e.app, &uri, json!({})).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["reason"], "changed", "{body}");
+    assert!(!body["paths"].as_array().unwrap().is_empty(), "{body}");
+    assert_eq!(std::fs::read(&e.settings).unwrap(), settings_before);
+    assert_eq!(std::fs::read(&chain).unwrap(), chain_before);
+}
+
+#[tokio::test]
+async fn snapshot_undo_is_refused_without_the_bearer() {
+    let e = env();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/v1/snapshots/s000000000000/undo")
+        .header(header::HOST, format!("127.0.0.1:{PORT}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from("{}"))
+        .unwrap();
+    let (status, _) = send(&e.app, req).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
 #[tokio::test]
 async fn an_unknown_agent_is_still_404() {
     let e = env();

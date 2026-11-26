@@ -113,7 +113,7 @@ import { useTerminalFloor } from "../terminal/useTerminalFloor";
 import { modeMenuItems, sessionMenuItems } from "../sidebar/sessionMenu";
 import { nextSessionNumber } from "../sidebar/sessionNumber";
 import type { Mode, RowModel } from "../sidebar/types";
-import { rowSetupStart, type SetupStart } from "../agents/agentsState";
+import { rowSetupStart, type HooksUndo, type SetupStart } from "../agents/agentsState";
 import { LiveOnboarding } from "../onboarding/LiveOnboarding";
 import { getSetup, listAgents, type HookAgent } from "../../lib/api/agents";
 import type { HookInstall } from "../../generated/HookInstall";
@@ -173,7 +173,7 @@ import type { NavEffect } from "../../lib/navigation/types";
 import { installTabHold, sendHeldTab } from "../../lib/navigation/tabHold";
 import { Toast } from "./Toast";
 import { pruneClosed, without, type StartingTexts } from "./startingTexts";
-import { SHELL_FAILED, SHELL_STARTING } from "../window/ShellPanel";
+import { OPEN_AS_SESSION_FAILED, SHELL_FAILED, SHELL_STARTING } from "../window/ShellPanel";
 import { SHELL_CHANGES_NOTE } from "../changes/ShellNote";
 import { handedOff } from "./handOff";
 import { focusShellTerminal, shellAutoFolded, shellTerminalFocused } from "./shellPanelFocus";
@@ -399,6 +399,10 @@ export function LiveApp() {
   const versionBefore = useRef(new Map<string, string | null>());
   const openingTask = useRef(false);
   const [accountsRefresh, setAccountsRefresh] = useState(0);
+  // Bumped by a hooks change, so mounted Company pages with no edit in progress read their file again (not a version probe).
+  const [settingsRefresh, setSettingsRefresh] = useState(0);
+  // The Hooks off Settings → Agents can still undo. Held here, so it outlives closing Settings; it does not outlive the app.
+  const [hooksUndo, setHooksUndo] = useState<HooksUndo | null>(null);
   const [companyRefresh, setCompanyRefresh] = useState<Record<CompanyAgent, number>>({ claude: 0, codex: 0, antigravity: 0, qwen: 0, copilot: 0 });
   // First run: shown once, when the saved settings say the onboarding was not seen. Nothing shows until that read has answered;
   // a failed read shows none.
@@ -1620,12 +1624,14 @@ export function LiveApp() {
     try {
       setAdopted({ endpoint, tabId: await sessions.adoptShellPanel(endpoint) });
     } catch (e) {
-      // A 404 means the core has no panel shell (it was adopted already): there is nothing to open.
       console.warn("Could not open the shell as a session", e);
+      announce(OPEN_AS_SESSION_FAILED);
+      // A 404 means the core has no panel shell (it was adopted already): the panel asks for a new one.
+      if (e instanceof ApiError && e.status === 404) setPanel(null);
     } finally {
       adopting.current = false;
     }
-  }, [endpoint, panelTab]);
+  }, [endpoint, panelTab, announce]);
   // The adopted tab is listed: in one update the panel lets go of its terminal and the window takes the tab. Until then the window draws
   // nothing for that tab (see renderTerminal), so the pty only ever has one terminal attached. (Adopting earlier would let the
   // view's own clean-up drop an id the list does not hold yet.)
@@ -2458,6 +2464,7 @@ export function LiveApp() {
       const hasTerminal = bar === undefined || bar.phrase !== ENDED_PHRASE;
       const profile = profiles.find((p) => p.id === info?.profile_id);
       const profileGone = info && resumeBlockedReason(info.profile_id, profiles);
+      const focus = terminalFocusProps({ selected: row.id === focusedId, linkHeld, overlayUp: launcherOpen || reopening !== null || overlay !== null || review !== null });
       return (
         <div className="resume-pane">
           {hasTerminal && (
@@ -2471,7 +2478,7 @@ export function LiveApp() {
                 placeholder={startingTexts[row.id]}
                 onOutput={() => setStartingTexts((t) => without(t, row.id))}
                 onSize={onSize}
-                {...terminalFocusProps({ selected: row.id === focusedId, linkHeld, overlayUp: launcherOpen || reopening !== null || overlay !== null || review !== null })}
+                {...focus}
                 visible={shown}
                 paused={info?.paused === true}
                 onBlockedInput={() => actions.showPausedBar(row.id)}
@@ -2493,6 +2500,7 @@ export function LiveApp() {
               profileName={profile?.name ?? info.profile_id}
               disabledReason={profileGone}
               needsAck={actions.resumeNeedsAck(bar.id)}
+              keyboard={hasTerminal ? undefined : { selected: focus.autoFocus, blocked: focus.focusBlocked, visible: shown, token: focusToken }}
               onResume={(acknowledged) => startResume(bar, acknowledged)}
             />
           )}
@@ -3111,10 +3119,16 @@ export function LiveApp() {
           initialCwd={settingsCwd}
           announce={announce}
           onProfilesSaved={reloadProfiles}
-          onAgentsChanged={refreshSetup}
+          onAgentsChanged={() => {
+            refreshSetup();
+            setSettingsRefresh((n) => n + 1);
+          }}
+          hooksUndo={hooksUndo}
+          onHooksUndo={setHooksUndo}
           found={found}
           accountsRefresh={accountsRefresh}
           companyRefresh={companyRefresh}
+          settingsRefresh={settingsRefresh}
           running={runningTabs}
           hooks={hooks}
           onSignIn={(agent) => void openCliTask(agent, "sign_in")}

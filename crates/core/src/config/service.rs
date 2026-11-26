@@ -577,15 +577,25 @@ impl ConfigService {
         }
         let changing: Vec<&PlannedFile> = files.iter().filter(|f| f.status == FileStatus::Changes).collect();
 
-        // 5. The snapshot.
+        // 5. The snapshot, with what `managed.json` records for each file now. Only an apply that holds a file's lock
+        // changes that file's records, and this one holds them all, so the list can be read before its own lock.
+        let recorded = managed::list(&shared.home).map_err(ApplyError::Failed)?;
         let inputs: Vec<SnapshotInput> = changing
             .iter()
-            .map(|f| SnapshotInput {
-                path: f.target.clone(),
-                before: f.before.clone(),
-                after_hash: f.after.as_deref().map(hash_bytes),
-                scope: f.scope,
-                applies: f.applies,
+            .map(|f| {
+                let target = f.target.to_string_lossy();
+                SnapshotInput {
+                    path: f.target.clone(),
+                    before: f.before.clone(),
+                    after_hash: f.after.as_deref().map(hash_bytes),
+                    scope: f.scope,
+                    applies: f.applies,
+                    managed: recorded
+                        .iter()
+                        .filter(|e| crate::projects::same_path(&e.path, &target))
+                        .cloned()
+                        .collect(),
+                }
             })
             .collect();
         let snapshot_id = shared
@@ -607,14 +617,24 @@ impl ConfigService {
 
         // 6. The new `managed.json`, computed before anything is written.
         let mut restored: HashMap<&str, String> = HashMap::new();
-        for op in changing.iter().flat_map(|f| &f.ops) {
-            if let EditOp::Restore { snapshot_id } = op {
-                match shared.snapshots.get(snapshot_id) {
-                    Ok(Some(info)) => {
-                        restored.insert(snapshot_id, info.changeset_id);
+        // What each restored file had on record before the change being undone, by snapshot and file.
+        let mut records_before: HashMap<(&str, &Path), Option<Vec<managed::ManagedEntry>>> = HashMap::new();
+        for file in &changing {
+            for op in &file.ops {
+                if let EditOp::Restore { snapshot_id } = op {
+                    match shared.snapshots.get(snapshot_id) {
+                        Ok(Some(info)) => {
+                            restored.insert(snapshot_id, info.changeset_id);
+                        }
+                        Ok(None) => return Err(abandon(anyhow!("snapshot {snapshot_id} is gone"))),
+                        Err(e) => return Err(abandon(e)),
                     }
-                    Ok(None) => return Err(abandon(anyhow!("snapshot {snapshot_id} is gone"))),
-                    Err(e) => return Err(abandon(e)),
+                    match shared.snapshots.managed_before(snapshot_id, &file.target) {
+                        Ok(before) => {
+                            records_before.insert((snapshot_id, &file.target), before);
+                        }
+                        Err(e) => return Err(abandon(e)),
+                    }
                 }
             }
         }
@@ -644,6 +664,9 @@ impl ConfigService {
                     EditOp::Restore { snapshot_id } => Change::Restored {
                         path: &file.target,
                         changeset_id: &restored[snapshot_id.as_str()],
+                        records: records_before
+                            .get(&(snapshot_id.as_str(), file.target.as_path()))
+                            .and_then(|before| before.as_deref()),
                     },
                 });
             }

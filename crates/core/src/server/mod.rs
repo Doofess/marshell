@@ -66,7 +66,7 @@ use std::collections::{HashMap, HashSet};
 use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
@@ -192,8 +192,9 @@ struct Inner {
     /// Where the shell integration scripts were written. None when writing them failed,
     /// so shells start without integration.
     shell_dir: Option<PathBuf>,
-    /// The shells found at startup. Detection runs once, not per request.
-    detected: Vec<Profile>,
+    /// The shells found at startup. Detection runs once, not per request; only a second look at a WSL that was too slow
+    /// to answer replaces it (`AppState::adopt_detected`).
+    detected: RwLock<Vec<Profile>>,
     /// Detected profiles merged with `profiles.json`.
     profiles: Arc<Mutex<ProfilesDoc>>,
     /// The contents of `settings.json`, or the defaults.
@@ -430,7 +431,7 @@ impl AppState {
             allowed_origins,
             home,
             shell_dir,
-            detected,
+            detected: RwLock::new(detected),
             profiles: shared_profiles,
             settings: Mutex::new(settings),
             layout: Mutex::new(layout),
@@ -1168,6 +1169,20 @@ impl AppState {
     pub(crate) fn profiles_snapshot(&self) -> ProfilesDoc {
         self.0.profiles.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
+    /// A copy of the shells detection found, as they were found.
+    pub(crate) fn detected_snapshot(&self) -> Vec<Profile> {
+        self.0.detected.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+    /// Takes a later detection as the detected shells and merges it with `profiles.json` again, so the shells it
+    /// adds appear and the person's saved edits stay. The file is read before any lock is taken, and the two locks
+    /// (the detected list, then the profiles document) are taken one after the other, never nested. A `PUT
+    /// /v1/profiles` that lands between the file read and the second lock is the accepted race: its document is on
+    /// disk, but the merge made from the older file is what the app shows until the next start.
+    pub(crate) fn adopt_detected(&self, detected: Vec<Profile>) {
+        let merged = crate::profiles::store::load(&self.0.home, detected.clone());
+        *self.0.detected.write().unwrap_or_else(|e| e.into_inner()) = detected;
+        *self.0.profiles.lock().unwrap_or_else(|e| e.into_inner()) = merged;
+    }
     /// The WSL distro the tab's shell runs in. None for a tab of any other profile, or an unknown tab.
     pub fn wsl_distro_of_tab(&self, tab: &str) -> Option<String> {
         let profile_id = self.registry().profile_of_tab(tab)?;
@@ -1543,6 +1558,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/config/apply", post(config::apply))
         .route("/v1/snapshots", get(config::snapshots))
         .route("/v1/snapshots/{id}/restore", post(config::restore))
+        .route("/v1/snapshots/{id}/undo", post(config::undo))
         .route("/v1/agents", get(agents::found))
         .route("/v1/agents/wsl-distros", get(agents::wsl_distros))
         .route("/v1/agents/catalog", get(catalog::catalog))
@@ -1744,6 +1760,37 @@ fn stuck_quiet_from_env(value: Option<&str>) -> Duration {
     }
 }
 
+/// When the first detection found no WSL profile (a cold WSL service can take longer than its 2 s limit), asks again
+/// in the background with a 30 s limit and, when distros answer, adopts the new detection. It holds only a `Weak` of
+/// the state, so a core that stopped meanwhile is simply gone, and it never delays start.
+#[cfg(windows)]
+fn spawn_second_look(state: &AppState) {
+    let weak = Arc::downgrade(&state.0);
+    let first = state.detected_snapshot();
+    // A thread of its own, not `spawn_blocking`: a runtime that shuts down waits for its blocking tasks, and this one
+    // can sit in `wsl.exe` for 30 s. Nothing joins it, so it never holds up the core's stop.
+    let look = std::thread::Builder::new()
+        .name("wsl-second-look".into())
+        .spawn(move || {
+            let Some(again) = crate::profiles::detect::second_look(
+                &first,
+                &|| crate::wsl::list_distros(Duration::from_secs(30)),
+                &|| detect_profiles(&Probe::patient()),
+            ) else {
+                return;
+            };
+            let Some(inner) = weak.upgrade() else {
+                return;
+            };
+            let added = again.len().saturating_sub(first.len());
+            AppState(inner).adopt_detected(again);
+            tracing::info!("WSL answered after start: {added} more shell profile(s) detected");
+        });
+    if let Err(e) = look {
+        tracing::warn!("the second look at WSL could not start: {e}");
+    }
+}
+
 /// Binds 127.0.0.1 on a random port, writes `run/endpoint.json`, serves in the background.
 pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
     let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
@@ -1819,6 +1866,8 @@ pub async fn start(cfg: CoreConfig) -> anyhow::Result<RunningCore> {
         state.start_importer(roots);
     }
     state.start_storage();
+    #[cfg(windows)]
+    spawn_second_look(&state);
     crate::gitbox::sweep::spawn(state.home().to_path_buf());
     let notifier = cfg.notify.map(|sink| crate::notify::spawn(state.clone(), sink));
     let stuck_state = state.clone();

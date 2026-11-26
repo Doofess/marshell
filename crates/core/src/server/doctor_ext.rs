@@ -132,9 +132,10 @@ pub(crate) fn inventories(st: &AppState, facts: &[AgentFacts], distro_homes: &[(
     let finder = st.agent_finder(&[]);
     let windows = windows_roots(st);
     let projects: Vec<PathBuf> = if windows.is_some() {
-        crate::projects::list(&st.0.home)
+        crate::projects::entries(&st.0.home, &|| (st.0.running_distros)())
             .into_iter()
-            .map(|p| PathBuf::from(p.path))
+            .filter(|listed| listed.read)
+            .map(|listed| PathBuf::from(listed.info.path))
             .collect()
     } else {
         Vec::new()

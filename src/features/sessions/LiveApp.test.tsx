@@ -991,3 +991,35 @@ describe("LiveApp: the shell panel owns the pane", () => {
     expect(source).toContain("onTyped={() => (owner.shell ? toOwnerTerminal() : focusDelivered(");
   });
 });
+
+describe("LiveApp: slice 6y's small faults", () => {
+  const source = readFileSync(join(__dirname, "LiveApp.tsx"), "utf8");
+  it("a hooks change refreshes the Company pages through settingsRefresh, not companyRefresh", () => {
+    const handler = source.match(/onAgentsChanged=\{([^]*?)\}\n/)?.[1] ?? "";
+    expect(handler).toContain("refreshSetup()");
+    expect(handler).toContain("setSettingsRefresh(");
+    expect(handler).not.toContain("setCompanyRefresh(");
+    expect(source).toContain("settingsRefresh={settingsRefresh}");
+  });
+  it("a failed Open as a session is announced, and a 404 gives the panel a new shell", () => {
+    const body = source.slice(source.indexOf("const openAsSession"), source.indexOf("const openAsSession") + 1200);
+    expect(body).toContain("announce(OPEN_AS_SESSION_FAILED)");
+    expect(body).toMatch(/404[^]*setPanel\(null\)/);
+  });
+  it("an ended session's Resume bar gets the terminal's keyboard state", () => {
+    const at = source.indexOf("keyboard={hasTerminal ? undefined : {");
+    expect(at).toBeGreaterThan(0);
+    const body = source.slice(at, at + 300);
+    expect(body).toContain("selected: focus.autoFocus");
+    expect(body).toContain("blocked: focus.focusBlocked");
+    expect(body).toContain("token: focusToken");
+    expect(body).toContain("visible: shown");
+    expect(source).toContain("const focus = terminalFocusProps(");
+  });
+  it("holds the Hooks off undo offer and gives it to the settings page", () => {
+    expect(source).toContain("const [hooksUndo, setHooksUndo] = useState<HooksUndo | null>(null)");
+    const element = source.slice(source.indexOf("<LiveSettings"), source.indexOf("onClose={", source.indexOf("<LiveSettings")));
+    expect(element).toContain("hooksUndo={hooksUndo}");
+    expect(element).toContain("onHooksUndo={setHooksUndo}");
+  });
+});

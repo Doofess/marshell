@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { ImportedTheme } from "../../generated/ImportedTheme";
@@ -139,5 +140,13 @@ describe("appearance edits", () => {
   it("adding a theme whose id is taken gives it a new id", () => {
     const a = { ...DEFAULT_APPEARANCE, imported_themes: [theme("nord")] };
     expect(addImported(a, [theme("nord", "Nord again"), theme("dracula")]).imported_themes.map((t) => t.id)).toEqual(["nord", "nord-2", "dracula"]);
+  });
+});
+
+describe("useAppearanceSection: the scheme", () => {
+  it("reads the scheme through useAppScheme and never calls appScheme() in this file", () => {
+    const src = readFileSync(new URL("./AppearanceSections.tsx", import.meta.url), "utf8");
+    expect(src.slice(src.indexOf("function useAppearanceSection"))).toContain("useAppScheme()");
+    expect(src).not.toMatch(/\bappScheme\(/);
   });
 });

@@ -118,9 +118,41 @@ impl Probe {
     }
 }
 
+impl Probe {
+    /// The real machine, with a WSL list that waits 30 seconds for a cold WSL service instead of 2. For the second
+    /// look in the background, never for the one that start waits on.
+    pub fn patient() -> Self {
+        Probe {
+            wsl_list: patient_wsl_list,
+            ..Probe::system()
+        }
+    }
+}
+
 /// Runs `wsl.exe -l -q` on a thread and gives up after 2 seconds.
 fn system_wsl_list() -> Vec<u8> {
     run_wsl(&["-l", "-q"], std::time::Duration::from_secs(2))
+}
+
+/// Runs `wsl.exe -l -q` on a thread and gives up after 30 seconds.
+fn patient_wsl_list() -> Vec<u8> {
+    run_wsl(&["-l", "-q"], std::time::Duration::from_secs(30))
+}
+
+/// The shells to use instead of `first` when a second look at WSL found distros that the first one missed. `None`
+/// when `first` already holds a WSL profile (`list` is not asked then), when `list` names no distro, or when the new
+/// detection still holds none. `list` asks WSL for its distros and `detect` runs detection again.
+pub fn second_look(
+    first: &[Profile],
+    list: &dyn Fn() -> Vec<String>,
+    detect: &dyn Fn() -> Vec<Profile>,
+) -> Option<Vec<Profile>> {
+    let has_wsl = |profiles: &[Profile]| profiles.iter().any(|p| p.family == ShellFamily::Wsl);
+    if has_wsl(first) || list().is_empty() {
+        return None;
+    }
+    let again = detect();
+    has_wsl(&again).then_some(again)
 }
 
 /// Runs `wsl.exe` with the arguments on a thread, with no console window, and gives up after `timeout`.
@@ -1113,6 +1145,68 @@ mod tests {
             parse_wsl_list(&utf16le("Ubuntu\r\n\r\nDebian\r\n")),
             ["Ubuntu", "Debian"]
         );
+    }
+
+    fn a_cmd() -> Profile {
+        detected("cmd", "Command Prompt", vec!["cmd.exe".into()], ShellFamily::Cmd)
+    }
+
+    fn a_distro() -> Profile {
+        detected(
+            "wsl-ubuntu",
+            "Ubuntu",
+            vec!["wsl.exe".into(), "-d".into(), "Ubuntu".into()],
+            ShellFamily::Wsl,
+        )
+    }
+
+    #[test]
+    fn second_look_is_skipped_when_wsl_was_found() {
+        let asked = std::cell::Cell::new(0);
+        let first = vec![a_cmd(), a_distro()];
+        let list = || {
+            asked.set(asked.get() + 1);
+            vec!["Ubuntu".to_string()]
+        };
+        let detect = || {
+            asked.set(asked.get() + 1);
+            vec![a_cmd(), a_distro()]
+        };
+        assert!(second_look(&first, &list, &detect).is_none());
+        assert_eq!(asked.get(), 0, "neither the list nor the detection was asked");
+    }
+
+    #[test]
+    fn second_look_gives_nothing_when_the_list_stays_empty() {
+        let detected_again = std::cell::Cell::new(false);
+        let detect = || {
+            detected_again.set(true);
+            vec![a_cmd(), a_distro()]
+        };
+        assert!(second_look(&[a_cmd()], &Vec::new, &detect).is_none());
+        assert!(
+            !detected_again.get(),
+            "no distro answered, so nothing was detected again"
+        );
+    }
+
+    #[test]
+    fn second_look_gives_nothing_when_the_new_detection_has_no_wsl() {
+        let list = || vec!["Ubuntu".to_string()];
+        let detect = || vec![a_cmd()];
+        assert!(second_look(&[a_cmd()], &list, &detect).is_none());
+    }
+
+    #[test]
+    fn second_look_gives_the_new_detection_when_distros_answer() {
+        let list = || vec!["Ubuntu".to_string()];
+        let detect = || vec![a_cmd(), a_distro()];
+        let ids: Vec<String> = second_look(&[a_cmd()], &list, &detect)
+            .expect("distros answered")
+            .into_iter()
+            .map(|p| p.id)
+            .collect();
+        assert_eq!(ids, ["cmd", "wsl-ubuntu"]);
     }
 
     #[cfg(windows)]

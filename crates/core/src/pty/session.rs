@@ -93,9 +93,17 @@ impl PtyControl for LocalControl {
     }
 }
 
-/// Applies the spec's environment steps to `cmd`, in this order: `env_remove`, then the inherited names `env_strip`
-/// accepts, then `env`.
+/// The names Windows Terminal gives the programs it starts. Marshell inherits them when it is started from a shell in
+/// Windows Terminal, and a session must not: a tab is not a Windows Terminal session, and a program that reads them
+/// takes it for one (Copilot CLI then offers to set Windows Terminal up).
+pub const HOST_TERMINAL_MARKERS: &[&str] = &["WT_SESSION", "WT_PROFILE_ID"];
+
+/// Applies the spec's environment steps to `cmd`, in this order: `HOST_TERMINAL_MARKERS` and `env_remove`, then the
+/// inherited names `env_strip` accepts, then `env` (so a profile that sets one of those names itself keeps it).
 fn apply_env(cmd: &mut CommandBuilder, spec: &SpawnSpec) {
+    for k in HOST_TERMINAL_MARKERS {
+        cmd.env_remove(k);
+    }
     for k in &spec.env_remove {
         cmd.env_remove(k);
     }
@@ -1051,6 +1059,31 @@ mod tests {
         // Without a remove or strip, an inherited name stays.
         let plain = child_env(&env_spec(vec![], vec![], None));
         assert!(plain.iter().any(|(k, _)| k.eq_ignore_ascii_case("PATH")));
+    }
+
+    /// The two names are given to the command itself, as an inherited name is: the test process's variables stay as
+    /// they are.
+    #[test]
+    fn a_session_never_inherits_windows_terminals_marks() {
+        let mut cmd = CommandBuilder::new("");
+        cmd.env("WT_SESSION", "x");
+        cmd.env("WT_PROFILE_ID", "y");
+        cmd.env("MARSHELL_6Y_KEEP", "z");
+        apply_env(&mut cmd, &env_spec(vec![], vec![], None));
+        assert_eq!(cmd.get_env("WT_SESSION"), None);
+        assert_eq!(cmd.get_env("WT_PROFILE_ID"), None);
+        assert_eq!(cmd.get_env("MARSHELL_6Y_KEEP").and_then(|v| v.to_str()), Some("z"));
+    }
+
+    #[test]
+    fn a_profile_can_still_set_windows_terminals_marks() {
+        let mut cmd = CommandBuilder::new("");
+        cmd.env("WT_SESSION", "inherited");
+        apply_env(
+            &mut cmd,
+            &env_spec(vec![("WT_SESSION".into(), "mine".into())], vec![], None),
+        );
+        assert_eq!(cmd.get_env("WT_SESSION").and_then(|v| v.to_str()), Some("mine"));
     }
 
     #[test]

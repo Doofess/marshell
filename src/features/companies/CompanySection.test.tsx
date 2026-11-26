@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { isValidElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -392,5 +393,13 @@ describe("CompanyView", () => {
       expect(h).toContain("<code>npm install -g @github/copilot@latest</code>");
       expect(c({ running: 2 })).toContain("Copilot CLI is running in 2 tabs. The update may fail while they run.");
     });
+  });
+});
+
+describe("CompanySection: a hooks change", () => {
+  it("reads the file again on settingsRefresh, only when no edit is in progress", () => {
+    const src = readFileSync(new URL("./CompanySection.tsx", import.meta.url), "utf8");
+    expect(src).toContain("settingsRefresh?: number");
+    expect(src).toMatch(/rereadsAfterHooksChange\([^]*?void reread\(\)[^]*?\[settingsRefresh\]/);
   });
 });

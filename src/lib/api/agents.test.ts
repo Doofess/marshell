@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentSetup } from "../../generated/AgentSetup";
 import type { ConfigPreview } from "../../generated/ConfigPreview";
 import type { Endpoint } from "../../generated/Endpoint";
-import { applyPreview, getSetup, listWslDistros, planInstall, planRemove, previewDiff, toDetection, toDetections } from "./agents";
+import { applyPreview, getSetup, listWslDistros, planInstall, planRemove, previewDiff, toDetection, toDetections, undoSnapshot } from "./agents";
 
 const endpoint: Endpoint = { port: 9, token: "t", platform: "windows" };
 const reply = (body: unknown, status = 200) => vi.fn().mockResolvedValue(new Response(typeof body === "string" ? body : JSON.stringify(body), { status }));
@@ -175,5 +175,24 @@ describe("toDetections", () => {
   });
   it("keeps only Claude's row when the list could not be read", () => {
     expect(toDetections(setup, null)).toEqual([toDetection(setup)]);
+  });
+});
+
+describe("undoSnapshot", () => {
+  it("posts to the snapshot's undo route with the id encoded, and reads 200 as done", async () => {
+    const f = reply({ snapshot_id: "s 1", restored: [] });
+    vi.stubGlobal("fetch", f);
+    expect(await undoSnapshot(endpoint, "s 1")).toEqual({ ok: true });
+    expect(call(f)).toMatchObject({ url: "http://127.0.0.1:9/v1/snapshots/s%201/undo", method: "POST" });
+  });
+  it("reads a changed 409 as the files that changed", async () => {
+    vi.stubGlobal("fetch", reply({ reason: "changed", paths: ["C:/a.json", "C:/b.json"] }, 409));
+    expect(await undoSnapshot(endpoint, "s1")).toEqual({ ok: false, changed: ["C:/a.json", "C:/b.json"] });
+  });
+  it("says there is nothing to undo for a 404, and gives any other failure's message", async () => {
+    vi.stubGlobal("fetch", reply("no such snapshot", 404));
+    expect(await undoSnapshot(endpoint, "s1")).toEqual({ ok: false, message: "There is nothing to undo." });
+    vi.stubGlobal("fetch", reply("boom", 500));
+    expect(await undoSnapshot(endpoint, "s1")).toEqual({ ok: false, message: "boom" });
   });
 });

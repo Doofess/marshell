@@ -280,3 +280,15 @@ describe("isTextEntry", () => {
     expect(isTextEntry({ tagName: "TEXTAREA", classList: { contains: (n: string) => n === "xterm-helper-textarea" } })).toBe(false);
   });
 });
+
+describe("LiveSettings: a hooks change", () => {
+  it("gives each Company section the settingsRefresh counter", () => {
+    const src = readFileSync(new URL("./LiveSettings.tsx", import.meta.url), "utf8");
+    expect(src).toMatch(/<CompanySection[^>]*settingsRefresh=\{settingsRefresh\}/);
+  });
+  it("gives AgentsSection the Hooks off undo offer and its setter", () => {
+    const src = readFileSync(new URL("./LiveSettings.tsx", import.meta.url), "utf8");
+    expect(src).toMatch(/<AgentsSection[^>]*hooksUndo=\{hooksUndo\}/);
+    expect(src).toMatch(/<AgentsSection[^>]*onHooksUndo=\{onHooksUndo\}/);
+  });
+});

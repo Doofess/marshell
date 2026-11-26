@@ -79,11 +79,12 @@
   color: var(--text-1);
   font-size: var(--text-13);
 }
-.agents-dialog__btn:disabled {
+.agents-dialog__btn:disabled,
+.agents-dialog__btn[aria-disabled="true"] {
   color: var(--text-2);
   background: var(--fill);
 }
-.agents-dialog__btn:active:not(:disabled) {
+.agents-dialog__btn:active:not(:disabled, [aria-disabled="true"]) {
   background: var(--selected, var(--fill-strong));
 }
 .agents-dialog__btn:focus-visible,
@@ -92,7 +93,7 @@
   outline-offset: 2px;
 }
 @media (hover: hover) and (pointer: fine) {
-  .agents-dialog__btn:not(:disabled):hover {
+  .agents-dialog__btn:not(:disabled, [aria-disabled="true"]):hover {
     background: var(--selected, var(--fill-strong));
   }
 }

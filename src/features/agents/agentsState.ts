@@ -86,7 +86,27 @@ export function actions(s: AgentSetup): Array<"setup" | "hooksOff"> {
 
 /** The notice after the hooks are turned off. */
 export const hooksOffNotice = (statuslineLeft: boolean): string =>
-  `Hooks off. Sessions started from now show limited status.${statuslineLeft ? " Your status line was changed since setup, so it was left as it is." : ""}`;
+  `Hooks off. Sessions started from now show limited status.${statuslineLeft ? STATUSLINE_LEFT : ""}`;
+
+const STATUSLINE_LEFT = " Your status line was changed since setup, so it was left as it is.";
+
+/** The Hooks off the person can still undo, for one CLI on Windows or inside one distro. `refused` is set once an undo found the files changed. */
+export type HooksUndo = { agent: HookAgent; distro?: string; snapshotId: string; statuslineLeft: boolean; refused?: string };
+
+/** The line of the undo block; `where` is the CLI's name, or `<name> in <distro>`. */
+export const hooksUndoLine = (where: string, statuslineLeft: boolean): string => `Hooks off for ${where}. Sessions started from now show limited status.${statuslineLeft ? STATUSLINE_LEFT : ""}`;
+
+/** What the announcer says when the undo went through. */
+export const hooksUndone = (where: string): string => `Hooks are back for ${where}, as they were before Hooks off.`;
+
+/** The undo found the files changed since Hooks off and wrote nothing; the block shows this and no button. */
+export function hooksUndoRefused(paths: readonly string[]): string {
+  const files = paths.length === 0 ? "a file" : paths.length === 1 ? paths[0]! : `${paths.slice(0, -1).join(", ")} and ${paths[paths.length - 1]}`;
+  return `Nothing was undone: ${files} changed since Hooks off, so undo would overwrite ${paths.length > 1 ? "them" : "it"}.`;
+}
+
+/** The undo failed for another reason; the button stays. */
+export const hooksUndoFailed = (message: string): string => `Couldn't undo Hooks off: ${message}`;
 
 /** Whether a Set up's diff starts open: an edited skill that is about to be replaced is shown, never replaced silently. */
 export const startsOpen = (want: Want, skill: AgentSetup["skill"] | undefined): boolean => opensDiff(want.skill, skill);

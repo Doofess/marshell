@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ApplyResult } from "../../generated/ApplyResult";
 import type { SettingsPlan } from "../../generated/SettingsPlan";
 import type { AgentSettingsView } from "../../generated/AgentSettingsView";
-import { afterApply, afterEdit, afterPlan, afterReload, afterUndo, announcement, focusAfter, focusBack, focusIn, isBusy, rawChange, rawDroppedLine } from "./companyFlow";
+import { afterApply, afterEdit, afterPlan, afterReload, afterUndo, announcement, focusAfter, focusBack, focusIn, isBusy, rawChange, rawDroppedLine, rereadsAfterHooksChange } from "./companyFlow";
 
 const plan = { preview: { changeset_id: "c" }, normalized: false } as unknown as SettingsPlan;
 const P = "C:/u/.claude/settings.json";
@@ -113,5 +113,14 @@ describe("rawChange", () => {
     expect(rawChange("raw", null, "a = 2\n")).toBeNull();
     expect(rawChange("raw", sv({ raw_lock: "not_plain_json", text: "x" }), "y")).toBeNull();
     expect(rawChange("raw", sv({ raw_lock: null, text: "x" }), "y")).toBe("y");
+  });
+});
+describe("rereadsAfterHooksChange", () => {
+  it("is true only with no pending edit, no Raw draft and nothing in flight", () => {
+    expect(rereadsAfterHooksChange({ draftKeys: 0, rawDraft: null, busy: false })).toBe(true);
+    expect(rereadsAfterHooksChange({ draftKeys: 1, rawDraft: null, busy: false })).toBe(false);
+    expect(rereadsAfterHooksChange({ draftKeys: 0, rawDraft: "x", busy: false })).toBe(false);
+    expect(rereadsAfterHooksChange({ draftKeys: 0, rawDraft: "", busy: false })).toBe(false);
+    expect(rereadsAfterHooksChange({ draftKeys: 0, rawDraft: null, busy: true })).toBe(false);
   });
 });

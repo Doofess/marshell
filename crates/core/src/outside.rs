@@ -59,7 +59,8 @@ fn is_marker(name: &str) -> bool {
 
 /// The environment for the outside terminal: the profile's own variables without Marshell's session markers, and
 /// the names the child must not inherit from the app (the markers again, in case the app was started from one of
-/// its own sessions, and the Claude Code session it may have been started from, as a session drops them). Never
+/// its own sessions, the Claude Code session it may have been started from, as a session drops them, and Windows
+/// Terminal's own names, which say the program runs in a Windows Terminal tab). Never
 /// `PATH` with Marshell's `bin` folder in it: that is a session's environment only.
 pub fn outside_env(profile_env: &[(String, String)]) -> (Vec<(String, String)>, Vec<String>) {
     let kept = profile_env
@@ -70,6 +71,7 @@ pub fn outside_env(profile_env: &[(String, String)]) -> (Vec<(String, String)>, 
     let removed = marshell_markers()
         .into_iter()
         .chain(crate::agents::INHERITED_MARKERS.iter().map(|name| name.to_string()))
+        .chain(crate::pty::HOST_TERMINAL_MARKERS.iter().map(|name| name.to_string()))
         .collect();
     (kept, removed)
 }
@@ -625,6 +627,14 @@ mod tests {
         let (kept, removed) = outside_env(&profile);
         assert_eq!(kept, env(&[("EDITOR", "vim")]));
         for name in ["MARSHELL_TAB_ID", "MARSHELL_SESSION_NUMBER", "MARSHELL_AGENT"] {
+            assert!(removed.iter().any(|r| r == name), "{name} not removed: {removed:?}");
+        }
+    }
+
+    #[test]
+    fn outside_env_drops_windows_terminals_marks() {
+        let (_, removed) = outside_env(&[]);
+        for name in ["WT_SESSION", "WT_PROFILE_ID"] {
             assert!(removed.iter().any(|r| r == name), "{name} not removed: {removed:?}");
         }
     }

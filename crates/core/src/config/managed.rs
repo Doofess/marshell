@@ -31,9 +31,12 @@ pub enum Change<'a> {
     Deleted {
         path: &'a Path,
     },
+    /// A file put back as it was before the change `changeset_id`. `records` is what was recorded for the file just
+    /// before that change, kept with its snapshot; `None` for a snapshot taken before records were kept.
     Restored {
         path: &'a Path,
         changeset_id: &'a str,
+        records: Option<&'a [ManagedEntry]>,
     },
     /// A file the person keeps as their own, after Marshell's last entries left it: nothing in it is Marshell's, so
     /// every record of it goes, as for a deleted file. The file itself stays.
@@ -141,9 +144,19 @@ pub fn updated(home: &Path, changeset_id: &str, changes: &[Change], now_ms: u64)
             Change::Restored {
                 path,
                 changeset_id: undone,
+                records,
             } => {
                 let path = path.to_string_lossy();
-                entries.retain(|e| !(same_path(&e.path, &path) && e.changeset_id == *undone));
+                match records {
+                    // The file holds what it held before the undone change, so what was Marshell's in it then is
+                    // Marshell's again: an undo of Hooks off brings back the records Hooks off took out.
+                    Some(before) => {
+                        entries.retain(|e| !same_path(&e.path, &path));
+                        entries.extend(before.iter().cloned());
+                    }
+                    // An older snapshot holds no records: forget what the undone change added, as before.
+                    None => entries.retain(|e| !(same_path(&e.path, &path) && e.changeset_id == *undone)),
+                }
             }
             Change::HandedBack { path } => {
                 let path = path.to_string_lossy();
@@ -326,6 +339,58 @@ mod tests {
     }
 
     #[test]
+    fn a_restore_puts_back_the_records_the_file_had_before_the_undone_change() {
+        let home = tempfile::tempdir().unwrap();
+        let other = Path::new("/home/u/.claude/other.json");
+        apply(home.path(), "c1", &[set("/hooks/Stop"), set("/statusLine")], 1);
+        apply(home.path(), "c1", &[Change::Created { path: other }], 1);
+        let before: Vec<ManagedEntry> = list(home.path())
+            .unwrap()
+            .into_iter()
+            .filter(|e| same_path(&e.path, &file().to_string_lossy()))
+            .collect();
+        // c2 takes Marshell's entries out and sets one of its own.
+        apply(
+            home.path(),
+            "c2",
+            &[
+                Change::Remove {
+                    path: file(),
+                    pointer: "/hooks/Stop",
+                },
+                Change::Remove {
+                    path: file(),
+                    pointer: "/statusLine",
+                },
+                set("/statusLine/command"),
+            ],
+            2,
+        );
+        assert_eq!(pointers(home.path()), ["/statusLine/command"]);
+        apply(
+            home.path(),
+            "c3",
+            &[Change::Restored {
+                path: file(),
+                changeset_id: "c2",
+                records: Some(&before),
+            }],
+            3,
+        );
+        let now = list(home.path()).unwrap();
+        let of_file: Vec<&ManagedEntry> = now
+            .iter()
+            .filter(|e| same_path(&e.path, &file().to_string_lossy()))
+            .collect();
+        assert_eq!(
+            of_file,
+            before.iter().collect::<Vec<_>>(),
+            "as they were, c1's id and time too"
+        );
+        assert_eq!(now.len(), before.len() + 1, "the other file's record is untouched");
+    }
+
+    #[test]
     fn undoing_a_change_that_set_a_pointer_again_keeps_the_first_entry() {
         let home = tempfile::tempdir().unwrap();
         apply(home.path(), "c1", &[set("/hooks/Stop"), set("/statusLine")], 1);
@@ -337,6 +402,7 @@ mod tests {
             &[Change::Restored {
                 path: file(),
                 changeset_id: "c2",
+                records: None,
             }],
             3,
         );
@@ -364,6 +430,7 @@ mod tests {
             &[Change::Restored {
                 path: file(),
                 changeset_id: "c2",
+                records: None,
             }],
             3,
         );
@@ -436,6 +503,7 @@ mod tests {
             &[Change::Restored {
                 path: file(),
                 changeset_id: "c2",
+                records: None,
             }],
             3,
         );

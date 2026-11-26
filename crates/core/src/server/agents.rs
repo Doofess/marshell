@@ -18,6 +18,7 @@ use crate::agents::settings_view::{
 use crate::agents::skill;
 use crate::agents::{parse_any_version, run_version_text};
 use crate::bridge;
+use crate::config::hash::hash_file;
 use crate::config::jsonc::{has_lone_lf, lf_to_crlf, parse_problem, read_value};
 use crate::config::preview::{MAX_CONFIG_BYTES, PlannedFile, TOO_LARGE_DETAIL, unified_diff};
 use crate::config::service::ApplyError;
@@ -34,7 +35,7 @@ use marshell_protocol::agents::{
 };
 use marshell_protocol::config::{
     Applies, ApplyConflict, ApplyRequest, ApplyResult, ChangeSet, ConfigPreview, ConfigScope, EditOp, ExpectedHash,
-    FileEdit, FileStatus, RefuseReason,
+    FileEdit, FileStatus, RefuseReason, SnapshotFileInfo, SnapshotInfo,
 };
 use marshell_protocol::install::{AgentInstall, InstallKind};
 use marshell_protocol::settings_view::{
@@ -1909,6 +1910,66 @@ fn settings_undo_of(st: &AppState, agent: &str, kind: Adapter, snapshot_id: &str
         Err(ApplyError::Conflict { paths, .. }) => Err(changed_since(paths)),
         Err(ApplyError::UnknownChangeSet) => Err(changed_since(vec![file.path.clone()])),
         Err(ApplyError::Failed(e)) => Err(Refusal::from(failed(format!("{e:#}")))),
+    }
+}
+
+/// The file isn't what the change left: another hash, or present where the change removed it.
+pub(super) fn differs_from_fix(file: &SnapshotFileInfo) -> bool {
+    match hash_file(Path::new(&file.path)) {
+        Ok(now) => now != file.after_hash,
+        Err(_) => true,
+    }
+}
+
+/// Puts every file of a snapshot back as it was before that change, in one change set, but only when every file is
+/// still exactly as the change left it. Otherwise nothing is written and the refusal names the files that changed.
+/// Starting a distro is allowed here: the person asked for the undo.
+pub(super) fn undo_snapshot(st: &AppState, info: &SnapshotInfo) -> Result<ApplyResult, Refusal> {
+    // After a restart the config guard knows no distro's folders until its home is looked up.
+    st.record_distros_of(info.files.iter().map(|f| Path::new(&f.path)));
+    let changed: Vec<String> = info
+        .files
+        .iter()
+        .filter(|f| differs_from_fix(f))
+        .map(|f| f.path.clone())
+        .collect();
+    if !changed.is_empty() {
+        return Err(changed_since(changed));
+    }
+    let cs = ChangeSet {
+        title: format!("Restore: {}", info.title),
+        reason: "Puts the files back as they were before this change.".to_string(),
+        edits: info
+            .files
+            .iter()
+            .map(|file| FileEdit {
+                path: file.path.clone(),
+                scope: file.scope,
+                op: EditOp::Restore {
+                    snapshot_id: info.id.clone(),
+                },
+                expected_hash: file.after_hash.clone(),
+                applies: file.applies,
+            })
+            .collect(),
+    };
+    let preview = changes_of(st.0.config.preview(cs))?;
+    let apply = ApplyRequest {
+        changeset_id: preview.changeset_id.clone(),
+        expected_hashes: preview
+            .files
+            .iter()
+            .map(|f| ExpectedHash {
+                path: f.path.clone(),
+                hash: f.before_hash.clone(),
+            })
+            .collect(),
+    };
+    match st.0.config.apply(&apply, now_ms()) {
+        Ok(result) => Ok(result),
+        Err(ApplyError::Conflict { paths, .. }) => Err(changed_since(paths)),
+        Err(ApplyError::UnknownChangeSet) => Err(changed_since(vec![])),
+        Err(ApplyError::Failed(e)) => Err(Refusal::Plain(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}"))),
     }
 }
 

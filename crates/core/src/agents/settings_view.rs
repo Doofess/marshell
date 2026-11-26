@@ -124,12 +124,35 @@ pub(crate) fn control(agent: &str, key: &str) -> Option<FieldControl> {
     })
 }
 
-/// Whether a key's value is a secret: the key holds `key`, `token`, `secret`, `password` or `auth`, in any case.
+/// Whether a key's value is a secret: the key holds `key`, `token`, `secret` or `password`, in any case, or holds
+/// `auth` anywhere but at the start of the word "author" (`includeCoAuthoredBy`, `authorName` and
+/// `certificateAuthority` are shown). The `or` must be written in the case of the `h` before it, so `authOrg` and
+/// `oauthOrganization`, where `Or` begins another word, stay secret. `authoriz` and `authoris` still count, so
+/// `Authorization` is a secret. The match stays on letters and not on words: a key written as one run, such as
+/// `oauthtoken`, must stay hidden.
 pub fn is_secret_key(key: &str) -> bool {
-    let key = key.to_lowercase();
-    ["key", "token", "secret", "password", "auth"]
+    if ["key", "token", "secret", "password"]
         .iter()
-        .any(|word| key.contains(word))
+        .any(|word| key.to_lowercase().contains(word))
+    {
+        return true;
+    }
+    // The original text, by bytes: only ASCII letters match `auth`, so a match always starts on a character boundary.
+    let bytes = key.as_bytes();
+    (0..bytes.len()).any(|at| {
+        let rest = &bytes[at..];
+        if !rest.get(..4).is_some_and(|word| word.eq_ignore_ascii_case(b"auth")) {
+            return false;
+        }
+        let upper = rest[3].is_ascii_uppercase();
+        let author = rest
+            .get(4..6)
+            .is_some_and(|or| or.eq_ignore_ascii_case(b"or") && or.iter().all(|b| b.is_ascii_uppercase() == upper));
+        let authoriz = rest
+            .get(..8)
+            .is_some_and(|word| word.eq_ignore_ascii_case(b"authoriz") || word.eq_ignore_ascii_case(b"authoris"));
+        !author || authoriz
+    })
 }
 
 // ---- masking, once for JSON and once for TOML ----
@@ -1127,7 +1150,8 @@ mod tests {
         );
         let raw: Value = serde_json::from_str(v.raw.as_deref().unwrap()).unwrap();
         assert_eq!(raw.pointer("/security/auth"), Some(&json!("hidden")));
-        assert_eq!(raw.pointer("/general/gitCoAuthor"), Some(&json!("hidden")));
+        // "author" is not a secret (slice 6y): of these, only the `auth` of `security.auth` hides its value.
+        assert_eq!(raw.pointer("/general/gitCoAuthor/commit"), Some(&json!(true)));
         assert_eq!(raw["maxTokens"], "hidden");
     }
 
@@ -1604,10 +1628,59 @@ mod tests {
             "Authorization",
             "password",
             "client_secret",
+            "AUTH",
+            "oauth",
+            "authToken",
+            "auth_token",
+            "authorisationHeader",
+            "x-authorization",
+            // The second `auth` counts.
+            "authorAuth",
+            "awsAuthRefresh",
         ] {
             assert!(is_secret_key(k), "{k}");
         }
-        for k in ["model", "theme", "cleanupPeriodDays"] {
+        for k in [
+            "model",
+            "theme",
+            "cleanupPeriodDays",
+            "includeCoAuthoredBy",
+            "author",
+            "authors",
+            "authorName",
+            "certificateAuthority",
+        ] {
+            assert!(!is_secret_key(k), "{k}");
+        }
+    }
+
+    #[test]
+    fn auth_before_another_word_that_starts_with_or_stays_secret() {
+        for k in [
+            "authOrg",
+            "authOrgId",
+            "authOrigin",
+            "oauthOrganization",
+            "AuthOrg",
+            "Authorization",
+            "authorisationHeader",
+            "AUTHORIZATION",
+            "oauth",
+            "AUTH",
+            "authToken",
+        ] {
+            assert!(is_secret_key(k), "{k}");
+        }
+        for k in [
+            "author",
+            "Author",
+            "AUTHOR",
+            "authors",
+            "includeCoAuthoredBy",
+            "authorName",
+            "certificateAuthority",
+            "gitCoAuthor",
+        ] {
             assert!(!is_secret_key(k), "{k}");
         }
     }

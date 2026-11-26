@@ -1,4 +1,5 @@
 use super::AppState;
+use super::agents::undo_snapshot;
 use crate::config::guard::{Guard, Refusal};
 use crate::config::hash::hash_bytes;
 use crate::config::preview::MAX_CONFIG_BYTES;
@@ -151,6 +152,26 @@ pub async fn snapshots(State(st): State<AppState>, Query(q): Query<PathQuery>) -
     match tokio::task::spawn_blocking(move || list_snapshots(&st, q.path)).await {
         Ok(Ok(list)) => Json(list).into_response(),
         Ok(Err(e)) => failed(format!("{e:#}")),
+        Err(e) => failed(e),
+    }
+}
+
+/// `POST /v1/snapshots/{id}/undo`: puts every file of one snapshot back in a single change set, when each is still as
+/// that change left it. Otherwise 409 with the files that changed, and nothing is written. An unknown or invalid id is
+/// a 404.
+pub async fn undo(State(st): State<AppState>, UrlPath(id): UrlPath<String>) -> Response {
+    let work = move || match st.0.config.snapshots().get(&id) {
+        Ok(Some(info)) => undo_snapshot(&st, &info).map(Some),
+        Ok(None) => Ok(None),
+        Err(e) => Err(super::agents::Refusal::Plain(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("{e:#}"),
+        )),
+    };
+    match tokio::task::spawn_blocking(work).await {
+        Ok(Ok(Some(result))) => Json(result).into_response(),
+        Ok(Ok(None)) => not_found("snapshot"),
+        Ok(Err(refusal)) => refusal.into_response(),
         Err(e) => failed(e),
     }
 }

@@ -1,16 +1,16 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode, type Ref } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode, type Ref } from "react";
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { Switch } from "../../components/Switch/Switch";
 import { DiffView } from "../../components/DiffView/DiffView";
 import type { AgentSetup } from "../../generated/AgentSetup";
 import type { Endpoint } from "../../generated/Endpoint";
 import type { RemovePreview } from "../../generated/RemovePreview";
-import { applyPreview, getSetup, listWslDistros, planRemove, previewDiff, type HookAgent } from "../../lib/api/agents";
+import { applyPreview, getSetup, listWslDistros, planRemove, previewDiff, undoSnapshot, type HookAgent } from "../../lib/api/agents";
 import { useAnnounceOnce } from "../../lib/useAnnounceOnce";
 import { SettingsReadError, type SettingsSync } from "../appearance/settingsSync";
 import { ConsentCard } from "../onboarding/ConsentCard";
 import { CLI_NAME, type Capability } from "../onboarding/consent";
-import { actions, consentProps, DEFAULT_WANT, hooksOffNotice, leftover, liveStatusOn, removalBlock, setupLine, setupWant, type InstallFlow, type SetupStart } from "./agentsState";
+import { actions, consentProps, DEFAULT_WANT, hooksOffNotice, hooksUndoFailed, hooksUndoLine, hooksUndone, hooksUndoRefused, leftover, liveStatusOn, removalBlock, setupLine, setupWant, type HooksUndo, type InstallFlow, type SetupStart } from "./agentsState";
 import { OwnAgentsSection } from "./OwnAgentsSection";
 import { SkillRow, type SkillRowHandlers } from "./SkillRow";
 import { failureText, useInstallFlow } from "./useInstallFlow";
@@ -48,7 +48,15 @@ export type AgentsHandlers = {
   onWslSetup?: (agent: HookAgent, distro: string) => void;
   /** Turn this agent's hooks off inside a WSL distro. */
   onWslRemove?: (agent: HookAgent, distro: string) => void;
+  /** Undo of the Hooks off the block under a CLI's (or a distro's) row offers. */
+  onUndo?: () => void;
 };
+
+/** The CLI's name in the undo block's line: "Codex", or "Claude Code in Ubuntu" for a distro's Hooks off. */
+const whereOf = (offer: HooksUndo): string => (offer.distro === undefined ? agentTitle(offer.agent) : `${agentTitle(offer.agent)} in ${offer.distro}`);
+
+/** The offer is under the CLI's own row when it is for no distro. */
+const windowsOffer = (offer: HooksUndo | null | undefined, agent: HookAgent): HooksUndo | undefined => (offer && offer.agent === agent && offer.distro === undefined ? offer : undefined);
 
 /** Esc on the consent card (and its diff) or on the Hooks off preview leaves that panel and keeps the page from also closing. */
 export function escapeLeavesPanel(e: { key: string; preventDefault: () => void }, panel: Panel, leave: () => void): void {
@@ -82,8 +90,14 @@ export function AgentsSectionView({
   rootRef,
   skills,
   wslDistros: distros,
+  hooksUndo,
+  undoBusy = false,
   ...on
 }: {
+  /** The Hooks off that can still be undone: its block shows under that CLI's row, or that distro's. */
+  hooksUndo?: HooksUndo | null;
+  /** The Undo is running: its button is aria-disabled. */
+  undoBusy?: boolean;
   /** The WSL distros the core accepts; the WSL group shows only once they are known. */
   wslDistros?: string[];
   /** Each agent's marshell skill flow and handlers; without it the rows are left out. */
@@ -125,13 +139,13 @@ export function AgentsSectionView({
       )}
       {typeof setup === "object" && panel.kind === "list" && (
         <>
-          <AgentList setup={setup} agent="claude" liveStatus={liveStatus} error={liveStatusError} on={on} skill={skills?.claude} distros={distros} />
+          <AgentList setup={setup} agent="claude" liveStatus={liveStatus} error={liveStatusError} on={on} skill={skills?.claude} distros={distros} offer={hooksUndo} undoBusy={undoBusy} />
           {/* A CLI missing on Windows still gets its section when there are distros (it may be installed inside one), or while
               Marshell's hooks are still in its files (#62), so they can be turned off. */}
-          {codex && (codex.found || (distros?.length ?? 0) > 0 || leftover(codex)) && <AgentList setup={codex} agent="codex" liveStatus={codexLiveStatus} error={codexLiveStatusError} on={on} skill={skills?.codex} distros={distros} />}
-          {antigravity && (antigravity.found || (distros?.length ?? 0) > 0 || leftover(antigravity)) && <AgentList setup={antigravity} agent="antigravity" liveStatus={antigravityLiveStatus} error={antigravityLiveStatusError} on={on} skill={skills?.antigravity} distros={distros} />}
-          {qwen && (qwen.found || (distros?.length ?? 0) > 0 || leftover(qwen)) && <AgentList setup={qwen} agent="qwen" liveStatus={qwenLiveStatus} error={qwenLiveStatusError} on={on} skill={skills?.qwen} distros={distros} />}
-          {copilot && (copilot.found || (distros?.length ?? 0) > 0 || leftover(copilot) || copilot.not_found_note !== undefined) && <AgentList setup={copilot} agent="copilot" liveStatus={copilotLiveStatus} error={copilotLiveStatusError} on={on} skill={skills?.copilot} distros={distros} />}
+          {codex && (codex.found || (distros?.length ?? 0) > 0 || leftover(codex) || windowsOffer(hooksUndo, "codex") !== undefined) && <AgentList setup={codex} agent="codex" liveStatus={codexLiveStatus} error={codexLiveStatusError} on={on} skill={skills?.codex} distros={distros} offer={hooksUndo} undoBusy={undoBusy} />}
+          {antigravity && (antigravity.found || (distros?.length ?? 0) > 0 || leftover(antigravity) || windowsOffer(hooksUndo, "antigravity") !== undefined) && <AgentList setup={antigravity} agent="antigravity" liveStatus={antigravityLiveStatus} error={antigravityLiveStatusError} on={on} skill={skills?.antigravity} distros={distros} offer={hooksUndo} undoBusy={undoBusy} />}
+          {qwen && (qwen.found || (distros?.length ?? 0) > 0 || leftover(qwen) || windowsOffer(hooksUndo, "qwen") !== undefined) && <AgentList setup={qwen} agent="qwen" liveStatus={qwenLiveStatus} error={qwenLiveStatusError} on={on} skill={skills?.qwen} distros={distros} offer={hooksUndo} undoBusy={undoBusy} />}
+          {copilot && (copilot.found || (distros?.length ?? 0) > 0 || leftover(copilot) || windowsOffer(hooksUndo, "copilot") !== undefined || copilot.not_found_note !== undefined) && <AgentList setup={copilot} agent="copilot" liveStatus={copilotLiveStatus} error={copilotLiveStatusError} on={on} skill={skills?.copilot} distros={distros} offer={hooksUndo} undoBusy={undoBusy} />}
           {own}
         </>
       )}
@@ -162,7 +176,7 @@ function TrustLine({ trust }: { trust: NonNullable<AgentSetup["trust"]> }) {
 }
 
 /** One agent's section: its state, its Live status switch, and Set up or Hooks off. Claude Code's has the Notifications link; Codex has no status line. */
-function AgentList({ setup, agent, liveStatus, error, on, skill, distros }: { setup: AgentSetup; agent: HookAgent; liveStatus: boolean | null; error?: string | null; on: AgentsHandlers; skill?: { flow: SkillFlow | null; on: SkillRowHandlers }; distros?: string[] }) {
+function AgentList({ setup, agent, liveStatus, error, on, skill, distros, offer, undoBusy }: { setup: AgentSetup; agent: HookAgent; liveStatus: boolean | null; error?: string | null; on: AgentsHandlers; skill?: { flow: SkillFlow | null; on: SkillRowHandlers }; distros?: string[]; offer?: HooksUndo | null; undoBusy: boolean }) {
   const todo = actions(setup);
   const orphaned = setup.found && setup.hooks === "orphaned" && setup.settings_state !== "unparsable";
   const name = agentTitle(agent);
@@ -222,7 +236,8 @@ function AgentList({ setup, agent, liveStatus, error, on, skill, distros }: { se
           )}
         </div>
       )}
-      {distros && <WslGroup agent={agent} distros={distros} on={on} />}
+      {windowsOffer(offer, agent) && <UndoBlock offer={windowsOffer(offer, agent)!} busy={undoBusy} onUndo={on.onUndo} />}
+      {distros && <WslGroup agent={agent} distros={distros} on={on} offer={offer?.agent === agent ? offer : null} undoBusy={undoBusy} />}
     </section>
   );
 }
@@ -231,7 +246,7 @@ function AgentList({ setup, agent, liveStatus, error, on, skill, distros }: { se
  * Hook setup inside each WSL distro (slice 6j1). The distros come from the core (no distro is started to list them), so nothing here starts one:
  * a distro is asked about only when one of its buttons is pressed. The skill file is not offered; the core installs none in a distro.
  */
-function WslGroup({ agent, distros, on }: { agent: HookAgent; distros: string[]; on: AgentsHandlers }) {
+function WslGroup({ agent, distros, on, offer, undoBusy }: { agent: HookAgent; distros: string[]; on: AgentsHandlers; offer: HooksUndo | null; undoBusy: boolean }) {
   return (
     <div className="agents-dialog__wsl" role="group" aria-label="WSL" data-wsl-group={agent}>
       <h4 className="agents-dialog__wsl-head">WSL</h4>
@@ -240,15 +255,37 @@ function WslGroup({ agent, distros, on }: { agent: HookAgent; distros: string[];
         <p className="agents-dialog__line">No WSL distros found.</p>
       ) : (
         distros.map((distro) => (
-          <div key={distro} className="agents-dialog__actions" data-wsl-distro={distro}>
-            <button type="button" className="agents-dialog__btn" onClick={() => on.onWslSetup?.(agent, distro)}>
-              {`Set up in ${distro}`}
-            </button>
-            <button type="button" className="agents-dialog__btn" onClick={() => on.onWslRemove?.(agent, distro)}>
-              {`Remove from ${distro}`}
-            </button>
-          </div>
+          <Fragment key={distro}>
+            <div className="agents-dialog__actions" data-wsl-distro={distro}>
+              <button type="button" className="agents-dialog__btn" onClick={() => on.onWslSetup?.(agent, distro)}>
+                {`Set up in ${distro}`}
+              </button>
+              <button type="button" className="agents-dialog__btn" onClick={() => on.onWslRemove?.(agent, distro)}>
+                {`Remove from ${distro}`}
+              </button>
+            </div>
+            {offer?.distro === distro && <UndoBlock offer={offer} busy={undoBusy} onUndo={on.onUndo} />}
+          </Fragment>
         ))
+      )}
+    </div>
+  );
+}
+
+/**
+ * What Hooks off just did and the way back: a block the keyboard is sent to when the list returns. The button stays focusable while it
+ * runs (`aria-disabled`, a swallowed click); once the files are found changed, the block says so and has no button.
+ */
+function UndoBlock({ offer, busy, onUndo }: { offer: HooksUndo; busy: boolean; onUndo?: () => void }) {
+  return (
+    <div className="agents-dialog__actions" tabIndex={-1} data-focus="hooks-undo">
+      <p className="agents-dialog__line" dir="auto">
+        {offer.refused ?? hooksUndoLine(whereOf(offer), offer.statuslineLeft)}
+      </p>
+      {offer.refused === undefined && (
+        <button type="button" className="agents-dialog__btn" aria-disabled={busy || undefined} onClick={() => !busy && onUndo?.()}>
+          Undo
+        </button>
       )}
     </div>
   );
@@ -326,6 +363,8 @@ export function AgentsSection({
   onNotifications,
   startWith,
   sync,
+  hooksUndo = null,
+  onHooksUndo,
 }: {
   endpoint: Endpoint;
   /** Says a result through the window's announcer. */
@@ -337,6 +376,10 @@ export function AgentsSection({
   onNotifications: () => void;
   /** The settings the Live status switch reads and saves. */
   sync?: SettingsSync;
+  /** The last Hooks off that can be undone. The window holds it, so it outlives closing Settings. */
+  hooksUndo?: HooksUndo | null;
+  /** Sets the offer after a Hooks off, or withdraws it (null) after a Set up, another Hooks off or an Undo. */
+  onHooksUndo?: (offer: HooksUndo | null) => void;
 }) {
   const [setup, setSetup] = useState<AgentSetup | "loading" | "failed">("loading");
   const [codex, setCodex] = useState<AgentSetup | null>(null);
@@ -395,12 +438,21 @@ export function AgentsSection({
     void load();
     onChanged?.();
   }, [load, onChanged]);
+  // The CLI (and distro) the open Set up card is for, so an applied Set up can withdraw that CLI's undo offer.
+  const setupFor = useRef<{ agent: HookAgent; distro?: string }>({ agent: "claude" });
+  // The keyboard goes to the undo block once it is drawn: after Hooks off returns to the list, and when an undo is refused.
+  const focusBlock = useRef(false);
+  const applied = () => {
+    const s = setupFor.current;
+    if (hooksUndo && hooksUndo.agent === s.agent && hooksUndo.distro === s.distro) onHooksUndo?.(null);
+    installed();
+  };
   // One flow per agent, so choosing an agent and planning never wait on a render.
-  const claudeInstall = useInstallFlow(endpoint, "claude", installed);
-  const codexInstall = useInstallFlow(endpoint, "codex", installed);
-  const antigravityInstall = useInstallFlow(endpoint, "antigravity", installed);
-  const qwenInstall = useInstallFlow(endpoint, "qwen", installed);
-  const copilotInstall = useInstallFlow(endpoint, "copilot", installed);
+  const claudeInstall = useInstallFlow(endpoint, "claude", applied);
+  const codexInstall = useInstallFlow(endpoint, "codex", applied);
+  const antigravityInstall = useInstallFlow(endpoint, "antigravity", applied);
+  const qwenInstall = useInstallFlow(endpoint, "qwen", applied);
+  const copilotInstall = useInstallFlow(endpoint, "copilot", applied);
   // The skill rows: after an apply the section reads the setup again, and the announcer says what was done.
   const setups = { claude: setup, codex, antigravity, qwen, copilot };
   const skillApplied = (agent: HookAgent) => (kind: SkillFlow["kind"]) => {
@@ -437,6 +489,8 @@ export function AgentsSection({
       const found = current ?? (agent === "codex" ? codex : agent === "antigravity" ? antigravity : agent === "qwen" ? qwen : agent === "copilot" ? copilot : setup);
       if (typeof found !== "object" || found === null) return;
       setActive(agent);
+      setupFor.current = { agent };
+      focusBlock.current = false;
       setMode("setup");
       void (agent === "codex" ? codexInstall : agent === "antigravity" ? antigravityInstall : agent === "qwen" ? qwenInstall : agent === "copilot" ? copilotInstall : claudeInstall).plan(setupWant(found), found.skill);
     },
@@ -445,6 +499,7 @@ export function AgentsSection({
   const startOff = useCallback(
     async (agent: HookAgent = "claude", distro?: string) => {
       setActive(agent);
+      focusBlock.current = false;
       setMode("off");
       setOff({ kind: "off", removal: null, busy: true, agent, distro });
       try {
@@ -473,6 +528,8 @@ export function AgentsSection({
     (agent: HookAgent, distro: string) => {
       // The hooks the Windows panel would offer by default; the core installs no skill file in a distro.
       setActive(agent);
+      setupFor.current = { agent, distro };
+      focusBlock.current = false;
       setMode("setup");
       void (agent === "codex" ? codexInstall : agent === "antigravity" ? antigravityInstall : agent === "qwen" ? qwenInstall : agent === "copilot" ? copilotInstall : claudeInstall).plan(DEFAULT_WANT, undefined, distro);
     },
@@ -506,6 +563,9 @@ export function AgentsSection({
       const out = await applyPreview(endpoint, removal.preview);
       if (out.ok) {
         announce?.(hooksOffNotice(removal.statusline_left));
+        // This replaces any earlier offer: the window holds one, and it is for the Hooks off just done.
+        focusBlock.current = onHooksUndo !== undefined;
+        onHooksUndo?.({ agent: off.agent ?? active, distro: off.distro, snapshotId: out.result.snapshot_id, statuslineLeft: removal.statusline_left });
         setMode("list");
         void load();
         onChanged?.();
@@ -515,6 +575,40 @@ export function AgentsSection({
       setOff({ ...off, busy: false, error: failureText(e) });
     }
   };
+
+  const [undoBusy, setUndoBusy] = useState(false);
+  const undo = async () => {
+    if (!hooksUndo || undoBusy) return;
+    const offer = hooksUndo;
+    setUndoBusy(true);
+    try {
+      const out = await undoSnapshot(endpoint, offer.snapshotId);
+      if (out.ok) {
+        announce?.(hooksUndone(whereOf(offer)));
+        onHooksUndo?.(null);
+        void load();
+        onChanged?.();
+      } else if ("changed" in out) {
+        // Nothing was written. The block keeps the sentence and loses its button, so the keyboard is sent back to the block.
+        const refused = hooksUndoRefused(out.changed);
+        announce?.(refused);
+        focusBlock.current = true;
+        onHooksUndo?.({ ...offer, refused });
+      } else announce?.(hooksUndoFailed(out.message));
+    } catch (e) {
+      announce?.(hooksUndoFailed(failureText(e)));
+    } finally {
+      setUndoBusy(false);
+    }
+  };
+  // The block is drawn once the list is back (or once its sentence changed): the keyboard goes to it, inside the page's own focus guard.
+  useEffect(() => {
+    if (mode !== "list" || !focusBlock.current) return;
+    const block = root.current?.querySelector<HTMLElement>('[data-focus="hooks-undo"]');
+    if (!block) return;
+    focusBlock.current = false;
+    block.focus();
+  }, [mode, hooksUndo]);
 
   const back = () => {
     install.reset();
@@ -569,6 +663,9 @@ export function AgentsSection({
       onSwitch={install.choose}
       onReload={() => void (mode === "off" ? startOff(active, off.distro) : install.plan())}
       onTurnOff={() => void turnOff()}
+      hooksUndo={hooksUndo}
+      undoBusy={undoBusy}
+      onUndo={() => void undo()}
     />
   );
 }
