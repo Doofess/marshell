@@ -192,6 +192,18 @@ function Wait-AppGone([int]$ProcId, [int]$Seconds) {
     return (Wait-Until { -not (Test-AppAlive $ProcId) } $Seconds)
 }
 
+# The programs whose file is in $Dir and that are running now, as "name (PID n, parent m)", or 'nothing'. A file
+# of a running program can't be deleted, so this says why an uninstall left one.
+function Get-RunningFrom([string]$Dir) {
+    if (-not $Dir) { return 'the folder is not known' }
+    $prefix = $Dir.TrimEnd('\') + '\'
+    $found = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+            $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)
+        } | ForEach-Object { "$($_.Name) (PID $($_.ProcessId), parent $($_.ParentProcessId))" })
+    if ($found.Count -eq 0) { return 'nothing' }
+    return ($found -join ', ')
+}
+
 function Test-Contains([string]$Path, [string]$Text) {
     if (-not (Test-Path -LiteralPath $Path)) { return $false }
     return [System.IO.File]::ReadAllText($Path).Contains($Text)
@@ -424,6 +436,7 @@ function Test-Uninstalled([string]$Label, [string]$InstDir, $Res, [int]$AppId) {
             if (Wait-AppGone $AppId 30) { $true } else { "PID $AppId is still running" }
         }
     }
+    Write-Host "NOTE $Label once the uninstaller has ended, running from the install folder: $(Get-RunningFrom $InstDir)"
     Check "$Label uninstall: the install folder holds no file" {
         if (-not $InstDir) { return 'the install folder is not known' }
         $left = $null
@@ -431,7 +444,10 @@ function Test-Uninstalled([string]$Label, [string]$InstDir, $Res, [int]$AppId) {
             $script:left = @(Get-ChildItem -LiteralPath $InstDir -Recurse -File -Force -ErrorAction SilentlyContinue)
             $script:left.Count -eq 0
         } 30
-        if ($gone) { $true } else { 'left ' + (($script:left | Select-Object -First 5 | ForEach-Object { $_.Name }) -join ', ') }
+        if ($gone) { $true } else {
+            'left ' + (($script:left | Select-Object -First 5 | ForEach-Object { $_.Name }) -join ', ') +
+                "; running from the folder 30 s later: $(Get-RunningFrom $InstDir)"
+        }
     }
 }
 
