@@ -6,6 +6,7 @@ export function EmptyFiles({ recent, onOpenFile, onBrowse, onRecent }: { recent:
   return (
     <EmptyPanel
       icon={FolderIcon}
+      fitKey={recent.length}
       title="No files open"
       line="Open a file from this project, or drop one here."
       actions={[

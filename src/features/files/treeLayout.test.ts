@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TREE, dividerKey, narrowAfterOpen, treeSide, treeWidth } from "./treeLayout";
+import { TREE, dividerKey, treeSide, treeWidth } from "./treeLayout";
 
 describe("treeLayout", () => {
   it("automatic puts the tree at the window's edge", () => {
@@ -27,11 +27,5 @@ describe("treeLayout", () => {
     expect(dividerKey("ArrowLeft", 160, 1000, "left")).toBe(160);
     expect(dividerKey("a", 240, 1000, "left")).toBeNull();
     expect(TREE.step).toBe(16);
-  });
-  it("only Space leaves the tree over the file", () => {
-    expect(narrowAfterOpen("click")).toBe(false);
-    expect(narrowAfterOpen("enter")).toBe(false);
-    expect(narrowAfterOpen("double")).toBe(false);
-    expect(narrowAfterOpen("space")).toBe(true);
   });
 });

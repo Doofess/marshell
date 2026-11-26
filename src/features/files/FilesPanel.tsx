@@ -7,9 +7,10 @@ import type { TreeView } from "../../generated/TreeView";
 import type { Os } from "../../lib/keymap";
 import { focusPane } from "../pane/focusPane";
 import { panelOfPath } from "../pane/panels";
+import { HeaderSlot, toolsSlot } from "../preview/headerSlot";
 import { cachedFileListNow, fileListFor, folderName } from "../preview/quickFiles";
 import { listTree, searchFiles } from "./filesApi";
-import { afterOpen, COLLAPSED, followTarget, keyboardToFile, openHow, rowOpens } from "./filesActions";
+import { afterOpen, COLLAPSED, filterTakesKeyboard, followTarget, keyboardToFile, openHow, rowOpens, treeAfter } from "./filesActions";
 import { FileTree } from "./FileTree";
 import { FilesBusy } from "./FilesBusy";
 import { filesWait, focusToFilter, listFailed, useShownAfter } from "./filesWait";
@@ -29,7 +30,7 @@ import { useTree, type TreeSource } from "./useTree";
 
 /** What the window can ask of the panel. The panel is mounted while Files is on screen. */
 export type FilesPanelHandle = {
-  /** Shows or hides the tree (in the narrow layout, the tree over the file). Returns whether it shows now. */
+  /** Shows or hides the tree (in the narrow layout, the tree that takes the file's place). Returns whether it shows now. */
   toggleTree(): boolean;
   collapseAll(): void;
 };
@@ -88,6 +89,7 @@ export function FilesPanel(p: FilesPanelProps) {
   const [focusedPath, setFocusedPath] = useState<string | null>(null);
   const [filterOpen, setFilterOpen] = useState<ReadonlySet<string>>(new Set());
   const [rowMenu, setRowMenu] = useState<{ row: TreeRow; anchor: Anchor; opener: HTMLElement } | null>(null);
+  const [tools, setTools] = useState<HTMLElement | null>(null);
   const [barMenu, setBarMenu] = useState<{ anchor: Anchor; opener: HTMLElement } | null>(null);
 
   useLayoutEffect(() => {
@@ -104,6 +106,16 @@ export function FilesPanel(p: FilesPanelProps) {
     return () => ro.disconnect();
   }, []);
   const narrow = size.width < TREE.narrow;
+  // The narrow tree follows the open file and the layout (`treeAfter`). Settled while rendering, not in an effect, so no frame is
+  // drawn with a new file inert under the tree: what moves the keyboard to the file next finds it usable.
+  const [seen, setSeen] = useState({ path: activePath, narrow });
+  if (seen.path !== activePath || seen.narrow !== narrow) {
+    const now = { path: activePath, narrow };
+    setSeen(now);
+    // Read while rendering: an open the person asked for has moved the keyboard out of the tree by now, a background one hasn't.
+    const keyboardInTree = box.current?.querySelector(".files-body__tree")?.contains(document.activeElement) ?? false;
+    setOverlay(treeAfter(overlay, seen, now, keyboardInTree));
+  }
   const shown = !treeView.hidden && (!narrow || overlay);
 
   const source = useMemo<TreeSource>(() => ({ list: (asks) => listTree(session, asks) }), [session]);
@@ -157,11 +169,27 @@ export function FilesPanel(p: FilesPanelProps) {
   const abs = (rel: string) => (base === null ? rel : absoluteOf(base, rel, windows));
   const sepOf = (rel: string) => (windows ? rel.replace(/\//g, "\\") : rel);
 
+  // The narrow tree makes the file inert, which drops the keyboard to the page when it was in the file: the filter box takes it instead.
+  const filterWants = useRef(false);
+  const openNarrowTree = () => {
+    // A tool in the path bar counts as the file: the tools go with the file when the tree covers it.
+    const at = document.activeElement;
+    const focusInFile = (box.current?.querySelector(".files-body__file")?.contains(at) ?? false) || (tools?.contains(at) ?? false);
+    filterWants.current = filterTakesKeyboard({ narrow, opening: true, focusInFile });
+    setOverlay(true);
+  };
+  useLayoutEffect(() => {
+    if (!shown || !filterWants.current) return;
+    filterWants.current = false;
+    filterBox.current?.focus();
+  }, [shown]);
+
   const toggleTree = (): boolean => {
     if (narrow) {
       const next = treeView.hidden ? true : !overlay;
       if (treeView.hidden) p.onTreeView({ hidden: false });
-      setOverlay(next);
+      if (next && !shown) openNarrowTree();
+      else setOverlay(next);
       return next;
     }
     p.onTreeView({ hidden: !treeView.hidden });
@@ -176,10 +204,12 @@ export function FilesPanel(p: FilesPanelProps) {
   /** Opens the file at `path`, from a tree row, a menu or a search result. */
   const openAt = (path: string, how: "click" | "enter" | "double" | "space", line?: number) => {
     p.onOpen({ path, keep: keyboardToFile(how), ...(line === undefined ? {} : { line }) });
-    // An HTML file opens in Browser: the keyboard goes there on Enter, and the tree over the file stays.
+    // In the narrow layout the tree gives way to the file; Space leaves the keyboard on the path bar's tree button, not in the editor.
+    // An HTML file opens in Browser: the keyboard goes there on Enter, and the tree stays.
     const after = afterOpen(how, { narrow, panel: panelOfPath(path) });
     if (after.close) setOverlay(false);
-    if (after.focus !== null) focusPane(after.focus);
+    if (after.focus === "tree-button") box.current?.querySelector<HTMLElement>("[data-tree-button]")?.focus();
+    else if (after.focus !== null) focusPane(after.focus);
   };
   const openFile = (rel: string, how: "click" | "enter" | "double" | "space") => openAt(abs(rel), how);
   /** Opens a row of the tree. Only a file row opens: a link row is never opened, whichever way the open came. */
@@ -240,7 +270,7 @@ export function FilesPanel(p: FilesPanelProps) {
 
   const revealFolder = (folder: string) => {
     if (treeView.hidden) p.onTreeView({ hidden: false });
-    if (narrow) setOverlay(true);
+    if (narrow && !shown) openNarrowTree();
     if (folder !== "") {
       tree.reveal(folder);
       setFocusedPath(folder);
@@ -361,55 +391,58 @@ export function FilesPanel(p: FilesPanelProps) {
       onCollapseAll={collapseAll}
       onToggleTree={toggleTree}
       onMenu={(anchor, opener) => setBarMenu({ anchor, opener })}
+      toolsRef={setTools}
     />
   );
   const position: TreePosition = p.position;
   return (
-    <div ref={box} className="files-panel" style={{ display: "grid", blockSize: "100%", minInlineSize: 0, minBlockSize: 0 }}>
-      <FilesBody
-        tree={treeNode}
-        filter={filter}
-        file={p.file}
-        pathBar={pathBar}
-        shown={!treeView.hidden}
-        position={position}
-        width={treeView.width}
-        panelWidth={size.width}
-        rtl={size.rtl}
-        overlayOpen={overlay}
-        onWidth={(w) => p.onTreeView({ width: w })}
-        onOverlay={(next) => {
-          setOverlay(next);
-          // The tree that had the keyboard is gone: it goes to the file.
-          if (!next) focusPane("files");
-        }}
-      />
-      {rowMenu && (
-        <ContextMenu
-          label={`Menu for ${rowMenu.row.name}`}
-          items={treeMenuItems(rowMenu.row, { pasteTo: p.pasteTo, os })}
-          anchor={rowMenu.anchor}
-          onRun={runRowMenu}
-          onClose={({ refocus }) => {
-            const m = rowMenu;
-            setRowMenu(null);
-            if (refocus) m.opener.focus();
+    <HeaderSlot value={toolsSlot(tools, narrow && shown)}>
+      <div ref={box} className="files-panel" style={{ display: "grid", blockSize: "100%", minInlineSize: 0, minBlockSize: 0 }}>
+        <FilesBody
+          tree={treeNode}
+          filter={filter}
+          file={p.file}
+          pathBar={pathBar}
+          shown={!treeView.hidden}
+          position={position}
+          width={treeView.width}
+          panelWidth={size.width}
+          rtl={size.rtl}
+          overlayOpen={overlay}
+          onWidth={(w) => p.onTreeView({ width: w })}
+          onOverlay={(next) => {
+            setOverlay(next);
+            // The tree that had the keyboard is gone: it goes to the file.
+            if (!next) focusPane("files");
           }}
         />
-      )}
-      {barMenu && (
-        <ContextMenu
-          label="Path menu"
-          items={barItems(selected)}
-          anchor={barMenu.anchor}
-          onRun={runBarMenu}
-          onClose={({ refocus }) => {
-            const m = barMenu;
-            setBarMenu(null);
-            if (refocus) m.opener.focus();
-          }}
-        />
-      )}
-    </div>
+        {rowMenu && (
+          <ContextMenu
+            label={`Menu for ${rowMenu.row.name}`}
+            items={treeMenuItems(rowMenu.row, { pasteTo: p.pasteTo, os })}
+            anchor={rowMenu.anchor}
+            onRun={runRowMenu}
+            onClose={({ refocus }) => {
+              const m = rowMenu;
+              setRowMenu(null);
+              if (refocus) m.opener.focus();
+            }}
+          />
+        )}
+        {barMenu && (
+          <ContextMenu
+            label="Path menu"
+            items={barItems(selected)}
+            anchor={barMenu.anchor}
+            onRun={runBarMenu}
+            onClose={({ refocus }) => {
+              const m = barMenu;
+              setBarMenu(null);
+              if (refocus) m.opener.focus();
+            }}
+          />
+        )}
+      </div>
+    </HeaderSlot>
   );
 }

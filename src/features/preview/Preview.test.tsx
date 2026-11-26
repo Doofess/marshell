@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { PreviewPane, bodyTakesFocus, escapeLeaves, formatSize, movedPlace, quietViews, type PreviewPaneProps } from "./Preview";
 import { followWebLink } from "./webLink";
+import { HeaderSlot } from "./headerSlot";
 import type { FileState } from "./usePreviewFile";
 
 // Rendered Markdown needs the DOM, which these tests run without: the stand-in shows the text it was given.
@@ -26,9 +27,19 @@ const base: PreviewPaneProps = {
   regionTarget: null,
   onRegion: () => Promise.resolve(),
 };
-const html = (file: FileState, more: Partial<PreviewPaneProps> = {}) => renderToStaticMarkup(<PreviewPane {...base} file={file} {...more} />);
+const element = (file: FileState, more: Partial<PreviewPaneProps> = {}) => <PreviewPane {...base} file={file} {...more} />;
+const html = (file: FileState, more: Partial<PreviewPaneProps> = {}) => renderToStaticMarkup(element(file, more));
 
 describe("PreviewPane", () => {
+  it("in the Files panel it draws no Back or Forward, with or without a path bar to hold its tools", () => {
+    const alone = html({ phase: "loading" }, { pathShown: true }); // no provider: the header stays, for the tools
+    expect(alone).toContain("preview__header");
+    expect(alone).not.toContain('aria-label="Back"');
+    expect(alone).not.toContain('aria-label="Forward"');
+    const inPanel = renderToStaticMarkup(<HeaderSlot value={null}>{element({ phase: "loading" }, { pathShown: true })}</HeaderSlot>);
+    expect(inPanel).not.toContain("preview__header");
+    expect(inPanel).not.toContain('aria-label="Back"');
+  });
   it("has no region label of its own: the tab panel names it", () => {
     const out = html({ phase: "text", text: "fn main() {}\n", encoding: "utf-8", eol: "lf", hash: "", readOnly: null });
     expect(out).not.toContain('aria-label="Preview, ');
@@ -87,7 +98,7 @@ describe("PreviewPane", () => {
     const out = html({ phase: "loading" }, { pathShown: true });
     expect(out).not.toContain("preview__name");
     expect(out).not.toContain("preview__folder");
-    expect(out).toContain('aria-label="Back"');
+    expect(out).not.toContain('aria-label="Back"');
     expect(html({ phase: "loading" })).toContain("preview__name");
   });
   it("shows a PDF in the PDF view, not the old placeholder", () => {

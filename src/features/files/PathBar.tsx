@@ -1,5 +1,5 @@
 import { Fragment, type KeyboardEvent, type MouseEvent, useLayoutEffect, useRef } from "react";
-import type { Segment } from "./pathSegments";
+import { pathAtEnd, type Segment } from "./pathSegments";
 import "./FilesBody.css";
 
 export type PathBarProps = {
@@ -10,11 +10,13 @@ export type PathBarProps = {
   onCollapseAll(): void;
   onToggleTree(): void;
   onMenu(anchor: { x: number; y: number }, opener: HTMLElement): void;
+  /** The element the open file's tools are drawn into (see `HeaderSlot`). */
+  toolsRef?: (el: HTMLElement | null) => void;
 };
 
 const icon = { width: 16, height: 16, viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", strokeWidth: 1.25, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true } as const;
 
-export function PathBar({ segments, windows, treeShown, onReveal, onCollapseAll, onToggleTree, onMenu }: PathBarProps) {
+export function PathBar({ segments, windows, treeShown, onReveal, onCollapseAll, onToggleTree, onMenu, toolsRef }: PathBarProps) {
   const sep = windows ? "\\" : "/";
   // A path longer than the bar scrolls sideways with no scrollbar; it opens at its end, so the file's name is in view. (Right to
   // left, the end is a negative scroll.)
@@ -23,7 +25,23 @@ export function PathBar({ segments, windows, treeShown, onReveal, onCollapseAll,
   useLayoutEffect(() => {
     const el = path.current;
     if (!el) return;
-    el.scrollLeft = getComputedStyle(el).direction === "rtl" ? -el.scrollWidth : el.scrollWidth;
+    const pin = () => {
+      el.scrollLeft = getComputedStyle(el).direction === "rtl" ? -el.scrollWidth : el.scrollWidth;
+    };
+    pin();
+    // The file's tools arrive in a later commit and narrow the path: it is pinned to its end again, unless the person has scrolled
+    // it back to read a folder. A resize moves no scroll, so the place is the one the last scroll left.
+    let atEnd = true;
+    const onScroll = () => {
+      atEnd = pathAtEnd(el);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => atEnd && pin());
+    ro?.observe(el);
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      ro?.disconnect();
+    };
   }, [shown]);
   const onContextMenu = (e: MouseEvent<HTMLElement>) => {
     e.preventDefault();
@@ -57,6 +75,7 @@ export function PathBar({ segments, windows, treeShown, onReveal, onCollapseAll,
           </Fragment>
         ))}
       </nav>
+      <div className="path-bar__tools" ref={toolsRef} />
       <button type="button" className="path-bar__button" aria-label="Collapse all folders" title="Collapse all folders" onClick={onCollapseAll} onKeyDown={onKeyDown}>
         <svg {...icon}>
           <path d="M4 6l4-3 4 3M4 10l4 3 4-3" />
@@ -66,6 +85,7 @@ export function PathBar({ segments, windows, treeShown, onReveal, onCollapseAll,
         type="button"
         className="path-bar__button"
         aria-label="Show file tree"
+        data-tree-button=""
         aria-pressed={treeShown}
         title={treeShown ? "Hide file tree" : "Show file tree"}
         onClick={onToggleTree}

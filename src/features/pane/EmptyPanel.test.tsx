@@ -113,4 +113,9 @@ describe("EmptyPanel actions", () => {
     expect(renderToStaticMarkup(<EmptyPanel icon={null} title="T" line="L" actions={[]} />)).toContain('<h2 class="empty-panel__title" tabindex="-1">T</h2>');
     expect(renderToStaticMarkup(<EmptyPanel icon={null} title="T" line="L" actions={[act("One")]} />)).not.toContain("tabindex");
   });
+  it("renders at level 0: no data-level in the markup, and the column keeps its class", () => {
+    const out = renderToStaticMarkup(<EmptyPanel icon={null} title="T" line="L" actions={[act("One")]} fitKey={3} />);
+    expect(out).not.toContain("data-level");
+    expect(out).toContain('class="empty-panel__column"');
+  });
 });

@@ -20,6 +20,11 @@ const blocks = (at: string) => {
     from = j + 1;
   }
 };
+/** The text from `selector {` to the next `}`. */
+const rule = (selector: string) => {
+  const i = css.indexOf(`${selector} {`);
+  return i < 0 ? "" : css.slice(i, css.indexOf("}", i));
+};
 const without = (parts: string[]) => parts.reduce((text, part) => text.replace(part, ""), css);
 const SYSTEM = ["Canvas", "CanvasText", "ButtonFace", "ButtonText", "Highlight", "HighlightText", "GrayText", "none", "transparent"];
 
@@ -57,11 +62,15 @@ describe("EmptyPanel.css", () => {
   it("never removes a focus ring", () => {
     expect(css).not.toMatch(/outline:\s*(?:none|0)\b/);
   });
-  it("drops the icon, never a button, in a short panel", () => {
-    const short = blocks("@container (height < 280px)");
-    expect(short).toHaveLength(1);
-    expect(short[0]).toMatch(/\.empty-panel__icon \{[^}]*display: none;/s);
-    expect(css).not.toMatch(/\.empty-panel__(?:button|actions)[^{]*\{[^}]*display: none/s);
+  it("gives up the mark and the help line at level 1 and the list at level 2, never the heading or a button", () => {
+    expect(css).toMatch(/\.empty-panel\[data-level="1"\] \.empty-panel__icon,\s*\.empty-panel\[data-level="2"\] \.empty-panel__icon,\s*\.empty-panel\[data-level="1"\] \.empty-panel__line,\s*\.empty-panel\[data-level="2"\] \.empty-panel__line \{\s*display: none;/);
+    expect(css).toMatch(/\.empty-panel\[data-level="2"\] \.empty-panel__group \{\s*display: none;/);
+    expect(css).not.toMatch(/data-level[^{]*__(title|actions|button)[^{]*\{\s*display: none/);
+    expect(css).not.toContain("@container");
+  });
+  it("shows no scrollbar", () => {
+    expect(rule(".empty-panel")).toContain("scrollbar-width: none");
+    expect(css).toContain(".empty-panel::-webkit-scrollbar {");
   });
   it("moves a pressed button only where motion is welcome", () => {
     const motion = blocks("@media (prefers-reduced-motion: no-preference)");

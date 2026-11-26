@@ -14,11 +14,41 @@ const forced = () => {
   return "";
 };
 
+const rule = (sel: string) => {
+  const i = css.indexOf(`${sel} {`);
+  return i < 0 ? "" : css.slice(i, css.indexOf("}", i));
+};
+
 describe("FilesBody.css", () => {
+  it("an empty tools place takes no room, and a full one never shrinks", () => {
+    expect(rule(".path-bar__tools")).toContain("flex: none");
+    // The "Updated" note is always drawn, so `:empty` would never match (review 4).
+    // A shown note counts as something: alone in the place it is still seen (review 6w: "Updated" was hidden for a file with no other tools).
+    const empty = rule(".path-bar__tools:not(:has(> :not(.preview__updated), > .preview__updated[data-show]))");
+    // Out of the row's flow, so it takes no room and no gap. Not `display: none`: the note is a live region, and one that is
+    // displayed in the same frame its text arrives isn't read out (pre-merge review 6w).
+    expect(empty).toContain("position: absolute");
+    expect(empty).not.toContain("display: none");
+  });
+  it("the file under the narrow tree is its own stacking context, so nothing in it paints over the tree (review 6w: a PDF's toolbar and the editor's find bar did)", () => {
+    expect(rule(".files-body[data-narrow] .files-body__file")).toContain("isolation: isolate");
+  });
+  it("a path longer than the bar scrolls: its parts never shrink into each other (live check 6w: the names overlapped at 320 px)", () => {
+    // The app's reset gives every flex item a zero minimum, so without this the folders shrink and their text runs over the next one.
+    expect(rule(".path-bar__path > *")).toContain("flex: none");
+  });
   it("the file's cell is a grid, so the tab panel inside fills it (live check 6r-2: a block let the preview's body collapse to 0 px)", () => {
     const rule = css.slice(css.indexOf(".files-body__content {"), css.indexOf("}", css.indexOf(".files-body__content {")));
     expect(rule).toContain("display: grid");
     expect(rule).toContain("grid-template-rows: minmax(0, 1fr)");
+  });
+  it("lays the narrow tree over the file in one cell, with no absolute placement", () => {
+    expect(rule(".files-body[data-narrow] .files-body__main")).toContain("display: grid");
+    expect(rule(".files-body[data-narrow] .files-body__main > *")).toContain("grid-area: 1 / 1");
+    // The file holds positioned boxes (`.preview__body`, CodeMirror's `.cm-editor` and `.cm-scroller`), which would paint over a tree with no z-index (review 1).
+    expect(rule(".files-body[data-narrow] .files-body__tree")).toContain("z-index: 1");
+    expect(rule(".files-body[data-narrow] .files-body__tree")).not.toContain("position");
+    expect(rule(".files-body")).not.toContain("position: relative");
   });
   it("has no hex colour", () => {
     expect(css).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
@@ -41,5 +71,21 @@ describe("FilesBody.css", () => {
     // The row already runs right to left there, and the DOM is in reading order: a reversed row would read backwards.
     expect(css).not.toContain("row-reverse");
     expect(css).not.toMatch(/\b(left|right|top|bottom)\s*:/);
+  });
+  it("is two rows: the path bar, then the tree and the file", () => {
+    expect(rule(".files-body")).toContain("grid-template-rows: auto minmax(0, 1fr)");
+    expect(rule(".files-body__main")).toContain("display: flex");
+  });
+  it("draws one line under the path bar, across the panel", () => {
+    expect(rule(".path-bar")).toContain("border-block-end: 1px solid var(--hairline)");
+  });
+  it("never shrinks the path bar's buttons: the path gives way and scrolls", () => {
+    // The first `.path-bar__button` block is shared with `.path-bar__folder`; the button's own block follows it (review 5).
+    expect(css).toMatch(/\n\.path-bar__button \{[^}]*flex: none;/);
+    expect(rule(".path-bar__path")).toContain("min-inline-size: 0");
+  });
+  it("leaves a gutter between the code and a tree that follows it", () => {
+    expect(css).toContain('.files-body[data-edge="end"][data-tree]:not([data-narrow]) .files-body__content .cm-scroller');
+    expect(css).toMatch(/\.cm-scroller \{\s*margin-inline-end: var\(--space-2\);/);
   });
 });

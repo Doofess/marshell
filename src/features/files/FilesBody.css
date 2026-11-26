@@ -7,6 +7,7 @@
   min-inline-size: 0;
   padding-inline: var(--space-2);
   padding-block: var(--space-1);
+  border-block-end: 1px solid var(--hairline);
   color: var(--text-2);
   font-size: var(--text-13);
 }
@@ -21,6 +22,23 @@
 }
 .path-bar__path::-webkit-scrollbar {
   display: none;
+}
+/* The reset gives a flex item a zero minimum: left to shrink, the folders' names would run over each other. They keep their width and the path scrolls. */
+.path-bar__path > * {
+  flex: none;
+}
+/* The open file's tools (Rendered and Source, Select region, an image's size), drawn here by its tab. Empty for a plain text file. */
+.path-bar__tools {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-12);
+}
+/* The "Updated" note is always drawn and is empty until it is shown: with nothing else in it, the place leaves the row's flow, so
+ * it takes no room and no gap. It is not hidden: the note is a live region, and it must be there before its text arrives to be read out. */
+.path-bar__tools:not(:has(> :not(.preview__updated), > .preview__updated[data-show])) {
+  position: absolute;
 }
 .path-bar__sep {
   padding-inline: 2px;
@@ -97,13 +115,18 @@
 
 /* The Files panel's body: the tree, a divider and the file in a row. In a right-to-left layout the row is reversed, so the first child (the tree, when it is on the left) stays at the left. */
 .files-body {
-  position: relative;
-  display: flex;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   box-sizing: border-box;
   block-size: 100%;
   min-inline-size: 0;
   min-block-size: 0;
   overflow: clip;
+}
+.files-body__main {
+  display: flex;
+  min-inline-size: 0;
+  min-block-size: 0;
 }
 .files-body__file {
   display: flex;
@@ -136,19 +159,21 @@
   min-block-size: 0;
 }
 
-/* Under 480 px the tree covers the file, on its own edge, with a hairline toward the file. */
+/* Under 480 px the tree takes the file's place: both sit in one cell and the tree covers the file whole. A grid item takes a
+ * z-index with no position; without one the file's positioned boxes (the preview's body, the editor) would paint over the tree. */
+.files-body[data-narrow] .files-body__main {
+  display: grid;
+}
+.files-body[data-narrow] .files-body__main > * {
+  grid-area: 1 / 1;
+}
 .files-body[data-narrow] .files-body__tree {
-  position: absolute;
-  inset-block: 0;
-  z-index: 2;
+  z-index: 1;
 }
-.files-body[data-narrow][data-edge="start"] .files-body__tree {
-  inset-inline-start: 0;
-  border-inline-end: 1px solid var(--hairline);
-}
-.files-body[data-narrow][data-edge="end"] .files-body__tree {
-  inset-inline-end: 0;
-  border-inline-start: 1px solid var(--hairline);
+/* The file is its own stacking context: a bar inside it with a higher z-index (a PDF's toolbar, the editor's find bar, a region's
+ * box) stays under the tree. */
+.files-body[data-narrow] .files-body__file {
+  isolation: isolate;
 }
 
 /* The divider: a 1 px hairline whose 8 px hit area overhangs both sides. */
@@ -181,6 +206,10 @@
   .files-body__divider:hover {
     background: var(--accent);
   }
+}
+/* A gutter between the code and a tree that follows it, so a long line stops short of the divider. */
+.files-body[data-edge="end"][data-tree]:not([data-narrow]) .files-body__content .cm-scroller {
+  margin-inline-end: var(--space-2);
 }
 /* Forced colours replace the accent with Canvas, which would hide the divider while it is hovered or dragged: use system colours. */
 @media (forced-colors: active) {

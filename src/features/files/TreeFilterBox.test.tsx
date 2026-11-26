@@ -16,4 +16,8 @@ describe("TreeFilter", () => {
     expect(filterKey("ArrowDown", "ab")).toBe("down");
     expect(filterKey("a", "ab")).toBeNull();
   });
+  it("has a search mark the reader never hears, drawn after the box so it paints over it", () => {
+    const html = renderToStaticMarkup(<TreeFilter value="" onChange={() => {}} onEscape={() => {}} onDown={() => {}} />);
+    expect(html).toMatch(/<div class="file-tree-filter-box"><input class="file-tree-filter"[^>]*aria-label="Filter files"[^>]*><svg class="file-tree-filter__mark"[^>]*aria-hidden="true"/);
+  });
 });

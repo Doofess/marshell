@@ -227,6 +227,9 @@ describe("waitsForPalette", () => {
     expect(waitsForPalette({ kind: "closePaneTab" })).toBe(true);
     expect(waitsForPalette({ kind: "newBrowserTab" })).toBe(true);
   });
+  it("the file tree's command waits too: in the narrow layout the tree's filter box takes the keyboard from the file, and it can only tell once the file has it back (live check 6w)", () => {
+    expect(waitsForPalette(commandShortcut("files-tree"))).toBe(true);
+  });
   it("the other commands run at once", () => {
     expect(waitsForPalette({ kind: "focusMode" })).toBe(false);
     expect(waitsForPalette({ kind: "launcher" })).toBe(false);

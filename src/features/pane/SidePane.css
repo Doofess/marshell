@@ -1,7 +1,7 @@
 /*
- * The side pane's frame: a strip of flat tabs on the window bar's surface (the height of the viewer's own header), then the
- * body that holds the kept tabs' panels or the empty state. The selected tab takes the body's background; the others are
- * transparent with muted text. The strip scrolls sideways and shows no scrollbar.
+ * The side pane's frame: a strip of rounded tabs on the window bar's surface (the height of the viewer's own header), then the
+ * body that holds the kept tabs' panels or the empty state. The tabs are told apart by fill (Slice 6w decision 10): the selected
+ * one is filled, the others are plain with muted text. The strip scrolls sideways and shows no scrollbar.
  */
 .side-pane {
   display: grid;
@@ -24,6 +24,8 @@
 .side-pane__tabs {
   display: flex;
   flex: 0 1 auto;
+  align-items: center;
+  gap: 2px;
   min-inline-size: 0;
   overflow: auto clip;
   overscroll-behavior: contain;
@@ -48,9 +50,13 @@
   align-items: center;
   gap: var(--space-2);
   min-inline-size: 0;
+  block-size: 24px;
   padding-block: 0;
   padding-inline: var(--space-3) calc(var(--space-2) + 20px);
   border: 0;
+  border-radius: var(--radius);
+  /* The selected mark's end bar is a straight box: it is cut to the rounded shape. */
+  overflow: clip;
   background: transparent;
   color: var(--text-2);
   font: inherit;
@@ -58,7 +64,7 @@
   touch-action: pan-x;
 }
 .side-pane__tab[aria-selected="true"] {
-  background: var(--bg-base);
+  background: var(--fill-strong);
   color: var(--text-1);
 }
 /* The tab's type icon, 14 px, before the title; it draws in the tab's text color. */

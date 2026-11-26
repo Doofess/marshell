@@ -85,4 +85,11 @@ describe("FileTree.css", () => {
     expect(rule(".file-tree__head")).toContain("text-overflow: ellipsis");
     expect(rule(".file-tree__tail")).toContain("flex: none");
   });
+  it("sets the filter in from the column's edges and stacks its mark in the same cell", () => {
+    expect(rule(".file-tree-filter-box")).toContain("display: grid");
+    expect(rule(".file-tree-filter-box")).toContain("padding: var(--space-2)");
+    expect(rule(".file-tree-filter-box > *")).toContain("grid-area: 1 / 1");
+    expect(rule(".file-tree-filter")).toContain("block-size: 28px");
+    expect(rule(".file-tree-filter__mark")).toContain("pointer-events: none");
+  });
 });

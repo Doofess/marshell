@@ -19,14 +19,18 @@ export type FilesBodyProps = {
 };
 
 /**
- * The Files panel's body: the tree beside the open file with a divider between them, or, under 480 px of panel, over the file.
- * The DOM order is the reading order: the tree first when it is on the start edge (the left in a left-to-right layout, the right in
+ * The Files panel's body: the tree beside the open file with a divider between them, or, under 480 px of panel, in the file's place
+ * (both sit in one cell, the file inert under the tree). The path bar runs across the panel, above the tree and the file. Under it the DOM order is the reading order: the tree first when it is on the start edge (the left in a left-to-right layout, the right in
  * the other), so Tab moves the way the eye reads. The row follows the writing direction as it is.
  */
 export function FilesBody({ tree, filter, file, pathBar, shown, position, width, panelWidth, rtl, overlayOpen, onWidth, onOverlay }: FilesBodyProps) {
   const side = treeSide(position, rtl);
   const narrow = panelWidth < TREE.narrow;
-  const px = narrow ? Math.min(Math.max(TREE.min, Math.min(width ?? TREE.start, TREE.max)), panelWidth - 40) : treeWidth(width, panelWidth);
+  // The wide tree's width; the narrow tree has none, it fills the panel.
+  const px = treeWidth(width, panelWidth);
+  const showTree = shown && (!narrow || overlayOpen);
+  // The narrow tree covers the file: the file is inert, so neither the keyboard nor a reader reaches what is hidden.
+  const covered = narrow && showTree;
   const drag = useRef<{ x: number; width: number } | null>(null);
 
   const onPointerDown = (e: ReactPointerEvent<HTMLElement>) => {
@@ -51,6 +55,7 @@ export function FilesBody({ tree, filter, file, pathBar, shown, position, width,
     if (next !== px) onWidth(next);
   };
   const onTreeKey = (e: KeyboardEvent<HTMLElement>) => {
+    // Esc in the narrow tree, which takes the file's place, closes it first (the keyboard goes back to the file).
     if (!narrow || e.key !== "Escape") return;
     e.preventDefault();
     e.stopPropagation();
@@ -58,7 +63,7 @@ export function FilesBody({ tree, filter, file, pathBar, shown, position, width,
   };
 
   const treeColumn = (
-    <div key="tree" className="files-body__tree" style={{ inlineSize: `${px}px` } satisfies CSSProperties} onKeyDown={onTreeKey}>
+    <div key="tree" className="files-body__tree" style={narrow ? undefined : ({ inlineSize: `${px}px` } satisfies CSSProperties)} onKeyDown={onTreeKey}>
       {filter}
       <div className="files-body__rows">{tree}</div>
     </div>
@@ -84,20 +89,19 @@ export function FilesBody({ tree, filter, file, pathBar, shown, position, width,
     />
   );
   const fileColumn = (
-    <div key="file" className="files-body__file">
-      {pathBar}
+    <div key="file" className="files-body__file" inert={covered}>
       <div className="files-body__content">{file}</div>
     </div>
   );
 
-  const showTree = shown && (!narrow || overlayOpen);
   // The edge the tree sits on, in the inline direction: the start edge is the left in a left-to-right layout and the right in the other.
   const edge = (side === "left") !== rtl ? "start" : "end";
-  // Keys keep the file's frame mounted while the tree comes and goes. In the narrow layout the tree is absolutely placed over the file.
+  // Keys keep the file's frame mounted while the tree comes and goes. In the narrow layout the tree shares the file's cell and covers it.
   const parts = showTree ? (narrow ? [fileColumn, treeColumn] : edge === "start" ? [treeColumn, divider, fileColumn] : [fileColumn, divider, treeColumn]) : [fileColumn];
   return (
-    <div className="files-body" data-side={side} data-edge={edge} data-narrow={narrow ? "" : undefined} data-rtl={rtl ? "" : undefined}>
-      {parts}
+    <div className="files-body" data-side={side} data-edge={edge} data-narrow={narrow ? "" : undefined} data-tree={showTree ? "" : undefined} data-rtl={rtl ? "" : undefined}>
+      {pathBar}
+      <div className="files-body__main">{parts}</div>
     </div>
   );
 }
