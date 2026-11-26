@@ -52,6 +52,10 @@ The plan review (2026-11-26) checked these against the docs and the runner's sou
 
 The new step's read-only calls ran on the development PC with the owner's own `gh` login, not with `WINGET_TOKEN`: `gh api user` gave `Doofess`, `gh api -i repos/Doofess/winget-pkgs` began `HTTP/2.0 200 OK`, the compare gave `ahead_by` 0, and a repository that doesn't exist began `HTTP/2.0 404 Not Found`. The step's script parses in PowerShell's parser with no errors.
 
+## Runs from before slice 9c
+
+A re-run uses the workflow at the run's own commit. alpha.1's run 43942007171 and alpha.2's run 45872192223 were made by workflows with `always()`, no hold and no fork check, and GitHub lets them be re-run for 30 days. Re-running alpha.2's failed `winget-submit` after the fork has been synced would open a second "New package" pull request while microsoft/winget-pkgs#482096 is open. The slice's final review found this, and RELEASING.md says never to re-run them. alpha.2 goes out only with `action=submit`.
+
 ## The check on GitHub
 
 Run 45880807826 is a manual `check` of the branch `phase-9c` (`3160c3c6`) with tag `v0.1.0-alpha.2`. It was started at 19:04:08 UTC, and a script polled its jobs every 3 seconds.

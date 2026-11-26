@@ -6,7 +6,7 @@ Alpha builds are for people who want to try Marshell before v1. They install wit
 
 1. `main` is green and holds what the release should carry.
 2. Run a dry run on `main` and wait for it: `gh workflow run release.yml -f action=dry-run`. A pull request runs one only when it touches the installer or the release scripts, and a change elsewhere (the CLI's uninstall, an adapter's hooks) can break what the smoke test checks. A tag whose build fails publishes nothing, but its number is used up.
-3. Decide whether the tag submits to winget. While the repository variable `WINGET_HOLD` is set, it doesn't (see [Holding the submission](#holding-the-submission)), so set or delete the variable before you push the tag. If the tag will submit, press **Sync fork** on the fork's page (`https://github.com/<owner>/winget-pkgs`) first. The workflow tries the sync itself, but GitHub refuses it whenever `microsoft/winget-pkgs` has changed one of its own workflow files since the fork's last sync, which happened within a week of alpha.1 (see [The fork](#the-fork)).
+3. Decide whether the tag submits to winget. While the repository variable `WINGET_HOLD` is set, it doesn't (see [Holding the submission](#holding-the-submission)), so set or delete the variable before you push the tag. If the tag will submit, press **Sync fork** on the fork's page (`https://github.com/<owner>/winget-pkgs`) first. The workflow tries the sync itself, but GitHub probably refuses it whenever `microsoft/winget-pkgs` has changed one of its own workflow files since the fork's last sync, which happened within a week of alpha.1 (see [The fork](#the-fork)).
 4. Tag it and push the tag. The tag is the version: `v0.1.0-alpha.N`, with N one more than the last release.
 
    ```sh
@@ -69,14 +69,15 @@ gh variable delete WINGET_HOLD
 - Change the variable before you push the tag, not while the run is going: when a running job reads it isn't pinned.
 - Cancelling a tagged run stops the winget jobs as well, but a cancel holds nothing once `wingetcreate` has opened the pull request, and `winget-check` can pass in about a minute. Use the variable. Until slice 9c both jobs ignored a cancel altogether (issue #216).
 - Re-running a held tag's run doesn't submit either: `publish` fails, because the release exists. Run `submit` by hand.
+- **Never re-run a release run from before slice 9c.** A re-run uses the workflow of the run's own commit, and that one has no hold and no fork check. alpha.1's run 43942007171 and alpha.2's run 45872192223 can still be re-run (GitHub allows it for 30 days). If the fork has been synced, re-running alpha.2's failed `winget-submit` opens a second "New package" pull request. The same goes for a tag pushed on a commit from before slice 9c. A release that went out before it is submitted only with `action=submit`.
 
-The hold is on as of 2026-11-26, until alpha.1's new-package pull request (microsoft/winget-pkgs#482096) is merged, because a submission before that would open a second "New package" pull request. Once #482096 is merged, delete the variable, sync the fork, and submit alpha.2 with `gh workflow run release.yml -f action=submit -f tag=v0.1.0-alpha.2`.
+The hold was switched on when slice 9c was merged (2026-11-26), until alpha.1's new-package pull request (microsoft/winget-pkgs#482096) is merged, because a submission before that would open a second "New package" pull request. Once #482096 is merged, delete the variable, sync the fork, and submit alpha.2 with `gh workflow run release.yml -f action=submit -f tag=v0.1.0-alpha.2`.
 
 ## The fork
 
 `wingetcreate` pushes its branch to the token owner's fork of `microsoft/winget-pkgs` and opens the pull request from there. It stops when it can't bring the fork up to date first ("The forked repository could not be synced with the upstream commits", alpha.2). So `winget-submit` asks GitHub to sync the fork before `wingetcreate` runs, in its step "Bring the fork up to date", and stops with what to do when that fails:
 
-- GitHub refuses the sync when `microsoft/winget-pkgs` has changed one of its own workflow files since the fork's last sync. The likely reason, not proven, is that the token has no `workflow` scope (`docs/research/2026-11-26-winget-hold-and-fork-sync.md`). Press **Sync fork** on the fork's page, then run `submit` again. Don't give the token the `workflow` scope: it would let the token change the workflows of every repository the owner has, this one's included.
+- GitHub probably refuses the sync when `microsoft/winget-pkgs` has changed one of its own workflow files since the fork's last sync, because the token has no `workflow` scope. That is likely, not proven: it rests on alpha.2's one failure, whose answer from GitHub was never seen (`docs/research/2026-11-26-winget-hold-and-fork-sync.md`). Press **Sync fork** on the fork's page, then run `submit` again. Don't give the token the `workflow` scope: it would let the token change the workflows of every repository the owner has, this one's included.
 - A fork with commits of its own on `master` isn't synced, because a merge would carry them toward the pull request. Put its `master` back to `microsoft/winget-pkgs`'s, then run `submit` again.
 - A fork that doesn't exist yet is made by `wingetcreate`.
 
