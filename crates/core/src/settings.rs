@@ -47,6 +47,10 @@ struct FileDoc {
     /// Each value that does not read falls back on its own default.
     #[serde(default, deserialize_with = "lenient_files")]
     files: FilesSettings,
+    /// True in a file saved since word wrap started on. Without it a stored `files.word_wrap: false` is the
+    /// old default and reads as on.
+    #[serde(default)]
+    wrap_default_on: bool,
     /// Each value that does not read falls back on its own default.
     #[serde(default, deserialize_with = "lenient_changes")]
     changes: ChangesSettings,
@@ -277,6 +281,10 @@ pub fn load(home: &Path) -> Settings {
         }
         ok
     });
+    let mut files = doc.files;
+    if !doc.wrap_default_on {
+        files.word_wrap = true;
+    }
     Settings {
         appearance,
         pause_warned,
@@ -290,7 +298,7 @@ pub fn load(home: &Path) -> Settings {
         history_backup_dir: doc.history_backup_dir.filter(|dir| !dir.trim().is_empty()),
         default_folder,
         browser: doc.browser,
-        files: doc.files,
+        files,
         changes: doc.changes,
     }
 }
@@ -342,6 +350,7 @@ pub fn save(home: &Path, s: &Settings) -> anyhow::Result<()> {
             default_folder: s.default_folder.clone(),
             browser: s.browser.clone(),
             files: s.files.clone(),
+            wrap_default_on: true,
             changes: s.changes.clone(),
             sound_off: false,
         },
@@ -472,7 +481,7 @@ mod tests {
                 preview_tabs: true,
                 auto_save: false,
                 tab_indents: true,
-                word_wrap: false,
+                word_wrap: true,
                 indent_guides: true,
                 whitespace: false,
                 scroll_past_end: false,
@@ -480,6 +489,44 @@ mod tests {
                 tree_position: TreePosition::Automatic,
             }
         );
+    }
+
+    const OLD_WRAP_FILE: &str = r#"{"version": 1, "sound_off": true, "files": {"word_wrap": false, "tab_size": 2}}"#;
+
+    #[test]
+    fn a_settings_file_from_before_wrap_started_on_reads_wrap_on() {
+        let home = tempfile::tempdir().unwrap();
+        write_settings(home.path(), OLD_WRAP_FILE);
+        let file = crate::paths::settings_file(home.path());
+        let before = std::fs::read(&file).unwrap();
+        for _ in 0..2 {
+            let s = load(home.path());
+            assert!(s.files.word_wrap);
+            assert_eq!(s.files.tab_size, 2);
+            assert!(!s.notifications.needs_you.sound);
+        }
+        assert_eq!(std::fs::read(&file).unwrap(), before);
+    }
+
+    #[test]
+    fn wrap_turned_off_after_the_switch_stays_off() {
+        let home = tempfile::tempdir().unwrap();
+        write_settings(home.path(), OLD_WRAP_FILE);
+        let mut s = load(home.path());
+        s.files.word_wrap = false;
+        save(home.path(), &s).unwrap();
+        assert!(!load(home.path()).files.word_wrap);
+        let text = std::fs::read_to_string(crate::paths::settings_file(home.path())).unwrap();
+        assert!(text.contains("\"wrap_default_on\": true"), "{text}");
+    }
+
+    #[test]
+    fn a_file_with_no_files_block_or_a_broken_one_reads_wrap_on() {
+        for body in [r#"{"version": 1}"#, r#"{"version": 1, "files": 3}"#] {
+            let home = tempfile::tempdir().unwrap();
+            write_settings(home.path(), body);
+            assert!(load(home.path()).files.word_wrap, "{body}");
+        }
     }
 
     #[test]
@@ -490,7 +537,7 @@ mod tests {
                 preview_tabs: false,
                 auto_save: true,
                 tab_indents: false,
-                word_wrap: true,
+                word_wrap: false,
                 indent_guides: false,
                 whitespace: true,
                 scroll_past_end: true,

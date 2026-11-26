@@ -659,6 +659,23 @@ describe("MainWindow: one terminal", () => {
     expect(h).toContain("preview-stand-in");
     expect(h).not.toContain("pane__divider");
   });
+  it("an expanded pane covers the terminal and marks the window", () => {
+    const stand = <aside className="preview-stand-in" />;
+    const wide = html({ pane: stand, paneShown: true, paneExpanded: true, width: 1700 });
+    expect(wide).toContain('data-pane="cover"');
+    expect(wide).toContain("data-expanded");
+    expect(wide).not.toContain("pane__divider");
+    const narrow = html({ pane: stand, paneShown: true, paneExpanded: true, width: 700 });
+    expect(narrow).toContain('data-pane="cover"');
+    expect(narrow).not.toContain("data-expanded");
+    expect(html({ pane: stand, paneShown: true, width: 1700 })).toContain('data-pane="beside"');
+    expect(html({ pane: stand, paneShown: true, width: 1700 })).not.toContain("data-expanded");
+  });
+  it("with no session an expanded pane still fills, and is not marked expanded", () => {
+    const h = html({ rows: [], selectedId: undefined, pane: <p>the pane</p>, paneShown: true, paneAlone: true, paneExpanded: true });
+    expect(h).toContain('data-pane="fill"');
+    expect(h).not.toContain("data-expanded");
+  });
   it("a pane that is not shown leaves the terminal alone", () => {
     const h = html({ pane: <aside className="preview-stand-in" /> });
     expect(h).not.toContain("preview-stand-in");
@@ -685,5 +702,17 @@ describe("MainWindow: mainView", () => {
   it("shows the terminal as before without it", () => {
     expect(html()).toContain("scripted-terminal");
     expect(html()).not.toContain("history-stand-in");
+  });
+});
+
+describe("MainWindow: the covered terminals", () => {
+  it("tells the app once the pane has covered the terminals and they are hidden, which is after the layout's motion", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const source = readFileSync(join(__dirname, "MainWindow.tsx"), "utf8");
+    expect(source).toContain("const terminalsCovered = paneCovers && !paneMotion.moving;");
+    expect(source).toContain("suspended={terminalsCovered || viewing}");
+    expect(source).toContain("if (terminalsCovered) toldCovered.current?.();");
+    expect(source).toContain("}, [terminalsCovered]);");
   });
 });

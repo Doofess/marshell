@@ -703,34 +703,191 @@ describe("the Browser and Files panels", () => {
     expect(onScreen(one, "s")).toEqual([]);
   });
 
-  it("a filled panel is the stack's only panel", () => {
-    const s = run(EMPTY, pg("https://a.test/"), open("/a.md"), { type: "fill", panel: "files", session: "s" });
-    expect(stackOf(s, "s").filled).toBe("files");
+  it("an expanded panel is the stack's only panel for its session", () => {
+    const s = run(EMPTY, pg("https://a.test/"), open("/a.md"), { type: "expand", panel: "files", session: "s" });
+    expect(stackOf(s, "s").expanded).toBe("files");
     expect(stackPanels(stackOf(s, "s"))).toEqual(["files"]);
     expect(onScreen(s, "s")).toEqual(["files"]);
     expect(stackOf(s, "s").shown).toEqual(["browser", "files"]);
+    expect(paneProblem(s)).toBeNull();
   });
 
-  it("Changes is a third panel: it joins the stack in its place, and Fill holds with three shown", () => {
+  it("Changes is a third panel: it joins the stack in its place, and it expands with three shown", () => {
     let s = run(EMPTY, pg("https://a.test/"), open("/a.md"), { type: "panel", panel: "changes", session: "s" });
     expect(stackOf(s, "s").shown).toEqual(["browser", "files", "changes"]);
-    s = run(s, { type: "fill", panel: "changes", session: "s" });
-    expect(stackOf(s, "s").filled).toBe("changes");
+    s = run(s, { type: "expand", panel: "changes", session: "s" });
+    expect(stackOf(s, "s").expanded).toBe("changes");
     expect(onScreen(s, "s")).toEqual(["changes"]);
-    s = run(s, { type: "fill", panel: "changes", session: "s" });
-    expect(stackOf(s, "s").filled).toBeNull();
+    expect(paneProblem(s)).toBeNull();
+    s = run(s, { type: "expand", panel: "changes", session: "s" });
+    expect(stackOf(s, "s").expanded).toBeNull();
+    expect(paneProblem(s)).toBeNull();
   });
 
-  it("Fill does nothing with only Changes shown", () => {
-    const s = run(EMPTY, { type: "show", session: "s" }, { type: "panel", panel: "changes", session: "s" }, { type: "panel", panel: "files", session: "s" });
-    expect(stackOf(s, "s").shown).toEqual(["changes"]);
-    expect(run(s, { type: "fill", panel: "changes", session: "s" })).toBe(s);
+  describe("expand", () => {
+    const A = (path: string): PaneAction => open(path, { session: "a" });
+    const B = (path: string): PaneAction => open(path, { session: "b" });
+    const expandOf = (panel: PanelId, session: string | null): PaneAction => ({ type: "expand", panel, session });
+    const two = () => run(EMPTY, pg("https://a.test/", "a"), A("/a.md"), B("/b.md"));
+
+    it("rule 1: it switches the session's expansion, only the session's", () => {
+      const s = two();
+      expect(shown(s, "a")).toEqual(["browser", "files"]);
+      const next = run(s, expandOf("files", "a"));
+      expect(stackOf(next, "a").expanded).toBe("files");
+      expect(stackOf(next, "b").expanded).toBeNull();
+      expect(stackPanels(stackOf(next, "a"))).toEqual(["files"]);
+      expect(stackPanels(stackOf(next, "b"))).toEqual(["browser", "files"]);
+      expect(next.sessions.a?.expanded_panel).toBe("files");
+      expect(paneProblem(next)).toBeNull();
+      // Another panel replaces it, the same one ends it.
+      expect(stackOf(run(next, expandOf("browser", "a")), "a").expanded).toBe("browser");
+      const off = run(next, expandOf("files", "a"));
+      expect(stackOf(off, "a").expanded).toBeNull();
+      expect("expanded_panel" in off.sessions.a!).toBe(false);
+      expect(paneProblem(off)).toBeNull();
+    });
+
+    it("rule 1: it does nothing while the pane is hidden, with no session, or for a panel that isn't shown", () => {
+      const s = two();
+      const hidden = paneReducer(s, { type: "hide" });
+      expect(paneReducer(hidden, expandOf("files", "a"))).toBe(hidden);
+      expect(paneReducer(s, expandOf("files", null))).toBe(s);
+      expect(paneReducer(s, expandOf("changes", "a"))).toBe(s);
+    });
+
+    it("rule 1: it works with one panel shown, and makes the session's entry", () => {
+      const s = run(EMPTY, { type: "show", session: "c" });
+      expect(shown(s, "c")).toEqual(["files"]);
+      expect("c" in s.sessions).toBe(false);
+      const on = run(s, expandOf("files", "c"));
+      expect(stackOf(on, "c").expanded).toBe("files");
+      expect(on.sessions.c).toEqual({ tabs: [], active: null, expanded_panel: "files" });
+      expect(paneProblem(on)).toBeNull();
+      const off = run(on, expandOf("files", "c"));
+      expect(stackOf(off, "c").expanded).toBeNull();
+      expect("c" in off.sessions).toBe(false);
+      expect(paneProblem(off)).toBeNull();
+    });
+
+    it("rule 2: hiding a panel with its switch ends its expansion in every session", () => {
+      const s = run(two(), expandOf("files", "a"));
+      const next = run(s, { type: "panel", panel: "files", session: "b" });
+      expect(shown(next, "b")).toEqual(["browser"]);
+      expect(stackOf(next, "a").expanded).toBeNull();
+      expect("expanded_panel" in next.sessions.a!).toBe(false);
+      expect(paneProblem(next)).toBeNull();
+      // The last panel: the pane hides and the expansion is gone, though the panel stays shown.
+      const lone = run(EMPTY, { type: "show", session: "c" }, expandOf("files", "c"), { type: "panel", panel: "files", session: "c" });
+      expect(lone.open).toBe(false);
+      expect(lone.panels?.shown).toEqual(["files"]);
+      expect("c" in lone.sessions).toBe(false);
+      expect(paneProblem(lone)).toBeNull();
+      // The panel a session expanded, hidden by that session's own switch.
+      const own = run(s, { type: "panel", panel: "files", session: "a" });
+      expect(stackOf(own, "a").expanded).toBeNull();
+      expect(paneProblem(own)).toBeNull();
+    });
+
+    it("rule 3: showing a panel, or opening into one, ends the acting session's expansion and leaves the others", () => {
+      const both = run(two(), expandOf("files", "a"), expandOf("files", "b"));
+      const shownBrowser = run(both, { type: "panel", panel: "browser", session: "a" });
+      expect(stackOf(shownBrowser, "a").expanded).toBeNull();
+      expect(stackOf(shownBrowser, "b").expanded).toBe("files");
+      expect(shown(shownBrowser, "a")).toEqual(["browser", "files"]);
+      expect(paneProblem(shownBrowser)).toBeNull();
+      // An open into another panel ends it; into the expanded panel it stays.
+      const other = run(both, A("/b.html"));
+      expect(stackOf(other, "a").expanded).toBeNull();
+      expect(stackOf(other, "b").expanded).toBe("files");
+      expect(paneProblem(other)).toBeNull();
+      const same = run(both, A("/c.md"));
+      expect(stackOf(same, "a").expanded).toBe("files");
+      expect(paneProblem(same)).toBeNull();
+    });
+
+    it("rule 4: showing a panel alone from a hidden pane removes the expansions of other panels in every session", () => {
+      const hidden = run(run(two(), expandOf("files", "a"), expandOf("browser", "b")), { type: "hide" });
+      const viaPanel = run(hidden, { type: "panel", panel: "files", session: "b" });
+      expect(viaPanel.panels?.shown).toEqual(["files"]);
+      expect(stackOf(viaPanel, "a").expanded).toBe("files");
+      expect("expanded_panel" in viaPanel.sessions.b!).toBe(false);
+      expect(paneProblem(viaPanel)).toBeNull();
+      const viaOpen = run(hidden, A("/c.html"));
+      expect(viaOpen.panels?.shown).toEqual(["browser"]);
+      expect("expanded_panel" in viaOpen.sessions.a!).toBe(false);
+      expect(stackOf(viaOpen, "b").expanded).toBe("browser");
+      expect(paneProblem(viaOpen)).toBeNull();
+    });
+
+    it("rule 5: show, hide and toggle leave every expansion alone", () => {
+      const s = run(two(), expandOf("files", "a"), expandOf("browser", "b"));
+      for (const type of ["hide", "toggle"] as const) {
+        const hidden = paneReducer(s, type === "hide" ? { type } : { type, session: "a" });
+        expect(hidden.open).toBe(false);
+        expect(stackOf(hidden, "a").expanded).toBe("files");
+        expect(stackOf(hidden, "b").expanded).toBe("browser");
+        const back = run(hidden, { type: "show", session: "a" });
+        expect(back.open).toBe(true);
+        expect(stackOf(back, "a").expanded).toBe("files");
+        expect(stackOf(back, "b").expanded).toBe("browser");
+        expect(paneProblem(back)).toBeNull();
+      }
+      const again = run(s, { type: "hide" }, { type: "show", session: "a" });
+      expect(stackOf(again, "a").expanded).toBe("files");
+    });
+
+    it("rule 6: closing the last tab keeps the expansion", () => {
+      const s = run(EMPTY, A("/a.md"), B("/b.md"), A("/a.html"), expandOf("files", "a"), close("t1", "a"), close("t2", "a"));
+      expect(tabsOf(s, "a").tabs).toEqual([]);
+      expect(stackOf(s, "a").expanded).toBe("files");
+      expect(s.sessions.a).toEqual({ tabs: [], active: null, expanded_panel: "files" });
+      expect(paneProblem(s)).toBeNull();
+    });
+
+    it("rule 6: clearing the last draft keeps an entry that holds an expansion", () => {
+      const draft = { checkout: "c", base: null, comments: [], picked: [], sent: [], folds: { "a.ts": true } };
+      const s = run(EMPTY, { type: "show", session: "a" }, { type: "panel", panel: "changes", session: "a" }, expandOf("changes", "a"), { type: "drafts", session: "a", drafts: draft });
+      expect(s.sessions.a?.changes).toBeDefined();
+      const cleared = run(s, { type: "drafts", session: "a", drafts: null });
+      expect(stackOf(cleared, "a").expanded).toBe("changes");
+      expect(cleared.sessions.a).toEqual({ tabs: [], active: null, expanded_panel: "changes" });
+      expect(paneProblem(cleared)).toBeNull();
+    });
+
+    it("rule 6: handing the session over carries the expansion", () => {
+      const s = run(two(), expandOf("files", "a"));
+      const next = run(s, { type: "handOver", from: "a", to: "c" });
+      expect(stackOf(next, "c").expanded).toBe("files");
+      expect("a" in next.sessions).toBe(false);
+      expect(paneProblem(next)).toBeNull();
+      // The target's own expansion wins.
+      const both = run(two(), expandOf("files", "a"), expandOf("browser", "c"), { type: "handOver", from: "a", to: "c" });
+      expect(stackOf(both, "c").expanded).toBe("browser");
+      expect(paneProblem(both)).toBeNull();
+    });
+
+    it("rule 7: paneProblem names an expanded_panel the stack doesn't show", () => {
+      const s = run(two(), expandOf("files", "a"));
+      expect(paneProblem(s)).toBeNull();
+      const st = s.sessions.a!;
+      const withSession = (next: SessionTabs): PaneView => ({ ...s, sessions: { ...s.sessions, a: next } });
+      expect(paneProblem(withSession({ ...st, expanded_panel: "changes" }))).toBe("expanded_panel");
+      expect(paneProblem(withSession({ ...st, expanded_panel: "nope" }))).toBe("expanded_panel");
+      expect(paneProblem(withSession({ ...st, expanded_panel: 3 as unknown as string }))).toBe("expanded_panel");
+      expect(paneProblem({ ...s, panels: undefined })).toBe("expanded_panel");
+    });
+  });
+
+  it("a stack saved by an older build, with a window-wide fill, is read with no expansion", () => {
+    const old = mk({ s: { tabs: [f("t1")], active: "t1" } }, { panels: { shown: ["browser", "files"], weights: {}, filled: "files" } as PaneView["panels"] });
+    expect(stackOf(old, "s").expanded).toBeNull();
   });
 
   it("an open selects the tab in its panel, shows the pane and adds the panel", () => {
     const s0 = run(EMPTY, pg("https://a.test/"));
     expect(shown(s0)).toEqual(["browser"]);
-    expect(s0.panels).toEqual({ shown: ["browser"], weights: {}, filled: null });
+    expect(s0.panels).toEqual({ shown: ["browser"], weights: {} });
     const s1 = run(s0, open("/a.md"));
     expect(shown(s1)).toEqual(["browser", "files"]);
     expect(sel(s1, "files")).toBe("t2");
@@ -742,24 +899,25 @@ describe("the Browser and Files panels", () => {
     expect(paneProblem(s2)).toBeNull();
   });
 
-  it("an open into another panel ends a fill; into the filled panel keeps it", () => {
-    const filled = run(EMPTY, pg("https://a.test/"), open("/a.md"), { type: "fill", panel: "browser", session: "s" });
-    expect(stackOf(filled, "s").filled).toBe("browser");
-    const files = run(filled, open("/b.md"));
-    expect(stackOf(files, "s")).toMatchObject({ filled: null, shown: ["browser", "files"] });
-    const same = run(filled, open("/b.html"));
-    expect(stackOf(same, "s").filled).toBe("browser");
-    const page = run(filled, pg("https://b.test/"));
-    expect(stackOf(page, "s").filled).toBe("browser");
+  it("an open into another panel ends an expansion; into the expanded panel keeps it", () => {
+    const expanded = run(EMPTY, pg("https://a.test/"), open("/a.md"), { type: "expand", panel: "browser", session: "s" });
+    expect(stackOf(expanded, "s").expanded).toBe("browser");
+    const files = run(expanded, open("/b.md"));
+    expect(stackOf(files, "s")).toMatchObject({ expanded: null, shown: ["browser", "files"] });
+    const same = run(expanded, open("/b.html"));
+    expect(stackOf(same, "s").expanded).toBe("browser");
+    const page = run(expanded, pg("https://b.test/"));
+    expect(stackOf(page, "s").expanded).toBe("browser");
+    for (const st of [expanded, files, same, page]) expect(paneProblem(st)).toBeNull();
   });
 
   it("an open while the pane is hidden shows that panel alone", () => {
-    const s = mk({ s: { tabs: [f("t1"), b("t2")], active: "t1", active_browser: "t2" } }, { open: false, panels: { shown: ["browser", "files"], weights: { browser: 3000 }, filled: "browser" } });
+    const s = mk({ s: { tabs: [f("t1"), b("t2")], active: "t1", active_browser: "t2" } }, { open: false, panels: { shown: ["browser", "files"], weights: { browser: 3000 } } });
     const next = paneReducer(s, open("/new.md"));
     expect(next.open).toBe(true);
-    expect(next.panels).toEqual({ shown: ["files"], weights: { browser: 3000 }, filled: null });
+    expect(next.panels).toEqual({ shown: ["files"], weights: { browser: 3000 } });
     const page = paneReducer(s, pg("https://z.test/"));
-    expect(page.panels).toEqual({ shown: ["browser"], weights: { browser: 3000 }, filled: null });
+    expect(page.panels).toEqual({ shown: ["browser"], weights: { browser: 3000 } });
   });
 
   it("an open of the tab already selected in a panel on screen returns the same state", () => {
@@ -812,12 +970,12 @@ describe("the Browser and Files panels", () => {
 
   it("Back onto an entry of the other panel takes the tab there, selected, with its panel shown", () => {
     const moved: PaneTab = { ...f("t1", "/a.html"), history: [...f("t1", "/a.html").history, ...f("t1", "/b.md").history], index: 1 };
-    const s = mk({ s: { tabs: [moved, f("t2")], active: "t1" } }, { panels: { shown: ["files"], weights: { files: 4000 }, filled: null } });
+    const s = mk({ s: { tabs: [moved, f("t2")], active: "t1" } }, { panels: { shown: ["files"], weights: { files: 4000 } } });
     const next = paneReducer(s, { type: "back", session: "s", paneTab: "t1" });
     expect(tabsOf(next, "s").tabs[0]!.index).toBe(0);
     expect(sel(next, "browser")).toBe("t1");
     expect(sel(next, "files")).toBe("t2");
-    expect(next.panels).toEqual({ shown: ["browser", "files"], weights: { files: 4000 }, filled: null });
+    expect(next.panels).toEqual({ shown: ["browser", "files"], weights: { files: 4000 } });
     expect(paneProblem(next)).toBeNull();
     const there = paneReducer(next, { type: "forward", session: "s", paneTab: "t1" });
     expect(sel(there, "files")).toBe("t1");
@@ -925,11 +1083,11 @@ describe("the Browser and Files panels", () => {
     for (const type of ["toggle", "show"] as const) {
       const next = paneReducer(old, { type, session: "s" });
       expect(next.open).toBe(true);
-      expect(next.panels).toEqual({ shown: ["browser", "files"], weights: {}, filled: null });
+      expect(next.panels).toEqual({ shown: ["browser", "files"], weights: {} });
     }
     const none = paneReducer(old, { type: "show", session: null });
-    expect(none.panels).toEqual({ shown: ["files"], weights: {}, filled: null });
-    const saved = { ...old, panels: { shown: ["files"], weights: { files: 2 }, filled: null } };
+    expect(none.panels).toEqual({ shown: ["files"], weights: {} });
+    const saved = { ...old, panels: { shown: ["files"], weights: { files: 2 } } };
     expect(paneReducer(saved, { type: "toggle", session: "s" }).panels).toBe(saved.panels);
     const open = paneReducer(old, { type: "show", session: "s" });
     expect(paneReducer(open, { type: "hide" }).panels).toBe(open.panels);
@@ -941,7 +1099,7 @@ describe("the Browser and Files panels", () => {
     const toggle = (st: PaneView, panel: PanelId) => paneReducer(st, { type: "panel", panel, session: "s" });
     // On screen with another: it leaves.
     const one = toggle(two, "browser");
-    expect(one.panels).toEqual({ shown: ["files"], weights: {}, filled: null });
+    expect(one.panels).toEqual({ shown: ["files"], weights: {} });
     expect(one.open).toBe(true);
     // The only one shown: the pane hides and the panel stays shown.
     const hidden = toggle(one, "files");
@@ -950,29 +1108,35 @@ describe("the Browser and Files panels", () => {
     // Pane hidden: that panel alone.
     const back = toggle(hidden, "browser");
     expect(back.open).toBe(true);
-    expect(back.panels).toEqual({ shown: ["browser"], weights: {}, filled: null });
-    // Not on screen while the pane is open: added; a fill ends.
+    expect(back.panels).toEqual({ shown: ["browser"], weights: {} });
+    // Not on screen while the pane is open: added; the session's expansion ends.
     expect(toggle(one, "browser").panels?.shown).toEqual(["browser", "files"]);
-    const filled = run(two, { type: "fill", panel: "files", session: "s" });
-    const added = toggle(filled, "browser");
-    expect(added.panels).toEqual({ shown: ["browser", "files"], weights: {}, filled: null });
-    // The filled one leaves; the other remains.
-    const gone = toggle(filled, "files");
-    expect(gone.panels).toEqual({ shown: ["browser"], weights: {}, filled: null });
-    for (const st of [two, one, hidden, back, filled, added, gone]) expect(paneProblem(st)).toBeNull();
+    const expanded = run(two, { type: "expand", panel: "files", session: "s" });
+    const added = toggle(expanded, "browser");
+    expect(added.panels).toEqual({ shown: ["browser", "files"], weights: {} });
+    expect(stackOf(added, "s").expanded).toBeNull();
+    // The expanded one leaves; the other remains.
+    const gone = toggle(expanded, "files");
+    expect(gone.panels).toEqual({ shown: ["browser"], weights: {} });
+    expect(stackOf(gone, "s").expanded).toBeNull();
+    for (const st of [two, one, hidden, back, expanded, added, gone]) expect(paneProblem(st)).toBeNull();
   });
 
-  it("fill", () => {
+  it("expand", () => {
     const two = run(EMPTY, pg("https://a.test/"), open("/a.md"));
-    const fill = (st: PaneView, panel: PanelId) => paneReducer(st, { type: "fill", panel, session: "s" });
-    const filled = fill(two, "browser");
-    expect(filled.panels?.filled).toBe("browser");
-    expect(fill(filled, "browser").panels?.filled).toBeNull();
-    expect(fill(filled, "files").panels?.filled).toBe("files");
+    const expand = (st: PaneView, panel: PanelId) => paneReducer(st, { type: "expand", panel, session: "s" });
+    const expanded = expand(two, "browser");
+    expect(stackOf(expanded, "s").expanded).toBe("browser");
+    expect(expand(expanded, "browser").sessions.s?.expanded_panel).toBeUndefined();
+    expect(stackOf(expand(expanded, "files"), "s").expanded).toBe("files");
+    // With one panel shown it turns on and off.
     const one = run(two, { type: "panel", panel: "browser", session: "s" });
-    expect(fill(one, "files")).toBe(one);
+    const on = expand(one, "files");
+    expect(stackOf(on, "s").expanded).toBe("files");
+    expect(stackOf(expand(on, "files"), "s").expanded).toBeNull();
     const hidden = paneReducer(two, { type: "hide" });
-    expect(fill(hidden, "files")).toBe(hidden);
+    expect(expand(hidden, "files")).toBe(hidden);
+    for (const st of [expanded, on, expand(on, "files")]) expect(paneProblem(st)).toBeNull();
   });
 
   it("weights are whole, 1 to 100000; NaN, an infinite number and an unknown key are dropped", () => {
@@ -990,7 +1154,7 @@ describe("the Browser and Files panels", () => {
   it("pin writes the stack once", () => {
     const s = OLD();
     const pinned = paneReducer(s, { type: "pin", session: "s" });
-    expect(pinned.panels).toEqual({ shown: ["browser", "files"], weights: {}, filled: null });
+    expect(pinned.panels).toEqual({ shown: ["browser", "files"], weights: {} });
     expect(paneReducer(pinned, { type: "pin", session: "s" })).toBe(pinned);
     expect(paneReducer(pinned, { type: "pin", session: "other" })).toBe(pinned);
   });
@@ -1046,8 +1210,11 @@ describe("the Browser and Files panels", () => {
         { type: "width", width: rnd() * 5000 },
         { type: "panel", panel: panel(), session: rnd() < 0.8 ? session : null },
         { type: "panel", panel: panel(), session },
-        { type: "fill", panel: panel(), session: rnd() < 0.8 ? session : null },
-        { type: "fill", panel: panel(), session },
+        { type: "expand", panel: panel(), session: rnd() < 0.8 ? session : null },
+        { type: "expand", panel: panel(), session },
+        { type: "expand", panel: panel(), session },
+        { type: "handOver", from: session, to: pick(sessions) },
+        { type: "expand", panel: panel(), session },
         { type: "weights", weights: { [pick(["browser", "files", "changes"])]: pick([rnd() * 200000, -4, Number.NaN, Number.POSITIVE_INFINITY, 12.5]) } },
         { type: "pin", session },
       ];
@@ -1062,7 +1229,7 @@ describe("the Browser and Files panels", () => {
     walk(1, EMPTY);
     walk(2, { ...EMPTY, open: true });
     walk(3, OLD());
-    walk(4, { ...OLD(), open: false, panels: { shown: ["browser", "files"], weights: { browser: 3000 }, filled: "files" } });
+    walk(4, { ...OLD(), open: false, panels: { shown: ["browser", "files"], weights: { browser: 3000 } } });
     walk(5, mk({ a: { tabs: [b("t1")], active: "t1" }, b: { tabs: [f("t1", "/x.html"), f("t2")], active: "t2" } }));
   });
 });

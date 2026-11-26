@@ -137,11 +137,43 @@ export function paneTabFocus(s: { outcome: "none" | "show" | "step"; from: "pane
 /**
  * What leaving a pane tab for the terminal does (Esc, or Ctrl+Shift+Tab, in a tab). Beside the terminal, the keyboard just moves
  * there. In a window so narrow that the pane covers the terminal, the pane is hidden as well, so the keys never go to a program
- * out of sight. A filling pane hides only when the shell panel isn't on screen (decision 16).
+ * out of sight. A filling pane hides only when the shell panel isn't on screen (decision 16). An expanded panel covers the terminal
+ * too, but it isn't hidden: it is put back beside the terminal (`expanded` is whether `[data-expanded]` is on the window), so the
+ * keys reach a terminal that is on screen.
  */
-export function leavePaneOutcome(s: { covers: boolean; alone: boolean; shellShown: boolean }): "hide" | "focus" {
+export function leavePaneOutcome(s: { covers: boolean; expanded: boolean; alone: boolean; shellShown: boolean }): "hide" | "focus" | "restore" {
+  if (s.expanded) return "restore";
   if (s.covers) return "hide";
   return s.alone && !s.shellShown ? "hide" : "focus";
+}
+/** Said when a key to the terminal put an expanded panel back beside it. */
+export const besideAgainText = (panel: PanelId) => `${PANEL_LABEL[panel]} is beside the terminal again.`;
+/**
+ * Where the navigation cursor's release on a session goes. On the session's own row its expanded panel stays and takes the
+ * keyboard ("panel"): going to a session never ends its expansion. On its terminal, or from inside the pane, the pane is left
+ * ("leave": an expanded panel is put back, a covering pane may hide). Anything else goes to the session's terminal ("terminal"),
+ * and so does a release outside the pane while the shell panel's expanded panel is up: that one isn't the session's to end.
+ */
+export function releaseOutcome(s: { row: boolean; inPane: boolean; expanded: boolean; shellOwner: boolean }): "panel" | "leave" | "terminal" {
+  const own = s.expanded && !s.shellOwner;
+  if (own && s.row) return "panel";
+  return s.inPane || own ? "leave" : "terminal";
+}
+
+/**
+ * Whether asking for the session's terminal hands the pane to the session: the shell panel's expanded panel covers that terminal,
+ * so it can't take the keyboard and the pane would stay the shell's. The shell keeps its expansion for when it has the pane again.
+ */
+export function handsToSession(s: { shellOwner: boolean; expanded: boolean; hasSession: boolean }): boolean {
+  return s.shellOwner && s.expanded && s.hasSession;
+}
+
+/**
+ * Whether the keyboard is on nothing a person can see: on the page itself, on nothing, or inside a hidden part (a terminal an
+ * expanded panel covers is `hidden`). A sidebar row, a panel or a sheet that has it keeps it.
+ */
+export function keyboardLost(active: Pick<Element, "closest"> | null, body: unknown): boolean {
+  return active === null || active === body || active.closest("[hidden]") !== null;
 }
 /** Said when leaving a tab hid the pane: the key that did it doesn't name the pane, so the line does, with the keys that bring it back. */
 export const paneHiddenText = (keys: string) => `The side pane is hidden. ${keys} shows it.`;

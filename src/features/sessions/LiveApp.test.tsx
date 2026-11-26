@@ -725,7 +725,7 @@ describe("LiveApp: the side pane", () => {
   const closedPane: PaneView = { open: false, width: null, sessions: {}, recent: [] };
   const paneNode = (pane: PaneView, session: string) =>
     renderToStaticMarkup(
-      <SidePane panel="files" tabs={[]} activeId={null} plus={{ label: "New tab", menu: true }} fill={{ on: false }} hideKeys="Ctrl+Shift+Q" onFill={() => {}} onSelect={() => {}} onClose={() => {}} onMove={() => {}} onHide={() => {}} onPlus={() => {}}>
+      <SidePane panel="files" tabs={[]} activeId={null} plus={{ label: "New tab", menu: true }} expand={{ on: false, others: true }} hideKeys="Ctrl+Shift+Q" onExpand={() => {}} onSelect={() => {}} onClose={() => {}} onMove={() => {}} onHide={() => {}} onPlus={() => {}}>
         {paneBody(pane, session) === "empty" ? <EmptyFiles recent={recentFor(pane, "C:\\dev\\my-app", session)} onOpenFile={() => {}} onBrowse={() => {}} onRecent={() => {}} /> : null}
       </SidePane>,
     );
@@ -779,9 +779,9 @@ describe("LiveApp: the stack of panels", () => {
               activeId={activeIn(st, panel)}
               plus={panel === "browser" ? { label: "New tab", menu: false } : { label: "Open a file", menu: true }}
               menu={panel === "browser" ? { label: "Browser menu" } : undefined}
-              fill={{ on: stack.filled === panel, disabled: stack.shown.length < 2 ? "No other panel is shown" : undefined }}
+              expand={{ on: stack.expanded === panel, others: stack.shown.length >= 2 }}
               hideKeys="Ctrl+Shift+A"
-              onFill={() => {}}
+              onExpand={() => {}}
               onSelect={() => {}}
               onClose={() => {}}
               onMove={() => {}}
@@ -804,8 +804,8 @@ describe("LiveApp: the stack of panels", () => {
     expect(h).toContain("Open a file");
     expect(h).toContain(PANEL_LABEL.browser);
   });
-  it("a filled panel is drawn alone", () => {
-    const pane = paneReducer(withBoth(), { type: "fill", panel: "files", session: "t1" });
+  it("an expanded panel is drawn alone", () => {
+    const pane = paneReducer(withBoth(), { type: "expand", panel: "files", session: "t1" });
     const h = stackHtml(pane, "t1");
     expect(h).toContain(`data-panel="files"`);
     expect(h).not.toContain(`data-panel="browser"`);
@@ -884,6 +884,84 @@ describe("LiveApp: tree opens and saves", () => {
   });
   it("a tree save from a session that has closed is dropped", () => {
     expect(source).toContain("stateRef.current.infos.some((i) => i.tab_id === session)");
+  });
+  it("a file opened by Browse… or a drop is put in front of the narrow tree before the keyboard moves (issue #205)", () => {
+    // The keyboard is still in the tree when these open, so the tree would stay up over the file (`treeAfter`).
+    const open = source.slice(source.indexOf("const openInPane = "), source.indexOf("const openFromTree = "));
+    expect(open).toContain('if (panel === "files") filesPanel.current?.showFile();');
+    expect(open.indexOf("showFile()")).toBeLessThan(open.indexOf("focusPane(panel)"));
+    const drop = source.slice(source.indexOf("const dropPaths = "), source.indexOf("return pasteInto(target.tabId, paths)"));
+    expect(drop).toContain('if (panel === "files") filesPanel.current?.showFile();');
+    expect(drop.indexOf("showFile()")).toBeLessThan(drop.indexOf("focusPane(panel)"));
+    // The tree's own open has taken the tree down already.
+    const fromTree = source.slice(source.indexOf("const openFromTree = "), source.indexOf("const runFilesMenu = "));
+    expect(fromTree).not.toContain("showFile");
+  });
+});
+
+describe("LiveApp: an expanded panel takes the terminal's place", () => {
+  const source = readFileSync(join(__dirname, "LiveApp.tsx"), "utf8");
+  const body = (name: string) => {
+    const start = source.indexOf(`  const ${name} = `);
+    expect(start).toBeGreaterThan(-1);
+    return source.slice(start, source.indexOf("\n  };", start));
+  };
+  it("tells the window and both panel frames", () => {
+    expect(source).toContain("paneExpanded={stack.expanded !== null}");
+    expect(source.split("expand={{ on: stack.expanded === panel, others: stack.shown.length >= 2 }}")).toHaveLength(3);
+    expect(source.split('onExpand={() => paneDispatch({ type: "expand", panel, session: owner.key })}')).toHaveLength(3);
+    expect(source).not.toContain("onFill=");
+  });
+  it("a switch that hides the panel under the keyboard ends the expansion, so only a narrow window still covers", () => {
+    expect(body("togglePanel")).toContain('[data-pane="cover"]:not([data-expanded])');
+  });
+  it("a key that leaves the pane for the terminal puts an expanded panel back, and says so", () => {
+    const b = body("toTerminalFromPane");
+    expect(b).toContain("[data-expanded]");
+    expect(b).toContain('"restore"');
+    expect(b).toContain('type: "expand"');
+    expect(b).toContain("besideAgainText(");
+    expect(b).toContain("setTimeout(toOwnerTerminal, 0)");
+  });
+  it("the cursor's release on the terminal asks [data-expanded] and carries the line in its receipt", () => {
+    const at = source.indexOf('case "select-pane"');
+    expect(at).toBeGreaterThan(-1);
+    const sel = source.slice(at, at + 1800);
+    expect(sel).toContain("[data-expanded]");
+    expect(sel).toContain("{ restored: panel }");
+    // The receipt that follows says it too, as it says a hide.
+    expect(source).toContain("`${effect.text}. ${besideAgainText(said.restored)}`");
+    expect(source).toContain("receiptWithPaneHidden(effect.text, paneKeys())");
+  });
+  it("a keyboard left on a covered terminal goes into the expanded panel, however the session was reached", () => {
+    // One effect, keyed by the owner and its expansion: no route to a session (its number, the cursor, the palette, the tray) has a rule of its own.
+    const helper = body("keyboardIntoExpanded");
+    expect(helper).toContain("keyboardLost(document.activeElement, document.body)");
+    expect(helper).toContain("focusPane(expanded)");
+    // History takes the pane's place: there is no panel to go into.
+    expect(helper).toContain('mainViewRef.current !== "sessions"');
+    // `focusToken` is every "back to the terminal" (a launcher or a sheet that closed): under an expanded panel that is the panel.
+    expect(source).toContain("  }, [owner.key, stack.expanded, view.pane.open, focusToken, focusedId]);");
+    // A terminal stays drawn, and takes the keyboard, until the layout's motion ends: the window says when it is covered (live check 6x).
+    expect(source).toContain("onTerminalsCovered={keyboardIntoExpanded}");
+  });
+  it("the cursor's release keeps an expanded panel on the session's own row, and ends it on the terminal", () => {
+    const nav = source.slice(source.indexOf('case "select-pane": {'), source.indexOf('case "select-side":'));
+    expect(nav).toContain('releaseOutcome({ row: effect.from === "row", inPane, expanded, shellOwner: ownerRef.current.shell })');
+    const panel = nav.slice(nav.indexOf('case "panel":'), nav.indexOf('case "leave":'));
+    expect(panel).toContain("focusPane(panel)");
+    expect(panel).not.toContain("toTerminalFromPane");
+    expect(nav.slice(nav.indexOf('case "leave":'))).toContain("toTerminalFromPane(false)");
+  });
+  it("a session's terminal asked for under the shell panel's expanded panel gets the pane, before the keyboard is looked for", () => {
+    const at = source.indexOf("tokenSeen.current !== focusToken || sessionSeen.current !== focusedId");
+    expect(at).toBeGreaterThan(-1);
+    const effect = source.slice(at, source.indexOf("}, [owner.key, stack.expanded, view.pane.open, focusToken, focusedId]);", at));
+    expect(effect).toContain("handsToSession({ shellOwner: ownerRef.current.shell");
+    expect(effect).toContain(".blur()");
+    expect(effect).toContain('setOwnerPref("session")');
+    expect(effect.indexOf('setOwnerPref("session")')).toBeLessThan(effect.indexOf("keyboardIntoExpanded()"));
+    expect(source).not.toContain("enterSession");
   });
 });
 

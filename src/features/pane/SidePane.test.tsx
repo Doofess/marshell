@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { PreviewPane, type PreviewPaneProps } from "../preview/Preview";
+import { LayoutContext, type ColumnInputs } from "../window/paneColumn";
 import { SidePane, tabTitle, type SidePaneProps, type StripTab } from "./SidePane";
 
 const noop = () => {};
@@ -16,14 +17,14 @@ const html = (more: Partial<SidePaneProps> = {}) =>
       tabs={tabs}
       activeId="t2"
       plus={{ label: "Open a file", menu: false }}
-      fill={{ on: false }}
+      expand={{ on: false, others: true }}
       hideKeys="Ctrl+Shift+A"
       onSelect={noop}
       onClose={noop}
       onMove={noop}
       onHide={noop}
       onPlus={noop}
-      onFill={noop}
+      onExpand={noop}
       {...more}
     >
       {more.children ?? <p>body</p>}
@@ -82,9 +83,9 @@ describe("SidePane", () => {
   });
   const btn = (out: string, label: string) => out.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`))![0];
   const order = (out: string, ...labels: string[]) => labels.map((l) => out.indexOf(`aria-label="${l}"`));
-  it("ends with +, the menu when it has one, Fill and Hide, in that order", () => {
+  it("ends with +, the menu when it has one, Expand and Hide, in that order", () => {
     const out = html({ panel: "browser", plus: { label: "New tab", menu: true }, menu: { label: "Browser menu" }, onMenu: noop });
-    const at = order(out, "Close b.rs", "New tab", "Browser menu", "Fill the side pane with Browser", "Hide Browser");
+    const at = order(out, "Close b.rs", "New tab", "Browser menu", "Expand Browser", "Hide Browser");
     expect([...at].sort((x, y) => x - y)).toEqual(at);
     expect(at[0]).toBeGreaterThan(-1);
     expect(btn(out, "Browser menu")).toContain('aria-haspopup="menu"');
@@ -107,24 +108,36 @@ describe("SidePane", () => {
     expect(b).toContain('title="Open a file: No session is open"');
     expect(btn(html(), "Open a file")).not.toContain("aria-disabled");
   });
-  it("Fill is pressed while its panel fills, and its tooltip says how to go back", () => {
-    const on = btn(html({ fill: { on: true } }), "Fill the side pane with Files");
+  it("Expand is pressed while its panel is expanded, and its tooltip says what pressing it brings back", () => {
+    const on = btn(html({ expand: { on: true, others: true } }), "Expand Files");
     expect(on).toContain('aria-pressed="true"');
-    expect(on).toContain('title="Show the other panels"');
-    const off = btn(html(), "Fill the side pane with Files");
+    expect(on).toContain('title="Show the terminal and the other panels"');
+    const off = btn(html(), "Expand Files");
     expect(off).toContain('aria-pressed="false"');
-    expect(off).toContain('title="Fill the side pane with Files"');
+    expect(off).toContain('title="Expand Files"');
   });
-  it("Fill with one panel shown is aria-disabled and says why", () => {
-    const b = btn(html({ fill: { on: false, disabled: "No other panel is shown" } }), "Fill the side pane with Files");
+  it("Expand with no terminal beside and no other panel is aria-disabled and says why", () => {
+    const layout = { inputs: {} as ColumnInputs, moving: false, beside: false };
+    const out = renderToStaticMarkup(
+      <LayoutContext.Provider value={layout}>
+        <SidePane panel="files" tabs={tabs} activeId="t2" expand={{ on: false, others: false }} hideKeys="Ctrl+Shift+A" onSelect={noop} onClose={noop} onMove={noop} onHide={noop} onExpand={noop}>
+          <p>body</p>
+        </SidePane>
+      </LayoutContext.Provider>,
+    );
+    const b = btn(out, "Expand Files");
     expect(b).toContain('aria-disabled="true"');
     expect(b).not.toMatch(/\sdisabled/);
     expect(b).toContain('title="No other panel is shown"');
+    // With no provider the terminal is taken to be beside, so a lone panel can still expand.
+    const alone = btn(html({ expand: { on: false, others: false } }), "Expand Files");
+    expect(alone).not.toContain("aria-disabled");
+    expect(alone).toContain('title="Expand Files"');
   });
-  it("names each Fill button after its panel and draws Hide as a bar", () => {
-    expect(html({ panel: "browser" })).toContain('aria-label="Fill the side pane with Browser"');
-    expect(html({ panel: "files" })).toContain('title="Fill the side pane with Files"');
-    expect(btn(html({ panel: "browser", fill: { on: true } }), "Fill the side pane with Browser")).toContain('title="Show the other panels"');
+  it("names each Expand button after its panel and draws Hide as a bar", () => {
+    expect(html({ panel: "browser" })).toContain('aria-label="Expand Browser"');
+    expect(html({ panel: "files" })).toContain('title="Expand Files"');
+    expect(btn(html({ panel: "browser", expand: { on: true, others: true } }), "Expand Browser")).toContain('title="Show the terminal and the other panels"');
     const hide = html({ panel: "browser" }).match(/<button[^>]*aria-label="Hide Browser"[^>]*>.*?<\/button>/)![0];
     expect(hide).toContain('d="M3 6h6"');
     expect(hide).not.toContain("M3 3l6 6M9 3 3 9");
@@ -159,7 +172,7 @@ describe("SidePane", () => {
     const out = html({ tabs: [], activeId: null });
     expect(out).not.toContain('role="tablist"');
     expect(out).toContain('aria-label="Open a file"');
-    expect(out).toContain('aria-label="Fill the side pane with Files"');
+    expect(out).toContain('aria-label="Expand Files"');
     expect(out).toContain('aria-label="Hide Files"');
   });
 

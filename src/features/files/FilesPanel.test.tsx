@@ -56,7 +56,7 @@ describe("FilesPanel", () => {
   });
   it("the strip shows the Files menu button", () => {
     const out = renderToStaticMarkup(
-      <SidePane panel="files" tabs={[]} activeId={null} plus={{ label: "Open a file", menu: true }} menu={{ label: "Files menu" }} fill={{ on: false }} hideKeys="Ctrl+Shift+E" onFill={noop} onSelect={noop} onClose={noop} onMove={noop} onHide={noop} onPlus={noop}>
+      <SidePane panel="files" tabs={[]} activeId={null} plus={{ label: "Open a file", menu: true }} menu={{ label: "Files menu" }} expand={{ on: false, others: true }} hideKeys="Ctrl+Shift+E" onExpand={noop} onSelect={noop} onClose={noop} onMove={noop} onHide={noop} onPlus={noop}>
         <i />
       </SidePane>,
     );
@@ -120,7 +120,10 @@ describe("what Files waits for", () => {
   });
   it("announces Collapsed all folders. from the menu and the handle", () => {
     expect(panel).toContain("announce(COLLAPSED)");
-    expect(panel).toContain("collapseAll }));");
+    expect(panel).toContain("toggleTree, collapseAll, showFile }));");
     expect(panel).toContain("onCollapseAll={collapseAll}");
+  });
+  it("the handle puts the file in front of the narrow tree (issue #205)", () => {
+    expect(panel).toContain("const showFile = () => setOverlay(false);");
   });
 });

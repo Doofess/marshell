@@ -56,7 +56,8 @@ export type NavEvent =
   | { type: "choose"; target: Target };
 
 export type NavEffect =
-  | { type: "select-pane"; index: number }
+  /** `from` is "row" when the session's sidebar row was chosen, and absent when its terminal was. */
+  | { type: "select-pane"; index: number; from?: "row" }
   /** A session that is not on screen was chosen: show it in this slot, then select that slot. */
   | { type: "bring-into-view"; number: number; pane: number }
   /** A panel of the side pane was selected: focus goes into it. */

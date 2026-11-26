@@ -178,9 +178,16 @@ export type MainWindowProps = {
   paneShown?: boolean;
   /** With no session an open pane fills the area right of the sidebar. Left out, the pane needs a session, as before. */
   paneAlone?: boolean;
+  /** The session's panel is expanded: an open pane takes the terminal's place (the same cover as a narrow window's, marked `data-expanded`). */
+  paneExpanded?: boolean;
   /** The saved width in pixels, or null for half the room. The window holds no width of its own. */
   paneWidth?: number | null;
   onPaneWidth?: (width: number | null) => void;
+  /**
+   * Called once the pane has covered the terminals and they are hidden. That is after the layout's motion: until then the selected
+   * terminal is still drawn and may take the keyboard. The app moves a keyboard left on a hidden terminal.
+   */
+  onTerminalsCovered?: () => void;
   /** The divider had the keyboard and is going, because the window got so narrow that the pane covers the terminal: somewhere else takes the keyboard. */
   onDividerGone?: () => void;
   /** The width of 80 terminal columns: the pane stops there, down to its own minimum. */
@@ -277,8 +284,10 @@ export function MainWindow({
   pane,
   paneShown = false,
   paneAlone = false,
+  paneExpanded = false,
   paneWidth = null,
   onPaneWidth,
+  onTerminalsCovered,
   onDividerGone,
   terminalMinWidth = 0,
   mainView,
@@ -358,7 +367,9 @@ export function MainWindow({
   // What the pane is asked to be (the toggle answers to this at once), and whether a hide holds it shown while its page freezes.
   const paneWanted = paneShown && !viewing && (!empty || paneAlone);
   const paneHeld = usePaneHold(paneWanted);
-  const geometry = paneGeometry({ room: spaceW, shown: paneWanted || paneHeld, saved: paneWidth, terminalMin: terminalMinWidth, alone: empty && paneAlone });
+  const geometry = paneGeometry({ room: spaceW, shown: paneWanted || paneHeld, saved: paneWidth, terminalMin: terminalMinWidth, alone: empty && paneAlone, expanded: paneExpanded });
+  // Whether a pane that isn't expanded would sit beside the terminal here (the Expand button's tooltip and disabled state read it).
+  const beside = paneGeometry({ room: spaceW, shown: true, saved: paneWidth, terminalMin: terminalMinWidth, alone: empty && paneAlone }).mode === "beside";
   const paneOn = geometry.mode !== "hidden";
   const paneCovers = geometry.mode === "cover";
   // The pane moves for 200 ms when its mode changes, and with the sidebar when that switches beside it (paneMotionKey). A drag
@@ -373,14 +384,21 @@ export function MainWindow({
   });
   const paneBlocked = viewing || (empty && !paneAlone);
   const layoutValue = useMemo<Layout>(
-    () => ({ inputs: { pref, sidebarWidth, drawer, shown: paneWanted || paneHeld, saved: paneWidth, terminalMin: terminalMinWidth, rtl, alone: empty && paneAlone }, moving: layoutMoving }),
-    [pref, sidebarWidth, drawer, paneWanted, paneHeld, paneWidth, terminalMinWidth, rtl, layoutMoving, empty, paneAlone],
+    () => ({ inputs: { pref, sidebarWidth, drawer, shown: paneWanted || paneHeld, saved: paneWidth, terminalMin: terminalMinWidth, rtl, alone: empty && paneAlone, expanded: paneExpanded }, moving: layoutMoving, beside }),
+    [pref, sidebarWidth, drawer, paneWanted, paneHeld, paneWidth, terminalMinWidth, rtl, layoutMoving, empty, paneAlone, paneExpanded, beside],
   );
   const roomNow = Math.max(0, width - sideAnim - pushed);
   const paneP = Math.max(0, Math.min(Math.round(paneMotion.value), roomNow));
   // A hide keeps drawing the last pane until its motion ends, so the node is kept (in the same slot, so its state stays).
   const keptPane = useRef<{ node: ReactNode; width: number } | null>(null);
   const paneDrawn = paneOn || paneMotion.moving;
+  // The terminals are hidden under a pane that covers them once its motion is over; the app is told then.
+  const terminalsCovered = paneCovers && !paneMotion.moving;
+  const toldCovered = useRef(onTerminalsCovered);
+  toldCovered.current = onTerminalsCovered;
+  useEffect(() => {
+    if (terminalsCovered) toldCovered.current?.();
+  }, [terminalsCovered]);
   // The request-details drawer lies over the pane in a narrow window, where a browser tab's page would be drawn above it.
   useCoverPage(drawer && Boolean(drawerCard || requests[0]) && paneDrawn);
   // A hide freezes its page first (the pane is held shown meanwhile), and the picture stays until the pane has folded and unmounted.
@@ -530,6 +548,7 @@ export function MainWindow({
           data-placement={drawer && !paneDrawn ? placement : undefined}
           data-nav-pane={!viewing && !empty ? 0 : undefined}
           data-pane={paneOn ? geometry.mode : paneMotion.moving ? "hiding" : undefined}
+          data-expanded={paneCovers && paneExpanded && beside ? "" : undefined}
           style={paneColumns ? { gridTemplateColumns: paneColumns } : undefined}
         >
           {empty ? (
@@ -544,7 +563,7 @@ export function MainWindow({
             }[emptySlot({ viewing, paneDrawn, threeTracks })]
           ) : renderTerminal ? (
             // Under a main view every terminal stays mounted and none is on screen.
-            <KeptTerminals rows={rows} selectedId={selected.id} render={renderTerminal} suspended={(paneCovers && !paneMotion.moving) || viewing} />
+            <KeptTerminals rows={rows} selectedId={selected.id} render={renderTerminal} suspended={terminalsCovered || viewing} />
           ) : viewing ? null : (
             <ScriptedTerminal setting={terminalSetting} label={`Terminal for ${selected.name}`} {...(isTool(selected.agent) ? { script: shellSession({ cwd: selected.project }), size: SHELL_SIZE } : {})} />
           )}

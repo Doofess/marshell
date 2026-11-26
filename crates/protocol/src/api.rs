@@ -532,6 +532,10 @@ pub struct SessionTabs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub changes: Option<ChangesDrafts>,
+    /// The panel expanded over the pane and the terminal for this session: one of the shown panels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub expanded_panel: Option<String>,
 }
 
 /// A session's file tree: its root and the open folders.
@@ -568,9 +572,6 @@ pub struct Panels {
     /// Each panel's weight in the stack's height: 1 to 100000; a panel with none has 10000.
     #[serde(default)]
     pub weights: BTreeMap<String, u32>,
-    /// The shown panel that fills the pane, hiding the other.
-    #[serde(default)]
-    pub filled: Option<String>,
 }
 
 /// The side pane: whether it shows, how wide, each session's tabs and the recent files.
@@ -2219,6 +2220,7 @@ pub struct FilesSettings {
     pub preview_tabs: bool,
     pub auto_save: bool,
     pub tab_indents: bool,
+    /// On by default: every file wraps. When off, Markdown and plain text still wrap and code does not.
     pub word_wrap: bool,
     pub indent_guides: bool,
     pub whitespace: bool,
@@ -2234,7 +2236,7 @@ impl Default for FilesSettings {
             preview_tabs: true,
             auto_save: false,
             tab_indents: true,
-            word_wrap: false,
+            word_wrap: true,
             indent_guides: true,
             whitespace: false,
             scroll_past_end: false,

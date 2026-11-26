@@ -294,7 +294,7 @@ async fn put_view_keeps_the_stack() {
     saved_with_session_a(home.path());
     let app = app_in(home.path());
     let body = pane_body(serde_json::json!({
-        "shown": ["browser", "files", "changes"], "weights": { "browser": 6000, "files": 14000, "changes": 8000 }, "filled": "changes"
+        "shown": ["browser", "files", "changes"], "weights": { "browser": 6000, "files": 14000, "changes": 8000 }
     }));
     let res = app
         .clone()
@@ -353,7 +353,7 @@ async fn put_view_refuses_a_bad_stack() {
     let home = tempfile::tempdir().unwrap();
     saved_with_session_a(home.path());
     let app = app_in(home.path());
-    let body = pane_body(serde_json::json!({ "shown": ["files", "browser"], "weights": {}, "filled": null }));
+    let body = pane_body(serde_json::json!({ "shown": ["files", "browser"], "weights": {} }));
     let res = app
         .oneshot(request("PUT", "/v1/layout/view", Some(body)))
         .await

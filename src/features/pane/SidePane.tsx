@@ -1,9 +1,11 @@
-import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useContext, useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { AgentMark } from "../../components/AgentMark/AgentMark";
 import { isAgentId } from "../../components/AgentMark/agents";
 import { selectedProps } from "../../components/a11y/SelectedMark";
 import { agentLabel } from "../sessions/sessionActions";
+import { LayoutContext } from "../window/paneColumn";
 import { clickGuard } from "./clickGuard";
+import { expandButton } from "./expandButton";
 import { PANEL_LABEL, type PanelId } from "./panels";
 import { dragIndex, stripKey } from "./stripKeys";
 import { splitName, type TabKind } from "./tabType";
@@ -61,8 +63,8 @@ export type SidePaneProps = {
   title?: string;
   /** The ⋯ button, for a panel that has a menu: its name ("Browser menu"). */
   menu?: { label: string };
-  /** ⤢ : whether this panel fills the pane, and why it can't. */
-  fill: { on: boolean; disabled?: string };
+  /** ⤢ : whether this panel is the session's expanded one, and whether another panel is shown (`expandButton` decides the rest). */
+  expand: { on: boolean; others: boolean };
   /** The panel's own key, for the Hide button's tooltip: "Ctrl+Shift+A". */
   hideKeys: string;
   onSelect(id: string): void;
@@ -72,7 +74,7 @@ export type SidePaneProps = {
   onMove(id: string, to: number): void;
   onPlus?(anchor: { x: number; y: number }, opener: HTMLElement): void;
   onMenu?(anchor: { x: number; y: number }, opener: HTMLElement): void;
-  onFill(): void;
+  onExpand(): void;
   onHide(): void;
 };
 
@@ -133,8 +135,9 @@ function TabTitle({ kind, title }: { kind: TabKind; title: string }) {
 
 type Drag = { id: string; pointerId: number; startX: number; started: boolean };
 
-/** One panel's frame: its tab strip, ending with +, the menu (if it has one), Fill and Hide, then whatever the panel holds. */
-export function SidePane({ panel, tabs, activeId, children, plus: plusSpec, title, menu, fill, hideKeys, onSelect, onClose, onKeep, onMove, onPlus, onMenu, onFill, onHide }: SidePaneProps) {
+/** One panel's frame: its tab strip, ending with +, the menu (if it has one), Expand and Hide, then whatever the panel holds. */
+export function SidePane({ panel, tabs, activeId, children, plus: plusSpec, title, menu, expand, hideKeys, onSelect, onClose, onKeep, onMove, onPlus, onMenu, onExpand, onHide }: SidePaneProps) {
+  const expandBtn = expandButton(panel, { ...expand, beside: useContext(LayoutContext)?.beside ?? true });
   const root = useRef<HTMLElement>(null);
   const plus = useRef<HTMLButtonElement>(null);
   // Where focus goes after the strip changes: a tab's id, or "active" for whichever tab became the selected one.
@@ -314,12 +317,12 @@ export function SidePane({ panel, tabs, activeId, children, plus: plusSpec, titl
         <button
           type="button"
           className="side-pane__button"
-          aria-label={`Fill the side pane with ${PANEL_LABEL[panel]}`}
-          aria-pressed={fill.on}
-          aria-disabled={fill.disabled !== undefined ? "true" : undefined}
-          title={fill.disabled ?? (fill.on ? "Show the other panels" : `Fill the side pane with ${PANEL_LABEL[panel]}`)}
+          aria-label={expandBtn.label}
+          aria-pressed={expandBtn.pressed}
+          aria-disabled={expandBtn.disabled ? "true" : undefined}
+          title={expandBtn.title}
           onClick={() => {
-            if (fill.disabled === undefined) onFill();
+            if (!expandBtn.disabled) onExpand();
           }}
         >
           {icon("M7.5 1.5h3v3M10.5 1.5 7 5M4.5 10.5h-3v-3M1.5 10.5 5 7")}

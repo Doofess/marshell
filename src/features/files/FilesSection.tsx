@@ -16,7 +16,7 @@ const FLAGS: ReadonlyArray<{ key: Flag; label: string; line: string }> = [
   { key: "preview_tabs", label: "Preview tabs", line: "A file opened from the tree shows in a tab that the next one replaces, until you edit it or double-click it." },
   { key: "auto_save", label: "Auto save", line: "Saves a file 1 second after you stop typing and when you leave its tab. It stops when the file changed on disk." },
   { key: "tab_indents", label: "Tab key indents", line: "When off, Tab moves to the next control. Esc, then Tab, always leaves the editor." },
-  { key: "word_wrap", label: "Word wrap", line: "When off, Markdown and plain text wrap and code doesn't. When on, every file wraps. Alt+Z changes the tab in front." },
+  { key: "word_wrap", label: "Word wrap", line: "When on, every file wraps. When off, Markdown and plain text wrap and code doesn't. Alt+Z changes the tab in front." },
   { key: "indent_guides", label: "Indent guides", line: "Draws a line at each indent level." },
   { key: "whitespace", label: "Show whitespace", line: "Draws spaces as dots and tabs as arrows." },
   { key: "scroll_past_end", label: "Scroll past end", line: "Lets the last line scroll up to the top." },

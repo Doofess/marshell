@@ -21,6 +21,13 @@ describe("paneGeometry", () => {
     expect(paneGeometry({ room: 719, shown: true, saved: null, terminalMin: 0 })).toMatchObject({ mode: "cover", pane: 719, terminal: 0 });
     expect(paneGeometry({ room: 720, shown: true, saved: null, terminalMin: 0 }).mode).toBe("beside");
   });
+  it("an expanded pane takes the terminal's place where it would sit beside", () => {
+    expect(paneGeometry({ room: 1200, shown: true, saved: 500, terminalMin: 600, expanded: true })).toEqual({ mode: "cover", terminal: 0, pane: 1200, max: 599 });
+    expect(paneGeometry({ room: 1200, shown: false, saved: 500, terminalMin: 600, expanded: true }).mode).toBe("hidden");
+    expect(paneGeometry({ room: 1200, shown: true, saved: 500, terminalMin: 600, expanded: true, alone: true }).mode).toBe("fill");
+    expect(paneGeometry({ room: 600, shown: true, saved: null, terminalMin: 0, expanded: true }).mode).toBe("cover");
+    expect(paneGeometry({ room: 600, shown: true, saved: null, terminalMin: 0 }).mode).toBe("cover");
+  });
   it("a room that is not a number gives zeros, not NaN", () => {
     expect(paneGeometry({ room: Number.NaN, shown: true, saved: null, terminalMin: 0 })).toMatchObject({ mode: "hidden", terminal: 0, pane: 0 });
     expect(paneGeometry({ room: -5, shown: true, saved: null, terminalMin: 0 })).toMatchObject({ mode: "hidden", terminal: 0, pane: 0 });
@@ -44,6 +51,9 @@ describe("paneMotionKey", () => {
   it("a hidden or covering pane starts no motion of its own when the sidebar switches", () => {
     expect(paneMotionKey("hidden", "expanded")).toBe(paneMotionKey("hidden", "rail"));
     expect(paneMotionKey("cover", "expanded")).toBe(paneMotionKey("cover", "focus"));
+  });
+  it("expanding moves: a cover's key differs from a beside pane's", () => {
+    expect(paneMotionKey("cover", "rail")).not.toBe(paneMotionKey("beside", "rail"));
   });
   it("showing, hiding and covering each change the key", () => {
     const keys = new Set([paneMotionKey("hidden", "rail"), paneMotionKey("beside", "rail"), paneMotionKey("cover", "rail")]);

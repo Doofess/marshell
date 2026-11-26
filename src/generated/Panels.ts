@@ -11,8 +11,4 @@ shown: Array<string>,
 /**
  * Each panel's weight in the stack's height: 1 to 100000; a panel with none has 10000.
  */
-weights: { [key in string]: number }, 
-/**
- * The shown panel that fills the pane, hiding the other.
- */
-filled: string | null, };
+weights: { [key in string]: number }, };
