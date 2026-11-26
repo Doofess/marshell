@@ -57,6 +57,26 @@ PASS A7 uninstall: the install folder holds no file
 
 The installer waited for the file and ended 2.3 s after it was let go.
 
+**After the final review's fixes** (commits 0fa8b97e and 780b1c24: the read-only probe and share mode 1; release run 45905227434, failed in the hooks check):
+
+```
+FAIL nothing in use: it does not wait: took 7730 ms
+RESULT 39 passed, 1 failed
+```
+
+That time wasn't spent in the wait. The case's program is built with a 3000 ms limit and still removed every file, so at least 4.7 s went to starting a program that had been built moments before on the runner. Issue #215 had named that risk. In the green run before it, building both programs and running the case took 0.5 s. Commit 19b8fce6 starts each program once on an empty folder before the timed cases and writes how long that took; the limits are unchanged.
+
+Its run, 45906502580, passed the hooks check, then lost its runner in the smoke test: 54 minutes, no log, and GitHub's annotation "The hosted runner lost communication with the server". Run 45837513717 failed the same way in slice 9b. The rerun (attempt 2) passed. The hooks check gave `RESULT 40 passed, 0 failed`, and the smoke test gave `RESULT 59 passed, 0 failed, 0 skipped`:
+
+```
+NOTE the first start of hooks-check-uninstall.exe took 265 ms (exit code '0')
+NOTE the first start of hooks-check-install.exe took 33 ms (exit code '0')
+NOTE A5 the hold on OpenConsole.exe ended at 2026-11-26T23:46:48.5847054Z, the installer at 2026-11-26T23:46:49.9115833Z
+PASS A5 reinstall over the running app: every program was replaced
+PASS A5 reinstall over the running app: the installer waited for the held OpenConsole.exe
+PASS A7 uninstall: the install folder holds no file
+```
+
 ## What stays unknown
 
 - Whether winget shows the stop's line, and whether it prints its own `fileInUse` message for exit 32. That shows only when a version with the mapping is installed through winget over a file that stays in use.
