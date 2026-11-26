@@ -163,6 +163,11 @@ describe("treeAfter", () => {
     expect(treeAfter(false, at("C:\\p\\a.ts"), at("C:\\p\\b.ts"), true)).toBe(false);
     expect(treeAfter(false, at("C:\\p\\a.ts"), at(null), true)).toBe(true);
   });
+  it("a wide tree that holds the keyboard stays up as the panel narrows, whatever the narrow tree was last (pre-merge review 6w: it depended on a state the wide layout never shows)", () => {
+    expect(treeAfter(false, at("C:\\p\\a.ts", false), at("C:\\p\\a.ts", true), true)).toBe(true);
+    expect(treeAfter(true, at("C:\\p\\a.ts", false), at("C:\\p\\a.ts", true), true)).toBe(true);
+    expect(treeAfter(true, at("C:\\p\\a.ts", false), at("C:\\p\\a.ts", true), false)).toBe(false);
+  });
   it("is as it was when neither the file nor the layout changed, and when the panel widens", () => {
     expect(treeAfter(true, at("C:\\p\\a.ts"), at("C:\\p\\a.ts"))).toBe(true);
     expect(treeAfter(false, at(null), at(null))).toBe(false);

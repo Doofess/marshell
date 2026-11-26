@@ -71,7 +71,8 @@ export function afterOpen(
  *
  * A tree that is up and holds the keyboard stays up through both: a file an agent opened in the background, or a window made
  * narrower, must not take the tree away from under the keyboard. An open the person asked for moves the keyboard first (a tab, the
- * palette, the terminal), and the tree's own open has already taken the tree down.
+ * palette, the terminal), and the tree's own open has already taken the tree down. As the panel narrows, `up` is not asked: the
+ * wide layout draws the tree whatever the narrow tree's last state was, and a tree that holds the keyboard is drawn.
  */
 export function treeAfter(
   up: boolean,
@@ -80,7 +81,7 @@ export function treeAfter(
   keyboardInTree = false,
 ): boolean {
   if (now.path !== was.path) return now.path === null || (up && keyboardInTree);
-  if (now.narrow && !was.narrow) return now.path === null || (up && keyboardInTree);
+  if (now.narrow && !was.narrow) return now.path === null || keyboardInTree;
   return up;
 }
 

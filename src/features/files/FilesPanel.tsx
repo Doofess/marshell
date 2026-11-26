@@ -397,52 +397,52 @@ export function FilesPanel(p: FilesPanelProps) {
   const position: TreePosition = p.position;
   return (
     <HeaderSlot value={toolsSlot(tools, narrow && shown)}>
-    <div ref={box} className="files-panel" style={{ display: "grid", blockSize: "100%", minInlineSize: 0, minBlockSize: 0 }}>
-      <FilesBody
-        tree={treeNode}
-        filter={filter}
-        file={p.file}
-        pathBar={pathBar}
-        shown={!treeView.hidden}
-        position={position}
-        width={treeView.width}
-        panelWidth={size.width}
-        rtl={size.rtl}
-        overlayOpen={overlay}
-        onWidth={(w) => p.onTreeView({ width: w })}
-        onOverlay={(next) => {
-          setOverlay(next);
-          // The tree that had the keyboard is gone: it goes to the file.
-          if (!next) focusPane("files");
-        }}
-      />
-      {rowMenu && (
-        <ContextMenu
-          label={`Menu for ${rowMenu.row.name}`}
-          items={treeMenuItems(rowMenu.row, { pasteTo: p.pasteTo, os })}
-          anchor={rowMenu.anchor}
-          onRun={runRowMenu}
-          onClose={({ refocus }) => {
-            const m = rowMenu;
-            setRowMenu(null);
-            if (refocus) m.opener.focus();
+      <div ref={box} className="files-panel" style={{ display: "grid", blockSize: "100%", minInlineSize: 0, minBlockSize: 0 }}>
+        <FilesBody
+          tree={treeNode}
+          filter={filter}
+          file={p.file}
+          pathBar={pathBar}
+          shown={!treeView.hidden}
+          position={position}
+          width={treeView.width}
+          panelWidth={size.width}
+          rtl={size.rtl}
+          overlayOpen={overlay}
+          onWidth={(w) => p.onTreeView({ width: w })}
+          onOverlay={(next) => {
+            setOverlay(next);
+            // The tree that had the keyboard is gone: it goes to the file.
+            if (!next) focusPane("files");
           }}
         />
-      )}
-      {barMenu && (
-        <ContextMenu
-          label="Path menu"
-          items={barItems(selected)}
-          anchor={barMenu.anchor}
-          onRun={runBarMenu}
-          onClose={({ refocus }) => {
-            const m = barMenu;
-            setBarMenu(null);
-            if (refocus) m.opener.focus();
-          }}
-        />
-      )}
-    </div>
+        {rowMenu && (
+          <ContextMenu
+            label={`Menu for ${rowMenu.row.name}`}
+            items={treeMenuItems(rowMenu.row, { pasteTo: p.pasteTo, os })}
+            anchor={rowMenu.anchor}
+            onRun={runRowMenu}
+            onClose={({ refocus }) => {
+              const m = rowMenu;
+              setRowMenu(null);
+              if (refocus) m.opener.focus();
+            }}
+          />
+        )}
+        {barMenu && (
+          <ContextMenu
+            label="Path menu"
+            items={barItems(selected)}
+            anchor={barMenu.anchor}
+            onRun={runBarMenu}
+            onClose={({ refocus }) => {
+              const m = barMenu;
+              setBarMenu(null);
+              if (refocus) m.opener.focus();
+            }}
+          />
+        )}
+      </div>
     </HeaderSlot>
   );
 }

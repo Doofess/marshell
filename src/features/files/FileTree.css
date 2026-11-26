@@ -195,7 +195,6 @@
   }
 }
 
-/* The filter box above the tree, and the content search's results that take the tree's place. */
 /* The filter box, set in from the column's edges; its mark is stacked in the same cell, over the box's start. */
 .file-tree-filter-box {
   display: grid;
