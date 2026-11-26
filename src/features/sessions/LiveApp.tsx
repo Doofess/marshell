@@ -1203,13 +1203,21 @@ export function LiveApp() {
   }, [view.pane.open, view.pane.panels, owner.key, settled, loaded]);
   // An expanded panel covers its owner's terminal, and a covered terminal can't take the keyboard. However the owner got here (a
   // session's number, the cursor, the palette, the tray, a restart), a keyboard left on the covered terminal or on nothing goes into
-  // the panel. One that is somewhere drawn stays: a sidebar row that was clicked, a sheet, the panel itself.
+  // the panel. One that is somewhere drawn stays: a sidebar row that was clicked, a sheet, the panel itself. `focusToken` is every
+  // "back to the terminal" (`actions.focusTerminal`, after a launcher or a sheet closes): under an expanded panel that is the panel.
+  // A terminal stays drawn, and takes the keyboard, until the layout's motion ends, so the window calls this again once the
+  // terminals are hidden (`onTerminalsCovered`).
+  const keyboardIntoExpanded = (): void => {
+    const pane = viewRef.current.pane;
+    const expanded = stackOf(pane, ownerRef.current.key).expanded;
+    // History takes the pane's place: there is no panel to go into.
+    if (expanded === null || !pane.open || mainViewRef.current !== "sessions") return;
+    if (keyboardLost(document.activeElement, document.body)) focusPane(expanded);
+  };
   useEffect(() => {
-    if (stack.expanded === null || !view.pane.open) return;
-    if (document.querySelector('[data-pane="cover"]') === null) return;
-    if (keyboardLost(document.activeElement, document.body)) focusPane(stack.expanded);
+    keyboardIntoExpanded();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- it runs when the owner or its expansion changes, not on every focus.
-  }, [owner.key, stack.expanded, view.pane.open]);
+  }, [owner.key, stack.expanded, view.pane.open, focusToken]);
   // Where the keyboard goes when the pane lets go of it: the owner's terminal. A session's terminal is the selected one; the shell
   // panel's is its own (or, with the panel not drawn, the main area, which holds no owner). Never `actions.focusTerminal()` on the
   // shell's path: that focus would flip the owner to the session.
@@ -2727,6 +2735,7 @@ export function LiveApp() {
           paneShown={view.pane.open}
           paneAlone
           paneExpanded={stack.expanded !== null}
+          onTerminalsCovered={keyboardIntoExpanded}
           paneWidth={view.pane.width}
           onPaneWidth={(w) => paneDispatch({ type: "width", width: w })}
           onDividerGone={() => focusPane(currentPanel() ?? "files")}

@@ -935,13 +935,15 @@ describe("LiveApp: an expanded panel takes the terminal's place", () => {
   });
   it("a keyboard left on a covered terminal goes into the expanded panel, however the session was reached", () => {
     // One effect, keyed by the owner and its expansion: no route to a session (its number, the cursor, the palette, the tray) has a rule of its own.
-    const at = source.indexOf("keyboardLost(document.activeElement, document.body)");
-    expect(at).toBeGreaterThan(-1);
-    const effect = source.slice(source.lastIndexOf("useEffect(", at), at + 400);
-    expect(effect).toContain("stack.expanded === null || !view.pane.open");
-    expect(effect).toContain(`[data-pane="cover"]`);
-    expect(effect).toContain("focusPane(stack.expanded)");
-    expect(effect).toContain("[owner.key, stack.expanded, view.pane.open]");
+    const helper = body("keyboardIntoExpanded");
+    expect(helper).toContain("keyboardLost(document.activeElement, document.body)");
+    expect(helper).toContain("focusPane(expanded)");
+    // History takes the pane's place: there is no panel to go into.
+    expect(helper).toContain('mainViewRef.current !== "sessions"');
+    // `focusToken` is every "back to the terminal" (a launcher or a sheet that closed): under an expanded panel that is the panel.
+    expect(source).toContain("  }, [owner.key, stack.expanded, view.pane.open, focusToken]);");
+    // A terminal stays drawn, and takes the keyboard, until the layout's motion ends: the window says when it is covered (live check 6x).
+    expect(source).toContain("onTerminalsCovered={keyboardIntoExpanded}");
     expect(source).not.toContain("enterSession");
   });
 });

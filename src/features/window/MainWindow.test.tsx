@@ -704,3 +704,15 @@ describe("MainWindow: mainView", () => {
     expect(html()).not.toContain("history-stand-in");
   });
 });
+
+describe("MainWindow: the covered terminals", () => {
+  it("tells the app once the pane has covered the terminals and they are hidden, which is after the layout's motion", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const source = readFileSync(join(__dirname, "MainWindow.tsx"), "utf8");
+    expect(source).toContain("const terminalsCovered = paneCovers && !paneMotion.moving;");
+    expect(source).toContain("suspended={terminalsCovered || viewing}");
+    expect(source).toContain("if (terminalsCovered) toldCovered.current?.();");
+    expect(source).toContain("}, [terminalsCovered]);");
+  });
+});

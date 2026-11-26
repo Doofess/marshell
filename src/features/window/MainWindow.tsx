@@ -183,6 +183,11 @@ export type MainWindowProps = {
   /** The saved width in pixels, or null for half the room. The window holds no width of its own. */
   paneWidth?: number | null;
   onPaneWidth?: (width: number | null) => void;
+  /**
+   * Called once the pane has covered the terminals and they are hidden. That is after the layout's motion: until then the selected
+   * terminal is still drawn and may take the keyboard. The app moves a keyboard left on a hidden terminal.
+   */
+  onTerminalsCovered?: () => void;
   /** The divider had the keyboard and is going, because the window got so narrow that the pane covers the terminal: somewhere else takes the keyboard. */
   onDividerGone?: () => void;
   /** The width of 80 terminal columns: the pane stops there, down to its own minimum. */
@@ -282,6 +287,7 @@ export function MainWindow({
   paneExpanded = false,
   paneWidth = null,
   onPaneWidth,
+  onTerminalsCovered,
   onDividerGone,
   terminalMinWidth = 0,
   mainView,
@@ -386,6 +392,13 @@ export function MainWindow({
   // A hide keeps drawing the last pane until its motion ends, so the node is kept (in the same slot, so its state stays).
   const keptPane = useRef<{ node: ReactNode; width: number } | null>(null);
   const paneDrawn = paneOn || paneMotion.moving;
+  // The terminals are hidden under a pane that covers them once its motion is over; the app is told then.
+  const terminalsCovered = paneCovers && !paneMotion.moving;
+  const toldCovered = useRef(onTerminalsCovered);
+  toldCovered.current = onTerminalsCovered;
+  useEffect(() => {
+    if (terminalsCovered) toldCovered.current?.();
+  }, [terminalsCovered]);
   // The request-details drawer lies over the pane in a narrow window, where a browser tab's page would be drawn above it.
   useCoverPage(drawer && Boolean(drawerCard || requests[0]) && paneDrawn);
   // A hide freezes its page first (the pane is held shown meanwhile), and the picture stays until the pane has folded and unmounted.
@@ -550,7 +563,7 @@ export function MainWindow({
             }[emptySlot({ viewing, paneDrawn, threeTracks })]
           ) : renderTerminal ? (
             // Under a main view every terminal stays mounted and none is on screen.
-            <KeptTerminals rows={rows} selectedId={selected.id} render={renderTerminal} suspended={(paneCovers && !paneMotion.moving) || viewing} />
+            <KeptTerminals rows={rows} selectedId={selected.id} render={renderTerminal} suspended={terminalsCovered || viewing} />
           ) : viewing ? null : (
             <ScriptedTerminal setting={terminalSetting} label={`Terminal for ${selected.name}`} {...(isTool(selected.agent) ? { script: shellSession({ cwd: selected.project }), size: SHELL_SIZE } : {})} />
           )}
