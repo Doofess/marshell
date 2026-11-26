@@ -15,7 +15,7 @@ pub async fn get(State(st): State<AppState>) -> Json<ProfilesDoc> {
 
 /// The shells detection found, as they were found. The profiles page resets an edited one to these.
 pub async fn detected(State(st): State<AppState>) -> Json<Vec<Profile>> {
-    Json(st.0.detected.clone())
+    Json(st.detected_snapshot())
 }
 
 /// Whether shell integration applies to this (possibly unsaved) profile, and the script it runs.
@@ -34,8 +34,9 @@ pub async fn put(
     let st2 = st.clone();
     // Saving touches the disk: keep it off the async worker threads.
     let saved = tokio::task::spawn_blocking(move || {
-        store::save(&st2.0.home, &doc, &st2.0.detected)?;
-        Ok::<_, anyhow::Error>(store::normalize(&doc, &st2.0.detected))
+        let detected = st2.detected_snapshot();
+        store::save(&st2.0.home, &doc, &detected)?;
+        Ok::<_, anyhow::Error>(store::normalize(&doc, &detected))
     })
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
@@ -323,6 +324,47 @@ mod tests {
         let (status, body) = ask(state(), "nope", true).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert_eq!(String::from_utf8_lossy(&body), "No such shell profile.");
+    }
+
+    async fn get_json<T: serde::de::DeserializeOwned>(st: AppState, uri: &str) -> T {
+        let req = Request::builder()
+            .method("GET")
+            .uri(uri)
+            .header(header::HOST, format!("127.0.0.1:{PORT}"))
+            .header(header::AUTHORIZATION, format!("Bearer {TOKEN}"))
+            .body(Body::empty())
+            .unwrap();
+        let res = router(st).oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn adopting_a_later_detection_adds_its_profiles_and_keeps_saved_edits() {
+        let home = tempfile::tempdir().unwrap().keep();
+        let cmd = profile("cmd", &["cmd.exe"], ShellFamily::Cmd);
+        // The person renamed the one detected shell, so profiles.json holds it.
+        let mut renamed = cmd.clone();
+        renamed.name = "My prompt".into();
+        renamed.detected = false;
+        let doc = marshell_protocol::api::ProfilesDoc {
+            default_id: "cmd".into(),
+            profiles: vec![renamed],
+        };
+        crate::profiles::store::save(&home, &doc, std::slice::from_ref(&cmd)).unwrap();
+        let st = AppState::new(TOKEN.into(), PORT, Vec::new(), home, vec![cmd.clone()]);
+        let distro = profile("wsl-ubuntu", &["wsl.exe", "-d", "Ubuntu"], ShellFamily::Wsl);
+
+        st.adopt_detected(vec![cmd, distro]);
+
+        let doc: marshell_protocol::api::ProfilesDoc = get_json(st.clone(), "/v1/profiles").await;
+        let ids: Vec<&str> = doc.profiles.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["cmd", "wsl-ubuntu"]);
+        assert_eq!(doc.profiles[0].name, "My prompt", "the saved rename is kept");
+        let found: Vec<Profile> = get_json(st, "/v1/profiles/detected").await;
+        let ids: Vec<&str> = found.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["cmd", "wsl-ubuntu"]);
     }
 
     #[tokio::test]
