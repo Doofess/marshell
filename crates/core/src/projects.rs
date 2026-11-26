@@ -224,28 +224,76 @@ pub fn record(home: &Path, cwd: &Path, now_ms: u64) -> anyhow::Result<()> {
     store::write(&path, &doc)
 }
 
-/// Recent projects, newest first. Folders that no longer exist are left out.
-/// A missing, broken or newer-version file gives an empty list.
-pub fn list(home: &Path) -> Vec<ProjectInfo> {
+/// A recent project, and whether its folder was read.
+pub struct Listed {
+    pub info: ProjectInfo,
+    /// False for a project in a WSL distro that is not running: it is kept in the list, but nothing was read from its
+    /// folder (it was not checked to exist and has no branch), because reading a share starts the distro.
+    pub read: bool,
+}
+
+/// Whether `path` is under a WSL share of a distro that is not in `running` (names compared without case). Reads the
+/// text only. False for any path that is not on a share.
+fn unread(path: &str, running: &[String]) -> bool {
+    crate::wsl::share_distro(path).is_some_and(|distro| {
+        let distro = distro.to_lowercase();
+        !running.iter().any(|name| name.to_lowercase() == distro)
+    })
+}
+
+/// Recent projects, newest first. Folders that no longer exist are left out, and a missing, broken or newer-version
+/// file gives an empty list. A project on a WSL share whose distro is not in `running` is kept unread (see `Listed`).
+/// `running` is called at most once, and only when the file holds a path on a WSL share.
+pub fn entries(home: &Path, running: &dyn Fn() -> Vec<String>) -> Vec<Listed> {
     let doc = store::read::<FileDoc>(&file(home)).unwrap_or_else(|err| {
         tracing::warn!("ignoring projects file: {err:#}");
         None
     });
+    let mut up: Option<Vec<String>> = None;
     doc.unwrap_or_default()
         .projects
         .into_iter()
-        .filter(|p| Path::new(&p.path).exists())
-        .map(|p| {
-            let dir = Path::new(&p.path);
-            ProjectInfo {
-                name: dir
-                    .file_name()
-                    .map_or_else(|| p.path.clone(), |n| n.to_string_lossy().into_owned()),
-                branch: git_branch(dir),
-                last_used_ms: p.last_used_ms,
-                path: p.path,
+        .filter_map(|p| {
+            if crate::wsl::share_distro(&p.path).is_some() && unread(&p.path, up.get_or_insert_with(running)) {
+                let name = p
+                    .path
+                    .rsplit(['/', '\\'])
+                    .find(|part| !part.is_empty())
+                    .unwrap_or(&p.path);
+                return Some(Listed {
+                    info: ProjectInfo {
+                        name: name.to_string(),
+                        branch: None,
+                        last_used_ms: p.last_used_ms,
+                        path: p.path,
+                    },
+                    read: false,
+                });
             }
+            let dir = Path::new(&p.path);
+            if !dir.exists() {
+                return None;
+            }
+            Some(Listed {
+                info: ProjectInfo {
+                    name: dir
+                        .file_name()
+                        .map_or_else(|| p.path.clone(), |n| n.to_string_lossy().into_owned()),
+                    branch: git_branch(dir),
+                    last_used_ms: p.last_used_ms,
+                    path: p.path,
+                },
+                read: true,
+            })
         })
+        .collect()
+}
+
+/// Recent projects, newest first, as `entries` gives them with the distros that run now (`wsl::running_recent`).
+pub fn list(home: &Path) -> Vec<ProjectInfo> {
+    entries(home, &crate::wsl::running_recent)
+        .into_iter()
+        .map(|listed| listed.info)
         .collect()
 }
 
@@ -467,5 +515,74 @@ mod tests {
         assert!(record(home.path(), projects.path(), 1).is_err());
         assert_eq!(fs::read_to_string(file(home.path())).unwrap(), newer);
         assert!(list(home.path()).is_empty());
+    }
+
+    /// A projects file with these paths, newest first.
+    fn write_projects(home: &Path, paths: &[&str]) {
+        let projects: Vec<_> = paths
+            .iter()
+            .enumerate()
+            .map(|(i, path)| serde_json::json!({ "path": path, "last_used_ms": 10 - i }))
+            .collect();
+        let doc = serde_json::json!({ "version": 1, "projects": projects });
+        fs::write(file(home), doc.to_string()).unwrap();
+    }
+
+    #[test]
+    fn a_project_in_a_stopped_distro_is_kept_and_not_read() {
+        let home = tempfile::tempdir().unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        let share = r"\\wsl.localhost\Ubuntu\home\me\app";
+        write_projects(home.path(), &[share, &folder.path().to_string_lossy()]);
+        let listed = entries(home.path(), &|| vec![]);
+        assert_eq!(listed.len(), 2);
+        assert!(!listed[0].read);
+        assert_eq!(listed[0].info.path, share);
+        assert_eq!(listed[0].info.name, "app");
+        assert_eq!(listed[0].info.branch, None);
+        assert_eq!(listed[0].info.last_used_ms, 10);
+        assert!(listed[1].read);
+    }
+
+    #[test]
+    fn a_share_path_counts_as_running_whatever_its_spelling() {
+        let up = ["Ubuntu".to_string()];
+        let spellings = [
+            r"\\wsl$\ubuntu\x",
+            "//WSL.LOCALHOST/UBUNTU/x",
+            r"\\?\UNC\wsl.localhost\Ubuntu\x",
+        ];
+        for path in spellings {
+            assert!(!unread(path, &up), "{path}");
+            assert!(unread(path, &[]), "{path}");
+            assert!(unread(path, &["Debian".to_string()]), "{path}");
+        }
+        for list in [&up[..], &[], &["Debian".to_string()]] {
+            assert!(!unread(r"C:\dev\x", list));
+        }
+    }
+
+    #[test]
+    fn the_running_list_is_asked_once_and_only_for_a_share_path() {
+        let calls = std::cell::Cell::new(0);
+        let running = || {
+            calls.set(calls.get() + 1);
+            vec!["Debian".to_string()]
+        };
+        let home = tempfile::tempdir().unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        write_projects(home.path(), &[&folder.path().to_string_lossy()]);
+        assert_eq!(entries(home.path(), &running).len(), 1);
+        assert_eq!(calls.get(), 0);
+        write_projects(
+            home.path(),
+            &[
+                r"\\wsl.localhost\Ubuntu\a",
+                r"\\wsl$\Ubuntu\b",
+                r"\\wsl.localhost\Ubuntu\c",
+            ],
+        );
+        assert_eq!(entries(home.path(), &running).len(), 3);
+        assert_eq!(calls.get(), 1);
     }
 }

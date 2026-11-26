@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::profiles::detect::{parse_wsl_list, run_wsl};
 
@@ -77,6 +77,34 @@ pub fn list_distros(timeout: Duration) -> Vec<String> {
 /// when none runs the output is a sentence, not a name, which the caller never matches to a detected distro.
 pub fn list_running(timeout: Duration) -> Vec<String> {
     parse_distro_list(&run_wsl(&["-l", "--running", "-q"], timeout))
+}
+
+/// How long `running_recent` remembers the list of running distros.
+const RUNNING_MEMORY: Duration = Duration::from_secs(5);
+
+/// The distros that are running now, as `list_running` gives them, remembered for 5 seconds so that one page load asks
+/// `wsl.exe` once. Blocks up to 8 seconds when it has to ask. Empty off Windows and when `wsl.exe` is missing, fails or
+/// is too slow.
+pub fn running_recent() -> Vec<String> {
+    static RECENT: Mutex<Option<(Instant, Vec<String>)>> = Mutex::new(None);
+    recent_or(&RECENT, Instant::now(), || list_running(LIST_TIMEOUT))
+}
+
+/// The list remembered in `cache` when it was stored less than `RUNNING_MEMORY` before `now`, else what `fetch` finds,
+/// which is remembered. The lock is held only to read or store, never while `fetch` runs `wsl.exe`.
+fn recent_or(
+    cache: &Mutex<Option<(Instant, Vec<String>)>>,
+    now: Instant,
+    fetch: impl FnOnce() -> Vec<String>,
+) -> Vec<String> {
+    if let Some((at, list)) = cache.lock().unwrap_or_else(|e| e.into_inner()).as_ref()
+        && now.saturating_duration_since(*at) < RUNNING_MEMORY
+    {
+        return list.clone();
+    }
+    let list = fetch();
+    *cache.lock().unwrap_or_else(|e| e.into_inner()) = Some((now, list.clone()));
+    list
 }
 
 /// `linux_home` as a path under the distro's own share. None for an empty or relative home, one with `..`, and one
@@ -183,6 +211,22 @@ pub fn share_to_linux(path: &Path) -> Option<String> {
     let (_, rest) = rest.split_once(['\\', '/'])?;
     let distro = rest.split(['\\', '/']).next()?;
     under_share(distro, text).map(|parts| format!("/{}", parts.join("/")))
+}
+
+/// The distro of a path under `\\wsl.localhost\<distro>` or `\\wsl$\<distro>`, as the path spells it. Either separator
+/// works, the host is compared without case, and a leading `\\?\UNC\` is accepted. None for any other path and for an
+/// empty distro name. It reads the text only.
+pub fn share_distro(path: &str) -> Option<&str> {
+    let rest = match path.strip_prefix(r"\\?\UNC\") {
+        Some(rest) => rest,
+        None => path.strip_prefix(r"\\").or_else(|| path.strip_prefix("//"))?,
+    };
+    let (host, rest) = rest.split_once(['\\', '/'])?;
+    if !host.eq_ignore_ascii_case("wsl.localhost") && !host.eq_ignore_ascii_case("wsl$") {
+        return None;
+    }
+    let distro = rest.split(['\\', '/']).next()?;
+    valid_distro(distro).then_some(distro)
 }
 
 /// Whether the path is under the distro's UNC share, as `\\wsl.localhost\<distro>` or `\\wsl$\<distro>`.
@@ -389,5 +433,35 @@ mod tests {
         assert_eq!(distro_of_argv(&argv(&["wsl.exe", "--distribution="])), None);
         // After --exec the rest is the Linux command, not wsl.exe's own options.
         assert_eq!(distro_of_argv(&argv(&["wsl.exe", "--exec", "tool", "-d", "x"])), None);
+    }
+
+    #[test]
+    fn the_running_list_is_remembered_for_five_seconds() {
+        let cache = Mutex::new(None);
+        let calls = std::cell::Cell::new(0);
+        let fetch = |name: &str| {
+            calls.set(calls.get() + 1);
+            vec![name.to_string()]
+        };
+        let start = Instant::now();
+        assert_eq!(recent_or(&cache, start, || fetch("Ubuntu")), ["Ubuntu"]);
+        let soon = start + Duration::from_secs(4);
+        assert_eq!(recent_or(&cache, soon, || fetch("Debian")), ["Ubuntu"]);
+        assert_eq!(calls.get(), 1);
+        let later = start + Duration::from_secs(6);
+        assert_eq!(recent_or(&cache, later, || fetch("Debian")), ["Debian"]);
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn share_distro_names_the_distro_of_a_share_path() {
+        assert_eq!(share_distro(r"\\wsl.localhost\Ubuntu\home\me"), Some("Ubuntu"));
+        assert_eq!(share_distro("//wsl$/ubuntu/home"), Some("ubuntu"));
+        assert_eq!(share_distro(r"\\WSL.LOCALHOST\Debian"), Some("Debian"));
+        assert_eq!(share_distro(r"\\?\UNC\wsl.localhost\Ubuntu\x"), Some("Ubuntu"));
+        assert_eq!(share_distro(r"\\wsl.localhost\My Distro\x"), Some("My Distro"));
+        assert_eq!(share_distro(r"C:\dev"), None);
+        assert_eq!(share_distro(r"\\server\share\x"), None);
+        assert_eq!(share_distro(r"\\wsl.localhost\"), None);
     }
 }

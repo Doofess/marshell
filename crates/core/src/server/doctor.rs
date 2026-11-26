@@ -330,9 +330,10 @@ pub(crate) fn facts_of(st: &AppState) -> Gathered {
     // What each CLI's history shows was used: the new lines are read now and kept in usage.json.
     let usage = doctor_usage::scan_all(st, &ext, roots.as_ref(), now_ms());
     let projects = if roots.is_some() {
-        crate::projects::list(&st.0.home)
+        crate::projects::entries(&st.0.home, &|| (st.0.running_distros)())
             .into_iter()
-            .map(|p| PathBuf::from(p.path))
+            .filter(|listed| listed.read)
+            .map(|listed| PathBuf::from(listed.info.path))
             .collect()
     } else {
         Vec::new()

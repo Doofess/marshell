@@ -36,6 +36,9 @@ pub struct Guard {
     allowed: Vec<PathBuf>,
     /// Each opened distro with its home as the distro's own Linux path: its agent folders are open, by that spelling.
     distro_homes: Vec<(String, String)>,
+    /// Each project folder in a distro that was not running when the guard was built: the distro and the folder's Linux
+    /// path. The folder is matched by that text and never resolved, because resolving it would start the distro.
+    unread: Vec<(String, String)>,
     denied: Vec<PathBuf>,
     marshell_home: PathBuf,
     /// The home variables refused for naming a folder that holds the profile or Marshell's home. They open nothing;
@@ -48,6 +51,7 @@ impl Guard {
         Self {
             allowed: allowed.iter().map(|p| canonical(p)).collect(),
             distro_homes: Vec::new(),
+            unread: Vec::new(),
             denied: denied.iter().map(|p| canonical(p)).collect(),
             marshell_home: canonical(&marshell_home),
             wide: Vec::new(),
@@ -59,19 +63,59 @@ impl Guard {
     /// a link: it would open the whole drive.
     /// Also allowed: the folder each CLI's home variable names (`agent_homes`), except a folder that holds the user
     /// profile or Marshell's home: it opens nothing, and a refusal under it names the variable (`wide_home_of`).
+    /// A project in a WSL distro that is not running is not read: it does not enter `allowed` (resolving it would start
+    /// the distro) and is matched by its text instead (`with_unread`).
     /// Denied: `denied_for_os()`. The project list is read once, here.
     pub fn for_home(home: &Path) -> Self {
         let mut allowed: Vec<PathBuf> = dirs::home_dir().into_iter().collect();
-        allowed.extend(
-            crate::projects::list(home)
-                .into_iter()
-                .map(|p| PathBuf::from(p.path))
-                .filter(|p| !crate::projects::is_root(&canonical(p))),
-        );
+        let mut unread = Vec::new();
+        for listed in crate::projects::entries(home, &crate::wsl::running_recent) {
+            let path = PathBuf::from(listed.info.path);
+            if !listed.read {
+                unread.push(path);
+            } else if !crate::projects::is_root(&canonical(&path)) {
+                allowed.push(path);
+            }
+        }
         allowed.push(home.join("agents"));
         let homes = agent_homes(&|k| std::env::var(k).ok(), home);
         allowed.extend(homes.open);
-        Self::new(allowed, denied_for_os(), home.to_path_buf()).with_wide_homes(homes.wide)
+        Self::new(allowed, denied_for_os(), home.to_path_buf())
+            .with_wide_homes(homes.wide)
+            .with_unread(&unread)
+    }
+
+    /// Also opens each of these project folders, all of them in a distro that is not running, by the text of the path
+    /// alone: the distro and the Linux path, so `\\wsl$\ubuntu\x` and `\\wsl.localhost\Ubuntu\x` are one folder. Nothing
+    /// is read from the disk. A folder that is not under a distro's share, or is the share's root (it would open the
+    /// whole distro), opens nothing.
+    pub fn with_unread(mut self, folders: &[PathBuf]) -> Self {
+        for folder in folders {
+            let folder = unverbatim(folder);
+            let Some(distro) = folder.to_str().and_then(crate::wsl::share_distro) else {
+                continue;
+            };
+            let Some(linux) = crate::wsl::share_to_linux(&folder) else {
+                continue;
+            };
+            if linux != "/" {
+                self.unread.push((distro.to_string(), linux));
+            }
+        }
+        self
+    }
+
+    /// Whether `path` is one of the unread folders or below one, by text. The Linux path is compared with case, and what
+    /// follows the folder must start at a `/`, so `/home/me2` is not in `/home/me`.
+    fn in_unread(&self, path: &Path) -> bool {
+        self.unread.iter().any(|(distro, folder)| {
+            linux_in_share(distro, path).is_some_and(|linux| {
+                linux == *folder
+                    || linux
+                        .strip_prefix(folder.as_str())
+                        .is_some_and(|rest| rest.starts_with('/'))
+            })
+        })
     }
 
     /// Records the home variables the guard refused for being wide, so `wide_home_of` can name them. They open nothing.
@@ -86,7 +130,8 @@ impl Guard {
     /// yet under a link to the wide folder is still found.
     pub fn wide_home_of(&self, path: &Path) -> Option<&WideHome> {
         let text = path.to_string_lossy();
-        if self.allowed.iter().any(|a| is_inside(&text, &a.to_string_lossy())) {
+        // A folder in an unread distro is tested first, by text: testing `allowed` resolves the path itself.
+        if self.in_unread(path) || self.allowed.iter().any(|a| is_inside(&text, &a.to_string_lossy())) {
             return None;
         }
         let resolved = resolve(path).ok();
@@ -132,7 +177,8 @@ impl Guard {
         if in_denied || resolved.file_name().is_some_and(is_managed_name) {
             return Err(Refusal::Managed);
         }
-        let in_allowed = self.allowed.iter().any(|a| is_inside(&text, &a.to_string_lossy()));
+        let in_allowed =
+            self.in_unread(&resolved) || self.allowed.iter().any(|a| is_inside(&text, &a.to_string_lossy()));
         if in_allowed
             || self
                 .distro_homes
@@ -468,6 +514,63 @@ mod tests {
         let root = canonical(dir.path());
         let guard = Guard::new(vec![root.clone()], vec![root.join("org")], root.join("home"));
         (dir, root, guard)
+    }
+
+    #[test]
+    fn an_unread_folder_opens_what_is_in_it_by_either_spelling() {
+        let (_dir, _root, guard) = setup();
+        let guard = guard.with_unread(&[r"\\wsl$\ubuntu\home\me\app".into()]);
+        for inside in [
+            r"\\wsl.localhost\Ubuntu\home\me\app\.claude\settings.json",
+            r"\\wsl$\UBUNTU\home\me\app",
+            r"\\?\UNC\wsl.localhost\Ubuntu\home\me\app\x",
+        ] {
+            assert!(guard.in_unread(Path::new(inside)), "{inside}");
+        }
+        for outside in [
+            r"\\wsl.localhost\Ubuntu\home\me\app2\x",
+            r"\\wsl.localhost\Ubuntu\home\me",
+            r"\\wsl.localhost\Debian\home\me\app\x",
+            r"C:\home\me\app",
+        ] {
+            assert!(!guard.in_unread(Path::new(outside)), "{outside}");
+        }
+    }
+
+    #[test]
+    fn a_share_root_is_never_unread_allowed() {
+        let (_dir, _root, guard) = setup();
+        let guard = guard.with_unread(&[r"\\wsl.localhost\Ubuntu".into(), r"\\wsl.localhost\Ubuntu\".into()]);
+        assert!(guard.unread.is_empty());
+    }
+
+    #[test]
+    fn an_unread_folder_is_never_resolved() {
+        let (_dir, root, guard) = setup();
+        let guard = guard.with_unread(&[r"\\wsl.localhost\Ubuntu\home\me\app".into()]);
+        assert!(guard.check(&root.join("proj").join("x.json")).is_ok());
+        // A check could reach the share only through a folder held in `allowed`.
+        assert!(
+            guard
+                .allowed
+                .iter()
+                .all(|a| crate::wsl::share_distro(&a.to_string_lossy()).is_none())
+        );
+    }
+
+    #[test]
+    fn wide_home_of_leaves_a_path_in_an_unread_folder_alone() {
+        let (_dir, _root, guard) = setup();
+        let wide = WideHome {
+            variable: "CODEX_HOME",
+            folder: PathBuf::from(r"\\wsl.localhost\Ubuntu\home"),
+            holds: Holds::Profile,
+        };
+        let guard = guard
+            .with_unread(&[r"\\wsl.localhost\Ubuntu\home\me\app".into()])
+            .with_wide_homes(vec![wide]);
+        let inside = Path::new(r"\\wsl.localhost\Ubuntu\home\me\app\.codex\config.toml");
+        assert!(guard.wide_home_of(inside).is_none());
     }
 
     #[test]
