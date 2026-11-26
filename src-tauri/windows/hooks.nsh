@@ -51,7 +51,8 @@
       DeleteRegKey HKCU "Software\Classes\marshell"
     ${EndIf}
   ${EndIf}
-  ; Last, and for every kind of uninstall: an install that follows one can't replace a file in use either.
+  ; Last, and for every kind of uninstall. The one a newer installer starts before it installs is this
+  ; installed version's uninstaller, so that install meets free files only from the version with this wait on.
   !insertmacro MARSHELL_REMOVE_HELD_PROGRAMS
 !macroend
 
@@ -63,7 +64,8 @@
 ; the app itself, whether it was closed here, was killed or crashed, and a program that is running can't
 ; have its file deleted: the uninstaller left it, and the install folder with it, without a word. Tauri's
 ; installer has no hook between closing the app and deleting the files, so this runs in the last hook and
-; tries again every quarter of a second for up to MARSHELL_HELD_WAIT_MS. After that it gives up, and what
+; tries again every quarter of a second for up to MARSHELL_HELD_WAIT_MS (it counts the pauses, not the time
+; the tries take, so a slow disk makes it longer). After that it gives up, and what
 ; is still in use stays, as before: an administrator session's marshell-host.exe isn't closed by anything
 ; here.
 ;

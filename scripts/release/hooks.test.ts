@@ -15,7 +15,8 @@ function programsOf(configs: BundleConf[]): string[] {
   const names = ["${MAINBINARYNAME}.exe"];
   for (const conf of configs) {
     const resources = conf.bundle?.resources ?? {};
-    names.push(...Object.values(resources).filter((target) => /\.(exe|dll)$/i.test(target)));
+    // With backslashes, the way the hook names a file under $INSTDIR.
+    names.push(...Object.values(resources).filter((target) => /\.(exe|dll)$/i.test(target)).map((target) => target.replace(/\//g, "\\")));
     names.push(...(conf.bundle?.externalBin ?? []).map((bin) => `${bin.split(/[\\/]/).pop()}.exe`));
   }
   return names.sort();
@@ -47,7 +48,7 @@ describe("the uninstaller's wait for programs that are still ending (issue #212)
         { bundle: { resources: ["res/c.exe", "res/readme.txt"], externalBin: ["binaries/helper", "tools\\probe"] } },
         {},
       ]),
-    ).toEqual(["${MAINBINARYNAME}.exe", "a.exe", "helper.exe", "lib/b.DLL", "probe.exe", "res/c.exe"]);
+    ).toEqual(["${MAINBINARYNAME}.exe", "a.exe", "helper.exe", "lib\\b.DLL", "probe.exe", "res\\c.exe"]);
   });
 
   it("gives up after 20 seconds unless a build says otherwise", () => {

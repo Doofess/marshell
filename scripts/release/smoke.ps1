@@ -197,7 +197,10 @@ function Wait-AppGone([int]$ProcId, [int]$Seconds) {
 # list can't be read it says so, and never throws.
 function Get-RunningFrom([string]$Dir) {
     if (-not $Dir) { return 'the folder is not known' }
-    $prefix = $Dir.TrimEnd('\') + '\'
+    # Both sides as full paths, so a folder written another way (forward slashes, a `.` in it) still matches. A
+    # short 8.3 name would not: the folder comes from the installer's own $INSTDIR, which is the long form, and the
+    # note before an uninstall with the app open shows the match working.
+    $prefix = try { [System.IO.Path]::GetFullPath($Dir).TrimEnd('\') + '\' } catch { return "not known ('$Dir' is not a path)" }
     $all = try { @(Get-CimInstance Win32_Process -ErrorAction Stop) } catch { return "not known (the process list could not be read: $($_.Exception.Message))" }
     $found = @($all | Where-Object {
             $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)
@@ -540,6 +543,8 @@ function Invoke-CycleA {
     }
     $instDir = $script:Inst
     $appId = $app.Id
+    # The app is open here, so this names it and what it started; "nothing" would mean the note can't see them.
+    Write-Host "NOTE A6 before the uninstall, running from the install folder: $(Get-RunningFrom $instDir)"
     $res = Uninstall-Marshell
     Test-Uninstalled 'A7' $instDir $res $appId
     if ($Fixture) {

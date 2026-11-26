@@ -31,7 +31,7 @@
 2. An uninstall run in place (`uninstall.exe _?=<folder>`) has its own `uninstall.exe` in the folder, in use: no wait for it. Pinned by `hooks-check.ps1`, "files that aren't Marshell's programs".
 3. Another program named `OpenConsole.exe` (Windows Terminal runs one per tab): never waited for, since only the files in `$INSTDIR` are tried.
 4. A program added to the bundle later and not to the hook's list: `hooks.test.ts` fails.
-5. An uninstall that is part of an update (`/UPDATE`, or in place before an install): the wait runs there too, so the install that follows meets free files; it must not run the unhook or remove the `marshell://` link there (unchanged code, read in review).
+5. An uninstall that is part of an install (`/UPDATE`, or in place before an install): the wait runs there too; it must not run the unhook or remove the `marshell://` link there (unchanged code, read in review). Found in review: the uninstaller that runs there is the installed version's, so the install that follows meets free files only once that version carries the wait, and a silent update runs no uninstaller at all.
 
 ---
 
@@ -74,7 +74,7 @@ Expected: A7 fails as on `main` ("left OpenConsole.exe"), and the new text says 
 - [x] **Step 3:** `docs/PLAN.md` §9 "Slice 9b decisions (2026-11-26)" and the research note with the runs' evidence.
 - [x] **Step 4:** `pnpm test`, commit, push.
 
-Expected on the pull request's dry run: the new step passes, and `PASS A7 uninstall: the install folder holds no file`, `RESULT … 0 failed`.
+Expected on the pull request's dry run: `PASS A7 uninstall: the install folder holds no file` and `RESULT … 0 failed`. (No hooks-check step: see Step 1.)
 
 ### Task 4: after the merge
 
