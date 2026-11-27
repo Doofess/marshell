@@ -60,7 +60,7 @@ fn read_config(cx: &mut Reader, file: &Path) -> Option<DocumentMut> {
 /// Whether Codex's config says the folder is untrusted: only the entry that decides for the folder counts, which is the
 /// folder's own `[projects.'<key>']`, else its git root's (the nearest folder at or above it that holds `.git`, which
 /// the caller finds through the guarded reader). A folder with no entry loads its files.
-fn untrusted(user: Option<&DocumentMut>, project: &Path, git_root: Option<&Path>) -> bool {
+pub(crate) fn untrusted(user: Option<&DocumentMut>, project: &Path, git_root: Option<&Path>) -> bool {
     let Some(table) = user.and_then(|d| d.get("projects")).and_then(Item::as_table_like) else {
         return false;
     };
