@@ -1,0 +1,361 @@
+/*
+ * The Instructions page. It sits in the app the way the Doctor does: a heading row, then fills and start-edge bars, never boxes.
+ * The one memorable thing is the Loads in list: each copy's state is a bar on its start edge, in words as well, so a copy that
+ * needs a look reads before anything is parsed. The body is the Page's scroller (a focusable region); nothing else does.
+ */
+.instructions {
+  display: flex;
+  flex-direction: column;
+  block-size: 100%;
+  min-block-size: 0;
+  background: var(--bg-base);
+  color: var(--text-1);
+}
+.instructions__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-4) var(--space-6);
+}
+.instructions__title {
+  margin: 0;
+  font-size: var(--text-20);
+  font-weight: 600;
+}
+.instructions__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* What needs doing across every doc: one quiet strip with a caution bar, the actions in line with their sentence. */
+.instructions__bar {
+  display: grid;
+  gap: var(--space-2);
+  margin-inline: var(--space-6);
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  background: var(--fill);
+  border-inline-start: 3px solid var(--caution);
+}
+.instructions__bar-text {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  font-size: var(--text-13);
+  text-wrap: pretty;
+}
+
+/* The list is as wide as its longest doc name up to 18rem; when the page is too narrow for both, the form drops below it. */
+.instructions__body {
+  flex: 1 1 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  align-content: start;
+  gap: var(--space-4) var(--space-6);
+}
+.instructions__body > .doclist {
+  flex: 1 1 13rem;
+  max-inline-size: 18rem;
+}
+.instructions__main {
+  flex: 999 1 22rem;
+  min-inline-size: 0;
+}
+.instructions__empty {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--text-13);
+}
+
+/* Buttons are plain fills; the primary one takes the accent (as in the Doctor). */
+.instructions__btn {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--fill-strong);
+  color: var(--text-1);
+  font-size: var(--text-13);
+}
+.instructions__btn[data-primary] {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+.instructions__btn[aria-disabled="true"] {
+  color: var(--text-2);
+  background: var(--fill);
+}
+.instructions__btn:focus-visible,
+.doclist__doc:focus-visible,
+.instructions__input:focus-visible,
+.instructions__select:focus-visible,
+.docform__check input:focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+}
+.instructions__btn:active,
+.doclist__doc:active {
+  background: var(--selected);
+}
+@media (hover: hover) and (pointer: fine) {
+  .instructions__btn:not([data-primary]):hover,
+  .doclist__doc:hover {
+    background: var(--hover);
+  }
+  .instructions__btn:not([data-primary]):hover {
+    background: var(--selected);
+  }
+}
+
+/* Fields are fills, not boxes. */
+.instructions__input {
+  inline-size: 100%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-1);
+  font-size: var(--text-13);
+}
+.instructions__select {
+  max-inline-size: 100%;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--fill);
+  color: var(--text-1);
+  font-size: var(--text-13);
+}
+.instructions__input[aria-invalid="true"] {
+  background: color-mix(in oklch, var(--error) 10%, var(--fill));
+}
+textarea.instructions__input {
+  resize: vertical;
+  field-sizing: content;
+  min-block-size: 4.5lh;
+  max-block-size: 14lh;
+}
+.instructions__hint {
+  margin: 0;
+  font-size: var(--text-12);
+  color: var(--text-2);
+  text-wrap: pretty;
+}
+.instructions__error,
+.instructions__problem {
+  margin: 0;
+  font-size: var(--text-12);
+  color: var(--text-1);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--fill);
+  border-inline-start: 3px solid var(--error);
+  text-wrap: pretty;
+}
+
+/* The list. */
+.doclist {
+  display: grid;
+  gap: var(--space-6);
+  align-content: start;
+}
+.doclist__group {
+  display: grid;
+  gap: var(--space-2);
+  justify-items: start;
+}
+.doclist__group > :not(.doclist__docs, .doclist__orphans) {
+  max-inline-size: 100%;
+}
+.doclist__title,
+.doclist__sub {
+  margin: 0;
+  font-size: var(--text-13);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.doclist__sub {
+  color: var(--text-2);
+  font-weight: 500;
+}
+.doclist__docs {
+  inline-size: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+}
+.doclist__doc {
+  inline-size: 100%;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius);
+  text-align: start;
+  font-size: var(--text-13);
+  color: var(--text-1);
+  overflow-wrap: anywhere;
+}
+.doclist__empty,
+.doclist__note {
+  margin: 0;
+  font-size: var(--text-12);
+  color: var(--text-2);
+  text-wrap: pretty;
+}
+.doclist__orphans {
+  display: grid;
+  gap: var(--space-2);
+  inline-size: 100%;
+}
+
+/* The form. */
+.docform,
+.docform__form {
+  display: grid;
+  gap: var(--space-4);
+  max-inline-size: 760px;
+}
+.docform__field,
+.docform__loads {
+  display: grid;
+  gap: var(--space-1);
+}
+.docform__field > label,
+.docform__label,
+.docform__clis legend {
+  font-size: var(--text-13);
+  font-weight: 600;
+}
+.docform__clis {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  padding: 0;
+  min-inline-size: 0;
+}
+.docform__clis legend {
+  padding: 0;
+  margin-block-end: var(--space-1);
+}
+.docform__clis .instructions__hint {
+  flex-basis: 100%;
+}
+.docform__check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-13);
+}
+.docform__editor {
+  display: grid;
+  block-size: clamp(14rem, 40dvh, 30rem);
+  min-block-size: 0;
+  border-radius: var(--radius);
+  overflow: clip;
+}
+.docform__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+}
+.docform__actions .instructions__btn:last-of-type {
+  margin-inline-start: auto;
+}
+.docform__subhead {
+  margin: 0;
+  font-size: var(--text-15);
+  font-weight: 600;
+}
+
+/* Loads in: a fill per copy, a start-edge bar for its state; the state is also written. */
+.loads {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-2);
+}
+.loads__row {
+  display: grid;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--fill);
+  border-inline-start: 3px solid var(--text-3);
+}
+.loads__row[data-state="in_sync"] {
+  border-inline-start-color: var(--ok);
+}
+.loads__row[data-state="out_of_date"],
+.loads__row[data-state="missing"],
+.loads__row[data-state="extra"],
+.loads__row[data-state="waiting"] {
+  border-inline-start-color: var(--caution);
+}
+.loads__row[data-state="changed_outside"],
+.loads__row[data-state="refused"],
+.loads__row[data-state="taken"] {
+  border-inline-start-color: var(--error);
+}
+.loads__head,
+.loads__path,
+.loads__note {
+  margin: 0;
+}
+.loads__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+  font-size: var(--text-13);
+}
+.loads__cli {
+  font-weight: 600;
+}
+.loads__state {
+  color: var(--text-2);
+}
+.loads__path,
+.loads__note {
+  font-size: var(--text-12);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+.loads__fixes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding-block-start: var(--space-1);
+}
+
+@media (forced-colors: active) {
+  .instructions__bar,
+  .instructions__problem,
+  .instructions__error,
+  .loads__row,
+  .instructions__btn,
+  .instructions__input,
+  .instructions__select,
+  .docform__editor {
+    outline: 1px solid CanvasText;
+  }
+  .instructions__btn[data-primary] {
+    outline-color: Highlight;
+  }
+  .instructions__btn:focus-visible,
+  .doclist__doc:focus-visible,
+  .instructions__input:focus-visible,
+  .instructions__select:focus-visible {
+    outline: 2px solid Highlight;
+  }
+  .docform__check input {
+    accent-color: Highlight;
+  }
+}

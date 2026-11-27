@@ -8,7 +8,7 @@ import { fixesCodexHooks, fixHeadline, restartNote } from "./report";
 import type { DoctorFixPlan } from "./types";
 import "./Doctor.css";
 
-function FileDiffs({ preview, prefix }: { preview: ConfigPreview; prefix: string }) {
+export function FileDiffs({ preview, prefix }: { preview: ConfigPreview; prefix: string }) {
   const deleted = deletedFiles(preview);
   return (
     <>
