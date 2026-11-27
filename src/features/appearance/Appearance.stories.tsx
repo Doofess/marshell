@@ -7,15 +7,13 @@ const meta: Meta = { title: "Settings/Appearance", parameters: { layout: "fullsc
 export default meta;
 
 const noop = () => {};
-const handlers: AppearanceHandlers = { save: noop, onAccentText: noop, commitAccent: noop, blurAccent: noop, pickAccent: noop, pickFont: noop, onSizeText: noop, commitSize: noop, importFile: noop };
+const handlers: AppearanceHandlers = { save: noop, pickFont: noop, onSizeText: noop, commitSize: noop, importFile: noop };
 const state = (over: Partial<AppearanceViewState> = {}): AppearanceViewState => ({
   appearance: DEFAULT_APPEARANCE,
   app: "dark",
   highContrast: false,
   wtFiles: [],
   error: null,
-  accent: { text: "", reason: null },
- 
   size: { text: "13", reason: null },
   importError: null,
   ...over,
@@ -40,10 +38,7 @@ const WT_SETTINGS = {
   }),
 };
 
-export const Default: StoryObj = { render: () => show("The defaults: follow the system, amber, the bundled font, no Windows Terminal found", state()) };
-export const CustomAccentRefused: StoryObj = {
-  render: () => show("A custom accent that fails the check: the reason shows and amber stays", state({ accent: { text: "#ffff66", reason: "Too light for the light theme: 1.1:1 against the background, needs 3:1." } })),
-};
+export const Default: StoryObj = { render: () => show("The defaults: follow the system, the bundled font, no Windows Terminal found", state()) };
 export const WithWindowsTerminal: StoryObj = {
   render: () =>
     show(

@@ -15,4 +15,5 @@ describe("AppearanceSections.css", () => {
     expect(rule![1]).not.toContain("border-color");
     expect(forced).not.toMatch(/var\(|#[0-9a-f]{3}|oklch/i);
   });
+  it("has no accent swatch or custom colour field left", () => expect(css).not.toMatch(/appearance__(swatch|hex|inline)/));
 });

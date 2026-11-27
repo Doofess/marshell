@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { parseTokens } from "./cssTokens";
 import { contrast, deltaE, minOnSurfaces, overlay } from "./contrast";
 
-const ACCENTS = ["sand", "amber", "blue", "indigo", "violet", "magenta", "cyan", "teal", "slate"] as const;
 const THEMES = ["dark", "light"] as const;
 const SURFACE_NAMES = ["--bg-base", "--bg-raised", "--bg-overlay"] as const;
 // Read from disk: Vitest hands CSS imports (even ?raw) to tests as empty strings.
@@ -11,7 +10,7 @@ const read = (f: string) => readFileSync(new URL(`../styles/${f}`, import.meta.u
 const tokensCss = read("tokens.css");
 const accentsCss = read("accents.css");
 const tokens = parseTokens(tokensCss, ":root");
-const accent = (name: string) => parseTokens(accentsCss, `[data-accent="${name}"]`);
+const appAccent = parseTokens(accentsCss, ":root");
 
 describe("text on surfaces", () => {
   for (const theme of THEMES)
@@ -88,42 +87,34 @@ describe("status and brand colours on surfaces", () => {
       });
 });
 
-describe("accents", () => {
-  it("defines all nine", () => {
-    for (const a of ACCENTS) expect(accent(a)["--accent"], a).toBeDefined();
+describe("the app accent", () => {
+  it("is sand, on :root alone: no preset blocks and no data-accent", () => {
+    expect(appAccent["--accent"]).toEqual({ light: "oklch(42% 0.028 70)", dark: "oklch(80% 0.045 75)" });
+    expect(appAccent["--accent-ink"]).toEqual({ light: "oklch(100% 0 none)", dark: "oklch(0% 0 none)" });
+    expect(accentsCss).not.toContain("data-accent");
   });
-  for (const theme of THEMES)
-    for (const a of ACCENTS) {
-      it(`${a} is at least 3:1 on every surface (${theme})`, () => {
-        expect(minOnSurfaces(accent(a)["--accent"]![theme], tokens, theme)).toBeGreaterThanOrEqual(3);
-      });
-      it(`${a} ink is at least 4.5:1 on the accent (${theme})`, () => {
-        const v = accent(a);
-        expect(contrast(v["--accent-ink"]![theme], v["--accent"]![theme])).toBeGreaterThanOrEqual(4.5);
-      });
-    }
+  for (const theme of THEMES) {
+    it(`is at least 3:1 on every surface (${theme})`, () => {
+      expect(minOnSurfaces(appAccent["--accent"]![theme], tokens, theme)).toBeGreaterThanOrEqual(3);
+    });
+    it(`its ink is at least 4.5:1 on it (${theme})`, () => {
+      expect(contrast(appAccent["--accent-ink"]![theme], appAccent["--accent"]![theme])).toBeGreaterThanOrEqual(4.5);
+    });
+  }
 });
 
 describe("distinctness", () => {
   for (const theme of THEMES)
-    for (const a of ACCENTS)
-      for (const s of ["--error", "--ok", "--caution"])
-        it(`${a} is ΔE ≥ 15 from ${s} (${theme})`, () => {
-          expect(deltaE(accent(a)["--accent"]![theme], tokens[s]![theme])).toBeGreaterThanOrEqual(15);
-        });
-  for (const theme of THEMES)
-    it(`default amber is ΔE ≥ 18 from Claude orange (${theme})`, () => {
-      expect(deltaE(accent("amber")["--accent"]![theme], tokens["--brand-claude"]![theme])).toBeGreaterThanOrEqual(18);
-    });
+    for (const s of ["--error", "--ok", "--caution"])
+      it(`the app accent is ΔE ≥ 15 from ${s} (${theme})`, () => {
+        expect(deltaE(appAccent["--accent"]![theme], tokens[s]![theme])).toBeGreaterThanOrEqual(15);
+      });
   // The window's own colour (no session in play) must not read as a vendor's: Codex is a neutral grey, OpenAI a pale yellow.
   for (const theme of THEMES)
     for (const b of ["--brand-codex", "--brand-openai", "--brand-claude"])
-      it(`default sand is ΔE ≥ 12 from ${b} (${theme})`, () => {
-        expect(deltaE(accent("sand")["--accent"]![theme], tokens[b]![theme])).toBeGreaterThanOrEqual(12);
+      it(`the app accent is ΔE ≥ 12 from ${b} (${theme})`, () => {
+        expect(deltaE(appAccent["--accent"]![theme], tokens[b]![theme])).toBeGreaterThanOrEqual(12);
       });
-  it("the :root default is sand: dark grey in light mode, beige in dark", () => {
-    expect(parseTokens(accentsCss, ":root")["--accent"]).toEqual(accent("sand")["--accent"]);
-  });
 });
 
 describe("composited and derived colours (final review)", () => {
@@ -142,13 +133,12 @@ describe("composited and derived colours (final review)", () => {
 
 describe("text on the blocked-row tints", () => {
   for (const theme of THEMES)
-    for (const a of ACCENTS)
-      for (const t of ["--text-1", "--text-2"])
-        for (const surface of ["--bg-base", "--bg-raised", "--bg-overlay"])
-          it(`${t} is at least 4.5:1 on the ${a} needs-you tint (${theme}, ${surface})`, () => {
-            const bg = overlay(accent(a)["--accent"]![theme], tokens[surface]![theme], 0.12);
-            expect(contrast(tokens[t]![theme], bg)).toBeGreaterThanOrEqual(4.5);
-          });
+    for (const t of ["--text-1", "--text-2"])
+      for (const surface of ["--bg-base", "--bg-raised", "--bg-overlay"])
+        it(`${t} is at least 4.5:1 on the app accent's needs-you tint (${theme}, ${surface})`, () => {
+          const bg = overlay(appAccent["--accent"]![theme], tokens[surface]![theme], 0.12);
+          expect(contrast(tokens[t]![theme], bg)).toBeGreaterThanOrEqual(4.5);
+        });
   for (const theme of THEMES)
     for (const t of ["--text-1", "--text-2"])
       for (const surface of ["--bg-base", "--bg-raised", "--bg-overlay"])
@@ -218,8 +208,8 @@ describe("high contrast", () => {
   it("every status and brand colour is at least 3:1 on every high contrast surface", () => {
     for (const theme of THEMES) for (const n of STATUS_AND_BRAND) expect(minOnSurfaces(hc[n]![theme], hc, theme), `${n} (${theme})`).toBeGreaterThanOrEqual(3);
   });
-  it("every accent is at least 3:1 on every high contrast surface", () => {
-    for (const theme of THEMES) for (const a of ACCENTS) expect(minOnSurfaces(accent(a)["--accent"]![theme], hc, theme), `${a} (${theme})`).toBeGreaterThanOrEqual(3);
+  it("the app accent is at least 3:1 on every high contrast surface", () => {
+    for (const theme of THEMES) expect(minOnSurfaces(appAccent["--accent"]![theme], hc, theme), theme).toBeGreaterThanOrEqual(3);
   });
 
   for (const theme of THEMES)

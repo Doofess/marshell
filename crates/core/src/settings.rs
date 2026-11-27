@@ -184,11 +184,6 @@ impl Versioned for FileDoc {
     const VERSION: u32 = 1;
 }
 
-/// The accent colours that have a name.
-const ACCENT_PRESETS: [&str; 9] = [
-    "sand", "amber", "blue", "indigo", "violet", "magenta", "cyan", "teal", "slate",
-];
-
 /// Terminal themes that are always there; any other value must be an imported theme's id.
 const BUILT_IN_TERMINAL_THEMES: [&str; 3] = ["follow-app", "dark", "light"];
 
@@ -366,16 +361,6 @@ fn is_hex_colour(text: &str) -> bool {
             .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
 }
 
-fn check_accent(a: &Appearance) -> Result<(), String> {
-    if !ACCENT_PRESETS.contains(&a.accent.as_str()) && !is_hex_colour(&a.accent) {
-        return Err(format!(
-            "The accent \"{}\" is not a preset or a #rrggbb colour.",
-            a.accent
-        ));
-    }
-    Ok(())
-}
-
 fn check_font_size(a: &Appearance) -> Result<(), String> {
     if !(8..=32).contains(&a.terminal_font.size) {
         return Err("The terminal font size must be between 8 and 32.".into());
@@ -430,7 +415,6 @@ fn check_terminal_theme(a: &Appearance) -> Result<(), String> {
 
 pub fn validate(s: &Settings) -> Result<(), String> {
     let a = &s.appearance;
-    check_accent(a)?;
     check_font_size(a)?;
     check_imported_themes(a)?;
     check_terminal_theme(a)?;
@@ -449,10 +433,6 @@ pub fn validate(s: &Settings) -> Result<(), String> {
 fn repair(a: &mut Appearance) -> Vec<&'static str> {
     let defaults = Appearance::default();
     let mut replaced = Vec::new();
-    if check_accent(a).is_err() {
-        a.accent = defaults.accent;
-        replaced.push("accent");
-    }
     if check_font_size(a).is_err() {
         a.terminal_font.size = defaults.terminal_font.size;
         replaced.push("terminal font size");
@@ -709,7 +689,6 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let s = load(home.path());
         assert_eq!(s, Settings::default());
-        assert_eq!(s.appearance.accent, "sand");
         assert_eq!(s.appearance.terminal_font.size, 13);
     }
 
@@ -873,7 +852,7 @@ mod tests {
     fn save_then_load_round_trips() {
         let home = tempfile::tempdir().unwrap();
         let mut s = Settings::default();
-        s.appearance.accent = "#3366cc".into();
+        s.appearance.theme = marshell_protocol::api::AppTheme::Dark;
         s.appearance.imported_themes.push(theme("campbell"));
         save(home.path(), &s).unwrap();
         assert_eq!(load(home.path()), s);
@@ -903,10 +882,36 @@ mod tests {
     fn missing_fields_take_defaults() {
         let home = tempfile::tempdir().unwrap();
         let path = crate::paths::settings_file(home.path());
-        std::fs::write(&path, r#"{"version":1,"appearance":{"accent":"teal"}}"#).unwrap();
+        std::fs::write(&path, r#"{"version":1,"appearance":{"theme":"dark"}}"#).unwrap();
         let s = load(home.path());
-        assert_eq!(s.appearance.accent, "teal");
+        assert_eq!(s.appearance.theme, marshell_protocol::api::AppTheme::Dark);
         assert_eq!(s.appearance.terminal_theme, "follow-app");
+    }
+
+    #[test]
+    fn an_old_accent_is_read_past_and_left_out_of_the_next_save() {
+        let home = tempfile::tempdir().unwrap();
+        let path = crate::paths::settings_file(home.path());
+        let old = r#"{"version":1,"appearance":{"theme":"dark","accent":"teal"}}"#;
+        std::fs::write(&path, old).unwrap();
+        let s = load(home.path());
+        assert_eq!(s.appearance.theme, marshell_protocol::api::AppTheme::Dark);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            old,
+            "load must not rewrite the file"
+        );
+        save(home.path(), &s).unwrap();
+        let saved: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved["appearance"]["theme"], "dark");
+        assert!(saved["appearance"].get("accent").is_none(), "{saved}");
+    }
+
+    #[test]
+    fn repair_does_not_name_an_old_accent() {
+        let mut a: Appearance = serde_json::from_str(r#"{"accent":"pink","terminal_font":{"size":40}}"#).unwrap();
+        assert_eq!(repair(&mut a), vec!["terminal font size"]);
+        assert_eq!(a.terminal_font.size, 13);
     }
 
     #[test]
@@ -915,11 +920,10 @@ mod tests {
         let path = crate::paths::settings_file(home.path());
         std::fs::write(
             &path,
-            r#"{"version":1,"appearance":{"theme":"dark","accent":"pink","contrast_protection":false,"terminal_font":{"family":"Fira Code","size":40}}}"#,
+            r#"{"version":1,"appearance":{"theme":"dark","contrast_protection":false,"terminal_font":{"family":"Fira Code","size":40}}}"#,
         )
         .unwrap();
         let a = load(home.path()).appearance;
-        assert_eq!(a.accent, "sand");
         assert_eq!(a.terminal_font.size, 13);
         assert_eq!(a.theme, marshell_protocol::api::AppTheme::Dark);
         assert!(!a.contrast_protection);
@@ -1066,12 +1070,12 @@ mod tests {
         let file = crate::paths::settings_file(home.path());
         std::fs::write(
             &file,
-            r#"{"version":1,"appearance":{"accent":"teal"},"onboarded":true,"notifications":{"done":{"banner":false,"sound":true},"quiet_hours":{"enabled":true,"start":2200,"end":null}}}"#,
+            r#"{"version":1,"appearance":{"theme":"dark"},"onboarded":true,"notifications":{"done":{"banner":false,"sound":true},"quiet_hours":{"enabled":true,"start":2200,"end":null}}}"#,
         )
         .unwrap();
         let s = load(home.path());
         assert!(s.onboarded);
-        assert_eq!(s.appearance.accent, "teal");
+        assert_eq!(s.appearance.theme, marshell_protocol::api::AppTheme::Dark);
         assert_eq!(s.notifications, NotifySettings::default());
     }
 
@@ -1100,10 +1104,9 @@ mod tests {
     }
 
     #[test]
-    fn validate_accepts_the_defaults_and_a_custom_accent() {
+    fn validate_accepts_the_defaults_and_an_imported_terminal_theme() {
         assert!(validate(&Settings::default()).is_ok());
         let mut s = Settings::default();
-        s.appearance.accent = "#3366cc".into();
         s.appearance.imported_themes.push(theme("campbell"));
         s.appearance.terminal_theme = "campbell".into();
         assert!(validate(&s).is_ok());
@@ -1118,8 +1121,6 @@ mod tests {
 
     #[test]
     fn validate_rejects_bad_values() {
-        assert!(error_after(|s| s.appearance.accent = "pink".into()).contains("accent"));
-        assert!(error_after(|s| s.appearance.accent = "#12345".into()).contains("accent"));
         assert!(error_after(|s| s.appearance.terminal_font.size = 7).contains("font size"));
         assert!(error_after(|s| s.appearance.terminal_font.size = 33).contains("font size"));
         assert!(error_after(|s| s.appearance.terminal_theme = "nope".into()).contains("terminal theme"));

@@ -41,7 +41,7 @@ pub fn endpoint_file(home: &Path) -> PathBuf {
     home.join("run").join("endpoint.json")
 }
 
-/// `<home>/settings.json`: how the app looks (theme, accent, terminal colours and font).
+/// `<home>/settings.json`: how the app looks (theme, terminal colours and font).
 pub fn settings_file(home: &Path) -> PathBuf {
     home.join("settings.json")
 }

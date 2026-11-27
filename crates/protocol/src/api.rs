@@ -2027,8 +2027,6 @@ pub struct ImportedTheme {
 #[ts(export)]
 pub struct Appearance {
     pub theme: AppTheme,
-    /// A preset name (sand, amber, blue, indigo, violet, magenta, cyan, teal, slate) or `#rrggbb`.
-    pub accent: String,
     pub contrast: ContrastMode,
     pub text_size: TextSize,
     /// "follow-app", "dark", "light" or the id of an imported theme.
@@ -2043,7 +2041,6 @@ impl Default for Appearance {
     fn default() -> Self {
         Self {
             theme: AppTheme::default(),
-            accent: "sand".into(),
             contrast: ContrastMode::default(),
             text_size: TextSize::default(),
             terminal_theme: "follow-app".into(),

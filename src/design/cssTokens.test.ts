@@ -8,10 +8,10 @@ const css = `
   --c: color-mix(in oklch, var(--a) 10%, transparent);
 }
 :root,
-[data-accent="amber"] {
+[data-agent="codex"] {
   --accent: light-dark(oklch(58% 0.15 65), oklch(80% 0.16 72));
 }
-[data-accent="blue"] { --accent: light-dark(oklch(54% 0.19 258), oklch(70% 0.15 250)); }
+[data-agent="claude"] { --accent: light-dark(oklch(54% 0.19 258), oklch(70% 0.15 250)); }
 `;
 
 describe("parseTokens", () => {
@@ -25,12 +25,12 @@ describe("parseTokens", () => {
     expect(parseTokens(css, ":root")["--c"]).toBeUndefined();
   });
   it("finds a selector inside a selector list", () => {
-    expect(parseTokens(css, '[data-accent="amber"]')["--accent"]?.dark).toBe("oklch(80% 0.16 72)");
+    expect(parseTokens(css, '[data-agent="codex"]')["--accent"]?.dark).toBe("oklch(80% 0.16 72)");
   });
   it("finds a single-line rule", () => {
-    expect(parseTokens(css, '[data-accent="blue"]')["--accent"]?.light).toBe("oklch(54% 0.19 258)");
+    expect(parseTokens(css, '[data-agent="claude"]')["--accent"]?.light).toBe("oklch(54% 0.19 258)");
   });
   it("returns an empty object for a missing selector", () => {
-    expect(parseTokens(css, '[data-accent="nope"]')).toEqual({});
+    expect(parseTokens(css, '[data-agent="nope"]')).toEqual({});
   });
 });
