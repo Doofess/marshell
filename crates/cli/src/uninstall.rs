@@ -17,6 +17,8 @@ use marshell_core::config::managed;
 use marshell_core::config::preview::{MAX_CONFIG_BYTES, TOO_LARGE_DETAIL};
 use marshell_core::config::service::{ApplyError, ConfigService};
 use marshell_core::gitbox::sweep;
+use marshell_core::instructions::library::uninstall_plan;
+use marshell_core::instructions::roots::Roots;
 use marshell_core::{paths, wsl};
 use marshell_protocol::agents::SkillInstall;
 use marshell_protocol::config::{ApplyRequest, ChangeSet, ConfigPreview, ExpectedHash, FileStatus};
@@ -389,6 +391,12 @@ pub fn run(
             hooks_failed = true;
         }
     }
+    // The instruction library's copies in the user-level folders: the ones Marshell wrote and nobody edited go, an
+    // edited one stays and is said so. The docs in `<home>/instructions` are never part of it.
+    let library = uninstall_plan(&Roots::from_env(env, user_home));
+    for line in &library.left {
+        let _ = writeln!(out, "{line}");
+    }
     // The WSL distros: the installed ones, and any `managed.json` names that the list missed. Every home is asked for at
     // once, each with its own time limit, because a stopped distro is started by the question.
     let managed_names = managed_distros(home);
@@ -420,6 +428,25 @@ pub fn run(
     // A distro that didn't answer, or whose files can't all be removed, may still have hooks pointing at bin.
     let mut distro_kept: Vec<String> = Vec::new();
     let mut distro_unanswered = false;
+    // A library copy Marshell can't remove points at nothing, so it only counts in the exit code.
+    let mut copies_refused = false;
+    // Previewed on its own, as a skill is: a copy the config service refuses keeps the library's copies, not the hooks.
+    if !library.changes.edits.is_empty() {
+        let preview = service.preview(library.changes.clone());
+        let refused = refusals(&preview);
+        if refused.is_empty() && preview.can_apply {
+            let _ = writeln!(out, "Instruction library copies found.");
+            extras.push(library.changes);
+        } else {
+            for (path, detail) in &refused {
+                let _ = writeln!(out, "Marshell can't change {path}: {detail}");
+            }
+            if refused.is_empty() {
+                let _ = writeln!(out, "Marshell can't change the instruction library copies.");
+            }
+            copies_refused = true;
+        }
+    }
     for (name, answer) in &answers {
         let Some(distro_home) = answer else {
             // WSL answered with its distros and this one isn't among them: it was unregistered, and its files with it.
@@ -437,7 +464,7 @@ pub fn run(
         };
         // Each agent's removal is previewed on its own first, so a file that is refused or doesn't plan is reported by
         // path and left, and the rest of the distro, the other distros and Windows go on.
-        let (mut found, mut failed) = (false, false);
+        let (mut found, mut failed, mut library_found, mut library_refused) = (false, false, false, false);
         for (agent, plan) in distro_hooks::remove_plans(name, distro_home, home) {
             match plan {
                 Err(e) => {
@@ -463,9 +490,33 @@ pub fn run(
                 }
             }
         }
+        let library = uninstall_plan(&Roots::under(distro_home));
+        for line in &library.left {
+            let _ = writeln!(out, "{name}: {line}");
+        }
+        if !library.changes.edits.is_empty() {
+            let preview = service.preview(library.changes.clone());
+            let refused = refusals(&preview);
+            if refused.is_empty() && preview.can_apply {
+                extras.push(library.changes);
+                library_found = true;
+            } else {
+                for (path, detail) in &refused {
+                    let _ = writeln!(out, "Marshell can't change {path}: {detail}");
+                }
+                if refused.is_empty() {
+                    let _ = writeln!(out, "{name}: Marshell can't change the instruction library copies.");
+                }
+                library_refused = true;
+                copies_refused = true;
+            }
+        }
+        if library_found {
+            let _ = writeln!(out, "{name}: instruction library copies found.");
+        }
         if found {
             let _ = writeln!(out, "{name}: Marshell's hooks found.");
-        } else if !failed {
+        } else if !failed && !library_found && !library_refused {
             let _ = writeln!(out, "{name}: nothing of Marshell's.");
         }
         if failed {
@@ -540,7 +591,7 @@ pub fn run(
     );
     // Non-zero when another CLI's hooks were left, so a script notices. A `git-sandbox` kept for a file
     // Marshell didn't make is not counted: nothing of Marshell's is left in it.
-    let ok = i32::from(others_failed || distro_unanswered);
+    let ok = i32::from(others_failed || distro_unanswered || copies_refused);
     let keep_note = |out: &mut dyn Write| {
         if claude_failed && bin.exists() {
             let _ = writeln!(
@@ -565,6 +616,15 @@ pub fn run(
             );
         }
     };
+    // The docs are the person's: uninstall never removes them, so once it is done it says where they are.
+    let docs_note = |out: &mut dyn Write| {
+        let docs = home.join("instructions");
+        if std::fs::read_dir(&docs).is_ok_and(|mut d| {
+            d.any(|e| e.is_ok_and(|e| e.path().extension().is_some_and(|x| x.eq_ignore_ascii_case("md"))))
+        }) {
+            let _ = writeln!(out, "Your library docs stay in {}.", docs.display());
+        }
+    };
     let left_note = "Your status line was changed since the setup and was left as it is.";
 
     if plan.changes.edits.is_empty() {
@@ -576,6 +636,7 @@ pub fn run(
         }
         if !has_bin && !has_sandbox {
             keep_note(out);
+            docs_note(out);
             return ok;
         }
         if has_bin {
@@ -604,6 +665,7 @@ pub fn run(
         if has_sandbox {
             remove_sandboxes(home, out);
         }
+        docs_note(out);
         return ok;
     }
 
@@ -669,6 +731,7 @@ pub fn run(
                 "Done. Snapshot {} holds the files as they were before this change.",
                 applied.snapshot_id
             );
+            docs_note(out);
         }
         Err(ApplyError::Conflict { reason, paths }) => {
             let _ = writeln!(
@@ -2134,5 +2197,152 @@ mod tests {
         assert_eq!(code, 0, "{out}");
         assert!(asked.is_empty());
         assert!(!out.contains("WSL") && !out.contains("Ubuntu"), "{out}");
+    }
+
+    fn library_copy(name: &str) -> String {
+        marshell_core::instructions::copy::file_copy("", name, "~/.marshell/instructions/x.md", "Be careful.\n")
+    }
+
+    fn write(path: &Path, text: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+
+    #[test]
+    fn uninstall_removes_library_copies() {
+        let f = installed(ORIGINAL);
+        let copy = f.user_home.join(".claude/rules/marshell-security.md");
+        write(&copy, &library_copy("security"));
+        let agents = f.user_home.join(".codex/AGENTS.md");
+        let block = marshell_core::agents::codex::library::block_text(
+            "security",
+            "~/.marshell/instructions/x.md",
+            "Be careful.\n",
+        );
+        write(&agents, &format!("Mine\n{block}"));
+        let (code, out) = run_with(&f, "", true);
+        assert_eq!(code, 0, "{out}");
+        assert!(!copy.exists(), "{out}");
+        assert_eq!(std::fs::read_to_string(&agents).unwrap(), "Mine\n", "{out}");
+        assert!(out.contains("Instruction library copies found."), "{out}");
+    }
+
+    #[test]
+    fn uninstall_leaves_edited_and_unmarked_files() {
+        let f = installed(ORIGINAL);
+        let edited = f.user_home.join(".claude/rules/marshell-b.md");
+        let text = format!("{}Edited.\n", library_copy("b"));
+        write(&edited, &text);
+        let mine = f.user_home.join(".claude/rules/marshell-mine.md");
+        write(&mine, "My own rule.\n");
+        let (_, out) = run_with(&f, "", true);
+        assert_eq!(std::fs::read_to_string(&edited).unwrap(), text);
+        assert_eq!(std::fs::read_to_string(&mine).unwrap(), "My own rule.\n");
+        assert!(
+            out.contains("Left ~/.claude/rules/marshell-b.md: it was edited after Marshell wrote it."),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn uninstall_keeps_the_docs() {
+        let f = installed(ORIGINAL);
+        let doc = f.home.join("instructions").join("security.md");
+        write(&doc, "Be careful.\n");
+        write(
+            &f.user_home.join(".claude/rules/marshell-security.md"),
+            &library_copy("security"),
+        );
+        let (_, out) = run_with(&f, "", true);
+        assert_eq!(std::fs::read_to_string(&doc).unwrap(), "Be careful.\n");
+        assert!(out.contains("Your library docs stay in"), "{out}");
+    }
+
+    #[test]
+    fn uninstall_removes_distro_copies() {
+        let f = installed(ORIGINAL);
+        let distro = fake_distro_home();
+        let copy = distro.path().join(".qwen/rules/marshell-security.md");
+        write(&copy, &library_copy("security"));
+        let name = "MarshellTestDistro";
+        let (_, out, _) = run_in_wsl(&f, &[name], &[(name, distro.path())]);
+        assert!(!copy.exists(), "{out}");
+        assert!(
+            out.contains("MarshellTestDistro: instruction library copies found."),
+            "{out}"
+        );
+        assert!(!out.contains("nothing of Marshell's."), "{out}");
+        assert!(!out.contains("MarshellTestDistro: Marshell's hooks found."), "{out}");
+    }
+
+    #[test]
+    fn a_refused_distro_copy_does_not_keep_bin() {
+        // Only hooks point at bin: a library copy Marshell can't remove is said and counted, and bin still goes.
+        let f = installed(ORIGINAL);
+        let distro = fake_distro_home();
+        let copy = distro.path().join(".qwen/rules/marshell-security.md");
+        write(&copy, &library_copy("security"));
+        let mut permissions = std::fs::metadata(&copy).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&copy, permissions).unwrap();
+        let name = "MarshellTestDistro";
+        let (code, out, _) = run_in_wsl(&f, &[name], &[(name, distro.path())]);
+        let mut permissions = std::fs::metadata(&copy).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        std::fs::set_permissions(&copy, permissions).unwrap();
+        assert_eq!(code, 1, "{out}");
+        assert!(copy.exists(), "{out}");
+        assert!(out.contains("The file is read-only."), "{out}");
+        assert!(!out.contains("may still point at it"), "{out}");
+        assert!(!out.contains("nothing of Marshell's."), "{out}");
+        assert!(!bin_exists(&f), "{out}");
+    }
+
+    #[test]
+    fn a_refused_windows_copy_leaves_the_rest_to_go() {
+        // One library copy Marshell can't remove is said and counted; the hooks and bin go all the same.
+        let f = installed(ORIGINAL);
+        let copy = f.user_home.join(".claude/rules/marshell-security.md");
+        write(&copy, &library_copy("security"));
+        let other = f.user_home.join(".claude/rules/marshell-style.md");
+        write(&other, &library_copy("style"));
+        let mut permissions = std::fs::metadata(&copy).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&copy, permissions).unwrap();
+        let (code, out) = run_with(&f, "", true);
+        let mut permissions = std::fs::metadata(&copy).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        std::fs::set_permissions(&copy, permissions).unwrap();
+        assert_eq!(code, 1, "{out}");
+        assert!(copy.exists(), "{out}");
+        assert!(out.contains("The file is read-only."), "{out}");
+        assert!(!out.contains("Nothing was changed."), "{out}");
+        assert_eq!(std::fs::read_to_string(&f.settings).unwrap(), ORIGINAL, "{out}");
+        assert!(!bin_exists(&f), "{out}");
+        // The library is previewed as a whole, so a copy beside the refused one stays too and is said by its line.
+        assert!(other.exists(), "{out}");
+    }
+
+    #[test]
+    fn docs_line_shows_with_nothing_to_remove() {
+        let (_dir, home, user_home) = bare();
+        write(&home.join("instructions").join("security.md"), "Be careful.\n");
+        let (_, out) = run_bare(&home, &user_home, "", true);
+        assert!(out.contains("Your library docs stay in"), "{out}");
+    }
+
+    #[test]
+    fn docs_line_shows_without_copies() {
+        let f = installed(ORIGINAL);
+        write(
+            &f.home.join("instructions").join("security.md"),
+            "Be careful.
+",
+        );
+        let (_, out) = run_with(&f, "", true);
+        assert!(out.contains("Your library docs stay in"), "{out}");
+        assert!(!out.contains("Instruction library copies found."), "{out}");
     }
 }

@@ -3,9 +3,9 @@ import { menuKey } from "../../components/ContextMenu/menuKeys";
 import { appMenuItems, appMenuKey, doctorItemLabel, isMenuTrigger, leavesAppMenu, menuAnchor, menuKeyCloses, menuPlace, pressMenuButton, SETTINGS_ITEMS, toggleMenu, type MenuState } from "./appMenu";
 
 describe("appMenu", () => {
-  it("the_menu_lists_settings_history_doctor_departures", () => {
+  it("the_menu_lists_settings_history_doctor_instructions_departures", () => {
     const items = appMenuItems("windows");
-    expect(items.map((i) => ("label" in i ? i.label : "-"))).toEqual(["Settings", "History", "Doctor", "Departures"]);
+    expect(items.map((i) => ("label" in i ? i.label : "-"))).toEqual(["Settings", "History", "Doctor", "Instructions", "Departures"]);
     expect(items[0]).toMatchObject({ submenu: true });
     expect(items[1]).toMatchObject({ shortcut: "Ctrl+Shift+Y" });
   });

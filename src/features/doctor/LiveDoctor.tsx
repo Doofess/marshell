@@ -133,6 +133,19 @@ export function LiveDoctor({ endpoint, summary, infos, isWorking, actions, annou
   // Keep my file and Stop keeping write nothing of the CLI's: the core remembers the choice and asks for a new run.
   const keep = async (item: DoctorItem) => {
     if (!endpoint || !item.action || keeping || m.phase === "fixing") return;
+    // Use this copy's text writes the doc, so it goes through the fix sheet: the plan, Apply, Reload and Undo are the Doctor's own.
+    if (item.action === "useCopy") {
+      setKeepError(undefined);
+      setKeeping(item.id);
+      try {
+        dispatch({ type: "planned", plan: await planFix(endpoint, [`libadopt.${item.id.slice("libdrift.".length)}`]) });
+      } catch (e) {
+        announce(`Couldn't prepare the fix: ${message(e)}`);
+        void run();
+      }
+      setKeeping(undefined);
+      return;
+    }
     setKeepError(undefined);
     setKeeping(item.id);
     // Set before the request: the new report can be shown before the reply is handled, and the focus effect runs once

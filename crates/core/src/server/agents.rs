@@ -1326,24 +1326,37 @@ pub async fn wsl_distros(State(st): State<AppState>) -> Json<WslDistros> {
 
 /// Which of the agent CLIs Marshell can start are on this machine, in the order claude, codex, antigravity, qwen, copilot.
 pub async fn found(State(st): State<AppState>) -> Result<Json<Vec<AgentFound>>, Fail> {
-    let list = tokio::task::spawn_blocking(move || {
-        let profiles = st.0.profiles.lock().unwrap().profiles.clone();
-        let finder = st.agent_finder(&[]);
-        ["claude", "codex", "antigravity", "qwen", "copilot"]
-            .into_iter()
-            .map(|agent| {
-                let exe = st.adapter_exe(&profiles, agent, &finder);
-                AgentFound {
-                    agent: agent.to_string(),
-                    found: exe.is_some(),
-                    exe_path: exe.map(|p| p.to_string_lossy().into_owned()),
-                }
-            })
-            .collect::<Vec<_>>()
-    })
-    .await
-    .map_err(failed)?;
+    let list = tokio::task::spawn_blocking(move || found_exes(&st))
+        .await
+        .map_err(failed)?;
     Ok(Json(list))
+}
+
+/// Each agent CLI, in the order claude, codex, antigravity, qwen, copilot, with the program that was found. Looks for
+/// programs, so callers go through `spawn_blocking`.
+fn found_exes(st: &AppState) -> Vec<AgentFound> {
+    let profiles = st.0.profiles.lock().unwrap().profiles.clone();
+    let finder = st.agent_finder(&[]);
+    ["claude", "codex", "antigravity", "qwen", "copilot"]
+        .into_iter()
+        .map(|agent| {
+            let exe = st.adapter_exe(&profiles, agent, &finder);
+            AgentFound {
+                agent: agent.to_string(),
+                found: exe.is_some(),
+                exe_path: exe.map(|p| p.to_string_lossy().into_owned()),
+            }
+        })
+        .collect()
+}
+
+/// The ids of the agent CLIs found on this machine, in CLI order. Blocks.
+pub(crate) fn found_agents(st: &AppState) -> Vec<&'static str> {
+    let found = found_exes(st);
+    crate::instructions::doc::CLIS
+        .into_iter()
+        .filter(|cli| found.iter().any(|f| f.found && f.agent == *cli))
+        .collect()
 }
 
 #[derive(serde::Deserialize)]

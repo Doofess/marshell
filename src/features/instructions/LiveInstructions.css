@@ -1,0 +1,43 @@
+/* The Instructions page over the live window: below the title bar, as the Doctor is. The sessions stay mounted behind it. */
+.live-instructions {
+  position: absolute;
+  inset: 40px 0 0 0;
+  z-index: 20;
+  background: var(--bg-base);
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-block-size: 0;
+}
+/* The save conflict: its line and its two choices, under the page. */
+.live-instructions__conflict {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-6);
+  background: var(--bg-raised);
+  color: var(--text-1);
+}
+.live-instructions__conflict p {
+  margin: 0;
+}
+.live-instructions__conflict button {
+  font: inherit;
+  color: var(--text-1);
+  background: var(--bg-base);
+  border: 0;
+  border-radius: var(--radius);
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+}
+
+@media (forced-colors: active) {
+  .live-instructions {
+    background: Canvas;
+  }
+  .live-instructions__conflict,
+  .live-instructions__conflict button {
+    background: ButtonFace;
+    color: ButtonText;
+  }
+}

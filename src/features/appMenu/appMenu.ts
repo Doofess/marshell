@@ -4,7 +4,7 @@ import type { KeyEventLike } from "../../lib/bindings";
 import { commandById, shortcutLabel, type Os } from "../../lib/keymap";
 import type { SettingsSection } from "../settings/settingsSections";
 
-export type AppMenuRun = "history" | "doctor" | "departures" | `settings:${SettingsSection}`;
+export type AppMenuRun = "history" | "doctor" | "instructions" | "departures" | `settings:${SettingsSection}`;
 
 export const SETTINGS_ITEMS: ReadonlyArray<{ section: SettingsSection; label: string }> = [
   { section: "appearance", label: "Appearance" },
@@ -22,6 +22,7 @@ export function appMenuItems(os: Os): MenuItem[] {
     { id: "settings", label: "Settings", submenu: true },
     { id: "history", label: "History", shortcut: binding ? shortcutLabel(binding, os) : undefined },
     { id: "doctor", label: "Doctor" },
+    { id: "instructions", label: "Instructions" },
     { id: "departures", label: "Departures" },
   ];
 }

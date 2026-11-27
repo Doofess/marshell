@@ -23,6 +23,7 @@ mod guard;
 mod history;
 mod hook;
 pub(crate) mod ignores;
+mod instructions;
 mod layout;
 mod merge;
 pub mod opens;
@@ -1581,6 +1582,11 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/doctor/fix/apply", post(doctor::fix_apply))
         .route("/v1/doctor/keep", post(doctor::keep))
         .route("/v1/doctor/undo", get(doctor::last_fix).post(doctor::undo))
+        .route("/v1/instructions", get(instructions::library))
+        .route("/v1/instructions/save", post(instructions::save))
+        .route("/v1/instructions/review", post(instructions::review))
+        .route("/v1/instructions/delete", post(instructions::delete))
+        .route("/v1/instructions/copy", post(instructions::copy))
         .route("/v1/history", get(history::list))
         .route("/v1/history/import", get(history::import_status))
         .route("/v1/history/storage", get(history::storage_report))

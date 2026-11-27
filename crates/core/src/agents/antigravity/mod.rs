@@ -4,6 +4,7 @@
 pub mod extensions;
 pub mod hooks;
 pub mod instructions;
+pub(crate) mod library;
 pub mod policy;
 pub mod request;
 pub mod status;

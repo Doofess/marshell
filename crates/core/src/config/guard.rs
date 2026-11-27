@@ -1,5 +1,5 @@
 //! Which paths the config service may write. Only the user's home folder, a project folder,
-//! `<marshell home>/agents` and the agent folders of a WSL distro whose home was looked up are open.
+//! `<marshell home>/agents`, `<marshell home>/instructions` and the agent folders of a WSL distro whose home was looked up are open.
 //! Managed and organization paths are always refused, and so is the rest of the Marshell home.
 //! The folder a CLI's home variable names is open too, unless it holds the user profile or Marshell's home: such a
 //! variable opens nothing, and the refusal names it. Elevation is never run.
@@ -58,7 +58,7 @@ impl Guard {
         }
     }
 
-    /// Allowed: the user's home (`dirs::home_dir`), every folder in `projects.json` and `<home>/agents`.
+    /// Allowed: the user's home (`dirs::home_dir`), every folder in `projects.json`, `<home>/agents` and `<home>/instructions`.
     /// A drive root in `projects.json` is skipped, also when it is spelt `C:\x\..` or reached through
     /// a link: it would open the whole drive.
     /// Also allowed: the folder each CLI's home variable names (`agent_homes`), except a folder that holds the user
@@ -83,6 +83,7 @@ impl Guard {
             }
         }
         allowed.push(home.join("agents"));
+        allowed.push(home.join("instructions"));
         let homes = agent_homes(&|k| std::env::var(k).ok(), home);
         allowed.extend(homes.open);
         Self::new(allowed, denied_for_os(), home.to_path_buf())
@@ -173,9 +174,10 @@ impl Guard {
         }
         let resolved = resolve(path)?;
         let text = resolved.to_string_lossy();
-        if is_inside(&text, &self.marshell_home.to_string_lossy())
-            && !is_inside(&text, &self.marshell_home.join("agents").to_string_lossy())
-        {
+        let opened = ["agents", "instructions"]
+            .iter()
+            .any(|folder| is_inside(&text, &self.marshell_home.join(folder).to_string_lossy()));
+        if is_inside(&text, &self.marshell_home.to_string_lossy()) && !opened {
             return Err(Refusal::MarshellOwn);
         }
         let in_denied = self.denied.iter().any(|d| is_inside(&text, &d.to_string_lossy()));
@@ -715,6 +717,31 @@ mod tests {
             .join("claude")
             .join("statusline-chain.json");
         assert!(guard.check(&chain).is_ok());
+    }
+
+    #[test]
+    fn instructions_folder_is_admitted() {
+        let (_dir, root, _guard) = setup();
+        let home = root.join("home");
+        // With the folder allowed, the Marshell-home test lets it through.
+        let guard = Guard::new(vec![home.join("instructions")], vec![], home.clone());
+        assert!(guard.check(&home.join("instructions").join("a.md")).is_ok());
+        // `for_home` lists it among the allowed folders (the profile's folder would let it through anyway).
+        let guard = Guard::for_home_with(&home, &|| Vec::new());
+        assert!(guard.allowed.contains(&canonical(&home.join("instructions"))));
+    }
+
+    #[test]
+    fn rest_of_home_stays_closed() {
+        let (_dir, root, _guard) = setup();
+        let home = root.join("home");
+        let guard = Guard::new(vec![home.join("instructions")], vec![], home.clone());
+        assert_eq!(guard.check(&home.join("settings.json")), Err(Refusal::MarshellOwn));
+        assert!(guard.check(&home.join("instructions-x").join("a.md")).is_err());
+        assert_eq!(
+            guard.check(&home.join("instructions-x").join("a.md")),
+            Err(Refusal::MarshellOwn)
+        );
     }
 
     #[test]

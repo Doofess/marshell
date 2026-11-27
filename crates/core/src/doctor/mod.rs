@@ -7,6 +7,7 @@ pub mod frontmatter;
 pub mod instr_checks;
 pub mod instr_text;
 pub mod instructions;
+pub mod library;
 pub mod measure;
 pub mod probe;
 pub mod refnotes;
