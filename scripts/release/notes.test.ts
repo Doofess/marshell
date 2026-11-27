@@ -42,6 +42,12 @@ describe("the release notes", () => {
     }
   });
 
+  it("say what to do when an update stops because a program is still running", () => {
+    expect(notes).toContain(
+      "so finish what your agents are doing first. If an update stops because one of Marshell's programs is still running, run it again; its message says whether the earlier version is still installed.",
+    );
+  });
+
   // What alpha.1's winget-check showed: winget starts the unsigned installer through the shell, and SmartScreen's
   // dialog holds it until someone answers.
   it("say that winget from the manifest folder meets SmartScreen too", () => {

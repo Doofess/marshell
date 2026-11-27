@@ -102,15 +102,22 @@ function Wait-Until([scriptblock]$Cond, [int]$Seconds, [int]$StepMs = 1000) {
     }
 }
 
-# Starts a program and waits for it up to $TimeoutSec. Gives its exit code, or $null when it was still running (it is
-# then stopped, by the PID this started).
-function Invoke-Setup([string]$File, [string]$ArgString, [int]$TimeoutSec) {
+# Starts a program with no window. Gives the process with its handle cached, so its exit code and exit time stay
+# readable after it has ended.
+function Start-Setup([string]$File, [string]$ArgString) {
     $p = if ($ArgString) {
         Start-Process -FilePath $File -ArgumentList $ArgString -PassThru -WindowStyle Hidden
     } else {
         Start-Process -FilePath $File -PassThru -WindowStyle Hidden
     }
     $null = $p.Handle
+    return $p
+}
+
+# Starts a program and waits for it up to $TimeoutSec. Gives its exit code, or $null when it was still running (it is
+# then stopped, by the PID this started).
+function Invoke-Setup([string]$File, [string]$ArgString, [int]$TimeoutSec) {
+    $p = Start-Setup $File $ArgString
     if (-not $p.WaitForExit($TimeoutSec * 1000)) {
         Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
         return $null
@@ -223,6 +230,96 @@ function Test-FileBytes([string]$Path, [byte[]]$Want) {
     return ((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -eq (Get-BytesHash $Want))
 }
 
+# ---------------------------------------------------------------- write-time marks and holds
+
+# A5 reinstalls the same build, so a hash can't tell a replaced file from one the installer skipped (issue #214).
+# Before the update every installed file gets this write time. `File` puts back the build's own time and
+# WriteUninstaller writes the current one, so a file that still has the mark afterwards was skipped.
+$Mark = [datetime]::SpecifyKind([datetime]'2001-01-01T00:00:00', 'Utc')
+# How long a hold lasts after the app has ended. The installer writes OpenConsole.exe straight after the 34 MB main
+# program, so a short hold could end before today's installer gets there. 8 s still leaves 12 of the wait's 20.
+$HoldAfterMs = 8000
+
+# Sets the mark on every one of $Programs in $Dir. Gives the names it couldn't set.
+function Set-Marks([string]$Dir) {
+    $failed = @()
+    foreach ($n in $Programs) {
+        $f = Join-Path $Dir $n
+        if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { continue }
+        try { [System.IO.File]::SetLastWriteTimeUtc($f, $Mark) } catch { $failed += $n }
+    }
+    return $failed
+}
+
+# The names in $Programs whose file in $Dir still has the mark.
+function Get-Marked([string]$Dir) {
+    return @($Programs | Where-Object {
+            $f = Join-Path $Dir $_
+            (Test-Path -LiteralPath $f -PathType Leaf) -and ([System.IO.File]::GetLastWriteTimeUtc($f) -eq $Mark)
+        })
+}
+
+# Holds $Path open the way a program that is still ending holds its own file: others may read it, nobody may write
+# or delete it. The hold lasts until $HoldAfterMs after $App has ended, 120 s at most, or until Stop-Hold -Now. It
+# waits on the process object with its handle cached, so a new process given the same id can't keep the file held.
+# Gives the hold, or $null when the file can't be opened.
+function Start-Hold([string]$Path, [System.Diagnostics.Process]$App) {
+    try { $null = $App.Handle } catch { }
+    try {
+        $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
+    } catch {
+        Write-Host "NOTE could not hold $(Split-Path -Leaf $Path): $($_.Exception.Message)"
+        return $null
+    }
+    $state = [hashtable]::Synchronized(@{ Stop = $false })
+    # A job that can't start must not end the smoke test either: the file is let go and there is no hold.
+    try {
+        $job = Start-ThreadJob -ArgumentList $stream, $App, $state, $HoldAfterMs -ScriptBlock {
+            param($Stream, $App, $State, $AfterMs)
+            # An error here must not end the smoke test, so nothing in the job stops on one, and the stream is closed
+            # whatever happens. The job's only output is the time the file was let go.
+            $ErrorActionPreference = 'Continue'
+            $released = $null
+            try {
+                $sw = [System.Diagnostics.Stopwatch]::StartNew()
+                while (-not $State.Stop -and -not $App.HasExited -and $sw.Elapsed.TotalSeconds -lt 120) { Start-Sleep -Milliseconds 100 }
+                if (-not $State.Stop -and $App.HasExited) {
+                    $after = [System.Diagnostics.Stopwatch]::StartNew()
+                    while (-not $State.Stop -and $after.ElapsedMilliseconds -lt $AfterMs) { Start-Sleep -Milliseconds 100 }
+                    if (-not $State.Stop) { $released = [datetime]::UtcNow }
+                }
+            } finally {
+                $Stream.Dispose()
+            }
+            $released
+        }
+    } catch {
+        $stream.Dispose()
+        Write-Host "NOTE could not hold $(Split-Path -Leaf $Path): $($_.Exception.Message)"
+        return $null
+    }
+    return [pscustomobject]@{ Stream = $stream; Job = $job; State = $state }
+}
+
+# Waits for a hold to end; -Now ends it first. Gives the UTC time the file was let go, or $null: no hold, the app
+# never ended, or -Now. Never throws.
+function Stop-Hold($Hold, [switch]$Now) {
+    if (-not $Hold) { return $null }
+    if ($Now) { $Hold.State.Stop = $true }
+    $got = @()
+    try {
+        # Not -ErrorAction Stop: a non-fatal error record from the job would throw away the time it let go.
+        $got = @(Receive-Job -Job $Hold.Job -Wait -AutoRemoveJob -ErrorAction SilentlyContinue)
+    } catch {
+        Write-Host "NOTE the hold's job failed: $($_.Exception.Message)"
+        Remove-Job -Job $Hold.Job -Force -ErrorAction SilentlyContinue
+    }
+    try { $Hold.Stream.Dispose() } catch { }
+    $times = @($got | Where-Object { $_ -is [datetime] })
+    if ($times.Count -gt 0) { return $times[-1] }
+    return $null
+}
+
 # winget's install took 22 s on a runner. Its limit is 300 s, so that an install that hangs in both cycles is over
 # after 10 minutes, well inside the workflow step's 20, and the step ends with this script's own result.
 function Install-Marshell {
@@ -248,7 +345,30 @@ function Get-UninstallerCopies {
 # Starts the uninstall the way a person would. The uninstaller hands over to a copy of itself in the temp folder and
 # returns early, so this waits up to 120 s for the uninstall key to go, and then up to 180 s for that copy to end:
 # it takes the hooks out after the key is gone. Gives the first command's result.
-function Uninstall-Marshell {
+# With -HoldUntil (the open app), OpenConsole.exe is held from before the uninstall until 8 s after the app has
+# ended, so the uninstaller's wait for programs still in use (slice 9b) has something to wait for.
+function Uninstall-Marshell([System.Diagnostics.Process]$HoldUntil = $null) {
+    $hold = $null
+    if ($HoldUntil) {
+        $dir = Get-InstallDir
+        if ($dir) { $hold = Start-Hold (Join-Path $dir 'OpenConsole.exe') $HoldUntil }
+        else { Write-Host 'NOTE the uninstall: no install folder to hold OpenConsole.exe in' }
+    }
+    $done = $false
+    try {
+        $res = Invoke-Uninstall
+        $done = $true
+    } finally {
+        if ($hold) {
+            $released = Stop-Hold $hold -Now:(-not $done)
+            if ($released) { Write-Host "NOTE the uninstall: OpenConsole.exe was held until $($released.ToString('o')), $($HoldAfterMs / 1000) s after the app ended" }
+            else { Write-Host 'NOTE the uninstall: the hold on OpenConsole.exe ended without the app ending' }
+        }
+    }
+    return $res
+}
+
+function Invoke-Uninstall {
     switch ($script:Mode) {
         'installer' {
             # Exactly what the key says, as winget runs it.
@@ -483,10 +603,40 @@ function Invoke-CycleA {
 
     $oldId = $script:App.Id
     if ($script:Mode -eq 'installer') {
-        # 5: install again over the running app, the way winget upgrade does.
-        $r = Install-Marshell
-        Check 'A5 reinstall over the running app: the installer exited 0' { if ($r.Code -eq 0) { $true } else { "exit code '$($r.Code)'" } }
+        # 5: install again over the running app, the way winget upgrade does. A silent install used to skip a program
+        # file that was still in use and exit 0 (issue #214), so every installed file gets the mark first, and
+        # OpenConsole.exe is held from before the update until 8 s after the old app has ended.
+        Write-Host "NOTE A5 before the update, running from the install folder: $(Get-RunningFrom $script:Inst)"
+        $unmarked = @(Set-Marks $script:Inst)
+        if ($unmarked.Count -gt 0) { Report-Fail 'A5 reinstall over the running app: the write-time marks' "could not set $($unmarked -join ', ')" }
+        $hold = Start-Hold (Join-Path $script:Inst 'OpenConsole.exe') $script:App
+        if (-not $hold) { Report-Fail 'A5 reinstall over the running app: the hold on OpenConsole.exe' 'could not open it' }
+        try {
+            $setup = Start-Setup $Installer '/S'
+            $exited = $setup.WaitForExit(300000)
+            if (-not $exited) { Stop-Process -Id $setup.Id -Force -ErrorAction SilentlyContinue }
+        } catch {
+            $null = Stop-Hold $hold -Now
+            throw
+        }
+        $released = Stop-Hold $hold
+        $setupCode = if ($exited) { $setup.ExitCode } else { $null }
+        $setupEnd = if ($exited) { $setup.ExitTime.ToUniversalTime() } else { $null }
+        $releasedText = if ($released) { $released.ToString('o') } else { 'no time' }
+        $setupEndText = if ($setupEnd) { $setupEnd.ToString('o') } else { 'no time: it was still running after 300 s' }
+        Write-Host "NOTE A5 the hold on OpenConsole.exe ended at $releasedText, the installer at $setupEndText"
+        Check 'A5 reinstall over the running app: the installer exited 0' { if ($setupCode -eq 0) { $true } else { "exit code '$setupCode'" } }
         Check 'A5 reinstall over the running app: the app has ended' { if (Wait-AppGone $oldId 60) { $true } else { "PID $oldId is still running" } }
+        Check 'A5 reinstall over the running app: every program was replaced' {
+            $kept = @(Get-Marked $script:Inst)
+            if ($kept.Count -eq 0) { $true } else { "kept the old $($kept -join ', ')" }
+        }
+        Check 'A5 reinstall over the running app: the installer waited for the held OpenConsole.exe' {
+            if (-not $hold) { return 'there was no hold' }
+            if (-not $released) { return 'the old app never ended, so the file was let go at the limit' }
+            if (-not $setupEnd) { return 'the installer never ended' }
+            if ($setupEnd -gt $released) { $true } else { "it exited $([int]($released - $setupEnd).TotalMilliseconds) ms before the file was let go" }
+        }
         if ($Fixture) {
             Check "A5 reinstall over the running app: Claude Code's file still names marshell-hook" { Test-Contains $ClaudeFile 'marshell-hook' }
         } else {
@@ -547,7 +697,7 @@ function Invoke-CycleA {
     # from the folder, and then the note after the uninstall says nothing either. The programs the app starts
     # show up here only when they are already running.
     Write-Host "NOTE A6 before the uninstall, running from the install folder: $(Get-RunningFrom $instDir)"
-    $res = Uninstall-Marshell
+    $res = Uninstall-Marshell -HoldUntil $app
     Test-Uninstalled 'A7' $instDir $res $appId
     if ($Fixture) {
         Check "A8 after uninstall: Claude Code's settings.json is the known one, byte for byte" {

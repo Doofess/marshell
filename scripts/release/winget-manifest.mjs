@@ -9,6 +9,11 @@ import { installerUrl } from "./version.mjs";
 const ID = "Doofess.Marshell";
 const MANIFEST_VERSION = "1.10.0";
 
+// An update that stops because a program is still running exits with this code (MARSHELL_HELD_EXIT in
+// src-tauri/windows/hooks.nsh), and winget then prints its own file-in-use message. winget has no default
+// return codes for NSIS installers.
+export const FILE_IN_USE_EXIT = 32;
+
 const schema = (type) =>
   `# yaml-language-server: $schema=https://aka.ms/winget-manifest.${type}.${MANIFEST_VERSION}.schema.json`;
 
@@ -37,6 +42,9 @@ export function manifests({ version, sha256, releaseDate }) {
       "- interactive",
       "- silent",
       "UpgradeBehavior: install",
+      "ExpectedReturnCodes:",
+      `- InstallerReturnCode: ${FILE_IN_USE_EXIT}`,
+      "  ReturnResponse: fileInUse",
       `ReleaseDate: ${releaseDate}`,
       "Installers:",
       "- Architecture: x64",
