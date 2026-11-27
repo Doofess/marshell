@@ -12,6 +12,7 @@ pub mod gitbox;
 pub mod github;
 pub mod history;
 pub mod hooks;
+pub mod instructions;
 pub mod job;
 pub mod layout;
 pub mod listen;
