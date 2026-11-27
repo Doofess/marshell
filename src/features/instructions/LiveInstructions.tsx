@@ -82,18 +82,20 @@ export function LiveInstructions({ endpoint, folder, prefs, announce, onClose }:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [endpoint]);
 
+  /** The view, with the project it was read for: the reducer drops an answer for a project the page has left. */
   const readView = useCallback(async () => {
     if (!endpoint) return null;
+    const project = latest.current.project;
     try {
-      return await libraryView(endpoint, latest.current.project);
+      return { view: await libraryView(endpoint, project), project };
     } catch (e) {
       announce(`Couldn't read the instruction library: ${message(e)}`);
       return null;
     }
   }, [endpoint, announce]);
   const refresh = useCallback(async () => {
-    const view = await readView();
-    if (view !== null) dispatch({ type: "viewLoaded", view });
+    const read = await readView();
+    if (read !== null) dispatch({ type: "viewLoaded", ...read });
   }, [readView]);
   useEffect(() => {
     void refresh();
@@ -130,13 +132,13 @@ export function LiveInstructions({ endpoint, folder, prefs, announce, onClose }:
   };
 
   const reload = async () => {
-    const view = await readView();
-    if (view !== null) dispatch({ type: "reloaded", view });
+    const read = await readView();
+    if (read !== null) dispatch({ type: "reloaded", ...read });
   };
   const saveOver = async () => {
-    const view = await readView();
-    if (view === null) return;
-    await save(findDoc(view, latest.current.open)?.hash ?? null);
+    const read = await readView();
+    if (read === null) return;
+    await save(findDoc(read.view, latest.current.open)?.hash ?? null);
   };
 
   const answer = async (choice: SaveChoice) => {

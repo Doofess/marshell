@@ -30,7 +30,8 @@ export type State = {
 };
 
 export type Action =
-  | { type: "viewLoaded"; view: LibraryView }
+  /** A view of the library, read for `project`; one read for another project than the page's is dropped. */
+  | { type: "viewLoaded"; view: LibraryView; project: string | null }
   | { type: "open"; scope: DocScope; name: string }
   | { type: "newDoc"; scope: DocScope }
   | { type: "pickProject"; path: string }
@@ -42,7 +43,7 @@ export type Action =
   | { type: "saved"; view: LibraryView; name: string }
   | { type: "saveRefused"; message: string }
   | { type: "saveConflict" }
-  | { type: "reloaded"; view: LibraryView }
+  | { type: "reloaded"; view: LibraryView; project: string | null }
   | { type: "reviewShown"; title: string; preview: ConfigPreview }
   | { type: "reviewBusy" }
   | { type: "reviewConflict" }
@@ -105,6 +106,8 @@ const ask = (s: State, next: Next): State => (isDirtyNow(s) ? { ...s, asking: ne
 export function instructionsReducer(s: State, a: Action): State {
   switch (a.type) {
     case "viewLoaded": {
+      // An answer for a project the page has left (or not yet reached) would show another project's docs under this one.
+      if (a.project !== s.project) return s;
       // A draft with no edits follows the fresh doc; one with edits is left alone.
       const fresh = findDoc(a.view, s.open);
       const follow = s.draft !== null && fresh !== null && !isDirtyNow(s);
@@ -139,6 +142,7 @@ export function instructionsReducer(s: State, a: Action): State {
     case "saveConflict":
       return { ...s, busy: false, conflict: conflictLine(s.draft?.name ?? s.open?.name ?? "The doc") };
     case "reloaded": {
+      if (a.project !== s.project) return s;
       const d = findDoc(a.view, s.open);
       return { ...s, view: a.view, draft: d === null ? s.draft : draftOf(d), conflict: null, errors: {} };
     }

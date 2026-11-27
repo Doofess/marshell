@@ -11,7 +11,7 @@ const view = (...docs: LibraryDoc[]): LibraryView => ({ user_docs: docs.map((d) 
 const projects: ProjectInfo[] = [{ path: "C:/dev/app", name: "app", branch: null, last_used_ms: 1 }];
 const opened = (): State => {
   let s = initialState(projects, "C:/dev/app");
-  s = instructionsReducer(s, { type: "viewLoaded", view: view(doc("Api"), doc("Web")) });
+  s = instructionsReducer(s, { type: "viewLoaded", view: view(doc("Api"), doc("Web")), project: "C:/dev/app" });
   return instructionsReducer(s, { type: "open", scope: "user", name: "Api" });
 };
 const dirty = (s: State): State => instructionsReducer(s, { type: "edit", draft: { ...s.draft!, body: "changed\n" } });
@@ -20,6 +20,17 @@ describe("the Instructions page's reducer", () => {
   it("starts on the project holding the folder, and on none for an unknown folder", () => {
     expect(initialState(projects, "C:/dev/app/src").project).toBe("C:/dev/app");
     expect(initialState(projects, "C:/elsewhere").project).toBeNull();
+  });
+  it("drops a view read for another project than the page's, so a slow first read can't hide the project's docs", () => {
+    // The page reads the view before the projects are known (no project), then again on the first project; slice 8a's live
+    // check saw the first answer come in last and leave the project showing "No docs yet".
+    const s = initialState(projects, "C:/dev/app");
+    expect(instructionsReducer(s, { type: "viewLoaded", view: view(doc("Api")), project: null }).view).toBeNull();
+    expect(instructionsReducer(s, { type: "viewLoaded", view: view(doc("Api")), project: "C:/dev/app" }).view).not.toBeNull();
+    const open = opened();
+    const stale = instructionsReducer(open, { type: "reloaded", view: view(), project: null });
+    expect(stale.view).toBe(open.view);
+    expect(stale.open).toEqual(open.open);
   });
   it("opens a doc into a draft", () => {
     const s = opened();
