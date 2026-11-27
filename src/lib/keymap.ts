@@ -160,11 +160,12 @@ export const COMMANDS: Command[] = [
   { id: "history-settings", label: "Settings: History…", group: "App" },
   { id: "pause-notifications", label: "Pause or resume notifications", group: "App" },
   { id: "doctor", label: "Open Doctor", group: "App" },
+  { id: "instructions", label: "Open Instructions", group: "App" },
   { id: "departures", label: "Open Departures board", group: "App" },
 ];
 
 /** Commands the palette leaves out until a person types: the menu button holds them. */
-export const MOVED_COMMANDS: readonly string[] = ["settings", "appearance", "agents", "profiles", "notifications", "history-settings", "diagnostics", "history", "doctor", "departures"];
+export const MOVED_COMMANDS: readonly string[] = ["settings", "appearance", "agents", "profiles", "notifications", "history-settings", "diagnostics", "history", "doctor", "instructions", "departures"];
 
 export function commandById(id: string): Command {
   const c = COMMANDS.find((x) => x.id === id);

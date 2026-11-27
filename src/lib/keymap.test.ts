@@ -247,7 +247,7 @@ describe("the four groups", () => {
     expect(COMMANDS.some((c) => c.id === "global-search")).toBe(false);
   });
   it("lists the commands the menu holds", () => {
-    expect(MOVED_COMMANDS).toEqual(["settings", "appearance", "agents", "profiles", "notifications", "history-settings", "diagnostics", "history", "doctor", "departures"]);
+    expect(MOVED_COMMANDS).toEqual(["settings", "appearance", "agents", "profiles", "notifications", "history-settings", "diagnostics", "history", "doctor", "instructions", "departures"]);
     for (const id of MOVED_COMMANDS) expect(commandById(id).id).toBe(id);
   });
 });

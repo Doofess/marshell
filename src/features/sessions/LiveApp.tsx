@@ -62,6 +62,7 @@ import { Preview, type PreviewHandle } from "../preview/Preview";
 import type { PdfCommands } from "../preview/pdf/PdfView";
 import { isUnsaved, staleDrafts, withUnsaved } from "../editor/drafts";
 import { dropDraft, listDrafts } from "../editor/editorApi";
+import { LiveInstructions } from "../instructions/LiveInstructions";
 import { SaveDialog, type SaveChoice } from "../editor/SaveDialog";
 import type { SaveCommands, TextTabCommands } from "../editor/TextTab";
 import type { PaneTab } from "../../generated/PaneTab";
@@ -338,7 +339,7 @@ export function LiveApp() {
     if (!launcherOpen) setLauncherElevated(false);
   }, [launcherOpen]);
   // The command palette, the Departures board or the Settings page, over the window.
-  const [overlay, setOverlay] = useState<"palette" | "settings" | "shortcuts" | "departures" | "doctor" | null>(null);
+  const [overlay, setOverlay] = useState<"palette" | "settings" | "shortcuts" | "departures" | "doctor" | "instructions" | null>(null);
   // The Settings page's section, and the one shown last in this run: the tray's Settings… reopens that one.
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
   const lastSettingsSection = useRef<SettingsSection | null>(null);
@@ -2212,7 +2213,7 @@ export function LiveApp() {
     setSettingsCwd(id === "edit-references" ? focusedInfo?.cwd : undefined);
     const section = paletteSection(id);
     if (section) return openSettings(section);
-    setOverlay(id === "departures" || id === "doctor" ? id : id === "cheatsheet" ? "shortcuts" : null);
+    setOverlay(id === "departures" || id === "doctor" || id === "instructions" ? id : id === "cheatsheet" ? "shortcuts" : null);
     // Its terminal takes the keyboard, also when the session is already on screen and the palette gave focus back to its opener.
     const session = sessionRowTarget(id);
     if (session !== null) {
@@ -3031,7 +3032,7 @@ export function LiveApp() {
               if (mainViewRef.current === "history") return void (back?.isConnected ? back.focus() : actions.focusTerminal());
               return void setMainView("history");
             }
-            if (item === "doctor" || item === "departures") return void setOverlay(item);
+            if (item === "doctor" || item === "instructions" || item === "departures") return void setOverlay(item);
             openSettings(item.slice("settings:".length) as SettingsSection);
           }}
           onClose={({ refocus }) => {
@@ -3103,6 +3104,18 @@ export function LiveApp() {
           onOpenFile={(open) => {
             if (openInPaneRef.current(open.line == null ? { path: open.path } : { path: open.path, line: open.line })) setOverlay(null);
           }}
+          onClose={() => {
+            setOverlay(null);
+            setTimeout(() => actions.focusTerminal(), 0);
+          }}
+        />
+      )}
+      {overlay === "instructions" && (
+        <LiveInstructions
+          endpoint={endpoint}
+          folder={dialogFolder()}
+          prefs={filesPrefs}
+          announce={announce}
           onClose={() => {
             setOverlay(null);
             setTimeout(() => actions.focusTerminal(), 0);

@@ -9,6 +9,11 @@ describe("keep buttons", () => {
     expect(keepLabel("keep", true)).toBe("Keeping…");
     expect(keepLabel("stopKeeping", true)).toBe("Stopping…");
   });
+  it("label Use this copy's text, and say Preparing while the plan is made", () => {
+    expect(keepLabel("useCopy", false)).toBe("Use this copy's text");
+    expect(keepLabel("useCopy", true)).toBe("Preparing…");
+    expect(keepName("useCopy", "T", false)).toBe("Use this copy's text: T");
+  });
   it("name the button with the row's title after the visible label", () => {
     expect(keepName("keep", "T", false)).toBe("Keep my file: T");
     expect(keepName("stopKeeping", "T", false)).toBe("Stop keeping: T");

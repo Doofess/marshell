@@ -2,7 +2,10 @@ import type { DoctorAction } from "../../generated/DoctorAction";
 import type { DoctorSummary } from "../../generated/DoctorSummary";
 
 /** The button's visible text: short, and busy while its request runs. */
-export const keepLabel = (action: DoctorAction, busy: boolean) => (action === "keep" ? (busy ? "Keeping…" : "Keep my file") : busy ? "Stopping…" : "Stop keeping");
+export const keepLabel = (action: DoctorAction, busy: boolean) => {
+  if (action === "useCopy") return busy ? "Preparing…" : "Use this copy's text";
+  return action === "keep" ? (busy ? "Keeping…" : "Keep my file") : busy ? "Stopping…" : "Stop keeping";
+};
 /** The button's accessible name: its visible text first, then the row it belongs to. */
 export const keepName = (action: DoctorAction, title: string, busy: boolean) => `${keepLabel(action, busy)}: ${title}`;
 
