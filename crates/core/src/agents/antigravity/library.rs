@@ -5,36 +5,24 @@ use crate::instructions::roots::Roots;
 use std::path::{Path, PathBuf};
 
 /// Antigravity CLI's cap on one rule file, in bytes; it cuts the rest on a line boundary.
-// Used by the library planner (slice 8a Task 5).
-#[allow(dead_code)]
 pub(crate) const RULE_CAP: usize = 24_000;
 
-// Used by the library planner (slice 8a Task 5).
-#[allow(dead_code)]
 pub(crate) fn user_dir(roots: &Roots) -> PathBuf {
     roots.gemini.join("config").join("rules")
 }
 
-// Used by the library planner (slice 8a Task 5).
-#[allow(dead_code)]
 pub(crate) fn project_dir(project: &Path) -> PathBuf {
     project.join(".agents").join("rules")
 }
 
-// Used by the library planner (slice 8a Task 5).
-#[allow(dead_code)]
 pub(crate) fn file_name(name: &str) -> String {
     format!("marshell-{}.md", name.to_lowercase())
 }
 
-// Used by the library planner (slice 8a Task 5).
-#[allow(dead_code)]
 pub(crate) fn own_name(file_name: &str) -> Option<String> {
     own_name_of(file_name, ".md")
 }
 
-// Used by the library planner (slice 8a Task 5).
-#[allow(dead_code)]
 pub(crate) fn frontmatter(globs: &[String]) -> String {
     if globs.is_empty() {
         return "---\ntrigger: always_on\n---\n".to_string();

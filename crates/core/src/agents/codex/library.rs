@@ -24,8 +24,6 @@ pub(crate) struct Block {
 
 /// The begin line (with the hash of the body), the body and the end line, all with `\n`. A body that doesn't end in
 /// a line end gets one first, so what is read back hashes the same.
-// Used by the library planner (slice 8a Task 5).
-#[allow(dead_code)]
 pub(crate) fn block_text(name: &str, source: &str, body: &str) -> String {
     let name = name.to_lowercase();
     let mut body = normalized(body);
@@ -97,8 +95,6 @@ pub(crate) fn blocks_in(text: &str) -> Vec<Block> {
     scan(&lines_of(text)).into_iter().map(|s| s.block).collect()
 }
 
-// Used by the library planner (slice 8a Task 5).
-#[allow(dead_code)]
 pub(crate) fn judge_block(expected_body: &str, found: &Block) -> Judged {
     if normalized(&found.body) == normalized(expected_body) {
         Judged::InSync
@@ -109,8 +105,6 @@ pub(crate) fn judge_block(expected_body: &str, found: &Block) -> Judged {
     }
 }
 
-// Used by the library planner (slice 8a Task 5).
-#[allow(dead_code)]
 pub(crate) fn judge_unwanted_block(found: &Block) -> Unwanted {
     if payload_hash(&found.body) == found.hash {
         Unwanted::Ours
@@ -182,8 +176,6 @@ fn rewrite(text: &str, wanted: &[(String, String)], keep: &[String]) -> String {
 
 /// The text with its blocks changed as `wanted` (name and full `block_text`) and `keep` say; None when only
 /// whitespace is left, so the file goes.
-// Used by the library planner (slice 8a Task 5).
-#[allow(dead_code)]
 pub(crate) fn with_blocks(text: &str, wanted: &[(String, String)], keep: &[String]) -> Option<String> {
     let out = rewrite(text, wanted, keep);
     (!blank(&out)).then_some(out)
@@ -208,8 +200,6 @@ fn override_text(path: &Path) -> String {
 
 /// `AGENTS.override.md` when its text, with Marshell's blocks taken out, holds more than whitespace, else `AGENTS.md`
 /// (decision 45).
-// Used by the library planner (slice 8a Task 5).
-#[allow(dead_code)]
 pub(crate) fn user_file(codex_home: &Path) -> PathBuf {
     let over = codex_home.join("AGENTS.override.md");
     if blank(&person_text(&override_text(&over))) {
@@ -220,8 +210,6 @@ pub(crate) fn user_file(codex_home: &Path) -> PathBuf {
 }
 
 /// The user file `user_file` didn't pick, whose blocks are unwanted.
-// Used by the library planner (slice 8a Task 5).
-#[allow(dead_code)]
 pub(crate) fn other_user_file(codex_home: &Path) -> PathBuf {
     if user_file(codex_home).ends_with("AGENTS.md") {
         codex_home.join("AGENTS.override.md")
@@ -230,8 +218,6 @@ pub(crate) fn other_user_file(codex_home: &Path) -> PathBuf {
     }
 }
 
-// Used by the library planner (slice 8a Task 5).
-#[allow(dead_code)]
 pub(crate) fn project_config(project: &Path) -> PathBuf {
     project.join(".codex").join("config.toml")
 }
@@ -248,8 +234,6 @@ fn instructions_of(doc: &DocumentMut) -> Result<Option<String>, String> {
 }
 
 /// The sections in the project's `developer_instructions`.
-// Used by the library planner (slice 8a Task 5).
-#[allow(dead_code)]
 pub(crate) fn sections_in(config_text: &str) -> Result<Vec<Block>, String> {
     let doc: DocumentMut = config_text.parse().map_err(|_| UNREADABLE.to_string())?;
     Ok(instructions_of(&doc)?
@@ -260,8 +244,6 @@ pub(crate) fn sections_in(config_text: &str) -> Result<Vec<Block>, String> {
 /// The config with its `developer_instructions` sections changed as `wanted` and `keep` say, as `with_blocks` does for
 /// a text. The string's other text stays; every other key and comment is untouched. Ok(None) deletes the file: the key
 /// held nothing else and no other content is left.
-// Used by the library planner (slice 8a Task 5).
-#[allow(dead_code)]
 pub(crate) fn with_sections(
     config_text: Option<&str>,
     wanted: &[(String, String)],

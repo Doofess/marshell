@@ -164,6 +164,43 @@ pub fn source_of(doc: &Doc, project: Option<&Path>, user_home: &Path) -> String 
     crate::doctor::instructions::display(&doc.path, project, user_home)
 }
 
+/// A copy file as it stands now.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Disk {
+    Missing,
+    /// A link, a folder, a file over 4 MiB, one that isn't UTF-8 text, or one that can't be read: never read or
+    /// written, because a link could point anywhere and Marshell would edit the target.
+    Refused,
+    /// The file's text and the config service's hash of its raw bytes.
+    Text {
+        text: String,
+        hash: String,
+    },
+}
+
+/// Reads a file only when `symlink_metadata` says it is a plain file of at most 4 MiB (as the docs are read).
+pub(crate) fn read_disk(path: &Path) -> Disk {
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Disk::Missing,
+        Err(_) => return Disk::Refused,
+    };
+    if meta.file_type().is_symlink() || !meta.is_file() || meta.len() > super::doc::MAX_BYTES {
+        return Disk::Refused;
+    }
+    match std::fs::read(path) {
+        Ok(bytes) => {
+            let hash = crate::config::hash::hash_bytes(&bytes);
+            match String::from_utf8(bytes) {
+                Ok(text) => Disk::Text { text, hash },
+                Err(_) => Disk::Refused,
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Disk::Missing,
+        Err(_) => Disk::Refused,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

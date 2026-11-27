@@ -4,32 +4,22 @@ use crate::instructions::copy::{own_name_of, quote};
 use crate::instructions::roots::Roots;
 use std::path::{Path, PathBuf};
 
-// Used by the library planner (slice 8a Task 5).
-#[allow(dead_code)]
 pub(crate) fn user_dir(roots: &Roots) -> PathBuf {
     roots.qwen.join("rules")
 }
 
-// Used by the library planner (slice 8a Task 5).
-#[allow(dead_code)]
 pub(crate) fn project_dir(project: &Path) -> PathBuf {
     project.join(".qwen").join("rules")
 }
 
-// Used by the library planner (slice 8a Task 5).
-#[allow(dead_code)]
 pub(crate) fn file_name(name: &str) -> String {
     format!("marshell-{}.md", name.to_lowercase())
 }
 
-// Used by the library planner (slice 8a Task 5).
-#[allow(dead_code)]
 pub(crate) fn own_name(file_name: &str) -> Option<String> {
     own_name_of(file_name, ".md")
 }
 
-// Used by the library planner (slice 8a Task 5).
-#[allow(dead_code)]
 pub(crate) fn frontmatter(globs: &[String]) -> String {
     if globs.is_empty() {
         return String::new();

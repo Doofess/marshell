@@ -2,4 +2,5 @@
 
 pub mod copy;
 pub mod doc;
+pub mod library;
 pub mod roots;
