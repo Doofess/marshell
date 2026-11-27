@@ -10,7 +10,8 @@ export function focusOrder(html: string): string[] {
     const attrs = m[2]!;
     const tabindex = /\btabindex="(-?\d+)"/.exec(attrs)?.[1];
     const control = ["button", "input", "select", "textarea"].includes(tag) && !/\bdisabled\b/.test(attrs);
-    const focusable = (tag === "a" && /\bhref=/.test(attrs)) || control || tag === "summary" || (tabindex !== undefined && tabindex !== "-1");
+    const editable = /\bcontenteditable="true"/.test(attrs);
+    const focusable = (tag === "a" && /\bhref=/.test(attrs)) || control || tag === "summary" || editable || (tabindex !== undefined && tabindex !== "-1");
     if (!focusable) continue;
     const label = /\baria-label="([^"]*)"/.exec(attrs)?.[1];
     const from = m.index + m[0].length;

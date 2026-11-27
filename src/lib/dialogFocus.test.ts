@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { openDialogFocus, type DialogDom, type Focusable } from "./dialogFocus";
+import { FOCUSABLE, openDialogFocus, type DialogDom, type Focusable } from "./dialogFocus";
 
 /** A dialog's DOM reduced to what the lifecycle touches: who has focus, the title, the controls and one keydown listener. */
 function fakeDialog(names: string[]) {
@@ -100,5 +100,13 @@ describe("useDialogFocus runs that lifecycle once per open", () => {
     expect(src).not.toMatch(/\[dialog, title, onClose\]/);
     expect(src).toContain("useEffectEvent");
     expect(src).toContain("openDialogFocus(");
+  });
+});
+
+describe("FOCUSABLE", () => {
+  // A CodeMirror editor is a contenteditable with no tabindex, which Chromium reports as tabIndex -1 though Tab reaches it.
+  // The trap walks only what the query finds, so without it Tab jumped from the Instructions page's Globs to Save (slice 8a's live check).
+  it("takes in an editor's contenteditable", () => {
+    expect(FOCUSABLE.split(", ")).toContain('[contenteditable="true"]');
   });
 });
