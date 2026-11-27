@@ -4,7 +4,7 @@ use crate::instructions::copy::{own_name_of, quote};
 use crate::instructions::roots::Roots;
 use std::path::{Path, PathBuf};
 
-/// Antigravity CLI's cap on one rule file, in characters.
+/// Antigravity CLI's cap on one rule file, in bytes; it cuts the rest on a line boundary.
 // Used by the library planner (slice 8a Task 5).
 #[allow(dead_code)]
 pub(crate) const RULE_CAP: usize = 24_000;
