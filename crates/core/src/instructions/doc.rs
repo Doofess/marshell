@@ -10,6 +10,7 @@ pub const CLIS: [&str; 5] = ["claude", "codex", "antigravity", "qwen", "copilot"
 
 const NAME_ERROR: &str = "This file's name can't name a doc: use letters, digits, - and _.";
 const MARKER_TAIL: &str = " marks Marshell's copies, so a doc can't hold it.";
+const NOT_UTF8: &str = "This doc isn't UTF-8 text, so Marshell doesn't read it.";
 
 /// Why a doc's body can't be copied: its line `line` (counted in the body, as the page shows it) is one of the lines
 /// that mark Marshell's copies, which would end a Codex block early.
@@ -43,8 +44,9 @@ pub struct Doc {
 }
 
 impl Doc {
-    /// Why the doc's frontmatter can't be read, when it can't: its keys are then the defaults. A file name that can't
-    /// name a doc, a second doc of the same name, or a body holding a marker line leaves the frontmatter read.
+    /// Why the doc's frontmatter can't be read, when it can't (a file that isn't UTF-8 among them): its keys are then
+    /// the defaults. A file name that can't name a doc, a second doc of the same name, or a body holding a marker line
+    /// leaves the frontmatter read.
     pub fn frontmatter_error(&self) -> Option<&str> {
         self.error
             .as_deref()
@@ -85,11 +87,15 @@ fn name_chars_ok(name: &str) -> bool {
 
 /// Reads a doc's file. Never fails: a problem sets `error` and leaves the keys at their defaults.
 pub fn parse(name: &str, scope: DocScope, path: PathBuf, bytes: &[u8]) -> Doc {
-    let text = String::from_utf8_lossy(bytes);
-    let text = text.strip_prefix('\u{feff}').unwrap_or(&text).replace("\r\n", "\n");
+    // Bytes that aren't UTF-8 aren't decoded at all, as the copies aren't (`copy::read_disk`): read lossily, U+FFFD
+    // would go into every copy, and a save would replace the file's own bytes. The doc is broken and its body empty.
+    let (text, mut error) = match std::str::from_utf8(bytes) {
+        Ok(text) => (text, None),
+        Err(_) => ("", Some(NOT_UTF8.to_string())),
+    };
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text).replace("\r\n", "\n");
     let lines: Vec<&str> = text.split('\n').collect();
     let mut fm = Fm::defaults();
-    let mut error = None;
     let mut body_start = 0;
     if lines[0].trim_end() == "---" {
         match lines.iter().skip(1).position(|l| l.trim_end() == "---").map(|i| i + 1) {
@@ -437,7 +443,7 @@ pub(crate) fn read_plain(path: &Path) -> Result<Vec<u8>, String> {
 }
 
 /// The `*.md` files directly in `dir`, sorted by name without case. A missing folder is an empty list. A file that
-/// isn't read (a link, over 4 MiB, or locked) is listed with its error, so its copies are left as they are.
+/// isn't read (a link, over 4 MiB, locked, or not UTF-8) is listed with its error, so its copies are left as they are.
 pub fn read_dir(dir: &Path, scope: DocScope) -> Vec<Doc> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -579,6 +585,21 @@ mod tests {
         assert_eq!(d.description, "x");
         // A save replaces the body, so it isn't refused over this.
         assert_eq!(d.frontmatter_error(), None);
+    }
+
+    #[test]
+    fn a_doc_that_isnt_utf8_is_broken_and_unread() {
+        // Saved as Windows-1252 by hand: a lossy read would copy U+FFFD into every CLI and a save would replace the bytes.
+        let bytes = b"---\ndescription: 'Caf\xe9'\nclis: [claude]\n---\nCaf\xe9 rules\n";
+        let d = parse("x", DocScope::Project, PathBuf::from("x.md"), bytes);
+        let why = "This doc isn't UTF-8 text, so Marshell doesn't read it.";
+        assert_eq!(d.error.as_deref(), Some(why));
+        assert_eq!(d.body, "");
+        assert_eq!(d.description, "");
+        assert_eq!(d.clis, CLIS.to_vec());
+        assert_eq!(d.hash, hash_bytes(bytes));
+        // Its keys are the defaults, so a save is refused rather than writing those over the file.
+        assert_eq!(d.frontmatter_error(), Some(why));
     }
 
     #[test]
