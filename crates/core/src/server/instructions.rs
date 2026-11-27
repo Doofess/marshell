@@ -263,17 +263,21 @@ fn read_project(
     if !stays_inside(&dir, root) {
         return Err(LINKED.to_string());
     }
+    let docs = doc::read_dir(&dir, DocScope::Project);
+    // In a project, found decides only the teammates note on a doc's rows: a project with no docs doesn't pay for the
+    // lookup (a `wsl.exe` run in a distro), and an unknown answer leaves the note out.
+    let found = match distro {
+        _ if docs.is_empty() => Vec::new(),
+        None => found_agents(st),
+        Some(d) => found_in_distro(st, d).unwrap_or_else(|| CLIS.to_vec()),
+    };
     Ok(Place {
         level: Level::Project {
             root: root.to_path_buf(),
             notes: notes_for(st, root, distro, distro_homes),
         },
-        docs: doc::read_dir(&dir, DocScope::Project),
-        // In a project, found decides only the teammates note, which an unknown answer leaves out.
-        found: match distro {
-            None => found_agents(st),
-            Some(d) => found_in_distro(st, d).unwrap_or_else(|| CLIS.to_vec()),
-        },
+        docs,
+        found,
     })
 }
 
@@ -437,6 +441,12 @@ fn doc_of<'a>(req: &DocSave, dir: &Path, docs: &'a [Doc]) -> Result<(Doc, Option
     // A doc Marshell refused to read (a link, or over 4 MiB) is never written over: a save would go wherever it points.
     if let Some(Err(why)) = old.map(|o| doc::read_plain(&o.path)) {
         return Err(Stop::clash(why));
+    }
+    // A doc whose frontmatter can't be read holds the default keys, so a save would write those over the file's.
+    if let Some(why) = old.and_then(Doc::frontmatter_error) {
+        return Err(Stop::unprocessable(format!(
+            "{why} A save would replace it, so fix the file first."
+        )));
     }
     let taken: Vec<&str> = docs
         .iter()
@@ -1154,8 +1164,44 @@ mod tests {
     fn a_distro_project_whose_distro_does_not_answer_reads_no_cli_as_missing() {
         // Found decides only the teammates note in a project; an unknown answer leaves the note out.
         let r = rig_with(vec![wsl_profile()], |st| st.with_distro_which(|_, _| None));
+        write(
+            &r.project.join(".marshell").join("instructions").join("security.md"),
+            &doc_text("s", "Be careful.\n"),
+        );
         let place = super::read_project(&r.st, &r.project, Some(DISTRO), &[]).unwrap();
         assert_eq!(place.found, CLIS.to_vec());
+    }
+
+    #[test]
+    fn a_project_with_no_docs_asks_for_no_clis() {
+        // Found decides only notes on a doc's rows, so a project with none doesn't pay for the lookup, which in a
+        // distro is a `wsl.exe` run per project on every view and Doctor run.
+        let r = rig_with(vec![wsl_profile()], |st| {
+            st.with_distro_which(|_, _| panic!("asked the distro for its CLIs"))
+        });
+        let place = super::read_project(&r.st, &r.project, Some(DISTRO), &[]).unwrap();
+        assert!(place.found.is_empty());
+    }
+
+    #[tokio::test]
+    async fn save_refuses_over_a_doc_whose_frontmatter_cant_be_read() {
+        // Its keys read as the defaults, so a save would write those over what the file holds (here a merge conflict).
+        let r = rig();
+        let path = r.home.join("instructions").join("security.md");
+        let text = "---\ndescription: 'ours'\n<<<<<<< HEAD\nclis: [claude]\n=======\nclis: [codex]\n>>>>>>> theirs\n---\nBe careful.\n";
+        write(&path, text);
+        let req = DocSave {
+            old_name: Some("security".into()),
+            ..save_of("security", "Be careful.\n")
+        };
+        let (status, body) = post(&r.st, "save", &req).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+        assert!(body.starts_with("Line "), "{body}");
+        assert!(
+            body.ends_with(" of the frontmatter can't be read. A save would replace it, so fix the file first."),
+            "{body}"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), text);
     }
 
     fn link_dir(link: &Path, target: &Path) -> std::io::Result<()> {

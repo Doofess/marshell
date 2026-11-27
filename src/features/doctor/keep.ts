@@ -13,9 +13,11 @@ export const keepName = (action: DoctorAction, title: string, busy: boolean) => 
 export const keepDone = (action: DoctorAction) => (action === "keep" ? "Marshell keeps your file as it is." : "Marshell no longer keeps that file.");
 /**
  * The mark both of one file's rows carry on their button ("isn't Marshell's file any more" and "has your changes"):
- * a press swaps one row for the other, and the focus follows to the button that took its place.
+ * a press swaps one row for the other, and the focus follows to the button that took its place. A "Use this copy's
+ * text" row carries its own: it swaps with nothing, and a Keep press on the same CLI must not land on it.
  */
-export const keepFocusKey = (item: { agent?: string | null; distro?: string | null }) => `${item.agent ?? ""}|${item.distro ?? ""}`;
+export const keepFocusKey = (item: { agent?: string | null; distro?: string | null; action?: DoctorAction | null; id?: string }) =>
+  item.action === "useCopy" ? `use:${item.id ?? ""}` : `${item.agent ?? ""}|${item.distro ?? ""}`;
 
 /** Whether a press left the focus nowhere: on nothing, on the body, or on the page itself, which takes it while a check hides the rows. */
 export const keepFocusLost = (active: unknown, body: unknown, page: unknown) => active === null || active === body || (page !== null && active === page);

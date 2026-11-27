@@ -30,6 +30,14 @@ pub struct Doc {
     pub duplicate: bool,
 }
 
+impl Doc {
+    /// Why the doc's frontmatter can't be read, when it can't: its keys are then the defaults. A file name that can't
+    /// name a doc, or a second doc of the same name, leaves the frontmatter read.
+    pub fn frontmatter_error(&self) -> Option<&str> {
+        self.error.as_deref().filter(|e| !self.duplicate && *e != NAME_ERROR)
+    }
+}
+
 struct Fm {
     description: String,
     clis: Vec<&'static str>,

@@ -49,6 +49,10 @@ describe("keep buttons", () => {
     expect(keepFocusKey({ agent: "copilot", distro: "Ubuntu" })).toBe("copilot|Ubuntu");
     expect(keepFocusKey({})).toBe("|");
   });
+  it("keepFocusKey keeps a Use this copy's text row apart, so a Keep press on the same CLI never lands on it", () => {
+    expect(keepFocusKey({ agent: "copilot", action: "useCopy", id: "libdrift.a" })).toBe("use:libdrift.a");
+    expect(keepFocusKey({ agent: "copilot", action: "keep", id: "copilot.keep" })).toBe("copilot|");
+  });
   it("keepDone says what Marshell now does", () => {
     expect(keepDone("keep")).toBe("Marshell keeps your file as it is.");
     expect(keepDone("stopKeeping")).toBe("Marshell no longer keeps that file.");
