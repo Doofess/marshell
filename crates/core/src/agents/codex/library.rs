@@ -286,8 +286,6 @@ pub(crate) enum Trust {
 
 /// What Codex's user config says about the project: the folder's own `[projects.'<key>']` entry, else its git root's,
 /// compared as Codex compares them (`trust_key`). The first entry found decides.
-// Used by the library planner (slice 8a Task 5).
-#[allow(dead_code)]
 pub(crate) fn project_trust(user_config: Option<&str>, project_key: &str, git_root_key: Option<&str>) -> Trust {
     use super::extensions::trust_key;
     let Some(doc) = user_config.and_then(|t| t.parse::<DocumentMut>().ok()) else {
@@ -314,8 +312,6 @@ pub(crate) fn project_trust(user_config: Option<&str>, project_key: &str, git_ro
 }
 
 /// Whether the user's Codex config sets its own `developer_instructions` (a project's value replaces it).
-// Used by the library planner (slice 8a Task 5).
-#[allow(dead_code)]
 pub(crate) fn user_sets_developer_instructions(user_config: Option<&str>) -> bool {
     let Some(doc) = user_config.and_then(|t| t.parse::<DocumentMut>().ok()) else {
         return false;

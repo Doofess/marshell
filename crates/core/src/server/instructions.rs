@@ -11,11 +11,11 @@ use crate::agents::codex::library::{Trust, project_trust, user_sets_developer_in
 use crate::agents::qwen::extensions::{folder_trust_on, folder_trusted};
 use crate::config::jsonc::read_value;
 use crate::config::service::ApplyError;
-use crate::instructions::copy::{Disk, parse_end, parse_marker, read_disk};
+use crate::instructions::copy::{Disk, first_marker, read_disk};
 use crate::instructions::doc::{self, CLIS, Doc};
 use crate::instructions::library::{
-    Level, LevelState, Notes, Place, delete_plan, level_state, put_back_plan, review_plan, save_plan, stays_inside,
-    take_copy_plan,
+    CantTake, Level, LevelState, Notes, Place, delete_plan, level_state, put_back_plan, review_plan, save_plan,
+    stays_inside, take_copy_plan,
 };
 use crate::instructions::roots::Roots;
 use crate::projects;
@@ -36,6 +36,7 @@ const NOT_KNOWN: &str = "Marshell doesn't know this project.";
 const LINKED: &str = "This project's .marshell folder links outside it, so Marshell doesn't read its docs.";
 const NO_DOC: &str = "No doc of that name here.";
 const CHANGED: &str = "This copy changed. Check again.";
+const TAKES_A_MARKER: &str = "This copy holds a line that marks Marshell's copies, so a doc can't take its text.";
 const NEEDS_PROJECT: &str = "A project doc needs a project.";
 const CODEX_NO_ENTRY: &str = "Codex loads it once you trust this project in Codex.";
 const CODEX_UNTRUSTED: &str = "Codex doesn't trust this project, so it loads none of its instructions.";
@@ -125,20 +126,21 @@ fn read_user_docs(st: &AppState) -> Vec<Doc> {
     doc::read_dir(&st.0.home.join("instructions"), DocScope::User)
 }
 
-/// The CLIs found on a running distro's own PATH, in CLI order. Never called for a stopped distro.
-fn found_in_distro(st: &AppState, distro: &str) -> Vec<&'static str> {
+/// The CLIs found on a running distro's own PATH, in CLI order; None when `wsl.exe` didn't answer (it timed out or
+/// failed), which says nothing about the CLIs. Never called for a stopped distro.
+fn found_in_distro(st: &AppState, distro: &str) -> Option<Vec<&'static str>> {
     let words = super::catalog::wsl_words(st);
     let asked: Vec<String> = words.iter().filter_map(|(_, word)| word.clone()).collect();
-    let Some(found) = st.agents_in_distro(distro, &asked) else {
-        return Vec::new();
-    };
-    CLIS.into_iter()
-        .filter(|cli| {
-            words
-                .iter()
-                .any(|(id, word)| id == cli && word.as_ref().is_some_and(|w| found.contains(w)))
-        })
-        .collect()
+    let found = st.agents_in_distro(distro, &asked)?;
+    Some(
+        CLIS.into_iter()
+            .filter(|cli| {
+                words
+                    .iter()
+                    .any(|(id, word)| id == cli && word.as_ref().is_some_and(|w| found.contains(w)))
+            })
+            .collect(),
+    )
 }
 
 fn user_places_with(st: &AppState, docs: &[Doc], distro_homes: &[(String, PathBuf)]) -> Vec<Place> {
@@ -154,13 +156,18 @@ fn user_places_with(st: &AppState, docs: &[Doc], distro_homes: &[(String, PathBu
         });
     }
     for (distro, home) in distro_homes {
+        // A distro that didn't say which CLIs it has is left out this time, as one whose home can't be found is: read
+        // as "none", every copy in it would be one to remove.
+        let Some(found) = found_in_distro(st, distro) else {
+            continue;
+        };
         places.push(Place {
             level: Level::User {
                 roots: Roots::under(home),
                 distro: Some(distro.clone()),
             },
             docs: docs.to_vec(),
-            found: found_in_distro(st, distro),
+            found,
         });
     }
     places
@@ -262,9 +269,10 @@ fn read_project(
             notes: notes_for(st, root, distro, distro_homes),
         },
         docs: doc::read_dir(&dir, DocScope::Project),
+        // In a project, found decides only the teammates note, which an unknown answer leaves out.
         found: match distro {
             None => found_agents(st),
-            Some(d) => found_in_distro(st, d),
+            Some(d) => found_in_distro(st, d).unwrap_or_else(|| CLIS.to_vec()),
         },
     })
 }
@@ -413,13 +421,6 @@ pub async fn library(State(st): State<AppState>, Query(q): Query<ViewQuery>) -> 
 
 // ---- saving ----
 
-/// The first line of `body` that Marshell's copies use as a marker, counted from 1.
-fn marker_line(body: &str) -> Option<usize> {
-    body.lines()
-        .position(|line| parse_marker(line).is_some() || parse_end(line).is_some())
-        .map(|i| i + 1)
-}
-
 /// What a person's save of a doc turns into, checked: the doc as it will be written and the doc it replaces.
 fn doc_of<'a>(req: &DocSave, dir: &Path, docs: &'a [Doc]) -> Result<(Doc, Option<&'a Doc>), Stop> {
     let mut clis = Vec::new();
@@ -449,7 +450,7 @@ fn doc_of<'a>(req: &DocSave, dir: &Path, docs: &'a [Doc]) -> Result<(Doc, Option
     let globs = doc::check_globs(&req.globs).map_err(Stop::unprocessable)?;
     doc::check_description(&req.description).map_err(Stop::unprocessable)?;
     let body = req.body.replace("\r\n", "\n");
-    if let Some(n) = marker_line(&body) {
+    if let Some(n) = first_marker(&body) {
         return Err(Stop::unprocessable(format!(
             "Line {n} marks Marshell's copies, so a doc can't hold it."
         )));
@@ -628,11 +629,14 @@ fn fix_copy(st: &AppState, req: CopyFix) -> Result<ConfigPreview, Stop> {
     let editable = |p: &Path| st.0.config.editable(p);
     let home = user_home(st);
     let plan = if req.take_copy {
-        take_copy_plan(&place, &doc.name, &req.cli, &home, &editable)
+        take_copy_plan(&place, &doc.name, &req.cli, &home, &editable).map_err(|why| match why {
+            CantTake::Gone => Stop::clash(CHANGED),
+            CantTake::Marker => Stop::unprocessable(TAKES_A_MARKER),
+        })
     } else {
-        put_back_plan(&place, &doc.name, &req.cli, &home, &editable)
+        put_back_plan(&place, &doc.name, &req.cli, &home, &editable).ok_or_else(|| Stop::clash(CHANGED))
     };
-    let cs = plan.ok_or_else(|| Stop::clash(CHANGED))?;
+    let cs = plan?;
     Ok(preview_of(st, cs))
 }
 
@@ -1105,6 +1109,53 @@ mod tests {
         let v = view_ok(&r.st, None).await;
         assert!(v.user_docs[0].rows.iter().all(|x| x.state != CopyState::Waiting));
         drop(r);
+    }
+
+    #[tokio::test]
+    async fn a_distro_that_does_not_answer_keeps_its_copies() {
+        // `wsl.exe` timing out or failing says nothing about the distro's CLIs: its copies are neither extra nor removed.
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static ANSWERS: AtomicBool = AtomicBool::new(true);
+        let dir = tempfile::tempdir().unwrap();
+        let dhome = canonical(dir.path()).join("distro-home");
+        std::fs::create_dir_all(&dhome).unwrap();
+        let target = DistroTarget {
+            home: dhome.clone(),
+            bridge: "/mnt/c/marshell-hook.exe".into(),
+        };
+        let r = rig_with(vec![wsl_profile()], |st| {
+            st.with_running_distros(|| vec![DISTRO.to_string()])
+                .with_distro_target(Some(target))
+                .with_distro_which(|_, words| {
+                    ANSWERS
+                        .load(Ordering::SeqCst)
+                        .then(|| words.iter().filter(|w| w.as_str() == "claude").cloned().collect())
+                })
+        });
+        managed_in(&r, &dhome.join(".claude").join("settings.json").to_string_lossy());
+        write(
+            &r.home.join("instructions").join("security.md"),
+            &doc_text("s", "Be careful.\n"),
+        );
+        let (status, body) = post(&r.st, "review", &serde_json::json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        apply(&r.st, &serde_json::from_str(&body).unwrap());
+        let copy = dhome.join(".claude").join("rules").join("marshell-security.md");
+        assert!(copy.exists());
+        assert_eq!(view_ok(&r.st, None).await.out_of_date, 0);
+        ANSWERS.store(false, Ordering::SeqCst);
+        let v = view_ok(&r.st, None).await;
+        assert_eq!(v.out_of_date, 0, "{:?}", v.user_docs[0].rows);
+        assert!(v.user_docs[0].rows.iter().all(|x| x.state != CopyState::Extra));
+        drop(r);
+    }
+
+    #[test]
+    fn a_distro_project_whose_distro_does_not_answer_reads_no_cli_as_missing() {
+        // Found decides only the teammates note in a project; an unknown answer leaves the note out.
+        let r = rig_with(vec![wsl_profile()], |st| st.with_distro_which(|_, _| None));
+        let place = super::read_project(&r.st, &r.project, Some(DISTRO), &[]).unwrap();
+        assert_eq!(place.found, CLIS.to_vec());
     }
 
     fn link_dir(link: &Path, target: &Path) -> std::io::Result<()> {

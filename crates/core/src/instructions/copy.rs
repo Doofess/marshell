@@ -47,6 +47,14 @@ pub fn parse_end(line: &str) -> Option<String> {
     (!name.is_empty() && !name.contains(' ')).then(|| name.to_string())
 }
 
+/// The first line of `body` that Marshell's copies use as a marker, counted from 1. A doc can't hold one: in Codex's
+/// files it would end or start a block.
+pub fn first_marker(body: &str) -> Option<usize> {
+    body.lines()
+        .position(|line| parse_marker(line).is_some() || parse_end(line).is_some())
+        .map(|i| i + 1)
+}
+
 /// BOM dropped, `\r\n` taken as `\n`.
 pub fn normalized(text: &str) -> String {
     text.strip_prefix('\u{feff}').unwrap_or(text).replace("\r\n", "\n")

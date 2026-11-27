@@ -1040,6 +1040,15 @@ pub fn put_back_plan(
     })
 }
 
+/// Why "Use this copy's text" has no plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CantTake {
+    /// The copy is no longer changed outside Marshell, or its doc or CLI is gone.
+    Gone,
+    /// The copy's text holds a line Marshell's copies use as a marker, which a doc can't hold (as a save refuses one).
+    Marker,
+}
+
 /// The copy's text becomes the doc's, and the copy is written again from the doc as it will be read back.
 pub fn take_copy_plan(
     place: &Place,
@@ -1047,19 +1056,22 @@ pub fn take_copy_plan(
     cli: &str,
     user_home: &Path,
     editable: &dyn Fn(&Path) -> bool,
-) -> Option<ChangeSet> {
-    let cli = cli_id(cli)?;
+) -> Result<ChangeSet, CantTake> {
+    let cli = cli_id(cli).ok_or(CantTake::Gone)?;
     let (a, _) = analyze(place, user_home, editable);
-    let it = changed(&a, name, cli)?;
-    let body = it.body.clone()?;
-    let doc = doc::find(&place.docs, name)?;
+    let it = changed(&a, name, cli).ok_or(CantTake::Gone)?;
+    let body = it.body.clone().ok_or(CantTake::Gone)?;
+    if super::copy::first_marker(&body).is_some() {
+        return Err(CantTake::Marker);
+    }
+    let doc = doc::find(&place.docs, name).ok_or(CantTake::Gone)?;
     let mut taken = doc.clone();
     taken.body = body;
     let rendered = doc::render(&taken);
     // The copy is planned from what the doc will read back as: reading trims the body's trailing blank lines.
     let reread = doc::parse(&doc.name, doc.scope, doc.path.clone(), rendered.as_bytes());
     if reread.error.is_some() {
-        return None;
+        return Err(CantTake::Gone);
     }
     let docs = place
         .docs
@@ -1089,7 +1101,7 @@ pub fn take_copy_plan(
         Some(doc.hash.clone()),
     )];
     edits.extend(copy_edits);
-    Some(ChangeSet {
+    Ok(ChangeSet {
         title: format!("Use the text of {} in {}", ctx.show(&it.path), doc.name),
         reason: "Make the copy's text the doc's. Its other copies stay out of date until Review.".to_string(),
         edits,
@@ -2142,7 +2154,10 @@ Be careful.
         let root = t.path();
         let p = on_disk(root);
         assert!(put_back_plan(&p, "security", "qwen", user(), &yes).is_none());
-        assert!(take_copy_plan(&p, "security", "qwen", user(), &yes).is_none());
+        assert_eq!(
+            take_copy_plan(&p, "security", "qwen", user(), &yes).err(),
+            Some(CantTake::Gone)
+        );
         assert!(put_back_plan(&p, "nope", "qwen", user(), &yes).is_none());
     }
 
@@ -2176,6 +2191,20 @@ Be careful.
                 CopyState::InSync,
                 CopyState::OutOfDate
             ]
+        );
+    }
+
+    #[test]
+    fn take_copy_plan_refuses_a_copy_holding_a_marker_line() {
+        // Save refuses such a body; taken into the doc, the line would end the doc's Codex block early.
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path();
+        let p = on_disk(root);
+        let edited = read(root, QWEN).replace("Be careful.", "Mine.\n<!-- marshell:end doc security -->");
+        write(root, QWEN, &edited);
+        assert_eq!(
+            take_copy_plan(&p, "security", "qwen", user(), &yes).err(),
+            Some(CantTake::Marker)
         );
     }
 

@@ -13,7 +13,7 @@ export function LoadsIn({ rows, orphan = false, onCopyFix }: { rows: CopyRow[]; 
       {rows.map((row, i) => {
         const hint = `${uid}-${i}`;
         return (
-          <li key={`${row.cli ?? ""}/${row.distro ?? ""}/${row.path ?? ""}`} className="loads__row" data-state={row.state}>
+          <li key={`${row.cli ?? ""}/${row.distro ?? ""}/${row.path ?? ""}/${i}`} className="loads__row" data-state={row.state}>
             <p className="loads__head">
               <span className="loads__cli">{rowLabel(row)}</span>
               <span className="loads__state">{stateText(row)}</span>

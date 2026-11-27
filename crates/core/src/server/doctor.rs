@@ -1283,7 +1283,7 @@ fn library_edits(st: &AppState, gathered: &Gathered, ids: &[&String]) -> Result<
                 .iter()
                 .find(|c| c.state == CopyState::ChangedOutside && doctor_library::drift_id(c) == want);
             if let Some(copy) = found {
-                let plan = take_copy_plan(place, &copy.doc, copy.cli, &home, &editable).ok_or_else(cant_fix)?;
+                let plan = take_copy_plan(place, &copy.doc, copy.cli, &home, &editable).map_err(|_| cant_fix())?;
                 return Ok(plan.edits);
             }
         }

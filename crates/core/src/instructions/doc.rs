@@ -327,6 +327,9 @@ pub fn check_globs(globs: &[String]) -> Result<Vec<String>, String> {
         if g.is_empty() {
             continue;
         }
+        if g.contains(['\n', '\r']) {
+            return Err("A glob is one line.".into());
+        }
         if g.contains(',') {
             return Err(format!("{g}: a glob can't hold a comma. Write it as two globs."));
         }
@@ -590,6 +593,9 @@ mod tests {
             check_globs(&v(&["../x"])),
             Err("../x: a glob can't go above the project with ..".into())
         );
+        // The local API can send one; the doc's `globs:` line and each copy's frontmatter would break.
+        assert_eq!(check_globs(&v(&["src/a\nb"])), Err("A glob is one line.".into()));
+        assert_eq!(check_globs(&v(&["src/a\rb"])), Err("A glob is one line.".into()));
     }
 
     #[test]
