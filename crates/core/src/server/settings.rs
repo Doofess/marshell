@@ -130,6 +130,7 @@ pub async fn windows_terminal() -> Result<Json<Vec<FoundFile>>, (StatusCode, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use marshell_protocol::api::AppTheme;
     use std::time::Duration;
 
     /// Two saves at once must not interleave their disk write and their memory update, or the file
@@ -142,7 +143,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let st = AppState::new("t".into(), 1, Vec::new(), home.path().to_path_buf(), Vec::new());
         let mut settings = Settings::default();
-        settings.appearance.accent = "teal".into();
+        settings.appearance.theme = AppTheme::Dark;
         let file = crate::paths::settings_file(home.path());
 
         let held = st.0.settings.lock().unwrap();
@@ -155,9 +156,9 @@ mod tests {
         drop(held);
 
         let Json(answer) = task.await.unwrap().unwrap();
-        assert_eq!(answer.appearance.accent, "teal");
+        assert_eq!(answer.appearance.theme, AppTheme::Dark);
         assert!(file.exists());
-        assert_eq!(st.0.settings.lock().unwrap().appearance.accent, "teal");
+        assert_eq!(st.0.settings.lock().unwrap().appearance.theme, AppTheme::Dark);
     }
 
     /// The folder check can hang on a network drive, so it must not run while the settings lock is held: that
@@ -212,12 +213,12 @@ mod tests {
             default_folder: Some(dir.clone()),
             ..Settings::default()
         };
-        settings.appearance.accent = "teal".into();
+        settings.appearance.theme = AppTheme::Dark;
 
         let Json(answer) = put(State(st.clone()), Json(settings)).await.unwrap();
-        assert_eq!(answer.appearance.accent, "teal");
+        assert_eq!(answer.appearance.theme, AppTheme::Dark);
         let saved = st.0.settings.lock().unwrap().clone();
-        assert_eq!(saved.appearance.accent, "teal");
+        assert_eq!(saved.appearance.theme, AppTheme::Dark);
         assert_eq!(saved.default_folder.as_deref(), Some(dir.as_str()));
         assert!(!gone.exists());
     }

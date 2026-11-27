@@ -8,11 +8,7 @@ import type { TextSize } from "./TextSize";
 /**
  * How the app and its terminals look.
  */
-export type Appearance = { theme: AppTheme, 
-/**
- * A preset name (sand, amber, blue, indigo, violet, magenta, cyan, teal, slate) or `#rrggbb`.
- */
-accent: string, contrast: ContrastMode, text_size: TextSize, 
+export type Appearance = { theme: AppTheme, contrast: ContrastMode, text_size: TextSize, 
 /**
  * "follow-app", "dark", "light" or the id of an imported theme.
  */

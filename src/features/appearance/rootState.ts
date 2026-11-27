@@ -3,7 +3,6 @@ import type { Appearance } from "../../generated/Appearance";
 /** What the app shows before the settings arrive, and when they can't be read. Matches the core's defaults. */
 export const DEFAULT_APPEARANCE: Appearance = {
   theme: "follow-system",
-  accent: "sand",
   contrast: "follow-system",
   text_size: "default",
   terminal_theme: "follow-app",
