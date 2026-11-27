@@ -15,6 +15,8 @@ export type DialogDom = {
   title: Focusable | null;
   /** The dialog's controls in document order (the FOCUSABLE query), read afresh when a key arrives. */
   controls(): Focusable[];
+  /** Whether the keyboard is in an editor, which keeps Esc for itself: Esc then Tab leaves it (docs/PLAN.md, the text editor). */
+  editing?(): boolean;
   /** Listens for keydown on the dialog; returns the way to stop listening. */
   onKeydown(handler: (e: { key: string; shiftKey?: boolean; defaultPrevented?: boolean; preventDefault(): void }) => void): () => void;
 };
@@ -34,6 +36,8 @@ export function openDialogFocus(dom: DialogDom, close: () => void): () => void {
     const current = dom.active();
     const action = trapKey(e, controls.length, current ? controls.indexOf(current) : -1);
     if (!action) return;
+    // Esc in an editor already did the editor's part (it closed the find bar, or armed the Tab that leaves); the dialog stays.
+    if (action.kind === "close" && dom.editing?.()) return;
     e.preventDefault();
     if (action.kind === "focus") controls[action.index]?.focus();
     else if (action.kind === "close") close();
@@ -50,6 +54,7 @@ export function dialogDom(el: HTMLElement, title: HTMLElement | null, doc: Docum
     active: () => (doc.activeElement instanceof HTMLElement ? doc.activeElement : null),
     title,
     controls: () => [...el.querySelectorAll<HTMLElement>(FOCUSABLE)],
+    editing: () => doc.activeElement instanceof HTMLElement && doc.activeElement.isContentEditable,
     onKeydown: (handler) => {
       el.addEventListener("keydown", handler);
       return () => el.removeEventListener("keydown", handler);

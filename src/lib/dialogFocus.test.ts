@@ -21,8 +21,10 @@ function fakeDialog(names: string[]) {
   active = opener;
   let handler: ((e: { key: string; shiftKey?: boolean; defaultPrevented?: boolean; preventDefault(): void }) => void) | null = null;
   let prevented = 0;
+  let editing = false;
   const dom: DialogDom = {
     active: () => active,
+    editing: () => editing,
     title,
     controls: () => controls,
     onKeydown: (h) => {
@@ -35,7 +37,10 @@ function fakeDialog(names: string[]) {
   const press = (key: string, shiftKey = false) => handler?.({ key, shiftKey, preventDefault: () => prevented++ });
   /** A key that bubbled up from a dialog inside this one, which already handled it. */
   const pressHandled = (key: string) => handler?.({ key, defaultPrevented: true, preventDefault: () => prevented++ });
-  return { dom, log, press, pressHandled, prevented: () => prevented, listening: () => handler !== null };
+  const setEditing = (on: boolean) => {
+    editing = on;
+  };
+  return { dom, log, press, pressHandled, setEditing, prevented: () => prevented, listening: () => handler !== null };
 }
 
 describe("openDialogFocus: one run per open", () => {
@@ -66,6 +71,22 @@ describe("openDialogFocus: one run per open", () => {
     expect(closed).toEqual(["first", "second"]);
     expect(d.prevented()).toBe(2);
     expect(d.log).toEqual(["title"]);
+  });
+  // Found in slice 8a's live check: Esc in the Instructions page's editor closed the page, so with Tab indenting there was
+  // no way out of the editor by keyboard but closing. The editor keeps its Esc (Esc then Tab leaves it, docs/PLAN.md).
+  it("Escape with the keyboard in an editor leaves the dialog open, and Tab still walks", () => {
+    const d = fakeDialog(["Save", "Fix"]);
+    const closed: string[] = [];
+    openDialogFocus(d.dom, () => closed.push("closed"));
+    d.setEditing(true);
+    d.press("Escape");
+    expect(closed).toEqual([]);
+    expect(d.prevented()).toBe(0);
+    d.press("Tab");
+    expect(d.log.at(-1)).toBe("Save");
+    d.setEditing(false);
+    d.press("Escape");
+    expect(closed).toEqual(["closed"]);
   });
   // Found in the 7a live check: the fix sheet is a dialog inside the Doctor. Its Escape bubbled on and closed the Doctor
   // too, and each Tab moved twice, so Tab never reached the sheet's scrolling body.
