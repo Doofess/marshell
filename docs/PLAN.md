@@ -84,7 +84,7 @@ Each step builds on the one before it, so do them in this order. All of them are
 
 | # | Deliverable | Contents |
 |---|---|---|
-| 1 | Tokens + type specimen | Colours, spacing, radii. AA matrix for the 8 accents in both themes. Type scale with real strings. |
+| 1 | Tokens + type specimen | Colours, spacing, radii. AA matrix for the 8 accents in both themes. Slice 6z (2026-11-27) removed the accent choice; only sand is left. Type scale with real strings. |
 | 2 | Status glyph set + motion | Every glyph at 12/16 px. Live animations, plus their reduced-motion versions. |
 | 3 | Sidebar row matrix | Every state in the row table below, in comfortable and expanded (there is no compact density). Truncation at a 200 px sidebar. |
 | 4 | Approve card | Safe Bash, risky Bash, Edit with diff, Write of a new file, MCP tool, a 40-line command, question card, after-decision receipt, "Answered in terminal", released on timeout. |
@@ -313,12 +313,12 @@ Every choice is monospace and falls back to the system monospace font and then t
 
 **Colour tokens:** the source of truth is `src/styles/tokens.css` (oklch, `light-dark()`), `accents.css` and the Storybook Colours story; this plan holds no hex values. Rules that stay binding:
 - Surfaces: a dark grey dark theme and a soft warm-white light theme (changed 2026-11-20, "Soft surfaces decisions"). With High contrast on, by the setting or by Windows asking for more contrast, they are true black and pure white. Marshell's default terminal theme follows the window's base surface in all four cases; an imported terminal theme keeps its own colours. Hover and selected are low-alpha overlays of the text colour. Text has three levels, and `--text-3` must pass AA on every surface.
-- **The accent follows the vendor.** Everything in a session's row, card or terminal (its header, composer and status bar too) takes that CLI's signal colour; the window's own controls (the palette, the shell panel, the navigation cursor) keep the app accent: focus rings, primary buttons, the needs-you tint. Where no session is in play (onboarding, settings, doctor) the user's chosen accent applies; the default is sand, a warm dark grey in light mode and a beige in dark mode, kept apart from Codex's neutral grey and OpenAI's pale yellow (9 accents: sand, amber, blue, indigo, violet, magenta, cyan, teal, slate). Vendor colours are checked for 4.5:1 text on their button fill and 3:1 for rings and bars on every surface (`accentFollowsVendor.test.ts`). This rule stands as written until slice 6z merges (decided 2026-11-27): 6z removes the chosen accent, so the app accent is sand alone, and rewrites this rule then.
+- **The accent follows the vendor.** Everything in a session's row, card or terminal (its header, composer and status bar too) takes that CLI's signal colour; the window's own controls (the palette, the shell panel, the navigation cursor) keep the app accent: focus rings, primary buttons, the needs-you tint. Where no session is in play (onboarding, settings, the Doctor, History, Instructions) the app accent applies. It is sand, a warm dark grey in light mode and a beige in dark mode, kept apart from Codex's neutral grey and OpenAI's pale yellow, and it can't be changed: slice 6z removed the accent picker (decided 2026-11-27). Vendor colours are checked for 4.5:1 text on their button fill and 3:1 for rings and bars on every surface (`accentFollowsVendor.test.ts`).
 - **No boxed outlines.** Cards, buttons, chips and keys are told apart by fill and tint, never by a 1 px box; a risky request is a tinted card with a red bar on its start edge. Hairlines stay as dividers between regions, and the keyboard focus ring stays everywhere but the launcher. There, slice 6o decision 9's look replaces it: focus turns a control's colours over. A chip or Back fills with the agent's accent and takes its ink, Start turns to ink with accent text, and a text field or the prompt line drops to the terminal's surface tinted with the accent, under an accent caret; forced colors draw a 2 px Highlight outline instead. A later slice carries it to the other stylesheets once the user has judged it. `noBoxedOutlines.test.ts` enforces it.
 - **Scrollbars:** the main window never shows a scrollbar: only the terminal conversation and the session list scroll, both by wheel, keys and touch, with the bar invisible. Menus, settings and the request-details drawer, which may scroll, keep a quiet 12 px pill that follows the theme and strengthens on hover and drag. `noScrollInMainWindow.test.ts` scans every feature and component stylesheet.
-- Status colours (error, ok, caution) are separate from the accent. Caution is yellow (dark) or olive (light) so it stays distinct from amber; `contrast.test.ts` checks AA and CIEDE2000 distance for every pair, including amber vs caution.
+- Status colours (error, ok, caution) are separate from the accent. Caution is yellow (dark) or olive (light), and `contrast.test.ts` checks AA and CIEDE2000 distance for every pair, including the app accent against each status colour.
 - Brand colours are for marks, stripes and dots and, as the accent, for the focused session's rings, bars and primary buttons (see the accent rule above). Claude's is a muted terracotta, never a status colour; Codex and Antigravity have their own tokens (OpenAI is a pale yellow in dark mode and a deep teal in light; a yellow that passes 3:1 on white looked like muddy gold). All are user-changeable.
-- Custom accent hex: validated at pick time against both themes (AA for `--accent-ink`), rejected with the reason if it fails. This stands until slice 6z merges, which removes it with the presets (decided 2026-11-27).
+- No accent choice: slice 6z removed the nine presets and the custom hex (decided 2026-11-27). An `accent` that an older build saved is ignored, then left out of the next save.
 
 **Motion:**
 
@@ -427,7 +427,7 @@ marshell/
     styles/fonts.css          # the bundled JetBrains Mono
     components/               # primitives over radix-ui
     features/                 # sidebar, terminal, launcher, palette, departures, history, doctor, settings, editors
-      appearance/             # Appearance dialog, provider, theme import parsers, custom accent check
+      appearance/             # Appearance dialog, provider, theme import parsers
       sessions/ResumeBar.tsx  # the Resume view for Ended tabs and the bar under an Exited terminal
       sidebar/grouping.ts     # project grouping of the session list (pure)
       window/viewState.ts     # the selected session, focus mode and sidebar state, and what goes to layout.json (pure)
@@ -559,7 +559,7 @@ The Rust core is the only source of truth.
 ```
 ~/.marshell/
   run/endpoint.json         bin/marshell-hook(.exe), bin/marshell(.exe)   # copied from the bundle on launch, hash-checked
-  settings.json             # app settings (theme, accent, notif rules, sounds, quiet hours, the browser's settings, the Files panel's editor settings)
+  settings.json             # app settings (theme, notif rules, sounds, quiet hours, the browser's settings, the Files panel's editor settings)
   layout.json               # tabs, order, groups, the selected session, last launcher choice per project, each session's side-pane tabs and file tree, the window's pane and tree sizes
   profiles.json  agents.json (custom agents)
   managed.json              # manifest of every entry Marshell wrote into any CLI config (path, pointer, tag, hash)
@@ -779,7 +779,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
    - Scope:
      - shell detection and profiles, the launcher, profile settings pages
      - app-owned init scripts (OSC 133 prompt and command marks; OSC 7 from the POSIX shells). "Make permanent" moves to phase 3 with the config safety core; PSReadLine and prompt options come later
-     - themes, accent, high-contrast and large-text modes, theme import (Windows Terminal, iTerm2, VS Code)
+     - themes, accent, high-contrast and large-text modes, theme import (Windows Terminal, iTerm2, VS Code) (slice 6z removed the accent choice)
      - **terminal theme** (below): follow-app default, per-profile override, live switch, contrast protection, background-colour answers
      - split view, clickable paths, layout restore, F2 rename, reopen a closed session, drag reorder and project grouping, focus mode and rail (Split view was removed in slice 6q-1.)
      - asciicast v2 recording, palette basics, the keyboard routing above, the cheat sheet, brand colors
@@ -1214,7 +1214,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
         - 6e2: Accounts, CLI version and update, and the read-only company tabs.
      2. Settings is one page in the main window, the phase-0 design with a section nav. Sessions keep running behind it, and Esc goes back to them. Today's Appearance, Notifications, History settings, Agents, Shell profiles and Diagnostics dialogs become its sections, and the separate dialogs go away. Their palette commands open Settings at that section.
      3. The sections in 6e1, in order:
-        - Appearance: app theme, accent, contrast and text size.
+        - Appearance: app theme, accent, contrast and text size (slice 6z removed the accent).
         - Terminal: the terminal theme, the font picker, the font size and theme import.
         - Notifications, with the close button.
         - Shell profiles.
