@@ -689,7 +689,7 @@ mod tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode, header};
     use marshell_protocol::api::{Profile, ShellFamily};
-    use marshell_protocol::config::{ApplyRequest, ConfigPreview, ExpectedHash};
+    use marshell_protocol::config::{ApplyRequest, ConfigPreview, ExpectedHash, FileStatus};
     use marshell_protocol::instructions::{CopyState, DocSave, DocSaved, LibraryView};
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -1265,6 +1265,44 @@ mod tests {
             "{body}"
         );
         assert_eq!(fs::read_to_string(&path).unwrap(), text);
+    }
+
+    #[tokio::test]
+    async fn a_doc_that_isnt_utf8_is_neither_copied_nor_saved_over() {
+        // Saved as Windows-1252 outside Marshell: Review would put U+FFFD in every copy, and a save would replace the
+        // file's own bytes with text the page never showed.
+        let r = rig();
+        let path = r.home.join("instructions").join("security.md");
+        let bytes = b"---\ndescription: 'Caf\xe9'\nclis: [claude, codex]\n---\nCaf\xe9 rules.\n";
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, bytes).unwrap();
+        let sentence = "This doc isn't UTF-8 text, so Marshell doesn't read it.";
+        let v = view_ok(&r.st, None).await;
+        let listed = &v.user_docs[0].doc;
+        assert_eq!(listed.error.as_deref(), Some(sentence));
+        assert_eq!(listed.body, "");
+        let (status, body) = post(&r.st, "review", &serde_json::json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let preview: ConfigPreview = serde_json::from_str(&body).unwrap();
+        assert!(
+            preview.files.iter().all(|f| f.status != FileStatus::Changes),
+            "{:?}",
+            preview.files
+        );
+        let req = DocSave {
+            old_name: Some("security".into()),
+            expected_hash: Some(listed.hash.clone()),
+            ..save_of("security", "Café rules.\n")
+        };
+        let (status, body) = post(&r.st, "save", &req).await;
+        assert_eq!(
+            (status, body.as_str()),
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "This doc isn't UTF-8 text, so Marshell doesn't read it. A save would replace it, so fix the file first."
+            )
+        );
+        assert_eq!(fs::read(&path).unwrap(), bytes);
     }
 
     #[tokio::test]
