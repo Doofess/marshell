@@ -4,7 +4,7 @@ import type { LibraryDoc } from "../../generated/LibraryDoc";
 import type { LibraryView } from "../../generated/LibraryView";
 import type { ProjectInfo } from "../../generated/ProjectInfo";
 import { draftOf } from "./instructionsModel";
-import { conflictLine, fieldOf, initialState, instructionsReducer, isDirtyNow, sheetTitle, type State } from "./instructionsState";
+import { conflictLine, fieldOf, initialState, instructionsReducer, isDirtyNow, saveKeyActs, sheetTitle, type State } from "./instructionsState";
 
 const doc = (name: string, body = "text\n"): LibraryDoc => ({ name, scope: "user", path: `~/${name}.md`, description: "d", clis: ["claude"], globs: [], enabled: true, body, hash: "h1" });
 const view = (...docs: LibraryDoc[]): LibraryView => ({ user_docs: docs.map((d) => ({ doc: d, rows: [] })), project_docs: [], user_orphans: [], project_orphans: [], out_of_date: 0, changed_outside: 0, found: ["claude"] });
@@ -111,5 +111,46 @@ describe("the review sheet's titles", () => {
     expect(sheetTitle({ kind: "delete", name: "SECURITY" })).toBe("Delete SECURITY and its copies");
     expect(sheetTitle({ kind: "copy", takeCopy: false })).toBe("Put the doc's text back");
     expect(sheetTitle({ kind: "copy", takeCopy: true })).toBe("Use this copy's text");
+  });
+  describe("the editor's text revision", () => {
+    it("bumps when a reload brings the disk's text, and the draft holds the disk body and hash", () => {
+      const s = dirty(opened());
+      const disk = { ...doc("Api", "teammate\n"), hash: "h2" };
+      const r = instructionsReducer(s, { type: "reloaded", view: view(disk, doc("Web")), project: "C:/dev/app" });
+      expect(r.textRev).toBe(s.textRev + 1);
+      expect(r.draft?.body).toBe("teammate\n");
+      expect(r.draft?.hash).toBe("h2");
+    });
+    it("bumps when a view that a clean draft follows has a changed body", () => {
+      const s = opened();
+      const r = instructionsReducer(s, { type: "viewLoaded", view: view({ ...doc("Api", "adopted\n"), hash: "h2" }, doc("Web")), project: "C:/dev/app" });
+      expect(r.draft?.body).toBe("adopted\n");
+      expect(r.textRev).toBe(s.textRev + 1);
+    });
+    it("doesn't bump on an edit, so the editor stays under the cursor", () => {
+      const s = opened();
+      expect(dirty(s).textRev).toBe(s.textRev);
+    });
+    it("doesn't bump when a save's view holds the body the draft already has", () => {
+      const s = dirty(opened());
+      const r = instructionsReducer(s, { type: "saved", view: view(doc("Api", "changed\n"), doc("Web")), name: "Api" });
+      expect(r.textRev).toBe(s.textRev);
+    });
+    it("bumps when a typed new draft is discarded for New", () => {
+      let s = instructionsReducer(opened(), { type: "newDoc", scope: "user" });
+      s = instructionsReducer(s, { type: "edit", draft: { ...s.draft!, body: "typed\n" } });
+      const asked = instructionsReducer(s, { type: "newDoc", scope: "user" });
+      expect(asked.asking).not.toBeNull();
+      const r = instructionsReducer(asked, { type: "discard" });
+      expect(r.textRev).toBe(s.textRev + 1);
+    });
+  });
+  describe("Ctrl+S", () => {
+    it("acts only when no sheet and no unsaved-edits question is open", () => {
+      const s = opened();
+      expect(saveKeyActs(s)).toBe(true);
+      expect(saveKeyActs({ ...s, asking: { kind: "close" } })).toBe(false);
+      expect(saveKeyActs({ ...s, review: { title: "t", preview: {} as ConfigPreview, busy: false, conflict: false } })).toBe(false);
+    });
   });
 });

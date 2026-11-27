@@ -18,7 +18,7 @@ import type { EditorPrefs } from "../editor/editorPrefs";
 import { CopiesReview } from "./CopiesReview";
 import { InstructionsPage } from "./InstructionsPage";
 import { copyFixOf, toSave } from "./instructionsModel";
-import { conflictLine, findDoc, initialState, instructionsReducer, isDirtyNow, sheetTitle } from "./instructionsState";
+import { conflictLine, findDoc, initialState, instructionsReducer, isDirtyNow, saveKeyActs, sheetTitle } from "./instructionsState";
 import "../doctor/Doctor.css";
 import "../doctor/LiveDoctor.css";
 import "./LiveInstructions.css";
@@ -215,7 +215,8 @@ export function LiveInstructions({ endpoint, folder, prefs, announce, onClose }:
   const saveKey = (e: React.KeyboardEvent) => {
     if (!isSaveKey(e, os)) return;
     e.preventDefault();
-    void save();
+    // A sheet or the unsaved-edits question is open over the page: the doc behind it waits.
+    if (saveKeyActs(latest.current)) void save();
   };
   const snapshot = s.status?.snapshot;
 
@@ -232,6 +233,7 @@ export function LiveInstructions({ endpoint, folder, prefs, announce, onClose }:
         status={s.status === null ? null : snapshot === undefined ? { text: s.status.text } : { text: s.status.text, undo: () => void undo(snapshot) }}
         prefs={prefs}
         appChord={appChord}
+        textRev={s.textRev}
         onPickProject={(path) => dispatch({ type: "pickProject", path })}
         onOpen={(scope, name) => dispatch({ type: "open", scope, name })}
         onNew={(scope) => dispatch({ type: "newDoc", scope })}

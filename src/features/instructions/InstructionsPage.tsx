@@ -22,6 +22,7 @@ export type InstructionsPageProps = {
   status: { text: string; undo?: () => void } | null;
   prefs: EditorPrefs;
   appChord: (e: KeyboardEvent) => boolean;
+  textRev: number;
   onPickProject: (path: string) => void;
   onOpen: (scope: DocScope, name: string) => void;
   onNew: (scope: DocScope) => void;
@@ -86,7 +87,7 @@ export function InstructionsPage(p: InstructionsPageProps) {
           {p.draft === null ? (
             <p className="instructions__empty">Pick a doc, or start a new one.</p>
           ) : (
-            <DocForm draft={p.draft} docError={doc?.doc.error} rows={doc?.rows ?? []} errors={p.errors} busy={p.busy} prefs={p.prefs} appChord={p.appChord} editorRef={p.editorRef} onDraft={p.onDraft} onSave={p.onSave} onDelete={p.onDelete} onCopyFix={p.onCopyFix} />
+            <DocForm textRev={p.textRev} draft={p.draft} docError={doc?.doc.error} rows={doc?.rows ?? []} errors={p.errors} busy={p.busy} prefs={p.prefs} appChord={p.appChord} editorRef={p.editorRef} onDraft={p.onDraft} onSave={p.onSave} onDelete={p.onDelete} onCopyFix={p.onCopyFix} />
           )}
         </div>
       </div>

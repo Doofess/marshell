@@ -27,6 +27,8 @@ export type State = {
   conflict: string | null;
   closed: boolean;
   review: Review | null;
+  /** Counts the times the draft's text was replaced from outside the editor; the editor's key, so it remounts on the new text. */
+  textRev: number;
 };
 
 export type Action =
@@ -55,7 +57,7 @@ export type Action =
 export function initialState(projects: ProjectInfo[], folder: string | null): State {
   const { selected } = pickProject(projects, folder ?? undefined);
   const known = selected !== null && projects.some((p) => p.path === selected);
-  return { project: known ? selected : null, view: null, open: null, draft: null, errors: {}, busy: false, status: null, asking: null, conflict: null, closed: false, review: null };
+  return { project: known ? selected : null, view: null, open: null, draft: null, errors: {}, busy: false, status: null, asking: null, conflict: null, closed: false, review: null, textRev: 0 };
 }
 
 export const conflictLine = (name: string) => `${name} changed on disk since you opened it.`;
@@ -103,7 +105,7 @@ function proceed(s: State, next: Next): State {
 
 const ask = (s: State, next: Next): State => (isDirtyNow(s) ? { ...s, asking: next } : proceed(s, next));
 
-export function instructionsReducer(s: State, a: Action): State {
+function step(s: State, a: Action): State {
   switch (a.type) {
     case "viewLoaded": {
       // An answer for a project the page has left (or not yet reached) would show another project's docs under this one.
@@ -160,3 +162,13 @@ export function instructionsReducer(s: State, a: Action): State {
       return { ...s, status: { text: "Put back." } };
   }
 }
+
+/** An edit comes from the form (the editor's own typing too) and never remounts the editor; any other action that changes the draft's text does. */
+export function instructionsReducer(s: State, a: Action): State {
+  const n = step(s, a);
+  if (a.type === "edit" || n.draft === null || n.draft.body === s.draft?.body) return n;
+  return { ...n, textRev: s.textRev + 1 };
+}
+
+/** Ctrl+S saves only with no sheet or unsaved-edits question open over the page. */
+export const saveKeyActs = (s: State): boolean => s.review === null && s.asking === null;

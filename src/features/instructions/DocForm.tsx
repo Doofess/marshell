@@ -16,7 +16,9 @@ const noop = () => {};
  * The open doc: its fields, the text in the editor, Save and Delete, and where the doc loads. Each error sits under its
  * field and is tied to it; a save error sits by the buttons. Every change goes up through onDraft.
  */
-export function DocForm({ draft, docError, rows, errors, busy, prefs, appChord, editorRef, onDraft, onSave, onDelete, onCopyFix }: {
+export function DocForm({ textRev, draft, docError, rows, errors, busy, prefs, appChord, editorRef, onDraft, onSave, onDelete, onCopyFix }: {
+  /** The editor's text revision: the editor remounts on a new one, since it reads its text only when it mounts. */
+  textRev: number;
   draft: Draft;
   docError?: string;
   rows: CopyRow[];
@@ -105,19 +107,23 @@ export function DocForm({ draft, docError, rows, errors, busy, prefs, appChord, 
           </span>
           <div className="docform__editor" role="group" aria-labelledby={id("text")}>
             <Editor
-              key={`${draft.scope}/${draft.oldName ?? ""}`}
+              key={`${draft.scope}/${draft.oldName ?? ""}/${textRev}`}
               ref={editorRef ?? undefined}
               name={`${draft.name === "" ? "doc" : draft.name}.md`}
               path={`instructions/${draft.scope}/${draft.oldName ?? "new"}.md`}
               initial={draft.body}
               readOnly={false}
               wrap
+              hintId={id("text-hint")}
               prefs={prefs}
               onEdit={(body) => onDraft({ ...draft, body })}
               onCursor={noop}
               appChord={appChord}
             />
           </div>
+          <p id={id("text-hint")} className="instructions__hint">
+            Esc, then Tab, leaves the editor
+          </p>
         </div>
         <div className="docform__actions">
           <button type="submit" className="instructions__btn" data-primary aria-disabled={busy ? "true" : undefined}>

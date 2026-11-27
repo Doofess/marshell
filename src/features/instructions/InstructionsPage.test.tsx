@@ -32,6 +32,7 @@ const page = (over: Partial<Props> = {}) =>
       status={null}
       prefs={EDITOR_DEFAULTS}
       appChord={() => false}
+      textRev={0}
       onPickProject={noop}
       onOpen={noop}
       onNew={noop}
@@ -48,6 +49,8 @@ const page = (over: Partial<Props> = {}) =>
   );
 const opened = (d: Draft, rows: CopyRow[], over: Partial<Props> = {}) =>
   page({ view: view({ project_docs: [docView("style", rows)] }), open: { scope: d.scope, name: "style" }, draft: d, ...over });
+
+const hintOf = (h: string) => /id="([^"]*-text-hint)"/.exec(h)?.[1];
 
 const PUT_BACK = "Put the doc&#x27;s text back";
 const USE_COPY = "Use this copy&#x27;s text";
@@ -152,5 +155,11 @@ describe("CopiesReview", () => {
     expect(h).toContain(">Close<");
     expect(h).not.toContain(">Apply<");
     expect(h).not.toContain(">Cancel<");
+  });
+  it("shows how to leave the editor, under an id the editor is described by", () => {
+    const h = opened(draft(), []);
+    const id = hintOf(h);
+    expect(id).toBeDefined();
+    expect(h).toContain(`<p id="${id}" class="instructions__hint">Esc, then Tab, leaves the editor</p>`);
   });
 });
