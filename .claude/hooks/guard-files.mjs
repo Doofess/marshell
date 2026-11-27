@@ -1,14 +1,13 @@
-// PreToolUse guard for Edit, Write, MultiEdit and NotebookEdit: rules F1 to F4 of SCOPE.md's file protections.
+// PreToolUse guard for Edit, Write, MultiEdit and NotebookEdit: rules F1, F3 and F4 of SCOPE.md's file protections.
+// F2, which refused edits to SCOPE.md's owner files, was removed on the user's word (2026-11-28).
 import { P, ask, canon, deny, findGitRoot, homeKey, isMarshellRoot, key, relKey, runHook, toAbs } from "./lib.mjs";
 
 const FILE_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 
 const F1 = "src/generated is written by ts-rs. Change crates/protocol and run cargo test -p marshell-protocol.";
-const F2 = "This is an owner file. Propose the change to the user instead.";
 const F3 = "Capabilities, the CSP and the API guard change only with the user's word (SCOPE.md).";
 const F4 = "Real CLI configuration and Marshell data are off limits while developing (SCOPE.md).";
 
-const OWNER_FILES = new Set(["scope.md", "docs/brief.md", "license", "third_party_notices.md", "security.md"]);
 const ASK_FILES = new Set(["src-tauri/tauri.conf.json", "src-tauri/tauri.windows.conf.json", "crates/core/src/server/guard.rs"]);
 
 /**
@@ -32,10 +31,9 @@ function realConfig(fileKey) {
   return null;
 }
 
-/** F1 to F3, on a path relative to a checkout of this repo. */
+/** F1 and F3, on a path relative to a checkout of this repo. */
 function checkoutRule(rel) {
   if (rel.startsWith("src/generated/")) return deny(F1);
-  if (OWNER_FILES.has(rel)) return deny(F2);
   if (rel.startsWith("src-tauri/capabilities/") || ASK_FILES.has(rel)) return ask(F3);
   return null;
 }
