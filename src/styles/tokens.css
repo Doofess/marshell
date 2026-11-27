@@ -21,7 +21,7 @@
   --hover: color-mix(in oklch, var(--text-1) 4%, transparent);
   --selected: color-mix(in oklch, var(--text-1) 7%, transparent);
 
-  /* Status. Caution is yellow (dark) and olive (light) and ΔE ≥ 15 from the app accent. */
+  /* Status. Caution is yellow (dark) and olive (light), and ΔE ≥ 15 from the app accent. */
   --error: light-dark(oklch(56% 0.22 27), oklch(67% 0.21 29));
   --ok: light-dark(oklch(55% 0.14 147), oklch(76.5% 0.19 147));
   --caution: light-dark(oklch(52% 0.11 100), oklch(90% 0.17 100));
