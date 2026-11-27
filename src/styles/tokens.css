@@ -21,7 +21,7 @@
   --hover: color-mix(in oklch, var(--text-1) 4%, transparent);
   --selected: color-mix(in oklch, var(--text-1) 7%, transparent);
 
-  /* Status. Caution is yellow (dark) and olive (light) so it never reads as the amber accent. */
+  /* Status. Caution is yellow (dark) and olive (light) and ΔE ≥ 15 from the app accent. */
   --error: light-dark(oklch(56% 0.22 27), oklch(67% 0.21 29));
   --ok: light-dark(oklch(55% 0.14 147), oklch(76.5% 0.19 147));
   --caution: light-dark(oklch(52% 0.11 100), oklch(90% 0.17 100));
@@ -29,7 +29,7 @@
   --ok-dim: light-dark(oklch(60% 0.07 147), oklch(58% 0.09 147));
 
   /* Agent brand colours: stripes and dots only, never status. */
-  /* Claude is a muted terracotta so it stays ΔE ≥ 15 from --error and ≥ 18 from the amber accent. */
+  /* Claude is a muted terracotta so it stays ΔE ≥ 15 from --error and ≥ 12 from the app accent. */
   --brand-claude: light-dark(oklch(56% 0.08 45), oklch(70% 0.08 45));
   /* The logo itself uses Claude's real orange. It is ΔE < 15 from --error, which is fine: the mark is a logo-shaped glyph at the
      row's start, never a status, and error is a disc with a cross at its end. The stripe keeps the muted terracotta above. */

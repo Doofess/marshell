@@ -9,7 +9,6 @@ import "./specimen.css";
 const meta: Meta = { title: "Design/Colours" };
 export default meta;
 
-const ACCENTS = ["sand", "amber", "blue", "indigo", "violet", "magenta", "cyan", "teal", "slate"] as const;
 const tokens = parseTokens(tokensCss, ":root");
 
 function Swatch({ name }: { name: string }) {
@@ -25,7 +24,7 @@ const groups: Array<[string, string[]]> = [
   ["Surfaces", ["--bg-base", "--bg-raised", "--bg-overlay", "--hover", "--selected", "--hairline"]],
   ["Text", ["--text-1", "--text-2", "--text-3"]],
   ["Status", ["--error", "--ok", "--caution"]],
-  ["Accent (toolbar)", ["--accent", "--accent-tint", "--accent-flash"]],
+  ["Accent", ["--accent", "--accent-tint", "--accent-flash"]],
   ["Agent brands (stripes and dots only)", ["--brand-claude", "--brand-codex", "--brand-openai", "--brand-cyan", "--brand-generic"]],
 ];
 
@@ -52,27 +51,25 @@ function Ratio({ value, floor }: { value: number; floor: number }) {
 
 /** Computed live from the CSS files, so this table can never drift from the tokens. */
 export const AccentMatrix: StoryObj = {
-  render: () => (
-    <table className="matrix">
-      <thead>
-        <tr>
-          <th>Accent</th>
-          <th>Theme</th>
-          <th>Chip</th>
-          <th>On surfaces (≥ 3)</th>
-          <th>Ink on accent (≥ 4.5)</th>
-          <th>ΔE error / ok / caution (≥ 15)</th>
-          <th>ΔE Claude</th>
-        </tr>
-      </thead>
-      <tbody>
-        {ACCENTS.flatMap((a) => {
-          const v = parseTokens(accentsCss, `[data-accent="${a}"]`);
-          return (["dark", "light"] as const).map((theme) => {
+  render: () => {
+    const v = parseTokens(accentsCss, ":root");
+    return (
+      <table className="matrix">
+        <thead>
+          <tr>
+            <th>Theme</th>
+            <th>Chip</th>
+            <th>On surfaces (≥ 3)</th>
+            <th>Ink on accent (≥ 4.5)</th>
+            <th>ΔE error / ok / caution (≥ 15)</th>
+            <th>ΔE Codex / OpenAI / Claude (≥ 12)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {(["dark", "light"] as const).map((theme) => {
             const acc = v["--accent"]![theme];
             return (
-              <tr key={a + theme}>
-                <td>{a}</td>
+              <tr key={theme}>
                 <td>{theme}</td>
                 <td>
                   <span
@@ -104,14 +101,21 @@ export const AccentMatrix: StoryObj = {
                     </span>
                   ))}
                 </td>
-                <td>{deltaE(acc, tokens["--brand-claude"]![theme]).toFixed(1)}</td>
+                <td>
+                  {(["--brand-codex", "--brand-openai", "--brand-claude"] as const).map((b, i) => (
+                    <span key={b}>
+                      {i > 0 && " / "}
+                      <Ratio value={deltaE(acc, tokens[b]![theme])} floor={12} />
+                    </span>
+                  ))}
+                </td>
               </tr>
             );
-          });
-        })}
-      </tbody>
-    </table>
-  ),
+          })}
+        </tbody>
+      </table>
+    );
+  },
 };
 
 export const TextMatrix: StoryObj = {
