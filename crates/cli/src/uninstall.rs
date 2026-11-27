@@ -393,7 +393,6 @@ pub fn run(
     }
     // The instruction library's copies in the user-level folders: the ones Marshell wrote and nobody edited go, an
     // edited one stays and is said so. The docs in `<home>/instructions` are never part of it.
-    let mut library_removed = false;
     let library = uninstall_plan(&Roots::from_env(env, user_home));
     for line in &library.left {
         let _ = writeln!(out, "{line}");
@@ -401,7 +400,6 @@ pub fn run(
     if !library.changes.edits.is_empty() {
         let _ = writeln!(out, "Instruction library copies found.");
         extras.push(library.changes);
-        library_removed = true;
     }
     // The WSL distros: the installed ones, and any `managed.json` names that the list missed. Every home is asked for at
     // once, each with its own time limit, because a stopped distro is started by the question.
@@ -486,9 +484,7 @@ pub fn run(
             let refused = refusals(&preview);
             if refused.is_empty() && preview.can_apply {
                 extras.push(library.changes);
-                found = true;
                 library_found = true;
-                library_removed = true;
             } else {
                 for (path, detail) in &refused {
                     let _ = writeln!(out, "Marshell can't change {path}: {detail}");
@@ -504,7 +500,7 @@ pub fn run(
         }
         if found {
             let _ = writeln!(out, "{name}: Marshell's hooks found.");
-        } else if !failed {
+        } else if !failed && !library_found {
             let _ = writeln!(out, "{name}: nothing of Marshell's.");
         }
         if failed {
@@ -708,11 +704,10 @@ pub fn run(
                 "Done. Snapshot {} holds the files as they were before this change.",
                 applied.snapshot_id
             );
-            if library_removed
-                && std::fs::read_dir(home.join("instructions")).is_ok_and(|mut d| {
-                    d.any(|e| e.is_ok_and(|e| e.path().extension().is_some_and(|x| x.eq_ignore_ascii_case("md"))))
-                })
-            {
+            // The docs are the person's: uninstall never removes them, so it says where they are.
+            if std::fs::read_dir(home.join("instructions")).is_ok_and(|mut d| {
+                d.any(|e| e.is_ok_and(|e| e.path().extension().is_some_and(|x| x.eq_ignore_ascii_case("md"))))
+            }) {
                 let _ = writeln!(
                     out,
                     "Your library docs stay in {}.",
@@ -2259,5 +2254,19 @@ mod tests {
             "{out}"
         );
         assert!(!out.contains("nothing of Marshell's."), "{out}");
+        assert!(!out.contains("MarshellTestDistro: Marshell's hooks found."), "{out}");
+    }
+
+    #[test]
+    fn docs_line_shows_without_copies() {
+        let f = installed(ORIGINAL);
+        write(
+            &f.home.join("instructions").join("security.md"),
+            "Be careful.
+",
+        );
+        let (_, out) = run_with(&f, "", true);
+        assert!(out.contains("Your library docs stay in"), "{out}");
+        assert!(!out.contains("Instruction library copies found."), "{out}");
     }
 }
