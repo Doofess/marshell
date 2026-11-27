@@ -286,7 +286,7 @@ impl Ctx<'_> {
 
 /// Whether `path` stays inside `root` once the part of it that exists is resolved (links and junctions followed): a
 /// copy not written yet is placed by its deepest folder that exists.
-fn stays_inside(path: &Path, root: &Path) -> bool {
+pub(crate) fn stays_inside(path: &Path, root: &Path) -> bool {
     let mut existing = path;
     while std::fs::symlink_metadata(existing).is_err() {
         match existing.parent() {

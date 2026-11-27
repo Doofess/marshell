@@ -350,7 +350,7 @@ pub(crate) fn facts_of(st: &AppState) -> Gathered {
     }
 }
 
-fn managed_entries(st: &AppState) -> Vec<ManagedEntry> {
+pub(crate) fn managed_entries(st: &AppState) -> Vec<ManagedEntry> {
     managed::list(&st.0.home).unwrap_or_else(|e| {
         tracing::warn!("the doctor could not read managed.json: {e:#}");
         Vec::new()
@@ -404,7 +404,7 @@ fn managed_distros(st: &AppState, entries: &[ManagedEntry]) -> Vec<String> {
 
 /// The managed distros that are running, and those that aren't. `wsl.exe` is asked what runs only when there is a
 /// managed distro.
-fn partition_managed_distros(st: &AppState, entries: &[ManagedEntry]) -> (Vec<String>, Vec<String>) {
+pub(crate) fn partition_managed_distros(st: &AppState, entries: &[ManagedEntry]) -> (Vec<String>, Vec<String>) {
     let managed = managed_distros(st, entries);
     if managed.is_empty() {
         return (Vec::new(), Vec::new());
