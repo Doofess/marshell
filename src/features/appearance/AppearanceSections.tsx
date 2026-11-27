@@ -41,7 +41,6 @@ export type AppearanceHandlers = {
   onClose?(): void;
 };
 
-
 const ANSI_KEYS = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white", "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite"] as const;
 
 const onEnter = (commit: () => void) => (e: KeyboardEvent) => {

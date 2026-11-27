@@ -14,7 +14,6 @@ const state = (over: Partial<AppearanceViewState> = {}): AppearanceViewState => 
   highContrast: false,
   wtFiles: [],
   error: null,
- 
   size: { text: "13", reason: null },
   importError: null,
   ...over,
