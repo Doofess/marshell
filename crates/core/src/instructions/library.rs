@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 
 const NOT_WRITABLE: &str = "Marshell may not write here, so this copy is left out.";
 const BROKEN: &str = "The doc's frontmatter can't be read, so its copies are left as they are.";
+const HOLDS_A_MARKER: &str = "The doc holds a line that marks Marshell's copies, so its copies are left as they are.";
 /// Decision 40's and 27's sentences start "Not installed on this PC"; in a distro they name the distro instead, since
 /// the CLI may well be installed on Windows.
 fn not_installed(distro: Option<&str>) -> String {
@@ -653,7 +654,14 @@ fn doc_rows(ctx: &Ctx, cfiles: &[CFile], all: &mut Vec<Item>, doc: &Doc) -> Vec<
         all.extend(items);
         let mine = first..all.len();
         let row = match &w {
-            Want::Broken => ctx.row(cli, None, CopyState::NoCopy, vec![BROKEN.to_string()], false),
+            Want::Broken => {
+                let why = if doc.error.as_deref().is_some_and(doc::is_marker_error) {
+                    HOLDS_A_MARKER
+                } else {
+                    BROKEN
+                };
+                ctx.row(cli, None, CopyState::NoCopy, vec![why.to_string()], false)
+            }
             Want::Shared => {
                 let claude = all[start..]
                     .iter()
@@ -1576,6 +1584,30 @@ mod tests {
         }
         let delete = plan_edits(&p, &Pick::Delete("security".into()), user(), &yes);
         assert_eq!(delete.len(), 4, "deleting a broken doc takes its untouched copies");
+    }
+
+    #[test]
+    fn a_doc_holding_a_marker_line_keeps_its_copies() {
+        // Copied as it is, the stray end line would cut a Codex block short and the copy would never settle.
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path();
+        applied(root);
+        let doc = project_doc(
+            root,
+            "security",
+            "---\nclis: [claude]\n---\nBe careful.\n<!-- marshell:end doc security -->\n",
+        );
+        assert!(doc.error.is_some());
+        let p = place(root, vec![doc], &ALL);
+        assert!(review(&p).is_empty());
+        let st = state(&p);
+        assert_eq!(st.out_of_date, 0);
+        for row in &st.rows[0].1 {
+            assert_eq!(
+                row.notes,
+                ["The doc holds a line that marks Marshell's copies, so its copies are left as they are."]
+            );
+        }
     }
 
     #[test]

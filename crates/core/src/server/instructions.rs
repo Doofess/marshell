@@ -488,9 +488,7 @@ fn doc_of<'a>(req: &DocSave, dir: &Path, docs: &'a [Doc]) -> Result<(Doc, Option
     doc::check_description(&req.description).map_err(Stop::unprocessable)?;
     let body = req.body.replace("\r\n", "\n");
     if let Some(n) = first_marker(&body) {
-        return Err(Stop::unprocessable(format!(
-            "Line {n} marks Marshell's copies, so a doc can't hold it."
-        )));
+        return Err(Stop::unprocessable(doc::marker_error(n)));
     }
     // A doc keeps its own file when its name doesn't change; a new name is joined only now that it passed.
     let path = match old {
@@ -1267,6 +1265,30 @@ mod tests {
             "{body}"
         );
         assert_eq!(fs::read_to_string(&path).unwrap(), text);
+    }
+
+    #[tokio::test]
+    async fn a_save_fixes_a_doc_holding_a_marker_line() {
+        let r = rig();
+        let path = r.home.join("instructions").join("security.md");
+        write(
+            &path,
+            "---\ndescription: 's'\n---\nBe careful.\n<!-- marshell:end doc security -->\n",
+        );
+        let v = view_ok(&r.st, None).await;
+        let listed = &v.user_docs[0].doc;
+        assert_eq!(
+            listed.error.as_deref(),
+            Some("Line 2 marks Marshell's copies, so a doc can't hold it.")
+        );
+        let req = DocSave {
+            old_name: Some("security".into()),
+            expected_hash: Some(listed.hash.clone()),
+            ..save_of("security", "Be careful.\n")
+        };
+        let (status, body) = post(&r.st, "save", &req).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(!fs::read_to_string(&path).unwrap().contains("marshell:end"));
     }
 
     fn link_dir(link: &Path, target: &Path) -> std::io::Result<()> {

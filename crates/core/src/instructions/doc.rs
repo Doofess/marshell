@@ -9,6 +9,18 @@ use std::path::{Path, PathBuf};
 pub const CLIS: [&str; 5] = ["claude", "codex", "antigravity", "qwen", "copilot"];
 
 const NAME_ERROR: &str = "This file's name can't name a doc: use letters, digits, - and _.";
+const MARKER_TAIL: &str = " marks Marshell's copies, so a doc can't hold it.";
+
+/// Why a doc's body can't be copied: its line `line` (counted in the body, as the page shows it) is one of the lines
+/// that mark Marshell's copies, which would end a Codex block early.
+pub fn marker_error(line: usize) -> String {
+    format!("Line {line}{MARKER_TAIL}")
+}
+
+/// Whether `error` is the one `marker_error` makes.
+pub fn is_marker_error(error: &str) -> bool {
+    error.ends_with(MARKER_TAIL)
+}
 
 /// One library doc, read from its file.
 #[derive(Debug, Clone, PartialEq)]
@@ -32,9 +44,11 @@ pub struct Doc {
 
 impl Doc {
     /// Why the doc's frontmatter can't be read, when it can't: its keys are then the defaults. A file name that can't
-    /// name a doc, or a second doc of the same name, leaves the frontmatter read.
+    /// name a doc, a second doc of the same name, or a body holding a marker line leaves the frontmatter read.
     pub fn frontmatter_error(&self) -> Option<&str> {
-        self.error.as_deref().filter(|e| !self.duplicate && *e != NAME_ERROR)
+        self.error
+            .as_deref()
+            .filter(|e| !self.duplicate && *e != NAME_ERROR && !is_marker_error(e))
     }
 }
 
@@ -92,6 +106,13 @@ pub fn parse(name: &str, scope: DocScope, path: PathBuf, bytes: &[u8]) -> Doc {
     if error.is_none() && !name_chars_ok(name) {
         error = Some(NAME_ERROR.to_string());
     }
+    let body = clean_body(&lines[body_start..]);
+    // A save from the page refuses such a body; a file written by hand or committed by a teammate is caught here.
+    if error.is_none()
+        && let Some(n) = super::copy::first_marker(&body)
+    {
+        error = Some(marker_error(n));
+    }
     Doc {
         name: name.to_string(),
         scope,
@@ -100,7 +121,7 @@ pub fn parse(name: &str, scope: DocScope, path: PathBuf, bytes: &[u8]) -> Doc {
         clis: fm.clis,
         globs: fm.globs,
         enabled: fm.enabled,
-        body: clean_body(&lines[body_start..]),
+        body,
         extra: fm.extra,
         hash: hash_bytes(bytes),
         error,
@@ -545,6 +566,19 @@ mod tests {
         );
         // A second save writes the same file.
         assert_eq!(render(&p(&out)), out);
+    }
+
+    #[test]
+    fn a_body_holding_a_marker_line_is_broken_with_its_frontmatter_read() {
+        // Written by hand or by a teammate: a save from the page checks the body, a file on disk skips that.
+        let d = p("---\ndescription: x\n---\nA\n<!-- marshell:end doc x -->\n");
+        assert_eq!(
+            d.error.as_deref(),
+            Some("Line 2 marks Marshell's copies, so a doc can't hold it.")
+        );
+        assert_eq!(d.description, "x");
+        // A save replaces the body, so it isn't refused over this.
+        assert_eq!(d.frontmatter_error(), None);
     }
 
     #[test]
