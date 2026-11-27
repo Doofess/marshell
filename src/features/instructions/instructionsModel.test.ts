@@ -70,7 +70,9 @@ describe("drafts", () => {
     expect(s.globs).toEqual(["src/**", "*.ts"]);
     expect(s.project).toBe("C:/p");
     expect(s.expected_hash).toBe("h1");
-    expect(s.old_name).toBeUndefined();
+    // An existing doc names itself even when its name stays, or the core takes it for a new doc of a taken name.
+    expect(s.old_name).toBe("Api");
+    expect("old_name" in toSave(newDraft("user", []), null)).toBe(false);
     const r = toSave({ ...draftOf(doc), name: "Web" }, null);
     expect(r.old_name).toBe("Api");
     expect("project" in r).toBe(false);

@@ -66,7 +66,7 @@ const globsOf = (text: string) =>
 export function toSave(d: Draft, project: string | null): DocSave {
   const s: DocSave = { scope: d.scope, name: d.name, description: d.description, clis: inOrder(d.clis), globs: globsOf(d.globsText), enabled: d.enabled, body: d.body };
   if (project !== null) s.project = project;
-  if (d.oldName !== null && d.oldName !== d.name) s.old_name = d.oldName;
+  if (d.oldName !== null) s.old_name = d.oldName;
   if (d.hash !== null) s.expected_hash = d.hash;
   return s;
 }
@@ -82,8 +82,6 @@ export function toggleCli(d: Draft, cli: string): Draft {
   if (cli === "claude" && d.scope === "project" && !next.includes("copilot")) next.push("copilot");
   return { ...d, clis: inOrder(next) };
 }
-
-const count = (n: number, one: string, many: string) => (n === 1 ? `1 ${one}` : `${n} ${many}`);
 
 /** The bar over the page; null when there is nothing to say. */
 export function barText(outOfDate: number, changed: number): string | null {
