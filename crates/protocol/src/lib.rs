@@ -10,6 +10,7 @@ pub mod history;
 pub mod hook;
 pub mod host;
 pub mod install;
+pub mod instructions;
 pub mod manifest;
 pub mod settings_view;
 

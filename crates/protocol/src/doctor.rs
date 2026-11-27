@@ -16,7 +16,8 @@ pub enum DoctorGroup {
     Info,
 }
 
-/// A button a Doctor row carries besides the fix's checkbox.
+/// A button a Doctor row carries besides the fix's checkbox. Keep and Stop keeping change what Marshell
+/// remembers about a file; Use this copy's text opens a fix preview that writes files.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -25,6 +26,8 @@ pub enum DoctorAction {
     Keep,
     /// "Stop keeping": Marshell takes that acceptance back.
     StopKeeping,
+    /// "Use this copy's text": a library copy edited outside Marshell gives its text to the doc.
+    UseCopy,
 }
 
 /// One finding of the Doctor's checks.
