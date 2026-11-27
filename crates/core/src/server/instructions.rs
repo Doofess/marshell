@@ -117,7 +117,7 @@ pub(crate) fn library_distros(st: &AppState) -> (Vec<(String, PathBuf)>, Vec<Str
 }
 
 /// The Windows user home, which a doc's source is shown under as `~/…`.
-fn user_home(st: &AppState) -> PathBuf {
+pub(crate) fn user_home(st: &AppState) -> PathBuf {
     windows_roots(st).map_or_else(|| st.0.home.clone(), |r| r.home)
 }
 
@@ -235,8 +235,6 @@ fn stopped_note(distro: &str) -> String {
 /// A project's docs and where its copies go. `Err` holds the sentence for a project that isn't read: a distro that
 /// isn't running, or a `.marshell` folder that links outside the project (a cloned repo must not make Marshell read,
 /// or write, another folder).
-// The Doctor's instruction checks call it (slice 8a Task 7).
-#[allow(dead_code)]
 pub(crate) fn project_place(st: &AppState, root: &Path, distro_homes: &[(String, PathBuf)]) -> Result<Place, String> {
     let distro = root.to_str().and_then(crate::wsl::share_distro).map(str::to_string);
     if let Some(d) = &distro {

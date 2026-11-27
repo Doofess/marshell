@@ -12,6 +12,7 @@ use super::agents::{
 use super::doctor_ext;
 use super::doctor_instr;
 use super::doctor_usage;
+use super::instructions::{project_place, user_home as library_home, user_places};
 use crate::agents::common::Gate;
 use crate::agents::copilot::hooks::{FileProblem, file_problem};
 use crate::agents::copilot::kept::{self, Kept};
@@ -24,8 +25,10 @@ use crate::doctor::cli::{CLI_DOCTOR_TIMEOUT_SECS, Ran, claude_items, codex_items
 use crate::doctor::ext::{self, Inventory, Switch};
 use crate::doctor::instr_text::remove_imports;
 use crate::doctor::instructions;
+use crate::doctor::library as doctor_library;
 use crate::doctor::{AgentFacts, FileState, PendingFix, checks};
 use crate::doctor::{instr_checks, refnotes};
+use crate::instructions::library::{LevelState, Pick, Place, level_state, plan_edits, take_copy_plan};
 use crate::paths;
 use crate::profiles::detect::{agent_command, run_wsl_capture};
 use crate::store::{self, Versioned};
@@ -42,6 +45,7 @@ use marshell_protocol::doctor::{
     DoctorAction, DoctorFixPlan, DoctorFixRequest, DoctorItem, DoctorKeepRequest, DoctorLastFix, DoctorReport,
     DoctorSummary,
 };
+use marshell_protocol::instructions::CopyState;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -239,15 +243,16 @@ async fn run_once(st: &AppState, read: ReadFacts) -> Option<(u32, u64)> {
             // reference notes' counters beside them. If it fails the report still comes, without them.
             let facts = Arc::new(facts);
             let read_by = (st.clone(), facts.clone());
-            let (instr, notes) = tokio::task::spawn_blocking(move || {
+            let (instr, notes, library) = tokio::task::spawn_blocking(move || {
                 let (st, facts) = read_by;
                 let read = doctor_instr::loads(&st, &facts.facts, &facts.distro_homes, &facts.projects);
-                (read, note_totals_of(&st, &facts.projects, now))
+                let library = library_items(&st, &facts.distro_homes, &facts.projects);
+                (read, note_totals_of(&st, &facts.projects, now), library)
             })
             .await
             .unwrap_or_else(|e| {
                 tracing::warn!("the doctor could not read the instruction files: {e}");
-                (doctor_instr::InstrRead::default(), Vec::new())
+                (doctor_instr::InstrRead::default(), Vec::new(), Vec::new())
             });
             let mut items = checks::items(&facts.facts, &facts.stopped, banners_on(st));
             // The last measurement is cloned under the lock, which is released at once.
@@ -263,6 +268,7 @@ async fn run_once(st: &AppState, read: ReadFacts) -> Option<(u32, u64)> {
             let editable = |p: &Path| st.0.config.editable(p);
             items.extend(instructions::items(&instr.loads, &facts.projects, &editable));
             items.extend(instr_checks::items(&instr.findings, &facts.projects, &editable));
+            items.extend(library);
             items.extend(refnotes::items(&notes));
             // The CLI doctors' last findings ride along in every report. The lock is released at once.
             let (cli_items, cli_checked_at_ms) = {
@@ -1059,6 +1065,25 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
             return Err(cant_fix());
         }
     }
+    // The library's fixes are split off the same way. Taking a copy's text is accepted only on its own, and only when
+    // the report holds the fixable drift item that offers it.
+    let (lib_ids, ids_of_facts): (Vec<&String>, Vec<&String>) = ids_of_facts.into_iter().partition(|id| is_lib_id(id));
+    for id in &lib_ids {
+        let offered = match id.strip_prefix("libadopt.") {
+            Some(_) => {
+                let drift = lib_item_id(id);
+                ids.len() == 1
+                    && reported
+                        .items
+                        .iter()
+                        .any(|i| i.id == drift && i.fixable && i.action == Some(DoctorAction::UseCopy))
+            }
+            None => reported.items.iter().any(|i| i.id == **id && i.fixable),
+        };
+        if !offered {
+            return Err(cant_fix());
+        }
+    }
 
     let mut picked: Vec<(DoctorItem, &AgentFacts)> = Vec::new();
     for id in ids_of_facts {
@@ -1127,6 +1152,24 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
     if !instr_ids.is_empty() {
         edits.extend(instruction_edits(st, &gathered, &instr_ids)?);
     }
+    // The library's copies and docs are the person's own files too: the preview holds one edit of each file, so a file
+    // another ticked fix changes as well is a conflict.
+    let lib_edits = if lib_ids.is_empty() {
+        Vec::new()
+    } else {
+        library_edits(st, &gathered, &lib_ids)?
+    };
+    if !lib_edits.is_empty() {
+        let home = library_home(st);
+        let show = |path: &Path| {
+            let project = gathered.projects.iter().find(|p| path.starts_with(p));
+            instructions::display(path, project.map(PathBuf::as_path), &home)
+        };
+        if let Some(clash) = library_clash(&lib_edits, &edits, &show) {
+            return Err(clash);
+        }
+        edits.extend(lib_edits.iter().cloned());
+    }
     if edits.is_empty() {
         return Err(cant_fix());
     }
@@ -1148,10 +1191,12 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
                     .find(|(item, _)| item.id == *id)
                     .map(|(item, _)| item.title.as_str())
                     .or_else(|| {
+                        // The library's fixes are worded by the stored report's items too; `libadopt` by its drift item.
+                        let held = if is_lib_id(id) { lib_item_id(id) } else { id.clone() };
                         reported
                             .items
                             .iter()
-                            .find(|item| item.id == *id && is_instr_id(id))
+                            .find(|item| item.id == held && (is_instr_id(id) || is_lib_id(id)))
                             .map(|item| item.title.as_str())
                     })
             })
@@ -1159,11 +1204,11 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
             .join("\n"),
         edits,
     };
-    // The retention setting and every server or skill turned off are the person's, so applying them records no key in
-    // managed.json.
-    let preview =
-        st.0.config
-            .preview_mixed(cs, &|edit| is_own_edit(edit, &own_settings) || ext_edits.contains(edit));
+    // The retention setting, every server or skill turned off and the library's copies and docs are the person's, so
+    // applying them records no key in managed.json.
+    let preview = st.0.config.preview_mixed(cs, &|edit| {
+        is_own_edit(edit, &own_settings) || ext_edits.contains(edit) || lib_edits.contains(edit)
+    });
     let restart = restart_list(st, &picked);
     *st.doctor().pending.lock().unwrap_or_else(|e| e.into_inner()) = Some(PendingFix {
         changeset_id: preview.changeset_id.clone(),
@@ -1175,6 +1220,131 @@ fn fix_of(st: &AppState, requested: Vec<String>) -> Result<DoctorFixPlan, Fail> 
         item_ids: ids,
         restart,
     })
+}
+
+/// The ids of the library's three fixes: a changed-outside copy's text put back, a place's copies brought up to date,
+/// and a changed-outside copy's text taken into its doc.
+fn is_lib_id(id: &str) -> bool {
+    id.starts_with("libdrift.") || id.starts_with("libstale.") || id.starts_with("libadopt.")
+}
+
+/// The id of the report's item that holds a library fix's title: `libadopt.<tail>` is worded by `libdrift.<tail>`.
+fn lib_item_id(id: &str) -> String {
+    match id.strip_prefix("libadopt.") {
+        Some(tail) => format!("libdrift.{tail}"),
+        None => id.to_string(),
+    }
+}
+
+/// Every level the library copies into, each with what its copies are: the user levels, then each project that can be
+/// read. Reads files and runs nothing in a distro that isn't running, so callers go through `spawn_blocking`.
+fn library_levels(st: &AppState, distro_homes: &[(String, PathBuf)], projects: &[PathBuf]) -> Vec<(Place, LevelState)> {
+    let home = library_home(st);
+    let editable = |p: &Path| st.0.config.editable(p);
+    let mut places = user_places(st, distro_homes);
+    places.extend(
+        projects
+            .iter()
+            .filter_map(|root| project_place(st, root, distro_homes).ok()),
+    );
+    places
+        .into_iter()
+        .map(|place| {
+            let state = level_state(&place, &home, &editable);
+            (place, state)
+        })
+        .collect()
+}
+
+/// The Doctor's items for the library's copies.
+fn library_items(st: &AppState, distro_homes: &[(String, PathBuf)], projects: &[PathBuf]) -> Vec<DoctorItem> {
+    let levels = library_levels(st, distro_homes, projects);
+    let refs: Vec<(&Place, &LevelState)> = levels.iter().map(|(p, s)| (p, s)).collect();
+    doctor_library::items(&refs)
+}
+
+/// The edits for the ticked library items, from a fresh read of the docs and copies. Every id is found again in a
+/// place's state, or the whole request is a 422. No path is built from an id.
+///
+/// - `libdrift` and `libstale` ids of one place are one `Pick::Fixes`, so each file has one edit.
+/// - `libadopt` (always alone) plans `take_copy_plan`.
+fn library_edits(st: &AppState, gathered: &Gathered, ids: &[&String]) -> Result<Vec<FileEdit>, Fail> {
+    let home = library_home(st);
+    let editable = |p: &Path| st.0.config.editable(p);
+    let levels = library_levels(st, &gathered.distro_homes, &gathered.projects);
+
+    if let [id] = ids
+        && let Some(tail) = id.strip_prefix("libadopt.")
+    {
+        let want = format!("libdrift.{tail}");
+        for (place, state) in &levels {
+            let found = state
+                .copies
+                .iter()
+                .find(|c| c.state == CopyState::ChangedOutside && doctor_library::drift_id(c) == want);
+            if let Some(copy) = found {
+                let plan = take_copy_plan(place, &copy.doc, copy.cli, &home, &editable).ok_or_else(cant_fix)?;
+                return Ok(plan.edits);
+            }
+        }
+        return Err(cant_fix());
+    }
+
+    let mut found = vec![false; ids.len()];
+    let mut edits = Vec::new();
+    for (place, state) in &levels {
+        let stale = doctor_library::stale_id(place);
+        let mut update = false;
+        let mut put_back: Vec<(String, &'static str)> = Vec::new();
+        for (i, id) in ids.iter().enumerate() {
+            if id.starts_with("libstale.") {
+                if **id == stale && state.out_of_date > 0 {
+                    update = true;
+                    found[i] = true;
+                }
+            } else if id.starts_with("libdrift.") {
+                let copy = state
+                    .copies
+                    .iter()
+                    .find(|c| c.state == CopyState::ChangedOutside && doctor_library::drift_id(c) == **id);
+                if let Some(copy) = copy {
+                    put_back.push((copy.doc.clone(), copy.cli));
+                    found[i] = true;
+                }
+            }
+        }
+        if update || !put_back.is_empty() {
+            let planned = plan_edits(place, &Pick::Fixes { update, put_back }, &home, &editable);
+            if planned.is_empty() {
+                return Err(cant_fix());
+            }
+            edits.extend(planned);
+        }
+    }
+    if found.contains(&false) {
+        return Err(cant_fix());
+    }
+    Ok(edits)
+}
+
+/// A file one of the library's edits and another ticked fix both change: 409, since the preview holds one edit of a
+/// file.
+fn library_clash(lib: &[FileEdit], other: &[FileEdit], show: &dyn Fn(&Path) -> String) -> Option<Fail> {
+    lib.iter()
+        .find(|edit| {
+            other
+                .iter()
+                .any(|o| comparable(Path::new(&o.path)) == comparable(Path::new(&edit.path)))
+        })
+        .map(|edit| {
+            (
+                StatusCode::CONFLICT,
+                format!(
+                    "Two of the ticked fixes change {}. Apply them one at a time.",
+                    show(Path::new(&edit.path))
+                ),
+            )
+        })
 }
 
 /// An id of one of slice 7d2's two instruction fixes.
@@ -4529,5 +4699,286 @@ pub(in crate::server) mod tests {
         let first_of = |prefix: &str| report.items.iter().position(|i| i.id.starts_with(prefix)).unwrap();
         assert!(at("instr.") < first_of("instrimport."), "{:?}", report.items);
         assert!(at("instrimport.") < first_of("refnotes."), "{:?}", report.items);
+    }
+
+    // The instruction library's copies (slice 8a): a copy edited outside Marshell and copies out of date, and their
+    // fixes. Every file is under the tempdir.
+
+    fn lib_doc(clis: &str, body: &str) -> String {
+        format!("---\ndescription: 'd'\nclis: [{clis}]\nglobs: []\n---\n{body}")
+    }
+
+    fn lib_doc_path(project: &Path, name: &str) -> PathBuf {
+        project
+            .join(".marshell")
+            .join("instructions")
+            .join(format!("{name}.md"))
+    }
+
+    /// Writes the project's copies as Review does, and applies them.
+    fn lib_review(st: &AppState, project: &Path) {
+        use crate::instructions::library::{Pick, plan_edits};
+        let place = super::super::instructions::project_place(st, project, &[]).expect("a place");
+        let home = doctor_ext::windows_roots(st).expect("the pinned home").home;
+        let editable = |p: &Path| st.0.config.editable(p);
+        let cs = ChangeSet {
+            title: "r".into(),
+            reason: "r".into(),
+            edits: plan_edits(&place, &Pick::Review, &home, &editable),
+        };
+        assert!(!cs.edits.is_empty());
+        let preview = st.0.config.preview_own(cs, &|_| None);
+        assert!(preview.can_apply, "{preview:?}");
+        let req = ApplyRequest {
+            changeset_id: preview.changeset_id.clone(),
+            expected_hashes: preview
+                .files
+                .iter()
+                .map(|f| ExpectedHash {
+                    path: f.path.clone(),
+                    hash: f.before_hash.clone(),
+                })
+                .collect(),
+        };
+        st.0.config
+            .apply(&req, 1)
+            .unwrap_or_else(|e| panic!("apply failed: {e:?}"));
+    }
+
+    /// Replaces text in a file, answering what it held before.
+    fn lib_edit(path: &Path, from: &str, to: &str) -> String {
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains(from), "{from} is in {text}");
+        write(path, &text.replace(from, to));
+        text
+    }
+
+    /// A project with the doc `security` for Claude Code and Qwen Code, written, and then Qwen Code's copy edited.
+    /// Answers what the copy held before the edit.
+    fn drifted_qwen(dir: &Path) -> (AppState, PathBuf, PathBuf, String) {
+        let (st, _ext) = ext_state(dir);
+        let project = project_of(dir);
+        write(
+            &lib_doc_path(&project, "security"),
+            &lib_doc("claude, qwen", "Be careful.\n"),
+        );
+        lib_review(&st, &project);
+        let copy = project.join(".qwen").join("rules").join("marshell-security.md");
+        let original = lib_edit(&copy, "Be careful.", "Mine.");
+        (st, project, copy, original)
+    }
+
+    fn drift_ids(report: &DoctorReport) -> Vec<String> {
+        ids_of(report, "libdrift.")
+    }
+
+    #[tokio::test]
+    async fn library_fix_puts_the_doc_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, _project, copy, original) = drifted_qwen(dir.path());
+        let edited = bytes(&copy).unwrap();
+
+        let report = run_and_report(&st).await;
+        let ids = drift_ids(&report);
+        assert_eq!(ids.len(), 1, "{:?}", report.items);
+        let item = report.items.iter().find(|i| i.id == ids[0]).unwrap();
+        assert_eq!(item.group, DoctorGroup::Broken);
+        assert!(item.fixable && item.unchecked, "{item:?}");
+        assert!(ids_of(&report, "libstale.").is_empty(), "{:?}", report.items);
+
+        let plan = fix_of(&st, ids).expect("a plan");
+        assert!(plan.preview.can_apply, "{:?}", plan.preview);
+        assert_eq!(plan.preview.reason, item.title);
+        assert_eq!(after_hash(&plan), hash_bytes(original.as_bytes()));
+        assert!(
+            plan.preview.files[0]
+                .path
+                .replace('\\', "/")
+                .ends_with(".qwen/rules/marshell-security.md")
+        );
+        // Nothing is written until the person applies.
+        assert_eq!(bytes(&copy).unwrap(), edited);
+
+        apply_fix_plan(&st, &plan).await;
+        assert_eq!(bytes(&copy).unwrap(), original.as_bytes());
+        assert!(drift_ids(&last_report(&st)).is_empty());
+    }
+
+    #[tokio::test]
+    async fn use_copy_fix_writes_doc_and_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, project, copy, _original) = drifted_qwen(dir.path());
+        let report = run_and_report(&st).await;
+        let drift = drift_ids(&report).remove(0);
+        let adopt = drift.replacen("libdrift.", "libadopt.", 1);
+        let item = report.items.iter().find(|i| i.id == drift).unwrap();
+        assert_eq!(item.action, Some(DoctorAction::UseCopy));
+
+        let plan = fix_of(&st, vec![adopt.clone()]).expect("a plan");
+        assert_eq!(plan.item_ids, std::slice::from_ref(&adopt));
+        assert_eq!(plan.preview.reason, item.title);
+        let doc = lib_doc_path(&project, "security");
+        let in_plan = |path: &Path| {
+            let want = path.to_string_lossy().replace('\\', "/").to_lowercase();
+            plan.preview
+                .files
+                .iter()
+                .any(|f| f.path.replace('\\', "/").to_lowercase() == want)
+        };
+        assert!(in_plan(&doc), "{:?}", plan.preview.files);
+        assert!(in_plan(&copy), "{:?}", plan.preview.files);
+
+        apply_fix_plan(&st, &plan).await;
+        let doc_text = std::fs::read_to_string(&doc).unwrap();
+        assert!(
+            doc_text.contains("Mine.") && !doc_text.contains("Be careful."),
+            "{doc_text}"
+        );
+        assert!(
+            doc_text.contains("clis: [claude, qwen]"),
+            "frontmatter stays: {doc_text}"
+        );
+        let report = run_and_report(&st).await;
+        assert!(drift_ids(&report).is_empty(), "{:?}", report.items);
+        // The doc and the copy taken are in step; the other CLIs' copies are now out of date, and Review brings them up.
+        let stale = ids_of(&report, "libstale.");
+        assert_eq!(stale.len(), 1, "{:?}", report.items);
+        let stale = report.items.iter().find(|i| i.id == stale[0]).unwrap();
+        assert_eq!(stale.title, "1 copy of security is out of date in project");
+        let claude = project.join(".claude").join("rules").join("marshell-security.md");
+        assert!(std::fs::read_to_string(claude).unwrap().contains("Be careful."));
+    }
+
+    #[tokio::test]
+    async fn use_copy_id_without_its_drift_item_is_cant_fix() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, _project, _copy, _original) = drifted_qwen(dir.path());
+        let report = run_and_report(&st).await;
+        let drift = drift_ids(&report).remove(0);
+        let adopt = drift.replacen("libdrift.", "libadopt.", 1);
+        let cant = |ids: Vec<String>| {
+            let (status, _) = fix_of(&st, ids).expect_err("refused");
+            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        };
+        // No drift item of that tail.
+        cant(vec!["libadopt.00000000.security".into()]);
+        // Only on its own.
+        cant(vec![adopt.clone(), drift.clone()]);
+        // The report's item has to offer it.
+        {
+            let mut stored = st.doctor().report.lock().unwrap();
+            for i in &mut stored.as_mut().unwrap().items {
+                if i.id == drift {
+                    i.action = None;
+                }
+            }
+        }
+        cant(vec![adopt.clone()]);
+        {
+            let mut stored = st.doctor().report.lock().unwrap();
+            stored.as_mut().unwrap().items.retain(|i| i.id != drift);
+        }
+        cant(vec![adopt]);
+    }
+
+    /// A project with two Codex docs written, `a` edited by hand in the config and `b` changed in its doc.
+    fn codex_pair(dir: &Path) -> (AppState, PathBuf) {
+        let (st, _ext) = ext_state(dir);
+        let project = project_of(dir);
+        write(&lib_doc_path(&project, "a"), &lib_doc("codex", "A body\n"));
+        write(&lib_doc_path(&project, "b"), &lib_doc("codex", "B body\n"));
+        lib_review(&st, &project);
+        let config = project.join(".codex").join("config.toml");
+        lib_edit(&config, "A body", "A hand");
+        lib_edit(&lib_doc_path(&project, "b"), "B body", "B new");
+        (st, config)
+    }
+
+    #[tokio::test]
+    async fn stale_and_drift_in_one_codex_file_is_one_edit() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, config) = codex_pair(dir.path());
+        let report = run_and_report(&st).await;
+        let drift = drift_ids(&report);
+        let stale = ids_of(&report, "libstale.");
+        assert_eq!((drift.len(), stale.len()), (1, 1), "{:?}", report.items);
+        assert!(drift[0].ends_with(".a"), "{drift:?}");
+        let stale_item = report.items.iter().find(|i| i.id == stale[0]).unwrap();
+        assert_eq!(stale_item.group, DoctorGroup::Info);
+        assert_eq!(stale_item.title, "1 copy of b is out of date in project");
+
+        let plan = fix_of(&st, vec![drift[0].clone(), stale[0].clone()]).expect("a plan");
+        assert_eq!(plan.preview.files.len(), 1, "{:?}", plan.preview.files);
+        assert!(plan.preview.can_apply, "{:?}", plan.preview);
+        apply_fix_plan(&st, &plan).await;
+        let text = std::fs::read_to_string(&config).unwrap();
+        assert!(text.contains("A body") && !text.contains("A hand"), "{text}");
+        assert!(text.contains("B new") && !text.contains("B body"), "{text}");
+        let report = run_and_report(&st).await;
+        assert!(drift_ids(&report).is_empty() && ids_of(&report, "libstale.").is_empty());
+    }
+
+    #[tokio::test]
+    async fn library_fix_records_nothing_in_managed_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, _config) = codex_pair(dir.path());
+        let before = managed_pairs(&st);
+        let report = run_and_report(&st).await;
+        let mut ids = drift_ids(&report);
+        ids.extend(ids_of(&report, "libstale."));
+        assert_eq!(ids.len(), 2, "{:?}", report.items);
+        let plan = fix_of(&st, ids).expect("a plan");
+        apply_fix_plan(&st, &plan).await;
+        assert_eq!(managed_pairs(&st), before);
+
+        let dir = tempfile::tempdir().unwrap();
+        let (st, _project, _copy, _original) = drifted_qwen(dir.path());
+        let before = managed_pairs(&st);
+        let report = run_and_report(&st).await;
+        let adopt = drift_ids(&report).remove(0).replacen("libdrift.", "libadopt.", 1);
+        let plan = fix_of(&st, vec![adopt]).expect("a plan");
+        apply_fix_plan(&st, &plan).await;
+        assert_eq!(managed_pairs(&st), before);
+    }
+
+    #[tokio::test]
+    async fn gone_copy_is_cant_fix() {
+        let dir = tempfile::tempdir().unwrap();
+        let (st, _project, copy, original) = drifted_qwen(dir.path());
+        let report = run_and_report(&st).await;
+        let drift = drift_ids(&report).remove(0);
+        let adopt = drift.replacen("libdrift.", "libadopt.", 1);
+        std::fs::remove_file(&copy).unwrap();
+        for id in [drift.clone(), adopt] {
+            let (status, _) = fix_of(&st, vec![id]).expect_err("refused");
+            assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        }
+        // The copy is as Marshell wrote it again: the item is gone, so is the fix.
+        write(&copy, &original);
+        let (status, _) = fix_of(&st, vec![drift]).expect_err("refused");
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        // A place that has nothing out of date can't be fixed either.
+        let (status, _) = fix_of(&st, vec!["libstale.user".into()]).expect_err("refused");
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[test]
+    fn a_library_file_another_fix_edits_is_a_clash() {
+        let at = |path: &str| FileEdit {
+            path: path.into(),
+            scope: ConfigScope::Project,
+            op: EditOp::DeleteFile,
+            expected_hash: None,
+            applies: Applies::NewSessions,
+        };
+        let mine = [at("C:/p/.codex/config.toml")];
+        let show = |p: &Path| p.display().to_string();
+        let (status, message) = library_clash(&mine, &[at("C:\\p\\.codex\\CONFIG.toml")], &show).expect("a clash");
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(
+            message.starts_with("Two of the ticked fixes change ") && message.ends_with(". Apply them one at a time."),
+            "{message}"
+        );
+        assert!(library_clash(&mine, &[at("C:/p/other.toml")], &show).is_none());
     }
 }
