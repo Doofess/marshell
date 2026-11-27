@@ -85,6 +85,15 @@ pub struct CopyRow {
     pub notes: Vec<String>,
     /// Copilot CLI's row that reads Claude Code's `.claude/rules` copy.
     pub shared: bool,
+    /// The row offers "Put the doc's text back" and "Use this copy's text": a copy the doc wants, changed outside
+    /// Marshell. A copy no doc wants, edited by hand, is left as it is and offers neither.
+    #[serde(default, skip_serializing_if = "is_false")]
+    #[ts(optional, as = "Option<bool>")]
+    pub fixes: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// A doc and its rows.
@@ -214,6 +223,7 @@ mod tests {
             state: CopyState::Waiting,
             notes: vec![],
             shared: false,
+            fixes: false,
         };
         assert_eq!(
             serde_json::to_string(&row).unwrap(),

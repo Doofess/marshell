@@ -63,7 +63,7 @@ pub struct DoctorItem {
     #[serde(default, skip_serializing_if = "is_false")]
     #[ts(optional, as = "Option<bool>")]
     pub unchecked: bool,
-    /// A button on the row that changes what Marshell remembers, not a file of a CLI.
+    /// A button on the row besides the fix's checkbox (see `DoctorAction`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub action: Option<DoctorAction>,

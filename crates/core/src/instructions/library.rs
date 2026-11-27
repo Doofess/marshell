@@ -24,6 +24,7 @@ const NOT_TICKED: &str = "Not ticked for this doc.";
 const OFF: &str = "This doc is off, so it gets no copy.";
 const SHARED: &str = "Copilot CLI reads .claude/rules, so it loads this too.";
 const CODEX_USER_WARNING: &str = "Your developer_instructions in ~/.codex/config.toml stop loading in this project, because the project sets its own.";
+const EDITED: &str = "It was edited, so Marshell leaves it; delete it yourself if you don't need it.";
 
 /// Where a level's copies live.
 #[derive(Debug, Clone)]
@@ -220,8 +221,15 @@ impl Ctx<'_> {
         }
     }
 
+    /// The guard admits the path and, in a project, the path stays in the project once its links are resolved: a
+    /// cloned repo's `.claude` linked to another folder must not take copies, or lose files, outside the repo. A link
+    /// at user level is the person's own setup (dotfiles) and is followed.
     fn can_write(&self, path: &Path) -> bool {
         (self.editable)(path)
+            && match &self.place.level {
+                Level::Project { root, .. } => stays_inside(path, root),
+                Level::User { .. } => true,
+            }
     }
 
     fn row(&self, cli: &str, path: Option<&Path>, state: CopyState, notes: Vec<String>, shared: bool) -> CopyRow {
@@ -232,6 +240,7 @@ impl Ctx<'_> {
             state,
             notes,
             shared,
+            fixes: false,
         }
     }
 
@@ -273,6 +282,20 @@ impl Ctx<'_> {
         }
         notes
     }
+}
+
+/// Whether `path` stays inside `root` once the part of it that exists is resolved (links and junctions followed): a
+/// copy not written yet is placed by its deepest folder that exists.
+fn stays_inside(path: &Path, root: &Path) -> bool {
+    let mut existing = path;
+    while std::fs::symlink_metadata(existing).is_err() {
+        match existing.parent() {
+            Some(parent) => existing = parent,
+            None => return false,
+        }
+    }
+    let resolved = crate::projects::canonical(existing);
+    crate::projects::is_inside(&resolved.to_string_lossy(), &root.to_string_lossy())
 }
 
 /// What a doc wants in one CLI.
@@ -363,7 +386,12 @@ struct Analysis {
 }
 
 fn cfile(ctx: &Ctx, path: PathBuf, sections: bool) -> CFile {
-    let (text, mut refused) = match read_disk(&path) {
+    let disk = if ctx.can_write(&path) {
+        read_disk(&path)
+    } else {
+        Disk::Refused
+    };
+    let (text, mut refused) = match disk {
         Disk::Missing => (None, None),
         Disk::Refused => (None, Some(NOT_WRITABLE.to_string())),
         Disk::Text { text, .. } => (Some(text), None),
@@ -450,7 +478,11 @@ fn unwanted_item(
 
 fn file_items(ctx: &Ctx, doc: &Doc, v: &Vendor, w: &Want) -> Vec<Item> {
     let path = ctx.dir(v).join((v.file_name)(&doc.name));
-    let disk = read_disk(&path);
+    let disk = if ctx.can_write(&path) {
+        read_disk(&path)
+    } else {
+        Disk::Refused
+    };
     if let Want::Copy = w {
         let content = file_copy(&(v.frontmatter)(&doc.globs), &doc.name, &ctx.source(doc), &doc.body);
         let mut notes = Vec::new();
@@ -540,6 +572,15 @@ fn codex_items(ctx: &Ctx, cfiles: &[CFile], doc: &Doc, w: &Want) -> Vec<Item> {
     items
 }
 
+/// An unwanted copy's notes: why the doc doesn't want it, and that an edited one stays.
+fn unwanted_notes(it: &Item, why: Option<&String>) -> Vec<String> {
+    let mut notes: Vec<String> = why.into_iter().cloned().collect();
+    if matches!(it.kind, Kind::Unwanted { ours: false }) {
+        notes.push(EDITED.to_string());
+    }
+    notes
+}
+
 /// A doc's rows and its items. `all` holds the items so far (the shared row reads Claude Code's).
 fn doc_rows(ctx: &Ctx, cfiles: &[CFile], all: &mut Vec<Item>, doc: &Doc) -> Vec<CopyRow> {
     if doc.duplicate {
@@ -578,13 +619,15 @@ fn doc_rows(ctx: &Ctx, cfiles: &[CFile], all: &mut Vec<Item>, doc: &Doc) -> Vec<
                     .expect("a wanted copy has an item");
                 used.push(at);
                 let it = &all[at];
-                ctx.row(cli, Some(&it.path), it.state, it.notes.clone(), false)
+                let mut row = ctx.row(cli, Some(&it.path), it.state, it.notes.clone(), false);
+                row.fixes = it.state == CopyState::ChangedOutside;
+                row
             }
             Want::No(why) => match mine.clone().find(|&i| !all[i].wanted()) {
                 Some(at) => {
                     used.push(at);
                     let it = &all[at];
-                    ctx.row(cli, Some(&it.path), it.state, vec![why.clone()], false)
+                    ctx.row(cli, Some(&it.path), it.state, unwanted_notes(it, Some(why)), false)
                 }
                 None => ctx.row(cli, None, CopyState::NoCopy, vec![why.clone()], false),
             },
@@ -595,7 +638,7 @@ fn doc_rows(ctx: &Ctx, cfiles: &[CFile], all: &mut Vec<Item>, doc: &Doc) -> Vec<
     // user file) gets a row of its own, so Review never removes what the page doesn't list.
     for (at, it) in all.iter().enumerate().skip(start) {
         if matches!(it.kind, Kind::Unwanted { .. }) && !used.contains(&at) {
-            rows.push(ctx.row(it.cli, Some(&it.path), it.state, Vec::new(), false));
+            rows.push(ctx.row(it.cli, Some(&it.path), it.state, unwanted_notes(it, None), false));
         }
     }
     rows
@@ -702,7 +745,7 @@ pub fn level_state(place: &Place, user_home: &Path, editable: &dyn Fn(&Path) -> 
     let copies: Vec<CopyAt> = a
         .items
         .iter()
-        .filter(|i| !matches!(i.kind, Kind::Kept { .. }))
+        .filter(|i| !matches!(i.kind, Kind::Kept { .. } | Kind::Unwanted { ours: false }))
         .map(|i| CopyAt {
             doc: i.doc.clone(),
             cli: i.cli,
@@ -1595,6 +1638,101 @@ Be careful.
         assert_eq!(st.changed_outside, 1);
         assert_eq!(st.out_of_date, 0);
         assert!(review(&p).is_empty());
+    }
+
+    #[test]
+    fn only_a_wanted_changed_copy_offers_fixes() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path();
+        let p = applied(root);
+        let edited = read(root, CLAUDE).replace("Be careful.", "Mine.");
+        write(root, CLAUDE, &edited);
+        let st = state(&p);
+        let rows = &st.rows[0].1;
+        assert_eq!(rows[0].state, CopyState::ChangedOutside);
+        assert!(rows[0].fixes, "Claude Code's row has the fixes");
+        assert_eq!(rows[4].state, CopyState::ChangedOutside);
+        assert!(rows[4].shared);
+        assert!(
+            !rows[4].fixes,
+            "the shared Copilot CLI row leaves the fixes to Claude Code's"
+        );
+        assert!(rows[1..4].iter().all(|r| !r.fixes));
+        assert_eq!(st.changed_outside, 1);
+    }
+
+    #[test]
+    fn edited_copy_of_an_unticked_cli_stays_without_fixes() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path();
+        applied(root);
+        let edited = read(root, QWEN).replace("Be careful.", "Mine.");
+        write(root, QWEN, &edited);
+        let doc = project_doc(
+            root,
+            "security",
+            "---\nclis: [claude, codex, antigravity, copilot]\n---\nBe careful.\n",
+        );
+        let p = place(root, vec![doc], &ALL);
+        let st = state(&p);
+        let qwen = &st.rows[0].1[3];
+        assert_eq!(qwen.state, CopyState::ChangedOutside);
+        assert!(!qwen.fixes);
+        assert_eq!(
+            qwen.notes,
+            [
+                "Not ticked for this doc.",
+                "It was edited, so Marshell leaves it; delete it yourself if you don't need it."
+            ]
+        );
+        assert_eq!(st.changed_outside, 0);
+        assert!(st.copies.iter().all(|c| c.cli != "qwen"));
+        assert!(!rels(root, &review(&p)).contains(&QWEN.to_string()));
+    }
+
+    /// A folder link at `link` to `target`: a symlink, or a junction on Windows without developer mode.
+    fn link_dir(link: &Path, target: &Path) -> std::io::Result<()> {
+        #[cfg(unix)]
+        return std::os::unix::fs::symlink(target, link);
+        #[cfg(windows)]
+        return std::os::windows::fs::symlink_dir(target, link).or_else(|_| {
+            let status = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()?
+                .status;
+            status
+                .success()
+                .then_some(())
+                .ok_or_else(|| std::io::Error::other("mklink /J failed"))
+        });
+    }
+
+    #[test]
+    fn a_linked_folder_out_of_the_project_is_refused() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().join("repo");
+        fs::create_dir_all(&root).unwrap();
+        let outside = t.path().join("outside");
+        fs::create_dir_all(outside.join("rules")).unwrap();
+        // A copy Marshell wrote elsewhere, which Review would otherwise take for an orphan here.
+        let theirs = file_copy("", "gone", "s", "Theirs.\n");
+        fs::write(outside.join("rules").join("marshell-gone.md"), &theirs).unwrap();
+        if let Err(e) = link_dir(&root.join(".qwen"), &outside) {
+            eprintln!("skipped: cannot create a folder link here: {e}");
+            return;
+        }
+        let p = place(&root, vec![security(&root)], &ALL);
+        let st = state(&p);
+        assert_eq!(st.rows[0].1[3].state, CopyState::Refused);
+        assert!(st.orphans.is_empty());
+        let edits = review(&p);
+        assert!(edits.iter().all(|e| !e.path.contains(".qwen")), "{edits:?}");
+        assert_eq!(
+            fs::read_to_string(outside.join("rules").join("marshell-gone.md")).unwrap(),
+            theirs
+        );
     }
 
     #[test]

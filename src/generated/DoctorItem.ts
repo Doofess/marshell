@@ -41,7 +41,7 @@ open_agents: boolean,
  */
 unchecked?: boolean, 
 /**
- * A button on the row that changes what Marshell remembers, not a file of a CLI.
+ * A button on the row besides the fix's checkbox (see `DoctorAction`).
  */
 action?: DoctorAction, 
 /**

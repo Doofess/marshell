@@ -24,4 +24,9 @@ notes: Array<string>,
 /**
  * Copilot CLI's row that reads Claude Code's `.claude/rules` copy.
  */
-shared: boolean, };
+shared: boolean, 
+/**
+ * The row offers "Put the doc's text back" and "Use this copy's text": a copy the doc wants, changed outside
+ * Marshell. A copy no doc wants, edited by hand, is left as it is and offers neither.
+ */
+fixes?: boolean, };
