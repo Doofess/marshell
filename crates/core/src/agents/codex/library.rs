@@ -24,7 +24,7 @@ pub(crate) struct Block {
 
 /// The begin line (with the hash of the body), the body and the end line, all with `\n`. A body that doesn't end in
 /// a line end gets one first, so what is read back hashes the same.
-pub(crate) fn block_text(name: &str, source: &str, body: &str) -> String {
+pub fn block_text(name: &str, source: &str, body: &str) -> String {
     let name = name.to_lowercase();
     let mut body = normalized(body);
     if !body.is_empty() && !body.ends_with('\n') {

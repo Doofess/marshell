@@ -3,7 +3,7 @@
 pub mod extensions;
 pub mod hooks;
 pub mod instructions;
-pub(crate) mod library;
+pub mod library;
 pub mod request;
 pub mod rollout;
 pub mod status;
