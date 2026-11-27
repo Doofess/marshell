@@ -103,18 +103,20 @@ where
 
 // ---- where things are ----
 
-/// The running managed distros with their homes, and the managed distros that are not running. A stopped distro is
-/// never asked for anything, since asking would start it. Runs `wsl.exe` when Marshell manages a distro.
-pub(crate) fn library_distros(st: &AppState) -> (Vec<(String, PathBuf)>, Vec<String>) {
+/// The running managed distros with their homes, the managed distros that are not running, and the running ones
+/// `wsl.exe` gave no home for. A stopped distro is never asked for anything, since asking would start it. Runs
+/// `wsl.exe` when Marshell manages a distro.
+pub(crate) fn library_distros(st: &AppState) -> (Vec<(String, PathBuf)>, Vec<String>, Vec<String>) {
     let (running, stopped) = partition_managed_distros(st, &managed_entries(st));
-    let homes = running
-        .into_iter()
-        .filter_map(|distro| {
-            let target = st.distro_target(&distro).ok()?;
-            Some((distro, target.home))
-        })
-        .collect();
-    (homes, stopped)
+    let mut homes = Vec::new();
+    let mut unanswered = Vec::new();
+    for distro in running {
+        match st.distro_target(&distro) {
+            Ok(target) => homes.push((distro, target.home)),
+            Err(_) => unanswered.push(distro),
+        }
+    }
+    (homes, stopped, unanswered)
 }
 
 /// The Windows user home, which a doc's source is shown under as `~/…`.
@@ -143,8 +145,10 @@ fn found_in_distro(st: &AppState, distro: &str) -> Option<Vec<&'static str>> {
     )
 }
 
-fn user_places_with(st: &AppState, docs: &[Doc], distro_homes: &[(String, PathBuf)]) -> Vec<Place> {
+/// The places, and the distros left out because `wsl.exe` didn't say which CLIs they have.
+fn user_places_with(st: &AppState, docs: &[Doc], distro_homes: &[(String, PathBuf)]) -> (Vec<Place>, Vec<String>) {
     let mut places = Vec::new();
+    let mut unanswered = Vec::new();
     if let Some(roots) = windows_roots(st) {
         places.push(Place {
             level: Level::User {
@@ -159,6 +163,7 @@ fn user_places_with(st: &AppState, docs: &[Doc], distro_homes: &[(String, PathBu
         // A distro that didn't say which CLIs it has is left out this time, as one whose home can't be found is: read
         // as "none", every copy in it would be one to remove.
         let Some(found) = found_in_distro(st, distro) else {
+            unanswered.push(distro.clone());
             continue;
         };
         places.push(Place {
@@ -170,13 +175,13 @@ fn user_places_with(st: &AppState, docs: &[Doc], distro_homes: &[(String, PathBu
             found,
         });
     }
-    places
+    (places, unanswered)
 }
 
 /// Every user level a doc is copied into: the Windows one first, then each running managed distro's (with the CLIs
 /// found on its PATH). Reads the user docs. Blocks.
 pub(crate) fn user_places(st: &AppState, distro_homes: &[(String, PathBuf)]) -> Vec<Place> {
-    user_places_with(st, &read_user_docs(st), distro_homes)
+    user_places_with(st, &read_user_docs(st), distro_homes).0
 }
 
 fn read_text(path: &Path) -> Option<String> {
@@ -329,13 +334,14 @@ fn ready_place(st: &AppState, root: &str, distro_homes: &[(String, PathBuf)]) ->
 
 // ---- the view ----
 
-fn waiting_row(distro: &str) -> CopyRow {
+/// A distro whose copies weren't read this time, with why: it isn't running, or `wsl.exe` didn't answer.
+fn waiting_row(distro: &str, note: String) -> CopyRow {
     CopyRow {
         cli: None,
         distro: Some(distro.to_string()),
         path: None,
         state: CopyState::Waiting,
-        notes: vec![format!("{distro} isn't running, so its copies wait.")],
+        notes: vec![note],
         shared: false,
         fixes: false,
     }
@@ -355,9 +361,10 @@ fn build_view(
     project: Option<&str>,
     distro_homes: &[(String, PathBuf)],
     stopped: &[String],
+    unanswered: &[String],
 ) -> Result<LibraryView, Stop> {
     let docs = read_user_docs(st);
-    let places = user_places_with(st, &docs, distro_homes);
+    let (places, no_clis) = user_places_with(st, &docs, distro_homes);
     let home = user_home(st);
     let editable = |p: &Path| st.0.config.editable(p);
     let states: Vec<LevelState> = places.iter().map(|p| level_state(p, &home, &editable)).collect();
@@ -366,7 +373,17 @@ fn build_view(
         .enumerate()
         .map(|(i, d)| {
             let mut rows = rows_at(&states, i);
-            rows.extend(stopped.iter().map(|s| waiting_row(s)));
+            rows.extend(
+                stopped
+                    .iter()
+                    .map(|d| waiting_row(d, format!("{d} isn't running, so its copies wait."))),
+            );
+            rows.extend(
+                unanswered
+                    .iter()
+                    .chain(&no_clis)
+                    .map(|d| waiting_row(d, format!("{d} didn't answer, so its copies wait."))),
+            );
             DocView {
                 doc: doc::to_protocol(d),
                 rows,
@@ -417,8 +434,8 @@ pub struct ViewQuery {
 /// `GET /v1/instructions?project=<root>`.
 pub async fn library(State(st): State<AppState>, Query(q): Query<ViewQuery>) -> Response {
     blocking(st, move |st| {
-        let (homes, stopped) = library_distros(st);
-        build_view(st, q.project.as_deref(), &homes, &stopped)
+        let (homes, stopped, unanswered) = library_distros(st);
+        build_view(st, q.project.as_deref(), &homes, &stopped, &unanswered)
     })
     .await
 }
@@ -532,7 +549,7 @@ fn apply_now(st: &AppState, cs: ChangeSet) -> Result<ApplyResult, Stop> {
 }
 
 fn save_doc(st: &AppState, req: DocSave) -> Result<DocSaved, Stop> {
-    let (homes, stopped) = library_distros(st);
+    let (homes, stopped, unanswered) = library_distros(st);
     if req.scope == DocScope::Project && req.project.is_none() {
         return Err(Stop::unprocessable(NEEDS_PROJECT));
     }
@@ -551,7 +568,7 @@ fn save_doc(st: &AppState, req: DocSave) -> Result<DocSaved, Stop> {
     let applied = apply_now(st, save_plan(&doc, old, req.expected_hash.as_deref()))?;
     Ok(DocSaved {
         snapshot_id: applied.snapshot_id,
-        view: build_view(st, req.project.as_deref(), &homes, &stopped)?,
+        view: build_view(st, req.project.as_deref(), &homes, &stopped, &unanswered)?,
     })
 }
 
@@ -567,7 +584,7 @@ fn preview_of(st: &AppState, cs: ChangeSet) -> ConfigPreview {
 }
 
 fn review_copies(st: &AppState, req: LibraryReview) -> Result<ConfigPreview, Stop> {
-    let (homes, _) = library_distros(st);
+    let (homes, ..) = library_distros(st);
     let project = req.project.as_deref().map(|p| ready_place(st, p, &homes)).transpose()?;
     let mut places = user_places(st, &homes);
     places.extend(project);
@@ -581,7 +598,7 @@ pub async fn review(State(st): State<AppState>, Json(req): Json<LibraryReview>) 
 }
 
 fn delete_doc(st: &AppState, req: DocRef) -> Result<ConfigPreview, Stop> {
-    let (homes, _) = library_distros(st);
+    let (homes, ..) = library_distros(st);
     let places = match req.scope {
         DocScope::User => user_places(st, &homes),
         DocScope::Project => {
@@ -607,7 +624,7 @@ pub async fn delete(State(st): State<AppState>, Json(req): Json<DocRef>) -> Resp
 }
 
 fn fix_copy(st: &AppState, req: CopyFix) -> Result<ConfigPreview, Stop> {
-    let (homes, stopped) = library_distros(st);
+    let (homes, stopped, _) = library_distros(st);
     let place = match req.scope {
         DocScope::Project => {
             let root = req
@@ -1157,7 +1174,45 @@ mod tests {
         let v = view_ok(&r.st, None).await;
         assert_eq!(v.out_of_date, 0, "{:?}", v.user_docs[0].rows);
         assert!(v.user_docs[0].rows.iter().all(|x| x.state != CopyState::Extra));
+        // The distro isn't dropped without a word: the doc says its copies wait.
+        let waiting: Vec<_> = v.user_docs[0]
+            .rows
+            .iter()
+            .filter(|x| x.state == CopyState::Waiting)
+            .collect();
+        assert_eq!(waiting.len(), 1, "{:?}", v.user_docs[0].rows);
+        assert_eq!(waiting[0].distro.as_deref(), Some(DISTRO));
+        assert_eq!(
+            waiting[0].notes,
+            ["MarshellTestDistro didn't answer, so its copies wait."]
+        );
         drop(r);
+    }
+
+    #[tokio::test]
+    async fn a_running_distro_with_no_home_gets_a_waiting_row() {
+        // `wsl.exe` didn't say where the distro's home is, so nothing in it is read; the doc says its copies wait.
+        let r = rig_with(vec![wsl_profile()], |st| {
+            st.with_running_distros(|| vec![DISTRO.to_string()])
+                .with_distro_target(None)
+        });
+        managed_in(&r, r"\\wsl.localhost\MarshellTestDistro\home\u\.claude\settings.json");
+        write(
+            &r.home.join("instructions").join("security.md"),
+            &doc_text("s", "Be careful.\n"),
+        );
+        let v = view_ok(&r.st, None).await;
+        let waiting: Vec<_> = v.user_docs[0]
+            .rows
+            .iter()
+            .filter(|x| x.state == CopyState::Waiting)
+            .collect();
+        assert_eq!(waiting.len(), 1, "{:?}", v.user_docs[0].rows);
+        assert_eq!(waiting[0].cli, None);
+        assert_eq!(
+            waiting[0].notes,
+            ["MarshellTestDistro didn't answer, so its copies wait."]
+        );
     }
 
     #[test]

@@ -397,10 +397,6 @@ pub fn run(
     for line in &library.left {
         let _ = writeln!(out, "{line}");
     }
-    if !library.changes.edits.is_empty() {
-        let _ = writeln!(out, "Instruction library copies found.");
-        extras.push(library.changes);
-    }
     // The WSL distros: the installed ones, and any `managed.json` names that the list missed. Every home is asked for at
     // once, each with its own time limit, because a stopped distro is started by the question.
     let managed_names = managed_distros(home);
@@ -434,6 +430,23 @@ pub fn run(
     let mut distro_unanswered = false;
     // A library copy Marshell can't remove points at nothing, so it only counts in the exit code.
     let mut copies_refused = false;
+    // Previewed on its own, as a skill is: a copy the config service refuses keeps the library's copies, not the hooks.
+    if !library.changes.edits.is_empty() {
+        let preview = service.preview(library.changes.clone());
+        let refused = refusals(&preview);
+        if refused.is_empty() && preview.can_apply {
+            let _ = writeln!(out, "Instruction library copies found.");
+            extras.push(library.changes);
+        } else {
+            for (path, detail) in &refused {
+                let _ = writeln!(out, "Marshell can't change {path}: {detail}");
+            }
+            if refused.is_empty() {
+                let _ = writeln!(out, "Marshell can't change the instruction library copies.");
+            }
+            copies_refused = true;
+        }
+    }
     for (name, answer) in &answers {
         let Some(distro_home) = answer else {
             // WSL answered with its distros and this one isn't among them: it was unregistered, and its files with it.
@@ -2284,6 +2297,32 @@ mod tests {
         assert!(!out.contains("may still point at it"), "{out}");
         assert!(!out.contains("nothing of Marshell's."), "{out}");
         assert!(!bin_exists(&f), "{out}");
+    }
+
+    #[test]
+    fn a_refused_windows_copy_leaves_the_rest_to_go() {
+        // One library copy Marshell can't remove is said and counted; the hooks and bin go all the same.
+        let f = installed(ORIGINAL);
+        let copy = f.user_home.join(".claude/rules/marshell-security.md");
+        write(&copy, &library_copy("security"));
+        let other = f.user_home.join(".claude/rules/marshell-style.md");
+        write(&other, &library_copy("style"));
+        let mut permissions = std::fs::metadata(&copy).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&copy, permissions).unwrap();
+        let (code, out) = run_with(&f, "", true);
+        let mut permissions = std::fs::metadata(&copy).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        std::fs::set_permissions(&copy, permissions).unwrap();
+        assert_eq!(code, 1, "{out}");
+        assert!(copy.exists(), "{out}");
+        assert!(out.contains("The file is read-only."), "{out}");
+        assert!(!out.contains("Nothing was changed."), "{out}");
+        assert_eq!(std::fs::read_to_string(&f.settings).unwrap(), ORIGINAL, "{out}");
+        assert!(!bin_exists(&f), "{out}");
+        // The library is previewed as a whole, so a copy beside the refused one stays too and is said by its line.
+        assert!(other.exists(), "{out}");
     }
 
     #[test]
