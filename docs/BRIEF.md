@@ -68,7 +68,7 @@ Where the text below disagrees with this list, this list wins. `docs/PLAN.md` ho
 - **Codex CLI:**
   - It has a `PermissionRequest` hook, so approve-from-anywhere works for Codex too.
   - Non-managed hooks need user review and trust in `/hooks`, bound to the current hook hash; hook definitions load additively across active config sources. See the current implementation notes in `docs/research/codex-cli.md`.
-  - Codex discovers chained `AGENTS.md` files up to a default 32 KiB combined limit (`project_doc_max_bytes`). The instruction library uses a tagged inline block with a size warning and must preserve user-authored files. (Replaced on 2026-11-27 by slice 8a decision 1 in `docs/PLAN.md`: a project doc reaches Codex through `developer_instructions` in the repo's `.codex/config.toml`, and `AGENTS.md` is not touched.)
+  - Codex discovers chained `AGENTS.md` files up to a default 32 KiB combined limit (`project_doc_max_bytes`). The instruction library uses a tagged inline block with a size warning and must preserve user-authored files.
 - **Claude Code:**
   - `model` arrives only on `SessionStart`.
   - `cleanupPeriodDays` defaults to 30.
