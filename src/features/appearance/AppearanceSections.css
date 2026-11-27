@@ -81,28 +81,6 @@
     background: var(--hover, var(--fill-strong));
   }
 }
-.appearance__swatch {
-  inline-size: 14px;
-  block-size: 14px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-.appearance__swatch--custom {
-  background: conic-gradient(var(--text-3) 0 25%, transparent 0 50%, var(--text-3) 0 75%, transparent 0) 0 0 / 6px 6px;
-}
-
-.appearance__inline {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-3);
-  font-size: var(--text-13);
-  color: var(--text-2);
-}
-.appearance__hex {
-  inline-size: 12ch;
-  font-family: var(--font-mono);
-}
 .appearance__size {
   inline-size: 8ch;
 }
@@ -199,7 +177,6 @@
   .appearance__chip:has(input:disabled) {
     color: GrayText;
   }
-  .appearance__swatch,
   .appearance__preview,
   .appearance__dots {
     forced-color-adjust: none;

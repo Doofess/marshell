@@ -7,8 +7,8 @@ import { AppearanceView, TerminalView, type AppearanceHandlers, type AppearanceV
 import { DEFAULT_APPEARANCE } from "./rootState";
 
 const noop = () => {};
-const handlers: AppearanceHandlers = { save: noop, onAccentText: noop, commitAccent: noop, blurAccent: noop, pickAccent: noop, pickFont: noop, onSizeText: noop, commitSize: noop, importFile: noop };
-const STATE: AppearanceViewState = { appearance: DEFAULT_APPEARANCE, app: "dark", highContrast: false, wtFiles: [], error: null, accent: { text: "", reason: null }, size: { text: "13", reason: null }, importError: null };
+const handlers: AppearanceHandlers = { save: noop, pickFont: noop, onSizeText: noop, commitSize: noop, importFile: noop };
+const STATE: AppearanceViewState = { appearance: DEFAULT_APPEARANCE, app: "dark", highContrast: false, wtFiles: [], error: null, size: { text: "13", reason: null }, importError: null };
 const appearanceHtml = (over: Partial<AppearanceViewState> = {}) => renderToStaticMarkup(<AppearanceView state={{ ...STATE, ...over }} handlers={handlers} />);
 const terminalHtml = (over: Partial<AppearanceViewState> = {}) => renderToStaticMarkup(<TerminalView state={{ ...STATE, ...over }} handlers={handlers} />);
 
@@ -35,26 +35,13 @@ const noShell = (m: string) => {
 describe("AppearanceView (the Appearance section)", () => {
   it("draws no dialog, page, h1, heading above its first field, Close button or live region", () => noShell(appearanceHtml()));
 
-  it("holds the app theme, contrast, text size and accent, and nothing of the terminal", () => {
+  it("holds the app theme, contrast and text size, no accent, and nothing of the terminal", () => {
     const m = appearanceHtml();
-    for (const l of ["Theme", "High contrast", "Text size", "Accent colour"]) expect(m).toContain(`>${l}<`);
+    for (const l of ["Theme", "High contrast", "Text size"]) expect(m).toContain(`>${l}<`);
+    expect(m).not.toMatch(/Accent|name="accent"|appearance__swatch|Custom colour|data-accent/);
     expect(m).not.toContain("Terminal font size");
     expect(m).not.toContain("Terminal theme");
     expect(m).not.toContain("Import a theme file");
-  });
-
-  it("marks the current accent", () => {
-    const m = appearanceHtml({ appearance: { ...DEFAULT_APPEARANCE, accent: "teal" } });
-    expect(radio(m, "Teal")).toContain('checked=""');
-    expect(radio(m, "Teal")).toContain('data-selected="true"');
-    expect(radio(m, "Sand")).not.toContain('checked=""');
-  });
-
-  it("custom accent shows the reason and keeps the old value", () => {
-    const m = appearanceHtml({ accent: { text: "#ffff00", reason: "Too light on a light background (1:1). Pick a darker colour." } });
-    expect(m).toContain("Too light on a light background");
-    expect(m).toMatch(/aria-describedby="[^"]+"[^>]*value="#ffff00"|value="#ffff00"[^>]*aria-describedby="[^"]+"/);
-    expect(radio(m, "Sand")).toContain('checked=""');
   });
 
   it("a failed save shows next to its section", () => {

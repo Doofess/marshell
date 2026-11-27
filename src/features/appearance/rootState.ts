@@ -1,5 +1,4 @@
 import type { Appearance } from "../../generated/Appearance";
-import { checkAccent } from "./customAccent";
 
 /** What the app shows before the settings arrive, and when they can't be read. Matches the core's defaults. */
 export const DEFAULT_APPEARANCE: Appearance = {
@@ -14,8 +13,7 @@ export const DEFAULT_APPEARANCE: Appearance = {
 };
 
 export type RootState = {
-  attrs: Record<"data-theme" | "data-accent" | "data-contrast" | "data-text-size", string | null>;
-  style: Record<"--accent" | "--accent-ink", string | null>;
+  attrs: Record<"data-theme" | "data-contrast" | "data-text-size", string | null>;
 };
 
 /** Whether High contrast is on: by the setting, or by the system asking for more contrast while the setting follows it. */
@@ -23,25 +21,15 @@ export function contrastMoreOf(contrast: Appearance["contrast"], prefersContrast
   return contrast === "on" || (contrast === "follow-system" && prefersContrastMore);
 }
 
-/** The attributes and inline properties the root element carries for these settings. `null` removes one. */
+/** The attributes the root element carries for these settings. `null` removes one. */
 export function rootState(a: Appearance, sys: { prefersContrastMore: boolean }): RootState {
-  let accent: string | null = a.accent;
-  let style: RootState["style"] = { "--accent": null, "--accent-ink": null };
-  if (a.accent.startsWith("#")) {
-    const check = checkAccent(a.accent);
-    // A custom accent that fails the check (edited by hand in settings.json) falls back to the default preset.
-    if (check.ok) style = { "--accent": check.hex, "--accent-ink": check.ink };
-    accent = check.ok ? "custom" : DEFAULT_APPEARANCE.accent;
-  }
   const contrastMore = contrastMoreOf(a.contrast, sys.prefersContrastMore);
   return {
     attrs: {
       "data-theme": a.theme === "follow-system" ? null : a.theme,
-      "data-accent": accent,
       "data-contrast": contrastMore ? "more" : null,
       "data-text-size": a.text_size === "default" ? null : a.text_size,
     },
-    style,
   };
 }
 
@@ -50,9 +38,5 @@ export function applyRootState(el: HTMLElement, s: RootState): void {
   for (const [name, value] of Object.entries(s.attrs)) {
     if (value === null) el.removeAttribute(name);
     else el.setAttribute(name, value);
-  }
-  for (const [name, value] of Object.entries(s.style)) {
-    if (value === null) el.style.removeProperty(name);
-    else el.style.setProperty(name, value);
   }
 }

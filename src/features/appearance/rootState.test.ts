@@ -13,22 +13,10 @@ describe("rootState", () => {
     expect(rootState(a({ theme: "dark" }), off).attrs["data-theme"]).toBe("dark");
     expect(rootState(a({ theme: "light" }), off).attrs["data-theme"]).toBe("light");
   });
-  it("a preset accent sets data-accent and clears the inline accent", () => {
-    const r = rootState(a({ accent: "teal" }), off);
-    expect(r.attrs["data-accent"]).toBe("teal");
-    expect(r.style["--accent"]).toBeNull();
-    expect(r.style["--accent-ink"]).toBeNull();
-  });
-  it("a custom accent sets the hex and its ink inline", () => {
-    const r = rootState(a({ accent: "#DB2777" }), off);
-    expect(r.attrs["data-accent"]).toBe("custom");
-    expect(r.style["--accent"]).toBe("#db2777");
-    expect(r.style["--accent-ink"]).toBe("#ffffff");
-  });
-  it("a custom accent that fails the check falls back to the default preset", () => {
-    const r = rootState(a({ accent: "#ffffff" }), off);
-    expect(r.attrs["data-accent"]).toBe("sand");
-    expect(r.style["--accent"]).toBeNull();
+  it("sets no accent: the root carries only the theme, contrast and text size", () => {
+    const r = rootState(DEFAULT_APPEARANCE, off);
+    expect(Object.keys(r.attrs).sort()).toEqual(["data-contrast", "data-text-size", "data-theme"]);
+    expect(r).not.toHaveProperty("style");
   });
   it("contrast on sets data-contrast", () => {
     expect(rootState(a({ contrast: "on" }), off).attrs["data-contrast"]).toBe("more");

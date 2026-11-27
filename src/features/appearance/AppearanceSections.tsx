@@ -9,7 +9,7 @@ import { resolveTerminalTheme, type Scheme } from "../terminal/terminalTheme";
 import { useAppScheme } from "../terminal/useAppScheme";
 import { addImported, removeImported } from "./appearanceEdits";
 import { useAppearance } from "./AppearanceProvider";
-import { blurAccent, commitAccent, draftsOf, pickPreset, refill, type Draft, type Drafts, type Field } from "./drafts";
+import { draftsOf, refill, type Draft, type Field } from "./drafts";
 import { importThemeFile, MAX_THEME_FILE } from "./import/importTheme";
 import { schemesInFiles } from "./import/windowsTerminal";
 import { terminalThemeOf, wtFont } from "./terminalSettings";
@@ -17,7 +17,7 @@ import "../settings/Settings.css";
 import "./AppearanceSections.css";
 
 /** Where a failed save is shown: next to the part that was changed. */
-export type ErrorPlace = "theme" | "accent" | "terminal" | "imported";
+export type ErrorPlace = "theme" | "terminal" | "imported";
 
 export type AppearanceViewState = {
   appearance: Appearance;
@@ -27,20 +27,12 @@ export type AppearanceViewState = {
   highContrast: boolean;
   wtFiles: FoundFile[] | null;
   error: { at: ErrorPlace; text: string } | null;
-  accent: Draft;
   size: Draft;
   importError: string | null;
 };
 
 export type AppearanceHandlers = {
   save(next: Appearance, at: ErrorPlace): void;
-  onAccentText(text: string): void;
-  /** Saves the custom accent if it passes the check; otherwise the reason shows and the accent stays. */
-  commitAccent(): void;
-  /** Leaving the custom colour field: commits only text that changed, and says nothing about empty text. */
-  blurAccent(): void;
-  /** Picks one of the preset accents and empties the custom colour field. */
-  pickAccent(accent: string): void;
   /** The family to save for the terminal font: "" is Match my terminal. */
   pickFont(family: string): void;
   onSizeText(text: string): void;
@@ -49,17 +41,6 @@ export type AppearanceHandlers = {
   onClose?(): void;
 };
 
-const ACCENTS = [
-  ["sand", "Sand"],
-  ["amber", "Amber"],
-  ["blue", "Blue"],
-  ["indigo", "Indigo"],
-  ["violet", "Violet"],
-  ["magenta", "Magenta"],
-  ["cyan", "Cyan"],
-  ["teal", "Teal"],
-  ["slate", "Slate"],
-] as const;
 
 const ANSI_KEYS = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white", "brightBlack", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan", "brightWhite"] as const;
 
@@ -128,11 +109,9 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 const setter = (a: Appearance, handlers: AppearanceHandlers) => (patch: Partial<Appearance>, at: ErrorPlace) => handlers.save({ ...a, ...patch }, at);
 
-/** The Appearance section's fields: app theme, contrast, text size and accent. The shell draws the heading and the page. */
+/** The Appearance section's fields: app theme, contrast and text size. The shell draws the heading and the page. */
 export function AppearanceView({ state, handlers }: { state: AppearanceViewState; handlers: AppearanceHandlers }) {
   const { appearance: a, error } = state;
-  const ids = { accentHelp: useId(), accentWhy: useId() };
-  const custom = a.accent.startsWith("#");
   const set = setter(a, handlers);
 
   return (
@@ -143,51 +122,6 @@ export function AppearanceView({ state, handlers }: { state: AppearanceViewState
         <Choice legend="Text size" help="Changes the size of Marshell's text. The terminal font size is set in Terminal." name="text-size" value={a.text_size} options={[["default", "Default"], ["large", "Large"], ["larger", "Larger"]]} onPick={(text_size) => set({ text_size }, "theme")} />
         <ErrorAt at="theme" error={error} />
       </div>
-
-      <Section title="Accent">
-        <fieldset className="appearance__group" aria-describedby={ids.accentHelp}>
-          <legend className="field__label">Accent colour</legend>
-          <p id={ids.accentHelp} className="field__help">
-            Sessions use their agent&apos;s colour. Your accent shows everywhere else.
-          </p>
-          <div className="appearance__chips">
-            {ACCENTS.map(([v, label]) => (
-              <label key={v} className="appearance__chip is-selected-mark" data-selected={a.accent === v ? "true" : undefined}>
-                <input type="radio" name="accent" value={v} checked={a.accent === v} onChange={() => handlers.pickAccent(v)} />
-                <span className="appearance__swatch" data-accent={v} aria-hidden="true" />
-                <span>{label}</span>
-              </label>
-            ))}
-            <label className="appearance__chip is-selected-mark" data-selected={custom ? "true" : undefined}>
-              <input type="radio" name="accent" value="custom" checked={custom} onChange={handlers.commitAccent} />
-              <span className="appearance__swatch appearance__swatch--custom" style={custom ? { background: a.accent } : undefined} aria-hidden="true" />
-              <span>Custom</span>
-            </label>
-          </div>
-          <label className="appearance__inline">
-            <span>Custom colour</span>
-            <input
-              type="text"
-              className="field__control appearance__hex"
-              data-field="accent"
-              spellCheck={false}
-              placeholder="#3a7bd5"
-              value={state.accent.text}
-              aria-invalid={state.accent.reason ? true : undefined}
-              aria-describedby={state.accent.reason ? ids.accentWhy : undefined}
-              onChange={(e) => handlers.onAccentText(e.target.value)}
-              onBlur={handlers.blurAccent}
-              onKeyDown={onEnter(handlers.commitAccent)}
-            />
-          </label>
-          {state.accent.reason && (
-            <p id={ids.accentWhy} className="field__why">
-              {state.accent.reason}
-            </p>
-          )}
-        </fieldset>
-        <ErrorAt at="accent" error={error} />
-      </Section>
     </div>
   );
 }
@@ -352,8 +286,7 @@ function useAppearanceSection(announce: ((text: string) => void) | undefined, on
   // Which part this section last saved. A failed save shows (and is said) only in the section that made it.
   const [at, setAt] = useState<ErrorPlace | null>(null);
   const [drafts, setDrafts] = useState(() => draftsOf(appearance));
-  const { accent, size } = drafts;
-  const setAccent = (next: Draft) => setDrafts((d) => ({ ...d, accent: next }));
+  const { size } = drafts;
   const setSize = (next: Draft) => setDrafts((d) => ({ ...d, size: next }));
   const [importError, setImportError] = useState<string | null>(null);
   // The settings may arrive after the section mounted: the fields then take the saved values, except one being typed in.
@@ -363,7 +296,7 @@ function useAppearanceSection(announce: ((text: string) => void) | undefined, on
   });
   useEffect(() => {
     refillNow();
-  }, [appearance.accent, appearance.terminal_font.family, appearance.terminal_font.size]);
+  }, [appearance.terminal_font.family, appearance.terminal_font.size]);
   // The window has one live region (its announcer): failures are said there and shown in words beside their section.
   const say = useEffectEvent((text: string) => announce?.(text));
   const mine = useEffectEvent(() => at !== null);
@@ -374,22 +307,10 @@ function useAppearanceSection(announce: ((text: string) => void) | undefined, on
     if (importError) say(importError);
   }, [importError]);
 
-  const applyAccent = ({ drafts: next, hex }: { drafts: Drafts; hex: string | null }) => {
-    setDrafts(next);
-    if (hex !== null && hex !== appearance.accent) handlers.save({ ...appearance, accent: hex }, "accent");
-  };
-
   const handlers: AppearanceHandlers = {
     save(next, section) {
       setAt(section);
       void save(next);
-    },
-    onAccentText: (text) => setAccent({ text, reason: null }),
-    commitAccent: () => applyAccent(commitAccent(drafts)),
-    blurAccent: () => applyAccent(blurAccent(drafts)),
-    pickAccent(accent) {
-      setDrafts(pickPreset(drafts));
-      handlers.save({ ...appearance, accent }, "accent");
     },
     pickFont(picked) {
       const family = picked.trim() || null;
@@ -421,12 +342,12 @@ function useAppearanceSection(announce: ((text: string) => void) | undefined, on
     onClose,
   };
 
-  const state: AppearanceViewState = { appearance, app: appearance.theme === "follow-system" ? scheme : appearance.theme, highContrast, wtFiles, error: error && at ? { at, text: error } : null, accent, size, importError };
+  const state: AppearanceViewState = { appearance, app: appearance.theme === "follow-system" ? scheme : appearance.theme, highContrast, wtFiles, error: error && at ? { at, text: error } : null, size, importError };
   return { state, handlers };
 }
 
 /**
- * The Appearance section of the Settings page: app theme, contrast, text size and accent. It draws no heading, dialog or Close
+ * The Appearance section of the Settings page: app theme, contrast and text size. It draws no heading, dialog or Close
  * button (the shell does) and says failures through `announce`. Nothing in it opens a popup, so it never handles Escape.
  */
 export function AppearanceSection({ announce }: { announce?: (text: string) => void }) {

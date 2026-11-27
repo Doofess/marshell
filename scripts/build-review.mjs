@@ -58,7 +58,6 @@ const CSS = [
   "src/features/palette/Palette.css",
   "src/features/window/ShellPanel.css",
 ];
-const ACCENTS = ["amber", "blue", "indigo", "violet", "magenta", "cyan", "teal", "slate"];
 
 const server = await createServer({ appType: "custom", server: { middlewareMode: true }, logLevel: "error" });
 let sections;
@@ -278,8 +277,6 @@ const terminalScripts = withTerminal
 // The Departures board's flip cells play on the batch 3c page; the markup already holds every cell's final text.
 const departuresScript = batch === "3c" ? `<script>${safeInline(readFileSync("scripts/review-departures.js", "utf8"))}</script>` : "";
 
-const options = ACCENTS.map((a) => `<option value="${a}">${a[0].toUpperCase()}${a.slice(1)}</option>`).join("");
-
 const html = `<title>Marshell design review</title>
 <style>
 ${css}
@@ -291,7 +288,6 @@ ${chrome}
     <p class="review__lede">${meta.lede}</p>
   </header>
   <div class="review__bar">
-    <label for="accent">Accent <select id="accent">${options}</select></label>
     <label for="motion"><input type="checkbox" id="motion"> Reduced motion</label>
     <button type="button" id="replay">Replay animations</button>
     ${withTerminal ? `<label for="terminal-theme">Terminal theme <select id="terminal-theme"><option value="follow-app">Follow app</option><option value="dark">Always dark</option><option value="light">Always light</option></select></label><label for="terminal-contrast"><input type="checkbox" id="terminal-contrast" checked> Contrast protection</label>` : ""}
@@ -312,8 +308,6 @@ ${departuresScript}
 <script>
 (() => {
   const root = document.documentElement;
-  const accent = document.getElementById("accent");
-  accent.addEventListener("change", () => { root.dataset.accent = accent.value; });
   const motion = document.getElementById("motion");
   motion.addEventListener("change", () => {
     if (motion.checked) root.dataset.motion = "reduce";

@@ -29,7 +29,7 @@ export function useAppearance(): AppearanceContext {
 
 const CONTRAST_QUERY = "(prefers-contrast: more)";
 
-/** Loads the Appearance settings once and keeps the root element's theme, accent, contrast and text size in step with them. */
+/** Loads the Appearance settings once and keeps the root element's theme, contrast and text size in step with them. */
 export function AppearanceProvider({ children }: { children: ReactNode }) {
   const [appearance, setAppearance] = useState(DEFAULT_APPEARANCE);
   const [error, setError] = useState<string | null>(null);

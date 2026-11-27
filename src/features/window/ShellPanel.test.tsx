@@ -54,7 +54,7 @@ describe("ShellPanel", () => {
     expect(html({ shellName: "zsh" })).toContain("zsh");
     expect(html({ shellName: "zsh" })).toContain('aria-label="zsh terminal"');
   });
-  it("is not an agent: no vendor, so the user's own accent applies, and nothing about it targets a session", () => {
+  it("is not an agent: no vendor, so the app accent applies, and nothing about it targets a session", () => {
     const h = html();
     expect(h).not.toContain("data-agent");
     expect(h).not.toContain("shell-panel__stripe");
