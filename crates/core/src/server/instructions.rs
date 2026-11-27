@@ -168,8 +168,6 @@ fn user_places_with(st: &AppState, docs: &[Doc], distro_homes: &[(String, PathBu
 
 /// Every user level a doc is copied into: the Windows one first, then each running managed distro's (with the CLIs
 /// found on its PATH). Reads the user docs. Blocks.
-// The Doctor's instruction checks call it (slice 8a Task 7).
-#[allow(dead_code)]
 pub(crate) fn user_places(st: &AppState, distro_homes: &[(String, PathBuf)]) -> Vec<Place> {
     user_places_with(st, &read_user_docs(st), distro_homes)
 }
@@ -437,6 +435,10 @@ fn doc_of<'a>(req: &DocSave, dir: &Path, docs: &'a [Doc]) -> Result<(Doc, Option
         Some(name) => Some(doc::find(docs, name).ok_or_else(|| Stop::plain(StatusCode::NOT_FOUND, NO_DOC))?),
         None => None,
     };
+    // A doc Marshell refused to read (a link, or over 4 MiB) is never written over: a save would go wherever it points.
+    if let Some(Err(why)) = old.map(|o| doc::read_plain(&o.path)) {
+        return Err(Stop::clash(why));
+    }
     let taken: Vec<&str> = docs
         .iter()
         .filter(|d| !old.is_some_and(|o| std::ptr::eq(*d, o)))
@@ -652,6 +654,7 @@ mod tests {
     use marshell_protocol::api::{Profile, ShellFamily};
     use marshell_protocol::config::{ApplyRequest, ConfigPreview, ExpectedHash};
     use marshell_protocol::instructions::{CopyState, DocSave, DocSaved, LibraryView};
+    use std::fs;
     use std::path::{Path, PathBuf};
     use tower::ServiceExt;
 
@@ -1149,6 +1152,31 @@ mod tests {
         let (status, body) = post(&r.st, "review", &serde_json::json!({"project": project})).await;
         assert_eq!((status, body.as_str()), (StatusCode::CONFLICT, sentence));
         assert!(!outside.join("instructions").join("api.md").exists());
+    }
+
+    #[tokio::test]
+    async fn a_linked_doc_is_never_saved_over() {
+        let r = rig();
+        let target = r.home.join("elsewhere");
+        fs::create_dir_all(&target).unwrap();
+        let dir = r.st.0.home.join("instructions");
+        fs::create_dir_all(&dir).unwrap();
+        if let Err(e) = link_dir(&dir.join("security.md"), &target) {
+            eprintln!("skipped: no folder link here: {e}");
+            return;
+        }
+        let v = view_ok(&r.st, None).await;
+        let listed = &v.user_docs[0].doc;
+        assert_eq!(listed.name, "security");
+        let sentence = "This doc is a link to another file, so Marshell doesn't read it.";
+        assert_eq!(listed.error.as_deref(), Some(sentence));
+        let mut save = save_of("security", "Mine.\n");
+        save.old_name = Some("security".into());
+        save.expected_hash = Some(listed.hash.clone());
+        let (status, body) = post(&r.st, "save", &save).await;
+        assert_eq!((status, body.as_str()), (StatusCode::CONFLICT, sentence));
+        assert!(fs::symlink_metadata(dir.join("security.md")).is_ok());
+        assert_eq!(fs::read_dir(&target).unwrap().count(), 0);
     }
 
     #[tokio::test]

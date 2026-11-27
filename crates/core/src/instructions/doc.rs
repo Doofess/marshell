@@ -365,7 +365,7 @@ fn refusal(is_link: bool, is_file: bool, len: u64) -> Option<&'static str> {
 }
 
 /// A doc's bytes, or why they aren't read. The link test uses the entry's own metadata, never the target's.
-fn read_plain(path: &Path) -> Result<Vec<u8>, String> {
+pub(crate) fn read_plain(path: &Path) -> Result<Vec<u8>, String> {
     let meta = std::fs::symlink_metadata(path).map_err(|e| format!("This doc can't be read: {e}."))?;
     if let Some(why) = refusal(meta.file_type().is_symlink(), meta.is_file(), meta.len()) {
         return Err(why.to_string());
