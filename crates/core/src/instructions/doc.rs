@@ -122,6 +122,7 @@ fn unreadable(n: usize) -> String {
 /// `lines` are the frontmatter's lines; the first is line 2 of the file.
 fn parse_frontmatter(lines: &[&str]) -> Result<Fm, String> {
     let mut fm = Fm::defaults();
+    let mut seen: Vec<&str> = Vec::new();
     let mut i = 0;
     while i < lines.len() {
         let line = lines[i];
@@ -139,10 +140,17 @@ fn parse_frontmatter(lines: &[&str]) -> Result<Fm, String> {
             .filter(|&k| !skipped(lines[k]))
             .map(|k| (k + 2, lines[k]))
             .collect();
-        let (key, value) = match line.split_once(':') {
-            Some((k, v)) => (k, v.trim()),
-            None => (line, ""),
+        // A line that is no `key:` (git's conflict markers among them), or one of Marshell's keys set again, is a
+        // frontmatter nobody can read the person's intent from: the doc is broken, so its copies are left as they are.
+        let Some((key, value)) = line.split_once(':').map(|(k, v)| (k, v.trim())) else {
+            return Err(unreadable(n));
         };
+        if ["description", "enabled", "clis", "globs"].contains(&key) {
+            if seen.contains(&key) {
+                return Err(unreadable(n));
+            }
+            seen.push(key);
+        }
         match key {
             "description" => {
                 if let Some((m, _)) = cont.first() {
@@ -531,6 +539,18 @@ mod tests {
             err("---\ndescription: x\n").as_deref(),
             Some("The frontmatter has no closing --- line.")
         );
+    }
+
+    #[test]
+    fn a_merge_conflict_in_the_frontmatter_is_unreadable() {
+        // A teammate's bad merge: the frontmatter still closes, but holds git's markers and the key twice.
+        let d = p(
+            "---\ndescription: x\n<<<<<<< HEAD\nclis: [claude, codex]\n=======\nclis: [claude]\n>>>>>>> theirs\n---\nB\n",
+        );
+        assert_eq!(d.error.as_deref(), Some("Line 3 of the frontmatter can't be read."));
+        // The same key twice, with no markers left, is as unreadable: which one the person meant isn't known.
+        let twice = p("---\nclis: [claude, codex]\nclis: [claude]\n---\nB\n");
+        assert_eq!(twice.error.as_deref(), Some("Line 3 of the frontmatter can't be read."));
     }
 
     #[test]
