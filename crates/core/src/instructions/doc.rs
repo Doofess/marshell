@@ -58,6 +58,13 @@ impl Fm {
     }
 }
 
+/// CON, PRN, AUX, NUL, COM0 to COM9 and LPT0 to LPT9, in any case: Windows 10 opens the device for `nul.md`.
+fn reserved_on_windows(name: &str) -> bool {
+    let n = name.to_ascii_uppercase();
+    matches!(n.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (n.len() == 4 && (n.starts_with("COM") || n.starts_with("LPT")) && n.as_bytes()[3].is_ascii_digit())
+}
+
 fn name_chars_ok(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
@@ -321,6 +328,9 @@ pub fn check_name(name: &str, taken: &[&str]) -> Result<(), String> {
     if name.chars().count() > 64 {
         return Err("A name is at most 64 characters.".into());
     }
+    if reserved_on_windows(name) {
+        return Err(format!("A name can't be {name}: Windows keeps it for a device."));
+    }
     if let Some(t) = taken.iter().find(|t| t.eq_ignore_ascii_case(name)) {
         return Err(format!("Another doc here is named {t}."));
     }
@@ -567,6 +577,16 @@ mod tests {
     #[test]
     fn names() {
         assert_eq!(check_name("security", &[]), Ok(()));
+        // Windows 10 opens the device for `nul.md`; a project doc is shared with teammates on any Windows.
+        for reserved in ["nul", "CON", "Aux", "prn", "com1", "LPT9", "com0"] {
+            assert_eq!(
+                check_name(reserved, &[]),
+                Err(format!("A name can't be {reserved}: Windows keeps it for a device.")),
+            );
+        }
+        for fine in ["console", "com10", "null", "lpt", "nul_rules"] {
+            assert_eq!(check_name(fine, &[]), Ok(()), "{fine}");
+        }
         assert_eq!(check_name("", &[]), Err("A doc needs a name.".into()));
         assert_eq!(
             check_name("Sec Ret", &[]),

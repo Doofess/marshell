@@ -18,7 +18,7 @@ import type { EditorPrefs } from "../editor/editorPrefs";
 import { CopiesReview } from "./CopiesReview";
 import { InstructionsPage } from "./InstructionsPage";
 import { copyFixOf, toSave } from "./instructionsModel";
-import { conflictLine, findDoc, initialState, instructionsReducer, isDirtyNow, saveKeyActs, sheetTitle } from "./instructionsState";
+import { conflictLine, findDoc, initialState, instructionsReducer, isDirtyNow, saveKeyActs, saveNeeded, sheetTitle } from "./instructionsState";
 import "../doctor/Doctor.css";
 import "../doctor/LiveDoctor.css";
 import "./LiveInstructions.css";
@@ -108,6 +108,8 @@ export function LiveInstructions({ endpoint, folder, prefs, announce, onClose }:
     const cur = latest.current;
     const d = cur.draft;
     if (!endpoint || d === null || cur.busy) return false;
+    // Ctrl+S on a doc with no edit has nothing to write, and the core would refuse it as "Nothing changes."
+    if (!saveNeeded(cur)) return true;
     const name = d.name.trim();
     dispatch({ type: "saveStarted" });
     try {

@@ -77,6 +77,8 @@ export const findDoc = (view: LibraryView | null, open: OpenDoc | null): Library
 };
 
 export const isDirtyNow = (s: State): boolean => s.draft !== null && isDirty(s.draft, findDoc(s.view, s.open));
+/** Whether Save has anything to send: a new draft always (the core says what it lacks), an open doc only once edited. */
+export const saveNeeded = (s: State): boolean => s.open === null || isDirtyNow(s);
 
 /** The field a refused save's sentence belongs under, by what it says; any other sentence sits by the buttons. */
 export function fieldOf(message: string): keyof FormErrors {

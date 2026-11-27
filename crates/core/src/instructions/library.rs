@@ -316,6 +316,10 @@ pub(crate) fn stays_inside(path: &Path, root: &Path) -> bool {
             None => return false,
         }
     }
+    // There, but not followable: a link whose target is gone, so where a write through it lands can't be known.
+    if std::fs::metadata(existing).is_err() {
+        return false;
+    }
     let resolved = crate::projects::canonical(existing);
     crate::projects::is_inside(&resolved.to_string_lossy(), &root.to_string_lossy())
 }
@@ -1767,6 +1771,30 @@ Be careful.
             fs::read_to_string(outside.join("rules").join("marshell-gone.md")).unwrap(),
             theirs
         );
+    }
+
+    #[test]
+    fn a_dangling_folder_link_is_not_inside() {
+        // Where a link with no target leads can't be known, so a write through it doesn't count as inside the project.
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().join("repo");
+        fs::create_dir_all(&root).unwrap();
+        let root = crate::projects::canonical(&root);
+        let outside = t.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        if let Err(e) = link_dir(&root.join(".qwen"), &outside) {
+            eprintln!("skipped: cannot create a folder link here: {e}");
+            return;
+        }
+        fs::remove_dir(&outside).unwrap();
+        assert!(!stays_inside(
+            &root.join(".qwen").join("rules").join("marshell-a.md"),
+            &root
+        ));
+        assert!(stays_inside(
+            &root.join(".claude").join("rules").join("marshell-a.md"),
+            &root
+        ));
     }
 
     #[test]

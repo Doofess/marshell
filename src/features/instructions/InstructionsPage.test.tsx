@@ -149,6 +149,12 @@ describe("CopiesReview", () => {
     expect(h).toContain(">Reload<");
     expect(h).not.toContain(">Apply<");
   });
+  it("says why a refused file can't change, and offers no working Apply", () => {
+    const refusedFile = { ...DOCTOR_PREVIEW.files[0]!, path: "C:/p/.qwen/rules/marshell-a.md", diff: "", status: { kind: "refused" as const, reason: "readOnly" as const, detail: "it is read-only" } };
+    const h = sheet({ preview: { ...DOCTOR_PREVIEW, can_apply: false, files: [...DOCTOR_PREVIEW.files, refusedFile] } });
+    expect(h).toContain('Marshell will not edit <code dir="auto">C:/p/.qwen/rules/marshell-a.md</code>: it is read-only');
+    expect(h).toMatch(/aria-disabled="true">Apply</);
+  });
   it("says there is nothing to update and offers only Close", () => {
     const h = sheet({ preview: { ...DOCTOR_PREVIEW, files: [] } });
     expect(h).toContain("Nothing to update: the copies are up to date.");

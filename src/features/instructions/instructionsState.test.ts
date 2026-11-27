@@ -4,7 +4,7 @@ import type { LibraryDoc } from "../../generated/LibraryDoc";
 import type { LibraryView } from "../../generated/LibraryView";
 import type { ProjectInfo } from "../../generated/ProjectInfo";
 import { draftOf } from "./instructionsModel";
-import { conflictLine, fieldOf, initialState, instructionsReducer, isDirtyNow, saveKeyActs, sheetTitle, type State } from "./instructionsState";
+import { conflictLine, fieldOf, initialState, instructionsReducer, isDirtyNow, saveKeyActs, saveNeeded, sheetTitle, type State } from "./instructionsState";
 
 const doc = (name: string, body = "text\n"): LibraryDoc => ({ name, scope: "user", path: `~/${name}.md`, description: "d", clis: ["claude"], globs: [], enabled: true, body, hash: "h1" });
 const view = (...docs: LibraryDoc[]): LibraryView => ({ user_docs: docs.map((d) => ({ doc: d, rows: [] })), project_docs: [], user_orphans: [], project_orphans: [], out_of_date: 0, changed_outside: 0, found: ["claude"] });
@@ -145,6 +145,19 @@ describe("the editor's text revision", () => {
     expect(asked.asking).not.toBeNull();
     const r = instructionsReducer(asked, { type: "discard" });
     expect(r.textRev).toBe(s.textRev + 1);
+  });
+});
+describe("Save", () => {
+  it("is needed for an edited doc or a new draft, and not for an open doc with no edit", () => {
+    const s = opened();
+    expect(saveNeeded(s)).toBe(false);
+    expect(saveNeeded(dirty(s))).toBe(true);
+    const fresh = instructionsReducer(instructionsReducer(s, { type: "newDoc", scope: "user" }), { type: "discard" });
+    expect(fresh.open).toBeNull();
+    expect(saveNeeded(fresh)).toBe(true);
+  });
+  it("puts the reserved-name sentence under the name", () => {
+    expect(fieldOf("A name can't be nul: Windows keeps it for a device.")).toBe("name");
   });
 });
 describe("Ctrl+S", () => {
