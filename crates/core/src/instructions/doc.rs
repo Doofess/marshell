@@ -143,6 +143,10 @@ fn parse_frontmatter(lines: &[&str]) -> Result<Fm, String> {
         let line = lines[i];
         let n = i + 2;
         if skipped(line) {
+            // A comment before the first key is the person's: a save keeps it, after Marshell's keys.
+            if !line.trim().is_empty() {
+                fm.extra.push(line.to_string());
+            }
             i += 1;
             continue;
         }
@@ -199,9 +203,18 @@ fn parse_frontmatter(lines: &[&str]) -> Result<Fm, String> {
                 }
             }
             _ => {
-                fm.extra.push(line.to_string());
-                fm.extra.extend(cont.iter().map(|(_, l)| (*l).to_string()));
+                // Kept as written: a blank line inside a `|` block is part of its value, and a comment is the person's.
+                fm.extra.extend(lines[i..j].iter().map(|l| (*l).to_string()));
             }
+        }
+        if ["description", "enabled", "clis", "globs"].contains(&key) {
+            // Marshell writes its own keys again, but a comment among their lines is the person's and stays.
+            fm.extra.extend(
+                lines[i + 1..j]
+                    .iter()
+                    .filter(|l| l.trim().starts_with('#'))
+                    .map(|l| (*l).to_string()),
+            );
         }
         i = j;
     }
@@ -504,6 +517,34 @@ mod tests {
         let d = p("\u{feff}---\r\ndescription: x\r\n---\r\nA\r\nB\r\n\r\n\r\n");
         assert_eq!(d.description, "x");
         assert_eq!(d.body, "A\nB\n");
+    }
+
+    #[test]
+    fn comments_and_an_unknown_keys_blank_lines_survive_a_save() {
+        // A blank line inside a `|` block is part of its value, and a comment is the person's; a save keeps both.
+        let d = p(
+            "---\n# owner: team-a\ndescription: x\n# about the CLIs\nclis: [claude]\nnotes: |\n  One.\n\n  Two.\n---\nB\n",
+        );
+        assert_eq!(d.description, "x");
+        assert_eq!(d.clis, vec!["claude"]);
+        assert_eq!(
+            d.extra,
+            vec![
+                "# owner: team-a",
+                "# about the CLIs",
+                "notes: |",
+                "  One.",
+                "",
+                "  Two."
+            ]
+        );
+        let out = render(&d);
+        assert!(
+            out.contains("# owner: team-a\n# about the CLIs\nnotes: |\n  One.\n\n  Two.\n---\nB\n"),
+            "{out}"
+        );
+        // A second save writes the same file.
+        assert_eq!(render(&p(&out)), out);
     }
 
     #[test]
