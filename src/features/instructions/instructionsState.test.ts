@@ -84,6 +84,7 @@ describe("the Instructions page's reducer", () => {
     expect(fieldOf("Another doc here is named Api.")).toBe("name");
     expect(fieldOf("A description is one line.")).toBe("description");
     expect(fieldOf("/x: a glob is relative to the project, so it can't start with /.")).toBe("globs");
+    expect(fieldOf("A file named globals.md is already there.")).toBe("name");
     expect(fieldOf("Something else.")).toBe("save");
     const s = instructionsReducer(opened(), { type: "saveRefused", message: "A doc needs a name." });
     expect(s.errors).toEqual({ name: "A doc needs a name." });

@@ -306,6 +306,29 @@ impl Ctx<'_> {
     }
 }
 
+/// Whether a project at `project` would keep its copies in a user level's own folders: for some CLI, the project's
+/// folder is the level's (the project is the level's home, or a CLI's home is set to the project's own folder). The
+/// two levels would plan the same files, one deleting what the other writes, so such a project isn't read.
+pub(crate) fn shares_user_folders(project: &Path, roots: &Roots) -> bool {
+    let c = crate::projects::canonical;
+    let project = c(project);
+    let user = Roots {
+        claude: c(&roots.claude),
+        codex: c(&roots.codex),
+        gemini: c(&roots.gemini),
+        qwen: c(&roots.qwen),
+        copilot: c(&roots.copilot),
+        home: roots.home.clone(),
+    };
+    let same = |a: &Path, b: &Path| crate::projects::same_path(&a.to_string_lossy(), &b.to_string_lossy());
+    VENDORS
+        .iter()
+        .any(|v| same(&(v.user_dir)(&user), &(v.project_dir)(&project)))
+        || codex::project_config(&project)
+            .parent()
+            .is_some_and(|dir| same(&user.codex, dir))
+}
+
 /// Whether `path` stays inside `root` once the part of it that exists is resolved (links and junctions followed): a
 /// copy not written yet is placed by its deepest folder that exists.
 pub(crate) fn stays_inside(path: &Path, root: &Path) -> bool {
@@ -1771,6 +1794,40 @@ Be careful.
             fs::read_to_string(outside.join("rules").join("marshell-gone.md")).unwrap(),
             theirs
         );
+    }
+
+    #[test]
+    fn a_project_sharing_a_cli_folder_with_a_user_level_is_seen() {
+        let t = tempfile::tempdir().unwrap();
+        let project = crate::projects::canonical(t.path()).join("repo");
+        let home = crate::projects::canonical(t.path()).join("home");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&home).unwrap();
+        assert!(!shares_user_folders(&project, &Roots::under(&home)));
+        // The level's home itself, by another spelling.
+        assert!(shares_user_folders(&project.join("."), &Roots::under(&project)));
+        // One CLI's home set to the project's own folder for it.
+        let claude = Roots {
+            claude: project.join(".claude"),
+            ..Roots::under(&home)
+        };
+        assert!(shares_user_folders(&project, &claude));
+        let codex = Roots {
+            codex: project.join(".codex"),
+            ..Roots::under(&home)
+        };
+        assert!(shares_user_folders(&project, &codex));
+        let copilot = Roots {
+            copilot: project.join(".github"),
+            ..Roots::under(&home)
+        };
+        assert!(shares_user_folders(&project, &copilot));
+        // A CLI home somewhere else inside the project is no clash.
+        let inside = Roots {
+            codex: project.join("tools").join("codex-home"),
+            ..Roots::under(&home)
+        };
+        assert!(!shares_user_folders(&project, &inside));
     }
 
     #[test]

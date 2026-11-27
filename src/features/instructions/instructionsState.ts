@@ -82,7 +82,7 @@ export const saveNeeded = (s: State): boolean => s.open === null || isDirtyNow(s
 
 /** The field a refused save's sentence belongs under, by what it says; any other sentence sits by the buttons. */
 export function fieldOf(message: string): keyof FormErrors {
-  if (/^(A doc needs a name|A name |Another doc)/.test(message)) return "name";
+  if (/^(A doc needs a name|A name |Another doc|A file named )/.test(message)) return "name";
   if (/^A description/.test(message)) return "description";
   if (/\bglob/i.test(message)) return "globs";
   return "save";

@@ -15,7 +15,7 @@ use crate::instructions::copy::{Disk, first_marker, read_disk};
 use crate::instructions::doc::{self, CLIS, Doc};
 use crate::instructions::library::{
     CantTake, Level, LevelState, Notes, Place, delete_plan, level_state, put_back_plan, review_plan, save_plan,
-    stays_inside, take_copy_plan,
+    shares_user_folders, stays_inside, take_copy_plan,
 };
 use crate::instructions::roots::Roots;
 use crate::projects;
@@ -34,6 +34,8 @@ use std::path::{Path, PathBuf};
 
 const NOT_KNOWN: &str = "Marshell doesn't know this project.";
 const LINKED: &str = "This project's .marshell folder links outside it, so Marshell doesn't read its docs.";
+const USER_FOLDERS: &str =
+    "This project's CLI folders are your own user-level ones, so Marshell doesn't read its docs.";
 const NO_DOC: &str = "No doc of that name here.";
 const CHANGED: &str = "This copy changed. Check again.";
 const TAKES_A_MARKER: &str = "This copy holds a line that marks Marshell's copies, so a doc can't take its text.";
@@ -267,6 +269,14 @@ fn read_project(
     let dir = root.join(".marshell").join("instructions");
     if !stays_inside(&dir, root) {
         return Err(LINKED.to_string());
+    }
+    // A home folder (most likely a distro's, since Windows' own is never recorded) or a CLI home set inside the project.
+    let user_levels = windows_roots(st)
+        .map(|r| Roots::from_ext(&r))
+        .into_iter()
+        .chain(distro_homes.iter().map(|(_, home)| Roots::under(home)));
+    if user_levels.into_iter().any(|r| shares_user_folders(root, &r)) {
+        return Err(USER_FOLDERS.to_string());
     }
     let docs = doc::read_dir(&dir, DocScope::Project);
     // In a project, found decides only the teammates note on a doc's rows: a project with no docs doesn't pay for the
@@ -1302,6 +1312,34 @@ mod tests {
         let (status, body) = post(&r.st, "review", &serde_json::json!({"project": project})).await;
         assert_eq!((status, body.as_str()), (StatusCode::CONFLICT, sentence));
         assert!(!outside.join("instructions").join("api.md").exists());
+    }
+
+    #[tokio::test]
+    async fn a_project_at_a_user_home_is_never_read_nor_written() {
+        // Its .claude/rules is the user level's own: the two levels would plan the same files, one deleting what the
+        // other writes, and the project's Codex config would be the person's own.
+        let r = rig();
+        record(&r.home, &r.ext, 2).unwrap();
+        write(
+            &r.ext.join(".marshell").join("instructions").join("api.md"),
+            &doc_text("a", "Use the API.\n"),
+        );
+        let sentence = "This project's CLI folders are your own user-level ones, so Marshell doesn't read its docs.";
+        let v = view_ok(&r.st, Some(&r.ext)).await;
+        assert_eq!(v.project_note.as_deref(), Some(sentence));
+        assert!(v.project_docs.is_empty() && v.project_orphans.is_empty());
+        let project = r.ext.to_string_lossy().into_owned();
+        let (status, body) = post(&r.st, "review", &serde_json::json!({"project": project})).await;
+        assert_eq!((status, body.as_str()), (StatusCode::CONFLICT, sentence));
+        assert!(!r.ext.join(".claude").join("rules").join("marshell-api.md").exists());
+        // Another project is read as before.
+        write(
+            &r.project.join(".marshell").join("instructions").join("api.md"),
+            &doc_text("a", "Use the API.\n"),
+        );
+        let v = view_ok(&r.st, Some(&r.project)).await;
+        assert_eq!(v.project_note, None);
+        assert_eq!(v.project_docs.len(), 1);
     }
 
     #[tokio::test]
