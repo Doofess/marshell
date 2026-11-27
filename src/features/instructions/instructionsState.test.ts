@@ -4,7 +4,7 @@ import type { LibraryDoc } from "../../generated/LibraryDoc";
 import type { LibraryView } from "../../generated/LibraryView";
 import type { ProjectInfo } from "../../generated/ProjectInfo";
 import { draftOf } from "./instructionsModel";
-import { conflictLine, fieldOf, initialState, instructionsReducer, isDirtyNow, type State } from "./instructionsState";
+import { conflictLine, fieldOf, initialState, instructionsReducer, isDirtyNow, sheetTitle, type State } from "./instructionsState";
 
 const doc = (name: string, body = "text\n"): LibraryDoc => ({ name, scope: "user", path: `~/${name}.md`, description: "d", clis: ["claude"], globs: [], enabled: true, body, hash: "h1" });
 const view = (...docs: LibraryDoc[]): LibraryView => ({ user_docs: docs.map((d) => ({ doc: d, rows: [] })), project_docs: [], user_orphans: [], project_orphans: [], out_of_date: 0, changed_outside: 0, found: ["claude"] });
@@ -91,5 +91,14 @@ describe("the Instructions page's reducer", () => {
     const preview = { changeset_id: "c", files: [] } as unknown as ConfigPreview;
     const s = instructionsReducer(instructionsReducer(opened(), { type: "reviewShown", title: "Review", preview }), { type: "reviewConflict" });
     expect(s.review?.conflict).toBe(true);
+  });
+});
+
+describe("the review sheet's titles", () => {
+  it("are the plan's", () => {
+    expect(sheetTitle({ kind: "review" })).toBe("Update the copies");
+    expect(sheetTitle({ kind: "delete", name: "SECURITY" })).toBe("Delete SECURITY and its copies");
+    expect(sheetTitle({ kind: "copy", takeCopy: false })).toBe("Put the doc's text back");
+    expect(sheetTitle({ kind: "copy", takeCopy: true })).toBe("Use this copy's text");
   });
 });

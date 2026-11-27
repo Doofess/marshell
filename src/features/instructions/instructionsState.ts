@@ -59,6 +59,14 @@ export function initialState(projects: ProjectInfo[], folder: string | null): St
 
 export const conflictLine = (name: string) => `${name} changed on disk since you opened it.`;
 
+/** The review sheet's title for each preview the page shows. */
+export type Sheet = { kind: "review" } | { kind: "delete"; name: string } | { kind: "copy"; takeCopy: boolean };
+export function sheetTitle(sheet: Sheet): string {
+  if (sheet.kind === "review") return "Update the copies";
+  if (sheet.kind === "delete") return `Delete ${sheet.name} and its copies`;
+  return sheet.takeCopy ? "Use this copy's text" : "Put the doc's text back";
+}
+
 export const findDoc = (view: LibraryView | null, open: OpenDoc | null): LibraryDoc | null => {
   if (view === null || open === null) return null;
   const docs = open.scope === "user" ? view.user_docs : view.project_docs;

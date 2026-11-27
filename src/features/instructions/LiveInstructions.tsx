@@ -18,7 +18,7 @@ import type { EditorPrefs } from "../editor/editorPrefs";
 import { CopiesReview } from "./CopiesReview";
 import { InstructionsPage } from "./InstructionsPage";
 import { copyFixOf, toSave } from "./instructionsModel";
-import { conflictLine, findDoc, initialState, instructionsReducer, isDirtyNow } from "./instructionsState";
+import { conflictLine, findDoc, initialState, instructionsReducer, isDirtyNow, sheetTitle } from "./instructionsState";
 import "../doctor/Doctor.css";
 import "../doctor/LiveDoctor.css";
 import "./LiveInstructions.css";
@@ -156,16 +156,16 @@ export function LiveInstructions({ endpoint, folder, prefs, announce, onClose }:
     }
   };
   const review = () => {
-    if (endpoint) void show("Update the copies", () => reviewCopies(endpoint, latest.current.project));
+    if (endpoint) void show(sheetTitle({ kind: "review" }), () => reviewCopies(endpoint, latest.current.project));
   };
   const remove = () => {
     const { open, project } = latest.current;
-    if (endpoint && open !== null) void show(`Delete ${open.name}`, () => previewDelete(endpoint, project === null ? { scope: open.scope, name: open.name } : { scope: open.scope, project, name: open.name }));
+    if (endpoint && open !== null) void show(sheetTitle({ kind: "delete", name: open.name }), () => previewDelete(endpoint, project === null ? { scope: open.scope, name: open.name } : { scope: open.scope, project, name: open.name }));
   };
   const copyFix = (row: CopyRow, takeCopy: boolean) => {
     const { view, open, project } = latest.current;
     const doc = findDoc(view, open);
-    if (endpoint && doc !== null) void show(takeCopy ? `Use this copy's text for ${doc.name}` : `Replace this copy with ${doc.name}`, () => previewCopyFix(endpoint, copyFixOf(doc, row, project, takeCopy)));
+    if (endpoint && doc !== null) void show(sheetTitle({ kind: "copy", takeCopy }), () => previewCopyFix(endpoint, copyFixOf(doc, row, project, takeCopy)));
   };
   const reloadSheet = async () => {
     const plan = replan.current;
