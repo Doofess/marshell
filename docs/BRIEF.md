@@ -14,7 +14,7 @@ Where the text below disagrees with this list, this list wins. `docs/PLAN.md` ho
   - The Departures board keeps its name.
 - **Icon.** The icon is two marshalling batons raised in a V, replacing the plane. The app icon is "Night shift": a charcoal tile, grey grips and orange lights. Its source is `assets/icon/app-night-shift.svg`.
 - **Phase 0 decisions (2026-10-10):**
-  - The default accent ("needs you" attention colour) is a signal amber, not the icon's orange and not Claude orange, so a Claude row's brand stripe never reads as an alert. (Later sand; since slice 6z, sand is the only app accent.)
+  - The default accent ("needs you" attention colour) is a signal amber, not the icon's orange and not Claude orange, so a Claude row's brand stripe never reads as an alert. (Sand became the default on 2026-10-17; since slice 6z, sand is the only app accent.)
   - Mockups are Storybook stories in the repo, plus a published private preview for review.
   - Sign-off happens in three batches:
     1. tokens, glyphs, rows
