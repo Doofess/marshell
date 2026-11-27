@@ -1069,7 +1069,7 @@ pub fn take_copy_plan(
     edits.extend(copy_edits);
     Some(ChangeSet {
         title: format!("Use the text of {} in {}", ctx.show(&it.path), doc.name),
-        reason: "Make the copy's text the doc's, and write the other copies from it.".to_string(),
+        reason: "Make the copy's text the doc's. Its other copies stay out of date until Review.".to_string(),
         edits,
     })
 }
@@ -2118,6 +2118,10 @@ Be careful.
         write(root, QWEN, &read(root, QWEN).replace("Be careful.", "Mine."));
         let cs = take_copy_plan(&p, "security", "qwen", user(), &yes).unwrap();
         assert_eq!(cs.title, "Use the text of .qwen/rules/marshell-security.md in security");
+        assert_eq!(
+            cs.reason,
+            "Make the copy's text the doc's. Its other copies stay out of date until Review."
+        );
         assert_eq!(cs.edits.len(), 2);
         assert_eq!(rel(root, &cs.edits[0]), DOC);
         assert_eq!(cs.edits[0].expected_hash.as_deref(), Some(p.docs[0].hash.as_str()));
