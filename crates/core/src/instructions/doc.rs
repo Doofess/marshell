@@ -347,7 +347,34 @@ pub fn check_description(text: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The `*.md` files directly in `dir`, sorted by name without case. A missing folder is an empty list.
+/// The largest library file Marshell reads, as the Doctor's instruction readers cap theirs.
+pub const MAX_BYTES: u64 = 4 * 1024 * 1024;
+
+/// Why a library file isn't read: a link could point anywhere (a cloned repo's link to a private file would
+/// otherwise be copied into committed rule files), and a file over `MAX_BYTES` is too big to hold.
+fn refusal(is_link: bool, is_file: bool, len: u64) -> Option<&'static str> {
+    if is_link {
+        Some("This doc is a link to another file, so Marshell doesn't read it.")
+    } else if !is_file {
+        Some("This doc isn't a file, so Marshell doesn't read it.")
+    } else if len > MAX_BYTES {
+        Some("This doc is over 4 MiB, so Marshell doesn't read it.")
+    } else {
+        None
+    }
+}
+
+/// A doc's bytes, or why they aren't read. The link test uses the entry's own metadata, never the target's.
+fn read_plain(path: &Path) -> Result<Vec<u8>, String> {
+    let meta = std::fs::symlink_metadata(path).map_err(|e| format!("This doc can't be read: {e}."))?;
+    if let Some(why) = refusal(meta.file_type().is_symlink(), meta.is_file(), meta.len()) {
+        return Err(why.to_string());
+    }
+    std::fs::read(path).map_err(|e| format!("This doc can't be read: {e}."))
+}
+
+/// The `*.md` files directly in `dir`, sorted by name without case. A missing folder is an empty list. A file that
+/// isn't read (a link, over 4 MiB, or locked) is listed with its error, so its copies are left as they are.
 pub fn read_dir(dir: &Path, scope: DocScope) -> Vec<Doc> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -357,12 +384,19 @@ pub fn read_dir(dir: &Path, scope: DocScope) -> Vec<Doc> {
         .filter_map(|e| {
             let path = e.path();
             let is_md = path.extension().is_some_and(|x| x.eq_ignore_ascii_case("md"));
-            if !is_md || !path.is_file() {
+            let kind = e.file_type().ok()?;
+            if !is_md || kind.is_dir() {
                 return None;
             }
             let stem = path.file_stem()?.to_string_lossy().into_owned();
-            let bytes = std::fs::read(&path).ok()?;
-            Some(parse(&stem, scope, path, &bytes))
+            Some(match read_plain(&path) {
+                Ok(bytes) => parse(&stem, scope, path, &bytes),
+                Err(why) => {
+                    let mut doc = parse(&stem, scope, path, b"");
+                    doc.error = Some(why);
+                    doc
+                }
+            })
         })
         .collect();
     docs.sort_by(|a, b| {
@@ -564,6 +598,59 @@ mod tests {
         );
         assert_eq!(docs[0].hash, hash_bytes(b"x\n"));
         assert!(read_dir(&t.path().join("missing"), DocScope::User).is_empty());
+    }
+
+    #[test]
+    fn refusals() {
+        assert_eq!(refusal(false, true, 10), None);
+        assert_eq!(
+            refusal(true, false, 10),
+            Some("This doc is a link to another file, so Marshell doesn't read it.")
+        );
+        assert_eq!(refusal(false, true, MAX_BYTES), None);
+        assert_eq!(
+            refusal(false, true, MAX_BYTES + 1),
+            Some("This doc is over 4 MiB, so Marshell doesn't read it.")
+        );
+    }
+
+    #[test]
+    fn oversized_doc_is_listed_unread() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("big.md"), vec![b'a'; 4 * 1024 * 1024 + 1]).unwrap();
+        std::fs::write(t.path().join("edge.md"), vec![b'a'; 4 * 1024 * 1024]).unwrap();
+        let docs = read_dir(t.path(), DocScope::User);
+        assert_eq!(docs[0].name, "big");
+        assert_eq!(
+            docs[0].error.as_deref(),
+            Some("This doc is over 4 MiB, so Marshell doesn't read it.")
+        );
+        assert_eq!(docs[0].body, "");
+        assert_eq!(docs[1].error, None);
+    }
+
+    #[test]
+    fn linked_doc_is_listed_unread() {
+        let t = tempfile::tempdir().unwrap();
+        let secret = t.path().join("secret.txt");
+        std::fs::write(&secret, "private\n").unwrap();
+        let dir = t.path().join("docs");
+        std::fs::create_dir(&dir).unwrap();
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(&secret, dir.join("leak.md"));
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_file(&secret, dir.join("leak.md"));
+        if let Err(e) = made {
+            eprintln!("skipped: cannot create a symlink here: {e}");
+            return;
+        }
+        let docs = read_dir(&dir, DocScope::Project);
+        assert_eq!(docs.len(), 1);
+        assert_eq!(
+            docs[0].error.as_deref(),
+            Some("This doc is a link to another file, so Marshell doesn't read it.")
+        );
+        assert!(!docs[0].body.contains("private"));
     }
 
     #[cfg(not(windows))]
