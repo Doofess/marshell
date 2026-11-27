@@ -17,8 +17,22 @@ use std::path::{Path, PathBuf};
 
 const NOT_WRITABLE: &str = "Marshell may not write here, so this copy is left out.";
 const BROKEN: &str = "The doc's frontmatter can't be read, so its copies are left as they are.";
-const NOT_INSTALLED: &str = "Not installed on this PC, so it gets no copy.";
-const TEAMMATES: &str = "Not installed on this PC. The copy is for teammates who use it.";
+/// Decision 40's and 27's sentences start "Not installed on this PC"; in a distro they name the distro instead, since
+/// the CLI may well be installed on Windows.
+fn not_installed(distro: Option<&str>) -> String {
+    format!("{}, so it gets no copy.", not_installed_where(distro))
+}
+
+fn teammates(distro: Option<&str>) -> String {
+    format!("{}. The copy is for teammates who use it.", not_installed_where(distro))
+}
+
+fn not_installed_where(distro: Option<&str>) -> String {
+    match distro {
+        Some(d) => format!("Not installed in {d}"),
+        None => "Not installed on this PC".to_string(),
+    }
+}
 const NO_GLOBS: &str = "Codex has no globs, so this doc doesn't load in Codex.";
 const NOT_TICKED: &str = "Not ticked for this doc.";
 const OFF: &str = "This doc is off, so it gets no copy.";
@@ -214,6 +228,14 @@ impl Ctx<'_> {
         self.place.found.contains(&cli)
     }
 
+    /// The distro the level is in: a distro user level's, or the distro of a project under its share.
+    fn found_in(&self) -> Option<String> {
+        match &self.place.level {
+            Level::User { distro, .. } => distro.clone(),
+            Level::Project { root, .. } => root.to_str().and_then(crate::wsl::share_distro).map(str::to_string),
+        }
+    }
+
     fn dir(&self, v: &Vendor) -> PathBuf {
         match &self.place.level {
             Level::User { roots, .. } => (v.user_dir)(roots),
@@ -253,7 +275,7 @@ impl Ctx<'_> {
     fn context_notes(&self, doc: &Doc, cli: &'static str, size: usize) -> Vec<String> {
         let mut notes = Vec::new();
         if !self.is_user() && !self.found(cli) {
-            notes.push(TEAMMATES.to_string());
+            notes.push(teammates(self.found_in().as_deref()));
         }
         if cli == "antigravity" {
             if size > antigravity::library::RULE_CAP {
@@ -327,7 +349,7 @@ fn want(ctx: &Ctx, doc: &Doc, cli: &'static str) -> Want {
         return Want::No(NO_GLOBS.to_string());
     }
     if ctx.is_user() && !ctx.found(cli) {
-        return Want::No(NOT_INSTALLED.to_string());
+        return Want::No(not_installed(ctx.found_in().as_deref()));
     }
     Want::Copy
 }
@@ -1810,7 +1832,8 @@ Be careful.
         let st = level_state(&p, &home, &yes);
         let agy = &st.rows[0].1[2];
         assert_eq!(agy.state, CopyState::NoCopy);
-        assert_eq!(agy.notes, ["Not installed on this PC, so it gets no copy."]);
+        // The CLI may be installed on Windows: the note names the distro, where it isn't.
+        assert_eq!(agy.notes, ["Not installed in MarshellTestDistro, so it gets no copy."]);
         assert_eq!(agy.distro.as_deref(), Some("MarshellTestDistro"));
         assert_eq!(st.rows[0].1[0].state, CopyState::Missing);
         assert_eq!(
@@ -1833,6 +1856,19 @@ Be careful.
         );
         assert!(st.rows[0].1[0].notes.is_empty());
         assert_eq!(rels(root, &review(&p)), [AGY, CLAUDE, CODEX, QWEN]);
+    }
+
+    #[test]
+    fn a_distro_projects_teammates_note_names_the_distro() {
+        let root = Path::new(r"\\wsl.localhost\MarshellTestDistro\tmp\p");
+        let p = place(root, vec![security(root)], &["claude"]);
+        let st = state(&p);
+        // The share doesn't exist here, so the row also says Marshell may not write it; only the teammates note counts.
+        let notes = &st.rows[0].1[1].notes;
+        assert!(
+            notes.contains(&"Not installed in MarshellTestDistro. The copy is for teammates who use it.".to_string())
+        );
+        assert!(!notes.iter().any(|n| n.contains("on this PC")));
     }
 
     #[test]
