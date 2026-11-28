@@ -2446,13 +2446,14 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
          - A plain-folder project never claims a terminal by a later `cd`. It only holds the terminals that start inside it (decision 7).
       7. **'+' opens a project, and new folders add themselves.**
          - The '+' in the Projects header, and "Open project…" in the palette, show the recent folders and Browse….
-         - A terminal can also start from outside: the `marshell` CLI, or a Resume from History. It joins the innermost open project that holds its folder, git or plain: `marshell new` in `C:\notes\drafts` joins an open plain project `C:\notes`. If no open project holds its folder, that repository or folder opens as a new project.
+         - A terminal can also start from outside: the `marshell` CLI, or a Resume from History. It joins the innermost open project that holds its folder, git or plain (the Home project and a drive root's project hold only their own folder, 6aa decision 19, so a folder below them opens as a project of its own): `marshell new` in `C:\notes\drafts` joins an open plain project `C:\notes`. If no open project holds its folder, that repository or folder opens as a new project.
       8. **Closing a project ends its terminals, after asking:** "Close billing? 3 terminals are running (2 agents working)." An agent's session can still be resumed from History. Since the side pane and the shell panel belong to the project (6aa decisions 15 and 16), the question also names what they would lose: unsaved editor tabs, by file name, and a command still running in the shell panel.
       9. **Numbers go.**
          - No terminal number on screen, no Ctrl+Shift+1–9 for terminals, and no Go to session by number.
          - The screen, the notifications and the tray name a terminal by project and terminal name: "billing · claude".
          - Scripts and agents use the id that `marshell list` prints, for example `t3fa91c02b7de` (the tab id; see "Settled for 6aa-1" below). `marshell send`, `focus` and `open` take that id.
          - `MARSHELL_SESSION_NUMBER` becomes `MARSHELL_TERMINAL_ID`, and the skill Marshell gives the five agent CLIs says so.
+         - The same id is already in `MARSHELL_TAB_ID`, which the hook bridge, Codex's hook daemon, `marshell open` and the skill read today. The 6aa-1 plan settles whether `MARSHELL_TERMINAL_ID` is added beside it or replaces it. Either way, every name that carries the id joins the lists of markers the outside console drops (`crates/core/src/outside.rs`, `crates/cli/src/start.rs`, `crates/core/tests/outside.rs`) and `docs/adr/0001-threat-model.md`'s "What the outside console gets".
       10. **"Terminal" on screen; "session" only for an agent's conversation.** So the commands read New terminal, Close terminal and Move terminal up, while Resume session and History keep "session".
       11. **The rail shows projects on top and the selected project's terminals below:**
           - a tile per project, with its folder or git icon, its initial and a needs-you badge;
@@ -2491,7 +2492,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
           - A banner says what the terminal needs and opens that terminal. Its Allow and Deny buttons go.
           - Departures' Y and N open the terminal instead of a card.
           - The cards leave in 6aa-3, together with the lane.
-      19. **Home is a project too.** A terminal in the user's home folder belongs to a "Home" project, shown with the folder icon, and a drive root becomes a project of its own, so every terminal always has a project. The Projects list doesn't follow the launcher's recent-folders exclusions (`projects::record`), and the recent folders stay as they are.
+      19. **Home is a project too.** A terminal in the user's home folder belongs to a "Home" project, shown with the folder icon, and a drive root becomes a project of its own, so every terminal always has a project. Each holds only a terminal whose folder is exactly its own. The Projects list doesn't follow the launcher's recent-folders exclusions (`projects::record`), and the recent folders stay as they are.
       - Settled without asking (rulings for the user to overturn):
         - **A folder inside a repository opens the repository's project.** A monorepo's subfolder as a project of its own is left for later.
         - **The Terminals list keeps the person's own order,** under the fixed-order rule. There is no priority sort.
@@ -2519,7 +2520,9 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
         - how the skill's new text reaches the five CLIs under the managed-file rules;
         - free keys for Next and Previous project (Ctrl+Shift+PageUp and PageDown are the prompt jumps);
         - the shell panel's fold rule without the lane;
-        - how `UiView` reports what is on screen for Done unseen.
+        - how `UiView` reports what is on screen for Done unseen;
+        - for 6aa-1: how banners, notifications and the tray tell apart two terminals that share a name, since only the screen reader gets "2 of 3";
+        - for 6aa-3: whether a project opened from outside and never selected is kept across a quit and a restart, and whether a last terminal that moves away by a `cd` closes it.
       - Older passages that describe today's app. These decisions override them, and each slice's plan amends the passages its slice changes, as slice 6z's did:
         - the "Needs-you lane" row and its 28 px header;
         - the Glance line ("Needs you · 2");
@@ -2924,8 +2927,9 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
      9. **Watch and type.** Another PC can see a terminal and type into it. The host always shows "Viewed from" or "Controlled from", has a switch per PC that refuses typing, and has Disconnect (2026-10-22 decision 6). A paused terminal refuses typing.
      10. **Built after phase 8, starting with a spike.** The spike covers iroh on Windows across real NATs and through a self-hosted relay, and Better Auth's passkey sign-in with the loopback return and D1.
      11. **The slices are planned when the phase starts,** because the code they touch will have moved by then.
+         - For the phase's plan: a PC that was offline while it was revoked, or while the account was reset, still holds old keys and pins. The plan either has a host check the account's current approvals before it accepts a link, and refuse when it can't reach the account server, or records that window as accepted.
      - Settled without asking (rulings for the user to overturn):
-       - **An OAuth App, as `gh` uses, not a GitHub App.** A GitHub App must be installed on each account or organisation whose repositories it touches. Its user tokens also expire, and each refresh token works only once, unless the app opts out of expiring user tokens. With an OAuth App, each PC simply keeps its own long-lived token.
+       - **An OAuth App, as `gh` uses, not a GitHub App.** A GitHub App must be installed on each account or organisation whose repositories it touches. Its user tokens also expire, and each refresh token works only once, unless the app opts out of expiring user tokens. With an OAuth App, each PC keeps its own token, which lasts until it is revoked or goes unused for a year; a PC idle that long signs in to GitHub again. For the phase's plan: how the PC gets the token without a client secret in the app (GitHub's device flow, or an exchange on the Worker that holds the secret), and that the GitHub sign-in to the account and the GitHub token are two separate OAuth Apps.
        - **Each synced setting keeps its newest value, setting by setting:** each inner setting, such as the text size inside `appearance`, has its own version, so changes to two settings on two PCs both survive.
          - The groups are `appearance`; `notifications` (its sound switches included) and `status_off`; and `files`, `changes` and `browser`.
          - `close_to_tray` stays on each PC, because it is how that PC's window behaves. So does `appearance`'s contrast, which depends on the PC's display.
