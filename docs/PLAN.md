@@ -2430,6 +2430,121 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
         - **`agent-colors.css` keeps its comment that calls the vendor colour the "default accent",** since the slice leaves that file alone.
         - **An old `accent` stays in `settings.json.bak` for one more save.** The save that drops the key backs up the previous file, accent included, and the save after that replaces the backup. It is never read back, so it is harmless.
         - **One `docs/BRIEF.md` amendment records the removal,** since §6 of the brief asks for the picker, and its Phase 0 amber line gets a note. The user had the file guard's owner-file rule removed (2026-11-28) so the amendment could be written.
+    - **Slice 6aa decisions (2026-11-28): Projects and Terminals.** The user asked for two lists in the sidebar: Projects, and under the selected project its Terminals, which "will show all shells running in the project and not just the Agents CLIs." Several rounds of questions on 2026-11-28 settled it, the last ones during the review of the docs PR (#226). It runs next, before 8b, in four slices.
+      1. **A project is a folder.** It doesn't have to be a git repository, but one that is gets a git icon. A repository's worktrees, task worktrees included, belong to its project. A folder outside git is a project of its own.
+      2. **A project stays in the list until it is closed,** across restarts, with or without terminals.
+      3. **One project is always selected, like a tab.** Whenever the list holds a project, exactly one is selected. The main area, the Terminals list, the side pane and the shell panel all belong to it. In the user's words: "think of it as separate environments or tabs".
+      4. **The Needs you lane goes.** The project rows carry the attention instead: how many of a project's terminals need you, and how many finished a turn you haven't seen. The lane's binding rules go with it: the permanent lane header, its 40% cap, its hover-freeze and its "1 new" chip.
+      5. **Done unseen.** A finished turn stays "Done, unseen" until its terminal has been on screen in a focused window. It shows on the terminal's row and in its project's count. "Next unread" and "Mark unread" come with it.
+         - The core keeps a turn and a seen turn per terminal.
+         - A turn is counted only from an adapter's own Stop or Done, never guessed.
+         - Today the `done-unseen` glyph exists but nothing draws it (`src/features/sessions/toRow.ts:42-54`).
+      6. **Git repositories claim their terminals.** A terminal belongs to the open git project whose repository holds its current folder, so `cd` from billing into web moves it to web. Anywhere else, such as a plain folder or a repository that isn't open as a project, it stays in the project it is in now: leaving a repository never moves a terminal, only entering an open one does. A terminal opened in billing that moves to web and then goes to `C:\tmp` stays in web.
+         - A repository is matched by its main checkout, as `project_of` does today (`crates/core/src/projects.rs`). It follows a linked worktree's `commondir`, so a worktree outside the repository's folder still belongs to its project.
+         - A nested repository is its own repository, and only an open project for it claims the terminal.
+         - A repository is open at most once (opening a folder inside it selects its project; see the rulings), so two projects never claim the same terminal.
+         - A plain-folder project never claims a terminal by a later `cd`. It only holds the terminals that start inside it (decision 7).
+      7. **'+' opens a project, and new folders add themselves.**
+         - The '+' in the Projects header, and "Open project…" in the palette, show the recent folders and Browse….
+         - A terminal can also start from outside: the `marshell` CLI, or a Resume from History. Inside a git repository, it joins or opens that repository's project, found as `project_of` finds it (decision 6), even when the repository sits inside an open plain project. Outside any repository, it joins the innermost open plain project that holds its folder (the Home project and a drive root's project take only a terminal that starts exactly in their folder, 6aa decision 19, so a folder below them opens as a project of its own): `marshell new` in `C:\notes\drafts` joins an open plain project `C:\notes`. If no open project holds its folder, that repository or folder opens as a new project.
+      8. **Closing a project ends its terminals, after asking:** "Close billing? 3 terminals are running (2 agents working)." An agent's session can still be resumed from History. Since the side pane and the shell panel belong to the project (6aa decisions 15 and 16), the question also names what they would lose: unsaved editor tabs, by file name, and a command still running in the shell panel.
+      9. **Numbers go.**
+         - No terminal number on screen, no Ctrl+Shift+1–9 for terminals, and no Go to session by number.
+         - The screen, the notifications and the tray name a terminal by project and terminal name: "billing · claude".
+         - Scripts and agents use the id that `marshell list` prints, for example `t3fa91c02b7de` (the tab id; see "Settled for 6aa-1" below). `marshell send`, `focus` and `open` take that id.
+         - `MARSHELL_SESSION_NUMBER` becomes `MARSHELL_TERMINAL_ID`, and the skill Marshell gives the five agent CLIs says so.
+         - The same id is already in `MARSHELL_TAB_ID`, which the hook bridge, Codex's hook daemon, `marshell open` and the skill read today. The 6aa-1 plan settles whether `MARSHELL_TERMINAL_ID` is added beside it or replaces it. Either way, every name that carries the id joins the lists of markers the outside console drops (`crates/core/src/outside.rs`, `crates/cli/src/start.rs`, `crates/core/tests/outside.rs`) and `docs/adr/0001-threat-model.md`'s "What the outside console gets".
+      10. **"Terminal" on screen; "session" only for an agent's conversation.** So the commands read New terminal, Close terminal and Move terminal up, while Resume session and History keep "session".
+      11. **The rail shows projects on top and the selected project's terminals below:**
+          - a tile per project, with its folder or git icon, its initial and a needs-you badge;
+          - then a divider;
+          - then the terminal marks, as today.
+      12. **Ctrl+Shift+1–9 pick the Nth project.** Next project and Previous project are keys and palette commands too. Terminals are reached with the arrow keys in the list, as now.
+      13. **A project row is one 32 px line:**
+          - the git or folder icon;
+          - the name, which is the folder's name and can be renamed;
+          - the main checkout's branch, dimmed;
+          - the counts, at the end.
+
+          The Terminals header reads "Terminals · billing" and has its own '+'. A terminal row drops the project's name, and shows its branch only where it differs from the project's, as in a worktree. The user picked this layout:
+          ```
+          PROJECTS                      +
+          ▌ ⎇ billing     main     ▲ 2
+            ⎇ web         feat/x
+            ▢ Downloads
+            ⎇ marshell    main   ✓ 1
+
+          TERMINALS · billing           +
+          ▌ ◆ claude     Needs you
+            ◆ codex      Working
+            ❯ pwsh
+            ❯ pwsh       wt/fix-12
+          ```
+      14. **The Projects list grows to fit, up to 40% of the sidebar's height, then scrolls.** Terminals takes the rest. The rule that only the session list scrolls becomes "only the two lists scroll".
+      15. **The side pane is per project.** Its panels and all its tabs belong to the project, whichever terminal is on screen.
+      16. **The shell panel is per project.** Each project has its own scratch shell, which starts in the project's folder.
+      17. **Four slices, before 8b:**
+          - 6aa-1: ids instead of numbers, the "terminal" wording, the CLI, `MARSHELL_TERMINAL_ID` and the skill.
+          - 6aa-2: Done unseen, Next unread and Mark unread.
+          - 6aa-3: the Projects and Terminals lists, the rail, Ctrl+Shift+1–9, the end of the lane, and projects kept across restarts.
+          - 6aa-4: the side pane and the shell panel per project.
+      18. **The approve cards go, and nothing outside the CLI answers a request.** Asked where the lane's cards would go, the user chose to "remove the approve card feature entirely. users attend to requests through the cli normally".
+          - A banner says what the terminal needs and opens that terminal. Its Allow and Deny buttons go.
+          - Departures' Y and N open the terminal instead of a card.
+          - The cards leave in 6aa-3, together with the lane.
+      19. **Home is a project too.** A terminal in the user's home folder belongs to a "Home" project, shown with the folder icon, and a drive root becomes a project of its own, so every terminal always has a project. A terminal that starts below Home or a drive root, in no repository and no other open project, opens a project of its own. As everywhere (decision 6), the project a terminal belongs to is set when it starts and changes only when it enters an open repository. A Home terminal that goes to `C:\notes\drafts` stays in Home. The Projects list doesn't follow the launcher's recent-folders exclusions (`projects::record`), and the recent folders stay as they are.
+      20. **Marshell's permission modes and its permission hook go too** (asked during the review of PR #226). Asked what happens to the modes once the cards are gone, the user chose to remove them with the hook. Each CLI runs with its own permission settings: Marshell no longer starts a CLI in its strictest mode, holds a request, or allows one for a mode, and the Guard rail goes.
+          - Status still comes from each CLI's other hooks. Whether a CLI still reports that it is waiting at its own prompt is checked per adapter in that slice's plan. Where a CLI can't, the UI says so.
+          - Removing the permission entries Marshell installed in a CLI's configuration follows the config service's rules: a preview, a backup, the managed-file rules and undo.
+          - Which slice removes them is settled when 6aa-3 is planned: with the cards, or a slice of its own.
+      - Settled without asking (rulings for the user to overturn):
+        - **A folder inside a repository opens the repository's project.** A monorepo's subfolder as a project of its own is left for later.
+        - **The Terminals list keeps the person's own order,** under the fixed-order rule. There is no priority sort.
+        - **A project renamed to an empty name takes back its folder's name.**
+        - **An empty project shows the launcher in its folder.**
+        - **Closing the selected project selects the one that takes its place,** or else the last one.
+        - **Next waiting (N), a banner and a notification cross projects:** they select the terminal's project.
+        - **After a restart, ended terminals come back in their projects,** "Ended last time", as today.
+        - **There is no "Move to another project".** 6aa decision 6 decides where a terminal belongs.
+        - **When the terminal on screen moves to another project, the selection follows it.** The person caused the move with a `cd`, so the terminal stays on screen and its new project becomes the selected one, side pane and shell panel included (6aa decisions 15 and 16). A terminal that isn't on screen moves to its new project's list quietly. Its Done-unseen state goes with it, since that state belongs to the terminal. Nothing closes when the selection follows: the old project keeps its side pane tabs, unsaved edits included, and its shell panel, until the person goes back to it.
+        - **A project opened by a terminal from outside closes itself when its last terminal closes,** unless the person has selected it with their own click or key press. It waits while its side pane has an unsaved editor tab or its shell panel runs a command, and closes once both are done, so nothing is lost and nothing is asked. A selection Marshell makes by itself (the first project in an empty list, following a `cd`, Next waiting, a banner, a notification) doesn't count, so such a project closes even when it is the only one, and the list then shows the launcher. That keeps scratch folders from a script, a test run or a History Resume out of the list. A project opened with '+', or once selected by the person, stays until it is closed (6aa decision 2). A task worktree opens its repository's project. The Home project and a drive root's project, when opened this way (6aa decision 19), close by the same rule.
+        - **"Seen" means drawn in the main area of a focused window.** A terminal in a project that isn't selected, or one seen only as a mark in the rail, isn't seen. A Done that arrives while its terminal is drawn there is seen at once.
+        - **6aa-2 comes before projects exist.** Until 6aa-3, "on screen" means the selected session in a focused window, as today, and Done unseen shows on the row only. The project count and the selected-project rule arrive with 6aa-3.
+        - **A terminal moves only when its shell reports its folder** (OSC 7 or OSC 9;9, `crates/core/src/pty/osc133.rs`). A terminal whose shell doesn't report it stays in the project it was opened in. So does an agent CLI, whose folder is the one it started in.
+        - **The Departures board stays one board for every project,** with its project column.
+        - **"Group by project" goes,** since the Projects list replaces it.
+      - Settled for 6aa-1 (asked 2026-11-28):
+        - **The id is the tab id that every terminal already has,** `t` and 12 hex digits (`auth::new_id("t")`, `crates/core/src/server/sessions.rs:598`). It is random, never reused and kept across restarts, and the CLI already accepts it. `MARSHELL_TERMINAL_ID` carries it, beside `MARSHELL_TAB_ID` or in its place, as the 6aa-1 plan settles (decision 9).
+        - **Numbers leave the core entirely.** `marshell send 6` answers "Terminal numbers are gone. Use the ID from `marshell list`.", and `MARSHELL_SESSION_NUMBER` is no longer set. An agent that still holds the old skill text reads the message and runs `marshell list`.
+        - **The plain `marshell list` table shows an ID column in place of `#`,** so the id an agent needs is in the default output as well as in `--json`.
+        - **Two terminals may share a name.** A repeated name gets no suffix. The mark, the branch and the status tell them apart, and the core's old "<name> <number>" rule goes. For a screen reader, a name that repeats in the list gets its position in the accessible name and in announcements, "billing · pwsh, 2 of 3"; nothing changes on screen, and a unique name stays as it is.
+        - **Ctrl+Shift+1–9 stay unbound from 6aa-1 until 6aa-3 gives them to projects,** as the user asked when numbers went. The list, the rail and the palette reach any terminal meanwhile.
+        - **The command groups "Session" and "Terminal" become "Terminals" and "In the terminal".** The first manages terminals (new, close, move, rename); the second acts inside the one on screen (find, capture, prompt jumps).
+      - For the plans to settle:
+        - how the skill's new text reaches the five CLIs under the managed-file rules;
+        - free keys for Next and Previous project (Ctrl+Shift+PageUp and PageDown are the prompt jumps);
+        - the shell panel's fold rule without the lane;
+        - how `UiView` reports what is on screen for Done unseen;
+        - for 6aa-1: how banners, notifications and the tray tell apart two terminals that share a name, since only the screen reader gets "2 of 3";
+        - for 6aa-3: whether a project opened from outside and never selected is kept across a quit and a restart, and whether a last terminal that moves away by a `cd` closes it.
+      - Older passages that describe today's app. These decisions override them, and each slice's plan amends the passages its slice changes, as slice 6z's did:
+        - the "Needs-you lane" row and its 28 px header;
+        - the Glance line ("Needs you · 2");
+        - the lane's 40% cap and hover-freeze;
+        - "only the session list scrolls";
+        - "Session 6" in accessible names and announcements;
+        - Ctrl+Shift+1–9 in the keyboard section;
+        - Go to session;
+        - Group by project;
+        - the tray's needs-you count and its session menu;
+        - Next waiting;
+        - the Departures board's SESSION column and its accessible row names;
+        - the session modes ("Session modes": Hybrid, the Guard rail, the mode chip and switching), every adapter slice's mode and permission-hook decisions, and the MODE column of `marshell list` (6aa decision 20);
+        - the approve cards in the lane, their keys, and the Allow and Deny of banners (slice 3d's decisions and the "Banners" line under "Batch 3 design decisions");
+        - the session-number passages in `docs/BRIEF.md` (its "Session numbers" lines) and in `docs/adr/0001-threat-model.md`, which get amendments as slice 6z's did.
+    - **Shell detection (2026-11-28).** In the same session the user asked for "a default shell program that you can set in settings". That setting already exists: Shell profiles → Make default, `default_id` in `profiles.json`. The user kept it, and the launcher's memory of the last shell per folder, as they are.
+      - Finding more Windows shells was offered and dropped: Nushell, MSYS2 and Cygwin shells, the Visual Studio developer shells, and Windows Terminal's profiles.
+      - On Linux and macOS, Marshell will list every shell in `/etc/shells`, with the login shell first and as the default. Today it offers only the login shell (`detect_profiles` in `crates/core/src/profiles/detect.rs`). This is built with the Linux and macOS work, because that code path can't run in the app on this PC.
 7. **Doctor**: the fix actions, on top of the phase-3 config core: "Fix X issues" and one-click undo; folds in each CLI's own doctor; detects duplicate notifications and offers to turn off each CLI's own desktop notifications (brief §5.5, moved here by slice 4e decision 4); reports the tokens injected by project references; checks Codex hook trust; waste checks (unused MCP servers and skills, long descriptions, broad scopes, a token-cost estimate); offers to raise `cleanupPeriodDays`.
    - Added 2026-10-16 (research in `docs/research/2026-10-16-accounts-cloud-extensions.md`):
      - **One-click doctor per CLI.** It runs the CLI's own doctor (`claude doctor` text, `codex doctor --json`) and opens a summary window of suggested fixes. Every fix goes through preview, backup and undo; nothing is applied silently. Antigravity has no doctor command, so it gets none.
@@ -2778,9 +2893,67 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
         - The smoke test tells a replaced file from a skipped one by its write time. A silent update reinstalls the same build, so a hash would match even for a skipped file. Before A5 the test sets every installed file's write time to 2001-01-01, and `File` puts back the build's own time. The test holds `OpenConsole.exe` open from before the update until 8 seconds after the old app has ended, then checks that no file kept the mark and that the installer ended after the file was let go. The installer writes `OpenConsole.exe` straight after the 34 MB main program, so a shorter hold could end before today's installer reaches it, and 8 seconds still leaves 12 of the wait's 20.
         - Nothing runs the Retry dialog: `hooks-check.ps1` runs silently, and no installer runs on the development PC.
      - Exit: the pull request's first dry run fails the new A5 check that every program was replaced, naming `OpenConsole.exe`; after the fix the dry run passes them, "A7 uninstall: the install folder holds no file" with the hold, and the build job's `hooks-check.ps1` with `RESULT … 0 failed`.
-10. **Accounts and cross-device** (after v1; proposal, research and sources in `docs/research/2026-10-22-accounts-and-cross-device.md`). Sign in with GitHub, a device registry with approval from an existing device, remote terminals through an end-to-end encrypted relay, and conversation handoffs between PCs. Slices: 10a spikes and the GitHub App, 10b sign-in, 10c devices, 10d remote view, 10e remote input, 10f handoffs, 10g later (remote approve cards, remote banners, a GitHub mirror, a direct path).
-   - Exit: on two PCs, a session on one is viewed and typed into from the other with the host showing who is connected; a closed session's handoff reaches the next session on the other PC; signed out, the app is today's app and a test asserts it opens no outbound socket.
-   - **Phase 10 decisions (2026-10-22).** Every question in the proposal's §8 was answered with its recommendation:
+10. **Accounts and cross-device** (after v1; proposal, research and sources in `docs/research/2026-10-22-accounts-and-cross-device.md`). Sign in with GitHub, a device registry with approval from an existing device, remote terminals through an end-to-end encrypted relay, and conversation handoffs between PCs. Slices (2026-10-22; the 2026-11-28 redesign below replaces the GitHub App with an OAuth App and drops remote approve cards, 6aa decision 18): 10a spikes and the GitHub App, 10b sign-in, 10c devices, 10d remote view, 10e remote input, 10f handoffs, 10g later (remote approve cards, remote banners, a GitHub mirror, a direct path; since 2026-11-28 there are no remote approve cards, and remote banners have no Allow or Deny, 6aa decision 18).
+   - **Redesigned 2026-11-28; built after phase 8.** The account now has three jobs: remember the GitHub account, sync settings, and reach terminals on the person's other PCs. The sign-in methods are passkey, Google, GitHub, and email with a password. PCs link to each other directly, with a relay when they must. The research and sources are in `docs/research/2026-11-28-accounts-redesign.md`. The slices above and the exit below come from 2026-10-22; both are rewritten when the phase starts (2026-11-28 decision 11).
+   - Exit (2026-11-28):
+     - Two PCs are signed in to one account. The second PC is approved from the first.
+     - The second PC picks up the synced settings, and connects GitHub as the remembered login.
+     - The second PC views and types into a terminal on the first, both over a direct link and through the relay, while the host shows who is connected.
+     - Signed out, the app is today's app, and a test asserts that it opens no connection to the account server, a relay or another PC. The update check, `gh` and browser tabs open their own connections, as they do today.
+   - Exit (2026-10-22, superseded): on two PCs, a session on one is viewed and typed into from the other with the host showing who is connected; a closed session's handoff reaches the next session on the other PC; signed out, the app is today's app and a test asserts it opens no outbound socket.
+   - **Phase 10 decisions (2026-11-28).** These replace the 2026-10-22 decisions below, which are kept for the record.
+     - The user asked for "an account system which user will be able to log into using a passkey or google or github or email and password".
+     - The account is there "just for three reasons -> remember the github account, sync settings between devices and to view session from other machines". It should be easier than reaching a PC through SSH addresses, because "the whole idea is that users would be able to connect through long distances".
+     - The user doesn't want a phone app.
+     - Four rounds of questions settled it:
+     1. **The account has three jobs:** remember the GitHub account, sync settings between the person's PCs, and show and type into terminals on their other PCs. Handoffs (2026-10-22 decisions 9 to 11) are parked under "v2 and later". No phone app.
+     2. **The account is optional.** Signed out, Marshell is today's app and opens no outbound socket for the account.
+     3. **Sign-in is Better Auth on Cloudflare Workers and D1, at `marshell.bookandry.com`**, a subdomain of a domain the user owns.
+        - Marshell opens the sign-in page in the system browser, never in the webview. The result comes back through a loopback redirect with PKCE (RFC 8252).
+        - The methods are a passkey bound to `marshell.bookandry.com`, Google, GitHub, and email with a password.
+        - The spike chooses the service that sends the verification and reset emails.
+     4. **A new PC is approved from a PC already on the account,** by comparing a six-digit code derived from both PCs' keys, as in the 2026-10-22 decision 4.
+        - Synced settings are end-to-end encrypted under an account key. The approval seals that key to the new PC, and the server never holds it.
+        - Revoking a PC rotates the account key. An approved PC makes a new key, seals it to every remaining PC and re-encrypts the synced settings under it, so the revoked PC can't read anything synced afterwards.
+        - The first PC on an account is approved by creating the account.
+        - Every approval and every revocation is signed by an approved PC's key, and every PC checks that chain before it trusts another PC. The account server's word alone adds no PC, so a stolen sign-in or a compromised Worker can't slip in a device of its own.
+     5. **GitHub takes one browser hop per PC.**
+        - Each PC signs in to GitHub once, through Marshell's own GitHub OAuth App, and keeps its token in the OS keychain.
+        - The account stores the GitHub login and GitHub's numeric user id, so a new PC knows which GitHub account to connect. After the GitHub sign-in, the PC checks the id, since a login can be renamed and taken by someone else, and the login is only a label.
+        - For the phase's spike: Better Auth's account table keeps a sign-in provider's tokens by default. The spike checks this in its docs, and the plan turns that storage off or encrypts it, so signing in with GitHub or Google leaves no provider token on the server.
+        - Marshell passes the token to its own `gh` calls through `GH_TOKEN` and never writes `gh`'s configuration.
+        - It costs no AI tokens.
+        - For the phase's plan: `GH_TOKEN` covers github.com only, while GitHub Enterprise hosts read `GH_ENTERPRISE_TOKEN` and keep `gh`'s own sign-in. When `gh` is already signed in as another account, `GH_TOKEN` takes precedence over it. The plan says which account Marshell uses then, and the Changes panel names the account in use.
+     6. **Sync covers appearance, notifications and status, and the editor, diff and browser options.** It never covers folders and paths, the layout, History or its limits, shell profiles, own agents, or any CLI's configuration.
+     7. **Remote terminals run PC to PC, between PCs running Marshell, over iroh.**
+        - iroh gives a direct encrypted link with hole punching, and a relay when no direct path exists. Each PC's key is pinned by the account's approvals.
+        - There is no OpenSSH server, no administrator prompt and no port 22.
+        - The account server introduces PCs to each other. Terminal traffic never passes through it.
+        - An Advanced setting can name a relay of the person's own.
+     8. **A PC shares its terminals only once "Let my other PCs see sessions here" is turned on for it.** The switch is off by default, and turning it on is what sets the PC up.
+     9. **Watch and type.** Another PC can see a terminal and type into it. The host always shows "Viewed from" or "Controlled from", has a switch per PC that refuses typing, and has Disconnect (2026-10-22 decision 6). A paused terminal refuses typing.
+     10. **Built after phase 8, starting with a spike.** The spike covers iroh on Windows across real NATs and through a self-hosted relay, and Better Auth's passkey sign-in with the loopback return and D1.
+     11. **The slices are planned when the phase starts,** because the code they touch will have moved by then.
+         - For the phase's plan: a PC that was offline while it was revoked, or while the account was reset, still holds old keys and pins. The plan either has a host check the account's current approvals before it accepts a link, and refuse when it can't reach the account server, or records that window as accepted.
+     - Settled without asking (rulings for the user to overturn):
+       - **An OAuth App, as `gh` uses, not a GitHub App.** A GitHub App must be installed on each account or organisation whose repositories it touches. Its user tokens also expire, and each refresh token works only once, unless the app opts out of expiring user tokens. With an OAuth App, each PC keeps its own token, which lasts until it is revoked or goes unused for a year; a PC idle that long signs in to GitHub again. For the phase's plan: how the PC gets the token without a client secret in the app (GitHub's device flow, or an exchange on the Worker that holds the secret), and that the GitHub sign-in to the account and the GitHub token are two separate OAuth Apps.
+       - **Each synced setting keeps its newest value, setting by setting:** each inner setting, such as the text size inside `appearance`, has its own version, so changes to two settings on two PCs both survive.
+         - The groups are `appearance`; `notifications` (its sound switches included) and `status_off`; and `files`, `changes` and `browser`.
+         - `close_to_tray` stays on each PC, because it is how that PC's window behaves. So does `appearance`'s contrast, which depends on the PC's display.
+         - For the phase's plan: whether `appearance.terminal_theme` and `appearance.imported_themes` sync as one unit, or an unknown theme id falls back to following the app; how the two list fields merge, `appearance.imported_themes` and `status_off`, as one value or as sets with deletions; and whether the terminal font's family (a font another PC may not have) and the quiet hours (a time zone) stay on each PC.
+         - Checked in `crates/protocol/src/api.rs` on 2026-11-28, none of the synced fields holds a path: `files`, `changes` and `browser` hold editor, diff and browser options only. `default_folder` and `history_backup_dir` are fields of their own and stay unsynced.
+         - "Newest" is a version counter, not a clock. Each write takes the highest version the PC has seen plus one, and the PC's id breaks a tie. The counter travels inside the encrypted record, so a PC with a fast clock can't win every time, and the server never orders writes it can't read.
+         - For the phase's plan: the server can't read or forge a record, but it could serve an older valid one, a replay. A newly approved PC would take that as the newest value and write above it. The plan either has each PC sign the latest versions it has seen, so a stale record shows, or records this limit as accepted.
+         - The plan checks this list against `settings.json` again when the phase starts.
+       - **No recovery phrase.** Losing every PC loses only the synced settings, since GitHub tokens stay per PC and terminals live on their PCs. This drops the phrase from the 2026-10-22 decision 4.
+       - **Every reset waits seven days.** "Not mine: start over" (2026-10-22 decision 5) stays, and it is also the way back for someone who lost every PC.
+         - A reset is announced to every approved PC and by email, and any approved PC can cancel it.
+         - After seven days without a cancel, the old account key, the synced settings and every PC's approval are gone. The PC that asked becomes the first PC of the fresh account.
+         - An account with one PC no longer wipes at once. Otherwise anyone who got past sign-in, with a stolen password or a phished mailbox, could wipe the account and take its place without notice.
+         - Accepted trade-off: someone who lost every PC can't be told apart from someone who holds their sign-in and email. If no approved PC cancels within the seven days, whoever holds both takes the account. What they get is an empty account. The old settings can't be read without the old key, and every old PC's approval is revoked, so there is no path to the old PCs' terminals.
+       - **Remote terminals take slice 6aa's names.** "desktop · billing · claude" replaces the "desktop · 6" of 2026-10-22 decision 7. Until the phase settles how another PC's projects appear in the Projects list, they add to the tray's counts only, since the lane in 2026-10-22 decision 8 goes with slice 6aa (6aa decision 4).
+       - **The spike settles the relay.** n0's public relays are rate-limited, so Marshell either runs its own relay or pays for one (n0 Pro, $19 a month plus use). A PC that is always on at home, such as an Ubuntu desktop, can run the person's own relay. The research note says what that takes.
+   - **Phase 10 decisions (2026-10-22), superseded by those of 2026-11-28 above.** Every question in the proposal's §8 was answered with its recommendation:
      1. Sign-in is GitHub's device flow through a GitHub App that asks for no permissions. The Worker checks the user token once with the client secret, keys the account by the numeric user id, and revokes the token: nobody keeps a GitHub token. The device keeps only Marshell's own rotating refresh token, in the OS keychain, never in a file. The loopback web flow is a documented fallback that spike S13 tests.
      2. The backend is a Cloudflare Worker, one Durable Object per account on the WebSocket Hibernation API, and D1, open source under `cloud/`, run on the owner's Cloudflare account, with the relay URL as an Advanced setting for self-hosters.
      3. Transport is the relay with Noise KK end to end between device pairs, so the relay sees ciphertext, sizes and timing only. No WebRTC in this phase; a direct path can come later behind the same device-to-device frames.
@@ -2832,7 +3005,7 @@ Onboarding, Departures, the doctor, the settings page, the banners and the tray 
 
 ## v2 and later (not in v1)
 
-From brief §5.9 and §6: the installer runner (install CLIs; the update button and version display moved to phase 6 on 2026-10-16), review-to-merge (for worktree tasks it moved to slice 2e+ on 2026-10-16), start-from-issue, checkpoints, file tree, phone check-in, and the `marshelld` daemon; accounts and cross-device are phase 10 above (decided 2026-10-22). v1 keeps the core protocol-first so these are additions, not rewrites. Also deferred: Airport mode (relabel statuses), if wanted at all.
+From brief §5.9 and §6: the installer runner (install CLIs; the update button and version display moved to phase 6 on 2026-10-16), review-to-merge (for worktree tasks it moved to slice 2e+ on 2026-10-16), start-from-issue, checkpoints, file tree, phone check-in, and the `marshelld` daemon; accounts and cross-device are phase 10 above (decided 2026-10-22, redesigned 2026-11-28). Conversation handoffs between PCs (phase 10's 2026-10-22 decisions 9 to 11) were parked here on 2026-11-28. v1 keeps the core protocol-first so these are additions, not rewrites. Also deferred: Airport mode (relabel statuses), if wanted at all.
 
 ## 10. Testing strategy
 
@@ -2861,7 +3034,7 @@ From brief §5.9 and §6: the installer runner (install CLIs; the update button 
 - **The 30-day Claude cleanup** deletes transcripts if the app isn't opened for a month. The doctor offers to raise `cleanupPeriodDays`, with consent.
 - **Scope.** v1 is large for one developer, so phases ship independently usable increments.
 - **Name.** Marshell is clear on a web search only; get a proper trademark search before the first public release.
-- **Crowded category** (Maestro, Orca, Agent Desk, Termexo, Schaltwerk, Belfry, herdr). The differentiators stay as in brief §6, "Borrowed from the field".
+- **Crowded category** (Maestro, Orca, Agent Desk, Termexo, Schaltwerk, Belfry). The differentiators stay as in brief §6, "Borrowed from the field".
 
 ## First actions after approval
 
