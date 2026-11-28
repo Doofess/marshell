@@ -2430,9 +2430,9 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
         - **`agent-colors.css` keeps its comment that calls the vendor colour the "default accent",** since the slice leaves that file alone.
         - **An old `accent` stays in `settings.json.bak` for one more save.** The save that drops the key backs up the previous file, accent included, and the save after that replaces the backup. It is never read back, so it is harmless.
         - **One `docs/BRIEF.md` amendment records the removal,** since §6 of the brief asks for the picker, and its Phase 0 amber line gets a note. The user had the file guard's owner-file rule removed (2026-11-28) so the amendment could be written.
-    - **Slice 6aa decisions (2026-11-28): Projects and Terminals.** The user asked for two lists in the sidebar: Projects, and under the selected project its Terminals, which "will show all shells running in the project and not just the Agents CLIs." Several rounds of questions on 2026-11-28 settled it, the last ones during the review of the docs PR (#226). It runs next, before 8b, in four slices.
+    - **Slice 6aa decisions (2026-11-28): Projects and Terminals.** The user asked for two lists in the sidebar: Projects, and under the selected project its Terminals, which "will show all shells running in the project and not just the Agents CLIs." Several rounds of questions on 2026-11-28 settled it, the last ones during the review of the docs PR (#226). It runs next, before 8b, in five slices (decision 17).
       1. **A project is a folder.** It doesn't have to be a git repository, but one that is gets a git icon. A repository's worktrees, task worktrees included, belong to its project. A folder outside git is a project of its own.
-      2. **A project stays in the list until it is closed,** across restarts, with or without terminals.
+      2. **A project stays in the list until it is closed,** across restarts, with or without terminals. The one exception is a project opened by a terminal from outside that the person never selected: it closes with its last terminal (see the rulings below).
       3. **One project is always selected, like a tab.** Whenever the list holds a project, exactly one is selected. The main area, the Terminals list, the side pane and the shell panel all belong to it. In the user's words: "think of it as separate environments or tabs".
       4. **The Needs you lane goes.** The project rows carry the attention instead: how many of a project's terminals need you, and how many finished a turn you haven't seen. The lane's binding rules go with it: the permanent lane header, its 40% cap, its hover-freeze and its "1 new" chip.
       5. **Done unseen.** A finished turn stays "Done, unseen" until its terminal has been on screen in a focused window. It shows on the terminal's row and in its project's count. "Next unread" and "Mark unread" come with it.
@@ -2453,7 +2453,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
          - The screen, the notifications and the tray name a terminal by project and terminal name: "billing · claude".
          - Scripts and agents use the id that `marshell list` prints, for example `t3fa91c02b7de` (the tab id; see "Settled for 6aa-1" below). `marshell send`, `focus` and `open` take that id.
          - `MARSHELL_SESSION_NUMBER` becomes `MARSHELL_TERMINAL_ID`, and the skill Marshell gives the five agent CLIs says so.
-         - The same id is already in `MARSHELL_TAB_ID`, which the hook bridge, Codex's hook daemon, `marshell open` and the skill read today. The 6aa-1 plan settles whether `MARSHELL_TERMINAL_ID` is added beside it or replaces it. Either way, every name that carries the id joins the lists of markers the outside console drops (`crates/core/src/outside.rs`, `crates/cli/src/start.rs`, `crates/core/tests/outside.rs`) and `docs/adr/0001-threat-model.md`'s "What the outside console gets".
+         - The same id is already in `MARSHELL_TAB_ID`, which the hook bridge, Codex's hook daemon, `marshell open` and the skill read today. `MARSHELL_TERMINAL_ID` is added beside it with the same value (asked 2026-11-28): the hooks keep reading `MARSHELL_TAB_ID`, so nothing installed changes, and the skill names only `MARSHELL_TERMINAL_ID`. Both names join the lists of markers the outside console drops (`crates/core/src/outside.rs`, `crates/cli/src/start.rs`, `crates/core/tests/outside.rs`) and `docs/adr/0001-threat-model.md`'s "What the outside console gets".
       10. **"Terminal" on screen; "session" only for an agent's conversation.** So the commands read New terminal, Close terminal and Move terminal up, while Resume session and History keep "session".
       11. **The rail shows projects on top and the selected project's terminals below:**
           - a tile per project, with its folder or git icon, its initial and a needs-you badge;
@@ -2483,22 +2483,24 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
       14. **The Projects list grows to fit, up to 40% of the sidebar's height, then scrolls.** Terminals takes the rest. The rule that only the session list scrolls becomes "only the two lists scroll".
       15. **The side pane is per project.** Its panels and all its tabs belong to the project, whichever terminal is on screen.
       16. **The shell panel is per project.** Each project has its own scratch shell, which starts in the project's folder.
-      17. **Four slices, before 8b:**
+      17. **Five slices, before 8b:**
           - 6aa-1: ids instead of numbers, the "terminal" wording, the CLI, `MARSHELL_TERMINAL_ID` and the skill.
           - 6aa-2: Done unseen, Next unread and Mark unread.
+          - 6aa-2b: requests answered in the CLI. The approve cards, the permission modes, the permission hook and the Guard rail go together (decisions 18 and 20), with each CLI's configuration cleanup. Named so that 6aa-3 and 6aa-4 keep their names.
           - 6aa-3: the Projects and Terminals lists, the rail, Ctrl+Shift+1–9, the end of the lane, and projects kept across restarts.
           - 6aa-4: the side pane and the shell panel per project.
       18. **The approve cards go, and nothing outside the CLI answers a request.** Asked where the lane's cards would go, the user chose to "remove the approve card feature entirely. users attend to requests through the cli normally".
           - A banner says what the terminal needs and opens that terminal. Its Allow and Deny buttons go.
           - Departures' Y and N open the terminal instead of a card.
-          - The cards leave in 6aa-3, together with the lane.
+          - The cards leave in 6aa-2b, together with the modes and the permission hook (decision 20), so no request is ever held with nothing to answer it. The lane itself leaves in 6aa-3; until then its rows open their terminals.
       19. **Home is a project too.** A terminal in the user's home folder belongs to a "Home" project, shown with the folder icon, and a drive root becomes a project of its own, so every terminal always has a project. A terminal that starts below Home or a drive root, in no repository and no other open project, opens a project of its own. As everywhere (decision 6), the project a terminal belongs to is set when it starts and changes only when it enters an open repository. A Home terminal that goes to `C:\notes\drafts` stays in Home. The Projects list doesn't follow the launcher's recent-folders exclusions (`projects::record`), and the recent folders stay as they are.
       20. **Marshell's permission modes and its permission hook go too** (asked during the review of PR #226). Asked what happens to the modes once the cards are gone, the user chose to remove them with the hook. Each CLI runs with its own permission settings: Marshell no longer starts a CLI in its strictest mode, holds a request, or allows one for a mode, and the Guard rail goes.
-          - Status still comes from each CLI's other hooks. Whether a CLI still reports that it is waiting at its own prompt is checked per adapter in that slice's plan. Where a CLI can't, the UI says so.
+          - Status still comes from each CLI's other hooks. Before the hook goes, 6aa-2b's plan records, for each of the five CLIs, which hook or event still reports that it waits at its own permission prompt. Where none does, that CLI's terminals don't show Needs you for a permission prompt, so the project count and the banners lose that signal for it, and the UI says so.
           - Removing the permission entries Marshell installed in a CLI's configuration follows the config service's rules: a preview, a backup, the managed-file rules and undo.
-          - Which slice removes them is settled when 6aa-3 is planned: with the cards, or a slice of its own.
+          - 6aa-2b removes them, together with the cards (asked 2026-11-28), before 6aa-3 builds the lists.
       - Settled without asking (rulings for the user to overturn):
         - **A folder inside a repository opens the repository's project.** A monorepo's subfolder as a project of its own is left for later.
+        - **Home and a drive root are always plain projects,** even when they hold a `.git`, such as a dotfiles repository in the home folder. A repository whose root is the home folder or a drive root doesn't count as one for 6aa decisions 6 and 7: its folders are matched as plain folders, so `C:\Users\me\Documents\notes` still opens a project of its own.
         - **The Terminals list keeps the person's own order,** under the fixed-order rule. There is no priority sort.
         - **A project renamed to an empty name takes back its folder's name.**
         - **An empty project shows the launcher in its folder.**
@@ -2514,10 +2516,11 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
         - **The Departures board stays one board for every project,** with its project column.
         - **"Group by project" goes,** since the Projects list replaces it.
       - Settled for 6aa-1 (asked 2026-11-28):
-        - **The id is the tab id that every terminal already has,** `t` and 12 hex digits (`auth::new_id("t")`, `crates/core/src/server/sessions.rs:598`). It is random, never reused and kept across restarts, and the CLI already accepts it. `MARSHELL_TERMINAL_ID` carries it, beside `MARSHELL_TAB_ID` or in its place, as the 6aa-1 plan settles (decision 9).
+        - **The id is the tab id that every terminal already has,** `t` and 12 hex digits (`auth::new_id("t")`, `crates/core/src/server/sessions.rs:598`). It is random, never reused and kept across restarts, and the CLI already accepts it. The question was asked twice on 2026-11-28, a counter such as `t7` against the tab id, and the user settled on the tab id. `MARSHELL_TERMINAL_ID` carries it, beside `MARSHELL_TAB_ID` (decision 9).
         - **Numbers leave the core entirely.** `marshell send 6` answers "Terminal numbers are gone. Use the ID from `marshell list`.", and `MARSHELL_SESSION_NUMBER` is no longer set. An agent that still holds the old skill text reads the message and runs `marshell list`.
         - **The plain `marshell list` table shows an ID column in place of `#`,** so the id an agent needs is in the default output as well as in `--json`.
         - **Two terminals may share a name.** A repeated name gets no suffix. The mark, the branch and the status tell them apart, and the core's old "<name> <number>" rule goes. For a screen reader, a name that repeats in the list gets its position in the accessible name and in announcements, "billing · pwsh, 2 of 3"; nothing changes on screen, and a unique name stays as it is.
+        - **In banners, OS notifications and the tray, a name that repeats in its project gets the terminal's folder,** relative to the project: "billing · pwsh (src\api)". A unique name stays as it is. Two rulings for the user to overturn: a terminal at the project's root shows the project folder's name, "billing · pwsh (billing)", and where the folder is the same too, the position follows it, "billing · pwsh (src\api, 2 of 2)".
         - **Ctrl+Shift+1–9 stay unbound from 6aa-1 until 6aa-3 gives them to projects,** as the user asked when numbers went. The list, the rail and the palette reach any terminal meanwhile.
         - **The command groups "Session" and "Terminal" become "Terminals" and "In the terminal".** The first manages terminals (new, close, move, rename); the second acts inside the one on screen (find, capture, prompt jumps).
       - For the plans to settle:
@@ -2525,7 +2528,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
         - free keys for Next and Previous project (Ctrl+Shift+PageUp and PageDown are the prompt jumps);
         - the shell panel's fold rule without the lane;
         - how `UiView` reports what is on screen for Done unseen;
-        - for 6aa-1: how banners, notifications and the tray tell apart two terminals that share a name, since only the screen reader gets "2 of 3";
+        - for 6aa-2b: whether a permission hook stays only to report that a CLI waits, answering nothing, where a CLI has no other way to report it;
         - for 6aa-3: whether a project opened from outside and never selected is kept across a quit and a restart, and whether a last terminal that moves away by a `cd` closes it.
       - Older passages that describe today's app. These decisions override them, and each slice's plan amends the passages its slice changes, as slice 6z's did:
         - the "Needs-you lane" row and its 28 px header;
