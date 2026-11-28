@@ -22,7 +22,6 @@ const R = {
   S7: "This can't be undone. Confirm with the user first.",
   S8: "Run cargo fmt --all before a Rust commit.",
   F1: "src/generated is written by ts-rs. Change crates/protocol and run cargo test -p marshell-protocol.",
-  F2: "This is an owner file. Propose the change to the user instead.",
   F3: "Capabilities, the CSP and the API guard change only with the user's word (SCOPE.md).",
   F4: "Real CLI configuration and Marshell data are off limits while developing (SCOPE.md).",
 };
@@ -598,24 +597,12 @@ describe("file rules", () => {
       none(edit("C:/dev/claude-setup/src/generated/x.ts")));
   });
 
-  describe("F2: owner files", () => {
+  // F2 (owner files) was removed on the user's word, 2026-11-28: SCOPE.md's owner files are a written rule, not a block.
+  describe("owner files give no decision", () => {
     for (const f of ["SCOPE.md", "docs/BRIEF.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "SECURITY.md"]) {
-      test(`Write ${f}`, () => denied(edit(at(...f.split("/")), { tool: "Write" }), R.F2));
+      test(`Write ${f}`, () => none(edit(at(...f.split("/")), { tool: "Write" })));
     }
-    test("backslashes and forward slashes", () => {
-      denied(edit(`${mz}\\docs\\BRIEF.md`), R.F2);
-      denied(edit(`${fwd(mz)}/SCOPE.md`), R.F2);
-    });
-    test("drive letter and path in another case", { skip: !WIN && "Windows only" }, () => {
-      const odd = mz.slice(0, 2).toLowerCase() + mz.slice(2).toUpperCase() + "\\SCOPE.md";
-      denied(edit(odd), R.F2);
-    });
-    test("docs/PLAN.md and README.md give no decision", () => {
-      none(edit(at("docs", "PLAN.md")));
-      none(edit(at("README.md")));
-    });
-    test("a SCOPE.md in a subfolder gives no decision", () => none(edit(at("docs", "SCOPE.md"))));
-    test("a different repo does not match", () => none(edit(path.join(other, "SCOPE.md"))));
+    test("backslashes", () => none(edit(`${mz}\\docs\\BRIEF.md`)));
   });
 
   describe("F3: security surface asks", () => {

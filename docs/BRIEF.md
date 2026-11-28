@@ -14,7 +14,7 @@ Where the text below disagrees with this list, this list wins. `docs/PLAN.md` ho
   - The Departures board keeps its name.
 - **Icon.** The icon is two marshalling batons raised in a V, replacing the plane. The app icon is "Night shift": a charcoal tile, grey grips and orange lights. Its source is `assets/icon/app-night-shift.svg`.
 - **Phase 0 decisions (2026-10-10):**
-  - The default accent ("needs you" attention colour) is a signal amber, not the icon's orange and not Claude orange, so a Claude row's brand stripe never reads as an alert.
+  - The default accent ("needs you" attention colour) is a signal amber, not the icon's orange and not Claude orange, so a Claude row's brand stripe never reads as an alert. (Sand became the default on 2026-10-17; since slice 6z, sand is the only app accent.)
   - Mockups are Storybook stories in the repo, plus a published private preview for review.
   - Sign-off happens in three batches:
     1. tokens, glyphs, rows
@@ -65,6 +65,7 @@ Where the text below disagrees with this list, this list wins. `docs/PLAN.md` ho
 - **Task worktrees (slice 2e+, 2026-10-16).** Task worktrees are created by Marshell's own git commands (shown first), live under `~/.marshell/worktrees`, and merge back as one squashed commit; projects are git repository roots. Review changes opens with Ctrl+Shift+R (Cmd+R on macOS). Details in `docs/PLAN.md`, phase 2.
 - **Notifications (phase 4, 2026-10-21).** Each category plays a Windows system sound of its own (`PlaySound` with a sound alias), so the sounds follow the user's sound scheme and volume; each has an on/off switch and there is no per-category volume or bundled sound file (this replaces rodio in §5.5). The core decides every banner, sound and flash; the app shell only shows them. Banners offer Open, or Review for a risky request; Allow and Deny on banners come in a later slice. Phase 4's exit is verified on Windows 11 only. Windows do-not-disturb can't be read, so Marshell's quiet hours cover it. Details in `docs/PLAN.md`, phase 4, and `docs/spikes/S3-notification-click.md`.
 - **Departures board (slice 4c, 2026-10-23).** It opens full window below the title bar, from the palette and the tray menu. Under reduced motion its flipping cells crossfade instead of standing still (this replaces "static when reduced motion is on" in §5). A row flashes only on an attention change (needs you, Done, error). Details in `docs/PLAN.md`, phase 4.
+- **Accent (slice 6z, 2026-11-27).** The user-chosen accent colour (§6) is removed. The app accent is sand, and a session's elements keep their CLI's colour. `docs/PLAN.md` §9 has the decisions.
 - **Codex CLI:**
   - It has a `PermissionRequest` hook, so approve-from-anywhere works for Codex too.
   - Non-managed hooks need user review and trust in `/hooks`, bound to the current hook hash; hook definitions load additively across active config sources. See the current implementation notes in `docs/research/codex-cli.md`.
