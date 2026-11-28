@@ -2500,7 +2500,8 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
           - 6aa-2b removes them, together with the cards (asked 2026-11-28), before 6aa-3 builds the lists.
       - Settled without asking (rulings for the user to overturn):
         - **A folder inside a repository opens the repository's project.** A monorepo's subfolder as a project of its own is left for later.
-        - **Home and a drive root are always plain projects,** even when they hold a `.git`, such as a dotfiles repository in the home folder. A repository whose root is the home folder or a drive root doesn't count as one for 6aa decisions 6 and 7: its folders are matched as plain folders, so `C:\Users\me\Documents\notes` still opens a project of its own.
+        - **Home and a drive root are always plain projects,** even when they hold a `.git`, such as a dotfiles repository in the home folder. A repository whose root is the home folder or a drive root doesn't count as one for 6aa decisions 6 and 7: its folders are matched as plain folders, so `C:\Users\me\Documents\notes` still opens a project of its own. They keep the folder icon and claim no worktrees.
+        - **A repeated name's folder that lies outside its project's folder shows in full** in banners, notifications and the tray, "billing · pwsh (C:\tmp)". That covers a terminal that left its repository but kept its project (6aa decision 6), and a linked worktree outside the repository's folder. The worktree's own folder counts as the project's folder, so a terminal at the worktree's root gets nothing added.
         - **The Terminals list keeps the person's own order,** under the fixed-order rule. There is no priority sort.
         - **A project renamed to an empty name takes back its folder's name.**
         - **An empty project shows the launcher in its folder.**
@@ -2520,7 +2521,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
         - **Numbers leave the core entirely.** `marshell send 6` answers "Terminal numbers are gone. Use the ID from `marshell list`.", and `MARSHELL_SESSION_NUMBER` is no longer set. An agent that still holds the old skill text reads the message and runs `marshell list`.
         - **The plain `marshell list` table shows an ID column in place of `#`,** so the id an agent needs is in the default output as well as in `--json`.
         - **Two terminals may share a name.** A repeated name gets no suffix. The mark, the branch and the status tell them apart, and the core's old "<name> <number>" rule goes. For a screen reader, a name that repeats in the list gets its position in the accessible name and in announcements, "billing · pwsh, 2 of 3"; nothing changes on screen, and a unique name stays as it is.
-        - **In banners, OS notifications and the tray, a name that repeats in its project gets the terminal's folder,** relative to the project: "billing · pwsh (src\api)". A unique name stays as it is. Two rulings for the user to overturn: a terminal at the project's root shows the project folder's name, "billing · pwsh (billing)", and where the folder is the same too, the position follows it, "billing · pwsh (src\api, 2 of 2)".
+        - **In banners, OS notifications and the tray, a name that repeats in its project gets the terminal's folder,** relative to the project: "billing · pwsh (src\api)". A unique name stays as it is. A terminal in the project's own folder gets nothing added, so "billing · pwsh" sits beside "billing · pwsh (src\api)". Two terminals with the same name in the same folder read the same, with no count. The user answered these two cases in the 6aa-1 session.
         - **Ctrl+Shift+1–9 stay unbound from 6aa-1 until 6aa-3 gives them to projects,** as the user asked when numbers went. The list, the rail and the palette reach any terminal meanwhile.
         - **The command groups "Session" and "Terminal" become "Terminals" and "In the terminal".** The first manages terminals (new, close, move, rename); the second acts inside the one on screen (find, capture, prompt jumps).
       - For the plans to settle:
@@ -2529,7 +2530,7 @@ Decisions from the 2026-10-10 coverage audit (`docs/superpowers/plan-coverage-au
         - the shell panel's fold rule without the lane;
         - how `UiView` reports what is on screen for Done unseen;
         - for 6aa-2b: whether a permission hook stays only to report that a CLI waits, answering nothing, where a CLI has no other way to report it;
-        - for 6aa-3: whether a project opened from outside and never selected is kept across a quit and a restart, and whether a last terminal that moves away by a `cd` closes it.
+        - for 6aa-3: what the auto-close ruling below decision 2 doesn't cover. Is a project opened from outside, never selected and with its terminals still open, kept across a quit and a restart? And does it close when its last terminal moves to another project by a `cd`? The ruling covers only a last terminal that closes.
       - Older passages that describe today's app. These decisions override them, and each slice's plan amends the passages its slice changes, as slice 6z's did:
         - the "Needs-you lane" row and its 28 px header;
         - the Glance line ("Needs you · 2");
