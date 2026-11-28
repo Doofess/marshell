@@ -48,17 +48,17 @@ The user chose **Better Auth on Cloudflare** at **`marshell.bookandry.com`**. bo
 - **An OAuth App's token doesn't expire** until it is revoked, or goes unused for a year (docs.github.com, "Token expiration and revocation"). `gh` signs in through an OAuth App, with the scopes `repo`, `read:org` and `gist` by default (cli.github.com/manual/gh_auth_login).
 - **The design:**
   - Each PC takes one browser hop to GitHub and keeps its own token in the OS keychain.
-  - The account stores only the GitHub login, so a new PC knows which GitHub account to connect.
+  - The account stores the GitHub login and GitHub's numeric user id, so a new PC knows which GitHub account to connect. The PC checks the id after the GitHub sign-in, since a login can be renamed and taken by someone else (PLAN's phase 10 decisions of 2026-11-28).
   - Marshell passes the token to the `gh` it runs through `GH_TOKEN`, and never writes `gh`'s own configuration.
   - No AI tokens are spent.
 - Which scopes Marshell's GitHub features need (slices 6r-4a and 6r-4b) is settled when the phase starts.
 
 ## 4. Settings sync
 
-- **Synced:** appearance; notifications and status; editor, diff and browser options.
+- **Synced:** appearance, but for its contrast, which stays on each PC; notifications and status; editor, diff and browser options. PLAN's phase 10 decisions of 2026-11-28 have the final list and the fields still open.
 - **Never synced:** folders and paths, the layout, History, shell profiles, own agents, and CLI configurations.
 - The candidate fields in today's `settings.json` are `appearance`; `notifications` (its sound switches included) and `status_off`; and `files`, `changes` and `browser`. `close_to_tray` stays per PC. None of them holds a path (`crates/protocol/src/api.rs`); `default_folder` and `history_backup_dir` are separate fields.
-- The fields are encrypted end to end under the account key. The newest value wins, field by field.
+- The fields are encrypted end to end under the account key. The newest value wins, setting by setting, with a version for each inner setting (PLAN's phase 10 decisions of 2026-11-28).
 - Marshell keeps no secret in the OS keychain yet. The GitHub token (section 3) and the device key would be its first.
 
 ## 5. Reaching other PCs
