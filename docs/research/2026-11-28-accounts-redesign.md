@@ -55,7 +55,7 @@ The user chose **Better Auth on Cloudflare** at **`marshell.bookandry.com`**. bo
 
 ## 4. Settings sync
 
-- **Synced:** appearance; notifications and status; editor, diff and browser options.
+- **Synced:** appearance, but for its contrast, which stays on each PC; notifications and status; editor, diff and browser options. PLAN's phase 10 decisions of 2026-11-28 have the final list and the fields still open.
 - **Never synced:** folders and paths, the layout, History, shell profiles, own agents, and CLI configurations.
 - The candidate fields in today's `settings.json` are `appearance`; `notifications` (its sound switches included) and `status_off`; and `files`, `changes` and `browser`. `close_to_tray` stays per PC. None of them holds a path (`crates/protocol/src/api.rs`); `default_folder` and `history_backup_dir` are separate fields.
 - The fields are encrypted end to end under the account key. The newest value wins, setting by setting, with a version for each inner setting (PLAN's phase 10 decisions of 2026-11-28).
